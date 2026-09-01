@@ -382,6 +382,7 @@ fn train_step_cuda_burn_dense_inner_v1(
     let mut substep_group_indices = Vec::new();
     let mut group_first_substeps = Vec::with_capacity(groups.len());
     let mut terminal_returns = Vec::with_capacity(groups.len());
+    let mut baselines = Vec::with_capacity(groups.len());
     for (group_index, group) in groups.iter().enumerate() {
         if group.substeps.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index });
@@ -394,6 +395,7 @@ fn train_step_cuda_burn_dense_inner_v1(
         }
         group_first_substeps.push(views.len());
         terminal_returns.push(group.terminal_return);
+        baselines.push(f32::from_bits(group.baseline_bits));
         for substep in group.substeps.iter() {
             let encoded = match &substep.forward {
                 NativePolicyForwardInputV1::Encoded(encoded) => **encoded,
@@ -515,6 +517,7 @@ fn train_step_cuda_burn_dense_inner_v1(
             &chunk_substep_group_indices,
             &chunk_group_first_substeps,
             &terminal_returns[chunk_start_group..chunk_end_group],
+            &baselines[chunk_start_group..chunk_end_group],
             &device,
             #[cfg(test)]
             chunk_anchor_rows,
@@ -733,7 +736,11 @@ fn train_step_cuda_burn_dense_inner_v1(
         )?;
         let transported_first_value = f32::from_bits(group.substeps[0].expected_value_bits);
         let target = f32::from(group.terminal_return);
-        let advantage = target - transported_first_value;
+        // v4-candidate: the persisted evidence describes exactly the
+        // objective the device optimized (contract section 5 item 2).
+        // `baseline_bits` is zero on every v3 batch, so this subtracts
+        // exact zero and stays bit-identical to v3.
+        let advantage = target - transported_first_value - f32::from_bits(group.baseline_bits);
         for (substep_index, substep) in group.substeps.iter().enumerate() {
             let begin = global_action_offsets[flat_substep];
             let end = global_action_offsets[flat_substep + 1];

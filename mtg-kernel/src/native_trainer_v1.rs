@@ -41,6 +41,9 @@ use crate::native_full_episode_trajectory_v2::{
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_anchor_v1::native_policy_anchor_probabilities_v1;
+use crate::native_policy_baseline_state_v4::{
+    BaselineCellKeyV4, BaselineObservationV4, BaselineRoleV4, NativeBaselineStateV4,
+};
 #[cfg(test)]
 use crate::native_policy_train_step_v1::{
     packed_actual_recompute_call_count_for_test_v1, FIXED_BACKWARD_PARTITION_COUNT_V1,
@@ -72,6 +75,7 @@ use crate::native_trainer_schedule_v1::{
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
 };
+use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_training_store_run_v2::NativeRunEnvironmentTrajectoryContractV1;
 use crate::private_physical_trajectory_core::{
     FlatGroupedTrajectoryBatchCore, FlatPhysicalLearnerSeatRuleCore,
@@ -2075,6 +2079,14 @@ pub(crate) struct NativeTrainerStateV2 {
     /// Optional immutable eight-slot opponent population. Every constructor
     /// defaults to `None`; rollout entry rejects if this and K4 are both set.
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    /// v4-candidate cell-centered advantage baseline
+    /// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`).
+    /// Every constructor defaults to `None`, which reproduces v3 behavior
+    /// exactly (every trained group's `baseline_bits` stays zero). Set only
+    /// via [`Self::set_baseline_state_v4`]; this task computes and returns
+    /// each update's successor observations but never applies them here, so
+    /// this field's value never advances on its own.
+    baseline_state: Option<NativeBaselineStateV4>,
     #[cfg(test)]
     policy_anchor: Option<NativePolicyAnchorRuntimeV1>,
     #[cfg(test)]
@@ -2182,6 +2194,7 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             population_opponent: None,
+            baseline_state: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2218,6 +2231,7 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             population_opponent: None,
+            baseline_state: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2252,6 +2266,7 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             population_opponent: None,
+            baseline_state: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2282,6 +2297,7 @@ impl NativeTrainerStateV2 {
             progress,
             ladder_opponent: None,
             population_opponent: None,
+            baseline_state: None,
             #[cfg(test)]
             policy_anchor: None,
             #[cfg(test)]
@@ -2346,6 +2362,15 @@ impl NativeTrainerStateV2 {
         population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ) {
         self.population_opponent = population_opponent;
+    }
+
+    /// Installs (or clears) the v4-candidate cell baseline state. `None`
+    /// (the default on every constructor) reproduces v3 behavior exactly.
+    /// Not persisted by this task (contract section 5's checkpoint-manifest
+    /// v4 sibling schema is a separate deliverable); the installed state
+    /// lives only for the process lifetime of this trainer instance.
+    pub(crate) fn set_baseline_state_v4(&mut self, baseline_state: Option<NativeBaselineStateV4>) {
+        self.baseline_state = baseline_state;
     }
 
     /// Installs the immutable experiment-only parent policy on one
@@ -2459,7 +2484,14 @@ impl NativeTrainerStateV2 {
     ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
         match &self.train_state {
             NativeTrainerModelStateV2::Frozen(_) => {
-                self.run_even_batch_update_inner_v2(config, environment, phase_recorder)
+                // v4 post-step observations are computed and returned by the
+                // inner update (see its doc comment) but not yet threaded
+                // past this boundary: applying/consuming them is a later
+                // task, and this task's own scope is the loss-change
+                // plumbing, not the public update-result contract.
+                let (evidence, _baseline_observations) =
+                    self.run_even_batch_update_inner_v2(config, environment, phase_recorder)?;
+                Ok(evidence)
             }
             NativeTrainerModelStateV2::Wide(_) => {
                 self.run_even_batch_update_wide_inner_v2(config, environment, phase_recorder)
@@ -2467,12 +2499,19 @@ impl NativeTrainerStateV2 {
         }
     }
 
+    // v4 note (contract section 3 step 4): the second tuple element is this
+    // update's `BaselineObservationV4`s (empty unless `self.baseline_state`
+    // is `Some`), computed and returned here but not yet applied anywhere;
+    // `run_even_batch_update_dispatch_v2` below currently discards them, so
+    // the public `run_even_batch_update_v2`/`_profiled_v2` surface and every
+    // existing caller stay byte-for-byte unchanged.
     fn run_even_batch_update_inner_v2(
         &mut self,
         config: &NativeTrainerUpdateConfigV2,
         environment: NativeRunEnvironmentTrajectoryContractV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
-    ) -> Result<NativeTrainerUpdateEvidenceV2, NativeTrainerErrorV1> {
+    ) -> Result<(NativeTrainerUpdateEvidenceV2, Vec<BaselineObservationV4>), NativeTrainerErrorV1>
+    {
         let update_started = Instant::now();
         let setup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::SetupValidation);
         #[cfg(test)]
@@ -2704,6 +2743,23 @@ impl NativeTrainerStateV2 {
         let adam_step_before = self.train_state_v1().adam_step_v1();
         let mut candidate_train_state = self.train_state_v1().clone();
         phase_recorder.finish_v1(grouping_timer);
+        // v4 cell labeling happens BEFORE the step (contract section 5): the
+        // same side-effect-free identity recomputation
+        // `attach_population_opponent_identity_v1` performs after the step
+        // below, run early enough to label the batch's physical groups with
+        // the strict-lag baseline `c_t` already committed on `self`.
+        let baseline_bits_per_episode: Option<Vec<u32>> = match self.baseline_state.as_ref() {
+            Some(baseline_state) => Some(resolve_baseline_bits_per_episode_v4(
+                baseline_state,
+                self.population_opponent.as_deref(),
+                self.base_seed,
+                grouped
+                    .episodes
+                    .iter()
+                    .map(|episode| (episode.episode_id, episode.learner_seat)),
+            )?),
+            None => None,
+        };
         let (train_result, mut episode_evidence, learner_group_count) = train_grouped_candidate_v1(
             &mut candidate_train_state,
             &grouped,
@@ -2715,6 +2771,7 @@ impl NativeTrainerStateV2 {
                 numerical_backend: config.numerical_backend,
                 backward_worker_limit: config.backward_worker_limit,
             },
+            baseline_bits_per_episode.as_deref(),
             #[cfg(test)]
             self.policy_anchor.as_ref(),
             #[cfg(test)]
@@ -2778,7 +2835,7 @@ impl NativeTrainerStateV2 {
                 selected_log_probability_bits: output.selected_log_probability.to_bits(),
             })
             .collect();
-        let physical_terms = source_physical_terms
+        let physical_terms: Vec<NativeTrainerPhysicalTermEvidenceV1> = source_physical_terms
             .iter()
             .map(|term| NativeTrainerPhysicalTermEvidenceV1 {
                 joint_log_probability_bits: term.joint_log_probability.to_bits(),
@@ -2787,6 +2844,17 @@ impl NativeTrainerStateV2 {
                 substep_count: term.substep_count,
             })
             .collect();
+        // v4 post-step observations (contract section 3 step 4): computed
+        // from the just-built evidence-shaped physical terms and episodes
+        // (target = terminal_return, value = the term's evidence value
+        // bits), and returned to the caller, but never applied to `self` in
+        // this task -- deriving and committing `c_{t+1}` is a later
+        // deliverable.
+        let baseline_observations: Vec<BaselineObservationV4> = if self.baseline_state.is_some() {
+            build_baseline_observations_v4(&episode_evidence, &physical_terms)?
+        } else {
+            Vec::new()
+        };
         let mut evidence = NativeTrainerUpdateEvidenceV2 {
             trainer_contract_identity: NATIVE_TRAINER_CONTRACT_IDENTITY_V2,
             update_elapsed_ns: 0,
@@ -2841,7 +2909,7 @@ impl NativeTrainerStateV2 {
         evidence.update_elapsed_ns =
             u64::try_from(update_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         phase_recorder.finish_update_v1(evidence.update_elapsed_ns);
-        Ok(evidence)
+        Ok((evidence, baseline_observations))
     }
 
     /// Capacity-experiment wide-net sibling of [`Self::run_even_batch_update_inner_v2`]
@@ -3671,11 +3739,142 @@ fn attach_population_opponent_identity_v1(
     Ok(())
 }
 
+/// v4 cell key role: the learner's physical seat under the unchanged
+/// P0-first production start
+/// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+/// section 2).
+fn baseline_role_for_seat_v4(learner_seat: PlayerSeatV1) -> BaselineRoleV4 {
+    match learner_seat {
+        PlayerSeatV1::P0 => BaselineRoleV4::P0,
+        PlayerSeatV1::P1 => BaselineRoleV4::P1,
+    }
+}
+
+/// v4 pre-step cell lookup (contract section 5): recomputes the same
+/// side-effect-free `(base_seed, episode_index)` opponent-identity
+/// resolution [`attach_population_opponent_identity_v1`] performs AFTER the
+/// step, but BEFORE training, so the strict-lag committed baseline `c_t` can
+/// label each episode's physical groups before any forward/backward work
+/// runs. Returns, in `episodes` order, the f32 bit pattern the trainer
+/// subtracts for that episode (zero for a cell the baseline state has never
+/// observed). Fails closed when no population opponent is installed, or
+/// when an episode's resolved occupant is not a checkpoint-manifest
+/// identity: v4 cells are keyed on checkpoint manifest SHA-256 only, and
+/// contract section 5 requires the 8-slot manifest engine for any v4 run.
+fn resolve_baseline_bits_per_episode_v4(
+    baseline_state: &NativeBaselineStateV4,
+    population_opponent: Option<&PopulationOpponentEngineV1>,
+    base_seed: u64,
+    episodes: impl Iterator<Item = (u64, PlayerSeatV1)>,
+) -> Result<Vec<u32>, NativeTrainerErrorV1> {
+    let population_opponent =
+        population_opponent.ok_or(NativeTrainerErrorV1::GroupingInvariant(
+            "v4 baseline state requires a population opponent engine",
+        ))?;
+    episodes
+        .map(|(episode_id, learner_seat)| {
+            let slot = population_opponent
+                .slot_for_episode_v1(base_seed, episode_id)
+                .map_err(|_| {
+                    NativeTrainerErrorV1::GroupingInvariant(
+                        "population opponent slot recomputation failed",
+                    )
+                })?;
+            let (_, checkpoint_manifest_sha256) = population_opponent
+                .checkpoint_identity_for_slot_v1(slot)
+                .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                    "v4 baseline cell requires a checkpoint-manifest opponent identity",
+                ))?;
+            let key = BaselineCellKeyV4::new_v4(
+                lower_hex_raw32_v1(checkpoint_manifest_sha256),
+                baseline_role_for_seat_v4(learner_seat),
+            )
+            .map_err(|_| {
+                NativeTrainerErrorV1::GroupingInvariant("v4 baseline cell key is invalid")
+            })?;
+            Ok(baseline_state.c_for_cell_v4(&key).to_bits())
+        })
+        .collect()
+}
+
+/// v4 post-step observation builder (contract section 3 step 4): folds the
+/// completed update's learner physical terms into per-cell decision-weighted
+/// residual sums. `episodes` and `physical_terms` must already be in the
+/// trainer's own batch order, with `episodes`' `learner_group_count`s
+/// exactly partitioning `physical_terms`; every consumed episode must carry
+/// a resolved checkpoint-manifest opponent identity (contract section 5).
+/// Pure and side-effect-free: it neither reads nor writes any
+/// [`NativeBaselineStateV4`]; applying the result via
+/// [`NativeBaselineStateV4::apply_update_v4`] is a later task's job.
+fn build_baseline_observations_v4(
+    episodes: &[NativeTrainerEpisodeEvidenceV1],
+    physical_terms: &[NativeTrainerPhysicalTermEvidenceV1],
+) -> Result<Vec<BaselineObservationV4>, NativeTrainerErrorV1> {
+    let mut sums: std::collections::BTreeMap<BaselineCellKeyV4, (f64, u64, u64)> =
+        std::collections::BTreeMap::new();
+    let mut term_offset = 0_usize;
+    for episode in episodes {
+        let checkpoint_manifest_sha256 = episode.opponent_checkpoint_manifest_sha256.ok_or(
+            NativeTrainerErrorV1::GroupingInvariant(
+                "v4 baseline observation requires a checkpoint-manifest opponent identity",
+            ),
+        )?;
+        let key = BaselineCellKeyV4::new_v4(
+            lower_hex_raw32_v1(checkpoint_manifest_sha256),
+            baseline_role_for_seat_v4(episode.learner_seat),
+        )
+        .map_err(|_| NativeTrainerErrorV1::GroupingInvariant("v4 baseline cell key is invalid"))?;
+        let group_count = usize::try_from(episode.learner_group_count)
+            .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
+        let terms = physical_terms
+            .get(term_offset..term_offset + group_count)
+            .ok_or(NativeTrainerErrorV1::GroupingInvariant(
+                "v4 baseline observation physical term count",
+            ))?;
+        term_offset += group_count;
+        let entry = sums.entry(key).or_insert((0.0_f64, 0_u64, 0_u64));
+        for term in terms {
+            let target = f64::from(f32::from(term.terminal_return));
+            let value = f64::from(f32::from_bits(term.value_bits));
+            entry.0 += target - value;
+            entry.1 = entry
+                .1
+                .checked_add(1)
+                .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+        }
+        entry.2 = entry
+            .2
+            .checked_add(1)
+            .ok_or(NativeTrainerErrorV1::CounterOverflow)?;
+    }
+    if term_offset != physical_terms.len() {
+        return Err(NativeTrainerErrorV1::GroupingInvariant(
+            "v4 baseline observation physical term count",
+        ));
+    }
+    Ok(sums
+        .into_iter()
+        .map(
+            |(key, (residual_sum_f64, decision_count, episode_count))| BaselineObservationV4 {
+                key,
+                residual_sum_f64,
+                decision_count,
+                episode_count,
+            },
+        )
+        .collect())
+}
+
 fn train_grouped_candidate_v1(
     candidate: &mut NativePolicyValueTrainStateV1,
     grouped: &NativePolicyGroupedTrajectoryV1,
     full_trajectory_receipts: &[NativeTrainingTrajectoryReceiptV2],
     execution: NativeTrainerGroupedTrainConfigV1,
+    // v4 cell labeling (contract section 5): resolved per-episode baseline
+    // `c_t` bits, in `grouped.episodes` order. `None` reproduces v3
+    // (every group's `baseline_bits` is zero); `Some` must have exactly
+    // `grouped.episodes.len()` entries.
+    baseline_bits_per_episode: Option<&[u32]>,
     #[cfg(test)] policy_anchor: Option<&NativePolicyAnchorRuntimeV1>,
     #[cfg(test)] test_physical_substep_count_mutation: bool,
     phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
@@ -3690,6 +3889,7 @@ fn train_grouped_candidate_v1(
     let grouping_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::GroupingMaterialization);
     let mut source_groups = Vec::new();
     let mut terminal_returns = Vec::new();
+    let mut baseline_bits_list = Vec::new();
     let episode_capacity = usize::try_from(grouped.episode_count)
         .map_err(|_| NativeTrainerErrorV1::CounterOverflow)?;
     if full_trajectory_receipts.len() != episode_capacity {
@@ -3697,8 +3897,17 @@ fn train_grouped_candidate_v1(
             "full trajectory receipt count",
         ));
     }
+    if let Some(per_episode) = baseline_bits_per_episode {
+        if per_episode.len() != episode_capacity {
+            return Err(NativeTrainerErrorV1::GroupingInvariant(
+                "baseline_bits_per_episode count",
+            ));
+        }
+    }
     let mut episode_evidence = Vec::with_capacity(episode_capacity);
-    for episode in &grouped.episodes {
+    for (episode_offset, episode) in grouped.episodes.iter().enumerate() {
+        let episode_baseline_bits =
+            baseline_bits_per_episode.map_or(0_u32, |per_episode| per_episode[episode_offset]);
         let mut matching_receipts = full_trajectory_receipts
             .iter()
             .filter(|receipt| receipt.episode_index() == episode.episode_id);
@@ -3748,6 +3957,7 @@ fn train_grouped_candidate_v1(
         for group in &episode.groups {
             source_groups.push(group);
             terminal_returns.push(terminal_return);
+            baseline_bits_list.push(episode_baseline_bits);
         }
     }
     let learner_group_count =
@@ -3791,10 +4001,12 @@ fn train_grouped_candidate_v1(
     let borrowed_groups = borrowed_substeps
         .iter()
         .zip(&terminal_returns)
+        .zip(&baseline_bits_list)
         .map(
-            |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
+            |((substeps, terminal_return), baseline_bits)| NativePolicyPhysicalDecisionV1 {
                 substeps,
                 terminal_return: *terminal_return,
+                baseline_bits: *baseline_bits,
             },
         )
         .collect::<Vec<_>>();
@@ -3924,6 +4136,7 @@ fn train_grouped_candidate_v1(
         drop(borrowed_substeps);
         drop(source_groups);
         drop(terminal_returns);
+        drop(baseline_bits_list);
         phase_recorder.finish_v1(cleanup_timer);
     }
     Ok((result, episode_evidence, learner_group_count))
@@ -4062,6 +4275,9 @@ fn train_grouped_candidate_wide_v1(
             |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
                 substeps,
                 terminal_return: *terminal_return,
+                // The wide-net capacity-experiment path is out of scope for
+                // v4 (contract: "The wide model path is out of scope.").
+                baseline_bits: 0,
             },
         )
         .collect::<Vec<_>>();
@@ -6342,5 +6558,164 @@ mod tests {
             "this mixture smoke test must exercise both occupant kinds within 16 episodes; \
              checkpoint={observed_checkpoint} search={observed_search}"
         );
+    }
+
+    // -- v4 baseline observation builder
+    // (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    // section 3 step 4) --
+
+    fn synthetic_receipt_for_baseline_test_v4(
+        episode_index: u64,
+        learner_seat: PlayerSeatV1,
+    ) -> NativeTrainingTrajectoryReceiptV2 {
+        NativeTrainingTrajectoryReceiptV2::from_legacy_v1(
+            crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1 {
+                episode_index,
+                environment_seed: 0,
+                deck_hashes: [0, 0],
+                learner_seat,
+                trajectory_sha256: [0; 32],
+                policy_step_count: 1,
+                physical_decision_count: 1,
+                learner_policy_step_count: 1,
+                opponent_policy_step_count: 0,
+                learner_physical_decision_count: 1,
+                opponent_physical_decision_count: 0,
+            },
+        )
+    }
+
+    fn synthetic_episode_evidence_for_baseline_test_v4(
+        episode_index: u64,
+        learner_seat: PlayerSeatV1,
+        learner_group_count: u64,
+        opponent_checkpoint_manifest_sha256: [u8; 32],
+    ) -> NativeTrainerEpisodeEvidenceV1 {
+        NativeTrainerEpisodeEvidenceV1 {
+            episode_index,
+            learner_seat,
+            learner_return: 1,
+            learner_group_count,
+            learner_policy_step_count: learner_group_count,
+            learner_trace_hash: 0,
+            terminal_outcome: TerminalOutcomeV1::P0Win,
+            full_trajectory_receipt: synthetic_receipt_for_baseline_test_v4(
+                episode_index,
+                learner_seat,
+            ),
+            opponent_population_slot: Some(0),
+            opponent_occupant_class: Some("policy"),
+            opponent_run_sha256: Some([0; 32]),
+            opponent_checkpoint_manifest_sha256: Some(opponent_checkpoint_manifest_sha256),
+            opponent_search_tier: None,
+            opponent_search_authority_sha256: None,
+            scoring_weight_version: None,
+            consuming_update_version: None,
+        }
+    }
+
+    fn synthetic_physical_term_for_baseline_test_v4(
+        terminal_return: i8,
+        value: f32,
+    ) -> NativeTrainerPhysicalTermEvidenceV1 {
+        NativeTrainerPhysicalTermEvidenceV1 {
+            joint_log_probability_bits: 0.0_f32.to_bits(),
+            value_bits: value.to_bits(),
+            terminal_return,
+            substep_count: 1,
+        }
+    }
+
+    /// Item 7(c): two cells, exact `f64` residual sums and counts. Every
+    /// chosen `terminal_return`/`value` pair is a small binary fraction so
+    /// the expected sums below are exact in `f64` with no rounding
+    /// ambiguity, matching the contract's "accumulated in batch order into
+    /// an f64 sum" arithmetic.
+    #[test]
+    fn build_baseline_observations_v4_reproduces_exact_sums_and_counts() {
+        let cell_a_identity = [0xAA_u8; 32];
+        let cell_b_identity = [0xBB_u8; 32];
+
+        // Cell (cell_a_identity, P0): episode 0 has two physical terms,
+        // episode 1 has one -- three decisions across two episodes.
+        let episodes = vec![
+            synthetic_episode_evidence_for_baseline_test_v4(
+                0,
+                PlayerSeatV1::P0,
+                2,
+                cell_a_identity,
+            ),
+            synthetic_episode_evidence_for_baseline_test_v4(
+                1,
+                PlayerSeatV1::P0,
+                1,
+                cell_a_identity,
+            ),
+            // Cell (cell_b_identity, P1): one episode, one decision.
+            synthetic_episode_evidence_for_baseline_test_v4(
+                2,
+                PlayerSeatV1::P1,
+                1,
+                cell_b_identity,
+            ),
+        ];
+        let physical_terms = vec![
+            synthetic_physical_term_for_baseline_test_v4(1, 0.25), // residual  0.75
+            synthetic_physical_term_for_baseline_test_v4(-1, 0.5), // residual -1.5
+            synthetic_physical_term_for_baseline_test_v4(1, -0.25), // residual  1.25
+            synthetic_physical_term_for_baseline_test_v4(-1, 0.125), // residual -1.125
+        ];
+
+        let observations =
+            build_baseline_observations_v4(&episodes, &physical_terms).expect("observations");
+        assert_eq!(observations.len(), 2);
+
+        // BTreeMap order: identity hex "aaaa..." sorts before "bbbb...".
+        let cell_a = &observations[0];
+        assert_eq!(
+            cell_a.key.opponent_checkpoint_manifest_sha256,
+            lower_hex_raw32_v1(cell_a_identity)
+        );
+        assert_eq!(cell_a.key.role, BaselineRoleV4::P0);
+        assert_eq!(
+            cell_a.residual_sum_f64.to_bits(),
+            (0.75_f64 - 1.5_f64 + 1.25_f64).to_bits()
+        );
+        assert_eq!(cell_a.decision_count, 3);
+        assert_eq!(cell_a.episode_count, 2);
+
+        let cell_b = &observations[1];
+        assert_eq!(
+            cell_b.key.opponent_checkpoint_manifest_sha256,
+            lower_hex_raw32_v1(cell_b_identity)
+        );
+        assert_eq!(cell_b.key.role, BaselineRoleV4::P1);
+        assert_eq!(cell_b.residual_sum_f64.to_bits(), (-1.125_f64).to_bits());
+        assert_eq!(cell_b.decision_count, 1);
+        assert_eq!(cell_b.episode_count, 1);
+    }
+
+    #[test]
+    fn build_baseline_observations_v4_fails_closed_without_checkpoint_identity() {
+        let mut episode =
+            synthetic_episode_evidence_for_baseline_test_v4(0, PlayerSeatV1::P0, 1, [0xAA; 32]);
+        episode.opponent_checkpoint_manifest_sha256 = None;
+        let physical_terms = vec![synthetic_physical_term_for_baseline_test_v4(1, 0.0)];
+        assert!(matches!(
+            build_baseline_observations_v4(&[episode], &physical_terms),
+            Err(NativeTrainerErrorV1::GroupingInvariant(_))
+        ));
+    }
+
+    #[test]
+    fn build_baseline_observations_v4_fails_closed_on_term_count_mismatch() {
+        let episode =
+            synthetic_episode_evidence_for_baseline_test_v4(0, PlayerSeatV1::P0, 2, [0xAA; 32]);
+        // Only one term supplied for an episode declaring two groups.
+        let physical_terms = vec![synthetic_physical_term_for_baseline_test_v4(1, 0.0)];
+        assert!(matches!(
+            build_baseline_observations_v4(&[episode], &physical_terms),
+            Err(NativeTrainerErrorV1::GroupingInvariant(_))
+        ));
     }
 }

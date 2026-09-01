@@ -4353,6 +4353,7 @@ fn execute_validated_actual_arm_v1(
             |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
                 substeps,
                 terminal_return: *terminal_return,
+                baseline_bits: 0,
             },
         )
         .collect();
