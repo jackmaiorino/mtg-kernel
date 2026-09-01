@@ -487,9 +487,17 @@ fn validate_slots_cycle4_v1(wire: &Cycle4RefreshManifestWireV1) -> Result<()> {
     let mut role_weights = [0_u64; 4];
     for (index, slot) in wire.slots.iter().enumerate() {
         let expected_index = u64::try_from(index).map_err(|_| invalid())?;
+        // Slots 0-5 carry live pool policies; slots 6-7 are frozen fallbacks
+        // and keep that provenance in their occupant class (the no-exploiter
+        // claim depends on it).
+        let expected_class = if index >= 6 {
+            "historical-fallback"
+        } else {
+            "policy"
+        };
         if slot.slot_index != expected_index
             || slot.role != EXPECTED_ROLES_CYCLE4_V1[index]
-            || slot.occupant_class != "policy"
+            || slot.occupant_class != expected_class
             || !is_sha256_cycle4_v1(&slot.source_run_sha256)
             || !is_sha256_cycle4_v1(&slot.checkpoint_manifest_sha256)
             || !is_sha256_cycle4_v1(&slot.checkpoint_payload_sha256)
@@ -615,7 +623,8 @@ pub(crate) fn panel_score_fraction_cycle4_v1(rank_sum: i64) -> Result<f64> {
     let games = i64::try_from(CYCLE4_PANEL_GAMES_PER_POLICY_V1).map_err(|_| {
         Cycle4RefreshManifestErrorV1::new(Cycle4RefreshManifestErrorKindV1::MwArithmetic)
     })?;
-    if rank_sum.abs() > games {
+    // Range comparison rather than `abs()`: `i64::MIN.abs()` would overflow.
+    if !(-games..=games).contains(&rank_sum) {
         return Err(Cycle4RefreshManifestErrorV1::new(
             Cycle4RefreshManifestErrorKindV1::MwArithmetic,
         ));
@@ -684,33 +693,46 @@ pub(crate) fn mw_update_cycle4_v1(
             }
             changed = true;
         }
-        // Raise any two-slot role below 20% to exactly 20% preserving its
-        // internal ratio, rescaling the remaining roles proportionally.
+        // Raise every deficient two-slot role to exactly 20% in the same
+        // step, preserving each role's internal ratio, and rescale the
+        // remaining above-floor roles proportionally to the remaining mass.
+        // Repairing all deficient roles simultaneously (rather than the
+        // first per round) is what makes the loop converge: one-at-a-time
+        // repair can push an already-repaired role back below the floor and
+        // oscillate past the round budget on feasible inputs.
         let mut role_sums = [0.0_f64; 4];
         for (index, weight) in weights.iter().enumerate() {
             role_sums[index / 2] += *weight;
         }
-        if let Some(deficient) = role_sums.iter().position(|role| *role < role_floor - 1e-12) {
-            let current = role_sums[deficient];
-            if current <= 0.0 {
-                return Err(arithmetic());
-            }
-            let others: f64 = role_sums
+        let deficient: Vec<usize> = role_sums
+            .iter()
+            .enumerate()
+            .filter(|(_, role)| **role < role_floor - 1e-12)
+            .map(|(role_index, _)| role_index)
+            .collect();
+        if !deficient.is_empty() {
+            let deficient_count = deficient.len();
+            let surplus_sum: f64 = role_sums
                 .iter()
                 .enumerate()
-                .filter(|(role_index, _)| *role_index != deficient)
+                .filter(|(role_index, _)| !deficient.contains(role_index))
                 .map(|(_, role)| *role)
                 .sum();
-            if others <= 0.0 {
+            #[allow(clippy::cast_precision_loss)]
+            let surplus_target = 1.0 - role_floor * deficient_count as f64;
+            if surplus_sum <= 0.0 || surplus_target <= 0.0 {
                 return Err(arithmetic());
             }
-            let scale_deficient = role_floor / current;
-            let scale_others = (1.0 - role_floor) / others;
+            let scale_surplus = surplus_target / surplus_sum;
             for (index, weight) in weights.iter_mut().enumerate() {
-                if index / 2 == deficient {
-                    *weight *= scale_deficient;
+                let role_index = index / 2;
+                if deficient.contains(&role_index) {
+                    if role_sums[role_index] <= 0.0 {
+                        return Err(arithmetic());
+                    }
+                    *weight *= role_floor / role_sums[role_index];
                 } else {
-                    *weight *= scale_others;
+                    *weight *= scale_surplus;
                 }
             }
             changed = true;
@@ -827,7 +849,11 @@ mod tests {
         Cycle4RefreshSlotV1 {
             slot_index: index,
             role: role.to_owned(),
-            occupant_class: "policy".to_owned(),
+            occupant_class: if index >= 6 {
+                "historical-fallback".to_owned()
+            } else {
+                "policy".to_owned()
+            },
             source_base_seed: frozen.source_base_seed,
             source_run_sha256: frozen.source_run_sha256.to_owned(),
             source_generation: frozen.source_generation,
@@ -1145,7 +1171,71 @@ mod tests {
     fn panel_score_fraction_bounds_v1() {
         assert!(panel_score_fraction_cycle4_v1(1_793).is_err());
         assert!(panel_score_fraction_cycle4_v1(-1_793).is_err());
+        // Regression: i64::MIN must fail closed, not overflow in `abs()`.
+        assert!(panel_score_fraction_cycle4_v1(i64::MIN).is_err());
         let fraction = panel_score_fraction_cycle4_v1(896).expect("fraction");
         assert!((fraction - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn mw_projection_handles_multiple_deficient_roles_v1() {
+        // Regression for the reviewer counterexample: one-at-a-time role
+        // repair oscillated past the round budget on this feasible input.
+        let prior = [
+            231_510, 164_349, 14_693, 186_850, 100_524, 99_553, 148_416, 54_105,
+        ];
+        let scores = [
+            1.0 / 7.0,
+            3.0 / 7.0,
+            -1.0 / 7.0,
+            -1.0 / 7.0,
+            -1.0 / 7.0,
+            1.0 / 7.0,
+            1.0 / 7.0,
+            -3.0 / 7.0,
+        ];
+        let updated = mw_update_cycle4_v1(&prior, &scores).expect("feasible projection");
+        let total: u64 = updated.iter().sum();
+        assert_eq!(total, CYCLE4_WEIGHT_TOTAL_UNITS_V1);
+        for pair in 0..4 {
+            assert!(updated[2 * pair] + updated[2 * pair + 1] >= CYCLE4_ROLE_FLOOR_UNITS_V1);
+        }
+        for unit in updated {
+            assert!(unit > 0 && unit <= CYCLE4_POLICY_CAP_UNITS_V1);
+        }
+    }
+
+    #[test]
+    fn fallback_slots_require_fallback_occupant_class_v1() {
+        let mut slots = slots_for(0, CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1);
+        slots[6].occupant_class = "policy".to_owned();
+        let error = build_cycle4_refresh_manifest_v1(
+            0,
+            None,
+            None,
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            slots,
+        )
+        .expect_err("fallback class");
+        assert_eq!(
+            error.kind_v1(),
+            Cycle4RefreshManifestErrorKindV1::InvalidSlots
+        );
+        let mut slots = slots_for(0, CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1);
+        slots[0].occupant_class = "historical-fallback".to_owned();
+        let error = build_cycle4_refresh_manifest_v1(
+            0,
+            None,
+            None,
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            slots,
+        )
+        .expect_err("policy class");
+        assert_eq!(
+            error.kind_v1(),
+            Cycle4RefreshManifestErrorKindV1::InvalidSlots
+        );
     }
 }

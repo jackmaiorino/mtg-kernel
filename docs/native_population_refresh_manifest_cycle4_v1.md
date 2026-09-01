@@ -43,8 +43,10 @@ sibling of the v1 module; it reinterprets nothing retroactively.
 ## Slot roster and assignment rules
 
 Roles keep the v1 order: anchor-0, anchor-1, historical-0, historical-1,
-current-0, current-1, exploiter-0, exploiter-1. All non-search occupants are
-`policy` or `historical-fallback` with five real store-identity hashes; the
+current-0, current-1, exploiter-0, exploiter-1. Occupant classes are pinned
+per slot: slots 0 through 5 carry `policy`; slots 6 and 7 carry
+`historical-fallback`, preserving the fallback provenance the no-exploiter
+claim depends on. Every occupant carries five real store-identity hashes; the
 duplicate-model-hash rejection from v1 is retained (all eight occupants are
 distinct identities at every refresh).
 
