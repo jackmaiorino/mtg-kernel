@@ -276,6 +276,13 @@ pub(crate) mod native_training_store_segment_representability_v2;
 // complete update and advances a move-only evidence-chain context; it owns no
 // continuation partitioning, filesystem, publication, receipt, or mutation.
 pub mod native_training_store_update_group_v1;
+// v4 update-evidence baseline sidecar and validator: a pure validation layer
+// over the existing v1 evidence wire shape plus a new `baseline_v4` record,
+// recomputing the cell-centered EMA trajectory and the v4 policy sum
+// bit-exactly from persisted evidence, the same way the v1 validator
+// recomputes today's loss.
+#[allow(dead_code)]
+pub(crate) mod native_training_store_update_group_v4;
 // Schema-neutral checked ATOM/raw32/SHA framing shared by Store records.
 #[allow(dead_code)]
 pub(crate) mod native_training_store_digest_v1;
