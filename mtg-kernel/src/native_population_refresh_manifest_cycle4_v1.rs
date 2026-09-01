@@ -375,6 +375,104 @@ pub(crate) fn decode_cycle4_refresh_manifest_v1(
     })
 }
 
+/// Reloads a manifest THIS SAME DURABLE PIPELINE already fully validated the
+/// one time it was built or first decoded (full chain, own panel content
+/// included, via [`build_cycle4_refresh_manifest_v1`] or
+/// [`decode_cycle4_refresh_manifest_v1`]). A one-shot CLI invocation of the
+/// refresh builder cannot supply the transitive panel chain back to genesis
+/// that a full re-decode of a non-genesis manifest demands (every manifest
+/// at `refresh_index >= 1` requires ITS OWN panel bytes to decode, which in
+/// turn requires an already-validated predecessor object, recursively to
+/// genesis); this entrypoint exists so the builder can reload exactly one
+/// link -- the immediately previous manifest -- without re-deriving that
+/// whole chain in one process.
+///
+/// It performs every check [`decode_cycle4_refresh_manifest_v1`] performs
+/// EXCEPT the two that need data unavailable at reload time: cross-checking
+/// against a live predecessor object, and content-resolving ITS OWN
+/// `payoff_panel_sha256` (only format/placeholder-checked here). Schema,
+/// prereg, the generation arithmetic, and the full slot/weight/role roster
+/// (`validate_slots_cycle4_v1`) are checked exactly as on first decode.
+///
+/// SECURITY: never call this on a manifest from an untrusted source. Every
+/// caller in this codebase uses it only to reload a file this same pipeline
+/// produced moments (or one refresh interval) earlier.
+pub(crate) fn reload_trusted_cycle4_refresh_manifest_v1(bytes: &[u8]) -> Result<Cycle4RefreshManifestV1> {
+    let wire: Cycle4RefreshManifestWireV1 =
+        from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid)?;
+    let reencoded = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;
+    if reencoded != bytes {
+        return Err(Cycle4RefreshManifestErrorV1::new(
+            Cycle4RefreshManifestErrorKindV1::InvalidAuthority,
+        ));
+    }
+    if wire.schema != CYCLE4_REFRESH_MANIFEST_SCHEMA_V1
+        || wire.prereg_sha256 != CYCLE4_PREREG_SHA256_V1
+        || !is_sha256_cycle4_v1(&wire.trainee_run_sha256)
+    {
+        return Err(Cycle4RefreshManifestErrorV1::new(
+            Cycle4RefreshManifestErrorKindV1::InvalidAuthority,
+        ));
+    }
+    let expected_program_update = wire
+        .refresh_index
+        .checked_mul(CYCLE4_REFRESH_INTERVAL_V1)
+        .ok_or_else(|| {
+            Cycle4RefreshManifestErrorV1::new(Cycle4RefreshManifestErrorKindV1::InvalidGeneration)
+        })?;
+    let expected_local_generation = CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1
+        .checked_add(expected_program_update)
+        .ok_or_else(|| {
+            Cycle4RefreshManifestErrorV1::new(Cycle4RefreshManifestErrorKindV1::InvalidGeneration)
+        })?;
+    if wire.refresh_index > CYCLE4_REFRESH_MAX_INDEX_V1
+        || wire.program_update != expected_program_update
+        || wire.trainee_local_generation != expected_local_generation
+    {
+        return Err(Cycle4RefreshManifestErrorV1::new(
+            Cycle4RefreshManifestErrorKindV1::InvalidGeneration,
+        ));
+    }
+    match wire.refresh_index {
+        0 => {
+            if wire.previous_manifest_sha256.is_some() || wire.payoff_panel_sha256.is_some() {
+                return Err(Cycle4RefreshManifestErrorV1::new(
+                    Cycle4RefreshManifestErrorKindV1::InvalidChain,
+                ));
+            }
+        }
+        _ => {
+            let previous_declared = wire.previous_manifest_sha256.as_deref().ok_or_else(|| {
+                Cycle4RefreshManifestErrorV1::new(Cycle4RefreshManifestErrorKindV1::InvalidChain)
+            })?;
+            if !is_sha256_cycle4_v1(previous_declared) {
+                return Err(Cycle4RefreshManifestErrorV1::new(
+                    Cycle4RefreshManifestErrorKindV1::InvalidChain,
+                ));
+            }
+            let declared_panel = wire.payoff_panel_sha256.as_deref().ok_or_else(|| {
+                Cycle4RefreshManifestErrorV1::new(Cycle4RefreshManifestErrorKindV1::InvalidChain)
+            })?;
+            if !is_sha256_cycle4_v1(declared_panel) {
+                return Err(Cycle4RefreshManifestErrorV1::new(
+                    Cycle4RefreshManifestErrorKindV1::InvalidChain,
+                ));
+            }
+            if is_placeholder_hash_cycle4_v1(declared_panel) {
+                return Err(Cycle4RefreshManifestErrorV1::new(
+                    Cycle4RefreshManifestErrorKindV1::PlaceholderPanelHash,
+                ));
+            }
+        }
+    }
+    validate_slots_cycle4_v1(&wire)?;
+    Ok(Cycle4RefreshManifestV1 {
+        manifest_sha256: sha256_v1(bytes),
+        wire,
+        canonical_bytes: bytes.to_vec(),
+    })
+}
+
 fn validate_wire_cycle4_v1(
     wire: &Cycle4RefreshManifestWireV1,
     previous: Option<&Cycle4RefreshManifestV1>,
@@ -1237,5 +1335,83 @@ mod tests {
             error.kind_v1(),
             Cycle4RefreshManifestErrorKindV1::InvalidSlots
         );
+    }
+
+    #[test]
+    fn reload_trusted_round_trips_genesis_and_non_genesis_bytes_v1() {
+        let genesis = genesis();
+        let reloaded_genesis =
+            reload_trusted_cycle4_refresh_manifest_v1(genesis.canonical_bytes_v1())
+                .expect("reload genesis");
+        assert_eq!(
+            reloaded_genesis.manifest_sha256_v1(),
+            genesis.manifest_sha256_v1()
+        );
+        assert_eq!(reloaded_genesis.refresh_index_v1(), 0);
+
+        let panel = b"cycle4-reload-test-panel-v1".to_vec();
+        let refresh_one = build_cycle4_refresh_manifest_v1(
+            1,
+            Some(&genesis),
+            Some(&panel),
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            slots_for(1, CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1),
+        )
+        .expect("refresh 1");
+        // Trusted reload does not need the panel bytes at all: the whole
+        // point is that a one-shot process reloading refresh 1 later cannot
+        // supply the panel that built it, only refresh 1's own bytes.
+        let reloaded = reload_trusted_cycle4_refresh_manifest_v1(refresh_one.canonical_bytes_v1())
+            .expect("reload refresh 1 without panel bytes");
+        assert_eq!(reloaded.refresh_index_v1(), 1);
+        assert_eq!(
+            reloaded.manifest_sha256_v1(),
+            refresh_one.manifest_sha256_v1()
+        );
+        assert_eq!(reloaded.trainee_run_sha256_v1(), TEST_TRAINEE_RUN);
+        assert_eq!(reloaded.trainee_base_seed_v1(), TEST_TRAINEE_SEED);
+        assert_eq!(reloaded.slots_v1(), refresh_one.slots_v1());
+
+        // A reloaded object still functions as a valid `previous` for
+        // chaining the next refresh, proving it is fit for the builder's use.
+        let panel_two = b"cycle4-reload-test-panel-two-v1".to_vec();
+        let refresh_two = build_cycle4_refresh_manifest_v1(
+            2,
+            Some(&reloaded),
+            Some(&panel_two),
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            slots_for(2, CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1),
+        )
+        .expect("refresh 2 chains off a reloaded predecessor");
+        assert_eq!(refresh_two.refresh_index_v1(), 2);
+    }
+
+    #[test]
+    fn reload_trusted_rejects_tampered_bytes_v1() {
+        let genesis = genesis();
+        let panel = b"panel".to_vec();
+        let refresh_one = build_cycle4_refresh_manifest_v1(
+            1,
+            Some(&genesis),
+            Some(&panel),
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            slots_for(1, CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1),
+        )
+        .expect("refresh 1");
+        let mut tampered = refresh_one.canonical_bytes_v1().to_vec();
+        tampered[0] ^= 0xFF;
+        let error =
+            reload_trusted_cycle4_refresh_manifest_v1(&tampered).expect_err("tampered bytes");
+        // Corrupting the first byte breaks canonical-JSON decode itself, not
+        // just a semantic field, so any CanonicalJson-kind rejection (or the
+        // authority re-encode check) is an acceptable fail-closed outcome.
+        assert!(matches!(
+            error.kind_v1(),
+            Cycle4RefreshManifestErrorKindV1::CanonicalJson(_)
+                | Cycle4RefreshManifestErrorKindV1::InvalidAuthority
+        ));
     }
 }
