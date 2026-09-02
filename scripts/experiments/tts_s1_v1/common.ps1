@@ -394,6 +394,13 @@ function Wait-TtsS1Process {
     return [int]$exitCode
 }
 
+# The release timestamp of the last start token published, set by the
+# launcher inside the fan-out after-start hook and read by it afterwards.
+# Initialized here because Set-StrictMode makes reading an undefined
+# variable a terminating error, and the read happens on a path the hook may
+# not have taken.
+$script:TtsS1BarrierReleasedMicros = 0
+
 # What the last Invoke-TtsS1ProcessFanOut had to stop, as records carrying a
 # label and a process id.
 #

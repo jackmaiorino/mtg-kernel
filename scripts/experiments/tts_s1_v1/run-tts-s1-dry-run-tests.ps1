@@ -808,6 +808,10 @@ try {
     $jobsIndex = $wrapperText.IndexOf('Invoke-TtsS1ProcessFanOut -Jobs')
     Assert-True ($jobsIndex -gt 0 -and $hookIndex -gt $jobsIndex) 'the token hook belongs to the shard fan-out'
     Assert-True ($commonText -like '*if ($null -ne $AfterStart) { & $AfterStart }*') 'the fan-out runs the hook once every job has started'
+    # Strict mode makes reading an undefined variable terminating, and the
+    # launcher reads this one on a path the hook may not have taken.
+    Assert-True ($commonText -like '*$script:TtsS1BarrierReleasedMicros = 0*') 'the barrier release variable is initialized before any read'
+    Assert-True ($script:TtsS1BarrierReleasedMicros -eq 0) 'the barrier release variable is defined for a caller that never published one'
     $startLoopIndex = $commonText.IndexOf('process = Start-TtsS1Process -FilePath $job.file_path')
     $hookRunIndex = $commonText.IndexOf('if ($null -ne $AfterStart) { & $AfterStart }')
     Assert-True ($hookRunIndex -gt $startLoopIndex) 'the hook runs after the start loop, not inside it'
