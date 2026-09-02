@@ -588,6 +588,124 @@ Assert-Throws -Action { & $wrapper @tooLargeWindow *>&1 | Out-Null } `
     -Message 'the preflight window stays inside the bin bound'
 
 # ---------------------------------------------------------------------------
+# 5. The genesis binding assertion itself
+#
+# The wrapper's whole reason for bootstrapping first is that the genesis
+# manifest must bind the checkpoint the Store actually published. Drive that
+# assertion directly against a synthetic Store, origin record and manifest,
+# since a dry run never produces the real three.
+# ---------------------------------------------------------------------------
+
+. (Join-Path $PSScriptRoot 'common.ps1')
+
+$bindingRoot = Join-Path $WorkRoot 'genesis-binding'
+$bindingStore = Join-Path $bindingRoot 'store'
+$bindingChain = Join-Path $bindingRoot 'chain'
+New-Item -ItemType Directory -Force -Path (Join-Path $bindingStore 'checkpoints') | Out-Null
+New-Item -ItemType Directory -Force -Path $bindingChain | Out-Null
+
+$payloadSha = New-SyntheticHash -Tag 0xb1
+$modelSha = New-SyntheticHash -Tag 0xb2
+$stateSha = New-SyntheticHash -Tag 0xb3
+$checkpointPath = Join-Path $bindingStore 'checkpoints\update-00000000.checkpoint.json'
+Write-SyntheticJson -Value ([ordered]@{
+    schema = 'mtg-kernel-native-checkpoint/v3'
+    generation_index = 0
+    train_state = [ordered]@{ model_parameter_sha256 = $modelSha; state_sha256 = $stateSha }
+    payload = [ordered]@{ sha256 = $payloadSha }
+}) -Path $checkpointPath
+# The Store's checkpoint_manifest_sha256 is the SHA-256 of these exact bytes,
+# so it can only be computed after the file is written.
+$checkpointSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $checkpointPath).Hash.ToLowerInvariant()
+
+function Write-BindingOriginRecord {
+    param([Parameter(Mandatory = $true)][string]$ManifestSha256)
+    Write-SyntheticJson -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle4-arm-origin/v1'
+        arm_kind = 'treatment-rb'
+        run_sha256 = $traineeRunSha256
+        base_seed = $traineeBaseSeed
+        init_generation = 2048
+        genesis_checkpoint_manifest_sha256 = $ManifestSha256
+        genesis_checkpoint_payload_sha256 = $payloadSha
+        genesis_model_parameter_sha256 = $modelSha
+        genesis_train_state_sha256 = $stateSha
+    }) -Path (Join-Path $bindingChain 'arm-origin.record.json')
+}
+
+function Write-BindingManifest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ManifestSha256
+    )
+    New-SyntheticManifest -Path $Path -RefreshIndex ([uint64]0)
+    $document = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    $document.slots[5].checkpoint_manifest_sha256 = $ManifestSha256
+    $document.slots[5].checkpoint_payload_sha256 = $payloadSha
+    $document.slots[5].model_parameter_sha256 = $modelSha
+    $document.slots[5].train_state_sha256 = $stateSha
+    Write-SyntheticJson -Value $document -Path $Path
+}
+
+$bindingManifestPath = Join-Path $bindingRoot 'refresh-00.manifest.json'
+Write-BindingOriginRecord -ManifestSha256 $checkpointSha
+Write-BindingManifest -Path $bindingManifestPath -ManifestSha256 $checkpointSha
+
+$binding = Assert-Cycle4GenesisManifestBinding `
+    -Manifest (Read-Cycle4Manifest -Path $bindingManifestPath) `
+    -Origin (Read-Cycle4ArmOriginRecord -ChainDir $bindingChain) `
+    -ArmStoreRoot $bindingStore
+Assert-That -Condition ($binding.genesis_checkpoint_manifest_sha256 -ceq $checkpointSha) `
+    -Message 'a genesis manifest that binds the Store checkpoint passes'
+Assert-That -Condition ($binding.trainee_local_generation -eq 896) `
+    -Message 'the own-run slot is checked at trainee-local 896'
+
+# A manifest whose own-run slot names some other checkpoint is refused, even
+# though the origin record and the Store still agree with each other.
+$staleManifest = Join-Path $bindingRoot 'refresh-00.stale.json'
+Write-BindingManifest -Path $staleManifest -ManifestSha256 (New-SyntheticHash -Tag 0xcc)
+Assert-Throws -Action {
+    Assert-Cycle4GenesisManifestBinding `
+        -Manifest (Read-Cycle4Manifest -Path $staleManifest) `
+        -Origin (Read-Cycle4ArmOriginRecord -ChainDir $bindingChain) `
+        -ArmStoreRoot $bindingStore
+} -ExpectedSubstring 'does not equal the arm-origin record' `
+  -Message "a genesis manifest binding the wrong checkpoint is refused"
+
+# And an origin record that disagrees with the Store is refused too, so the
+# check cannot be satisfied by two agreeing copies of one wrong value.
+Write-BindingOriginRecord -ManifestSha256 (New-SyntheticHash -Tag 0xcc)
+Write-BindingManifest -Path $staleManifest -ManifestSha256 (New-SyntheticHash -Tag 0xcc)
+Assert-Throws -Action {
+    Assert-Cycle4GenesisManifestBinding `
+        -Manifest (Read-Cycle4Manifest -Path $staleManifest) `
+        -Origin (Read-Cycle4ArmOriginRecord -ChainDir $bindingChain) `
+        -ArmStoreRoot $bindingStore
+} -ExpectedSubstring "does not equal the Store's own generation-0 checkpoint" `
+  -Message 'an origin record that disagrees with the Store is refused'
+
+# The slot-identities staging the genesis build feeds the builder derives that
+# same identity from the Store, which is why the three ever agree.
+Write-BindingOriginRecord -ManifestSha256 $checkpointSha
+$stagedGenesis = Join-Path $bindingRoot 'refresh-00.slot-identities.json'
+New-Cycle4SlotIdentitiesFile `
+    -RosterPath (Join-Path $rosterDir 'refresh-00.slot-identities.json') `
+    -OutputPath $stagedGenesis `
+    -RefreshIndex ([uint64]0) `
+    -ArmStoreRoot $bindingStore `
+    -ArmRunSha256 $traineeRunSha256 `
+    -ArmBaseSeed $traineeBaseSeed | Out-Null
+$stagedDocument = Get-Content -Raw -LiteralPath $stagedGenesis | ConvertFrom-Json
+Assert-That -Condition ([string]$stagedDocument.slots[5].checkpoint_manifest_sha256 -ceq $checkpointSha) `
+    -Message "the genesis roster staging reads the own-run slot from the Store's generation-0 checkpoint"
+Assert-That -Condition ([uint64]$stagedDocument.slots[5].source_generation -eq 896) `
+    -Message 'the staged own-run slot is labelled trainee-local 896'
+Assert-That -Condition ([string]$stagedDocument.slots[5].source_run_sha256 -ceq $traineeRunSha256) `
+    -Message "the staged own-run slot carries the arm's run identity"
+Assert-That -Condition ([string]$stagedDocument.slots[0].checkpoint_manifest_sha256 -ceq (New-SyntheticHash -Tag 0x20)) `
+    -Message 'every pinned slot passes through the staging unchanged'
+
+# ---------------------------------------------------------------------------
 
 Write-Host ''
 Write-Host "cycle-4 wrapper dry-run tests: $($script:Checks - $script:Failures)/$($script:Checks) checks passed"
