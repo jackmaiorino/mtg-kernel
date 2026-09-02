@@ -104,24 +104,14 @@ $ErrorActionPreference = 'Stop'
 # every call in the whole stack resolves to the self-contained one.
 . (Join-Path $PSScriptRoot '..\regularized_continuation_retest_v1\common.ps1')
 
-$script:TtsS1Ladder = @('t512', 't2048', 't8192', 't32768')
+# The pinned report contract (the compute-cap rule, the NESTED latency-curve
+# rule, and the gating view) plus the validation that enforces it. Kept in a
+# file of its own so this launcher and the dry-run tests exercise the same
+# constants and the same check, rather than one asserting what the other
+# merely describes.
+. (Join-Path $PSScriptRoot 'common.ps1')
 
-# The compute-cap rule the reports must declare, and the view the latency
-# verdict must come from. Both are compiled constants on the Rust side
-# (TTS_S1_S2_PROJECTION_RULE_V2 and TTS_S1_VERDICT_VIEW_V1); they are
-# restated here only so this wrapper can reject a report produced by a
-# different rule BEFORE it is summarized, never as an independent source of
-# truth. A report whose rule string is the superseded mean-length-times-
-# mean-latency V1 is exactly what this catches.
-$script:TtsS1ProjectionRule = 'wrapped-games-only' +
-    '-3072-root-clusters-times-2-paired-units' +
-    '-isotonic-per-ordinal-protocol-latency-curve-fitted-to-whole-episode-timings' +
-    '-extrapolated-past-the-last-observed-ordinal-at-the-maximum-adjacent-fitted-rise' +
-    '-every-harvested-episode-natural-and-truncated-costed-at-its-own-length' +
-    '-mean-estimated-episode-cost-times-wrapped-games' +
-    '-as-aggregate-worker-hours-with-no-worker-division' +
-    '/v2'
-$script:TtsS1VerdictView = 'corpus_target_view'
+$script:TtsS1Ladder = @('t512', 't2048', 't8192', 't32768')
 $script:TtsS1SloSeconds = 4.0
 $script:TtsS1HardTimeoutSeconds = 20.0
 
@@ -510,6 +500,7 @@ $provenance = [ordered]@{
     formal_ladder = $isFormalLadder
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
+    pinned_contract = Get-TtsS1PinnedContract
     planned_corpus_command = Format-TtsS1CommandLine -FilePath $CorpusExecutable -Arguments $corpusArgs
     planned_tier_commands = @($tierPlans | ForEach-Object { $_.command_line })
 }
@@ -616,18 +607,19 @@ foreach ($plan in $tierPlans) {
             curve_extrapolation_slope_micros_per_ordinal = $report.body.compute_cap.latency_curve.extrapolation_slope_micros_per_ordinal
             curve_knot_count = @($report.body.compute_cap.latency_curve.knots).Count
             compute_cap_rule = $report.body.compute_cap.rule
+            latency_curve_rule = $report.body.compute_cap.latency_curve.rule
             projected_s2_worker_hours_milli = $report.body.compute_cap.projected_worker_hours_milli
             projected_elapsed_hours_at_workers_milli = $report.body.compute_cap.projected_elapsed_hours_at_workers_milli
             compute_cap_worker_hours_milli = $report.body.compute_cap.cap_worker_hours_milli
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        if ($report.body.verdict_view -cne $script:TtsS1VerdictView) {
-            throw "tier $($plan.tier) reports its verdict from $($report.body.verdict_view), not the frozen corpus targets"
-        }
-        if ($report.body.compute_cap.rule -cne $script:TtsS1ProjectionRule) {
-            throw "tier $($plan.tier) declares compute-cap rule $($report.body.compute_cap.rule), not the pre-registered one"
-        }
+        # Every pinned string, including the one NESTED inside the
+        # compute-cap block: a partially updated replay binary can declare
+        # the current compute-cap rule over a curve fitted under a
+        # superseded one, and that report must not be able to mark a run
+        # complete.
+        Assert-TtsS1TierReportContract -Tier $plan.tier -Report $report
         Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} target_protocol_p99_micros={5} target_protocol_max_micros={6} whole_episode_protocol_p99_micros={7} projected_s2_worker_hours_milli={8} extrapolated_ordinals={9} within_compute_cap={10}" -f `
             $plan.tier, $observedVerdict, $report.body.verdict_view, `
             $report.body.episodes_replayed, $report.body.searched_decisions, `
@@ -682,7 +674,9 @@ $summary = [ordered]@{
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
     compute_cap_rule = $script:TtsS1ProjectionRule
+    latency_curve_rule = $script:TtsS1LatencyCurveRule
     verdict_view = $script:TtsS1VerdictView
+    pinned_contract = Get-TtsS1PinnedContract
     ladder = $script:TtsS1Ladder
     tiers = @($tierResults)
     feasible_tiers = $feasible

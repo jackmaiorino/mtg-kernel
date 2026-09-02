@@ -21,8 +21,11 @@ What it proves:
     the child;
   * a full-ladder whole-corpus run plans as FORMAL and a partial one plans
     as a SMOKE;
-  * the wrapper pins the compute-cap rule and the gating view it will
-    accept from a tier report, and those pins are the current versions;
+  * the wrapper's pinned report contract (the compute-cap rule, the NESTED
+    latency-curve rule, and the gating view) is the current version, and the
+    validation the launcher runs on every tier report rejects a stale value
+    in any of the three, including a report that declares the current
+    compute-cap rule over a curve fitted under a superseded one;
   * -LimitEpisodes appears only when it is set;
   * the input rejections all fire: equal seed blocks, a reordered ladder, a
     duplicated tier, a missing -Generation, a -Generation on the portable
@@ -105,6 +108,92 @@ function Get-OnlyAttemptRoot {
     return $children[0].FullName
 }
 
+# The pinned contract and the validation the launcher runs, dot-sourced so
+# these tests exercise the SAME constants and the SAME function rather than
+# re-implementing either. It defines constants and functions only.
+. (Join-Path $PSScriptRoot 'common.ps1')
+$wrapperText = [System.IO.File]::ReadAllText($ScriptPath)
+
+# The superseded strings, spelled out so a stale report can be built and
+# rejected here rather than discovered after a formal run.
+$staleCurveRule = 'pool-adjacent-violators-isotonic-regression-over-decision-ordinal' +
+    '-on-pooled-whole-episode-protocol-micros' +
+    '-extrapolated-past-the-last-observed-ordinal-at-the-maximum-fitted-slope' +
+    '-floored-at-one-micro-per-ordinal' +
+    '/v1'
+$staleProjectionRule = 'wrapped-games-only' +
+    '-3072-root-clusters-times-2-paired-units' +
+    '-times-mean-decisions-per-episode-over-natural-and-truncated-episodes' +
+    '-times-whole-episode-mean-protocol-decision-wall-time' +
+    '-as-aggregate-worker-hours-with-no-worker-division' +
+    '/v1'
+
+function New-TtsS1TestReport {
+    # A decoded tier report carrying only the fields the contract check
+    # reads. Built fresh per case so a mutation cannot leak between them.
+    param(
+        [string]$VerdictView = $script:TtsS1VerdictView,
+        [string]$ProjectionRule = $script:TtsS1ProjectionRule,
+        [string]$CurveRule = $script:TtsS1LatencyCurveRule,
+        [switch]$OmitLatencyCurve
+    )
+    $computeCap = [pscustomobject]@{ rule = $ProjectionRule }
+    if (-not $OmitLatencyCurve) {
+        $computeCap | Add-Member -NotePropertyName latency_curve -NotePropertyValue ([pscustomobject]@{ rule = $CurveRule })
+    }
+    return [pscustomobject]@{
+        body = [pscustomobject]@{
+            verdict_view = $VerdictView
+            compute_cap = $computeCap
+        }
+    }
+}
+
+function Get-TtsS1ContractRejection {
+    # The rejection message for a report the contract check refuses, or
+    # $null if it was accepted. It asserts nothing itself: an Assert-True
+    # inside here would put its own output on this function's output stream
+    # and the caller would receive an array instead of the message.
+    param([Parameter(Mandatory = $true)]$Report)
+    try {
+        Assert-TtsS1TierReportContract -Tier 't512' -Report $Report
+    }
+    catch {
+        return $_.Exception.Message
+    }
+    return $null
+}
+
+# --- 0. The pinned contract itself, and the validation over synthetic
+#        reports. No process is started and no file is written.
+Assert-True ($script:TtsS1LatencyCurveRule -cne $script:TtsS1ProjectionRule) 'the curve rule and the compute-cap rule are distinct pins'
+Assert-True ($script:TtsS1LatencyCurveRule -like '*/v2') 'the pinned latency-curve rule is the V2 one'
+Assert-True ($script:TtsS1ProjectionRule -like '*/v2') 'the pinned compute-cap rule is the V2 one'
+
+$valid = New-TtsS1TestReport
+Assert-TtsS1TierReportContract -Tier 't512' -Report $valid
+Assert-True $true 'a report declaring every pinned string is accepted'
+
+# THE CASE THIS EXISTS FOR: a partially updated replay binary whose
+# compute-cap rule is current but whose NESTED curve was fitted under the
+# superseded one. Pinning only the outer rule would accept it.
+$message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport -CurveRule $staleCurveRule)
+Assert-True ($null -ne $message) 'the contract check rejects a stale NESTED latency-curve rule'
+Assert-True ($message -like '*latency-curve rule*') 'the rejection names the latency-curve rule'
+Assert-True ($message -like '*body.compute_cap.latency_curve.rule*') 'the rejection names the nested field path'
+
+$message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport -ProjectionRule $staleProjectionRule)
+Assert-True ($null -ne $message) 'the contract check rejects a stale compute-cap rule'
+Assert-True ($message -like '*compute-cap rule*') 'the rejection names the compute-cap rule'
+
+$message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport -VerdictView 'whole_episode_view')
+Assert-True ($null -ne $message) 'the contract check rejects a report gated on the wrong view'
+Assert-True ($message -like '*gating view*') 'the rejection names the gating view'
+
+$message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport -OmitLatencyCurve)
+Assert-True ($null -ne $message) 'the contract check rejects a report with no latency curve at all'
+Assert-True ($message -like '*missing*latency_curve*') 'the rejection names the missing nested block'
+
 $sandbox = New-TtsS1TestRoot
 try {
     $corpusExe = New-TtsS1StandIn -Path (Join-Path $sandbox 'tts_s1_corpus_v1.exe')
@@ -152,17 +241,14 @@ try {
     Assert-True ($provenanceJson.dry_run -eq $true) 'provenance.json records the dry run'
     Assert-True ($provenanceJson.formal_ladder -eq $true) 'a whole-corpus full-ladder run plans as FORMAL'
 
-    # The wrapper refuses a tier report produced under a superseded
-    # compute-cap rule or gated on the wrong view. Both pins are read out of
-    # the script itself, so a rule change that forgets the wrapper is caught
-    # here rather than after a formal run.
-    $wrapperText = [System.IO.File]::ReadAllText($ScriptPath)
-    Assert-True ($wrapperText -like '*-isotonic-per-ordinal-protocol-latency-curve-fitted-to-whole-episode-timings*') 'the wrapper pins the isotonic compute-cap rule'
-    Assert-True ($wrapperText -like '*-at-the-maximum-adjacent-fitted-rise*') 'the pinned rule names the adjacent-rise extrapolation'
-    Assert-True ($wrapperText -like "*'/v2'*") 'the pinned compute-cap rule is the V2 one'
-    Assert-True (-not ($wrapperText -like '*times-mean-decisions-per-episode-over-natural-and-truncated-episodes*')) 'the superseded mean-times-mean rule is gone'
-    Assert-True ($wrapperText -like "*`$script:TtsS1VerdictView = 'corpus_target_view'*") 'the wrapper pins the corpus-target gating view'
-    Assert-True ($wrapperText -like '*compute_cap.rule -cne $script:TtsS1ProjectionRule*') 'the wrapper asserts the rule on every tier report'
+    # The provenance record states the whole pinned contract, so a dry run
+    # already says which rules a real launch would accept.
+    Assert-True ($provenanceJson.pinned_contract.compute_cap_rule -like '*-isotonic-per-ordinal-protocol-latency-curve-fitted-to-whole-episode-timings*') 'the pinned compute-cap rule is the isotonic one'
+    Assert-True ($provenanceJson.pinned_contract.compute_cap_rule -like '*/v2') 'the pinned compute-cap rule is V2'
+    Assert-True ($provenanceJson.pinned_contract.latency_curve_rule -like '*-at-the-maximum-rise-between-adjacent-fitted-ordinals*') 'the pinned latency-curve rule names the adjacent-rise extrapolation'
+    Assert-True ($provenanceJson.pinned_contract.latency_curve_rule -like '*/v2') 'the pinned latency-curve rule is V2'
+    Assert-True ($provenanceJson.pinned_contract.verdict_view -ceq 'corpus_target_view') 'the pinned gating view is the corpus targets'
+    Assert-True ($wrapperText -like '*Assert-TtsS1TierReportContract -Tier $plan.tier -Report $report*') 'the launcher validates every tier report against the pinned contract'
     Assert-True ($provenanceJson.corpus_executable.sha256.Length -eq 64) 'the corpus bin is hashed'
     Assert-True ($provenanceJson.replay_executable.sha256.Length -eq 64) 'the replay bin is hashed'
     Assert-True ($null -eq $provenanceJson.git) 'the git record is skipped under -SkipHostAssertions'
