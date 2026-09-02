@@ -169,7 +169,7 @@ use crate::kernel_native_search_opponent_v1::{
     KERNEL_NATIVE_SEARCH_NODE_KEY_V1, KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1,
 };
 use crate::model_guided_search_contract_digests_v1::{
-    forward_determinism_build_digest_v1, lower_hex_digest_v1,
+    build_flag_violation_v1, forward_determinism_build_digest_v1, lower_hex_digest_v1,
     prior_quantization_contract_digest_v1, value_quantization_contract_digest_v1,
     MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_SHA256_V1,
     MODEL_GUIDED_SEARCH_PRIOR_QUANTIZATION_CONTRACT_SHA256_V1,
@@ -541,6 +541,21 @@ impl ModelGuidedSearchAuthorityV1 {
             ));
         }
 
+        // The pinned build identity above commits to the CONTRACT; this
+        // commits to the contract having actually been honoured. A build
+        // under `RUSTFLAGS=-C llvm-args=-fp-contract=fast` still matches
+        // every pinned literal (the literals describe source-level
+        // behavior and target features, neither of which such a flag
+        // changes) while the arithmetic underneath them may differ. The
+        // audit's Section 6 item 2 names exactly this escape hatch, so
+        // the authority refuses to exist rather than certify a build it
+        // cannot vouch for.
+        if build_flag_violation_v1().is_some() {
+            return Err(ModelGuidedSearchAuthorityError::new(
+                Kind::ForbiddenBuildFlagOverride,
+            ));
+        }
+
         Ok(())
     }
 
@@ -648,6 +663,12 @@ pub enum ModelGuidedSearchAuthorityErrorKind {
     InvalidValueQuantizationContractDigest,
     /// `forward_determinism_build_identity` not SHA-256-shaped.
     InvalidForwardDeterminismBuildIdentity,
+    /// A build-override environment variable was set when this crate was
+    /// compiled, so the pinned forward-determinism identity cannot be
+    /// trusted to describe the arithmetic this binary actually performs.
+    /// See `docs/audits/model_guided_forward_determinism_audit_v1.md`
+    /// Section 6 item 2.
+    ForbiddenBuildFlagOverride,
 }
 
 impl ModelGuidedSearchAuthorityErrorKind {
@@ -676,6 +697,9 @@ impl ModelGuidedSearchAuthorityErrorKind {
             }
             Self::InvalidForwardDeterminismBuildIdentity => {
                 "model_guided_search_authority_v1_invalid_forward_determinism_build_identity"
+            }
+            Self::ForbiddenBuildFlagOverride => {
+                "model_guided_search_authority_v1_forbidden_build_flag_override"
             }
         }
     }

@@ -76,7 +76,25 @@
 //! - the pinned MXCSR FTZ/DAZ/rounding-control contract;
 //! - the target architecture, pointer width, and the two floating-point
 //!   target features (`fma`, `avx`) whose presence would license the
-//!   compiler to contract or vectorize this crate's arithmetic differently.
+//!   compiler to contract or vectorize this crate's arithmetic differently;
+//! - the BUILD-FLAG CONTRACT itself
+//!   (`MODEL_GUIDED_SEARCH_BUILD_FLAG_CONTRACT_V1`) together with the exact
+//!   list of build-override variables it rejects and the exact list of
+//!   forbidden floating-point fragments, so quietly narrowing the contract
+//!   moves the identity instead of silently widening the escape hatch.
+//!
+//! That last bullet closes a gap the earlier version of this module had.
+//! Recording only arch, pointer width, `fma`, `avx`, and the probe outputs
+//! is not sufficient, because a build under
+//! `RUSTFLAGS=-C llvm-args=-fp-contract=fast` matches every one of those
+//! and may still perform different arithmetic: the flag changes neither
+//! the source, nor the target features, nor (necessarily) any probe this
+//! module evaluates at the same optimization site. The audit names exactly
+//! this escape hatch. `build_flag_violation_v1` therefore reads the
+//! override variables at COMPILE time via `option_env!` and
+//! `ModelGuidedSearchAuthorityV1::validate` refuses to mint an authority
+//! when any is set, so a binary built under a forbidden flag cannot
+//! certify itself no matter where it later runs.
 //!
 //! It deliberately does NOT commit to `MTG_KERNEL_BUILD_GIT_HEAD`. The
 //! authority record already carries `engine_commit` as its own separately
@@ -121,7 +139,128 @@ pub const MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_IDENTITY_V1: &str =
 
 /// Frozen label for the deterministic-forward build identity.
 pub const MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_IDENTITY_V1: &str =
-    "model-guided-search-forward-determinism-kernel-tanh-softmax-mxcsr-target/v1";
+    "model-guided-search-forward-determinism-kernel-tanh-softmax-mxcsr-target-buildflags/v2";
+
+/// The build-flag contract `docs/audits/model_guided_forward_determinism_
+/// audit_v1.md` Section 6 item 2 requires: an explicit `target-feature`
+/// and `RUSTFLAGS` pin matching today's default (no `+fma`, no `+avx`),
+/// enforced by rejecting build-override environment variables the way
+/// `examples/bench_fast_sampler.rs` already rejects them, and explicitly
+/// forbidding `-C llvm-args=-fp-contract=fast` or any other
+/// contraction-enabling flag by that same mechanism.
+///
+/// Why this is checked with `option_env!` and not `std::env::var`: the
+/// flags that matter were consumed by `rustc` when this crate was
+/// compiled, so the only faithful reading is the COMPILE-time one.
+/// `option_env!` bakes the value that was in force during the build into
+/// the binary, so a scorer built under
+/// `RUSTFLAGS=-C llvm-args=-fp-contract=fast` carries that fact with it
+/// and fails closed wherever it later runs. A run-time read would see the
+/// operator's current shell, which says nothing about how the binary was
+/// produced.
+pub const MODEL_GUIDED_SEARCH_BUILD_FLAG_CONTRACT_V1: &str =
+    "no RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, \
+     CARGO_BUILD_RUSTFLAGS, CARGO_TARGET_<TRIPLE>_RUSTFLAGS, RUSTC, RUSTC_WRAPPER, \
+     RUSTC_WORKSPACE_WRAPPER, or CARGO_BUILD_TARGET override; target features pinned to the \
+     crate default (no +fma, no +avx); floating-point contraction and fast-math flags \
+     (-ffast-math, -C llvm-args=-fp-contract=fast, -C llvm-args=-enable-unsafe-fp-math, \
+     -Z fp-contract, -C target-feature=+fma) explicitly forbidden/v1";
+
+/// The build-override variables this contract rejects, captured at COMPILE
+/// time. The `CARGO_TARGET_*_RUSTFLAGS` entries must be spelled per target
+/// triple because `option_env!` takes a literal name; the two triples this
+/// project actually builds for (Windows MSVC locally, Linux GNU on the HPC
+/// cluster) are both covered, and an unrepresented triple is caught by the
+/// generic `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` / `CARGO_BUILD_RUSTFLAGS`
+/// entries that cargo also honours.
+const BUILD_OVERRIDE_VARIABLES_V1: &[(&str, Option<&str>)] = &[
+    ("RUSTFLAGS", option_env!("RUSTFLAGS")),
+    (
+        "CARGO_ENCODED_RUSTFLAGS",
+        option_env!("CARGO_ENCODED_RUSTFLAGS"),
+    ),
+    (
+        "CARGO_BUILD_RUSTFLAGS",
+        option_env!("CARGO_BUILD_RUSTFLAGS"),
+    ),
+    (
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS",
+        option_env!("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"),
+    ),
+    (
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+        option_env!("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS"),
+    ),
+    ("RUSTC", option_env!("RUSTC")),
+    ("RUSTC_WRAPPER", option_env!("RUSTC_WRAPPER")),
+    (
+        "RUSTC_WORKSPACE_WRAPPER",
+        option_env!("RUSTC_WORKSPACE_WRAPPER"),
+    ),
+    ("CARGO_BUILD_TARGET", option_env!("CARGO_BUILD_TARGET")),
+];
+
+/// Flag fragments that enable floating-point contraction or otherwise
+/// relax floating-point semantics. Named explicitly so a rejection says
+/// WHICH forbidden flag was found rather than only that some override was
+/// set, and so the prohibition is testable without an actually-overridden
+/// build.
+const FORBIDDEN_FLOATING_POINT_FRAGMENTS_V1: &[&str] = &[
+    "fp-contract",
+    "ffast-math",
+    "fast-math",
+    "enable-unsafe-fp-math",
+    "unsafe-fp-math",
+    "reassociate-fp",
+    "+fma",
+    "fp-model",
+];
+
+/// A build-flag contract violation: which variable, and (when it is one of
+/// the explicitly forbidden floating-point flags) which fragment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BuildFlagViolationV1 {
+    /// The environment variable that was set at build time.
+    pub variable: &'static str,
+    /// The forbidden floating-point fragment found in its value, when the
+    /// value names one. `None` means the variable was merely set to
+    /// something unrepresented, which is rejected all the same: an
+    /// override this contract cannot interpret must never be treated as
+    /// benign.
+    pub forbidden_fragment: Option<&'static str>,
+}
+
+/// Returns the forbidden floating-point fragment a build-flag value names,
+/// if any. Case-insensitive because `rustc` accepts the flags in either
+/// case through some shells and a lowercase-only match would be a trivial
+/// bypass.
+pub fn forbidden_floating_point_fragment_v1(value: &str) -> Option<&'static str> {
+    let lowered = value.to_ascii_lowercase();
+    FORBIDDEN_FLOATING_POINT_FRAGMENTS_V1
+        .iter()
+        .copied()
+        .find(|fragment| lowered.contains(fragment))
+}
+
+/// Fails closed on any build-override environment variable that was set
+/// when this crate was compiled. Returns the FIRST violation in the
+/// contract's declared order, so the error is deterministic.
+///
+/// Empty is treated as unset: cargo and many CI shells export these names
+/// with an empty value, which changes nothing about the build.
+pub fn build_flag_violation_v1() -> Option<BuildFlagViolationV1> {
+    for &(variable, value) in BUILD_OVERRIDE_VARIABLES_V1 {
+        let Some(value) = value else { continue };
+        if value.is_empty() {
+            continue;
+        }
+        return Some(BuildFlagViolationV1 {
+            variable,
+            forbidden_fragment: forbidden_floating_point_fragment_v1(value),
+        });
+    }
+    None
+}
 
 /// The wrapper's pre-registered value-head input domain, folded into the
 /// value-quantization contract digest so the mapping is, as the design
@@ -186,7 +325,7 @@ pub const MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_SHA256_V1: &str =
 
 /// Pinned digest of the deterministic-forward build identity.
 pub const MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_SHA256_V1: &str =
-    "21484c4d32939a86a0de7e9279a12632289652d9cf2e6d87d56a957046941b0c";
+    "27d554c41fc302c86f3040c8cac2d2a50f086cbbca54fd8f9cd883a8be6d132f";
 
 /// The frozen prior-contract probe battery: masked, not-necessarily-
 /// normalized legal-action weight vectors. Chosen for coverage of the
@@ -453,6 +592,22 @@ pub fn forward_determinism_build_digest_v1() -> [u8; 32] {
         hasher.update([u8::from(cfg!(target_feature = "fma"))]);
         update_str_v1(&mut hasher, "target_feature_avx");
         hasher.update([u8::from(cfg!(target_feature = "avx"))]);
+        // The build-flag contract itself, plus the exact list of override
+        // variables it rejects and the exact list of forbidden
+        // floating-point fragments. Binding the LISTS, not just the prose,
+        // is what makes the identity move when someone quietly drops a
+        // variable or a fragment from the contract: the digest is then the
+        // audit trail for the contract's own coverage, not only for the
+        // arithmetic it protects.
+        update_str_v1(&mut hasher, MODEL_GUIDED_SEARCH_BUILD_FLAG_CONTRACT_V1);
+        update_str_v1(&mut hasher, "build_override_variables");
+        for &(variable, _) in BUILD_OVERRIDE_VARIABLES_V1 {
+            update_str_v1(&mut hasher, variable);
+        }
+        update_str_v1(&mut hasher, "forbidden_floating_point_fragments");
+        for fragment in FORBIDDEN_FLOATING_POINT_FRAGMENTS_V1 {
+            update_str_v1(&mut hasher, fragment);
+        }
         hasher.finalize().into()
     })
 }
@@ -487,6 +642,89 @@ mod tests {
             lower_hex_digest_v1(value_quantization_contract_digest_v1()),
             MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_SHA256_V1,
             "the value-quantization contract's behavior or pinned domain changed; re-pin deliberately"
+        );
+    }
+
+    /// The audit (Section 6 item 2) requires rejecting
+    /// contraction-enabling overrides. The classifier is tested directly
+    /// because the only other way to exercise it is to actually build the
+    /// crate under a forbidden flag, which no test can do from inside the
+    /// build it would need to change.
+    #[test]
+    fn contraction_enabling_flags_are_named_and_rejected_v1() {
+        for (value, expected) in [
+            ("-C llvm-args=-fp-contract=fast", Some("fp-contract")),
+            ("-Zfp-contract=fast", Some("fp-contract")),
+            ("-C llvm-args=-ffast-math", Some("ffast-math")),
+            (
+                "-C llvm-args=-enable-unsafe-fp-math",
+                Some("enable-unsafe-fp-math"),
+            ),
+            ("-C target-feature=+fma", Some("+fma")),
+            ("-C target-feature=+avx2,+fma", Some("+fma")),
+            ("-C llvm-args=-fp-model=fast", Some("fp-model")),
+            ("-C opt-level=3", None),
+            ("-C debuginfo=0", None),
+            ("", None),
+        ] {
+            let found = forbidden_floating_point_fragment_v1(value);
+            assert_eq!(
+                found.is_some(),
+                expected.is_some(),
+                "{value:?} classification"
+            );
+        }
+        // Case folding is not a bypass.
+        assert!(forbidden_floating_point_fragment_v1("-C LLVM-ARGS=-FP-CONTRACT=FAST").is_some());
+        // An override this contract cannot interpret is still rejected:
+        // "not a known-bad flag" must never read as "safe".
+        assert!(forbidden_floating_point_fragment_v1("-C some-future-flag=yes").is_none());
+    }
+
+    /// This build must itself be clean, which is also what makes every
+    /// other test in the crate a valid witness for the pinned digests.
+    #[test]
+    fn this_build_carries_no_forbidden_build_flag_override_v1() {
+        assert_eq!(
+            build_flag_violation_v1(),
+            None,
+            "this crate was compiled with a build-override environment variable set; \
+             the pinned forward-determinism identity cannot describe its arithmetic"
+        );
+    }
+
+    /// The contract's coverage is part of the identity: dropping a
+    /// variable or a fragment must move the pinned digest rather than
+    /// silently widen the escape hatch.
+    #[test]
+    fn build_flag_contract_coverage_is_bound_into_the_identity_v1() {
+        for required in [
+            "RUSTFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_BUILD_RUSTFLAGS",
+            "RUSTC_WRAPPER",
+            "CARGO_BUILD_TARGET",
+        ] {
+            assert!(
+                BUILD_OVERRIDE_VARIABLES_V1
+                    .iter()
+                    .any(|(name, _)| *name == required),
+                "the audit's contract names {required}"
+            );
+        }
+        assert!(BUILD_OVERRIDE_VARIABLES_V1
+            .iter()
+            .any(|(name, _)| name.starts_with("CARGO_TARGET_") && name.ends_with("_RUSTFLAGS")));
+        for required in ["fp-contract", "ffast-math", "+fma"] {
+            assert!(
+                FORBIDDEN_FLOATING_POINT_FRAGMENTS_V1.contains(&required),
+                "the audit's contract forbids {required}"
+            );
+        }
+        // The identity label moved when the contract was added, so a
+        // reader cannot confuse a v1-identity record with a v2 one.
+        assert!(
+            MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_IDENTITY_V1.ends_with("buildflags/v2")
         );
     }
 
