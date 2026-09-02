@@ -30,12 +30,14 @@ from run_payoff_panel_v1 import (
     commit_staged_file,
     load_manifest,
     load_slot_locator,
+    matchup_environment,
     panel_filename,
     parse_args,
     remove_stray,
     render_dry_run_lines,
     run,
     staged_temp_path,
+    store_generation_for_slot,
     summarize_outcome,
 )
 
@@ -56,6 +58,11 @@ def hash_tag(tag: int) -> str:
 
 
 def synthetic_slot(index: int) -> dict:
+    # No synthetic slot names the synthetic manifest's own trainee run, so
+    # every one of these is an OTHER-run slot: `store_generation` equals the
+    # label, exactly as `load_manifest` would derive it. The own-run
+    # translation is exercised separately in `StoreGenerationTranslationTests`
+    # and `ManifestAndSlotLocatorLoadingTests`.
     return {
         "slot_index": index,
         "role": ROLES[index],
@@ -63,6 +70,7 @@ def synthetic_slot(index: int) -> dict:
         "source_base_seed": 900_000 + index,
         "source_run_sha256": hash_tag(10 * index + 1),
         "source_generation": 384 + index,
+        "store_generation": 384 + index,
         "checkpoint_manifest_sha256": hash_tag(10 * index + 2),
         "checkpoint_payload_sha256": hash_tag(10 * index + 3),
         "model_parameter_sha256": hash_tag(10 * index + 4),
@@ -127,14 +135,14 @@ def outcome_for(
         "episode_count": spec.pair_count * 2,
         "candidate": {
             "run_sha256": candidate["source_run_sha256"],
-            "generation": candidate["source_generation"],
+            "generation": candidate["store_generation"],
             "checkpoint_manifest_sha256": candidate["checkpoint_manifest_sha256"],
             "checkpoint_payload_sha256": candidate["checkpoint_payload_sha256"],
             "model_parameter_sha256": candidate["model_parameter_sha256"],
         },
         "opponent": {
             "run_sha256": opponent["source_run_sha256"],
-            "generation": opponent["source_generation"],
+            "generation": opponent["store_generation"],
             "checkpoint_manifest_sha256": opponent["checkpoint_manifest_sha256"],
             "checkpoint_payload_sha256": opponent["checkpoint_payload_sha256"],
             "model_parameter_sha256": opponent["model_parameter_sha256"],
@@ -374,7 +382,87 @@ class DryRunDeterminismTests(unittest.TestCase):
         self.assertNotEqual(first, second)
 
 
+class StoreGenerationTranslationTests(unittest.TestCase):
+    """The 896-offset translation, mirroring the launcher's
+    `store_generation_for_slot_v1`."""
+
+    TRAINEE_RUN = hash_tag(2)
+
+    def own_run_slot(self, generation: int) -> dict:
+        slot = synthetic_slot(5)
+        slot["source_run_sha256"] = self.TRAINEE_RUN
+        slot["source_generation"] = generation
+        return slot
+
+    def test_own_run_label_translates_by_the_896_offset(self):
+        for update in (0, 128, 512, 2048):
+            slot = self.own_run_slot(896 + update)
+            self.assertEqual(
+                store_generation_for_slot(slot, self.TRAINEE_RUN),
+                update,
+                "an own-run slot loads at label - 896",
+            )
+
+    def test_own_run_label_below_the_program_start_is_rejected(self):
+        for generation in (0, 1, 895):
+            slot = self.own_run_slot(generation)
+            with self.assertRaises(PanelRunnerError):
+                store_generation_for_slot(slot, self.TRAINEE_RUN)
+
+    def test_other_run_slots_keep_their_labels(self):
+        slot = synthetic_slot(0)
+        self.assertNotEqual(slot["source_run_sha256"], self.TRAINEE_RUN)
+        self.assertEqual(
+            store_generation_for_slot(slot, self.TRAINEE_RUN),
+            slot["source_generation"],
+        )
+        # Including labels far below 896, which are ordinary generations in
+        # the runs that own them.
+        slot["source_generation"] = 384
+        self.assertEqual(store_generation_for_slot(slot, self.TRAINEE_RUN), 384)
+
+    def test_matchup_environment_passes_the_translated_generation(self):
+        slots = synthetic_slots()
+        slots[5] = self.own_run_slot(896 + 128)
+        slots[5]["store_generation"] = store_generation_for_slot(slots[5], self.TRAINEE_RUN)
+        locator = {index: Path(f"D:/cycle4/slot-{index}") for index in range(SLOT_COUNT)}
+        # Pick the matchup that actually names slot 5.
+        spec = next(
+            candidate
+            for candidate in build_matchup_specs(1000, 4)
+            if candidate.higher_slot == 5
+        )
+        environment = matchup_environment(slots, locator, spec, Path("D:/out/outcome.json"))
+        self.assertEqual(environment["H2H_OPPONENT_GEN"], "128")
+
+
 class ManifestAndSlotLocatorLoadingTests(unittest.TestCase):
+    def test_load_manifest_translates_own_run_slot_generations(self):
+        # The manifest label stays trainee-local; the loaded slot carries the
+        # Store generation the arm's own Store actually holds.
+        document = synthetic_manifest_document()
+        trainee_run = document["trainee_run_sha256"]
+        document["slots"][5]["source_run_sha256"] = trainee_run
+        document["slots"][5]["source_generation"] = 896 + 128
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_bytes(canonical_bytes(document))
+            _, _, _, slots = load_manifest(path)
+        self.assertEqual(slots[5]["source_generation"], 896 + 128)
+        self.assertEqual(slots[5]["store_generation"], 128)
+        # Other-run slots are untouched.
+        self.assertEqual(slots[0]["store_generation"], slots[0]["source_generation"])
+
+    def test_load_manifest_rejects_own_run_label_below_the_program_start(self):
+        document = synthetic_manifest_document()
+        document["slots"][5]["source_run_sha256"] = document["trainee_run_sha256"]
+        document["slots"][5]["source_generation"] = 895
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_bytes(canonical_bytes(document))
+            with self.assertRaises(PanelRunnerError):
+                load_manifest(path)
+
     def test_load_manifest_accepts_well_formed_document(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"

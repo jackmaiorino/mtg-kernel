@@ -24,14 +24,29 @@
 //!   `896 + program_update`.
 //! - `--stop-generation` and [`Cycle4ArmRequestV1::stop_generation`] are
 //!   STORE generations (0..=2048), never trainee-local. The launcher proves
-//!   `stop_generation == resume_position + 128` before training.
+//!   `stop_generation` names a whole interval (a multiple of 128 at or below
+//!   2048) and that the Store resumes at a checkpoint-segment boundary
+//!   inside `stop - 128 ..= stop` before training, so an interrupted attempt
+//!   restarts against the same stop it was given.
+//! - The refresh manifest labels EVERY slot generation in the contract's
+//!   trainee-local numbering, including the slots bound to the arm's own run
+//!   (`current-1` always, `historical-0` from refresh index 4). Translation
+//!   is this launcher's job, not the manifest's: an own-run slot's
+//!   `source_generation` is read from the arm's Store at
+//!   `source_generation - 896` (see `store_generation_for_slot_v1`). A label
+//!   below 896, a translated generation the Store does not contain, and a
+//!   loaded checkpoint whose identity hashes differ from the roster's all
+//!   fail closed. Slots bound to OTHER runs are read at their labels
+//!   verbatim, since those runs number their own stores.
 //! - The origin binding (parent run, parent checkpoint/sidecar/state
 //!   SHA-256s, init generation 896) lives in the hashed run record's
 //!   `contracts.opponent_ladder_initialization`, and is additionally
 //!   restated in this launcher's own hashed origin record published into the
 //!   chain directory at genesis.
 
-use crate::canonical_json_v1::{to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1};
+use crate::canonical_json_v1::{
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
+};
 use crate::native_baseline_checkpoint_chain_v4::{
     manifest_final_name_v4, publish_baseline_record_v4, record_final_name_v4,
     resume_baseline_chain_v4, sidecar_record_name_v4, BaselineChainRecordPartsV4,
@@ -52,8 +67,9 @@ use crate::native_population_refresh_builder_cycle4_v1::{
     cycle4_chain_manifest_filename_v1, cycle4_chain_panel_filename_v1,
 };
 use crate::native_population_refresh_manifest_cycle4_v1::{
-    decode_cycle4_refresh_manifest_v1, Cycle4RefreshManifestV1, CYCLE4_REFRESH_INTERVAL_V1,
-    CYCLE4_REFRESH_MAX_INDEX_V1, CYCLE4_SLOT_COUNT_V1, CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1,
+    decode_cycle4_refresh_manifest_v1, Cycle4RefreshManifestV1, Cycle4RefreshSlotV1,
+    CYCLE4_REFRESH_INTERVAL_V1, CYCLE4_REFRESH_MAX_INDEX_V1, CYCLE4_SLOT_COUNT_V1,
+    CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1,
 };
 use crate::native_training_executor_v1::NativeTrainingExecutionConfigV1;
 use crate::native_training_store_bootstrap_v2::bootstrap_native_training_store_v2;
@@ -214,7 +230,10 @@ pub struct Cycle4ArmRequestV1 {
     /// Identity-keyed slot locator, see
     /// [`CYCLE4_ARM_SLOT_LOCATOR_SCHEMA_V1`].
     pub slot_locator: PathBuf,
-    /// STORE generation this process stops at, `resume_position + 128`.
+    /// STORE generation this process stops at: the end of the interval the
+    /// manifest opens, a multiple of 128 at or below 2048. The Store may
+    /// resume anywhere inside that interval (an interrupted attempt keeps its
+    /// original stop), or at the stop itself when it already completed.
     pub stop_generation: u64,
     /// Bounded preflight provision (`docs/native_cycle4_arm_launcher_v1.md`
     /// Section 6's CONTROL preflight ladder). `None` is the formal path and
@@ -438,6 +457,37 @@ fn slot_store_roots_for_manifest_v1(
 // Cycle-4 population resolution (sibling of resolve_population_opponent_v1)
 // ---------------------------------------------------------------------
 
+/// The Store generation one roster slot is actually read at.
+///
+/// The refresh manifest labels every slot in the contract's trainee-local
+/// numbering (`docs/native_population_refresh_manifest_cycle4_v1.md`,
+/// Frame). For a slot bound to the ARM'S OWN run that label is 896 above the
+/// arm's Store numbering, because the arm is a new run identity seeded from
+/// the cycle-3 g896 checkpoint and its Store publishes genesis at generation
+/// 0 (`0 ..= 2048` for `896 ..= 2944`). Translation lives here rather than
+/// in the manifest so every identity in the roster keeps one consistent
+/// lineage numbering.
+///
+/// Fails closed on an own-run label below 896: there is no Store generation
+/// such a label could name. Slots bound to other runs are returned
+/// unchanged; those runs number their own Stores.
+fn store_generation_for_slot_v1(slot: &Cycle4RefreshSlotV1, arm_run_sha256: &str) -> Result<u64> {
+    if slot.source_run_sha256 != arm_run_sha256 {
+        return Ok(slot.source_generation);
+    }
+    slot.source_generation
+        .checked_sub(CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1)
+        .ok_or_else(|| {
+            Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_own_run_slot_generation",
+                format!(
+                    "slot {} names the arm's own run at trainee-local generation {}, which is below the program start {CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1}",
+                    slot.slot_index, slot.source_generation
+                ),
+            )
+        })
+}
+
 /// Cycle-4 sibling of `native_population_runtime_resolution_v1`'s
 /// `resolve_population_opponent_v1`: same shape (reopen each slot's own Store
 /// through its own `run.json` and complete walk, re-verify every declared
@@ -451,6 +501,12 @@ fn slot_store_roots_for_manifest_v1(
 /// only validates through the v4 recompute, so those slots resolve through
 /// `access`; every frozen slot is a v3 Store and resolves through the plain
 /// path, byte for byte as before.
+///
+/// Own-run slots additionally translate their trainee-local
+/// `source_generation` label into the arm's Store numbering
+/// (`store_generation_for_slot_v1`) before the boundary is opened, and the
+/// loaded checkpoint's `generation_index` is compared against the TRANSLATED
+/// value; other-run slots keep their labels verbatim.
 fn resolve_population_opponent_cycle4_v1(
     manifest: &Cycle4RefreshManifestV1,
     slot_store_roots: &[PathBuf],
@@ -465,8 +521,21 @@ fn resolve_population_opponent_cycle4_v1(
             "eight slots required",
         ));
     }
+    // Translate every own-run label into its Store generation FIRST, before
+    // any file is opened: a label that cannot name a Store generation at all
+    // is rejected without touching the filesystem.
+    let store_generations = manifest
+        .slots_v1()
+        .iter()
+        .map(|slot| store_generation_for_slot_v1(slot, arm_run_sha256))
+        .collect::<Result<Vec<u64>>>()?;
     let mut handles = Vec::with_capacity(POPULATION_OPPONENT_SLOT_COUNT_V1);
-    for (slot, store_root) in manifest.slots_v1().iter().zip(slot_store_roots) {
+    for ((slot, store_root), store_generation) in manifest
+        .slots_v1()
+        .iter()
+        .zip(slot_store_roots)
+        .zip(store_generations)
+    {
         let mismatch = |detail: String| {
             Cycle4ArmErrorV1::contract("cycle4_arm_v1_population_authority_mismatch", detail)
         };
@@ -489,14 +558,14 @@ fn resolve_population_opponent_cycle4_v1(
             (true, Some(access)) => load_native_training_boundary_baseline_v4_v2(
                 &root,
                 &slot_run,
-                slot.source_generation,
+                store_generation,
                 access,
             ),
-            _ => load_native_training_boundary_v2(&root, &slot_run, slot.source_generation),
+            _ => load_native_training_boundary_v2(&root, &slot_run, store_generation),
         }
         .map_err(|error| {
             mismatch(format!(
-                "{} generation {}: {error}",
+                "{} store generation {store_generation} (slot label {}): {error}",
                 store_root.display(),
                 slot.source_generation
             ))
@@ -504,7 +573,7 @@ fn resolve_population_opponent_cycle4_v1(
         let checkpoint = boundary.checkpoint();
         let matches_authority = slot_run.run_sha256() == slot.source_run_sha256
             && slot_run.record().schedule.base_seed == slot.source_base_seed
-            && checkpoint.generation_index() == slot.source_generation
+            && checkpoint.generation_index() == store_generation
             && lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256())
                 == slot.checkpoint_manifest_sha256
             && lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256())
@@ -575,6 +644,16 @@ struct Cycle4BaselineChainAccessV1 {
     /// it only stops the publisher's repeated revalidation passes from
     /// re-reading the same records.
     boundary_states: RefCell<BTreeMap<u64, NativeBaselineStateV4>>,
+    /// Sidecars staged by the producer for updates whose Store evidence has
+    /// not committed yet, keyed by update index. Held in memory rather than
+    /// under a `.pending` on-disk name deliberately: a process that dies
+    /// between preparing a segment and committing it then leaves NOTHING to
+    /// reconcile, so its retry never has to reproduce or clean up orphaned
+    /// sidecar bytes for updates the Store does not contain. Staged bytes
+    /// are visible to `sidecar_record_bytes_v4` (the producer revalidates
+    /// each one through the resume path immediately) and reach their
+    /// immutable names only in `commit_staged_sidecar_records_v4`.
+    staged_sidecars: RefCell<BTreeMap<u64, Vec<u8>>>,
 }
 
 impl Cycle4BaselineChainAccessV1 {
@@ -584,6 +663,7 @@ impl Cycle4BaselineChainAccessV1 {
             checkpoint_segment_updates,
             observed_core_hashes: RefCell::new(BTreeMap::new()),
             boundary_states: RefCell::new(BTreeMap::new()),
+            staged_sidecars: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -701,6 +781,11 @@ impl Cycle4BaselineChainAccessV1 {
 
 impl BaselineSidecarSourceV4 for Cycle4BaselineChainAccessV1 {
     fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>> {
+        // A staged sidecar is this update's record for every reader inside
+        // the producing process; on disk it exists only after the commit.
+        if let Some(bytes) = self.staged_sidecars.borrow().get(&update_index) {
+            return Some(bytes.clone());
+        }
         std::fs::read(self.sidecar_path_v1(update_index)?).ok()
     }
 }
@@ -717,20 +802,62 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         self.observe_v1(generation_index, core_state_sha256);
     }
 
-    fn publish_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
+    fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
         let Some(path) = self.sidecar_path_v1(update_index) else {
             return false;
         };
-        if std::fs::create_dir_all(&self.chain_dir).is_err() {
-            return false;
-        }
-        // Crash replay: an already-published sidecar with identical bytes is
-        // the same publication, so accept it; different bytes are a genuine
-        // conflict and fail closed.
+        // Crash replay: an already-committed sidecar with identical bytes is
+        // the same record, so accept it and stage nothing; different bytes
+        // are a genuine conflict and fail closed.
         if let Ok(existing) = std::fs::read(&path) {
             return existing == record_bytes;
         }
-        write_file_atomically_v1(&path, record_bytes).is_ok()
+        match self.staged_sidecars.borrow_mut().entry(update_index) {
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                entry.get().as_slice() == record_bytes
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(record_bytes.to_vec());
+                true
+            }
+        }
+    }
+
+    fn commit_staged_sidecar_records_v4(&self) -> bool {
+        let staged: Vec<(u64, Vec<u8>)> = self
+            .staged_sidecars
+            .borrow()
+            .iter()
+            .map(|(index, bytes)| (*index, bytes.clone()))
+            .collect();
+        if staged.is_empty() {
+            return true;
+        }
+        if std::fs::create_dir_all(&self.chain_dir).is_err() {
+            return false;
+        }
+        // Ascending update order (the map is a BTreeMap), so a crash
+        // mid-commit leaves a prefix of this segment's sidecars -- exactly
+        // the shape the boundary replay and the chain's
+        // `StoreAheadByOneBoundary` repair already admit. Each entry leaves
+        // the staged set only once it is durable, so a failed commit keeps
+        // the remainder staged rather than silently dropping it.
+        for (update_index, bytes) in staged {
+            let Some(path) = self.sidecar_path_v1(update_index) else {
+                return false;
+            };
+            match std::fs::read(&path) {
+                Ok(existing) if existing == bytes => {}
+                Ok(_) => return false,
+                Err(_) => {
+                    if write_file_atomically_v1(&path, &bytes).is_err() {
+                        return false;
+                    }
+                }
+            }
+            self.staged_sidecars.borrow_mut().remove(&update_index);
+        }
+        true
     }
 }
 
@@ -772,7 +899,7 @@ fn write_file_atomically_v1(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 // Origin record
 // ---------------------------------------------------------------------
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Cycle4ArmOriginRecordV1 {
     schema: String,
@@ -1100,15 +1227,32 @@ fn validate_manifest_against_run_v1(
     })
 }
 
-/// The interval stop is a STORE generation: exactly one refresh interval past
-/// the resume position, never past the program's own 2048-generation end.
+/// The interval stop is a STORE generation, and it names the whole interval:
+/// a multiple of the pre-registered 128 at or below the program's own 2048,
+/// whose start is `stop - 128`.
+///
+/// The resume position may be anywhere inside that interval. A wrapper that
+/// was interrupted mid-interval restarts the same process against the SAME
+/// stop it was given, so the Store it reopens sits at whatever checkpoint
+/// boundary the interrupted attempt reached (resume 388 for the interval
+/// 384..=512, say). Every admissible position is therefore
+/// `interval_start ..= stop`, and every one of them must be a checkpoint
+/// segment boundary, because that is the only granularity the Store ever
+/// publishes. `resume == stop` is the completed case: a process that
+/// committed the interval's final generation and died before returning
+/// trains nothing here, and the caller breaks immediately, revalidates the
+/// whole Store, and returns the outcome the lost process would have
+/// returned. The manifest position rule still compares the manifest's own
+/// `program_update` against `interval_start`, the interval that manifest
+/// opened, never against wherever the Store happens to sit.
 ///
 /// `preflight_updates` is the bounded relaxation the CONTROL preflight ladder
-/// needs and nothing else may use: `Some(n)` replaces the pre-registered 128
-/// with `n`, still exact (`stop == resume + n`), still inside the program's
-/// end, and still a whole number of checkpoint segments -- the Store advances
-/// a segment at a time, so a window that is not a segment multiple could not
-/// land on its own stop and would silently overshoot.
+/// needs and nothing else may use, and it is deliberately NOT widened the
+/// same way: `Some(n)` keeps the exact `stop == resume + n` for `n` in
+/// `1 ..= CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1`, still inside the program's
+/// end, still a whole number of checkpoint segments, and still pinned to the
+/// genesis manifest below the first refresh boundary. A preflight prefix is
+/// throwaway, so it has no interrupted-attempt case to serve.
 fn validate_interval_stop_v1(
     stop_generation: u64,
     resume_generation: u64,
@@ -1117,21 +1261,88 @@ fn validate_interval_stop_v1(
     arm: Cycle4ArmKindV1,
     preflight_updates: Option<u64>,
 ) -> Result<()> {
-    let window = match preflight_updates {
-        None => CYCLE4_REFRESH_INTERVAL_V1,
-        Some(updates) => {
-            if updates == 0 || updates > CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1 {
-                return Err(Cycle4ArmErrorV1::contract(
-                    "cycle4_arm_v1_preflight_updates_range",
-                    format!(
-                        "--preflight-updates must be 1..={CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1}, got {updates}"
-                    ),
-                ));
-            }
-            updates
-        }
-    };
-    let expected = resume_generation.checked_add(window).ok_or_else(|| {
+    let interval_stop =
+        |detail: String| Cycle4ArmErrorV1::contract("cycle4_arm_v1_interval_stop", detail);
+    if let Some(updates) = preflight_updates {
+        return validate_preflight_stop_v1(
+            stop_generation,
+            resume_generation,
+            checkpoint_segment_updates,
+            contract,
+            updates,
+        );
+    }
+    if stop_generation > CYCLE4_ARM_STORE_GENERATION_TOTAL_V1 {
+        return Err(interval_stop(format!(
+            "stop generation {stop_generation} is past the program end {CYCLE4_ARM_STORE_GENERATION_TOTAL_V1}"
+        )));
+    }
+    if stop_generation == 0 || !stop_generation.is_multiple_of(CYCLE4_REFRESH_INTERVAL_V1) {
+        return Err(interval_stop(format!(
+            "stop generation {stop_generation} is not a whole refresh interval"
+        )));
+    }
+    let interval_start = stop_generation
+        .checked_sub(CYCLE4_REFRESH_INTERVAL_V1)
+        .ok_or_else(|| {
+            interval_stop(format!(
+                "stop generation {stop_generation} is not one refresh interval past any start"
+            ))
+        })?;
+    if checkpoint_segment_updates == 0
+        || !CYCLE4_REFRESH_INTERVAL_V1.is_multiple_of(checkpoint_segment_updates)
+    {
+        return Err(interval_stop(
+            "the training window must be a whole number of checkpoint segments".to_owned(),
+        ));
+    }
+    if resume_generation < interval_start || resume_generation > stop_generation {
+        return Err(interval_stop(format!(
+            "the store resumes at {resume_generation}, outside the interval {interval_start}..={stop_generation} this stop names"
+        )));
+    }
+    if !resume_generation.is_multiple_of(checkpoint_segment_updates) {
+        return Err(interval_stop(format!(
+            "the store resumes at {resume_generation}, which is not a boundary of its {checkpoint_segment_updates}-update checkpoint segment"
+        )));
+    }
+    // A refresh-chained arm's manifest names the interval it opens; a
+    // static-pool arm reuses the genesis manifest at every interval and
+    // therefore binds no resume position of its own. Compared against the
+    // interval's START, so an interrupted attempt resuming mid-interval is
+    // judged against the same manifest as a fresh one.
+    if !arm.static_pool_v1() && contract.program_update != interval_start {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_resume_position_mismatch",
+            format!(
+                "manifest refresh index {} opens store generation {}, but this stop names the interval {interval_start}..={stop_generation}",
+                contract.refresh_index, contract.program_update
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// The preflight ladder's own stop rule, exactly as round D pinned it: an
+/// exact `stop == resume + n` window of `1 ..= 8` updates, a whole number of
+/// checkpoint segments, against the genesis manifest only, never past the
+/// first refresh boundary.
+fn validate_preflight_stop_v1(
+    stop_generation: u64,
+    resume_generation: u64,
+    checkpoint_segment_updates: u64,
+    contract: &Cycle4ArmContractV1,
+    updates: u64,
+) -> Result<()> {
+    if updates == 0 || updates > CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1 {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_preflight_updates_range",
+            format!(
+                "--preflight-updates must be 1..={CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1}, got {updates}"
+            ),
+        ));
+    }
+    let expected = resume_generation.checked_add(updates).ok_or_else(|| {
         Cycle4ArmErrorV1::contract("cycle4_arm_v1_interval_stop", "stop generation overflow")
     })?;
     if stop_generation != expected {
@@ -1148,7 +1359,7 @@ fn validate_interval_stop_v1(
             ),
         ));
     }
-    if checkpoint_segment_updates == 0 || !window.is_multiple_of(checkpoint_segment_updates) {
+    if checkpoint_segment_updates == 0 || !updates.is_multiple_of(checkpoint_segment_updates) {
         return Err(Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_interval_stop",
             "the training window must be a whole number of checkpoint segments",
@@ -1158,35 +1369,20 @@ fn validate_interval_stop_v1(
     // interval and never chains a manifest, so it is pinned to the genesis
     // manifest and bounded below the first refresh boundary rather than
     // matched to a manifest position it does not have.
-    if preflight_updates.is_some() {
-        if contract.refresh_index != 0 {
-            return Err(Cycle4ArmErrorV1::contract(
-                "cycle4_arm_v1_preflight_manifest_advanced",
-                format!(
-                    "a preflight runs only against the genesis manifest, got refresh index {}",
-                    contract.refresh_index
-                ),
-            ));
-        }
-        if stop_generation > CYCLE4_REFRESH_INTERVAL_V1 {
-            return Err(Cycle4ArmErrorV1::contract(
-                "cycle4_arm_v1_preflight_manifest_advanced",
-                format!(
-                    "a preflight never leaves the genesis interval, got stop generation {stop_generation}"
-                ),
-            ));
-        }
-        return Ok(());
-    }
-    // A refresh-chained arm's manifest names the interval it opens; a
-    // static-pool arm reuses the genesis manifest at every interval and
-    // therefore binds no resume position of its own.
-    if !arm.static_pool_v1() && contract.program_update != resume_generation {
+    if contract.refresh_index != 0 {
         return Err(Cycle4ArmErrorV1::contract(
-            "cycle4_arm_v1_resume_position_mismatch",
+            "cycle4_arm_v1_preflight_manifest_advanced",
             format!(
-                "manifest refresh index {} opens store generation {}, but the store resumes at {resume_generation}",
-                contract.refresh_index, contract.program_update
+                "a preflight runs only against the genesis manifest, got refresh index {}",
+                contract.refresh_index
+            ),
+        ));
+    }
+    if stop_generation > CYCLE4_REFRESH_INTERVAL_V1 {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_preflight_manifest_advanced",
+            format!(
+                "a preflight never leaves the genesis interval, got stop generation {stop_generation}"
             ),
         ));
     }
@@ -1270,6 +1466,21 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
         )
     });
 
+    // Verify-or-publish, on every open and for every arm kind (review
+    // finding P2): the origin record must exist and must bind this run, arm,
+    // parent checkpoint, and the Store's own genesis checkpoint, whether or
+    // not this invocation is the one that authored genesis. Runs before the
+    // chain is touched, so a chain directory paired with the wrong run or arm
+    // fails closed before anything is published into it.
+    let genesis_identity = genesis_identity_from_store_v1(
+        &root,
+        &run,
+        access
+            .as_ref()
+            .map(|access| access as &dyn BaselineChainAccessV4),
+    )?;
+    ensure_origin_record_v1(&request.chain_dir, request.arm, &run, &genesis_identity)?;
+
     let mut chain_generation = None;
     if let Some(access) = access.as_ref() {
         chain_generation = Some(prepare_baseline_chain_v1(&root, &run, access)?);
@@ -1320,6 +1531,20 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
                         request.arm,
                         request.preflight_updates,
                     )?;
+                }
+                // Review finding P2: `Complete` means the run record's own
+                // `requested_successful_updates` is exhausted, which is not
+                // the same as this interval being trained. A run whose
+                // schedule stops short of the requested stop would otherwise
+                // return a silently undertrained arm.
+                if latest_generation_index != request.stop_generation {
+                    return Err(Cycle4ArmErrorV1::contract(
+                        "cycle4_arm_v1_interval_incomplete",
+                        format!(
+                            "the run's schedule completed at store generation {latest_generation_index}, short of the requested stop {}",
+                            request.stop_generation
+                        ),
+                    ));
                 }
                 break latest_generation_index;
             }
@@ -1404,6 +1629,19 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
                         error.code().to_owned(),
                     )
                 })?;
+                // The Store has now durably committed this segment's
+                // evidence, so the sidecars staged while preparing it may
+                // reach their immutable names. Before this point nothing was
+                // written, which is what keeps a failed segment from leaving
+                // sidecars for updates the Store does not contain.
+                if let Some(access) = access.as_ref() {
+                    if !access.commit_staged_sidecar_records_v4() {
+                        return Err(Cycle4ArmErrorV1::runtime(
+                            "cycle4_arm_v1_baseline_sidecar_commit",
+                            "the segment's staged baseline sidecars could not be committed",
+                        ));
+                    }
+                }
                 // The boundary's chain record is published here, after the
                 // Store durably committed the generation and before the
                 // in-memory candidate is installed. A crash in this window
@@ -1633,10 +1871,20 @@ pub struct Cycle4ArmBootstrapOutcomeV1 {
 /// record carrying that checkpoint's identity, and nothing else; the refresh
 /// builder then authors `refresh-00.manifest.json` from it.
 ///
+/// Idempotent on a Store that already holds ONLY genesis (review finding):
+/// the Store commit and the origin-record publication are two writes, and a
+/// process that died between them left a generation-0 Store with no origin
+/// record. Rejecting that outright stranded the root, because the wrapper
+/// then skips bootstrap (genesis exists) while every bootstrap retry is
+/// refused. Such a Store is instead validated, its genesis identity read back
+/// from its own checkpoint, the missing origin record published, and the same
+/// outcome returned. A Store that has trained past generation 0 is still
+/// refused: bootstrap never adopts a run in progress.
+///
 /// # Errors
 ///
 /// Returns a classified [`Cycle4ArmErrorV1`]: `Contract` (bin exit code 3)
-/// for any contract, locator, or already-seeded-Store rejection, `Runtime`
+/// for any contract, locator, or already-trained-Store rejection, `Runtime`
 /// (bin exit code 1) for an I/O or publication failure.
 pub fn run_native_cycle4_arm_bootstrap_genesis_v1(
     request: &Cycle4ArmBootstrapRequestV1,
@@ -1677,28 +1925,38 @@ pub fn run_native_cycle4_arm_bootstrap_genesis_v1(
         bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
             Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
         })?;
-    if bootstrapped.latest_final_present() {
-        return Err(Cycle4ArmErrorV1::contract(
-            "cycle4_arm_v1_genesis_already_present",
-            format!(
-                "{} already holds a Store; --bootstrap-genesis only ever seeds a new one",
-                request.store_root.display()
-            ),
-        ));
-    }
+    let already_seeded = bootstrapped.latest_final_present();
     let root = bootstrapped.into_root();
 
-    // 4. Publish genesis and the origin record.
-    let genesis =
-        author_genesis_from_parent_v1(&root, &run, &locator, &request.chain_dir, request.arm)?;
-
-    // 5. The same final-store validation an interval exit performs.
+    // 4. Publish genesis, unless a previous bootstrap already did. The Store
+    //    commit and the origin-record write are two steps, so a crash between
+    //    them leaves a generation-0 Store whose origin record is missing;
+    //    this invocation finishes that publication instead of refusing it.
     let access = request.arm.uses_baseline_v4_v1().then(|| {
         Cycle4BaselineChainAccessV1::new_v1(
             request.chain_dir.clone(),
             run.checkpoint_segment_updates(),
         )
     });
+    let genesis = if already_seeded {
+        // A Store that has trained is never adopted: only the exact
+        // generation-0 shape a bootstrap itself leaves behind.
+        let state = match access.as_ref() {
+            None => validate_native_training_store_v2(&root, &run),
+            Some(access) => validate_native_training_store_baseline_v4_v2(&root, &run, access),
+        }
+        .map_err(|error| {
+            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_validate_failed", error.to_string())
+        })?;
+        bootstrap_may_adopt_seeded_store_v1(state.latest_generation_index(), &request.store_root)?;
+        let identity = genesis_identity_from_checkpoint_v1(state.latest_checkpoint());
+        ensure_origin_record_v1(&request.chain_dir, request.arm, &run, &identity)?;
+        identity
+    } else {
+        author_genesis_from_parent_v1(&root, &run, &locator, &request.chain_dir, request.arm)?
+    };
+
+    // 5. The same final-store validation an interval exit performs.
     let state = match access.as_ref() {
         None => validate_native_training_store_v2(&root, &run),
         Some(access) => validate_native_training_store_baseline_v4_v2(&root, &run, access),
@@ -1721,6 +1979,30 @@ pub fn run_native_cycle4_arm_bootstrap_genesis_v1(
         trainee_local_generation: CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1,
         genesis,
     })
+}
+
+/// Whether a bootstrap retry may adopt a Store that already carries a
+/// published generation.
+///
+/// Only the exact shape a bootstrap itself leaves behind is adoptable:
+/// generation 0 and nothing more, which is what a process that committed the
+/// Store and died before publishing the origin record leaves. Any trained
+/// Store is refused, so `--bootstrap-genesis` can never be pointed at a run
+/// in progress and can never re-enter a prefix an interval has advanced.
+fn bootstrap_may_adopt_seeded_store_v1(
+    latest_generation_index: u64,
+    store_root: &Path,
+) -> Result<()> {
+    if latest_generation_index != 0 {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_genesis_already_present",
+            format!(
+                "{} has trained to generation {latest_generation_index}; --bootstrap-genesis only ever seeds a new Store or completes an interrupted one",
+                store_root.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn store_root_parts_v1(store_root: &Path) -> Result<(PathBuf, String)> {
@@ -1757,17 +2039,7 @@ fn author_genesis_from_parent_v1(
     chain_dir: &Path,
     arm: Cycle4ArmKindV1,
 ) -> Result<Cycle4ArmGenesisIdentityV1> {
-    let declared = run
-        .record()
-        .contracts()
-        .opponent_ladder_initialization
-        .as_ref()
-        .ok_or_else(|| {
-            Cycle4ArmErrorV1::contract(
-                "cycle4_arm_v1_genesis_requires_origin",
-                "a cycle-4 arm's genesis must be seeded from a pinned parent checkpoint",
-            )
-        })?;
+    let declared = declared_origin_v1(run)?;
     let parent_root = locator.genesis_parent_store_root.as_ref().ok_or_else(|| {
         Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_genesis_parent_missing",
@@ -1829,24 +2101,84 @@ fn author_genesis_from_parent_v1(
     }
     // Taken from the manifest the Store just published, not re-read off disk:
     // these are the same bytes `publish_genesis_generation_v2` committed.
-    let identity = Cycle4ArmGenesisIdentityV1 {
+    let identity = genesis_identity_from_checkpoint_v1(&checkpoint);
+    ensure_origin_record_v1(chain_dir, arm, run, &identity)?;
+    Ok(identity)
+}
+
+/// The run record's pinned genesis origin, which every cycle-4 arm must
+/// declare whether or not its Store still needs authoring. The origin record
+/// restates it, so the record cannot be built or verified without it.
+fn declared_origin_v1(
+    run: &ValidatedTrainRunV2,
+) -> Result<&crate::native_training_store_run_v2::OpponentLadderInitializationContractV1> {
+    run.record()
+        .contracts()
+        .opponent_ladder_initialization
+        .as_ref()
+        .ok_or_else(|| {
+            Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_genesis_requires_origin",
+                "a cycle-4 arm's genesis must be seeded from a pinned parent checkpoint",
+            )
+        })
+}
+
+/// The four genesis-checkpoint hashes the origin record carries, read off one
+/// already-validated checkpoint manifest.
+fn genesis_identity_from_checkpoint_v1(
+    checkpoint: &CheckpointManifestV3,
+) -> Cycle4ArmGenesisIdentityV1 {
+    Cycle4ArmGenesisIdentityV1 {
         checkpoint_manifest_sha256: lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256()),
         checkpoint_payload_sha256: lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256()),
         model_parameter_sha256: lower_hex_raw32_v1(checkpoint.model_parameter_sha256()),
         train_state_sha256: lower_hex_raw32_v1(checkpoint.train_state_sha256()),
-    };
-    publish_origin_record_v1(chain_dir, arm, run, declared, &identity)?;
-    Ok(identity)
+    }
 }
 
-fn publish_origin_record_v1(
+/// The same four hashes, taken from an already-seeded Store's own generation
+/// 0 through the ordinary validated boundary walk. This is how an invocation
+/// that did NOT author genesis reconstructs what the origin record must say.
+/// A `trainer_v4_candidate` Store resolves through `access`, exactly as its
+/// own roster slot does; generation 0 carries no update evidence either way.
+fn genesis_identity_from_store_v1(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    access: Option<&dyn BaselineChainAccessV4>,
+) -> Result<Cycle4ArmGenesisIdentityV1> {
+    let boundary = match access {
+        Some(access) => load_native_training_boundary_baseline_v4_v2(root, run, 0, access),
+        None => load_native_training_boundary_v2(root, run, 0),
+    }
+    .map_err(|error| {
+        Cycle4ArmErrorV1::runtime(
+            "cycle4_arm_v1_genesis_identity",
+            format!("store generation 0: {error}"),
+        )
+    })?;
+    Ok(genesis_identity_from_checkpoint_v1(boundary.checkpoint()))
+}
+
+/// Publishes the launcher's hashed origin record if the chain directory has
+/// none, and otherwise decodes the existing one and requires it to equal the
+/// record this run, arm, and genesis checkpoint imply (review finding P2).
+///
+/// Called on EVERY open, for every arm kind including CONTROL-R, not only
+/// when the Store's genesis is authored: a process that published genesis and
+/// then failed to write the origin record would otherwise see `latest.json`
+/// on its retry, skip authoring, and leave the origin unrecorded forever.
+/// Verifying an existing record on every open additionally means the record
+/// is read, not merely written, so a chain directory paired with the wrong
+/// run, arm, or Store fails closed here.
+fn ensure_origin_record_v1(
     chain_dir: &Path,
     arm: Cycle4ArmKindV1,
     run: &ValidatedTrainRunV2,
-    declared: &crate::native_training_store_run_v2::OpponentLadderInitializationContractV1,
     identity: &Cycle4ArmGenesisIdentityV1,
 ) -> Result<()> {
-    let record = Cycle4ArmOriginRecordV1 {
+    let declared = declared_origin_v1(run)?;
+    let expected = Cycle4ArmOriginRecordV1 {
         schema: CYCLE4_ARM_ORIGIN_RECORD_SCHEMA_V1.to_owned(),
         arm_kind: arm.wire_v1().to_owned(),
         run_sha256: run.run_sha256().to_owned(),
@@ -1862,22 +2194,31 @@ fn publish_origin_record_v1(
         genesis_model_parameter_sha256: identity.model_parameter_sha256.clone(),
         genesis_train_state_sha256: identity.train_state_sha256.clone(),
     };
-    let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).map_err(
+    let bytes = to_canonical_json_bytes_v1(&expected, CanonicalJsonNullPolicyV1::Forbid).map_err(
         |error| Cycle4ArmErrorV1::runtime("cycle4_arm_v1_origin_record", error.to_string()),
     )?;
+    let path = chain_dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+    if let Ok(existing) = std::fs::read(&path) {
+        let decoded: Cycle4ArmOriginRecordV1 =
+            from_canonical_json_bytes_v1(&existing, CanonicalJsonNullPolicyV1::Forbid).map_err(
+                |error| {
+                    Cycle4ArmErrorV1::contract(
+                        "cycle4_arm_v1_origin_record_conflict",
+                        format!("the existing origin record does not decode: {error}"),
+                    )
+                },
+            )?;
+        if decoded != expected {
+            return Err(Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_origin_record_conflict",
+                "the existing origin record does not bind this run, arm, parent checkpoint, and genesis checkpoint",
+            ));
+        }
+        return Ok(());
+    }
     std::fs::create_dir_all(chain_dir).map_err(|error| {
         Cycle4ArmErrorV1::runtime("cycle4_arm_v1_origin_record", error.to_string())
     })?;
-    let path = chain_dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
-    if let Ok(existing) = std::fs::read(&path) {
-        if existing == bytes {
-            return Ok(());
-        }
-        return Err(Cycle4ArmErrorV1::contract(
-            "cycle4_arm_v1_origin_record_conflict",
-            "an origin record with different bytes already exists",
-        ));
-    }
     write_file_atomically_v1(&path, &bytes).map_err(|error| {
         Cycle4ArmErrorV1::runtime("cycle4_arm_v1_origin_record", error.to_string())
     })
@@ -1983,13 +2324,16 @@ mod tests {
     use super::*;
     use crate::native_policy_baseline_state_v4::{BaselineCellKeyV4, BaselineRoleV4};
     use crate::native_population_refresh_manifest_cycle4_v1::{
-        build_cycle4_refresh_manifest_v1, Cycle4RefreshSlotV1, FrozenOccupantIdentityCycle4V1,
-        CYCLE4_ANCHOR_0_V1, CYCLE4_ANCHOR_1_V1, CYCLE4_CURRENT_0_V1,
-        CYCLE4_CYCLE3_LINEAGE_BASE_SEED_V1, CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1,
-        CYCLE4_EXPLOITER_0_V1, CYCLE4_EXPLOITER_1_V1, CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1,
-        CYCLE4_HISTORICAL_1_ROTATION_V1, CYCLE4_HISTORICAL_LAG_V1,
+        build_cycle4_refresh_manifest_v1, FrozenOccupantIdentityCycle4V1, CYCLE4_ANCHOR_0_V1,
+        CYCLE4_ANCHOR_1_V1, CYCLE4_CURRENT_0_V1, CYCLE4_CYCLE3_LINEAGE_BASE_SEED_V1,
+        CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1, CYCLE4_EXPLOITER_0_V1, CYCLE4_EXPLOITER_1_V1,
+        CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1, CYCLE4_HISTORICAL_1_ROTATION_V1,
+        CYCLE4_HISTORICAL_LAG_V1,
     };
-    use crate::native_training_store_run_v2::test_fixture_bytes_population_program_v2_cycle4_v1;
+    use crate::native_training_store_run_v2::{
+        test_fixture_bytes_population_program_v2_cycle4_seeded_v1,
+        test_fixture_bytes_population_program_v2_cycle4_v1,
+    };
     use crate::native_training_store_update_group_v4::{
         build_update_baseline_record_v4, UpdateBaselineCellPartsV4, UpdateBaselineRecordPartsV4,
     };
@@ -2200,6 +2544,24 @@ mod tests {
         decode_train_run_v2(&bytes).expect("cycle-4 fixture must validate")
     }
 
+    /// The same arm record, carrying the `opponent_ladder_initialization`
+    /// section a real arm declares. Every Store that reached an interval was
+    /// bootstrapped from that section, so the origin record can always be
+    /// rebuilt from it.
+    fn seeded_run_for_arm_v1(arm: Cycle4ArmKindV1) -> ValidatedTrainRunV2 {
+        let bytes = test_fixture_bytes_population_program_v2_cycle4_seeded_v1(arm.wire_v1());
+        decode_train_run_v2(&bytes).expect("seeded cycle-4 fixture must validate")
+    }
+
+    fn genesis_identity_fixture_v1(nonce: u8) -> Cycle4ArmGenesisIdentityV1 {
+        Cycle4ArmGenesisIdentityV1 {
+            checkpoint_manifest_sha256: digest_v1(11, nonce),
+            checkpoint_payload_sha256: digest_v1(12, nonce),
+            model_parameter_sha256: digest_v1(13, nonce),
+            train_state_sha256: digest_v1(14, nonce),
+        }
+    }
+
     // ------------------------------------------------------------------
     // Contract gates
     // ------------------------------------------------------------------
@@ -2287,6 +2649,148 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Origin record: verify-or-publish, and the bootstrap adopt rule
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn the_origin_record_is_published_when_the_chain_has_none_v1() {
+        let dir = fresh_temp_dir_v1("origin-publish");
+        let run = seeded_run_for_arm_v1(Cycle4ArmKindV1::TreatmentRb);
+        let identity = genesis_identity_fixture_v1(1);
+        let path = dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+        assert!(!path.exists());
+        ensure_origin_record_v1(&dir, Cycle4ArmKindV1::TreatmentRb, &run, &identity)
+            .expect("a missing origin record is published");
+        assert!(path.is_file(), "the record must use the contract's name");
+        let decoded: Cycle4ArmOriginRecordV1 = from_canonical_json_bytes_v1(
+            &std::fs::read(&path).expect("read"),
+            CanonicalJsonNullPolicyV1::Forbid,
+        )
+        .expect("the published record decodes");
+        assert_eq!(decoded.schema, CYCLE4_ARM_ORIGIN_RECORD_SCHEMA_V1);
+        assert_eq!(decoded.run_sha256, run.run_sha256());
+        assert_eq!(decoded.arm_kind, Cycle4ArmKindV1::TreatmentRb.wire_v1());
+        assert_eq!(
+            decoded.genesis_checkpoint_manifest_sha256,
+            identity.checkpoint_manifest_sha256
+        );
+        assert_eq!(
+            decoded.genesis_train_state_sha256,
+            identity.train_state_sha256
+        );
+        // Verify-or-publish is idempotent: the second open reads it back and
+        // agrees, leaving the bytes untouched.
+        let before = std::fs::read(&path).expect("read");
+        ensure_origin_record_v1(&dir, Cycle4ArmKindV1::TreatmentRb, &run, &identity)
+            .expect("an agreeing origin record is accepted");
+        assert_eq!(std::fs::read(&path).expect("read"), before);
+        assert!(
+            !dir.read_dir()
+                .expect("read dir")
+                .filter_map(std::result::Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-")),
+            "no temporary file may survive a publication"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_origin_record_that_binds_something_else_fails_closed_v1() {
+        let dir = fresh_temp_dir_v1("origin-conflict");
+        let run = seeded_run_for_arm_v1(Cycle4ArmKindV1::TreatmentRb);
+        let identity = genesis_identity_fixture_v1(1);
+        ensure_origin_record_v1(&dir, Cycle4ArmKindV1::TreatmentRb, &run, &identity)
+            .expect("publish");
+        // A different genesis checkpoint under the same run and arm.
+        let error = ensure_origin_record_v1(
+            &dir,
+            Cycle4ArmKindV1::TreatmentRb,
+            &run,
+            &genesis_identity_fixture_v1(2),
+        )
+        .expect_err("a different genesis checkpoint is a conflict");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_origin_record_conflict");
+        // A different arm kind on the same chain directory.
+        let error = ensure_origin_record_v1(&dir, Cycle4ArmKindV1::ControlR, &run, &identity)
+            .expect_err("a different arm is a conflict");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_origin_record_conflict");
+        // A different run identity.
+        let other_run = seeded_run_for_arm_v1(Cycle4ArmKindV1::ControlR);
+        assert_ne!(other_run.run_sha256(), run.run_sha256());
+        let error = ensure_origin_record_v1(&dir, Cycle4ArmKindV1::ControlR, &other_run, &identity)
+            .expect_err("a different run is a conflict");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_origin_record_conflict");
+        // Bytes that are not an origin record at all.
+        let path = dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+        std::fs::write(&path, b"{}").expect("write");
+        let error = ensure_origin_record_v1(&dir, Cycle4ArmKindV1::TreatmentRb, &run, &identity)
+            .expect_err("an undecodable record is a conflict");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_origin_record_conflict");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_run_without_a_pinned_origin_cannot_have_an_origin_record_v1() {
+        // The unseeded fixture declares no `opponent_ladder_initialization`,
+        // so there is nothing to restate; every arm kind fails closed.
+        let dir = fresh_temp_dir_v1("origin-unpinned");
+        for arm in [
+            Cycle4ArmKindV1::ControlR,
+            Cycle4ArmKindV1::StaticRb,
+            Cycle4ArmKindV1::TreatmentRb,
+        ] {
+            let run = run_for_arm_v1(arm);
+            let error = ensure_origin_record_v1(&dir, arm, &run, &genesis_identity_fixture_v1(3))
+                .expect_err("no pinned parent, no origin record");
+            assert_eq!(error.code_v1(), "cycle4_arm_v1_genesis_requires_origin");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_bootstrap_retry_adopts_a_genesis_only_store_and_refuses_a_trained_one_v1() {
+        // Review finding: the Store commit and the origin-record write are
+        // two steps. A process that died between them leaves a
+        // generation-0 Store with no origin record, and refusing that
+        // stranded the root, because the wrapper then skips bootstrap
+        // (genesis exists) while every retry is rejected.
+        let store_root = PathBuf::from("D:/cycle4/arm-a/store");
+        bootstrap_may_adopt_seeded_store_v1(0, &store_root)
+            .expect("a genesis-only Store is exactly what an interrupted bootstrap leaves");
+        for generation in [1_u64, 4, 128, 2048] {
+            let error = bootstrap_may_adopt_seeded_store_v1(generation, &store_root)
+                .expect_err("a trained Store is never adopted by a bootstrap");
+            assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+            assert_eq!(error.exit_code_v1(), 3);
+            assert_eq!(error.code_v1(), "cycle4_arm_v1_genesis_already_present");
+            assert!(error.detail_v1().contains(&generation.to_string()));
+        }
+    }
+
+    #[test]
+    fn a_bootstrap_retry_publishes_the_origin_record_the_lost_process_owed_v1() {
+        // The adopt path reads the four genesis hashes back off the Store's
+        // own generation-0 checkpoint and finishes the publication. Modelled
+        // here at the two steps a Store hands over: the identity it reports,
+        // and the record that identity implies.
+        let dir = fresh_temp_dir_v1("origin-retry");
+        let run = seeded_run_for_arm_v1(Cycle4ArmKindV1::ControlR);
+        let identity = genesis_identity_fixture_v1(7);
+        let path = dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+        assert!(!path.exists(), "the lost process never wrote it");
+        bootstrap_may_adopt_seeded_store_v1(0, Path::new("D:/cycle4/arm-a/store"))
+            .expect("adoptable");
+        ensure_origin_record_v1(&dir, Cycle4ArmKindV1::ControlR, &run, &identity)
+            .expect("the retry finishes the publication");
+        assert!(path.is_file());
+        // And the interval path that follows agrees with what it published.
+        ensure_origin_record_v1(&dir, Cycle4ArmKindV1::ControlR, &run, &identity)
+            .expect("the first interval verifies the same record");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ------------------------------------------------------------------
     // Slot locator and roster binding
     // ------------------------------------------------------------------
 
@@ -2368,6 +2872,138 @@ mod tests {
 
         let good = locator_for_v1(&manifest);
         decode_slot_locator_v1(&encode(&good)).expect("a well-formed locator decodes");
+    }
+
+    // ------------------------------------------------------------------
+    // Own-run generation translation (trainee-local label -> Store)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn own_run_slot_labels_translate_by_the_896_offset_v1() {
+        // The manifest labels every slot trainee-locally; the arm's own
+        // Store counts 0..=2048 for 896..=2944, so an own-run label of
+        // `896 + n` is read at Store generation `n`.
+        let arm_run = foreign_run_sha256_v1();
+        for refresh_index in [0_u64, 1, 4, 16] {
+            let slots = manifest_slots_v1(refresh_index, &arm_run, FOREIGN_BASE_SEED_V1);
+            let program_update = refresh_index * CYCLE4_REFRESH_INTERVAL_V1;
+            // current-1 is own-run at every index.
+            let current_1 = &slots[5];
+            assert_eq!(
+                current_1.source_generation,
+                CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1 + program_update,
+                "the manifest label stays trainee-local"
+            );
+            assert_eq!(
+                store_generation_for_slot_v1(current_1, &arm_run).expect("current-1 translates"),
+                program_update,
+                "the Store is read at the translated generation"
+            );
+        }
+    }
+
+    #[test]
+    fn historical_zero_translates_only_once_it_is_own_run_v1() {
+        let arm_run = foreign_run_sha256_v1();
+        // Indices 0..=3 read the cycle-3 lineage store, an OTHER run: its
+        // own numbering applies and nothing is translated.
+        for refresh_index in 0..=3_u64 {
+            let slots = manifest_slots_v1(refresh_index, &arm_run, FOREIGN_BASE_SEED_V1);
+            let historical_0 = &slots[2];
+            assert_eq!(
+                historical_0.source_run_sha256,
+                CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1
+            );
+            let label = CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1
+                + refresh_index * CYCLE4_REFRESH_INTERVAL_V1
+                - CYCLE4_HISTORICAL_LAG_V1;
+            assert_eq!(historical_0.source_generation, label);
+            assert_eq!(
+                store_generation_for_slot_v1(historical_0, &arm_run).expect("other run"),
+                label,
+                "an other-run slot is read at its label verbatim"
+            );
+        }
+        // From index 4 it is the arm's own store, so the same lag resolves
+        // at the translated generation.
+        let slots = manifest_slots_v1(4, &arm_run, FOREIGN_BASE_SEED_V1);
+        let historical_0 = &slots[2];
+        assert_eq!(historical_0.source_run_sha256, arm_run);
+        assert_eq!(
+            historical_0.source_generation,
+            CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1 + 4 * CYCLE4_REFRESH_INTERVAL_V1
+                - CYCLE4_HISTORICAL_LAG_V1
+        );
+        assert_eq!(
+            store_generation_for_slot_v1(historical_0, &arm_run).expect("own run"),
+            4 * CYCLE4_REFRESH_INTERVAL_V1 - CYCLE4_HISTORICAL_LAG_V1,
+            "historical-0 at refresh 4 is read at store generation 0"
+        );
+    }
+
+    #[test]
+    fn every_other_run_slot_keeps_its_own_lineage_numbering_v1() {
+        // The anchors, the historical-1 rotation, current-0, and the two
+        // frozen fallbacks all name completed runs that number their own
+        // stores; translation must never touch them.
+        let arm_run = foreign_run_sha256_v1();
+        let slots = manifest_slots_v1(1, &arm_run, FOREIGN_BASE_SEED_V1);
+        for index in [0_usize, 1, 3, 4, 6, 7] {
+            let slot = &slots[index];
+            assert_ne!(slot.source_run_sha256, arm_run);
+            assert_eq!(
+                store_generation_for_slot_v1(slot, &arm_run).expect("other run"),
+                slot.source_generation
+            );
+        }
+        assert_eq!(
+            slots[0].source_generation,
+            CYCLE4_ANCHOR_0_V1.source_generation
+        );
+        assert_eq!(
+            slots[1].source_generation,
+            CYCLE4_ANCHOR_1_V1.source_generation
+        );
+        assert_eq!(
+            slots[4].source_generation,
+            CYCLE4_CURRENT_0_V1.source_generation
+        );
+    }
+
+    #[test]
+    fn an_own_run_label_below_the_program_start_fails_closed_v1() {
+        let arm_run = foreign_run_sha256_v1();
+        let mut slots = manifest_slots_v1(1, &arm_run, FOREIGN_BASE_SEED_V1);
+        for label in [0_u64, 1, CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1 - 1] {
+            slots[5].source_generation = label;
+            let error = store_generation_for_slot_v1(&slots[5], &arm_run)
+                .expect_err("no store generation can carry this label");
+            assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+            assert_eq!(error.code_v1(), "cycle4_arm_v1_own_run_slot_generation");
+        }
+        // The boundary case is admissible: 896 is the arm's own genesis.
+        slots[5].source_generation = CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1;
+        assert_eq!(
+            store_generation_for_slot_v1(&slots[5], &arm_run).expect("the program start"),
+            0
+        );
+    }
+
+    #[test]
+    fn a_store_without_the_translated_generation_fails_closed_v1() {
+        // Every slot is translated before a single file is opened, and the
+        // Store is then asked for exactly the translated generation. A store
+        // that cannot supply it never yields an occupant: resolution fails
+        // closed rather than falling back to the label or to another
+        // generation.
+        let arm_run = foreign_run_sha256_v1();
+        let genesis = genesis_manifest_v1();
+        let roots: Vec<PathBuf> = (0..CYCLE4_SLOT_COUNT_V1)
+            .map(|index| PathBuf::from(format!("D:/cycle4/absent-slot-{index}")))
+            .collect();
+        let error = resolve_population_opponent_cycle4_v1(&genesis, &roots, &arm_run, None)
+            .expect_err("a store that carries nothing cannot occupy a slot");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_population_run_read");
     }
 
     // ------------------------------------------------------------------
@@ -2508,7 +3144,7 @@ mod tests {
         let contract = contract_at_v1(2);
         validate_interval_stop_v1(384, 256, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
             .expect("256 + 128 == 384");
-        for stop in [256_u64, 383, 385, 512] {
+        for stop in [383_u64, 385, 512] {
             assert_eq!(
                 validate_interval_stop_v1(
                     stop,
@@ -2523,6 +3159,128 @@ mod tests {
                 "cycle4_arm_v1_interval_stop"
             );
         }
+        // The stop names the whole interval, so it is always a multiple of
+        // the pre-registered 128; anything else names no interval at all.
+        for stop in [0_u64, 64, 127, 129, 200] {
+            assert_eq!(
+                validate_interval_stop_v1(
+                    stop,
+                    0,
+                    4,
+                    &contract_at_v1(0),
+                    Cycle4ArmKindV1::TreatmentRb,
+                    None
+                )
+                .expect_err("not a whole refresh interval")
+                .code_v1(),
+                "cycle4_arm_v1_interval_stop"
+            );
+        }
+    }
+
+    #[test]
+    fn a_completed_interval_resumes_idempotently_at_its_stop_v1() {
+        // Review finding P1: a process that committed this interval's final
+        // generation and died before returning resumes exactly at the stop.
+        // That is a validated completion, not a contract violation: the
+        // caller breaks immediately, revalidates the whole Store, and
+        // returns the outcome the lost process would have returned.
+        let contract = contract_at_v1(1);
+        validate_interval_stop_v1(256, 256, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
+            .expect("refresh 1 opens 128 and stops at 256");
+        // The ordinary start position for the same interval still passes.
+        validate_interval_stop_v1(256, 128, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
+            .expect("128 + 128 == 256");
+        // Both positions are judged against the same manifest: resuming at
+        // the stop of an interval this manifest does not open is still a
+        // position mismatch.
+        assert_eq!(
+            validate_interval_stop_v1(
+                256,
+                256,
+                4,
+                &contract_at_v1(2),
+                Cycle4ArmKindV1::TreatmentRb,
+                None
+            )
+            .expect_err("manifest 2 opens 256, not 128")
+            .code_v1(),
+            "cycle4_arm_v1_resume_position_mismatch"
+        );
+        // A position between the start and the stop is an interrupted
+        // attempt resuming, which this same manifest and stop still cover.
+        validate_interval_stop_v1(256, 192, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
+            .expect("an interrupted attempt resumes mid-interval");
+    }
+
+    #[test]
+    fn an_interrupted_interval_resumes_anywhere_inside_it_v1() {
+        // The wrapper restarts an interrupted attempt against the SAME stop
+        // it was given, so the Store it reopens sits at whatever checkpoint
+        // boundary that attempt reached. Interval 384..=512 is refresh 3's.
+        let contract = contract_at_v1(3);
+        let segment = 4_u64;
+        for resume in [384_u64, 388, 392, 508, 512] {
+            validate_interval_stop_v1(
+                512,
+                resume,
+                segment,
+                &contract,
+                Cycle4ArmKindV1::TreatmentRb,
+                None,
+            )
+            .unwrap_or_else(|error| {
+                panic!("resume {resume} is inside the interval this stop names: {error}")
+            });
+        }
+        // Off a checkpoint-segment boundary: the Store never publishes such a
+        // generation, so naming one is a contract error, not a near miss.
+        for resume in [385_u64, 386, 387, 511] {
+            assert_eq!(
+                validate_interval_stop_v1(
+                    512,
+                    resume,
+                    segment,
+                    &contract,
+                    Cycle4ArmKindV1::TreatmentRb,
+                    None
+                )
+                .expect_err("not a checkpoint segment boundary")
+                .code_v1(),
+                "cycle4_arm_v1_interval_stop"
+            );
+        }
+        // Before the interval's start, and past its stop.
+        for resume in [0_u64, 256, 380, 516, 640] {
+            assert_eq!(
+                validate_interval_stop_v1(
+                    512,
+                    resume,
+                    segment,
+                    &contract,
+                    Cycle4ArmKindV1::TreatmentRb,
+                    None
+                )
+                .expect_err("outside the interval this stop names")
+                .code_v1(),
+                "cycle4_arm_v1_interval_stop"
+            );
+        }
+        // The manifest rule still binds the interval's START, so a
+        // mid-interval resume under the wrong manifest is still rejected.
+        assert_eq!(
+            validate_interval_stop_v1(
+                512,
+                388,
+                segment,
+                &contract_at_v1(4),
+                Cycle4ArmKindV1::TreatmentRb,
+                None
+            )
+            .expect_err("refresh 4 opens 512, not 384")
+            .code_v1(),
+            "cycle4_arm_v1_resume_position_mismatch"
+        );
     }
 
     #[test]
@@ -2534,6 +3292,28 @@ mod tests {
                 .code_v1(),
             "cycle4_arm_v1_interval_stop"
         );
+        // The last TRAINED interval is the one refresh 15 opens (refresh 16
+        // is the final panel boundary, not an interval start), and it is
+        // admissible from either position.
+        let final_interval = contract_at_v1(CYCLE4_REFRESH_MAX_INDEX_V1 - 1);
+        validate_interval_stop_v1(
+            2048,
+            1920,
+            4,
+            &final_interval,
+            Cycle4ArmKindV1::TreatmentRb,
+            None,
+        )
+        .expect("the final interval ends exactly at the program end");
+        validate_interval_stop_v1(
+            2048,
+            2048,
+            4,
+            &final_interval,
+            Cycle4ArmKindV1::TreatmentRb,
+            None,
+        )
+        .expect("a completed final interval resumes idempotently");
     }
 
     #[test]
@@ -2882,14 +3662,28 @@ mod tests {
         let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 3);
-        assert!(access.publish_sidecar_record_v4(1, &bytes));
         let path = dir.join("baseline-update-00000001.record.json");
+        assert!(access.stage_sidecar_record_v4(1, &bytes));
+        // Review finding P1: staging writes nothing. A process that dies
+        // before the Store commits this update leaves no sidecar for an
+        // update the Store does not contain.
+        assert!(
+            !path.exists(),
+            "a staged sidecar must not exist at its immutable name yet"
+        );
+        // It is nevertheless this update's record for every reader inside
+        // the producing process, which is what lets the producer revalidate
+        // it through the resume path before training the next update.
+        assert_eq!(access.sidecar_record_bytes_v4(1).expect("staged"), bytes);
+        assert!(access.commit_staged_sidecar_records_v4());
         assert!(path.is_file(), "sidecar must use the contract's exact name");
         assert_eq!(std::fs::read(&path).expect("read"), bytes);
-        // Crash replay of the identical publication is accepted; different
-        // bytes for the same update are not.
-        assert!(access.publish_sidecar_record_v4(1, &bytes));
-        assert!(!access.publish_sidecar_record_v4(1, b"different"));
+        // Committing again is a no-op: the staged set is empty.
+        assert!(access.commit_staged_sidecar_records_v4());
+        // Crash replay of the identical record is accepted; different bytes
+        // for the same update are not.
+        assert!(access.stage_sidecar_record_v4(1, &bytes));
+        assert!(!access.stage_sidecar_record_v4(1, b"different"));
         assert!(
             !dir.read_dir()
                 .expect("read dir")
@@ -2897,6 +3691,52 @@ mod tests {
                 .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-")),
             "no temporary file may survive a publication"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_uncommitted_segment_leaves_no_sidecar_behind_v1() {
+        // Review finding P1: the producer stages every update's sidecar
+        // while preparing a segment. If that segment never reaches the
+        // Store, the chain directory must be exactly as it was, so the
+        // retry has nothing orphaned to reproduce or clean up.
+        let dir = fresh_temp_dir_v1("sidecar-abandoned");
+        let mut state = NativeBaselineStateV4::empty_v4();
+        {
+            let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+            for update_index in 1_u64..=4 {
+                let bytes = synthetic_sidecar_v1(&state, update_index, update_index as u8);
+                assert!(access.stage_sidecar_record_v4(update_index, &bytes));
+                state = access
+                    .replay_sidecar_v1(&state, update_index)
+                    .expect("staged bytes replay inside the producing process");
+            }
+            // The segment is abandoned here: no commit.
+        }
+        assert_eq!(
+            dir.read_dir()
+                .expect("read dir")
+                .filter_map(std::result::Result::ok)
+                .count(),
+            0,
+            "an abandoned segment must leave the chain directory untouched"
+        );
+        // The retry stages and commits the same updates cleanly.
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let mut retry = NativeBaselineStateV4::empty_v4();
+        for update_index in 1_u64..=4 {
+            let bytes = synthetic_sidecar_v1(&retry, update_index, update_index as u8);
+            assert!(access.stage_sidecar_record_v4(update_index, &bytes));
+            retry = access
+                .replay_sidecar_v1(&retry, update_index)
+                .expect("replay");
+        }
+        assert!(access.commit_staged_sidecar_records_v4());
+        for update_index in 1_u64..=4 {
+            assert!(dir
+                .join(sidecar_record_name_v4(update_index).expect("name"))
+                .is_file());
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2926,11 +3766,12 @@ mod tests {
         let mut expected = NativeBaselineStateV4::empty_v4();
         for update_index in 1_u64..=4 {
             let bytes = synthetic_sidecar_v1(&expected, update_index, update_index as u8);
-            assert!(access.publish_sidecar_record_v4(update_index, &bytes));
+            assert!(access.stage_sidecar_record_v4(update_index, &bytes));
             expected = access
                 .replay_sidecar_v1(&expected, update_index)
                 .expect("replay");
         }
+        assert!(access.commit_staged_sidecar_records_v4());
         let resolved = access
             .committed_state_for_generation_v4(4)
             .expect("one boundary ahead of an empty chain is reconstructible");
@@ -2968,7 +3809,7 @@ mod tests {
         .expect("tampered record still encodes")
         .canonical_bytes()
         .to_vec();
-        assert!(access.publish_sidecar_record_v4(1, &tampered));
+        assert!(access.stage_sidecar_record_v4(1, &tampered));
         assert!(access.replay_sidecar_v1(&prior, 1).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }

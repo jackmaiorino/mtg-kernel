@@ -19,7 +19,11 @@
 //! Store genesis is published at generation 0 carrying the cycle-3 g896
 //! weights, so trainee-local 896 is store generation 0 and trainee-local
 //! 2944 is store generation 2048. The launcher proves
-//! `--stop-generation == resume_position + 128` before training.
+//! `--stop-generation` names a whole interval (a multiple of 128 at or below
+//! 2048) and that the Store resumes at a checkpoint-segment boundary inside
+//! that interval before training. An interrupted attempt is restarted against
+//! the SAME `--stop-generation` it was first given, whatever boundary its
+//! Store reached; a Store already at the stop completes idempotently.
 //!
 //! Bounded preflight provision (Section 6's CONTROL preflight ladder): the
 //! ladder needs two SHORT updates per throwaway Store prefix, which the

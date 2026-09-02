@@ -2766,26 +2766,32 @@ pub(crate) fn advance_baseline_v4_for_group_v1(
 
 /// Round B producer-side step: mints the `baseline_v4` sidecar for one
 /// just-built update group from that group's own persisted evidence, hands
-/// it to `access` for atomic publication into the chain directory, and then
-/// re-reads and revalidates it through exactly the validator path a later
-/// resume will take. Publication therefore always happens before the next
-/// update begins, and a sidecar that the validator would reject can never be
-/// left behind as the committed record for that update
-/// (`docs/native_cycle4_arm_launcher_v1.md` Section 2).
+/// it to `access` to STAGE, and then re-reads and revalidates it through
+/// exactly the validator path a later resume will take. A sidecar the
+/// validator would reject therefore never becomes that update's record.
+///
+/// Staging, not publication, is what happens here: the record reaches its
+/// immutable name only when the caller commits the staged set after the
+/// Store durably commits the segment's evidence
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 2 -- "published
+/// atomically right after the Store commits update `t` and BEFORE update
+/// `t + 1` begins"). A segment abandoned between preparation and the Store
+/// commit thus leaves no sidecar behind for an update the Store never
+/// contained.
 ///
 /// Returns the recomputed successor state, which the caller installs as the
 /// next update's `c_t`.
-pub(crate) fn publish_and_validate_group_baseline_v4_v1(
+pub(crate) fn stage_and_validate_group_baseline_v4_v1(
     run: &ValidatedTrainRunV2,
     group: &ValidatedUpdateGroupV1,
     prior_state: &NativeBaselineStateV4,
     access: &dyn BaselineChainAccessV4,
 ) -> DispatchResult<NativeBaselineStateV4> {
     let record = mint_update_group_baseline_sidecar_v4_v1(run, group, prior_state)?;
-    // Published under the evidence's own update index, which is the index
-    // the validator below reads back; a validated group binds the two
-    // together, so this can never diverge on a real Store group.
-    if !access.publish_sidecar_record_v4(record.update_index(), record.canonical_bytes()) {
+    // Staged under the evidence's own update index, which is the index the
+    // validator below reads back; a validated group binds the two together,
+    // so this can never diverge on a real Store group.
+    if !access.stage_sidecar_record_v4(record.update_index(), record.canonical_bytes()) {
         return Err(UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing);
     }
     advance_baseline_v4_for_group_v1(run, group, prior_state, access)
@@ -6644,7 +6650,7 @@ mod tests {
             None
         }
 
-        fn publish_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
+        fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
             self.published
                 .borrow_mut()
                 .insert(update_index, record_bytes.to_vec());
@@ -6668,35 +6674,32 @@ mod tests {
     }
 
     #[test]
-    fn baseline_v4_producer_publishes_before_validating_and_returns_the_successor() {
+    fn baseline_v4_producer_stages_before_validating_and_returns_the_successor() {
         let fixture = baseline_dispatch_fixture_v1();
         let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
         let access = RecordingBaselineAccessV1::new_v1();
-        let successor = publish_and_validate_group_baseline_v4_v1(
+        let successor = stage_and_validate_group_baseline_v4_v1(
             &fixture.run,
             &group,
             &fixture.prior_state,
             &access,
         )
-        .expect("mint, publish, then validate through the resume path");
+        .expect("mint, stage, then validate through the resume path");
         assert_eq!(successor.cell_count_v4(), 2);
-        let published = access
+        let staged = access
             .sidecar_record_bytes_v4(fixture.sidecar_parts.update_index)
-            .expect("the sidecar must be published before validation returns");
-        assert_eq!(
-            published,
-            sidecar_bytes_from_parts_v1(&fixture.sidecar_parts)
-        );
+            .expect("the sidecar must be staged before validation returns");
+        assert_eq!(staged, sidecar_bytes_from_parts_v1(&fixture.sidecar_parts));
         // The successor the producer returns is exactly what a later resume
-        // recomputes from the published bytes alone.
+        // recomputes from the staged bytes alone.
         let resumed =
             advance_baseline_v4_for_group_v1(&fixture.run, &group, &fixture.prior_state, &access)
-                .expect("resume must accept the published sidecar");
+                .expect("resume must accept the staged sidecar");
         assert_eq!(resumed, successor);
     }
 
     #[test]
-    fn baseline_v4_producer_fails_closed_when_publication_fails() {
+    fn baseline_v4_producer_fails_closed_when_staging_fails() {
         struct RefusingAccessV1;
         impl BaselineSidecarSourceV4 for RefusingAccessV1 {
             fn sidecar_record_bytes_v4(&self, _update_index: u64) -> Option<Vec<u8>> {
@@ -6710,19 +6713,19 @@ mod tests {
             ) -> Option<NativeBaselineStateV4> {
                 None
             }
-            fn publish_sidecar_record_v4(&self, _update_index: u64, _bytes: &[u8]) -> bool {
+            fn stage_sidecar_record_v4(&self, _update_index: u64, _bytes: &[u8]) -> bool {
                 false
             }
         }
         let fixture = baseline_dispatch_fixture_v1();
         let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
-        let error = publish_and_validate_group_baseline_v4_v1(
+        let error = stage_and_validate_group_baseline_v4_v1(
             &fixture.run,
             &group,
             &fixture.prior_state,
             &RefusingAccessV1,
         )
-        .expect_err("a refused publication must fail the update closed");
+        .expect_err("a refused staging must fail the update closed");
         assert_eq!(
             error,
             UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing

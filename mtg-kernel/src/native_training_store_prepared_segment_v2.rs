@@ -41,8 +41,8 @@ use crate::native_training_store_segment_representability_v2::{
     SegmentRepresentabilityPlanV2,
 };
 use crate::native_training_store_update_group_v1::{
-    build_compact_update_group_v2, publish_and_validate_group_baseline_v4_v1,
-    resume_update_evidence_chain_v1, validate_prepared_execution_config_v1,
+    build_compact_update_group_v2, resume_update_evidence_chain_v1,
+    stage_and_validate_group_baseline_v4_v1, validate_prepared_execution_config_v1,
     UpdateEvidenceChainContextV1, ValidatedUpdateGroupV1,
 };
 use crate::native_training_store_update_group_v4::BaselineChainAccessV4;
@@ -586,10 +586,13 @@ pub fn prepare_segment_v2<'executor>(
 /// Round B sibling of [`prepare_segment_v2`] for a `trainer_v4_candidate`
 /// run (`docs/native_cycle4_arm_launcher_v1.md` Sections 2-3). Identical in
 /// every frozen respect; additionally, per update, it mints that update's
-/// `baseline_v4` sidecar from the just-built evidence, publishes it
-/// atomically through `access` BEFORE the next update begins, revalidates it
-/// through the same path a later resume takes, and installs the recomputed
-/// successor as the next update's committed `c_t`.
+/// `baseline_v4` sidecar from the just-built evidence, STAGES it through
+/// `access` BEFORE the next update begins, revalidates it through the same
+/// path a later resume takes, and installs the recomputed successor as the
+/// next update's committed `c_t`. Staged sidecars become durable at their
+/// immutable names only when the caller commits them after the Store
+/// commits this segment (`commit_staged_sidecar_records_v4`), so a failure
+/// anywhere between preparation and that commit orphans nothing.
 ///
 /// The caller must have installed the segment's starting baseline state on
 /// `executor` (`set_baseline_state_v4`) before calling; this function proves
@@ -754,14 +757,19 @@ fn prepare_segment_impl_v2<'executor>(
         )
         .map_err(|_| evidence_error_v2())?;
         // Round B, `docs/native_cycle4_arm_launcher_v1.md` Section 2: the
-        // sidecar for update `t` is published atomically here -- after the
+        // sidecar for update `t` is minted and STAGED here -- after the
         // Store's own evidence for `t` exists and strictly before update
-        // `t + 1` begins -- and the successor `c_{t+1}` it proves is
-        // installed on the candidate before the next iteration trains.
+        // `t + 1` begins -- revalidated through the resume path, and the
+        // successor `c_{t+1}` it proves is installed on the candidate before
+        // the next iteration trains. It reaches its immutable name only when
+        // the caller commits the staged set after the Store durably commits
+        // this segment, so a segment abandoned anywhere below (continuations,
+        // artifact bounds, or the publish itself) leaves no sidecar for an
+        // update the Store does not contain.
         if let Some(access) = baseline_v4 {
             let prior = baseline_state.as_ref().ok_or_else(evidence_error_v2)?;
             let next_state =
-                publish_and_validate_group_baseline_v4_v1(run, advance.group(), prior, access)
+                stage_and_validate_group_baseline_v4_v1(run, advance.group(), prior, access)
                     .map_err(|_| evidence_error_v2())?;
             candidate.set_baseline_state_v4(Some(next_state.clone()));
             baseline_state = Some(next_state);

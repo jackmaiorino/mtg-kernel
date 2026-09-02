@@ -32,6 +32,19 @@ both because cycle-4's Store and manifest schema are newer than v1's:
      would not even be meaningful here; the post-hoc check achieves the same
      "never trust an unverified identity" guarantee against the SAME wire
      document v1 itself also cross-checked in `validate_outcome`.
+  1b. Own-run generation translation: the manifest labels every slot in the
+     contract's trainee-local numbering, but a cycle-4 arm is a NEW run
+     identity seeded from the cycle-3 g896 checkpoint, so its own Store
+     restarts at generation 0 and counts 0..=2048 for 896..=2944. Any slot
+     whose `source_run_sha256` is the manifest's own `trainee_run_sha256`
+     (current-1 always, historical-0 from refresh index 4) is therefore
+     loaded at `source_generation - 896`, and the outcome document's
+     self-reported generation is checked against that translated value. This
+     mirrors the launcher's `store_generation_for_slot_v1`
+     (`native_cycle4_arm_v1.rs`) exactly; the two must never drift. Slots
+     naming other runs keep their labels verbatim, since those runs number
+     their own Stores.
+
   2. No concurrency screen: v1 first measured whether N parallel replicas of
      one arm were bit-identical and fast enough before committing to
      parallel execution across the full matrix. Cycle-4's round-C contract
@@ -196,6 +209,12 @@ EXPECTED_ROLES = (
 )
 
 
+# The contract's trainee-local start generation. An own-run slot's manifest
+# label is this many generations above the arm Store's own numbering; see the
+# module docstring and `store_generation_for_slot`.
+TRAINEE_START_LOCAL_GENERATION = 896
+
+
 class PanelRunnerError(ValueError):
     """Any fail-closed rejection: malformed input, an outcome that does not
     match its spec or the manifest's declared identity, or a reused pair
@@ -301,6 +320,31 @@ def panel_filename(refresh_index: int) -> str:
     return f"refresh-{refresh_index:02d}.panel.json"
 
 
+def store_generation_for_slot(slot: dict, trainee_run_sha256: str) -> int:
+    """The generation this slot is actually loaded at in ITS OWN Store.
+
+    Slots bound to the arm's own run carry trainee-local labels that sit 896
+    above that Store's numbering (the arm restarts at generation 0), so they
+    translate; slots naming other runs are returned unchanged. A label below
+    896 on an own-run slot names no Store generation at all and fails closed,
+    matching the launcher's `store_generation_for_slot_v1`."""
+    generation = slot["source_generation"]
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+        raise PanelRunnerError(
+            f"slot {slot.get('slot_index')!r} source_generation must be a "
+            f"non-negative int: {generation!r}"
+        )
+    if slot["source_run_sha256"] != trainee_run_sha256:
+        return generation
+    if generation < TRAINEE_START_LOCAL_GENERATION:
+        raise PanelRunnerError(
+            f"slot {slot.get('slot_index')!r} names the arm's own run at trainee-local "
+            f"generation {generation}, below the program start "
+            f"{TRAINEE_START_LOCAL_GENERATION}"
+        )
+    return generation - TRAINEE_START_LOCAL_GENERATION
+
+
 def load_manifest(path: Path) -> tuple[bytes, str, int, list[dict]]:
     """Reads the manifest's exact bytes, its own SHA-256, its own
     `refresh_index` (the panel this run produces evaluates THIS index's
@@ -311,7 +355,12 @@ def load_manifest(path: Path) -> tuple[bytes, str, int, list[dict]]:
     roles, required fields present); the manifest's full semantic contract
     -- roster identities, weight arithmetic, chain linkage against its
     predecessor -- was already the Rust builder's job when this file was
-    constructed, and is not re-verified here."""
+    constructed, and is not re-verified here.
+
+    Each returned slot additionally carries a derived `store_generation`: the
+    generation that slot is loaded at in its own Store, translated by the 896
+    offset for slots bound to the arm's own run (`store_generation_for_slot`).
+    It is a local convenience only and never reaches any emitted document."""
     raw = path.read_bytes()
     manifest_sha256 = sha256_bytes(raw)
     document = json.loads(raw.decode("utf-8-sig"))
@@ -348,6 +397,11 @@ def load_manifest(path: Path) -> tuple[bytes, str, int, list[dict]]:
         ordered[index] = entry
     if any(slot is None for slot in ordered):
         raise PanelRunnerError("manifest is missing a slot")
+    trainee_run_sha256 = document.get("trainee_run_sha256")
+    if not isinstance(trainee_run_sha256, str):
+        raise PanelRunnerError("manifest must carry a trainee_run_sha256 string")
+    for slot in ordered:
+        slot["store_generation"] = store_generation_for_slot(slot, trainee_run_sha256)
     return raw, manifest_sha256, refresh_index, ordered
 
 
@@ -426,10 +480,13 @@ def matchup_environment(
     opponent = slots[spec.higher_slot]
     return {
         "H2H_CANDIDATE_STORE_ROOT": str(locator[spec.lower_slot]),
-        "H2H_CANDIDATE_GEN": str(candidate["source_generation"]),
+        # STORE generations, translated by `store_generation_for_slot`: an
+        # own-run slot's trainee-local label does not exist in the arm's own
+        # Store, which restarted at generation 0.
+        "H2H_CANDIDATE_GEN": str(candidate["store_generation"]),
         "H2H_CANDIDATE_USE_STORE_RUN": "1",
         "H2H_OPPONENT_STORE_ROOT": str(locator[spec.higher_slot]),
-        "H2H_OPPONENT_GEN": str(opponent["source_generation"]),
+        "H2H_OPPONENT_GEN": str(opponent["store_generation"]),
         "H2H_PAIRS": str(spec.pair_count),
         "H2H_EVAL_SEED": str(spec.evaluation_seed),
         "H2H_ENVIRONMENT_RANDOMIZATION_V2": "1",
@@ -506,7 +563,9 @@ def summarize_outcome(outcome: dict, spec: MatchupSpec, candidate: dict, opponen
         identity = outcome.get(side)
         if not isinstance(identity, dict) or (
             identity.get("run_sha256") != slot["source_run_sha256"]
-            or identity.get("generation") != slot["source_generation"]
+            # The outcome reports the generation the Store actually loaded,
+            # which for an own-run slot is the translated one.
+            or identity.get("generation") != slot["store_generation"]
             or identity.get("checkpoint_manifest_sha256") != slot["checkpoint_manifest_sha256"]
             or identity.get("checkpoint_payload_sha256") != slot["checkpoint_payload_sha256"]
             or identity.get("model_parameter_sha256") != slot["model_parameter_sha256"]

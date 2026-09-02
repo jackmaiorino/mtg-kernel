@@ -486,11 +486,32 @@ pub(crate) trait BaselineChainAccessV4: BaselineSidecarSourceV4 {
     /// leave the default no-op.
     fn observe_store_checkpoint_v4(&self, _generation_index: u64, _core_state_sha256: [u8; 32]) {}
 
-    /// Publishes the per-update sidecar record for `update_index` atomically
-    /// into the chain directory. Producer-only: every validation path leaves
-    /// this untouched. Returns `false` on any failure so the caller fails
-    /// closed rather than continuing with an unpublished sidecar.
-    fn publish_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool;
+    /// Stages the per-update sidecar record for `update_index`. Producer-only:
+    /// every validation path leaves this untouched. Returns `false` on any
+    /// failure so the caller fails closed rather than continuing with an
+    /// unstaged sidecar.
+    ///
+    /// A staged record is immediately readable through
+    /// [`BaselineSidecarSourceV4::sidecar_record_bytes_v4`] (the producer
+    /// revalidates it through the validator's own path before training the
+    /// next update) but is NOT yet at its immutable on-disk name. It reaches
+    /// that name only through [`Self::commit_staged_sidecar_records_v4`],
+    /// which the producer calls once the Store has durably committed the
+    /// evidence those updates belong to. A segment that fails between
+    /// preparation and the Store commit therefore leaves no sidecar for an
+    /// update the Store does not contain, and its retry has nothing orphaned
+    /// to reproduce.
+    fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool;
+
+    /// Publishes every sidecar staged since the last commit at its immutable
+    /// name, in ascending update order. Called only after the Store durably
+    /// committed the evidence for those updates. Returns `false` on any
+    /// failure so the caller fails closed. Implementations that have no
+    /// staging step (an in-memory double, say) leave the default, which
+    /// reports the empty commit as successful.
+    fn commit_staged_sidecar_records_v4(&self) -> bool {
+        true
+    }
 }
 
 /// Producer-side sibling of [`validate_update_baseline_v4`]: mints the

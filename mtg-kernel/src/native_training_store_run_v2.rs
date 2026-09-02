@@ -473,6 +473,12 @@ const CYCLE4_REFRESH_MANIFEST_SCHEMA_V1: &str = "mtg-kernel-population-refresh-m
 const CYCLE4_TRAINEE_START_GENERATION_V1: u64 = 896;
 const CYCLE4_TRAINEE_STOP_GENERATION_V1: u64 = 2_944;
 const CYCLE4_REFRESH_INTERVAL_V1: u64 = 128;
+/// The whole cycle-4 program in successful updates: the trainee-local span
+/// 896..=2944, which is also the arm Store's own 0..=2048 (review finding
+/// P2). The run schedule must request exactly this many updates, so an arm
+/// whose schedule stops short can never report a completed program.
+const CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1: u64 =
+    CYCLE4_TRAINEE_STOP_GENERATION_V1 - CYCLE4_TRAINEE_START_GENERATION_V1;
 const CYCLE4_ARM_KIND_CONTROL_R_V1: &str = "control-r";
 const CYCLE4_ARM_KIND_STATIC_RB_V1: &str = "static-rb";
 const CYCLE4_ARM_KIND_TREATMENT_RB_V1: &str = "treatment-rb";
@@ -1910,6 +1916,7 @@ fn validate_decoded_train_run_v2(
     validate_optimization_v2(&record.optimization)?;
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
     validate_population_program_v1(&record)?;
+    validate_population_program_v2_cycle4(&record)?;
     validate_response_exploiter_v1(&record)?;
     validate_limits_v2(&record.limits)?;
     validate_topology_v2(&record.topology)?;
@@ -2821,7 +2828,6 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
     if contracts.trainer_v4_candidate.is_some() {
         validate_trainer_v4_candidate_v1(contracts)?;
     }
-    validate_population_program_v2_cycle4(contracts)?;
     Ok(())
 }
 
@@ -2874,7 +2880,8 @@ fn validate_trainer_v4_candidate_v1(contracts: &TrainRunContractsV2) -> Result<(
 /// the population engine only, and `population_program_v2_cycle2` is a
 /// distinct, unrelated population-program successor -- see that field's own
 /// doc comment).
-fn validate_population_program_v2_cycle4(contracts: &TrainRunContractsV2) -> Result<()> {
+fn validate_population_program_v2_cycle4(record: &TrainRunV2) -> Result<()> {
+    let contracts = &record.contracts;
     let Some(program) = contracts.population_program_v2_cycle4.as_ref() else {
         return Ok(());
     };
@@ -2903,6 +2910,19 @@ fn validate_population_program_v2_cycle4(contracts: &TrainRunContractsV2) -> Res
     };
     if !arm_kind_consistent {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    // Review finding P2: the section states the program in generations, but
+    // what actually bounds training is the schedule's update count. Binding
+    // the two here is what stops a short schedule from letting an arm report
+    // a completed interval it never trained.
+    if program
+        .trainee_stop_generation
+        .checked_sub(program.trainee_start_generation)
+        != Some(CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1)
+        || record.schedule.requested_successful_updates != CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1
+        || !CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1.is_multiple_of(program.refresh_interval)
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding));
     }
     Ok(())
 }
@@ -3901,6 +3921,21 @@ pub(crate) fn test_fixture_bytes_trainer_v4_candidate_v1() -> Vec<u8> {
 pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_v1(arm_kind: &str) -> Vec<u8> {
     to_canonical_json_bytes_v1(
         &tests::population_program_v2_cycle4_record(arm_kind),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
+}
+
+/// The same cycle-4 arm record, additionally carrying the ladder tuple a real
+/// arm run declares: the ladder opponent identity, its pool, its schedule,
+/// and the `opponent_ladder_initialization` section that pins the parent
+/// checkpoint the arm's genesis is seeded from. Every arm that reached its
+/// first interval was bootstrapped from that section, so the launcher's
+/// origin-record tests need a record that actually has one.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_seeded_v1(arm_kind: &str) -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::population_program_v2_cycle4_seeded_record(arm_kind),
         CanonicalJsonNullPolicyV1::Forbid,
     )
     .unwrap()
@@ -9688,8 +9723,48 @@ mod tests {
         record.contracts.population_program_v2_cycle4 = Some(
             population_program_v2_cycle4_fixture_v1(arm_kind, static_pool),
         );
+        // The schedule carries the whole program: 2048 successful updates,
+        // the 896..=2944 trainee-local span in the arm Store's own numbering.
+        record.schedule.requested_successful_updates = CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1;
         refresh_derived(&mut record);
         record
+    }
+
+    /// The cycle-4 arm record widened with the ladder tuple a real arm run
+    /// carries, so `opponent_ladder_initialization` (the pinned genesis
+    /// parent) is present: that section is only admissible under the ladder
+    /// opponent identity, which in turn requires the pool and the v2
+    /// schedule.
+    pub(super) fn population_program_v2_cycle4_seeded_record(arm_kind: &str) -> TrainRunV2 {
+        let mut record = population_program_v2_cycle4_record(arm_kind);
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_seeded_record_validates() {
+        for arm_kind in [
+            CYCLE4_ARM_KIND_CONTROL_R_V1,
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let record = population_program_v2_cycle4_seeded_record(arm_kind);
+            let validated = validate_train_run_record_v2(record)
+                .unwrap_or_else(|error| panic!("{arm_kind} seeded record: {error:?}"));
+            assert!(validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_some());
+        }
     }
 
     #[test]
@@ -9862,6 +9937,37 @@ mod tests {
             refresh_derived(&mut record);
             assert!(validate_train_run_record_v2(record).is_err());
         }
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_binds_the_schedule_to_the_whole_program() {
+        // Review finding P2: the section states the program in generations,
+        // but the schedule is what actually bounds training. A run whose
+        // schedule stops short would report its own completion at a
+        // generation the program has not reached, and the arm launcher would
+        // return a silently undertrained interval.
+        let record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+        assert_eq!(
+            record.schedule.requested_successful_updates,
+            CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1
+        );
+        assert_eq!(CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1, 2_048);
+        for short in [1_024_u64, 2_044, 4_096] {
+            let mut record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+            record.schedule.requested_successful_updates = short;
+            refresh_derived(&mut record);
+            assert!(
+                validate_train_run_record_v2(record).is_err(),
+                "a schedule of {short} successful updates is not the cycle-4 program"
+            );
+        }
+        // A record without the cycle-4 section keeps its own schedule.
+        let base = coherent_v2_record();
+        assert_ne!(
+            base.schedule.requested_successful_updates,
+            CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1
+        );
+        validate_train_run_record_v2(base).expect("a non-cycle-4 record is unaffected");
     }
 
     #[test]
