@@ -4934,7 +4934,7 @@ mod tests {
             .as_str()
             .is_some_and(|value| value.len() == 64));
         assert!(decision["stability"]["halves_agree"].is_boolean());
-        assert_eq!(decision["ceiling_status"].as_str().is_some(), true);
+        assert!(decision["ceiling_status"].as_str().is_some());
         // Every simulation ends at exactly one leaf class, so the census
         // partitions the simulation count exactly.
         let census = &decision["leaf_census"];
