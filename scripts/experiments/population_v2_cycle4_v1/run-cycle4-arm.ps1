@@ -402,6 +402,15 @@ try {
 
         $phase = 'preflight-locators'
         foreach ($rung in $rungs) {
+            # Each rung's own chain directory, since each rung is an
+            # independent campaign genesis. Empty for CONTROL-R, which has no
+            # baseline chain; the ladder is the CONTROL ladder, so in practice
+            # this is always empty today, and stays correct if the ladder is
+            # ever pointed at a v4 arm.
+            $armBaselineChainDirForPanel = ''
+            if (Test-Cycle4ArmUsesBaselineChain -Arm $Arm) {
+                $armBaselineChainDirForPanel = [string]$rung.chain_dir
+            }
             if ($DryRun -and -not (Test-Path -LiteralPath $rung.manifest -PathType Leaf)) {
                 Write-Host "DRY-RUN preflight-locators: would write $($rung.locator) and $($rung.panel_locator) from $($rung.manifest)"
                 continue
@@ -414,6 +423,7 @@ try {
                 -PanelLocatorPath $rung.panel_locator `
                 -ArmRunSha256 $rungManifest.trainee_run_sha256 `
                 -ArmStoreRoot $rung.store_root `
+                -ArmBaselineChainDir $armBaselineChainDirForPanel `
                 -GenesisParentStoreRoot $GenesisParentStoreRoot `
                 -AllowMissingStores:$DryRun | Out-Null
         }
@@ -521,6 +531,14 @@ try {
         # -------------------------------------------------------------------
         $phase = 'formal-bootstrap'
         $armPrefix = Split-Path -Parent $StoreRoot
+        # Written into the panel locator for every slot the manifest binds to
+        # this arm's own run: the payoff probe loads a v4 arm's trained own-run
+        # checkpoints through the baseline-aware loader, which needs the chain.
+        # Empty for CONTROL-R, whose checkpoints load on the frozen v3 path.
+        $armBaselineChainDirForPanel = ''
+        if (Test-Cycle4ArmUsesBaselineChain -Arm $Arm) {
+            $armBaselineChainDirForPanel = [string]$ChainDir
+        }
         Invoke-Cycle4Bootstrap `
             -Prefix $root `
             -TargetStoreRoot $StoreRoot `
@@ -715,6 +733,7 @@ try {
                 -PanelLocatorPath $panelLocator `
                 -ArmRunSha256 $armRunSha256 `
                 -ArmStoreRoot $StoreRoot `
+                -ArmBaselineChainDir $armBaselineChainDirForPanel `
                 -GenesisParentStoreRoot $GenesisParentStoreRoot `
                 -AllowMissingStores:$DryRun | Out-Null
 

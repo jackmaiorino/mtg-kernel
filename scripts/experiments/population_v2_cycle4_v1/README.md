@@ -198,6 +198,39 @@ powershell -NoProfile -File scripts\experiments\population_v2_cycle4_v1\run-cycl
 runs the dry-run test suite against a synthetic campaign under the temp
 directory.
 
+## The panel locator's slot entries
+
+The wrapper writes two machine-local locators per interval from one slot
+table. The arm bin's is identity-keyed
+(`mtg-kernel-cycle4-arm-slot-locator/v1`) and unchanged. The payoff panel
+runner's is index-keyed (`mtg-kernel-cycle4-slot-locator/v1`) and each slot
+entry is one of two shapes:
+
+```json
+{
+  "schema": "mtg-kernel-cycle4-slot-locator/v1",
+  "stores": {
+    "0": "E:\cycle4\slot-0",
+    "5": {
+      "store_root": "E:\cycle4\treatment-rb\store",
+      "baseline_chain_dir": "E:\cycle4\treatment-rb\baseline-chain"
+    }
+  }
+}
+```
+
+A bare string is a store root and nothing more. The object form adds the
+optional `baseline_chain_dir`, and the wrapper writes it on exactly the slots
+the interval's manifest binds to the ARM's own run (`current-1` always,
+`historical-0` from refresh 4), and only when the arm is `treatment-rb` or
+`static-rb`. Those arms' trained own-run checkpoints load only through the
+baseline-aware loader, which needs the chain the arm was launched with, so the
+value is that arm's own `-ChainDir`, absolute.
+
+`control-r` has no baseline chain, so every slot in its locator is a bare
+string and the file is shaped exactly as it was before the field existed.
+Other-run slots never carry the field on any arm.
+
 ## Known issue: slot generation numbering
 
 The refresh manifest pins slots 2 and 5 to TRAINEE-LOCAL generations

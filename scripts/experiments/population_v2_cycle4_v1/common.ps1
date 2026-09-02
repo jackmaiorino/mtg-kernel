@@ -163,6 +163,16 @@ function Write-Cycle4JsonFile {
     }
 }
 
+function Test-Cycle4ArmUsesBaselineChain {
+    # Mirrors Cycle4ArmKindV1::uses_baseline_v4_v1: TREATMENT-RB and STATIC-RB
+    # run terminal_reinforce_value/v4-candidate and therefore carry a baseline
+    # chain, and their trained own-run checkpoints only load through the
+    # baseline-aware loader. CONTROL-R runs the frozen v3 path and has no
+    # chain at all.
+    param([Parameter(Mandatory = $true)][string]$Arm)
+    return (@('treatment-rb', 'static-rb') -contains $Arm)
+}
+
 function Assert-Cycle4Arm {
     param([Parameter(Mandatory = $true)][string]$Arm)
     if ($script:Cycle4Arms -notcontains $Arm) {
@@ -367,11 +377,21 @@ function New-Cycle4SlotLocatorPair {
         [Parameter(Mandatory = $true)][string]$PanelLocatorPath,
         [Parameter(Mandatory = $true)][string]$ArmRunSha256,
         [Parameter(Mandatory = $true)][string]$ArmStoreRoot,
+        [string]$ArmBaselineChainDir,
         [string]$GenesisParentStoreRoot,
         [switch]$AllowMissingStores
     )
     if (-not [System.IO.Path]::IsPathRooted($ArmStoreRoot)) {
         throw "the arm store root must be an absolute path: $ArmStoreRoot"
+    }
+    $baselineChainDir = $null
+    if (-not [string]::IsNullOrWhiteSpace($ArmBaselineChainDir)) {
+        if (-not [System.IO.Path]::IsPathRooted($ArmBaselineChainDir)) {
+            throw "the arm baseline chain directory must be an absolute path: $ArmBaselineChainDir"
+        }
+        # Normalized rather than resolved: the chain directory legitimately
+        # does not exist yet the first time a locator is written.
+        $baselineChainDir = [System.IO.Path]::GetFullPath($ArmBaselineChainDir)
     }
     $entries = @($SlotTable)
     if ($entries.Count -ne $script:Cycle4SlotCount) {
@@ -450,9 +470,27 @@ function New-Cycle4SlotLocatorPair {
         $armLocator['genesis_parent_store_root'] = $GenesisParentStoreRoot
     }
 
+    # The panel runner's slot entry is a bare store-root string, and stays one
+    # for every slot that needs nothing more. A slot bound to the ARM's own run
+    # on a v4 arm needs one thing more: its trained checkpoints only load
+    # through the baseline-aware loader, which needs the arm's chain directory.
+    # Those slots carry an object instead, `store_root` plus the optional
+    # `baseline_chain_dir`. The addition is deliberately additive, so a
+    # CONTROL-R locator is byte-identical to what this wrote before the field
+    # existed and a reader that only understands strings still reads every
+    # slot a v3 arm ever produces.
     $panelStores = [ordered]@{}
     foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
-        $panelStores["$index"] = $byIndex[$index].store_root
+        $root = $byIndex[$index].store_root
+        if (($armSlots -contains $index) -and $null -ne $baselineChainDir) {
+            $panelStores["$index"] = [ordered]@{
+                store_root = $root
+                baseline_chain_dir = $baselineChainDir
+            }
+        }
+        else {
+            $panelStores["$index"] = $root
+        }
     }
     $panelLocator = [ordered]@{
         schema = $script:Cycle4PanelLocatorSchema
@@ -467,6 +505,7 @@ function New-Cycle4SlotLocatorPair {
         manifest_sha256 = $Manifest.sha256
         manifest_refresh_index = $Manifest.refresh_index
         arm_owned_slot_indexes = @($armSlots)
+        arm_baseline_chain_dir = $baselineChainDir
     }
 }
 

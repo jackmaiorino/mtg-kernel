@@ -135,11 +135,19 @@ function New-SyntheticManifest {
     $slots = @(
         foreach ($index in 0..7) { New-SyntheticSlot -Index $index -Role $roles[$index] }
     )
-    # Slot 5 (current-1) is always the trainee's own run, which is what makes
-    # the wrapper substitute the arm's own Store root for it.
+    # Slot 5 (current-1) is always the trainee's own run, and slot 2
+    # (historical-0) becomes the trainee's own run from refresh 4 -- the same
+    # rule validate_slot_assignment_cycle4_v1 enforces. Both are what make the
+    # wrapper substitute the arm's own Store root, and both must therefore
+    # carry the baseline chain directory on a v4 arm.
     $slots[5].source_run_sha256 = $traineeRunSha256
     $slots[5].source_base_seed = $traineeBaseSeed
     $slots[5].source_generation = (896 + ($RefreshIndex * 128))
+    if ($RefreshIndex -ge 4) {
+        $slots[2].source_run_sha256 = $traineeRunSha256
+        $slots[2].source_base_seed = $traineeBaseSeed
+        $slots[2].source_generation = (896 + ($RefreshIndex * 128) - 512)
+    }
     if ($DuplicateIdentity) {
         $slots[7].checkpoint_manifest_sha256 = $slots[6].checkpoint_manifest_sha256
     }
@@ -364,6 +372,21 @@ Assert-That -Condition ([string]$panelLocator.schema -ceq 'mtg-kernel-cycle4-slo
 Assert-That -Condition (@($armLocator.stores).Count -eq 8) -Message 'the arm locator carries eight stores'
 Assert-That -Condition ([string]$armLocator.genesis_parent_store_root -ceq (Resolve-Path -LiteralPath $parentStore).Path) `
     -Message 'the arm locator carries the genesis parent store root'
+function Get-PanelSlotStoreRoot {
+    # A panel-locator slot entry is either a bare store-root string or an
+    # object carrying store_root plus the optional baseline_chain_dir.
+    param([Parameter(Mandatory = $true)]$Entry)
+    if ($Entry -is [string]) { return [string]$Entry }
+    return [string]$Entry.store_root
+}
+
+function Get-PanelSlotBaselineChainDir {
+    param([Parameter(Mandatory = $true)]$Entry)
+    if ($Entry -is [string]) { return $null }
+    if ($Entry.PSObject.Properties.Name -notcontains 'baseline_chain_dir') { return $null }
+    return [string]$Entry.baseline_chain_dir
+}
+
 $agree = $true
 foreach ($index in 0..7) {
     # Slot 5 is the arm's own run in the synthetic roster, so the wrapper
@@ -372,7 +395,7 @@ foreach ($index in 0..7) {
     else { $expectedRoot = [string]$slotStoreRoots[$index] }
     if ([string]$armLocator.stores[$index].store_root -cne $expectedRoot) { $agree = $false }
     if ([string]$armLocator.stores[$index].checkpoint_manifest_sha256 -cne (New-SyntheticHash -Tag (0x20 + $index))) { $agree = $false }
-    if ([string]$panelLocator.stores."$index" -cne $expectedRoot) { $agree = $false }
+    if ((Get-PanelSlotStoreRoot -Entry $panelLocator.stores."$index") -cne $expectedRoot) { $agree = $false }
 }
 Assert-That -Condition $agree -Message "both locators name the same store for the same slot, with the arm's own Store substituted into its own slot"
 
@@ -425,6 +448,97 @@ Assert-Throws -Action { & $wrapper @missingRoster *>&1 | Out-Null } `
     -Message 'the genesis roster is a required operator input'
 
 # ---------------------------------------------------------------------------
+# 1c. The panel locator's per-slot baseline_chain_dir
+#
+# The payoff probe loads a v4 arm's trained own-run checkpoints through the
+# baseline-aware loader, which needs that arm's chain directory. The
+# index-keyed panel locator therefore carries it, on exactly the slots the
+# manifest binds to the arm's own run, and only for the arms that have a chain.
+# ---------------------------------------------------------------------------
+
+function Get-PanelLocator {
+    param(
+        [Parameter(Mandatory = $true)][string]$AttemptRoot,
+        [Parameter(Mandatory = $true)][int]$Interval
+    )
+    $path = Join-Path $AttemptRoot ('interval-{0:d2}\panel-slot-locator.json' -f $Interval)
+    return (Get-Content -Raw -LiteralPath $path | ConvertFrom-Json)
+}
+
+function Assert-PanelLocatorChainDirs {
+    param(
+        [Parameter(Mandatory = $true)]$Locator,
+        [AllowEmptyCollection()][int[]]$ExpectedSlots = @(),
+        [string]$ExpectedChainDir,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    $carried = @()
+    $wrongValue = @()
+    foreach ($index in 0..7) {
+        $entry = $Locator.stores."$index"
+        $chain = Get-PanelSlotBaselineChainDir -Entry $entry
+        if ($null -ne $chain) {
+            $carried += $index
+            if ($chain -cne ([System.IO.Path]::GetFullPath($ExpectedChainDir))) { $wrongValue += $index }
+        }
+    }
+    Assert-That -Condition (@(Compare-Object -ReferenceObject @($ExpectedSlots) -DifferenceObject @($carried)).Count -eq 0) `
+        -Message "$Label carries baseline_chain_dir on exactly slots $($ExpectedSlots -join ',') (saw $($carried -join ','))"
+    if ($ExpectedSlots.Count -ne 0) {
+        Assert-That -Condition ($wrongValue.Count -eq 0) `
+            -Message "$Label names the arm's own chain directory on every slot that carries the field"
+    }
+}
+
+# TREATMENT-RB at genesis: only current-1 is the arm's own run.
+Assert-PanelLocatorChainDirs `
+    -Locator (Get-PanelLocator -AttemptRoot $attempt -Interval 0) `
+    -ExpectedSlots @(5) `
+    -ExpectedChainDir ([string]$treatmentArguments['ChainDir']) `
+    -Label 'the treatment-rb genesis panel locator'
+
+# TREATMENT-RB from refresh 4: historical-0 is the arm's own run too, and both
+# slots must carry the field.
+Assert-PanelLocatorChainDirs `
+    -Locator (Get-PanelLocator -AttemptRoot $attempt -Interval 4) `
+    -ExpectedSlots @(2, 5) `
+    -ExpectedChainDir ([string]$treatmentArguments['ChainDir']) `
+    -Label 'the treatment-rb refresh-4 panel locator'
+
+# The slots that do not carry it are still bare strings, so a reader that
+# knows nothing of the field still reads them.
+$treatmentPanelZero = Get-PanelLocator -AttemptRoot $attempt -Interval 0
+$plain = $true
+foreach ($index in @(0, 1, 2, 3, 4, 6, 7)) {
+    if (-not ($treatmentPanelZero.stores."$index" -is [string])) { $plain = $false }
+}
+Assert-That -Condition $plain -Message 'slots without a chain directory stay bare store-root strings'
+Assert-That -Condition ((Get-PanelSlotStoreRoot -Entry $treatmentPanelZero.stores."5") -ceq [string]$treatmentArguments['StoreRoot']) `
+    -Message 'a slot carrying the field still names its store root'
+
+# CONTROL-R has no baseline chain, so no slot carries the field at all.
+$controlEvidence = Join-Path $WorkRoot 'evidence-control'
+$controlArguments = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $controlEvidence
+& $wrapper @controlArguments *>&1 | Out-Null
+$controlAttempt = Get-LatestAttemptRoot -EvidenceRoot $controlEvidence -GateName 'cycle4-control-r-formal'
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $controlAttempt 'TRAINING_COMPLETE')) `
+    -Message 'control-r completes its dry run'
+Assert-PanelLocatorChainDirs `
+    -Locator (Get-PanelLocator -AttemptRoot $controlAttempt -Interval 0) `
+    -ExpectedSlots @() `
+    -Label 'the control-r genesis panel locator'
+Assert-PanelLocatorChainDirs `
+    -Locator (Get-PanelLocator -AttemptRoot $controlAttempt -Interval 4) `
+    -ExpectedSlots @() `
+    -Label 'the control-r refresh-4 panel locator'
+$controlPanelZero = Get-PanelLocator -AttemptRoot $controlAttempt -Interval 0
+$allPlain = $true
+foreach ($index in 0..7) {
+    if (-not ($controlPanelZero.stores."$index" -is [string])) { $allPlain = $false }
+}
+Assert-That -Condition $allPlain -Message "a control-r panel locator is byte-identical in shape to one written before the field existed"
+
+# ---------------------------------------------------------------------------
 # 2. STATIC-RB never advances the manifest
 # ---------------------------------------------------------------------------
 
@@ -451,6 +565,18 @@ foreach ($record in $staticArm) {
     if ($record.command_line -like '*--payoff-panel*') { $staticUsesGenesis = $false }
 }
 Assert-That -Condition $staticUsesGenesis -Message 'every static-rb interval reuses the genesis manifest and binds no panel'
+# STATIC-RB is a v4 arm, so its own-run slot carries the chain directory even
+# though its manifest never advances past genesis.
+Assert-PanelLocatorChainDirs `
+    -Locator (Get-PanelLocator -AttemptRoot $staticAttempt -Interval 0) `
+    -ExpectedSlots @(5) `
+    -ExpectedChainDir ([string]$staticArguments['ChainDir']) `
+    -Label 'the static-rb genesis panel locator'
+Assert-PanelLocatorChainDirs `
+    -Locator (Get-PanelLocator -AttemptRoot $staticAttempt -Interval 7) `
+    -ExpectedSlots @(5) `
+    -ExpectedChainDir ([string]$staticArguments['ChainDir']) `
+    -Label 'the static-rb refresh-7 panel locator'
 
 # A manifest that appeared past genesis stops static-rb before it trains.
 $intruder = Join-Path $staticChain 'refresh-01.manifest.json'
@@ -500,6 +626,13 @@ Assert-That -Condition ($rungA -like "*`"--run-record`" `"$runRecord`"*" -and $r
 Assert-That -Condition ($rungA -like '*ladder\a\refresh-00.manifest.json*' -and $rungB -like '*ladder\b\refresh-00.manifest.json*') `
     -Message "each rung trains against its own genesis manifest, never the other's"
 Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'ladder\a\bootstrap-slot-locator.json')) -Message 'each rung gets its own bootstrap locator'
+$rungPanelLocator = Join-Path $preflightAttempt 'ladder\a\panel-slot-locator.json'
+if (Test-Path -LiteralPath $rungPanelLocator -PathType Leaf) {
+    Assert-PanelLocatorChainDirs `
+        -Locator (Get-Content -Raw -LiteralPath $rungPanelLocator | ConvertFrom-Json) `
+        -ExpectedSlots @() `
+        -Label 'the CONTROL preflight rung panel locator'
+}
 Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'cycle4-genesis-authority-control-r.json')) `
     -Message 'a preflight keeps its genesis authority copy inside the throwaway attempt root'
 
