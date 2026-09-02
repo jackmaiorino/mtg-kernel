@@ -67,28 +67,42 @@
 //! interrupted publish cannot turn every later one into a permanent stage
 //! collision. See `append_and_publish_v4` and `publish_atomically_v4`.
 //!
-//! **Every completed decision is classifiable, including the last one.**
-//! Publishing is synchronous: it rewrites, syncs and reverifies the whole
-//! episode file before the scorer can answer its client, so it is part of
-//! the per-decision latency a panel host pays. A record cannot measure its
-//! own publication (measuring it requires publishing, which requires the
-//! finished bytes), so each record carries its PREDECESSOR's publish time
-//! in `wall_time.previous_record_publish_micros` and the protocol verdict
-//! is a chain-level read: [`episode_decision_ceilings_v4`].
+//! **The whole client-visible request is accounted for, and every
+//! completed decision is classifiable, including the last one.** A request
+//! that searches a decision costs three consecutive synchronous phases,
+//! and the client waits for all three:
 //!
-//! That rule used to leave the FINAL decision of every episode
+//! ```text
+//! request receipt ---> record built ---> record published ---> response flushed
+//!    |<-- decision_micros -->|<-- publish -->|<-- response tail -->|
+//! ```
+//!
+//! Only the first is knowable while the record is being built. The
+//! publication cannot be (measuring it requires publishing, which requires
+//! the finished bytes) and the response tail cannot be (the record is
+//! already on disk before the response line is serialized, written and
+//! flushed, and before any other export runs). So each record carries its
+//! PREDECESSOR's last two phases, in
+//! `wall_time.previous_record_publish_micros` and
+//! `wall_time.previous_record_response_micros`, and the protocol verdict
+//! is a chain-level read: [`episode_decision_ceilings_v4`] sums all three.
+//! Charging only the first two would let a slow export or a slow stdout
+//! push a request past the 4 s SLO or the 20 s hard timeout while the
+//! record still classified it as comfortably inside.
+//!
+//! The successor rule used to leave the FINAL decision of every episode
 //! unclassifiable, because nothing followed it to report its publication:
 //! one systematically dropped sample per game, and always the same
 //! decision (the one that ended the game). The
 //! [`EpisodeFooterRecordV4`] closes it. An episode is CLOSED by a footer
 //! on terminal, on replacement by a new reset, and on orderly process
-//! exit; the footer is an ordinary hash-chained record whose
-//! `previous_record_publish_micros` is the last decision's publication, so
-//! the reconstruction rule needs no special case: the successor of the
-//! last decision is simply the footer. [`verify_episode_chain_v4`] accepts
-//! a footer only as the terminal record and rejects anything after it, so
-//! a file that ends in a footer is a complete episode by construction and
-//! every decision in it has a protocol verdict.
+//! exit; the footer is an ordinary hash-chained record carrying the same
+//! two predecessor fields, so the reconstruction rule needs no special
+//! case: the successor of the last decision is simply the footer.
+//! [`verify_episode_chain_v4`] accepts a footer only as the terminal
+//! record and rejects anything after it, so a file that ends in a footer
+//! is a complete episode by construction and every decision in it has a
+//! protocol verdict.
 //!
 //! # Hash chaining across records within an episode
 //!
@@ -261,6 +275,23 @@ pub struct WallTimeV4 {
     /// Writer-assigned, like every other chain field: a caller that could
     /// set this could understate the latency it is being measured on.
     pub previous_record_publish_micros: u64,
+    /// The RESPONSE TAIL of the request that published the record
+    /// immediately before this one: everything synchronous after that
+    /// record was published and before the client's response line was
+    /// written and flushed. Later exports, response serialization, the
+    /// stdout write, and the flush all live here.
+    ///
+    /// Carried by the successor for the same reason the publish time is:
+    /// the record is already on disk before any of it happens. Without it
+    /// a slow export or a slow output path could push the request the
+    /// client actually waited on past a pre-registered ceiling while the
+    /// classification still reported it inside.
+    ///
+    /// Writer-assigned. Zero means "the serving loop never closed the
+    /// outer boundary for that request", which only happens when a caller
+    /// drives `handle_line_v1` directly instead of running the loop; the
+    /// protocol verdict is then a lower bound rather than wrong.
+    pub previous_record_response_micros: u64,
 }
 
 /// The footer's timing surface. Kept in a field literally named
@@ -274,6 +305,11 @@ pub struct FooterWallTimeV4 {
     /// an episode that searched at least one decision, that is the last
     /// decision's publication: the sample the old shape dropped.
     pub previous_record_publish_micros: u64,
+    /// The response tail of the request that published the record
+    /// immediately before this footer. Same field, same meaning, and same
+    /// reason as on a decision record: the footer is just the last
+    /// decision's successor.
+    pub previous_record_response_micros: u64,
 }
 
 /// Wrapper identity, carried once per episode in the header record (sketch
@@ -520,8 +556,14 @@ pub struct DecisionCeilingV4 {
     /// it could publish a footer. A file that ends in a footer never has
     /// one.
     pub publish_micros: Option<u64>,
-    /// `decision_micros + publish_micros`: the whole synchronous cost the
-    /// client waited for. `None` exactly when `publish_micros` is `None`.
+    /// The response tail of the request that answered with THIS decision:
+    /// exports, response serialization, the stdout write and the flush.
+    /// Read from the same successor record. `None` under the same
+    /// condition as `publish_micros`.
+    pub response_micros: Option<u64>,
+    /// `decision_micros + publish_micros + response_micros`: the whole
+    /// synchronous cost the client waited for. `None` exactly when
+    /// `publish_micros` is `None`.
     pub protocol_micros: Option<u64>,
     /// What the record itself claims, over the search alone.
     pub search_ceiling_status: CeilingStatusV4,
@@ -536,24 +578,27 @@ pub struct DecisionCeilingV4 {
 /// # The classification rule
 ///
 /// A client waiting on decision `n` waits from the moment the scorer read
-/// its request line through the synchronous publication of decision `n`'s
-/// record, because `write_decision_v4` rewrites, syncs and reverifies the
-/// episode file before the scorer can answer. So:
+/// its request line until the moment its response line has been written
+/// and flushed. That spans three consecutive synchronous phases, and all
+/// three are charged:
 ///
 /// ```text
 /// latency(n)  = record[n].wall_time.decision_micros
 ///             + record[n + 1].wall_time.previous_record_publish_micros
+///             + record[n + 1].wall_time.previous_record_response_micros
 /// status(n)   = CeilingStatusV4::classify_v4(latency(n) / 1e6)
 /// ```
 ///
 /// where `record[n + 1]` is the immediately following record in the file,
-/// decision or footer. A record cannot carry its own publish time
+/// decision or footer. A record can carry neither its own publish time
 /// (measuring it requires publishing, and publishing requires the finished
-/// bytes), so the successor carries it and the verdict is a chain-level
-/// read. The footer exists so that the last decision has a successor too;
-/// in a closed episode this function returns a protocol status for every
-/// decision. `SearchDecisionRecordV4::search_ceiling_status` deliberately
-/// covers the search alone and is named to say so.
+/// bytes) nor its own response tail (the record is already on disk before
+/// the response is serialized, written and flushed), so the successor
+/// carries both and the verdict is a chain-level read. The footer exists
+/// so that the last decision has a successor too; in a closed episode this
+/// function returns a protocol status for every decision.
+/// `SearchDecisionRecordV4::search_ceiling_status` deliberately covers the
+/// search alone and is named to say so.
 ///
 /// The episode's chain is verified first, so a tampered file cannot
 /// produce a latency report.
@@ -566,12 +611,17 @@ pub fn episode_decision_ceilings_v4(bytes: &[u8]) -> Result<Vec<DecisionCeilingV
             serde_json::from_str(line).map_err(|error| format!("record is not JSON: {error}"))
         })
         .collect::<Result<_, _>>()?;
-    let publish_micros_of = |index: usize| -> Option<u64> {
-        values.get(index + 1).and_then(|next| {
-            next.get("wall_time")?
-                .get("previous_record_publish_micros")?
-                .as_u64()
-        })
+    // The successor record reports BOTH phases the predecessor could not
+    // observe about itself: its publication and the response tail that
+    // followed it. They are read as one pair so a successor that reports
+    // only half of the interval cannot silently produce a verdict that
+    // omits the other half.
+    let successor_tail_of = |index: usize| -> Option<(u64, u64)> {
+        let wall = values.get(index + 1)?.get("wall_time")?;
+        Some((
+            wall.get("previous_record_publish_micros")?.as_u64()?,
+            wall.get("previous_record_response_micros")?.as_u64()?,
+        ))
     };
     let mut out = Vec::new();
     for (index, value) in values.iter().enumerate() {
@@ -582,14 +632,20 @@ pub fn episode_decision_ceilings_v4(bytes: &[u8]) -> Result<Vec<DecisionCeilingV
         }
         let record: SearchDecisionRecordV4 = serde_json::from_value(value.clone())
             .map_err(|error| format!("decision record does not match the schema: {error}"))?;
-        let publish_micros = publish_micros_of(index);
-        let protocol_micros =
-            publish_micros.map(|publish| record.wall_time.decision_micros.saturating_add(publish));
+        let tail = successor_tail_of(index);
+        let protocol_micros = tail.map(|(publish, response)| {
+            record
+                .wall_time
+                .decision_micros
+                .saturating_add(publish)
+                .saturating_add(response)
+        });
         out.push(DecisionCeilingV4 {
             decision_ordinal: record.decision_ordinal,
             search_micros: record.wall_time.search_micros,
             decision_micros: record.wall_time.decision_micros,
-            publish_micros,
+            publish_micros: tail.map(|(publish, _)| publish),
+            response_micros: tail.map(|(_, response)| response),
             protocol_micros,
             search_ceiling_status: record.search_ceiling_status,
             protocol_ceiling_status: protocol_micros
@@ -706,6 +762,20 @@ struct OpenEpisodeV4 {
     /// recoverable from the chain. Zero before anything has been
     /// published.
     last_publish_micros: u64,
+    /// The response tail measured after the most recent publish, carried
+    /// into the NEXT record for the same reason. Filled in by
+    /// [`ModelGuidedSearchOutcomeWriterV4::note_request_completed_v4`],
+    /// which the serving loop calls once the response has been flushed.
+    last_response_micros: u64,
+    /// `wall_time.decision_micros` of the most recently published record,
+    /// or zero for a header or footer. Subtracted (with the publish time)
+    /// from the whole request to isolate the response tail.
+    last_record_decision_micros: u64,
+    /// True between a successful publish and the response boundary that
+    /// follows it. Without it, a request that published nothing (a
+    /// `score_current`, a rejected request) would overwrite an already
+    /// measured tail with an interval that belongs to no record.
+    response_accounting_pending: bool,
 }
 
 /// Per-episode JSONL diagnostics writer: one file per episode in the
@@ -817,8 +887,11 @@ impl ModelGuidedSearchOutcomeWriterV4 {
             next_record_ordinal: 0,
             next_decision_ordinal: 0,
             last_publish_micros: 0,
+            last_response_micros: 0,
+            last_record_decision_micros: 0,
+            response_accounting_pending: false,
         });
-        let published = self.append_and_publish_v4(line, false);
+        let published = self.append_and_publish_v4(line, false, 0);
         if published.is_err() {
             // The header never reached disk, so there is no episode to
             // close and no file for a footer to belong to. Dropping the
@@ -843,7 +916,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
     /// from the caller: they are chain state, and a caller that could set
     /// them could forge a chain.
     pub fn write_decision_v4(&mut self, mut record: SearchDecisionRecordV4) -> io::Result<()> {
-        let (ordinal, decision_ordinal, previous, last_publish_micros) = {
+        let (ordinal, decision_ordinal, previous, last_publish_micros, last_response_micros) = {
             let episode = self
                 .open
                 .as_ref()
@@ -858,6 +931,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
                 episode.next_decision_ordinal,
                 episode.previous_record_sha256.clone(),
                 episode.last_publish_micros,
+                episode.last_response_micros,
             )
         };
         record.contract = MODEL_GUIDED_SEARCH_OUTCOME_CONTRACT_V4.to_owned();
@@ -867,8 +941,40 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         record.decision_ordinal = decision_ordinal;
         record.previous_record_sha256 = previous;
         record.wall_time.previous_record_publish_micros = last_publish_micros;
+        record.wall_time.previous_record_response_micros = last_response_micros;
+        let decision_micros = record.wall_time.decision_micros;
         let line = serde_json::to_string(&record).map_err(io::Error::other)?;
-        self.append_and_publish_v4(line, true)
+        self.append_and_publish_v4(line, true, decision_micros)
+    }
+
+    /// Closes the OUTER request boundary: `request_micros` is the whole
+    /// interval from request receipt to the moment the response line was
+    /// written and flushed.
+    ///
+    /// The tail that belongs to the record published during that request
+    /// is what is left after subtracting the two intervals already
+    /// accounted for, the record's own `decision_micros` and its
+    /// publication, so exports, response serialization, the write and the
+    /// flush all land here. It is stored and carried into the NEXT record
+    /// (or the footer), because the record it belongs to was on disk
+    /// before any of it happened.
+    ///
+    /// A request that published no record (a `score_current`, a rejected
+    /// request, a failed publish) is IGNORED: `response_accounting_pending`
+    /// is false, and attributing an unrelated interval to an already
+    /// measured record would be worse than measuring nothing. For the same
+    /// reason a second call for the same publish is a no-op.
+    pub fn note_request_completed_v4(&mut self, request_micros: u64) {
+        let Some(episode) = self.open.as_mut() else {
+            return;
+        };
+        if !episode.response_accounting_pending {
+            return;
+        }
+        episode.last_response_micros = request_micros
+            .saturating_sub(episode.last_record_decision_micros)
+            .saturating_sub(episode.last_publish_micros);
+        episode.response_accounting_pending = false;
     }
 
     /// CLOSES the open episode with a footer, then forgets it.
@@ -906,11 +1012,12 @@ impl ModelGuidedSearchOutcomeWriterV4 {
                 episode_content_sha256: lower_hex_sha256_v4(episode_content_digest_v4(&content)),
                 wall_time: FooterWallTimeV4 {
                     previous_record_publish_micros: episode.last_publish_micros,
+                    previous_record_response_micros: episode.last_response_micros,
                 },
             }
         };
         let line = serde_json::to_string(&footer).map_err(io::Error::other)?;
-        self.append_and_publish_v4(line, false)?;
+        self.append_and_publish_v4(line, false, 0)?;
         self.open = None;
         Ok(())
     }
@@ -937,7 +1044,12 @@ impl ModelGuidedSearchOutcomeWriterV4 {
     /// fix here rather than poisoning the runtime: a transient ENOSPC or a
     /// held file handle should cost the panel one retry, not the rest of
     /// the episode.
-    fn append_and_publish_v4(&mut self, line: String, is_decision: bool) -> io::Result<()> {
+    fn append_and_publish_v4(
+        &mut self,
+        line: String,
+        is_decision: bool,
+        record_decision_micros: u64,
+    ) -> io::Result<()> {
         let episode = self
             .open
             .as_ref()
@@ -975,6 +1087,11 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         episode.lines.push(line);
         episode.next_record_ordinal += 1;
         episode.last_publish_micros = publish_micros;
+        episode.last_record_decision_micros = record_decision_micros;
+        // The tail that follows THIS publish has not happened yet, so it
+        // reads as zero until the response boundary reports it.
+        episode.last_response_micros = 0;
+        episode.response_accounting_pending = true;
         if is_decision {
             episode.next_decision_ordinal += 1;
         }
@@ -1508,6 +1625,7 @@ mod tests {
             search_micros: 3_500_000,
             decision_micros: 3_900_000,
             previous_record_publish_micros: 0,
+            previous_record_response_micros: 0,
         };
         writer.set_publish_delay_for_test_v4(std::time::Duration::from_millis(250));
         writer
@@ -1638,6 +1756,79 @@ mod tests {
             1,
         );
         assert!(episode_decision_ceilings_v4(tampered.as_bytes()).is_err());
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// CODEX P1, round 2. The record is on disk before the response is
+    /// serialized, written and flushed and before any later export runs,
+    /// so charging only the search and the publication still lets a slow
+    /// output path push the request the client actually waited on past a
+    /// pre-registered ceiling while the classification reports it inside.
+    ///
+    /// The tail after the publish is measured at the outer boundary,
+    /// carried by the successor exactly as the publish time is, and added
+    /// by the classifier. The three phases reconstruct the whole request
+    /// by construction, which is what this pins.
+    #[test]
+    fn a_slow_response_tail_is_charged_to_the_decision_it_answered_v4() {
+        let directory = scratch_directory_v4(16);
+        let mut writer = ModelGuidedSearchOutcomeWriterV4::open_directory_v4(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v4(14, 707, PlayerSeatV1::P0, wrapper_identity_v4())
+            .expect("header publishes");
+        // A decision comfortably inside the SLO on everything the record
+        // can see about itself.
+        let near_slo = WallTimeV4 {
+            full_search_micros: 3_500_000,
+            search_micros: 3_500_000,
+            decision_micros: 3_900_000,
+            ..WallTimeV4::default()
+        };
+        writer
+            .write_decision_v4(decision_record_v4(14, near_slo))
+            .expect("decision publishes");
+        // The client's wait for that decision ended 4.1 s after its
+        // request arrived: everything past 3.9 s happened after the record
+        // was already published.
+        writer.note_request_completed_v4(4_100_000);
+        // A second boundary for the same publish changes nothing: the tail
+        // was already attributed, and a later request that published no
+        // record must not overwrite it.
+        writer.note_request_completed_v4(50);
+        writer
+            .close_episode_v4(EpisodeCloseReasonV4::EpisodeTerminal)
+            .expect("footer publishes");
+
+        let bytes = fs::read(writer.episode_path_v4(14, 707)).unwrap();
+        let ceilings = episode_decision_ceilings_v4(&bytes).expect("chain verifies");
+        assert_eq!(ceilings.len(), 1);
+        let only = ceilings[0];
+        assert_eq!(only.decision_micros, 3_900_000);
+        // The 200 ms past the record's own window is accounted for, wherever
+        // it fell: the tail carries it, unless a pathologically slow publish
+        // swallowed it, in which case the publish carries it instead.
+        // Either way it is charged to this decision and neither is dropped.
+        let tail = only.response_micros.expect("the footer reports the tail");
+        let publish = only.publish_micros.expect("the footer reports the publish");
+        assert!(
+            tail + publish >= 200_000,
+            "the interval after the record was built must be charged: tail {tail} publish {publish}"
+        );
+        assert!(
+            only.protocol_micros.unwrap() >= 4_100_000,
+            "the three phases must reconstruct the client's whole wait: {:?}",
+            only.protocol_micros
+        );
+        // The record's own field, over the search alone, is within SLO.
+        // The protocol verdict is not, and only the chain-level read can
+        // say so.
+        assert_eq!(only.search_ceiling_status, CeilingStatusV4::WithinSlo);
+        assert_eq!(
+            only.protocol_ceiling_status,
+            Some(CeilingStatusV4::SloExceeded),
+            "a slow response path that crosses the SLO must be visible"
+        );
         fs::remove_dir_all(&directory).ok();
     }
 
@@ -1785,6 +1976,7 @@ mod tests {
                 search_micros: 9_000_003,
                 decision_micros: 9_000_010,
                 previous_record_publish_micros: 4,
+                previous_record_response_micros: 5,
             },
         );
         assert_ne!(fast, slow);

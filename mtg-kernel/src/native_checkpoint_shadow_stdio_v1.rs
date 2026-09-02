@@ -2524,6 +2524,18 @@ struct ModelGuidedSearchRuntimeV1 {
     stability_halves_enabled: bool,
     diagnostics: ModelGuidedSearchOutcomeWriterV4,
     bound: Option<BoundModelGuidedSearchV1>,
+    /// The episode id of an episode that reached a TERMINAL whose footer
+    /// has not been published yet.
+    ///
+    /// A terminal close can fail transiently (a held handle, ENOSPC), and
+    /// once it has, the session already reports the episode as terminal:
+    /// a retried step is rejected before it can reach the close again, and
+    /// the next reset or the end of input would then close the file as
+    /// `episode_replaced` or `process_exit`. That misclassifies a game
+    /// that actually ended. This flag makes the terminal reason STICK
+    /// until the footer is really on disk, and gives the retry paths
+    /// something to notice.
+    pending_terminal_episode_id: Option<u64>,
 }
 
 struct BoundModelGuidedSearchV1 {
@@ -2586,6 +2598,7 @@ impl ModelGuidedSearchRuntimeV1 {
             stability_halves_enabled,
             diagnostics,
             bound: None,
+            pending_terminal_episode_id: None,
         })
     }
 
@@ -2721,12 +2734,50 @@ impl ModelGuidedSearchRuntimeV1 {
     /// dropping it silently would put the episode back in exactly the
     /// state this record exists to prevent.
     fn close_episode_v1(&mut self, reason: EpisodeCloseReasonV4) -> Result<(), &'static str> {
-        if !self.diagnostics.has_open_episode_v4() {
+        let Some(open_episode_id) = self.diagnostics.open_episode_id_v4() else {
+            // Nothing open, so nothing is owed. A pending terminal that
+            // outlived its file cannot be honored and must not leak into
+            // the next episode's footer.
+            self.pending_terminal_episode_id = None;
             return Ok(());
-        }
+        };
+        // A REMEMBERED terminal always wins over the reason the caller
+        // happens to be closing with. Once an episode has terminated, the
+        // only truthful footer says so, whether the footer finally
+        // publishes on the retried step, on the next reset, or at end of
+        // input.
+        let reason = if self.pending_terminal_episode_id == Some(open_episode_id) {
+            EpisodeCloseReasonV4::EpisodeTerminal
+        } else {
+            reason
+        };
         self.diagnostics
             .close_episode_v4(reason)
-            .map_err(|_| "model_guided_search_diagnostics_write_failed")
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")?;
+        self.pending_terminal_episode_id = None;
+        Ok(())
+    }
+
+    /// Records that `episode_id` reached a terminal and publishes its
+    /// footer. The terminal is remembered BEFORE the publish is attempted,
+    /// so a transient failure leaves the reason owed rather than lost.
+    fn close_terminal_episode_v1(&mut self, episode_id: u64) -> Result<(), &'static str> {
+        if self.diagnostics.open_episode_id_v4() == Some(episode_id) {
+            self.pending_terminal_episode_id = Some(episode_id);
+        }
+        self.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal)
+    }
+
+    /// Whether an episode terminated without its footer reaching disk.
+    fn has_pending_terminal_close_v1(&self) -> bool {
+        self.pending_terminal_episode_id.is_some()
+    }
+
+    /// Reports the outer response boundary to the diagnostics writer: the
+    /// client's wait for this request ended `request_micros` after the
+    /// request line was read.
+    fn note_request_completed_v1(&mut self, request_micros: u64) {
+        self.diagnostics.note_request_completed_v4(request_micros);
     }
 }
 
@@ -3370,10 +3421,13 @@ impl ShadowScorerServiceV1 {
                 // interval is how a near-boundary request gets recorded as
                 // comfortably inside the boundary.
                 decision_micros: 0,
-                // Writer-assigned: the diagnostics writer knows how long
-                // it spent publishing the previous record, and a caller
-                // that could set this could understate its own latency.
+                // Writer-assigned, both of them: the diagnostics writer
+                // knows how long it spent publishing the previous record
+                // and how long the response tail that followed it took,
+                // and a caller that could set either could understate the
+                // latency it is being measured on.
                 previous_record_publish_micros: 0,
+                previous_record_response_micros: 0,
             },
         };
         record.wall_time.decision_micros = elapsed_micros_v1(request_received);
@@ -3844,7 +3898,7 @@ impl ShadowScorerServiceV1 {
         // rather than waiting for the next reset to replace it.
         if current.is_none() {
             if let Some(search) = self.search.as_mut() {
-                if let Err(code) = search.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal) {
+                if let Err(code) = search.close_terminal_episode_v1(episode_id) {
                     return response_v1(
                         Some(request_id),
                         &self.identity,
@@ -3977,6 +4031,28 @@ impl ShadowScorerServiceV1 {
         selected_index: u32,
         request_received: Instant,
     ) -> ShadowScorerResponseV1 {
+        // RETRY an owed terminal footer first. If the terminal close failed
+        // transiently, the session already reports this episode as
+        // terminal, so the rejection below would answer the driver's retry
+        // without ever attempting the footer again, and the episode would
+        // eventually be closed as replaced or as a process exit: a game
+        // that ended recorded as one that did not. Retrying here is the
+        // only place a driver's own retry can reach.
+        if self
+            .search
+            .as_ref()
+            .is_some_and(ModelGuidedSearchRuntimeV1::has_pending_terminal_close_v1)
+        {
+            if let Some(search) = self.search.as_mut() {
+                if let Err(code) = search.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal) {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(code, "model-guided search episode could not be closed"),
+                    );
+                }
+            }
+        }
         let Some(active) = self.active.as_mut() else {
             return response_v1(
                 Some(request_id),
@@ -4247,7 +4323,7 @@ impl ShadowScorerServiceV1 {
         // session has moved past.
         if matches!(next, FastActorResponseV1::Terminal(_)) {
             if let Some(search) = self.search.as_mut() {
-                if let Err(code) = search.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal) {
+                if let Err(code) = search.close_terminal_episode_v1(episode_id) {
                     return response_v1(
                         Some(request_id),
                         &self.identity,
@@ -4272,19 +4348,33 @@ impl ShadowScorerServiceV1 {
         response_v1(Some(request_id), &self.identity, body)
     }
 
-    /// The OUTER decision boundary.
+    /// The OUTER decision boundary, for a caller that owns no response
+    /// transport of its own. `run_jsonl_v1` uses
+    /// [`Self::handle_line_at_v1`] instead, because the client's wait does
+    /// not end until the response has been written and flushed.
+    #[cfg(test)]
+    fn handle_line_v1(&mut self, line: &str) -> String {
+        self.handle_line_at_v1(line, Instant::now())
+    }
+
+    /// The OPENING half of the outer request boundary.
     ///
-    /// `request_received` is taken here, before anything else, and
-    /// threaded down to the diagnostics record. Everything between this
-    /// instant and the record's publication is synchronous work the client
-    /// is waiting on (request parsing, packet encoding, tensorization, the
-    /// model forward, the policy sample, the search, the stability halves,
-    /// record construction), so this is where a per-decision protocol
+    /// `request_received` is taken by the caller before anything else and
+    /// threaded down to the diagnostics record. Everything between that
+    /// instant and the record's construction is synchronous work the
+    /// client is waiting on (request parsing, packet encoding,
+    /// tensorization, the model forward, the policy sample, the search,
+    /// the stability halves), so this is where a per-decision protocol
     /// latency has to start being counted. Only requests that actually
     /// score a decision carry it further: `score_current` answers from the
     /// cache and publishes nothing, so it has no decision to charge.
-    fn handle_line_v1(&mut self, line: &str) -> String {
-        let request_received = Instant::now();
+    ///
+    /// The CLOSING half is [`Self::note_request_completed_v1`], which the
+    /// serving loop calls once the response has been written and flushed.
+    /// It cannot be called from here: the record is already published by
+    /// the time this returns, and the response has not been serialized,
+    /// written or flushed yet.
+    fn handle_line_at_v1(&mut self, line: &str, request_received: Instant) -> String {
         if self.export_poisoned {
             let request_id = parse_strict_json_value(line)
                 .ok()
@@ -4373,6 +4463,20 @@ impl ShadowScorerServiceV1 {
         match self.search.as_mut() {
             Some(search) => search.close_episode_v1(reason),
             None => Ok(()),
+        }
+    }
+
+    /// The CLOSING half of the outer request boundary: the response line
+    /// has been written and flushed, so the client's wait for this request
+    /// is over and the tail after the diagnostics publish is now known.
+    ///
+    /// A no-op when the wrapper is not installed. Called by the serving
+    /// loop for every request, including ones that published nothing; the
+    /// writer ignores those rather than charging an unrelated interval to
+    /// an already measured record.
+    fn note_request_completed_v1(&mut self, request_received: Instant) {
+        if let Some(search) = self.search.as_mut() {
+            search.note_request_completed_v1(elapsed_micros_v1(request_received));
         }
     }
 }
@@ -4705,8 +4809,19 @@ fn run_jsonl_v1(
                 line.pop();
             }
         }
-        writeln!(writer, "{}", service.handle_line_v1(&line))?;
+        // The OUTER request boundary, both halves. The client's wait
+        // starts when the request line has been read and does not end
+        // until the response line is out and flushed, so the diagnostics
+        // record's protocol accounting is opened and closed here rather
+        // than anywhere inside the handler: exports, response
+        // serialization, the write and the flush are all synchronous cost
+        // the panel host pays for that decision, and all of them happen
+        // after the record is already on disk.
+        let request_received = Instant::now();
+        let response = service.handle_line_at_v1(&line, request_received);
+        writeln!(writer, "{response}")?;
         writer.flush()?;
+        service.note_request_completed_v1(request_received);
         if service.export_poisoned {
             return Err(io::Error::other(
                 "checkpoint shadow export is poisoned after a write failure",
@@ -5120,6 +5235,84 @@ mod tests {
         stability_halves_enabled: bool,
     ) -> (Vec<u32>, Vec<u8>) {
         run_wrapped_episode_configured_v1(directory, steps, stability_halves_enabled, None, false)
+    }
+
+    /// A response transport that is slow to FLUSH.
+    ///
+    /// The delay sits entirely after the diagnostics record is on disk and
+    /// entirely outside `handle_line_at_v1`, which is where a slow export
+    /// or a slow stdout sits on a loaded panel host, and which is exactly
+    /// the interval a record cannot observe about itself.
+    struct SlowFlushWriterV1 {
+        sink: Vec<u8>,
+        delay: Option<std::time::Duration>,
+    }
+
+    impl Write for SlowFlushWriterV1 {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.sink.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if let Some(delay) = self.delay {
+                std::thread::sleep(delay);
+            }
+            self.sink.flush()
+        }
+    }
+
+    /// Records the exact request lines one wrapped episode produces, so
+    /// the same episode can be replayed through the real serving loop
+    /// (which reads a script and cannot ask the scorer what to send next).
+    /// The wrapper is deterministic, so a recorded script replays exactly.
+    fn wrapped_episode_script_v1(steps: usize) -> Vec<String> {
+        let directory = search_scratch_directory_v1("script");
+        let mut service = search_service_with_halves_v1(directory.clone(), false);
+        let reset = reset_line_v1("loop-reset");
+        let mut script = vec![reset.clone()];
+        let mut response = value_v1(&service.handle_line_v1(&reset));
+        assert_eq!(response["response_type"], "decision", "{response}");
+        for index in 0..steps {
+            let decision = &response["decision"];
+            let selected = decision["selected_action_index"].as_u64().unwrap();
+            let episode_id = decision["episode_id"].as_u64().unwrap();
+            let step = decision["step"].as_u64().unwrap();
+            let line = format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"loop-step-{index}\",\"episode_id\":{episode_id},\"expected_step\":{step},\"selected_index\":{selected}}}"
+            );
+            script.push(line.clone());
+            response = value_v1(&service.handle_line_v1(&line));
+            if response["response_type"] != "decision" {
+                break;
+            }
+        }
+        fs::remove_dir_all(&directory).ok();
+        script
+    }
+
+    /// Replays a recorded script through the PRODUCTION serving loop, with
+    /// an optionally slow response transport, and returns the published
+    /// diagnostics. The loop closes the episode with a footer at end of
+    /// input, so every decision in the result is classifiable.
+    fn run_script_through_loop_v1(
+        directory: &Path,
+        script: &[String],
+        flush_delay: Option<std::time::Duration>,
+    ) -> Vec<u8> {
+        let mut service = search_service_with_halves_v1(directory.to_path_buf(), false);
+        let input: String = script.iter().map(|line| format!("{line}\n")).collect();
+        let writer = SlowFlushWriterV1 {
+            sink: Vec::new(),
+            delay: flush_delay,
+        };
+        run_jsonl_v1(&mut service, input.as_bytes(), writer).expect("the serving loop runs");
+        let path = service
+            .search
+            .as_ref()
+            .expect("search runtime installed")
+            .diagnostics
+            .episode_path_v4(2, 71_501);
+        fs::read(path).expect("episode diagnostics published")
     }
 
     /// Drives one wrapped episode and, optionally, injects an artificial
@@ -5639,8 +5832,16 @@ mod tests {
         );
         assert_eq!(
             ceilings[0].protocol_micros,
-            Some(ceilings[0].decision_micros + ceilings[0].publish_micros.unwrap()),
-            "the protocol latency is the decision window plus its own publication"
+            Some(
+                ceilings[0].decision_micros
+                    + ceilings[0].publish_micros.unwrap()
+                    + ceilings[0].response_micros.unwrap()
+            ),
+            "the protocol latency is all three synchronous phases of the request"
+        );
+        assert!(
+            ceilings[0].response_micros.is_some(),
+            "the serving loop must report a response tail, even a tiny one"
         );
         fs::remove_dir_all(&exit_directory).ok();
 
@@ -5770,6 +5971,193 @@ mod tests {
         }
         fs::remove_dir_all(&fast_directory).ok();
         fs::remove_dir_all(&slow_directory).ok();
+
+        // PART TWO: the delay moved out past the record entirely, into the
+        // RESPONSE path, through the production serving loop. This is the
+        // interval a record can least observe about itself: it is already
+        // published, synced and reverified before the response is
+        // serialized, written and flushed. Charging only the search and
+        // the publication would let a slow export or a slow stdout push
+        // the client's real wait past a pre-registered ceiling while the
+        // classification still called it comfortably inside.
+        let script = wrapped_episode_script_v1(2);
+        assert!(script.len() >= 2, "the script must include at least a step");
+        let prompt_directory = search_scratch_directory_v1("loop-prompt");
+        let sluggish_directory = search_scratch_directory_v1("loop-sluggish");
+        let prompt_bytes = run_script_through_loop_v1(&prompt_directory, &script, None);
+        let sluggish_bytes = run_script_through_loop_v1(
+            &sluggish_directory,
+            &script,
+            Some(std::time::Duration::from_millis(150)),
+        );
+
+        // Same conclusion as part one, reached by delaying a completely
+        // different phase: nothing the search decides may move.
+        assert_eq!(
+            strip_wall_time_v1(&prompt_bytes),
+            strip_wall_time_v1(&sluggish_bytes),
+            "a slow response path may not change a single non-timing byte"
+        );
+        assert_eq!(digests(&prompt_bytes), digests(&sluggish_bytes));
+
+        let prompt = episode_decision_ceilings_v4(&prompt_bytes).expect("chain verifies");
+        let sluggish = episode_decision_ceilings_v4(&sluggish_bytes).expect("chain verifies");
+        assert!(!prompt.is_empty());
+        assert_eq!(prompt.len(), sluggish.len());
+        for (index, ceiling) in sluggish.iter().enumerate() {
+            let response = ceiling
+                .response_micros
+                .expect("a closed episode reports every response tail");
+            assert!(
+                response >= 150_000,
+                "decision {index} response tail {response} us must carry the injected flush delay"
+            );
+            assert!(
+                ceiling.protocol_micros.unwrap() > prompt[index].protocol_micros.unwrap(),
+                "decision {index} must be measured as slower when only the response path is slow"
+            );
+        }
+        // And the fast loop run really did measure a tail rather than
+        // leaving the field at its unmeasured zero, so the comparison
+        // above is between two measurements and not against a hole.
+        assert!(prompt
+            .iter()
+            .all(|ceiling| ceiling.response_micros.is_some()));
+        fs::remove_dir_all(&prompt_directory).ok();
+        fs::remove_dir_all(&sluggish_directory).ok();
+    }
+
+    /// CODEX P2. A terminal footer whose publish fails transiently must
+    /// stay owed as a TERMINAL footer.
+    ///
+    /// By the time the close is attempted the session already reports the
+    /// episode as terminal, so the driver's retried step is rejected
+    /// before it can reach the close again, and the next reset or the end
+    /// of input would close the file as `episode_replaced` or
+    /// `process_exit`: a game that actually ended, recorded as one that
+    /// did not.
+    #[test]
+    fn a_failed_terminal_footer_is_retried_and_still_says_terminal_v1() {
+        use crate::model_guided_search_outcome_v4::EpisodeFooterRecordV4;
+
+        let directory = search_scratch_directory_v1("pending-terminal");
+        let mut service = search_service_with_halves_v1(directory.clone(), false);
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("pending-reset")));
+        assert_eq!(response["response_type"], "decision", "{response}");
+        let selected = response["decision"]["selected_action_index"]
+            .as_u64()
+            .unwrap();
+        let step = response["decision"]["step"].as_u64().unwrap();
+        let step_line = format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"pending-step\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+        );
+        let path = service
+            .search
+            .as_ref()
+            .unwrap()
+            .diagnostics
+            .episode_path_v4(2, 71_501);
+        let mut stage = path.clone().into_os_string();
+        stage.push(".tmp");
+        let stage = PathBuf::from(stage);
+
+        // The state the finding describes: the episode reached a terminal
+        // and the footer publish failed. Blocking the staging name with a
+        // directory is the shape of a transient publish failure that no
+        // amount of retrying inside the writer can work around, and
+        // `active.current` is already None because the session is terminal.
+        service.active.as_mut().unwrap().current = None;
+        fs::create_dir(&stage).expect("stage name is occupiable");
+        assert_eq!(
+            service
+                .search
+                .as_mut()
+                .unwrap()
+                .close_terminal_episode_v1(2),
+            Err("model_guided_search_diagnostics_write_failed")
+        );
+        assert!(service
+            .search
+            .as_ref()
+            .unwrap()
+            .has_pending_terminal_close_v1());
+
+        // The driver retries its step. The footer is still blocked, so the
+        // retry reports the diagnostics failure rather than answering
+        // `episode_already_terminal` and quietly abandoning the footer.
+        let blocked = value_v1(&service.handle_line_v1(&step_line));
+        assert_eq!(
+            blocked["error_code"], "model_guided_search_diagnostics_write_failed",
+            "{blocked}"
+        );
+
+        // Unblock. The next retry publishes the footer, and only then does
+        // the step get its ordinary terminal rejection.
+        fs::remove_dir(&stage).expect("stage name frees");
+        let retried = value_v1(&service.handle_line_v1(&step_line));
+        assert_eq!(
+            retried["error_code"], "episode_already_terminal",
+            "{retried}"
+        );
+        assert!(!service
+            .search
+            .as_ref()
+            .unwrap()
+            .has_pending_terminal_close_v1());
+
+        // A later reset would have closed this file as `episode_replaced`
+        // and end of input as `process_exit`. It says what actually
+        // happened.
+        let text = fs::read_to_string(&path).expect("episode diagnostics published");
+        assert!(verify_episode_chain_v4(text.as_bytes()).is_ok());
+        let footer: EpisodeFooterRecordV4 =
+            serde_json::from_str(text.lines().next_back().unwrap()).expect("a footer");
+        assert_eq!(footer.close_reason, EpisodeCloseReasonV4::EpisodeTerminal);
+        assert_eq!(footer.episode_id, 2);
+
+        // The same rule holds when the retry never comes and the episode
+        // is closed by a reset or by end of input instead: a remembered
+        // terminal outranks whatever reason the closing path names.
+        let replaced_directory = search_scratch_directory_v1("pending-terminal-replaced");
+        let mut runtime = search_runtime_with_halves_v1(replaced_directory.clone(), false);
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            50_303,
+            81_107,
+            256,
+            32_768,
+            ["Rally".to_owned(), "Burn".to_owned()],
+        )
+        .expect("session resets");
+        runtime
+            .begin_episode_v1(
+                &session,
+                &search_checkpoint_identity_v1(),
+                search_test_net_architecture_v1(),
+                50_303,
+                81_107,
+                PlayerSeatV1::P0,
+            )
+            .expect("search episode opens");
+        let replaced_path = runtime.diagnostics.episode_path_v4(50_303, 81_107);
+        let mut replaced_stage = replaced_path.clone().into_os_string();
+        replaced_stage.push(".tmp");
+        let replaced_stage = PathBuf::from(replaced_stage);
+        fs::create_dir(&replaced_stage).expect("stage name is occupiable");
+        assert!(runtime.close_terminal_episode_v1(50_303).is_err());
+        fs::remove_dir(&replaced_stage).expect("stage name frees");
+        runtime
+            .close_episode_v1(EpisodeCloseReasonV4::ProcessExit)
+            .expect("the owed footer publishes");
+        let text = fs::read_to_string(&replaced_path).unwrap();
+        let footer: EpisodeFooterRecordV4 =
+            serde_json::from_str(text.lines().next_back().unwrap()).expect("a footer");
+        assert_eq!(
+            footer.close_reason,
+            EpisodeCloseReasonV4::EpisodeTerminal,
+            "a remembered terminal outranks the reason the closing path names"
+        );
+        fs::remove_dir_all(&replaced_directory).ok();
+        fs::remove_dir_all(&directory).ok();
     }
 
     fn search_decision_record_v1(bytes: &[u8]) -> serde_json::Value {
