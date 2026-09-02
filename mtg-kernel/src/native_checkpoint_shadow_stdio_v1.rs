@@ -65,6 +65,8 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1: &str = "mtg-kernel-checkpoint-shadow-stdio/v1";
 pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
+pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V2: &str = "mtg-kernel-checkpoint-shadow-stdio/v2";
+pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V2: u32 = 2;
 pub const CHECKPOINT_SHADOW_MODEL_INPUT_COMMITMENT_V1: &str =
     "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1";
 const CHECKPOINT_SHADOW_PUBLIC_HISTORY_COMMITMENT_V1: &str =
@@ -2104,6 +2106,104 @@ impl XmageCp7OutcomeJsonlWriterV1 {
     }
 }
 
+/// Wire version this scorer speaks. `V1` is the frozen original: its request
+/// grammar, response envelope and every body field stay byte-identical, so a
+/// pinned consumer (including the already-built `checkpoint_shadow_stdio_v1`
+/// executables and `XMageRallyBridgeJsonCodec`, which rejects unknown fields)
+/// keeps working unchanged. `V2` adds the kernel game clock to every decision
+/// body and accepts an optional `expected_clock` rendezvous guard on `step`.
+/// See `docs/checkpoint_shadow_stdio_protocol_v2.md`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShadowStdioProtocolV1 {
+    #[default]
+    V1,
+    V2,
+}
+
+impl ShadowStdioProtocolV1 {
+    fn protocol_string_v1(self) -> &'static str {
+        match self {
+            Self::V1 => CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1,
+            Self::V2 => CHECKPOINT_SHADOW_STDIO_PROTOCOL_V2,
+        }
+    }
+
+    fn schema_version_v1(self) -> u32 {
+        match self {
+            Self::V1 => CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1,
+            Self::V2 => CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V2,
+        }
+    }
+
+    fn carries_kernel_clock_v1(self) -> bool {
+        matches!(self, Self::V2)
+    }
+}
+
+/// Stable wire spelling of `state::Step`. Written out rather than derived from
+/// `Debug`/`Serialize` so a kernel-side rename can never silently move the
+/// wire contract the Java rendezvous guard compares against.
+fn kernel_phase_step_name_v2(step: crate::state::Step) -> &'static str {
+    match step {
+        crate::state::Step::Untap => "Untap",
+        crate::state::Step::Upkeep => "Upkeep",
+        crate::state::Step::Draw => "Draw",
+        crate::state::Step::Main1 => "Main1",
+        crate::state::Step::BeginCombat => "BeginCombat",
+        crate::state::Step::DeclareAttackers => "DeclareAttackers",
+        crate::state::Step::DeclareBlockers => "DeclareBlockers",
+        crate::state::Step::CombatDamage => "CombatDamage",
+        crate::state::Step::EndCombat => "EndCombat",
+        crate::state::Step::Main2 => "Main2",
+        crate::state::Step::End => "End",
+        crate::state::Step::Cleanup => "Cleanup",
+    }
+}
+
+/// The kernel's own game clock at the decision the response describes. This is
+/// the field the shadow rendezvous lacked: without it neither side can notice
+/// that an XMage callback from one turn is being mapped onto a kernel decision
+/// from another. V2 only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+struct KernelClockV2 {
+    turn: u32,
+    phase_step: &'static str,
+    active_player: PlayerSeatV1,
+    priority_player: PlayerSeatV1,
+    stack_depth: u32,
+}
+
+impl KernelClockV2 {
+    fn from_session_v2(session: &FastActorSessionV1) -> Self {
+        let state = session.kernel_search_state_v1();
+        Self {
+            turn: state.turn,
+            phase_step: kernel_phase_step_name_v2(state.step),
+            active_player: state.active_player.into(),
+            priority_player: state.priority_player.into(),
+            stack_depth: u32::try_from(state.stack.len()).unwrap_or(u32::MAX),
+        }
+    }
+
+    fn matches_expected_v2(self, expected: &ExpectedKernelClockV2) -> bool {
+        self.turn == expected.turn
+            && self.phase_step == expected.phase_step
+            && self.active_player == expected.active_player
+    }
+}
+
+/// Optional caller-supplied rendezvous assertion on `step`. Carrying it means
+/// "I believe the kernel decision I am about to answer is the one at this
+/// game clock"; a disagreement fails closed instead of silently consuming a
+/// decision from another turn.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ExpectedKernelClockV2 {
+    turn: u32,
+    phase_step: String,
+    active_player: PlayerSeatV1,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "request_type", rename_all = "snake_case", deny_unknown_fields)]
 enum ShadowScorerRequestV1 {
@@ -2122,6 +2222,10 @@ enum ShadowScorerRequestV1 {
         episode_id: u64,
         expected_step: u64,
         selected_index: u32,
+        /// V2 only. A V1-mode service rejects any request carrying this field
+        /// as `malformed_request`, exactly as it did before the field existed.
+        #[serde(default)]
+        expected_clock: Option<ExpectedKernelClockV2>,
     },
 }
 
@@ -2177,6 +2281,10 @@ struct DecisionBodyV1 {
     logits_f32_bits: Vec<u32>,
     value_f32_bits: u32,
     action_semantics: Vec<ActionSemanticV1>,
+    /// V2 only; `None` (and therefore absent from the wire) under V1, which
+    /// keeps every V1 response byte-identical to the frozen protocol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kernel_clock: Option<KernelClockV2>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2415,6 +2523,7 @@ struct ShadowScorerServiceV1 {
     population_opponent: Option<LadderOpponentEngineV1>,
     identity: ShadowCheckpointIdentityV1,
     candidate_selector: ShadowCandidateSelectorV1,
+    protocol: ShadowStdioProtocolV1,
     max_physical_decisions: u64,
     max_policy_steps: u64,
     active: Option<ActiveShadowSessionV1>,
@@ -2483,6 +2592,7 @@ impl ShadowScorerServiceV1 {
                     population_opponent: None,
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+                    protocol: ShadowStdioProtocolV1::V1,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                     max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                     active: None,
@@ -2501,6 +2611,7 @@ impl ShadowScorerServiceV1 {
             population_opponent: None,
             identity: loaded.identity,
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+            protocol: ShadowStdioProtocolV1::V1,
             max_physical_decisions: loaded.max_physical_decisions,
             max_policy_steps: loaded.max_policy_steps,
             active: None,
@@ -2535,6 +2646,7 @@ impl ShadowScorerServiceV1 {
                 sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
             },
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+            protocol: ShadowStdioProtocolV1::V1,
             max_physical_decisions: 128,
             max_policy_steps: 16_384,
             active: None,
@@ -3059,6 +3171,7 @@ impl ShadowScorerServiceV1 {
     fn decision_body_v1(
         active: &ActiveShadowSessionV1,
         include_initial_libraries: bool,
+        protocol: ShadowStdioProtocolV1,
     ) -> Result<DecisionBodyV1, ()> {
         let scored = active.current.as_ref().ok_or(())?;
         Ok(DecisionBodyV1 {
@@ -3094,6 +3207,9 @@ impl ShadowScorerServiceV1 {
             logits_f32_bits: scored.logits_f32_bits.clone(),
             value_f32_bits: scored.value_f32_bits,
             action_semantics: scored.action_semantics.clone(),
+            kernel_clock: protocol
+                .carries_kernel_clock_v1()
+                .then(|| KernelClockV2::from_session_v2(&active.session)),
         })
     }
 
@@ -3273,14 +3389,17 @@ impl ShadowScorerServiceV1 {
                 );
             }
         }
+        let protocol = self.protocol;
         let body = match active.session.current_response() {
-            FastActorResponseV1::Decision(_) => match Self::decision_body_v1(&active, true) {
-                Ok(decision) => ShadowScorerResponseBodyV1::Decision {
-                    decision,
-                    applied_action: None,
-                },
-                Err(()) => error_body_v1("internal_protocol_error", "decision cache missing"),
-            },
+            FastActorResponseV1::Decision(_) => {
+                match Self::decision_body_v1(&active, true, protocol) {
+                    Ok(decision) => ShadowScorerResponseBodyV1::Decision {
+                        decision,
+                        applied_action: None,
+                    },
+                    Err(()) => error_body_v1("internal_protocol_error", "decision cache missing"),
+                }
+            }
             FastActorResponseV1::Terminal(terminal) => ShadowScorerResponseBodyV1::Terminal {
                 terminal: Self::terminal_body_v1(&active, terminal, true),
                 applied_action: None,
@@ -3296,6 +3415,7 @@ impl ShadowScorerServiceV1 {
         episode_id: u64,
         expected_step: u64,
     ) -> ShadowScorerResponseV1 {
+        let protocol = self.protocol;
         let Some(active) = self.active.as_ref() else {
             return response_v1(
                 Some(request_id),
@@ -3335,7 +3455,7 @@ impl ShadowScorerServiceV1 {
         }
         match current {
             FastActorResponseV1::Decision(_) => {
-                let body = match Self::decision_body_v1(active, false) {
+                let body = match Self::decision_body_v1(active, false, protocol) {
                     Ok(decision) => ShadowScorerResponseBodyV1::Decision {
                         decision,
                         applied_action: None,
@@ -3361,7 +3481,9 @@ impl ShadowScorerServiceV1 {
         episode_id: u64,
         expected_step: u64,
         selected_index: u32,
+        expected_clock: Option<ExpectedKernelClockV2>,
     ) -> ShadowScorerResponseV1 {
+        let protocol = self.protocol;
         let Some(active) = self.active.as_mut() else {
             return response_v1(
                 Some(request_id),
@@ -3395,6 +3517,24 @@ impl ShadowScorerServiceV1 {
                     "expected_step does not match the current decision",
                 ),
             );
+        }
+        // Rendezvous guard (V2). `expected_step` only pins the scorer's own
+        // decision counter, which both sides advance together by construction;
+        // it cannot catch a caller whose game is at a different turn than the
+        // kernel decision it is about to answer. The optional clock does, and
+        // fails closed without advancing the session.
+        if let Some(expected_clock) = expected_clock.as_ref() {
+            if !KernelClockV2::from_session_v2(&active.session).matches_expected_v2(expected_clock)
+            {
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(
+                        "clock_mismatch",
+                        "expected_clock does not match the kernel clock of the current decision",
+                    ),
+                );
+            }
         }
         if let Some(model_selected) = scored.selected_action_index {
             if selected_index != model_selected {
@@ -3616,13 +3756,15 @@ impl ShadowScorerServiceV1 {
         active.current = next_scored;
         active.structured_history = structured_history_after;
         let body = match next {
-            FastActorResponseV1::Decision(_) => match Self::decision_body_v1(active, false) {
-                Ok(decision) => ShadowScorerResponseBodyV1::Decision {
-                    decision,
-                    applied_action: Some(applied),
-                },
-                Err(()) => error_body_v1("internal_protocol_error", "decision cache missing"),
-            },
+            FastActorResponseV1::Decision(_) => {
+                match Self::decision_body_v1(active, false, protocol) {
+                    Ok(decision) => ShadowScorerResponseBodyV1::Decision {
+                        decision,
+                        applied_action: Some(applied),
+                    },
+                    Err(()) => error_body_v1("internal_protocol_error", "decision cache missing"),
+                }
+            }
             FastActorResponseV1::Terminal(terminal) => ShadowScorerResponseBodyV1::Terminal {
                 terminal: Self::terminal_body_v1(active, terminal, false),
                 applied_action: Some(applied),
@@ -3631,19 +3773,28 @@ impl ShadowScorerServiceV1 {
         response_v1(Some(request_id), &self.identity, body)
     }
 
+    /// Every response leaves through here, so this is the single place the
+    /// negotiated wire version is stamped. `response_v1` keeps building the
+    /// frozen V1 envelope; under V2 only these two envelope fields change.
+    fn stamped_response_v1(&self, mut response: ShadowScorerResponseV1) -> ShadowScorerResponseV1 {
+        response.protocol = self.protocol.protocol_string_v1();
+        response.schema_version = self.protocol.schema_version_v1();
+        response
+    }
+
     fn handle_line_v1(&mut self, line: &str) -> String {
         if self.export_poisoned {
             let request_id = parse_strict_json_value(line)
                 .ok()
                 .and_then(|value| request_id_from_value_v1(&value));
-            return serialize_response_v1(&response_v1(
+            return serialize_response_v1(&self.stamped_response_v1(response_v1(
                 request_id,
                 &self.identity,
                 error_body_v1(
                     "export_poisoned",
                     "a prior export write failed and this scorer cannot continue",
                 ),
-            ));
+            )));
         }
         let response = if line.len() > CHECKPOINT_SHADOW_MAX_REQUEST_BYTES_V1 {
             response_v1(
@@ -3660,11 +3811,11 @@ impl ShadowScorerServiceV1 {
                     } else {
                         "malformed_json"
                     };
-                    return serialize_response_v1(&response_v1(
+                    return serialize_response_v1(&self.stamped_response_v1(response_v1(
                         None,
                         &self.identity,
                         error_body_v1(code, "request line is not valid strict JSON"),
-                    ));
+                    )));
                 }
             };
             let recoverable_request_id = request_id_from_value_v1(&value);
@@ -3685,7 +3836,30 @@ impl ShadowScorerServiceV1 {
                         episode_id,
                         expected_step,
                         selected_index,
-                    } => self.handle_step_v1(request_id, episode_id, expected_step, selected_index),
+                        expected_clock,
+                    } => {
+                        if expected_clock.is_some() && !self.protocol.carries_kernel_clock_v1() {
+                            // A V1 service has never accepted this field. Keep
+                            // its exact pre-V2 error surface rather than
+                            // inventing a new code only V1 callers could see.
+                            response_v1(
+                                Some(request_id),
+                                &self.identity,
+                                error_body_v1(
+                                    "malformed_request",
+                                    "request does not match the shadow scorer schema",
+                                ),
+                            )
+                        } else {
+                            self.handle_step_v1(
+                                request_id,
+                                episode_id,
+                                expected_step,
+                                selected_index,
+                                expected_clock,
+                            )
+                        }
+                    }
                 },
                 _ => response_v1(
                     recoverable_request_id,
@@ -3697,7 +3871,7 @@ impl ShadowScorerServiceV1 {
                 ),
             }
         };
-        serialize_response_v1(&response)
+        serialize_response_v1(&self.stamped_response_v1(response))
     }
 }
 
@@ -3852,13 +4026,48 @@ fn install_native_population_exports_v1(
     Ok(())
 }
 
+/// The one entry point that can select the wire version. Every other public
+/// runner delegates here with [`ShadowStdioProtocolV1::V1`], so a caller that
+/// does not opt in keeps the frozen protocol byte for byte.
+pub fn run_checkpoint_shadow_stdio_with_protocol_and_exports_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    protocol: ShadowStdioProtocolV1,
+    teacher_jsonl: Option<PathBuf>,
+    outcome_jsonl: Option<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_fully_configured_v1(
+        authority,
+        ShadowCandidateSelectorV1::PolicySample,
+        protocol,
+        teacher_jsonl,
+        outcome_jsonl,
+    )
+}
+
 fn run_checkpoint_shadow_stdio_configured_v1(
     authority: ShadowCheckpointAuthorityV1,
     selector: ShadowCandidateSelectorV1,
     teacher_jsonl: Option<PathBuf>,
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
+    run_checkpoint_shadow_stdio_fully_configured_v1(
+        authority,
+        selector,
+        ShadowStdioProtocolV1::V1,
+        teacher_jsonl,
+        outcome_jsonl,
+    )
+}
+
+fn run_checkpoint_shadow_stdio_fully_configured_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    selector: ShadowCandidateSelectorV1,
+    protocol: ShadowStdioProtocolV1,
+    teacher_jsonl: Option<PathBuf>,
+    outcome_jsonl: Option<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    service.protocol = protocol;
     if selector == ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -4432,6 +4641,171 @@ mod tests {
             decision_projection_v1(&before),
             decision_projection_v1(&after)
         );
+    }
+
+    fn service_v2() -> ShadowScorerServiceV1 {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(DeterministicTestModelV1));
+        service.protocol = ShadowStdioProtocolV1::V2;
+        service
+    }
+
+    fn live_kernel_clock_v2(service: &ShadowScorerServiceV1) -> serde_json::Value {
+        let session = &service.active.as_ref().expect("active session").session;
+        serde_json::to_value(KernelClockV2::from_session_v2(session)).expect("clock serializes")
+    }
+
+    fn step_line_with_clock_v2(
+        request_id: &str,
+        expected_step: u64,
+        selected_index: u64,
+        clock: &serde_json::Value,
+    ) -> String {
+        format!(
+            concat!(
+                "{{\"request_type\":\"step\",\"request_id\":\"{}\",\"episode_id\":2,",
+                "\"expected_step\":{},\"selected_index\":{},\"expected_clock\":",
+                "{{\"turn\":{},\"phase_step\":{},\"active_player\":{}}}}}"
+            ),
+            request_id,
+            expected_step,
+            selected_index,
+            clock["turn"],
+            clock["phase_step"],
+            clock["active_player"],
+        )
+    }
+
+    fn score_current_line_v1(request_id: &str) -> String {
+        format!(
+            "{{\"request_type\":\"score_current\",\"request_id\":\"{request_id}\",\"episode_id\":2,\"expected_step\":0}}"
+        )
+    }
+
+    #[test]
+    fn protocol_v1_omits_the_kernel_clock_and_refuses_expected_clock_v1() {
+        let mut service = service_v1();
+        let reset = value_v1(&service.handle_line_v1(&reset_line_v1("v1-reset")));
+        assert_eq!(reset["protocol"], CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1);
+        assert_eq!(reset["schema_version"], 1);
+        assert!(
+            reset["decision"].get("kernel_clock").is_none(),
+            "V1 decision bodies stay byte-identical to the frozen protocol"
+        );
+        let scored = value_v1(&service.handle_line_v1(&score_current_line_v1("v1-score")));
+        assert!(scored["decision"].get("kernel_clock").is_none());
+
+        // A V1 service has never accepted expected_clock. Refusing it must
+        // neither change V1's error surface nor advance the session.
+        let selected = reset["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("selected index");
+        let clock = live_kernel_clock_v2(&service);
+        let refused = value_v1(
+            &service.handle_line_v1(&step_line_with_clock_v2("v1-clock", 0, selected, &clock)),
+        );
+        assert_eq!(refused["error_code"], "malformed_request");
+        let after = value_v1(&service.handle_line_v1(&score_current_line_v1("v1-after")));
+        assert_eq!(
+            decision_projection_v1(&scored),
+            decision_projection_v1(&after)
+        );
+        let stepped = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"v1-step\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        )));
+        assert_ne!(stepped["response_type"], "error");
+        assert!(stepped["decision"].get("kernel_clock").is_none());
+    }
+
+    #[test]
+    fn protocol_v2_decision_bodies_carry_the_kernel_clock_v2() {
+        let mut service = service_v2();
+        let reset = value_v1(&service.handle_line_v1(&reset_line_v1("v2-reset")));
+        assert_eq!(reset["protocol"], CHECKPOINT_SHADOW_STDIO_PROTOCOL_V2);
+        assert_eq!(reset["schema_version"], 2);
+        let clock = reset["decision"]["kernel_clock"].clone();
+        assert_eq!(clock, live_kernel_clock_v2(&service));
+        assert!(clock["turn"].as_u64().expect("turn") >= 1);
+        assert_eq!(clock["phase_step"], "Main1");
+        assert_eq!(clock["active_player"], "p0");
+        assert_eq!(clock["priority_player"], "p0");
+        assert_eq!(clock["stack_depth"], 0);
+
+        let scored = value_v1(&service.handle_line_v1(&score_current_line_v1("v2-score")));
+        assert_eq!(scored["decision"]["kernel_clock"], clock);
+
+        // The clock describes the decision the body carries, so a step must
+        // move it to the next decision's own game clock.
+        let selected = reset["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("selected index");
+        let stepped = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"v2-step\",\"episode_id\":2,\"expected_step\":0,\"selected_index\":{selected}}}"
+        )));
+        assert_ne!(stepped["response_type"], "error");
+        assert_eq!(stepped["protocol"], CHECKPOINT_SHADOW_STDIO_PROTOCOL_V2);
+        assert_eq!(
+            stepped["decision"]["kernel_clock"],
+            live_kernel_clock_v2(&service)
+        );
+    }
+
+    #[test]
+    fn protocol_v2_expected_clock_guard_fails_closed_v2() {
+        let mut service = service_v2();
+        let before = value_v1(&service.handle_line_v1(&reset_line_v1("guard-reset")));
+        let selected = before["decision"]["selected_action_index"]
+            .as_u64()
+            .expect("selected index");
+        let clock = before["decision"]["kernel_clock"].clone();
+
+        let mut wrong_turn = clock.clone();
+        wrong_turn["turn"] = serde_json::json!(clock["turn"].as_u64().expect("turn") + 1);
+        let mut wrong_step = clock.clone();
+        wrong_step["phase_step"] = serde_json::json!("Main2");
+        let mut wrong_actor = clock.clone();
+        wrong_actor["active_player"] = serde_json::json!("p1");
+
+        for (label, wrong) in [
+            ("turn", wrong_turn),
+            ("phase_step", wrong_step),
+            ("active_player", wrong_actor),
+        ] {
+            let refused = value_v1(&service.handle_line_v1(&step_line_with_clock_v2(
+                "guard-bad",
+                0,
+                selected,
+                &wrong,
+            )));
+            assert_eq!(
+                refused["error_code"], "clock_mismatch",
+                "a disagreeing {label} must fail closed"
+            );
+            let after = value_v1(&service.handle_line_v1(&score_current_line_v1("guard-after")));
+            assert_eq!(
+                decision_projection_v1(&before),
+                decision_projection_v1(&after),
+                "a rejected {label} must not advance the session"
+            );
+        }
+
+        // An unknown field inside the clock is a schema violation, never a
+        // silently ignored hint.
+        let unknown = value_v1(&service.handle_line_v1(concat!(
+            "{\"request_type\":\"step\",\"request_id\":\"guard-unknown\",\"episode_id\":2,",
+            "\"expected_step\":0,\"selected_index\":0,\"expected_clock\":",
+            "{\"turn\":1,\"phase_step\":\"Main1\",\"active_player\":\"p0\",\"stack_depth\":0}}"
+        )));
+        assert_eq!(unknown["error_code"], "malformed_request");
+
+        let accepted = value_v1(&service.handle_line_v1(&step_line_with_clock_v2(
+            "guard-good",
+            0,
+            selected,
+            &clock,
+        )));
+        assert_ne!(accepted["response_type"], "error");
+        assert_eq!(accepted["applied_action"]["selected_index"], selected);
     }
 
     #[test]
