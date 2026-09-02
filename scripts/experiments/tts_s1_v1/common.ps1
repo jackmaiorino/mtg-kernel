@@ -77,6 +77,39 @@ function Get-TtsS1ReportField {
     return $current
 }
 
+function Read-TtsS1Json {
+    # Decodes a UTF-8 JSON document, tolerating a BOM a producer may have
+    # written. Lives here rather than in the launcher so the launcher and
+    # these tests read a tier report through the same code.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "required JSON document is missing: $Path"
+    }
+    $text = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    if ($text.Length -gt 0 -and [int][char]$text[0] -eq 65279) { $text = $text.Substring(1) }
+    return $text | ConvertFrom-Json
+}
+
+function Read-TtsS1TierReport {
+    # Reads one tier report AND validates its pinned contract, in that order
+    # and in one call.
+    #
+    # The two steps are fused deliberately. Splitting them lets a caller
+    # dereference a contract field (say `compute_cap.latency_curve`) between
+    # the read and the assertion, and under Set-StrictMode a report missing
+    # that block then dies with a bare PropertyNotFoundException naming
+    # neither the tier nor the field the contract required. Returning only
+    # already-validated reports makes that ordering impossible to get wrong:
+    # there is no way to hold an unvalidated one.
+    param(
+        [Parameter(Mandatory = $true)][string]$Tier,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $report = Read-TtsS1Json -Path $Path
+    Assert-TtsS1TierReportContract -Tier $Tier -Report $report
+    return $report
+}
+
 function Assert-TtsS1TierReportContract {
     # Every pinned string a tier report must declare, checked before the
     # report is summarized. Case-sensitive throughout: these are identity

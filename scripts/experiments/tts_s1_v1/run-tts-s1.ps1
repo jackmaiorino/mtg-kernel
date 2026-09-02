@@ -173,16 +173,6 @@ function Assert-TtsS1LastExitCode {
     }
 }
 
-function Read-TtsS1Json {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "required JSON document is missing: $Path"
-    }
-    $text = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
-    if ($text.Length -gt 0 -and [int][char]$text[0] -eq 65279) { $text = $text.Substring(1) }
-    return $text | ConvertFrom-Json
-}
-
 function Write-TtsS1JsonFile {
     # Atomic publication by staged sibling then move, so a killed wrapper
     # never leaves a half-written record for the next process to read as
@@ -556,7 +546,12 @@ foreach ($plan in $tierPlans) {
         if ($exitCode -ne 0 -and $exitCode -ne 4) {
             throw "tts_s1_replay_v1 exited with $exitCode for tier $($plan.tier); see tier-$($plan.tier).stderr.txt"
         }
-        $report = Read-TtsS1Json -Path $plan.report_path
+        # Read AND validate in one call. Every dereference below reaches a
+        # contract field, so a report missing one must be refused BEFORE the
+        # first of them: otherwise a missing `compute_cap.latency_curve`
+        # dies with a bare strict-mode PropertyNotFoundException naming
+        # neither the tier nor the field the contract required.
+        $report = Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path
         if ($report.body.corpus_sha256 -cne $corpus.corpus_sha256) {
             throw "tier $($plan.tier) measured corpus $($report.body.corpus_sha256), not the corpus this attempt built"
         }
@@ -614,12 +609,6 @@ foreach ($plan in $tierPlans) {
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        # Every pinned string, including the one NESTED inside the
-        # compute-cap block: a partially updated replay binary can declare
-        # the current compute-cap rule over a curve fitted under a
-        # superseded one, and that report must not be able to mark a run
-        # complete.
-        Assert-TtsS1TierReportContract -Tier $plan.tier -Report $report
         Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} target_protocol_p99_micros={5} target_protocol_max_micros={6} whole_episode_protocol_p99_micros={7} projected_s2_worker_hours_milli={8} extrapolated_ordinals={9} within_compute_cap={10}" -f `
             $plan.tier, $observedVerdict, $report.body.verdict_view, `
             $report.body.episodes_replayed, $report.body.searched_decisions, `

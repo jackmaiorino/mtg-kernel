@@ -109,9 +109,21 @@ function Get-OnlyAttemptRoot {
 }
 
 # The pinned contract and the validation the launcher runs, dot-sourced so
-# these tests exercise the SAME constants and the SAME function rather than
+# these tests exercise the SAME constants and the SAME functions rather than
 # re-implementing either. It defines constants and functions only.
-. (Join-Path $PSScriptRoot 'common.ps1')
+#
+# Resolved from the directory of the wrapper UNDER TEST, not from this test
+# file's own directory: -ScriptPath may select a wrapper elsewhere (a
+# candidate build, a second checkout), and loading this directory's
+# common.ps1 would then assert one implementation while the wrapper loaded
+# another. The wrapper itself dot-sources `$PSScriptRoot/common.ps1`, so
+# taking it from beside the wrapper is exactly what the wrapper loads.
+$script:TtsS1WrapperDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $ScriptPath).Path
+$script:TtsS1CommonPath = Join-Path $script:TtsS1WrapperDirectory 'common.ps1'
+if (-not (Test-Path -LiteralPath $script:TtsS1CommonPath -PathType Leaf)) {
+    throw "the wrapper under test has no common.ps1 beside it: $script:TtsS1CommonPath"
+}
+. $script:TtsS1CommonPath
 $wrapperText = [System.IO.File]::ReadAllText($ScriptPath)
 
 # The superseded strings, spelled out so a stale report can be built and
@@ -194,6 +206,43 @@ $message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport -OmitLatencyC
 Assert-True ($null -ne $message) 'the contract check rejects a report with no latency curve at all'
 Assert-True ($message -like '*missing*latency_curve*') 'the rejection names the missing nested block'
 
+# THE LAUNCHER PATH. The wrapper obtains every tier report through
+# Read-TtsS1TierReport, which validates before returning, so a report
+# missing the nested block can never reach the dereferences that build the
+# tier summary. Were the read and the assertion separable, that report would
+# die with a bare strict-mode PropertyNotFoundException naming neither the
+# tier nor the field.
+$contractSandbox = New-TtsS1TestRoot
+try {
+    $reportPath = Join-Path $contractSandbox 'tier-t512.report.json'
+    $json = New-TtsS1TestReport -OmitLatencyCurve | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($reportPath, $json, [System.Text.UTF8Encoding]::new($false))
+
+    $launcherMessage = $null
+    try { [void](Read-TtsS1TierReport -Tier 't512' -Path $reportPath) }
+    catch { $launcherMessage = $_.Exception.Message }
+    Assert-True ($null -ne $launcherMessage) 'the launcher read path rejects a report with no latency_curve block'
+    Assert-True ($launcherMessage -like '*missing*body.compute_cap.latency_curve.rule*') 'the launcher read path names the missing nested path'
+    Assert-True (-not ($launcherMessage -like '*PropertyNotFound*')) 'the launcher read path does not surface a bare strict-mode error'
+
+    # And a well-formed report still comes back through the same call.
+    $validPath = Join-Path $contractSandbox 'tier-t2048.report.json'
+    $json = New-TtsS1TestReport | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($validPath, $json, [System.Text.UTF8Encoding]::new($false))
+    $returned = Read-TtsS1TierReport -Tier 't2048' -Path $validPath
+    Assert-True ($returned.body.compute_cap.latency_curve.rule -ceq $script:TtsS1LatencyCurveRule) 'the launcher read path returns a validated report'
+
+    # The wrapper really does obtain its tier reports that way, and no
+    # longer carries a second, separable assertion it could drift from.
+    Assert-True ($wrapperText -like '*Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path*') 'the wrapper reads every tier report through the validating reader'
+    Assert-True (-not ($wrapperText -like '*Read-TtsS1Json -Path $plan.report_path*')) 'the wrapper does not read a tier report unvalidated'
+}
+finally {
+    if (Test-Path -LiteralPath $contractSandbox) {
+        Remove-Item -LiteralPath $contractSandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $sandbox = New-TtsS1TestRoot
 try {
     $corpusExe = New-TtsS1StandIn -Path (Join-Path $sandbox 'tts_s1_corpus_v1.exe')
@@ -248,7 +297,7 @@ try {
     Assert-True ($provenanceJson.pinned_contract.latency_curve_rule -like '*-at-the-maximum-rise-between-adjacent-fitted-ordinals*') 'the pinned latency-curve rule names the adjacent-rise extrapolation'
     Assert-True ($provenanceJson.pinned_contract.latency_curve_rule -like '*/v2') 'the pinned latency-curve rule is V2'
     Assert-True ($provenanceJson.pinned_contract.verdict_view -ceq 'corpus_target_view') 'the pinned gating view is the corpus targets'
-    Assert-True ($wrapperText -like '*Assert-TtsS1TierReportContract -Tier $plan.tier -Report $report*') 'the launcher validates every tier report against the pinned contract'
+    Assert-True ($wrapperText -like "*. (Join-Path `$PSScriptRoot 'common.ps1')*") 'the launcher loads the shared pinned contract beside it'
     Assert-True ($provenanceJson.corpus_executable.sha256.Length -eq 64) 'the corpus bin is hashed'
     Assert-True ($provenanceJson.replay_executable.sha256.Length -eq 64) 'the replay bin is hashed'
     Assert-True ($null -eq $provenanceJson.git) 'the git record is skipped under -SkipHostAssertions'
