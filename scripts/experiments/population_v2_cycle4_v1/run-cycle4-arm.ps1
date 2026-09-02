@@ -19,11 +19,19 @@ Formal mode:
 
 then per interval, through refresh 16:
 
-  1. assert the Store's own resume position equals interval * 128
-  2. run cycle4_arm_v1 with --stop-generation = position + 128
-  3. assert the Store advanced to exactly position + 128
+  1. assert the Store's own position is inside this interval's window
+  2. run cycle4_arm_v1 with --stop-generation = interval end
+  3. assert the Store advanced to exactly that stop generation
   4. run the payoff panel over the interval's manifest roster
   5. build the next refresh manifest from the chain plus that panel
+
+Each of those transitions is journalled, hash-chained, under the attempt root
+before the next begins, so an interrupted attempt can be resumed exactly: a
+Store stopped inside an interval resumes that interval's ORIGINAL stop
+generation, and an interval whose training finished but whose panel or next
+manifest did not gets those finished before anything advances.
+TRAINING_COMPLETE is published only once the whole chain through the last
+refresh exists and verifies.
 
 STATIC-RB runs steps 1-4 and never step 5: it reuses the genesis manifest at
 every interval, and the wrapper asserts before and after every interval that
@@ -117,6 +125,7 @@ if (@($SlotStoreRoots).Count -ne $script:Cycle4SlotCount) {
 }
 
 $gateName = "cycle4-$Arm-$Mode"
+$gateRoot = Join-Path $EvidenceRoot $gateName
 $root = New-Cycle4AttemptRoot -EvidenceRoot $EvidenceRoot -GateName $gateName
 $phase = 'inputs'
 $commandLog = Join-Path $root 'commands.jsonl'
@@ -566,27 +575,120 @@ try {
                 throw "$genesisManifestPath declares base seed $($genesisManifest.trainee_base_seed), but $RunRecord declares $armBaseSeed"
             }
         }
+        $endGeneration = $ThroughRefreshIndex * $script:Cycle4RefreshInterval
         $storeGeneration = Get-Cycle4StoreLatestGeneration -StoreRoot $StoreRoot
         if ($null -eq $storeGeneration) { $storeGeneration = [uint64]0 }
-        if (($storeGeneration % $script:Cycle4RefreshInterval) -ne [uint64]0) {
-            throw "Store $StoreRoot is at generation $storeGeneration, which is not a refresh boundary; a cycle-4 arm only ever resumes on a boundary"
+        if ($storeGeneration -gt $endGeneration) {
+            throw "Store $StoreRoot is at generation $storeGeneration, past the refresh $ThroughRefreshIndex end ($endGeneration)"
         }
-        $startInterval = [uint64]($storeGeneration / $script:Cycle4RefreshInterval)
-        if ($startInterval -gt $ThroughRefreshIndex) {
-            throw "Store $StoreRoot is already past refresh $ThroughRefreshIndex (generation $storeGeneration)"
+        if (($storeGeneration % $checkpointSegmentUpdates) -ne [uint64]0) {
+            throw "Store $StoreRoot is at generation $storeGeneration, which is not a whole number of checkpoint segments ($checkpointSegmentUpdates); a Store can only ever stop on one"
         }
 
-        $intervals = @()
-        if ($null -eq $dryRunStoppedAfter) {
-            for ($interval = $startInterval; $interval -lt $ThroughRefreshIndex; $interval++) {
-                $intervals += [uint64]$interval
+        $journals = Read-Cycle4IntervalJournals -GateRoot $gateRoot
+
+        # Reconstruct what is left to do. An interval is finished only when all
+        # three of its outputs exist: its trained generations, its panel, and
+        # the next manifest. The Store answers the first. For a refresh-chained
+        # arm the chain itself answers the other two, which is the durable
+        # answer; for static-rb, whose panel deliberately never enters the
+        # chain and which never builds, only the journal can.
+        $plan = @()
+        for ($candidate = [uint64]0; $candidate -lt $ThroughRefreshIndex; $candidate++) {
+            $candidateStop = ($candidate + [uint64]1) * $script:Cycle4RefreshInterval
+            $recorded = Get-Cycle4IntervalPhase -Journals $journals -IntervalIndex $candidate
+            $trainingDone = $storeGeneration -ge $candidateStop
+            if ($Arm -ceq 'static-rb') {
+                $panelDone = $trainingDone -and (@('panel-complete', 'manifest-complete') -contains $recorded)
+                $manifestDone = $true
+            }
+            else {
+                $panelDone = Test-Path -LiteralPath (Join-Path $RefreshChainDir (Get-Cycle4ChainPanelName -RefreshIndex ($candidate + [uint64]1))) -PathType Leaf
+                $manifestDone = Test-Path -LiteralPath (Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex ($candidate + [uint64]1))) -PathType Leaf
+                if ((@('panel-complete', 'manifest-complete') -contains $recorded) -and -not $panelDone) {
+                    throw "interval $candidate journalled '$recorded', but refresh $($candidate + 1)'s panel is missing from $RefreshChainDir; refusing to silently re-run a 28-matchup panel over a chain that lost one"
+                }
+                if ($manifestDone -and -not $panelDone) {
+                    throw "$RefreshChainDir holds refresh $($candidate + 1)'s manifest without the panel it binds"
+                }
+            }
+            # A panel or a manifest cannot legitimately exist for an interval
+            # the Store has not trained through: each is produced only after
+            # that interval's training finished. Finding one means the Store
+            # and the refresh chain are not from the same campaign. A dry run
+            # says so and plans the interval in full anyway, because its job is
+            # to show a plan over whatever directories it was pointed at; a
+            # real run stops.
+            if (($panelDone -or $manifestDone) -and -not $trainingDone) {
+                $detail = "interval $candidate's outputs are present in $RefreshChainDir but the Store has not trained through generation $candidateStop"
+                if (-not $DryRun) {
+                    throw "$detail; the Store and the refresh chain are not from the same campaign"
+                }
+                Write-Host "DRY-RUN formal-plan: $detail; planning the interval in full anyway"
+                $panelDone = $false
+                $manifestDone = $false
+            }
+            if ($trainingDone -and $panelDone -and $manifestDone) { continue }
+            $plan += [ordered]@{
+                interval = [uint64]$candidate
+                refresh_index = $(if ($Arm -ceq 'static-rb') { [uint64]0 } else { [uint64]$candidate })
+                stop_generation = $candidateStop
+                train = (-not $trainingDone)
+                panel = (-not $panelDone)
+                manifest = (-not $manifestDone)
+                resumed_from_phase = $recorded
             }
         }
+        # Only the frontier interval can still need training, and it has to be
+        # the last thing planned: a Store's generation is monotonic, so an
+        # untrained interval before a trained one means the Store and the
+        # refresh chain disagree about which campaign this is.
+        for ($index = 0; $index -lt $plan.Count; $index++) {
+            if ($plan[$index].train -and $index -ne ($plan.Count - 1)) {
+                $detail = "interval $($plan[$index].interval) still needs training while later intervals are planned after it"
+                if (-not $DryRun) {
+                    throw "$detail; the Store and $RefreshChainDir disagree"
+                }
+                Write-Host "DRY-RUN formal-plan: $detail; planning them in order anyway"
+                break
+            }
+        }
+        if ($null -ne $dryRunStoppedAfter) { $plan = @() }
+        $startInterval = $(if ($plan.Count -eq 0) { $ThroughRefreshIndex } else { [uint64]$plan[0].interval })
 
-        foreach ($interval in $intervals) {
+        function Write-Cycle4Phase {
+            # Journals one transition, or says what it would journal. A dry run
+            # never writes: its records would otherwise be read back by the next
+            # real attempt as progress that never happened.
+            param(
+                [Parameter(Mandatory = $true)][uint64]$IntervalIndex,
+                [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+                [Parameter(Mandatory = $true)][uint64]$StopGeneration,
+                [Parameter(Mandatory = $true)][string]$Transition
+            )
+            if ($DryRun) {
+                Write-Host "DRY-RUN interval-$IntervalIndex`: would journal $Transition"
+                return
+            }
+            Add-Cycle4IntervalPhase `
+                -Journals $journals `
+                -AttemptRoot $root `
+                -Arm $Arm `
+                -IntervalIndex $IntervalIndex `
+                -RefreshIndex $RefreshIndex `
+                -StopGeneration $StopGeneration `
+                -Phase $Transition | Out-Null
+        }
+
+        foreach ($step in $plan) {
+            $interval = [uint64]$step.interval
             $phase = "interval-$interval"
             $panelIndex = $interval + [uint64]1
-            if ($Arm -ceq 'static-rb') { $refreshIndex = [uint64]0 } else { $refreshIndex = [uint64]$interval }
+            $refreshIndex = [uint64]$step.refresh_index
+            $stopGeneration = [uint64]$step.stop_generation
+            if ($null -ne $step.resumed_from_phase) {
+                Write-Host "interval-$interval`: resuming an interrupted interval, last journalled phase '$($step.resumed_from_phase)'"
+            }
             $manifestPath = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex $refreshIndex)
             $manifest = Read-Cycle4Manifest -Path $manifestPath
             if ($manifest.refresh_index -ne $refreshIndex) {
@@ -616,14 +718,31 @@ try {
                 -GenesisParentStoreRoot $GenesisParentStoreRoot `
                 -AllowMissingStores:$DryRun | Out-Null
 
-            $resumeGeneration = $interval * $script:Cycle4RefreshInterval
-            $stopGeneration = $resumeGeneration + $script:Cycle4RefreshInterval
-            if ($DryRun -and $interval -ne $startInterval) {
-                Write-Host "DRY-RUN interval-$interval`: would assert $StoreRoot is at generation $resumeGeneration"
+            $intervalStart = $interval * $script:Cycle4RefreshInterval
+            if (-not $step.train) {
+                Write-Host "interval-$interval`: already trained to generation $stopGeneration; finishing its pending outputs before advancing"
             }
             else {
-                Assert-Cycle4ResumePosition -StoreRoot $StoreRoot -ExpectedGeneration $resumeGeneration | Out-Null
+            if ($DryRun -and $interval -ne $startInterval) {
+                Write-Host "DRY-RUN interval-$interval`: would assert $StoreRoot is inside [$intervalStart, $stopGeneration)"
             }
+            else {
+                # An interrupted interval leaves the Store on a checkpoint
+                # segment inside its window, not on the refresh boundary. That
+                # is a legal resume point for the SAME stop generation this
+                # interval was started with, and for no other, which is why the
+                # stop below is derived from the interval rather than from
+                # wherever the Store happens to be.
+                $actual = Get-Cycle4StoreLatestGeneration -StoreRoot $StoreRoot
+                if ($null -eq $actual) { $actual = [uint64]0 }
+                if ($actual -lt $intervalStart -or $actual -ge $stopGeneration) {
+                    throw "resume assertion FAILED: $StoreRoot is at generation $actual, outside interval $interval's window [$intervalStart, $stopGeneration)"
+                }
+                if ($actual -ne $intervalStart) {
+                    Write-Host "interval-$interval`: resuming mid-interval from generation $actual toward its original stop generation $stopGeneration"
+                }
+            }
+            Write-Cycle4Phase -IntervalIndex $interval -RefreshIndex $refreshIndex -StopGeneration $stopGeneration -Transition 'training-started'
 
             $armArguments = @(
                 '--arm', $Arm,
@@ -657,11 +776,17 @@ try {
             if (-not $DryRun) {
                 Assert-Cycle4ResumePosition -StoreRoot $StoreRoot -ExpectedGeneration $stopGeneration | Out-Null
             }
+            Write-Cycle4Phase -IntervalIndex $interval -RefreshIndex $refreshIndex -StopGeneration $stopGeneration -Transition 'training-complete'
+            }
 
             # Payoff panel over THIS manifest's roster. Its own output name is
             # derived from the manifest's refresh index plus one, which is the
             # panel the next manifest binds by hash.
             $phase = "interval-$interval-panel"
+            if (-not $step.panel) {
+                Write-Host "interval-$interval`: its panel is already published; skipping"
+            }
+            else {
             $panelOutputDir = Join-Path $intervalRoot 'panel'
             $panelSeed = $PanelBaseSeed + ($panelIndex * $script:Cycle4PanelSeedStridePerRefresh)
             $panelArguments = @(
@@ -690,22 +815,49 @@ try {
             if ($Arm -ceq 'static-rb') {
                 # The panel still runs -- STATIC-RB's pool is measured like
                 # every other arm's -- but it never enters the refresh chain,
-                # so no manifest can ever be built from it.
+                # so no manifest can ever be built from it. The journal is
+                # therefore the only durable record that it ran.
                 $advanced = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex ([uint64]1))
                 if (Test-Path -LiteralPath $advanced -PathType Leaf) {
                     throw "static-rb never advances the manifest past genesis, but $advanced appeared during interval $interval"
                 }
+                Write-Cycle4Phase -IntervalIndex $interval -RefreshIndex $refreshIndex -StopGeneration $stopGeneration -Transition 'panel-complete'
                 continue
             }
 
+            # The panel counts as complete only once its bytes are in the
+            # refresh chain, because that copy is what the builder and every
+            # later interval read. Doing the copy here, before the journal
+            # entry, is what makes 'panel-complete' and the chain agree by
+            # construction, so a resume never has to guess which of the two is
+            # authoritative.
+            $chainPanel = Join-Path $RefreshChainDir (Get-Cycle4ChainPanelName -RefreshIndex $panelIndex)
+            if ($DryRun) {
+                Write-Host "DRY-RUN interval-$interval`: would publish $producedPanel to $chainPanel"
+            }
+            else {
+                if (-not (Test-Path -LiteralPath $producedPanel -PathType Leaf)) {
+                    throw "the panel runner did not publish $producedPanel"
+                }
+                Copy-Item -LiteralPath $producedPanel -Destination "$chainPanel.stage-$PID" -Force
+                Move-Item -LiteralPath "$chainPanel.stage-$PID" -Destination $chainPanel -Force
+            }
+            Write-Cycle4Phase -IntervalIndex $interval -RefreshIndex $refreshIndex -StopGeneration $stopGeneration -Transition 'panel-complete'
+            }
+
+            if ($Arm -ceq 'static-rb') { continue }
+
             $phase = "interval-$interval-refresh"
+            if (-not $step.manifest) {
+                Write-Host "interval-$interval`: refresh $panelIndex's manifest already exists; skipping"
+                continue
+            }
             $chainPanel = Join-Path $RefreshChainDir (Get-Cycle4ChainPanelName -RefreshIndex $panelIndex)
             $nextManifest = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex $panelIndex)
             $stagedIdentities = Join-Path $intervalRoot ('refresh-{0:d2}.slot-identities.json' -f $panelIndex)
             $rosterPath = Join-Path $SlotIdentitiesRosterDir ('refresh-{0:d2}.slot-identities.json' -f $panelIndex)
 
             if ($DryRun) {
-                Write-Host "DRY-RUN interval-$interval`: would publish $producedPanel to $chainPanel"
                 try {
                     New-Cycle4SlotIdentitiesFile `
                         -RosterPath $rosterPath `
@@ -720,11 +872,11 @@ try {
                 }
             }
             else {
-                if (-not (Test-Path -LiteralPath $producedPanel -PathType Leaf)) {
-                    throw "the panel runner did not publish $producedPanel"
+                # Reached either straight from this interval's panel step or on
+                # a resume that found the panel already in the chain.
+                if (-not (Test-Path -LiteralPath $chainPanel -PathType Leaf)) {
+                    throw "refresh $panelIndex's manifest cannot be built: $chainPanel is missing"
                 }
-                Copy-Item -LiteralPath $producedPanel -Destination "$chainPanel.stage-$PID" -Force
-                Move-Item -LiteralPath "$chainPanel.stage-$PID" -Destination $chainPanel -Force
                 New-Cycle4SlotIdentitiesFile `
                     -RosterPath $rosterPath `
                     -OutputPath $stagedIdentities `
@@ -753,6 +905,78 @@ try {
                 -DryRun:$DryRun
             Add-Cycle4CommandRecord -Result $result | Out-Null
             Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+            if (-not $DryRun) {
+                $built = Read-Cycle4Manifest -Path $nextManifest
+                if ($built.refresh_index -ne $panelIndex) {
+                    throw "$nextManifest declares refresh index $($built.refresh_index), not $panelIndex"
+                }
+                if ($built.trainee_run_sha256 -cne $armRunSha256 -or $built.trainee_base_seed -ne $armBaseSeed) {
+                    throw "$nextManifest binds a different trainee identity than the genesis manifest"
+                }
+            }
+            Write-Cycle4Phase -IntervalIndex $interval -RefreshIndex $refreshIndex -StopGeneration $stopGeneration -Transition 'manifest-complete'
+        }
+
+        # ------------------------------------------------------------------
+        # Nothing is complete until the whole chain is. An interrupted attempt
+        # can leave the Store at the program end with the last interval's panel
+        # and manifest missing, which is exactly the state that must NOT
+        # publish TRAINING_COMPLETE.
+        # ------------------------------------------------------------------
+        $phase = 'formal-verification'
+        $chainVerification = $null
+        if ($DryRun) {
+            Write-Host "DRY-RUN formal-verification: would require $StoreRoot at generation $endGeneration and every panel and manifest through refresh $ThroughRefreshIndex"
+        }
+        elseif ($Arm -ceq 'static-rb') {
+            Assert-Cycle4ResumePosition -StoreRoot $StoreRoot -ExpectedGeneration $endGeneration | Out-Null
+            $advanced = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex ([uint64]1))
+            if (Test-Path -LiteralPath $advanced -PathType Leaf) {
+                throw "static-rb never advances the manifest past genesis, but $advanced exists"
+            }
+            for ($index = [uint64]0; $index -lt $ThroughRefreshIndex; $index++) {
+                $recorded = Get-Cycle4IntervalPhase -Journals $journals -IntervalIndex $index
+                if (@('panel-complete', 'manifest-complete') -notcontains $recorded) {
+                    throw "refusing to publish TRAINING_COMPLETE: static-rb interval $index's panel is not journalled complete (last phase '$recorded')"
+                }
+            }
+            $chainVerification = [ordered]@{
+                arm = $Arm
+                static_pool = $true
+                final_generation = $endGeneration
+                intervals_verified = $ThroughRefreshIndex
+            }
+        }
+        else {
+            Assert-Cycle4ResumePosition -StoreRoot $StoreRoot -ExpectedGeneration $endGeneration | Out-Null
+            $links = @()
+            for ($index = [uint64]1; $index -le $ThroughRefreshIndex; $index++) {
+                $linkPanel = Join-Path $RefreshChainDir (Get-Cycle4ChainPanelName -RefreshIndex $index)
+                $linkManifest = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex $index)
+                foreach ($required in @($linkPanel, $linkManifest)) {
+                    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+                        throw "refusing to publish TRAINING_COMPLETE: $required is missing"
+                    }
+                }
+                $link = Read-Cycle4Manifest -Path $linkManifest
+                if ([uint64]$link.refresh_index -ne [uint64]$index) {
+                    throw "$linkManifest declares refresh index $($link.refresh_index), not $index"
+                }
+                if ($link.trainee_run_sha256 -cne $armRunSha256 -or $link.trainee_base_seed -ne $armBaseSeed) {
+                    throw "$linkManifest binds a different trainee identity than the genesis manifest"
+                }
+                $links += [ordered]@{
+                    refresh_index = [uint64]$index
+                    manifest_sha256 = $link.sha256
+                    panel_sha256 = (Get-Cycle4Sha256 -Path $linkPanel)
+                }
+            }
+            $chainVerification = [ordered]@{
+                arm = $Arm
+                static_pool = $false
+                final_generation = $endGeneration
+                links = @($links)
+            }
         }
 
         $phase = 'formal-publication'
@@ -768,7 +992,8 @@ try {
             dry_run = [bool]$DryRun
             start_interval_index = $startInterval
             through_refresh_index = $ThroughRefreshIndex
-            intervals_run = @($intervals)
+            intervals_planned = @($plan)
+            chain_verification = $chainVerification
             dry_run_stopped_after = $dryRunStoppedAfter
             genesis_binding = $genesisBinding
             store_root = $StoreRoot

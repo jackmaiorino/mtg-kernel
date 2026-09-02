@@ -80,6 +80,13 @@ $script:Cycle4ArmOwnedSlotIndex = 5
 $script:Cycle4HistoricalArmSlotIndex = 2
 $script:Cycle4HistoricalArmFirstRefreshIndex = [uint64]4
 $script:Cycle4ArmOriginRecordSchema = 'mtg-kernel-cycle4-arm-origin/v1'
+$script:Cycle4IntervalPhaseSchema = 'mtg-kernel-cycle4-interval-phase/v1'
+# The four transitions one interval passes through, in order. Every one of
+# them is a point an interrupted attempt can stop at, and each is durable
+# before the next begins, so the phase a journal last recorded plus the Store
+# and chain contents determine exactly what is left to do.
+$script:Cycle4IntervalPhases = @('training-started', 'training-complete', 'panel-complete', 'manifest-complete')
+$script:Cycle4PhaseChainGenesisParent = ('0' * 64)
 
 $script:Cycle4ManifestSchema = 'mtg-kernel-population-refresh-manifest-cycle4/v1'
 $script:Cycle4ArmLocatorSchema = 'mtg-kernel-cycle4-arm-slot-locator/v1'
@@ -757,6 +764,192 @@ function New-Cycle4SlotIdentitiesFile {
         record = Get-Cycle4FileRecord -Path $OutputPath
         derived_slot_indexes = @($derived | ForEach-Object { $_.slot_index })
     }
+}
+
+# ---------------------------------------------------------------------------
+# Interval phase journal
+#
+# An attempt can be interrupted anywhere, and the Store alone cannot say where:
+# a latest.json at a refresh boundary means either "this interval finished and
+# its panel and next manifest are done" or "training finished and neither is",
+# and a latest.json inside an interval means training is mid-flight at a stop
+# generation only the launching attempt knew. So each interval keeps a small
+# hash-chained journal, one file per interval under the attempt root, written
+# atomically at every transition. Resume reads the journals of every attempt
+# under the gate root (newest wins per interval, dry runs ignored), verifies
+# the chain, and reconstructs the pending work from it plus the Store and the
+# refresh chain.
+# ---------------------------------------------------------------------------
+
+function Get-Cycle4IntervalPhaseFileName {
+    param([Parameter(Mandatory = $true)][uint64]$IntervalIndex)
+    return ('interval-{0:d2}.phase.json' -f $IntervalIndex)
+}
+
+function Get-Cycle4PhaseRecordSha256 {
+    # Deterministic framing over every field of one record plus its parent
+    # hash. LF-joined and never reordered, so two readers of the same journal
+    # compute the same digest.
+    param(
+        [Parameter(Mandatory = $true)]$Record,
+        [Parameter(Mandatory = $true)][uint64]$IntervalIndex,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [Parameter(Mandatory = $true)][uint64]$StopGeneration
+    )
+    $frame = @(
+        [string]$Record.phase
+        [string]$Record.utc
+        [string]$Record.attempt_root
+        [string]$IntervalIndex
+        [string]$RefreshIndex
+        [string]$StopGeneration
+        [string]$Record.parent_sha256
+    ) -join "`n"
+    return Get-TextSha256 $frame
+}
+
+function Assert-Cycle4IntervalJournal {
+    # Recomputes every record's digest and every link, including the link from
+    # the previous interval's terminal record. A truncated, reordered or edited
+    # journal fails here rather than producing a plausible-looking plan.
+    param(
+        [Parameter(Mandatory = $true)]$Journal,
+        [string]$PreviousIntervalTipSha256
+    )
+    $records = @($Journal.records)
+    if ($records.Count -eq 0) {
+        throw "interval $($Journal.interval_index) journal carries no records"
+    }
+    $expectedParent = $script:Cycle4PhaseChainGenesisParent
+    if (-not [string]::IsNullOrWhiteSpace($PreviousIntervalTipSha256)) {
+        $expectedParent = $PreviousIntervalTipSha256
+    }
+    $seen = 0
+    foreach ($record in $records) {
+        if ([string]$record.parent_sha256 -cne $expectedParent) {
+            throw "interval $($Journal.interval_index) journal record '$($record.phase)' is not chained to its predecessor"
+        }
+        $computed = Get-Cycle4PhaseRecordSha256 `
+            -Record $record `
+            -IntervalIndex ([uint64]$Journal.interval_index) `
+            -RefreshIndex ([uint64]$Journal.refresh_index) `
+            -StopGeneration ([uint64]$Journal.stop_generation)
+        if ($computed -cne [string]$record.record_sha256) {
+            throw "interval $($Journal.interval_index) journal record '$($record.phase)' does not match its own digest"
+        }
+        $position = [array]::IndexOf($script:Cycle4IntervalPhases, [string]$record.phase)
+        if ($position -lt 0) {
+            throw "interval $($Journal.interval_index) journal carries an unknown phase: $($record.phase)"
+        }
+        if ($position -ne $seen) {
+            throw "interval $($Journal.interval_index) journal reaches '$($record.phase)' out of order"
+        }
+        $seen++
+        $expectedParent = [string]$record.record_sha256
+    }
+    return $expectedParent
+}
+
+function Read-Cycle4IntervalJournals {
+    # Every attempt under the gate root, oldest to newest; the newest copy of
+    # each interval's journal wins, because an attempt that touched an interval
+    # carries that interval's whole history forward. Dry-run attempts are
+    # skipped outright: they plan work rather than performing it, and their
+    # records must never be mistaken for progress.
+    param([Parameter(Mandatory = $true)][string]$GateRoot)
+    $journals = @{}
+    if (-not (Test-Path -LiteralPath $GateRoot -PathType Container)) { return $journals }
+    foreach ($attempt in @(Get-ChildItem -LiteralPath $GateRoot -Directory | Sort-Object Name)) {
+        $launch = Join-Path $attempt.FullName 'launch-manifest.json'
+        if (Test-Path -LiteralPath $launch -PathType Leaf) {
+            $manifest = Read-Cycle4Json -Path $launch
+            # Property-existence checked rather than dereferenced: a launch
+            # manifest that predates a field must not crash a resume.
+            if (($manifest.PSObject.Properties.Name -contains 'dry_run') -and [bool]$manifest.dry_run) {
+                continue
+            }
+        }
+        foreach ($file in @(Get-ChildItem -LiteralPath $attempt.FullName -Filter 'interval-*.phase.json' -File)) {
+            $journal = Read-Cycle4Json -Path $file.FullName
+            if ([string]$journal.schema -cne $script:Cycle4IntervalPhaseSchema) {
+                throw "unexpected interval-phase schema at $($file.FullName): $($journal.schema)"
+            }
+            $journals[[uint64]$journal.interval_index] = $journal
+        }
+    }
+    # Verify the whole chain in interval order once every file is in hand.
+    $tip = $null
+    foreach ($index in @($journals.Keys | Sort-Object)) {
+        $tip = Assert-Cycle4IntervalJournal -Journal $journals[$index] -PreviousIntervalTipSha256 $tip
+    }
+    return $journals
+}
+
+function Get-Cycle4IntervalPhase {
+    # The last phase recorded for one interval, or $null when the interval has
+    # no journal at all (a campaign that predates the journal, or an interval
+    # that has never been started).
+    param(
+        [Parameter(Mandatory = $true)]$Journals,
+        [Parameter(Mandatory = $true)][uint64]$IntervalIndex
+    )
+    if (-not $Journals.ContainsKey($IntervalIndex)) { return $null }
+    $records = @($Journals[$IntervalIndex].records)
+    return [string]$records[$records.Count - 1].phase
+}
+
+function Add-Cycle4IntervalPhase {
+    # Appends one transition and rewrites that interval's journal atomically
+    # into the CURRENT attempt root, carrying every earlier record forward so
+    # the newest copy is always the complete history. Returns the updated
+    # journal.
+    param(
+        [Parameter(Mandatory = $true)]$Journals,
+        [Parameter(Mandatory = $true)][string]$AttemptRoot,
+        [Parameter(Mandatory = $true)][string]$Arm,
+        [Parameter(Mandatory = $true)][uint64]$IntervalIndex,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [Parameter(Mandatory = $true)][uint64]$StopGeneration,
+        [Parameter(Mandatory = $true)][ValidateSet('training-started', 'training-complete', 'panel-complete', 'manifest-complete')][string]$Phase
+    )
+    if ($Journals.ContainsKey($IntervalIndex)) {
+        $journal = $Journals[$IntervalIndex]
+        if ([uint64]$journal.stop_generation -ne $StopGeneration -or [uint64]$journal.refresh_index -ne $RefreshIndex) {
+            throw "interval $IntervalIndex was journalled with stop generation $($journal.stop_generation) at refresh $($journal.refresh_index), but this attempt is using $StopGeneration at refresh $RefreshIndex"
+        }
+        $records = @($journal.records)
+        $parent = [string]$records[$records.Count - 1].record_sha256
+    }
+    else {
+        $records = @()
+        $parent = $script:Cycle4PhaseChainGenesisParent
+        if ($IntervalIndex -gt [uint64]0 -and $Journals.ContainsKey($IntervalIndex - [uint64]1)) {
+            $previous = @($Journals[$IntervalIndex - [uint64]1].records)
+            $parent = [string]$previous[$previous.Count - 1].record_sha256
+        }
+    }
+    $record = [ordered]@{
+        phase = $Phase
+        utc = [DateTimeOffset]::UtcNow.ToString('O')
+        attempt_root = $AttemptRoot
+        parent_sha256 = $parent
+    }
+    $record['record_sha256'] = Get-Cycle4PhaseRecordSha256 `
+        -Record $record `
+        -IntervalIndex $IntervalIndex `
+        -RefreshIndex $RefreshIndex `
+        -StopGeneration $StopGeneration
+    $updated = [ordered]@{
+        schema = $script:Cycle4IntervalPhaseSchema
+        arm = $Arm
+        interval_index = $IntervalIndex
+        refresh_index = $RefreshIndex
+        stop_generation = $StopGeneration
+        records = @($records + $record)
+    }
+    Write-Cycle4JsonFile -Value $updated -Path (Join-Path $AttemptRoot (Get-Cycle4IntervalPhaseFileName -IntervalIndex $IntervalIndex))
+    $Journals[$IntervalIndex] = $updated
+    return $updated
 }
 
 # ---------------------------------------------------------------------------

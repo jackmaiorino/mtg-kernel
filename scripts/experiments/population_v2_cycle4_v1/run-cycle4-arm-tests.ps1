@@ -79,6 +79,11 @@ New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
 $wrapper = Join-Path $PSScriptRoot 'run-cycle4-arm.ps1'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 
+# The resume fixtures below plant interval journals, and section 6 drives the
+# genesis binding check directly, so the shared helpers are needed here rather
+# than only inside the wrapper's own scope.
+. (Join-Path $PSScriptRoot 'common.ps1')
+
 function New-SyntheticHash {
     param([Parameter(Mandatory = $true)][int]$Tag)
     return (('{0:x2}' -f $Tag) * 32)
@@ -588,15 +593,242 @@ Assert-Throws -Action { & $wrapper @tooLargeWindow *>&1 | Out-Null } `
     -Message 'the preflight window stays inside the bin bound'
 
 # ---------------------------------------------------------------------------
-# 5. The genesis binding assertion itself
+# 5. Resuming an interrupted attempt
+#
+# An attempt can stop anywhere, and latest.json alone cannot say where: a
+# boundary generation means either "this interval is finished" or "training
+# finished and its panel and next manifest are not", and a generation inside an
+# interval means training is mid-flight toward a stop only the launching
+# attempt knew. Each interruption point below plants the campaign state a real
+# interruption would have left -- chain contents, Store position, and the
+# hash-chained journal of a previous (non-dry) attempt -- and asserts the plan.
+# ---------------------------------------------------------------------------
+
+$script:ResumeCase = 0
+
+function New-InterruptionCampaign {
+    <#
+      Builds one interrupted campaign and returns the wrapper arguments for it.
+      -ChainThroughManifest / -ChainThroughPanel say how far the refresh chain
+      got, -StoreGeneration where the Store stopped, and -JournalPhases the
+      per-interval phases a previous attempt journalled.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$ArmKind,
+        [Parameter(Mandatory = $true)][uint64]$ThroughRefreshIndex,
+        [Parameter(Mandatory = $true)][int]$ChainThroughManifest,
+        [Parameter(Mandatory = $true)][int]$ChainThroughPanel,
+        [Parameter(Mandatory = $true)][uint64]$StoreGeneration,
+        [Parameter(Mandatory = $true)][hashtable]$JournalPhases,
+        [switch]$JournalFromDryRunAttempt
+    )
+    $script:ResumeCase++
+    $caseRoot = Join-Path $WorkRoot ("resume-{0:d2}-{1}" -f $script:ResumeCase, $Name)
+    $chain = Join-Path $caseRoot 'refresh-chain'
+    $store = Join-Path $caseRoot 'store'
+    $evidence = Join-Path $caseRoot 'evidence'
+
+    foreach ($index in 0..$ChainThroughManifest) {
+        New-SyntheticManifest -Path (Join-Path $chain ('refresh-{0:d2}.manifest.json' -f $index)) -RefreshIndex ([uint64]$index)
+    }
+    if ($ChainThroughPanel -ge 1) {
+        foreach ($index in 1..$ChainThroughPanel) {
+            $panel = Join-Path $chain ('refresh-{0:d2}.panel.json' -f $index)
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $panel) | Out-Null
+            [System.IO.File]::WriteAllText($panel, "{}", [System.Text.UTF8Encoding]::new($false))
+        }
+    }
+    New-Item -ItemType Directory -Force -Path $store | Out-Null
+    Write-SyntheticJson -Value ([ordered]@{ generation_index = $StoreGeneration }) -Path (Join-Path $store 'latest.json')
+
+    # The journal a previous attempt would have left, written with the wrapper's
+    # own writer so its hash chain is genuine rather than hand-rolled.
+    $gate = Join-Path $evidence "cycle4-$ArmKind-formal"
+    $planted = Join-Path $gate 'attempt-001'
+    New-Item -ItemType Directory -Force -Path $planted | Out-Null
+    Write-SyntheticJson -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle4-arm-launch-manifest/v1'
+        dry_run = [bool]$JournalFromDryRunAttempt
+    }) -Path (Join-Path $planted 'launch-manifest.json')
+    $journals = @{}
+    foreach ($index in @($JournalPhases.Keys | Sort-Object)) {
+        $target = [string]$JournalPhases[$index]
+        $refresh = $(if ($ArmKind -ceq 'static-rb') { [uint64]0 } else { [uint64]$index })
+        foreach ($transition in @('training-started', 'training-complete', 'panel-complete', 'manifest-complete')) {
+            Add-Cycle4IntervalPhase `
+                -Journals $journals `
+                -AttemptRoot $planted `
+                -Arm $ArmKind `
+                -IntervalIndex ([uint64]$index) `
+                -RefreshIndex $refresh `
+                -StopGeneration ((([uint64]$index) + [uint64]1) * [uint64]128) `
+                -Phase $transition | Out-Null
+            if ($transition -ceq $target) { break }
+        }
+    }
+
+    $arguments = New-WrapperArguments -Mode 'formal' -Arm $ArmKind -EvidenceRoot $evidence
+    $arguments['RefreshChainDir'] = $chain
+    $arguments['StoreRoot'] = $store
+    $arguments['ChainDir'] = (Join-Path $caseRoot 'baseline-chain')
+    $arguments['ThroughRefreshIndex'] = $ThroughRefreshIndex
+    return [ordered]@{
+        arguments = $arguments
+        chain = $chain
+        store = $store
+        evidence = $evidence
+        gate = $gate
+        planted_attempt = $planted
+    }
+}
+
+function Invoke-ResumeCase {
+    param([Parameter(Mandatory = $true)]$Case)
+    $arguments = $Case.arguments
+    & $wrapper @arguments *>&1 | Out-Null
+    $attempt = Get-LatestAttemptRoot -EvidenceRoot $Case.evidence -GateName (Split-Path -Leaf $Case.gate)
+    return [ordered]@{
+        attempt = $attempt
+        records = @(Get-CommandRecords -AttemptRoot $attempt)
+        result = (Get-Content -Raw -LiteralPath (Join-Path $attempt 'result.json') | ConvertFrom-Json)
+    }
+}
+
+# (i) Interrupted mid-training: latest.json sits on a checkpoint segment inside
+# interval 3, which the old boundary-only rule rejected outright.
+$midTraining = New-InterruptionCampaign -Name 'mid-training' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 3 `
+    -StoreGeneration ([uint64]388) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'training-started' }
+$run = Invoke-ResumeCase -Case $midTraining
+$arm = @($run.records | Where-Object { $_.label -like 'arm-interval-*' })
+Assert-That -Condition ($arm.Count -eq 1 -and $arm[0].label -ceq 'arm-interval-3') `
+    -Message 'a mid-interval Store resumes exactly the interrupted interval'
+Assert-That -Condition ($arm[0].command_line -like '*"--stop-generation" "512"*') `
+    -Message 'a mid-interval resume uses the interval original stop generation, not the Store position plus 128'
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'panel-interval-*' }).Count -eq 1) `
+    -Message 'a mid-interval resume still owes its panel'
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'refresh-build-*' }).Count -eq 1) `
+    -Message 'a mid-interval resume still owes its next manifest'
+
+# (ii) Interrupted after training, before the panel. This is the reported
+# defect: the old logic mapped the boundary to the NEXT interval, skipped the
+# unfinished panel and build, and at the program end published
+# TRAINING_COMPLETE with both missing.
+$afterTraining = New-InterruptionCampaign -Name 'after-training' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 3 `
+    -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'training-complete' }
+$run = Invoke-ResumeCase -Case $afterTraining
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'arm-interval-*' }).Count -eq 0) `
+    -Message 'an interval already trained to its stop generation is not retrained'
+$panel = @($run.records | Where-Object { $_.label -like 'panel-interval-*' })
+$build = @($run.records | Where-Object { $_.label -like 'refresh-build-*' })
+Assert-That -Condition ($panel.Count -eq 1 -and $panel[0].label -ceq 'panel-interval-3') `
+    -Message 'the final interval pending panel is run before anything completes'
+Assert-That -Condition ($build.Count -eq 1 -and $build[0].command_line -like '*"--next-generation" "4"*') `
+    -Message 'the final interval pending manifest is built before anything completes'
+Assert-That -Condition (@($run.result.intervals_planned).Count -eq 1) `
+    -Message 'the result records exactly the interval that still owed work'
+
+# (iii) Interrupted after the panel reached the chain, before the build.
+$afterPanel = New-InterruptionCampaign -Name 'after-panel' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 4 `
+    -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'panel-complete' }
+$run = Invoke-ResumeCase -Case $afterPanel
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'arm-interval-*' }).Count -eq 0) `
+    -Message 'a published panel does not retrain its interval'
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'panel-interval-*' }).Count -eq 0) `
+    -Message 'a panel already in the refresh chain is never re-run'
+$build = @($run.records | Where-Object { $_.label -like 'refresh-build-*' })
+Assert-That -Condition ($build.Count -eq 1 -and $build[0].command_line -like '*"--next-generation" "4"*') `
+    -Message 'only the missing manifest is built'
+
+# (iv) Nothing left: every interval trained, every panel and manifest present.
+$complete = New-InterruptionCampaign -Name 'complete' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 4 -ChainThroughPanel 4 `
+    -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'manifest-complete' }
+$run = Invoke-ResumeCase -Case $complete
+Assert-That -Condition ($run.records.Count -eq 0) -Message 'a finished campaign plans no work at all'
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $run.attempt 'TRAINING_COMPLETE')) `
+    -Message 'a finished campaign publishes TRAINING_COMPLETE'
+
+# (v) STATIC-RB, whose panel never enters the refresh chain, so only the
+# journal can say whether it ran.
+$staticPending = New-InterruptionCampaign -Name 'static-pending' -ArmKind 'static-rb' `
+    -ThroughRefreshIndex ([uint64]2) -ChainThroughManifest 0 -ChainThroughPanel 0 `
+    -StoreGeneration ([uint64]256) -JournalPhases @{ 0 = 'panel-complete'; 1 = 'training-complete' }
+$run = Invoke-ResumeCase -Case $staticPending
+$panel = @($run.records | Where-Object { $_.label -like 'panel-interval-*' })
+Assert-That -Condition ($panel.Count -eq 1 -and $panel[0].label -ceq 'panel-interval-1') `
+    -Message "static-rb re-runs only the interval whose panel the journal does not record"
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'refresh-build-*' }).Count -eq 0) `
+    -Message 'static-rb never builds a manifest on resume either'
+
+# The same state, but the journal came from a DRY RUN: it plans work rather
+# than performing it, so its records must never be read back as progress.
+$staticDryJournal = New-InterruptionCampaign -Name 'static-dry-journal' -ArmKind 'static-rb' `
+    -ThroughRefreshIndex ([uint64]2) -ChainThroughManifest 0 -ChainThroughPanel 0 `
+    -StoreGeneration ([uint64]256) -JournalPhases @{ 0 = 'panel-complete'; 1 = 'panel-complete' } -JournalFromDryRunAttempt
+$run = Invoke-ResumeCase -Case $staticDryJournal
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'panel-interval-*' }).Count -eq 2) `
+    -Message 'a dry-run journal is never mistaken for completed work'
+
+# (vi) A journal that has been edited or truncated stops the launch.
+$tampered = New-InterruptionCampaign -Name 'tampered-journal' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 3 `
+    -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'training-complete' }
+$tamperedPath = Join-Path $tampered.planted_attempt 'interval-02.phase.json'
+$tamperedJournal = Get-Content -Raw -LiteralPath $tamperedPath | ConvertFrom-Json
+$tamperedJournal.records[1].utc = '2020-01-01T00:00:00.0000000+00:00'
+Write-SyntheticJson -Value $tamperedJournal -Path $tamperedPath
+$tamperedArguments = $tampered.arguments
+Assert-Throws -Action { & $wrapper @tamperedArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'does not match its own digest' `
+    -Message 'an edited journal record is refused'
+
+$truncated = New-InterruptionCampaign -Name 'truncated-journal' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 3 `
+    -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'training-complete' }
+Remove-Item -LiteralPath (Join-Path $truncated.planted_attempt 'interval-01.phase.json') -Force
+$truncatedArguments = $truncated.arguments
+Assert-Throws -Action { & $wrapper @truncatedArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'not chained to its predecessor' `
+    -Message 'a journal with an interval removed is refused'
+
+# (vii) A journal that claims a panel the refresh chain no longer holds.
+$lostPanel = New-InterruptionCampaign -Name 'lost-panel' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 3 `
+    -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'panel-complete' }
+$lostPanelArguments = $lostPanel.arguments
+Assert-Throws -Action { & $wrapper @lostPanelArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'refusing to silently re-run a 28-matchup panel' `
+    -Message 'a journalled panel missing from the chain stops the launch instead of costing a panel'
+
+# (viii) A Store that stopped somewhere the Store itself could never stop.
+$offSegment = New-InterruptionCampaign -Name 'off-segment' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 3 -ChainThroughPanel 3 `
+    -StoreGeneration ([uint64]385) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'training-started' }
+$offSegmentArguments = $offSegment.arguments
+Assert-Throws -Action { & $wrapper @offSegmentArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'not a whole number of checkpoint segments' `
+    -Message 'a Store position no checkpoint segment could produce is refused'
+
+$pastEnd = New-InterruptionCampaign -Name 'past-end' -ArmKind 'treatment-rb' `
+    -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 4 -ChainThroughPanel 4 `
+    -StoreGeneration ([uint64]640) -JournalPhases @{ 0 = 'manifest-complete' }
+$pastEndArguments = $pastEnd.arguments
+Assert-Throws -Action { & $wrapper @pastEndArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'past the refresh 4 end' `
+    -Message 'a Store past the requested end is refused'
+
+# ---------------------------------------------------------------------------
+# 6. The genesis binding assertion itself
 #
 # The wrapper's whole reason for bootstrapping first is that the genesis
 # manifest must bind the checkpoint the Store actually published. Drive that
 # assertion directly against a synthetic Store, origin record and manifest,
 # since a dry run never produces the real three.
 # ---------------------------------------------------------------------------
-
-. (Join-Path $PSScriptRoot 'common.ps1')
 
 $bindingRoot = Join-Path $WorkRoot 'genesis-binding'
 $bindingStore = Join-Path $bindingRoot 'store'

@@ -147,9 +147,35 @@ manifest past `refresh-00` exists. On completion the attempt root gets an
 empty `TRAINING_COMPLETE`; any failure writes a plain-text `RUN_FAILED` naming
 the failing phase.
 
-The wrapper resumes: it derives its starting interval from the Store's own
-`latest.json`, so a killed run is restarted with the same command line.
-`-ThroughRefreshIndex` (default 16) stops it earlier.
+### Resuming an interrupted attempt
+
+Rerun the same command line. The wrapper works out what is left from three
+things: the Store's `latest.json`, the refresh chain's contents, and a
+hash-chained journal it keeps per interval (`interval-NN.phase.json` in the
+attempt root, written atomically at each of `training-started`,
+`training-complete`, `panel-complete`, `manifest-complete`). On start it reads
+the journals of every previous non-dry-run attempt under the gate root and
+verifies the chain; an edited, truncated or reordered journal stops the launch.
+
+- Interrupted mid-training, so `latest.json` sits on a checkpoint segment
+  inside an interval: that interval is resumed toward its ORIGINAL stop
+  generation, not the Store position plus 128.
+- Interrupted after training, before the panel or the manifest: those are
+  finished before anything advances. This is the case that used to skip them
+  silently, and at the program end used to publish `TRAINING_COMPLETE` with
+  the last panel and manifest missing.
+- A panel counts as complete only once its bytes are in the refresh chain, so
+  the journal and the chain cannot disagree. A journal that claims a panel the
+  chain no longer holds stops the launch rather than silently re-running a
+  28-matchup panel.
+
+`TRAINING_COMPLETE` is published only after the Store is at the program end
+and every panel and manifest through `-ThroughRefreshIndex` exists and binds
+this arm's identity (for `static-rb`, whose panels never enter the chain,
+after every interval is journalled panel-complete and no manifest past
+genesis exists).
+
+`-ThroughRefreshIndex` (default 16) stops the campaign earlier.
 
 ### Dry run
 
