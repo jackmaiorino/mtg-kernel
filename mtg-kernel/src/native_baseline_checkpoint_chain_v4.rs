@@ -75,6 +75,13 @@ use std::path::Path;
 pub(crate) const BASELINE_CHAIN_RECORD_SCHEMA_V4: &str = "mtg-kernel-baseline-chain-record/v1";
 
 const RECORD_NAME_PREFIX_V4: &str = "baseline-";
+/// Reserved infix separating the launcher's PER-UPDATE sidecar records
+/// (`baseline-update-<8 digits>.record.json`,
+/// `docs/native_cycle4_arm_launcher_v1.md` Section 2) from this chain's own
+/// PER-BOUNDARY records (`baseline-<8 digits>.record.json`). Both live in the
+/// same chain directory by contract, so the boundary-record scan below skips
+/// exactly this namespace and still fails closed on any other malformed name.
+const SIDECAR_NAME_INFIX_V4: &str = "update-";
 const RECORD_NAME_SUFFIX_V4: &str = ".record.json";
 const MANIFEST_NAME_SUFFIX_V4: &str = ".manifest.json";
 const STAGE_SUFFIX_V4: &str = ".stage-v4";
@@ -284,14 +291,37 @@ fn parse_fixed_generation_v4(text: &str) -> Option<u64> {
     text.parse::<u64>().ok()
 }
 
-fn record_final_name_v4(generation: u64) -> Result<String> {
+/// Fixed on-disk name of the per-update baseline sidecar record the arm
+/// launcher publishes into this same chain directory
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 2). Owned here so the
+/// two namespaces sharing one directory can never drift apart.
+pub(crate) fn sidecar_record_name_v4(update_index: u64) -> Result<String> {
+    Ok(format!(
+        "{RECORD_NAME_PREFIX_V4}{SIDECAR_NAME_INFIX_V4}{}{RECORD_NAME_SUFFIX_V4}",
+        fixed_generation_v4(update_index)?
+    ))
+}
+
+/// Inverse of [`sidecar_record_name_v4`]: the update index a per-update
+/// sidecar file name carries, or `None` for any name outside that exact
+/// namespace. Owned here beside the builder so the launcher's staging area
+/// cannot invent its own reading of the same grammar.
+pub(crate) fn parse_sidecar_record_name_v4(name: &str) -> Option<u64> {
+    let digits = name
+        .strip_prefix(RECORD_NAME_PREFIX_V4)?
+        .strip_prefix(SIDECAR_NAME_INFIX_V4)?
+        .strip_suffix(RECORD_NAME_SUFFIX_V4)?;
+    parse_fixed_generation_v4(digits)
+}
+
+pub(crate) fn record_final_name_v4(generation: u64) -> Result<String> {
     Ok(format!(
         "{RECORD_NAME_PREFIX_V4}{}{RECORD_NAME_SUFFIX_V4}",
         fixed_generation_v4(generation)?
     ))
 }
 
-fn manifest_final_name_v4(generation: u64) -> Result<String> {
+pub(crate) fn manifest_final_name_v4(generation: u64) -> Result<String> {
     Ok(format!(
         "{RECORD_NAME_PREFIX_V4}{}{MANIFEST_NAME_SUFFIX_V4}",
         fixed_generation_v4(generation)?
@@ -354,6 +384,13 @@ fn list_record_generations_v4(dir: &Path) -> Result<Vec<u64>> {
         let Some(index_text) = stem.strip_suffix(RECORD_NAME_SUFFIX_V4) else {
             continue;
         };
+        // The launcher's per-update sidecars share this directory by
+        // contract and are not chain boundary records; skip exactly that
+        // reserved namespace, so every OTHER malformed name still fails
+        // closed below instead of being silently ignored.
+        if index_text.starts_with(SIDECAR_NAME_INFIX_V4) {
+            continue;
+        }
         let generation = parse_fixed_generation_v4(index_text).ok_or_else(|| {
             BaselineChainErrorV4::new(BaselineChainErrorKindV4::InvalidGeneration)
         })?;

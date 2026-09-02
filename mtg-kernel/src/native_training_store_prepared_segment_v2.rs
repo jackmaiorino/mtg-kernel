@@ -30,8 +30,8 @@ use crate::native_training_store_run_v2::{
     NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
 };
 use crate::native_training_store_segment_continuation_v2::{
-    build_segment_continuations_v2, ValidatedSegmentContinuationChainAdvanceV2,
-    SEGMENT_CONTINUATION_MAX_BYTES_V2,
+    build_segment_continuations_baseline_v4_v2, build_segment_continuations_v2,
+    ValidatedSegmentContinuationChainAdvanceV2, SEGMENT_CONTINUATION_MAX_BYTES_V2,
 };
 use crate::native_training_store_segment_manifest_v2::{
     build_trained_segment_manifest_v2, SegmentManifestV2, SEGMENT_MANIFEST_MAX_BYTES_V2,
@@ -42,8 +42,10 @@ use crate::native_training_store_segment_representability_v2::{
 };
 use crate::native_training_store_update_group_v1::{
     build_compact_update_group_v2, resume_update_evidence_chain_v1,
-    validate_prepared_execution_config_v1, UpdateEvidenceChainContextV1, ValidatedUpdateGroupV1,
+    stage_and_validate_group_baseline_v4_v1, validate_prepared_execution_config_v1,
+    UpdateEvidenceChainContextV1, ValidatedUpdateGroupV1,
 };
+use crate::native_training_store_update_group_v4::BaselineChainAccessV4;
 use crate::native_training_store_v2::NativeTrainingPersistenceReceiptV2;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -235,6 +237,14 @@ pub struct NativeTrainingPreparedSegmentV2<'executor> {
 impl NativeTrainingPreparedSegmentV2<'_> {
     pub const fn parent_generation_index(&self) -> u64 {
         self.plan.parent_generation_index_v2()
+    }
+
+    /// Round B: the trained checkpoint manifest this segment will publish,
+    /// borrowed before `commit_v2` consumes the segment, so the arm launcher
+    /// can build that boundary's baseline chain record from the exact
+    /// checkpoint facts the Store is about to commit.
+    pub(crate) const fn checkpoint_manifest_v2(&self) -> &CheckpointManifestV3 {
+        &self.checkpoint_manifest
     }
 
     pub const fn expected_generation_index(&self) -> u64 {
@@ -570,6 +580,42 @@ pub fn prepare_segment_v2<'executor>(
     parent: &ValidatedNativeTrainingBoundaryV2,
     parent_checkpoint: &CheckpointManifestV3,
 ) -> Result<NativeTrainingPreparedSegmentV2<'executor>> {
+    prepare_segment_impl_v2(executor, run, parent, parent_checkpoint, None)
+}
+
+/// Round B sibling of [`prepare_segment_v2`] for a `trainer_v4_candidate`
+/// run (`docs/native_cycle4_arm_launcher_v1.md` Sections 2-3). Identical in
+/// every frozen respect; additionally, per update, it mints that update's
+/// `baseline_v4` sidecar from the just-built evidence, STAGES it through
+/// `access` BEFORE the next update begins, revalidates it through the same
+/// path a later resume takes, and installs the recomputed successor as the
+/// next update's committed `c_t`. Staged sidecars become durable at their
+/// immutable names only when the caller commits them after the Store
+/// commits this segment (`commit_staged_sidecar_records_v4`), so a failure
+/// anywhere between preparation and that commit orphans nothing.
+///
+/// The caller must have installed the segment's starting baseline state on
+/// `executor` (`set_baseline_state_v4`) before calling; this function proves
+/// that state agrees with the chain directory's own record for the parent
+/// boundary and fails closed otherwise.
+pub(crate) fn prepare_segment_baseline_v4_v2<'executor>(
+    executor: &'executor mut NativeTrainingExecutorV1,
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    parent_checkpoint: &CheckpointManifestV3,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<NativeTrainingPreparedSegmentV2<'executor>> {
+    prepare_segment_impl_v2(executor, run, parent, parent_checkpoint, Some(access))
+}
+
+#[allow(clippy::too_many_lines)]
+fn prepare_segment_impl_v2<'executor>(
+    executor: &'executor mut NativeTrainingExecutorV1,
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    parent_checkpoint: &CheckpointManifestV3,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
+) -> Result<NativeTrainingPreparedSegmentV2<'executor>> {
     validate_prepared_execution_config_v1(run, executor.config()).map_err(|_| input_error_v2())?;
     // Exhaustive run/executor mode diagonal before live checkpoint facts,
     // planning, evidence contexts, reservation, candidate clone, rollout, or
@@ -644,10 +690,27 @@ pub fn prepare_segment_v2<'executor>(
         .map_err(|_| input_error_v2())?;
     let continuation_context = resume_update_evidence_chain_v1(run, parent, parent_checkpoint)
         .map_err(|_| input_error_v2())?;
+    // Round B: the segment's committed `c_t` comes from the chain
+    // directory's own record for the parent boundary, never from whatever
+    // happens to be installed on the executor, so a stale or absent chain
+    // fails closed here before a single candidate is cloned.
+    let mut baseline_state = match baseline_v4 {
+        None => None,
+        Some(access) => {
+            let parent_generation = parent_checkpoint.generation_index();
+            let state = access
+                .committed_state_for_generation_v4(parent_generation)
+                .ok_or_else(evidence_error_v2)?;
+            Some(state)
+        }
+    };
     let mut groups = reserve_update_groups_v2(plan.segment_update_capacity_v2())?;
     let mut candidate = executor
         .begin_segment_candidate_v2()
         .map_err(|_| update_error_v2())?;
+    if let Some(state) = baseline_state.as_ref() {
+        candidate.set_baseline_state_v4(Some(state.clone()));
+    }
     #[cfg(test)]
     injected_abort_for_test_v2(NativeTrainingPreparedAbortPointForTestV2::AfterClone)?;
     let mut predecessor = Some(live);
@@ -690,8 +753,27 @@ pub fn prepare_segment_v2<'executor>(
             run,
             active_context.take().ok_or_else(evidence_error_v2)?,
             transition,
+            baseline_state.as_ref(),
         )
         .map_err(|_| evidence_error_v2())?;
+        // Round B, `docs/native_cycle4_arm_launcher_v1.md` Section 2: the
+        // sidecar for update `t` is minted and STAGED here -- after the
+        // Store's own evidence for `t` exists and strictly before update
+        // `t + 1` begins -- revalidated through the resume path, and the
+        // successor `c_{t+1}` it proves is installed on the candidate before
+        // the next iteration trains. It reaches its immutable name only when
+        // the caller commits the staged set after the Store durably commits
+        // this segment, so a segment abandoned anywhere below (continuations,
+        // artifact bounds, or the publish itself) leaves no sidecar for an
+        // update the Store does not contain.
+        if let Some(access) = baseline_v4 {
+            let prior = baseline_state.as_ref().ok_or_else(evidence_error_v2)?;
+            let next_state =
+                stage_and_validate_group_baseline_v4_v1(run, advance.group(), prior, access)
+                    .map_err(|_| evidence_error_v2())?;
+            candidate.set_baseline_state_v4(Some(next_state.clone()));
+            baseline_state = Some(next_state);
+        }
         let (group, advanced_context) = advance.into_parts();
         let compact =
             NativeTrainingCompactSuccessorFactsV2::bind_v2(run, &advanced_context, successor)?;
@@ -723,8 +805,13 @@ pub fn prepare_segment_v2<'executor>(
     let final_checkpoint = final_checkpoint.ok_or_else(update_error_v2)?;
     #[cfg(test)]
     injected_abort_for_test_v2(NativeTrainingPreparedAbortPointForTestV2::BeforeContinuations)?;
-    let continuations = build_segment_continuations_v2(run, continuation_context, groups)
-        .map_err(|_| evidence_error_v2())?;
+    let continuations = match baseline_v4 {
+        None => build_segment_continuations_v2(run, continuation_context, groups),
+        Some(access) => {
+            build_segment_continuations_baseline_v4_v2(run, continuation_context, groups, access)
+        }
+    }
+    .map_err(|_| evidence_error_v2())?;
     #[cfg(test)]
     injected_abort_for_test_v2(NativeTrainingPreparedAbortPointForTestV2::AfterContinuations)?;
     if !final_compact.matches_context_v2(run, continuations.advanced_context())

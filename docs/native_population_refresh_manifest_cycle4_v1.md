@@ -15,6 +15,17 @@ sibling of the v1 module; it reinterprets nothing retroactively.
   interval. `program_update = refresh_index * 128`;
   `trainee_local_generation = 896 + program_update` (start 896, end 2944 in
   trainee-local numbering; the arm's own store counts updates 0..=2048).
+- Every slot's `source_generation` is stated in the numbering of the run that
+  owns it. For a slot bound to the arm's OWN run (`current-1` always,
+  `historical-0` from refresh index 4) that is trainee-local numbering, and a
+  consumer reading the arm's own Store translates by the 896 offset
+  (`store_generation = source_generation - 896`), because the arm is a new run
+  identity seeded from the cycle-3 g896 checkpoint and its Store restarts at
+  generation 0. The translation lives in the consumers (the arm launcher's
+  `store_generation_for_slot_v1` and the payoff panel runner's
+  `store_generation_for_slot`), never in this manifest; slots bound to other
+  runs are read at their stated generations verbatim. This states existing
+  practice and changes no rule.
 - Weight total 1,000,000 units; role floors 200,000 per adjacent slot pair;
   policy cap 250,000; largest-remainder integerization with ascending-index
   tie break and the v1 one-unit repair rule.

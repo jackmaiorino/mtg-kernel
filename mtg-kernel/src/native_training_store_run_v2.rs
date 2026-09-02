@@ -61,6 +61,9 @@ use crate::native_opponent_sampler_v1::{
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1, UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1,
     UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
 };
+use crate::native_policy_baseline_state_v4::{
+    NATIVE_BASELINE_MAX_CELLS_V4, NATIVE_BASELINE_STATE_SCHEMA_V4,
+};
 use crate::native_policy_train_step_v1::{
     ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1, ADAM_WEIGHT_DECAY_V1,
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_OPTIMIZER_IDENTITY_V1,
@@ -441,6 +444,44 @@ const POPULATION_SOURCE_LINEAGES_V1: [(u64, &str, &str, &str, &str, &str, &str);
         "861f28ca95316e68d1552986294aae0f7677af64b21f615d5bfcaff01276602c",
     ),
 ];
+
+// Cycle-4 v4-candidate trainer authority
+// (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
+// `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`).
+// `baseline_schema` and `cell_cap` are checked directly against the owner
+// constants in `native_policy_baseline_state_v4` rather than restated as
+// independent literals, since that module IS the baseline-state authority
+// this section pins.
+const CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1: &str = "terminal_reinforce_value/v4-candidate";
+// 0.05f32 (`NATIVE_BASELINE_BETA_V4`) big-endian bit pattern, lowercase hex.
+const CYCLE4_TRAINER_V4_BETA_F32_BITS_V1: &str = "3d4ccccd";
+const CYCLE4_TRAINER_V4_CELL_CAP_V1: u64 = NATIVE_BASELINE_MAX_CELLS_V4 as u64;
+const CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1: &str = "cuda-burn-dense";
+/// SHA-256 of `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+/// (review finding P2-4): pins the section to that specific document rather
+/// than accepting any well-formed hex string.
+const CYCLE4_TRAINER_V4_CONTRACT_DOCUMENT_SHA256_V1: &str =
+    "339bbe15bb19f21971ae68b2059263f6e940324c04ec773111cb4171893b8a79";
+
+// Cycle-4 population-program successor authority
+// (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
+// `docs/native_population_refresh_manifest_cycle4_v1.md`), ratified under
+// `OX_CYCLE4_PREREG_SKETCH_V2.md` (SHA `c49bffd6`).
+const CYCLE4_PREREG_SHA256_V1: &str =
+    "c49bffd62084285328a24b11531d80d148cba0f5bad8083349b7d24856326481";
+const CYCLE4_REFRESH_MANIFEST_SCHEMA_V1: &str = "mtg-kernel-population-refresh-manifest-cycle4/v1";
+const CYCLE4_TRAINEE_START_GENERATION_V1: u64 = 896;
+const CYCLE4_TRAINEE_STOP_GENERATION_V1: u64 = 2_944;
+const CYCLE4_REFRESH_INTERVAL_V1: u64 = 128;
+/// The whole cycle-4 program in successful updates: the trainee-local span
+/// 896..=2944, which is also the arm Store's own 0..=2048 (review finding
+/// P2). The run schedule must request exactly this many updates, so an arm
+/// whose schedule stops short can never report a completed program.
+const CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1: u64 =
+    CYCLE4_TRAINEE_STOP_GENERATION_V1 - CYCLE4_TRAINEE_START_GENERATION_V1;
+const CYCLE4_ARM_KIND_CONTROL_R_V1: &str = "control-r";
+const CYCLE4_ARM_KIND_STATIC_RB_V1: &str = "static-rb";
+const CYCLE4_ARM_KIND_TREATMENT_RB_V1: &str = "treatment-rb";
 
 const RESPONSE_EXPLOITER_IDENTITY_V1: &str =
     "mtg-kernel-native-scaled-selfplay-response-exploiter/v1";
@@ -915,6 +956,62 @@ pub struct TrainRunContractsV2 {
     /// struct only, no `validate_population_program_v2_cycle2` port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) population_program_v2_cycle2: Option<PopulationProgramContractV2Cycle2>,
+    /// Cycle-4 v4-candidate trainer authority
+    /// (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
+    /// `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`).
+    /// Present if and only if this run trains under the
+    /// `terminal_reinforce_value/v4-candidate` loss (the STATIC-RB and
+    /// TREATMENT-RB cycle-4 arms); absent for every pre-cycle-4 record and
+    /// for CONTROL-R, which keeps the v3 loss identity untouched. Omitted
+    /// entirely from canonical bytes when absent, so every pre-existing
+    /// record's canonical bytes, `run_sha256`, and validation stay
+    /// byte-for-byte unchanged: `validate_contracts_v2` only swaps the
+    /// `FROZEN_LOSS_IDENTITY_V2` equality for this section's own literal
+    /// when it is present, and leaves the v3 check untouched when it is
+    /// absent. See [`TrainerV4CandidateContractV1`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) trainer_v4_candidate: Option<TrainerV4CandidateContractV1>,
+    /// Cycle-4 population-program successor authority
+    /// (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
+    /// `docs/native_population_refresh_manifest_cycle4_v1.md`). Present if
+    /// and only if this run is one of the three cycle-4 arms (CONTROL-R,
+    /// STATIC-RB, TREATMENT-RB); absent for every pre-cycle-4 record, so
+    /// their canonical bytes are unchanged. Mutually exclusive with
+    /// `population_program_v1` and `response_exploiter_v1` -- a cycle-4 arm
+    /// runs the population engine only. See
+    /// [`PopulationProgramContractV2Cycle4`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle4: Option<PopulationProgramContractV2Cycle4>,
+}
+
+/// Cycle-4 v4-candidate trainer authority. See
+/// [`TrainRunContractsV2::trainer_v4_candidate`] for the presence/absence
+/// contract; see `validate_trainer_v4_candidate_v1` for the literal pins.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainerV4CandidateContractV1 {
+    pub(crate) loss_identity: String,
+    pub(crate) baseline_schema: String,
+    pub(crate) beta_f32_bits: String,
+    pub(crate) cell_cap: u64,
+    pub(crate) contract_document_sha256: String,
+    pub(crate) numerical_backend: String,
+}
+
+/// Cycle-4 population-program successor authority. See
+/// [`TrainRunContractsV2::population_program_v2_cycle4`] for the
+/// presence/absence contract; see `validate_population_program_v2_cycle4`
+/// for the literal pins and the arm-kind/exclusivity rules.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle4 {
+    pub(crate) prereg_sha256: String,
+    pub(crate) refresh_manifest_schema: String,
+    pub(crate) arm_kind: String,
+    pub(crate) trainee_start_generation: u64,
+    pub(crate) trainee_stop_generation: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) static_pool: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1677,6 +1774,30 @@ impl TrainRunContractsV2 {
     pub fn standalone_semantics(&self) -> &StandaloneSemanticsV2 {
         &self.standalone_semantics
     }
+
+    /// The trainer loss identity this record declares, derived from
+    /// `trainer_v4_candidate`'s presence rather than independently stored:
+    /// `validate_contracts_v2` already ties `contracts.loss.identity` to the
+    /// matching literal for each variant (see `expected_loss_identity`
+    /// there), so on a validated record the two can never disagree. The
+    /// science loop and the evidence-validation dispatch query this instead
+    /// of restating the presence check at each call site.
+    pub fn trainer_loss_identity_v2(&self) -> TrainerLossIdentityV2 {
+        if self.trainer_v4_candidate.is_some() {
+            TrainerLossIdentityV2::V4Candidate
+        } else {
+            TrainerLossIdentityV2::V3
+        }
+    }
+}
+
+/// The two admissible trainer loss identities a validated RunV2 record can
+/// declare (`docs/native_cycle4_arm_launcher_v1.md` Section 1). See
+/// [`TrainRunContractsV2::trainer_loss_identity_v2`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrainerLossIdentityV2 {
+    V3,
+    V4Candidate,
 }
 
 impl StandaloneSemanticsV2 {
@@ -1795,6 +1916,7 @@ fn validate_decoded_train_run_v2(
     validate_optimization_v2(&record.optimization)?;
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
     validate_population_program_v1(&record)?;
+    validate_population_program_v2_cycle4(&record)?;
     validate_response_exploiter_v1(&record)?;
     validate_limits_v2(&record.limits)?;
     validate_topology_v2(&record.topology)?;
@@ -2607,6 +2729,15 @@ fn validate_wide_snapshot_v1(
 }
 
 fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
+    // Cycle-4 v4-candidate loss-identity swap (native_cycle4_arm_launcher_v1.md
+    // Section 1): present `trainer_v4_candidate` replaces the frozen v3
+    // equality with the v4-candidate literal; absent, the v3 check below is
+    // byte-for-byte the same comparison every pre-cycle-4 record already
+    // passes.
+    let expected_loss_identity = match &contracts.trainer_v4_candidate {
+        Some(_) => CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1,
+        None => FROZEN_LOSS_IDENTITY_V2,
+    };
     if contracts.trainer_identity != FROZEN_TRAINER_IDENTITY_V2
         || contracts.identity_bundle_identity != IDENTITY_BUNDLE_IDENTITY_V2
         || !is_sha256(&contracts.identity_bundle_sha256)
@@ -2621,7 +2752,7 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
             &contracts.tensorizer.fixture_sha256,
             &contracts.tensorizer.fixture_payload_sha256,
         )
-        || contracts.loss.identity != FROZEN_LOSS_IDENTITY_V2
+        || contracts.loss.identity != expected_loss_identity
         || contracts.train_step.identity != FROZEN_TRAIN_STEP_IDENTITY_V2
         || !matches!(
             contracts.train_step.numerical_backend_identity.as_str(),
@@ -2694,6 +2825,105 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
         contracts.wide_model_experiment_v1.as_ref(),
     )?;
     validate_opponent_policy_and_ladder_pool_v2(contracts)?;
+    if contracts.trainer_v4_candidate.is_some() {
+        validate_trainer_v4_candidate_v1(contracts)?;
+    }
+    Ok(())
+}
+
+/// Real validator for [`TrainerV4CandidateContractV1`]
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 1). Every section field
+/// is a literal pin; `baseline_schema` and `cell_cap` are checked directly
+/// against the live `native_policy_baseline_state_v4` owner constants rather
+/// than an independently restated copy, and `contract_document_sha256` is
+/// pinned to the exact contract document's digest (review finding P2-4)
+/// rather than format-checked only.
+///
+/// Takes the whole `contracts`, not just the section, because the section's
+/// own `numerical_backend` field is a self-declared literal with nothing
+/// binding it to what the run actually trains on (review finding P1-3): a
+/// v4-candidate run REQUIRES `contracts.train_step.numerical_backend_identity`
+/// to be exactly the CUDA-burn-dense identity (v4 admits no CPU backend,
+/// `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+/// Section 5) and forbids `contracts.wide_model_experiment_v1` (the wide
+/// path is out of scope for that same section). `validate_runtime_v2`
+/// separately binds `runtime.numerical_backend_identity` to this same
+/// `contracts.train_step` field and to the runtime tuple, so a v4-candidate
+/// record is end-to-end pinned to the CUDA runtime tuple, not just this one
+/// field.
+fn validate_trainer_v4_candidate_v1(contracts: &TrainRunContractsV2) -> Result<()> {
+    let Some(trainer) = contracts.trainer_v4_candidate.as_ref() else {
+        return Ok(());
+    };
+    if trainer.loss_identity != CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1
+        || trainer.baseline_schema != NATIVE_BASELINE_STATE_SCHEMA_V4
+        || trainer.beta_f32_bits != CYCLE4_TRAINER_V4_BETA_F32_BITS_V1
+        || trainer.cell_cap != CYCLE4_TRAINER_V4_CELL_CAP_V1
+        || trainer.contract_document_sha256 != CYCLE4_TRAINER_V4_CONTRACT_DOCUMENT_SHA256_V1
+        || trainer.numerical_backend != CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1
+        || contracts.train_step.numerical_backend_identity
+            != crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1
+        || contracts.wide_model_experiment_v1.is_some()
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    Ok(())
+}
+
+/// Real validator for [`PopulationProgramContractV2Cycle4`]
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 1). Literal pins, plus:
+/// `static_pool` is true if and only if `arm_kind` is `"static-rb"`;
+/// `"treatment-rb"` and `"static-rb"` require `trainer_v4_candidate`
+/// present, `"control-r"` requires it absent; the section is mutually
+/// exclusive with `population_program_v1`, `response_exploiter_v1`, and
+/// `population_program_v2_cycle2` (review finding P2-5: a cycle-4 arm runs
+/// the population engine only, and `population_program_v2_cycle2` is a
+/// distinct, unrelated population-program successor -- see that field's own
+/// doc comment).
+fn validate_population_program_v2_cycle4(record: &TrainRunV2) -> Result<()> {
+    let contracts = &record.contracts;
+    let Some(program) = contracts.population_program_v2_cycle4.as_ref() else {
+        return Ok(());
+    };
+    if program.prereg_sha256 != CYCLE4_PREREG_SHA256_V1
+        || program.refresh_manifest_schema != CYCLE4_REFRESH_MANIFEST_SCHEMA_V1
+        || program.trainee_start_generation != CYCLE4_TRAINEE_START_GENERATION_V1
+        || program.trainee_stop_generation != CYCLE4_TRAINEE_STOP_GENERATION_V1
+        || program.refresh_interval != CYCLE4_REFRESH_INTERVAL_V1
+        || contracts.population_program_v1.is_some()
+        || contracts.response_exploiter_v1.is_some()
+        || contracts.population_program_v2_cycle2.is_some()
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    let arm_kind_consistent = match program.arm_kind.as_str() {
+        CYCLE4_ARM_KIND_CONTROL_R_V1 => {
+            !program.static_pool && contracts.trainer_v4_candidate.is_none()
+        }
+        CYCLE4_ARM_KIND_STATIC_RB_V1 => {
+            program.static_pool && contracts.trainer_v4_candidate.is_some()
+        }
+        CYCLE4_ARM_KIND_TREATMENT_RB_V1 => {
+            !program.static_pool && contracts.trainer_v4_candidate.is_some()
+        }
+        _ => false,
+    };
+    if !arm_kind_consistent {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    // Review finding P2: the section states the program in generations, but
+    // what actually bounds training is the schedule's update count. Binding
+    // the two here is what stops a short schedule from letting an arm report
+    // a completed interval it never trained.
+    if program
+        .trainee_stop_generation
+        .checked_sub(program.trainee_start_generation)
+        != Some(CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1)
+        || record.schedule.requested_successful_updates != CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1
+        || !CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1.is_multiple_of(program.refresh_interval)
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding));
+    }
     Ok(())
 }
 
@@ -3665,6 +3895,50 @@ pub(crate) fn test_fixture_bytes_historical_v1() -> Vec<u8> {
 #[cfg(test)]
 pub(crate) fn test_fixture_bytes_environment_randomization_v2() -> Vec<u8> {
     tests::coherent_v2_bytes()
+}
+
+/// A coherent record widened with `trainer_v4_candidate` (and the matching
+/// top-level `loss.identity`). Test-only: lets other modules' evidence-
+/// dispatch tests (`native_training_store_update_group_v1`) decode a
+/// `ValidatedTrainRunV2` whose `trainer_loss_identity_v2()` is
+/// `TrainerLossIdentityV2::V4Candidate` without duplicating this module's
+/// fixture-construction machinery.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_trainer_v4_candidate_v1() -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::trainer_v4_candidate_record(),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
+}
+
+/// A coherent record widened with `population_program_v2_cycle4` for one
+/// arm kind, with the paired `trainer_v4_candidate` presence/absence and
+/// `static_pool` flag the arm-kind consistency rule requires. Test-only:
+/// lets the cycle-4 arm launcher's own suite decode a validated run for each
+/// arm without duplicating this module's fixture machinery.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_v1(arm_kind: &str) -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::population_program_v2_cycle4_record(arm_kind),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
+}
+
+/// The same cycle-4 arm record, additionally carrying the ladder tuple a real
+/// arm run declares: the ladder opponent identity, its pool, its schedule,
+/// and the `opponent_ladder_initialization` section that pins the parent
+/// checkpoint the arm's genesis is seeded from. Every arm that reached its
+/// first interval was bootstrapped from that section, so the launcher's
+/// origin-record tests need a record that actually has one.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_seeded_v1(arm_kind: &str) -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::population_program_v2_cycle4_seeded_record(arm_kind),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
 }
 
 /// Backend-parametrized fixture: the matched runtime tuple and train-step
@@ -9375,5 +9649,425 @@ mod tests {
             validated.record().model_snapshot.parameter_element_count,
             2_750_754
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Cycle-4 run-contract widening
+    // (`docs/native_cycle4_arm_launcher_v1.md` Section 1)
+    // ------------------------------------------------------------------
+
+    fn trainer_v4_candidate_fixture_v1() -> TrainerV4CandidateContractV1 {
+        TrainerV4CandidateContractV1 {
+            loss_identity: CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned(),
+            baseline_schema: NATIVE_BASELINE_STATE_SCHEMA_V4.to_owned(),
+            beta_f32_bits: CYCLE4_TRAINER_V4_BETA_F32_BITS_V1.to_owned(),
+            cell_cap: CYCLE4_TRAINER_V4_CELL_CAP_V1,
+            contract_document_sha256: CYCLE4_TRAINER_V4_CONTRACT_DOCUMENT_SHA256_V1.to_owned(),
+            numerical_backend: CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1.to_owned(),
+        }
+    }
+
+    /// A coherent-V2 record widened with `trainer_v4_candidate` and the
+    /// matching top-level `loss.identity`. No schedule/opponent-pool
+    /// requirements: unlike `population_program_v1`/`response_exploiter_v1`,
+    /// this section carries no cross-binding into `schedule`.
+    ///
+    /// Carries the CUDA runtime tuple / backend identity pair (review
+    /// finding P1-3: `validate_trainer_v4_candidate_v1` now requires
+    /// `contracts.train_step.numerical_backend_identity` to be exactly the
+    /// CUDA-burn-dense identity), not the base fixture's Sequential-CPU
+    /// pair -- v4 admits no CPU backend
+    /// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// Section 5).
+    pub(super) fn trainer_v4_candidate_record() -> TrainRunV2 {
+        let mut record = coherent_v2_record();
+        record.contracts.loss.identity = CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned();
+        record.contracts.trainer_v4_candidate = Some(trainer_v4_candidate_fixture_v1());
+        apply_backend_pair(
+            &mut record,
+            crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::CudaBurnDense,
+        );
+        refresh_derived(&mut record);
+        record
+    }
+
+    fn population_program_v2_cycle4_fixture_v1(
+        arm_kind: &str,
+        static_pool: bool,
+    ) -> PopulationProgramContractV2Cycle4 {
+        PopulationProgramContractV2Cycle4 {
+            prereg_sha256: CYCLE4_PREREG_SHA256_V1.to_owned(),
+            refresh_manifest_schema: CYCLE4_REFRESH_MANIFEST_SCHEMA_V1.to_owned(),
+            arm_kind: arm_kind.to_owned(),
+            trainee_start_generation: CYCLE4_TRAINEE_START_GENERATION_V1,
+            trainee_stop_generation: CYCLE4_TRAINEE_STOP_GENERATION_V1,
+            refresh_interval: CYCLE4_REFRESH_INTERVAL_V1,
+            static_pool,
+        }
+    }
+
+    /// A coherent record carrying `population_program_v2_cycle4` for the
+    /// requested arm kind, with the paired `trainer_v4_candidate`
+    /// presence/absence and `static_pool` flag the arm-kind consistency
+    /// rule requires (`docs/native_cycle4_arm_launcher_v1.md` Section 1):
+    /// CONTROL-R carries neither `trainer_v4_candidate` nor `static_pool`;
+    /// STATIC-RB and TREATMENT-RB both carry `trainer_v4_candidate`, and
+    /// only STATIC-RB sets `static_pool`.
+    pub(super) fn population_program_v2_cycle4_record(arm_kind: &str) -> TrainRunV2 {
+        let mut record = if arm_kind == CYCLE4_ARM_KIND_CONTROL_R_V1 {
+            coherent_v2_record()
+        } else {
+            trainer_v4_candidate_record()
+        };
+        let static_pool = arm_kind == CYCLE4_ARM_KIND_STATIC_RB_V1;
+        record.contracts.population_program_v2_cycle4 = Some(
+            population_program_v2_cycle4_fixture_v1(arm_kind, static_pool),
+        );
+        // The schedule carries the whole program: 2048 successful updates,
+        // the 896..=2944 trainee-local span in the arm Store's own numbering.
+        record.schedule.requested_successful_updates = CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1;
+        refresh_derived(&mut record);
+        record
+    }
+
+    /// The cycle-4 arm record widened with the ladder tuple a real arm run
+    /// carries, so `opponent_ladder_initialization` (the pinned genesis
+    /// parent) is present: that section is only admissible under the ladder
+    /// opponent identity, which in turn requires the pool and the v2
+    /// schedule.
+    pub(super) fn population_program_v2_cycle4_seeded_record(arm_kind: &str) -> TrainRunV2 {
+        let mut record = population_program_v2_cycle4_record(arm_kind);
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_seeded_record_validates() {
+        for arm_kind in [
+            CYCLE4_ARM_KIND_CONTROL_R_V1,
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let record = population_program_v2_cycle4_seeded_record(arm_kind);
+            let validated = validate_train_run_record_v2(record)
+                .unwrap_or_else(|error| panic!("{arm_kind} seeded record: {error:?}"));
+            assert!(validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_some());
+        }
+    }
+
+    #[test]
+    fn trainer_v4_candidate_valid_record_decodes_and_validates() {
+        let record = trainer_v4_candidate_record();
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).expect("v4-candidate record must validate");
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.record().contracts().trainer_loss_identity_v2(),
+            TrainerLossIdentityV2::V4Candidate
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .trainer_v4_candidate
+            .is_some());
+    }
+
+    #[test]
+    fn trainer_v4_candidate_literal_violations_fail_closed() {
+        let mutations: &[fn(&mut TrainerV4CandidateContractV1)] = &[
+            |t| t.loss_identity = "terminal_reinforce_value/v3".to_owned(),
+            |t| t.baseline_schema = "wrong-schema/v1".to_owned(),
+            |t| t.beta_f32_bits = "00000000".to_owned(),
+            |t| t.cell_cap = 255,
+            |t| t.cell_cap = 257,
+            |t| {
+                t.contract_document_sha256 =
+                    "not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-he".to_owned()
+            },
+            |t| t.contract_document_sha256 = "0".repeat(63),
+            // Well-formed hex, but not the pinned document digest (review
+            // finding P2-4: content-pinned now, not format-checked only).
+            |t| t.contract_document_sha256 = "1".repeat(64),
+            |t| t.numerical_backend = "cpu-sequential".to_owned(),
+        ];
+        for mutate in mutations {
+            let mut record = trainer_v4_candidate_record();
+            mutate(record.contracts.trainer_v4_candidate.as_mut().unwrap());
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    /// The `trainer_v4_candidate` section's own `loss_identity` field and
+    /// the top-level `contracts.loss.identity` are two independent literal
+    /// pins that must agree: `validate_trainer_v4_candidate_v1` checks the
+    /// former, `validate_contracts_v2`'s loss-identity swap checks the
+    /// latter. This proves the swap itself, holding the section's own field
+    /// correct while the top-level field regresses to the v3 literal.
+    #[test]
+    fn trainer_v4_candidate_present_requires_matching_top_level_loss_identity() {
+        let mut record = trainer_v4_candidate_record();
+        record.contracts.loss.identity = FROZEN_LOSS_IDENTITY_V2.to_owned();
+        refresh_derived(&mut record);
+        assert!(validate_train_run_record_v2(record).is_err());
+    }
+
+    /// Review finding P1-3: `trainer_v4_candidate`'s own `numerical_backend`
+    /// field is a self-declared literal with no cross-binding to what the
+    /// run actually trains on; `validate_trainer_v4_candidate_v1` must
+    /// additionally require `contracts.train_step.numerical_backend_identity`
+    /// to be the CUDA identity. A CPU (Sequential) tuple/backend pair with an
+    /// otherwise-valid `trainer_v4_candidate` section must fail closed.
+    #[test]
+    fn trainer_v4_candidate_rejects_cpu_backend() {
+        let mut record = trainer_v4_candidate_record();
+        apply_backend_pair(
+            &mut record,
+            crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::Sequential,
+        );
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// Review finding P1-3: the wide-model path is explicitly out of scope
+    /// for v4-candidate (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// Section 5), so `trainer_v4_candidate` and `contracts.wide_model_experiment_v1`
+    /// must be mutually exclusive. `apply_wide_model_experiment` makes the
+    /// model/snapshot side fully wide-consistent first, so the rejection
+    /// below is provably this exclusivity rule, not an unrelated
+    /// wide/frozen-snapshot mismatch.
+    #[test]
+    fn trainer_v4_candidate_rejects_wide_model_section() {
+        let mut record = trainer_v4_candidate_record();
+        apply_wide_model_experiment(&mut record);
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// Review finding P2-5: `population_program_v2_cycle4` and
+    /// `population_program_v2_cycle2` are distinct, unrelated population-
+    /// program successors and must be mutually exclusive, exactly like the
+    /// existing `population_program_v1`/`response_exploiter_v1` exclusivity.
+    #[test]
+    fn population_program_v2_cycle4_mutually_exclusive_with_cycle2() {
+        let mut record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        record.contracts.population_program_v2_cycle2 = Some(PopulationProgramContractV2Cycle2 {
+            identity: String::new(),
+            package_commit: String::new(),
+            program_document_sha256: ZERO_SHA256.to_owned(),
+            retest_manifest_sha256: ZERO_SHA256.to_owned(),
+            global_generation_offset: 0,
+            local_updates_total: 0,
+            refresh_interval: 0,
+            slot_count: 0,
+            reward_identity: String::new(),
+            refresh_manifest_identity: String::new(),
+            retest_beta_f32_bits: "00000000".to_owned(),
+            expected_base_seed: 0,
+            pool_identity: String::new(),
+            parent_store_local_generation: 0,
+            parent_lineage: PopulationSourceLineageV1 {
+                base_seed: 0,
+                store_tree_sha256: ZERO_SHA256.to_owned(),
+                run_sha256: ZERO_SHA256.to_owned(),
+                checkpoint_sha256: ZERO_SHA256.to_owned(),
+                sidecar_sha256: ZERO_SHA256.to_owned(),
+                state_sha256: ZERO_SHA256.to_owned(),
+                model_parameter_sha256: ZERO_SHA256.to_owned(),
+            },
+            source_lineage_v2: None,
+        });
+        refresh_derived(&mut record);
+        assert!(validate_train_run_record_v2(record).is_err());
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_valid_for_each_arm_kind() {
+        for arm_kind in [
+            CYCLE4_ARM_KIND_CONTROL_R_V1,
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let record = population_program_v2_cycle4_record(arm_kind);
+            let validated = validate_train_run_record_v2(record)
+                .unwrap_or_else(|error| panic!("{arm_kind} must validate: {error:?}"));
+            assert_eq!(
+                validated
+                    .record()
+                    .contracts()
+                    .population_program_v2_cycle4
+                    .as_ref()
+                    .unwrap()
+                    .arm_kind,
+                arm_kind
+            );
+        }
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_literal_violations_fail_closed() {
+        let mutations: &[fn(&mut PopulationProgramContractV2Cycle4)] = &[
+            |p| p.prereg_sha256 = ZERO_SHA256.to_owned(),
+            |p| p.refresh_manifest_schema = "wrong-schema/v1".to_owned(),
+            |p| p.trainee_start_generation = 897,
+            |p| p.trainee_stop_generation = 2_945,
+            |p| p.refresh_interval = 129,
+        ];
+        for mutate in mutations {
+            let mut record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+            mutate(
+                record
+                    .contracts
+                    .population_program_v2_cycle4
+                    .as_mut()
+                    .unwrap(),
+            );
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_binds_the_schedule_to_the_whole_program() {
+        // Review finding P2: the section states the program in generations,
+        // but the schedule is what actually bounds training. A run whose
+        // schedule stops short would report its own completion at a
+        // generation the program has not reached, and the arm launcher would
+        // return a silently undertrained interval.
+        let record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+        assert_eq!(
+            record.schedule.requested_successful_updates,
+            CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1
+        );
+        assert_eq!(CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1, 2_048);
+        for short in [1_024_u64, 2_044, 4_096] {
+            let mut record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+            record.schedule.requested_successful_updates = short;
+            refresh_derived(&mut record);
+            assert!(
+                validate_train_run_record_v2(record).is_err(),
+                "a schedule of {short} successful updates is not the cycle-4 program"
+            );
+        }
+        // A record without the cycle-4 section keeps its own schedule.
+        let base = coherent_v2_record();
+        assert_ne!(
+            base.schedule.requested_successful_updates,
+            CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1
+        );
+        validate_train_run_record_v2(base).expect("a non-cycle-4 record is unaffected");
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_arm_kind_consistency_fails_closed() {
+        // CONTROL-R must not carry trainer_v4_candidate.
+        let mut control_with_trainer =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        control_with_trainer.contracts.trainer_v4_candidate =
+            Some(trainer_v4_candidate_fixture_v1());
+        control_with_trainer.contracts.loss.identity =
+            CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned();
+        refresh_derived(&mut control_with_trainer);
+        assert!(validate_train_run_record_v2(control_with_trainer).is_err());
+
+        // STATIC-RB and TREATMENT-RB must both carry trainer_v4_candidate.
+        for arm_kind in [
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let mut record = population_program_v2_cycle4_record(arm_kind);
+            record.contracts.trainer_v4_candidate = None;
+            record.contracts.loss.identity = FROZEN_LOSS_IDENTITY_V2.to_owned();
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+
+        // static_pool must be true iff arm_kind == "static-rb".
+        let mut static_without_flag =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_STATIC_RB_V1);
+        static_without_flag
+            .contracts
+            .population_program_v2_cycle4
+            .as_mut()
+            .unwrap()
+            .static_pool = false;
+        refresh_derived(&mut static_without_flag);
+        assert!(validate_train_run_record_v2(static_without_flag).is_err());
+
+        let mut treatment_with_flag =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+        treatment_with_flag
+            .contracts
+            .population_program_v2_cycle4
+            .as_mut()
+            .unwrap()
+            .static_pool = true;
+        refresh_derived(&mut treatment_with_flag);
+        assert!(validate_train_run_record_v2(treatment_with_flag).is_err());
+
+        // An unrecognized arm_kind string fails closed regardless of shape.
+        let mut unknown_arm = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        unknown_arm
+            .contracts
+            .population_program_v2_cycle4
+            .as_mut()
+            .unwrap()
+            .arm_kind = "unknown-arm".to_owned();
+        refresh_derived(&mut unknown_arm);
+        assert!(validate_train_run_record_v2(unknown_arm).is_err());
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_mutually_exclusive_with_v1_programs() {
+        let mut with_population_v1 =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        with_population_v1.contracts.population_program_v1 = Some(population_program_fixture());
+        refresh_derived(&mut with_population_v1);
+        assert!(validate_train_run_record_v2(with_population_v1).is_err());
+
+        let mut with_response_exploiter =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        with_response_exploiter.contracts.response_exploiter_v1 =
+            Some(response_exploiter_fixture_for_seed(970_001));
+        refresh_derived(&mut with_response_exploiter);
+        assert!(validate_train_run_record_v2(with_response_exploiter).is_err());
+    }
+
+    /// House style: "never mutate frozen behavior for existing v3 runs
+    /// (byte-identical when the new contract sections are absent)". A
+    /// pre-cycle-4 record carries neither new section, decodes to
+    /// `TrainerLossIdentityV2::V3`, and re-encodes byte-for-byte identical
+    /// to what it decoded from.
+    #[test]
+    fn v3_fixture_round_trips_byte_identically_with_cycle4_sections_absent() {
+        let bytes = fixture_bytes();
+        let validated = decode_train_run_v2(&bytes).expect("v3 fixture must still validate");
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.record().contracts().trainer_loss_identity_v2(),
+            TrainerLossIdentityV2::V3
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .trainer_v4_candidate
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle4
+            .is_none());
     }
 }

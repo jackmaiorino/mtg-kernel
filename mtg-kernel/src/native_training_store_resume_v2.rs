@@ -42,7 +42,8 @@ use crate::native_training_store_reference_latest_v2::{
 use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::native_training_store_segment_continuation_v2::{
-    decode_segment_continuations_v2, SEGMENT_CONTINUATION_MAX_BYTES_V2,
+    decode_segment_continuations_baseline_v4_v2, decode_segment_continuations_v2,
+    SEGMENT_CONTINUATION_MAX_BYTES_V2,
 };
 use crate::native_training_store_segment_manifest_v2::{
     decode_genesis_segment_manifest_v2, decode_trained_segment_manifest_v2,
@@ -51,6 +52,7 @@ use crate::native_training_store_segment_manifest_v2::{
 use crate::native_training_store_update_group_v1::{
     resume_update_evidence_chain_v1, validate_prepared_execution_config_v1,
 };
+use crate::native_training_store_update_group_v4::BaselineChainAccessV4;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -199,6 +201,14 @@ pub struct ValidatedNativeTrainingStoreStateV2 {
     latest_payload: Vec<u8>,
     recognized_stage_paths: Vec<PathBuf>,
     final_expectations: Vec<NativeTrainingStoreFinalExpectationV2>,
+    /// Round B (`docs/native_cycle4_arm_launcher_v1.md` Section 3): every
+    /// walked boundary's `(generation_index, v3 core train-state SHA-256)`
+    /// pair in ascending order, the exact input the v4 baseline chain's
+    /// generation-pairing rule takes. Populated ONLY by the full walk; the
+    /// O(1) tip shortcut leaves it empty because it proves no ancestry, so a
+    /// caller that needs it must obtain a state from a full walk (the arm
+    /// launcher does, through `validate_native_training_store_baseline_v4_v2`).
+    checkpoint_core_state_sha256: Vec<(u64, [u8; 32])>,
 }
 
 impl ValidatedNativeTrainingStoreStateV2 {
@@ -225,6 +235,12 @@ impl ValidatedNativeTrainingStoreStateV2 {
 
     pub(crate) fn final_expectations_v2(&self) -> &[NativeTrainingStoreFinalExpectationV2] {
         &self.final_expectations
+    }
+
+    /// Round B: see the field's own doc. Empty on a state produced by the
+    /// O(1) tip shortcut rather than a full walk.
+    pub(crate) fn checkpoint_core_state_sha256_v4(&self) -> &[(u64, [u8; 32])] {
+        &self.checkpoint_core_state_sha256
     }
 }
 
@@ -365,10 +381,55 @@ pub fn validate_native_training_store_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
 ) -> Result<ValidatedNativeTrainingStoreStateV2> {
+    validate_native_training_store_dispatch_v2(root, run, None)
+}
+
+/// Round B sibling of [`validate_native_training_store_v2`] for a
+/// `trainer_v4_candidate` run: the identical walk, with every update group's
+/// evidence additionally dispatched to the v4 recompute against the baseline
+/// replayed from `access` (`docs/native_cycle4_arm_launcher_v1.md`
+/// Sections 2-3).
+pub(crate) fn validate_native_training_store_baseline_v4_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<ValidatedNativeTrainingStoreStateV2> {
+    validate_native_training_store_dispatch_v2(root, run, Some(access))
+}
+
+/// The generation `latest.json` names, read WITHOUT walking the Store.
+///
+/// The cycle-4 launcher needs the committed tip before its baseline-aware
+/// walk can run, because reconciling the staged sidecar area is a
+/// precondition of that walk rather than a result of it (the walk itself
+/// fails closed on a sidecar the reconcile would have supplied). This proves
+/// nothing about the pointer beyond its own shape; the walk that follows is
+/// still the authority.
+pub(crate) fn peek_latest_generation_index_from_store_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+) -> Result<u64> {
     root.recapture_v2()
         .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
     let _shared = root.lock_shared_v2().map_err(map_lock_error_v2)?;
-    walk_complete_store_v2(root, run)
+    let latest_bytes = read_bounded_final_v2(
+        root,
+        NativeTrainingStoreFinalNameV2::Latest,
+        LATEST_RECORD_MAX_BYTES_V2,
+        NativeTrainingStoreResumeV2ErrorKind::LatestInvalid,
+    )?;
+    peek_latest_generation_index_v2(&latest_bytes)
+        .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::LatestInvalid))
+}
+
+fn validate_native_training_store_dispatch_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
+) -> Result<ValidatedNativeTrainingStoreStateV2> {
+    root.recapture_v2()
+        .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
+    let _shared = root.lock_shared_v2().map_err(map_lock_error_v2)?;
+    walk_complete_store_v2(root, run, baseline_v4)
 }
 
 /// One named boundary generation loaded strictly from validated Store bytes.
@@ -426,10 +487,34 @@ pub fn load_native_training_boundary_v2(
     run: &ValidatedTrainRunV2,
     generation_index: u64,
 ) -> Result<LoadedNativeTrainingBoundaryV2> {
+    load_native_training_boundary_dispatch_v2(root, run, generation_index, None)
+}
+
+/// Round B sibling of [`load_native_training_boundary_v2`] for a
+/// `trainer_v4_candidate` store: the identical two walks, with every update
+/// group's evidence dispatched to the v4 recompute against the baseline
+/// replayed from `access`. A cycle-4 arm's OWN store can only be resolved as
+/// a population slot through this entry point, because the plain one
+/// validates evidence in v3 mode and a v4 run fails closed there.
+pub(crate) fn load_native_training_boundary_baseline_v4_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    generation_index: u64,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<LoadedNativeTrainingBoundaryV2> {
+    load_native_training_boundary_dispatch_v2(root, run, generation_index, Some(access))
+}
+
+fn load_native_training_boundary_dispatch_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    generation_index: u64,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
+) -> Result<LoadedNativeTrainingBoundaryV2> {
     root.recapture_v2()
         .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
     let _shared = root.lock_shared_v2().map_err(map_lock_error_v2)?;
-    let state = walk_complete_store_v2(root, run)?;
+    let state = walk_complete_store_v2(root, run, baseline_v4)?;
     let checkpoint_segment_updates = run.checkpoint_segment_updates();
     if generation_index > state.latest_generation_index
         || !(generation_index == 0 || generation_index.is_multiple_of(checkpoint_segment_updates))
@@ -451,7 +536,7 @@ pub fn load_native_training_boundary_v2(
     let mut walked: Option<WalkedGenerationV2> = None;
     let mut current = 0_u64;
     loop {
-        let generation = load_generation_v2(root, run, walked.as_ref(), current)?;
+        let generation = load_generation_v2(root, run, walked.as_ref(), current, baseline_v4)?;
         if current == generation_index {
             return Ok(LoadedNativeTrainingBoundaryV2 {
                 generation_index,
@@ -489,6 +574,7 @@ pub fn resume_native_training_store_v2(
         config,
         None,
         PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1,
+        None,
     )
 }
 
@@ -518,6 +604,28 @@ pub(crate) fn resume_native_training_store_with_session_v2(
         config,
         session,
         PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1,
+        None,
+    )
+}
+
+/// Round B sibling of [`resume_native_training_store_with_session_v2`] for a
+/// `trainer_v4_candidate` run: identical resume logic, with every walked
+/// update group's evidence dispatched to the v4 recompute against the
+/// baseline replayed from `access`.
+pub(crate) fn resume_native_training_store_with_session_baseline_v4_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    config: NativeTrainingExecutionConfigV1,
+    session: Option<NativeTrainingStoreContinuationSessionV2>,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<NativeTrainingStoreResumeV2> {
+    resume_native_training_store_impl_v1(
+        root,
+        run,
+        config,
+        session,
+        PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1,
+        Some(access),
     )
 }
 
@@ -537,7 +645,7 @@ pub(crate) fn resume_native_training_store_with_session_and_cadence_for_test_v1(
     session: Option<NativeTrainingStoreContinuationSessionV2>,
     cadence_windows: u32,
 ) -> Result<NativeTrainingStoreResumeV2> {
-    resume_native_training_store_impl_v1(root, run, config, session, cadence_windows)
+    resume_native_training_store_impl_v1(root, run, config, session, cadence_windows, None)
 }
 
 fn resume_native_training_store_impl_v1(
@@ -546,6 +654,7 @@ fn resume_native_training_store_impl_v1(
     config: NativeTrainingExecutionConfigV1,
     session: Option<NativeTrainingStoreContinuationSessionV2>,
     cadence_windows: u32,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> Result<NativeTrainingStoreResumeV2> {
     // Dual-Profile Catalog Successor (collab CLAUDE #220), resume boundary:
     // reject a historical-profile run before any other check, lock, or store
@@ -582,7 +691,7 @@ fn resume_native_training_store_impl_v1(
         .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
     let _exclusive = root.lock_exclusive_v2().map_err(map_lock_error_v2)?;
     let (state, windows_since_full_walk) =
-        walk_complete_store_or_shortcut_v2(root, run, session, cadence_windows)?;
+        walk_complete_store_or_shortcut_v2(root, run, session, cadence_windows, baseline_v4)?;
 
     // Apply only the complete prevalidated recognized-stage deletion plan.
     for stage_path in &state.recognized_stage_paths {
@@ -591,7 +700,7 @@ fn resume_native_training_store_impl_v1(
     }
     if !state.recognized_stage_paths.is_empty() {
         // Rescan to require stage absence after the plan is applied.
-        let rescanned = walk_complete_store_v2(root, run)?;
+        let rescanned = walk_complete_store_v2(root, run, baseline_v4)?;
         if !rescanned.recognized_stage_paths.is_empty() {
             return Err(resume_error_v2(
                 NativeTrainingStoreResumeV2ErrorKind::StageCorruption,
@@ -609,7 +718,7 @@ fn resume_native_training_store_impl_v1(
     if latest == target {
         // The no-op revalidates the unchanged latest boundary hashes and
         // performs no reconstruction, publication, or live mutation.
-        let reread = walk_complete_store_v2(root, run)?;
+        let reread = walk_complete_store_v2(root, run, baseline_v4)?;
         if reread.latest_generation_index != latest
             || reread.latest_boundary.head_record_sha256()
                 != state.latest_boundary.head_record_sha256()
@@ -723,6 +832,7 @@ fn load_generation_v2(
     run: &ValidatedTrainRunV2,
     parent: Option<&WalkedGenerationV2>,
     generation_index: u64,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> Result<WalkedGenerationV2> {
     // StoreV3 port (D1) risk register: test-only call counter proving the
     // O(1) shortcut never reaches this function (only `walk_complete_store_v2`,
@@ -825,9 +935,16 @@ fn load_generation_v2(
             let parent_context =
                 resume_update_evidence_chain_v1(run, &parent.boundary, &parent.checkpoint)
                     .map_err(|_| error)?;
-            let continuations =
-                decode_segment_continuations_v2(run, parent_context, &continuation_bytes)
-                    .map_err(|_| error)?;
+            let continuations = match baseline_v4 {
+                None => decode_segment_continuations_v2(run, parent_context, &continuation_bytes),
+                Some(access) => decode_segment_continuations_baseline_v4_v2(
+                    run,
+                    parent_context,
+                    &continuation_bytes,
+                    access,
+                ),
+            }
+            .map_err(|_| error)?;
             let checkpoint = decode_trained_checkpoint_manifest_v3(
                 &manifest,
                 &payload,
@@ -896,6 +1013,12 @@ fn load_generation_v2(
         NativeTrainingStoreFinalNameV2::CheckpointReference { generation_index },
         &reference_bytes,
     )?);
+    // Round B: register this proven boundary's own core train-state hash so
+    // the launcher-level v4 chain manifest for the same generation can only
+    // ever be decoded against the Store's authenticated value.
+    if let Some(access) = baseline_v4 {
+        access.observe_store_checkpoint_v4(generation_index, checkpoint.train_state_sha256());
+    }
     Ok(WalkedGenerationV2 {
         checkpoint,
         boundary,
@@ -911,6 +1034,7 @@ fn load_generation_v2(
 fn walk_complete_store_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> Result<ValidatedNativeTrainingStoreStateV2> {
     // Schedule identities: K, S, N, checked K*S and K*N, S | N.
     let schedule_invalid = resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::ScheduleInvalid);
@@ -968,11 +1092,15 @@ fn walk_complete_store_v2(
     // Fully validate every reachable boundary generation in order.
     let mut walked: Option<WalkedGenerationV2> = None;
     let mut continuation_counts: BTreeMap<u64, u64> = BTreeMap::new();
+    let mut checkpoint_core_state_sha256: Vec<(u64, [u8; 32])> = Vec::new();
     let mut generation_index = 0_u64;
     loop {
-        let generation = load_generation_v2(root, run, walked.as_ref(), generation_index)?;
+        let generation =
+            load_generation_v2(root, run, walked.as_ref(), generation_index, baseline_v4)?;
         continuation_counts.insert(generation_index, generation.continuation_count);
         final_expectations.extend(generation.final_expectations.iter().copied());
+        checkpoint_core_state_sha256
+            .push((generation_index, generation.checkpoint.train_state_sha256()));
         walked = Some(generation);
         if generation_index == latest_generation_index {
             break;
@@ -1087,6 +1215,7 @@ fn walk_complete_store_v2(
         latest_payload: latest_walked.payload,
         recognized_stage_paths,
         final_expectations,
+        checkpoint_core_state_sha256,
     })
 }
 
@@ -1257,6 +1386,7 @@ fn try_tip_shortcut_v1(
         latest_payload,
         recognized_stage_paths: Vec::new(),
         final_expectations: session.tip_proof.final_expectations,
+        checkpoint_core_state_sha256: Vec::new(),
     })
 }
 
@@ -1271,6 +1401,7 @@ fn walk_complete_store_or_shortcut_v2(
     run: &ValidatedTrainRunV2,
     session: Option<NativeTrainingStoreContinuationSessionV2>,
     cadence_windows: u32,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> Result<(ValidatedNativeTrainingStoreStateV2, u32)> {
     if let Some(session) = session {
         if session.windows_since_full_walk < cadence_windows {
@@ -1283,7 +1414,7 @@ fn walk_complete_store_or_shortcut_v2(
             // weaker check for a stronger one it disagrees with.
         }
     }
-    Ok((walk_complete_store_v2(root, run)?, 0))
+    Ok((walk_complete_store_v2(root, run, baseline_v4)?, 0))
 }
 
 /// Read-only whole-Store validation for a publisher that already owns the
@@ -1295,8 +1426,9 @@ fn walk_complete_store_or_shortcut_v2(
 pub(crate) fn validate_native_training_store_for_publication_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> std::result::Result<ValidatedNativeTrainingStoreStateV2, NativeTrainingStoreResumeV2Error> {
-    walk_complete_store_v2(root, run)
+    walk_complete_store_v2(root, run, baseline_v4)
 }
 
 /// Decode the latest checkpoint into a private candidate and swap it into a
@@ -2304,7 +2436,7 @@ mod store_v2_partial_walk_timing_harness_v1 {
             let mut generation_index = 0_u64;
             loop {
                 let generation =
-                    load_generation_v2(&root, &run, walked.as_ref(), generation_index)
+                    load_generation_v2(&root, &run, walked.as_ref(), generation_index, None)
                         .unwrap_or_else(|error| {
                             panic!(
                                 "harness_error=load_generation_v2 code={} generation_index={} error={error}",

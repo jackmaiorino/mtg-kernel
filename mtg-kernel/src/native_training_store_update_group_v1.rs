@@ -16,6 +16,9 @@ use crate::canonical_json_v1::{
 use crate::kernel_native_search_opponent_v1::{
     KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
 };
+use crate::native_policy_baseline_state_v4::{
+    BaselineCellKeyV4, BaselineRoleV4, NativeBaselineStateV4,
+};
 use crate::native_policy_train_step_v1::{
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1,
 };
@@ -35,7 +38,13 @@ use crate::native_training_store_digest_v1::{
     NativeTrainingStoreDigestErrorV1,
 };
 use crate::native_training_store_run_v2::{
-    NativeRunEnvironmentTrajectoryContractV1, ValidatedTrainRunV2,
+    NativeRunEnvironmentTrajectoryContractV1, TrainerLossIdentityV2, ValidatedTrainRunV2,
+};
+use crate::native_training_store_update_group_v4::{
+    build_update_baseline_record_from_episodes_v4, decode_update_baseline_record_v4,
+    validate_update_baseline_v4, BaselineChainAccessV4, BaselineSidecarSourceV4,
+    UpdateBaselineEpisodeViewV4, UpdateBaselineRecordV4, UpdateBaselineTermViewV4,
+    UpdateBaselineV4ErrorKind,
 };
 use crate::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use serde::{Deserialize, Serialize};
@@ -783,6 +792,18 @@ pub enum UpdateGroupV1ErrorKind {
     ProgressMismatch,
     CheckpointMismatch,
     ChainMismatch,
+    /// A run declares `trainer_v4_candidate`, but the group was submitted
+    /// through a plain (non-sidecar) entry point --
+    /// `build_update_group_v1`/`decode_update_group_v1`/
+    /// `build_compact_update_group_v2`/`validate_embedded_update_group_wire_v1`.
+    /// Those paths recompute only the v3-frozen structural/loss/gauge
+    /// invariants; a v4-candidate run's policy term is trained against a
+    /// per-cell baseline (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// Section 1) that only `decode_update_group_with_baseline_v4_v1` can
+    /// verify, so a v4 group can never validate through the plain paths --
+    /// fail closed here rather than silently skip the baseline check
+    /// (review finding P1-1).
+    V4RequiresBaselineSidecar,
 }
 
 impl UpdateGroupV1ErrorKind {
@@ -804,6 +825,9 @@ impl UpdateGroupV1ErrorKind {
             Self::ProgressMismatch => "native_train_update_group_v1_progress_mismatch",
             Self::CheckpointMismatch => "native_train_update_group_v1_checkpoint_mismatch",
             Self::ChainMismatch => "native_train_update_group_v1_chain_mismatch",
+            Self::V4RequiresBaselineSidecar => {
+                "native_train_update_group_v1_v4_requires_baseline_sidecar"
+            }
         }
     }
 }
@@ -842,6 +866,23 @@ impl Display for UpdateGroupV1Error {
 impl Error for UpdateGroupV1Error {}
 
 type Result<T> = std::result::Result<T, UpdateGroupV1Error>;
+
+/// Selects which structural-validation invariants `validate_group_bindings_v1`
+/// (and, downstream, `validate_gauge_v1`) enforce for one group: `Plain` is
+/// the frozen v1/v3 shape every non-cycle-4 caller uses; `V4Baseline` carries
+/// the committed prior baseline state a v4-candidate run's gauge check needs
+/// to recompute the per-cell advantage the producer actually optimized
+/// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+/// Section 1). `validate_group_bindings_v1` requires this to agree with the
+/// run's own declared trainer identity -- `V4RequiresBaselineSidecar`
+/// otherwise (review finding P1-1) -- so a v4-candidate run can only ever
+/// validate through `decode_update_group_with_baseline_v4_v1`, never the
+/// plain entry points.
+#[derive(Clone, Copy)]
+enum UpdateGroupValidationModeV1<'a> {
+    Plain,
+    V4Baseline(&'a NativeBaselineStateV4),
+}
 
 /// Establishes the only public root constructor for the evidence chain.
 pub fn begin_update_evidence_chain_v1(
@@ -1067,10 +1108,17 @@ fn preflight_receipt_environment_diagonal_v1(
     Ok(())
 }
 
+/// `baseline_v4` is round B's per-update prior committed baseline state
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 3): `None` is the frozen
+/// v3 producer path, byte for byte; `Some(prior_state)` is the only shape a
+/// run declaring `trainer_v4_candidate` can build under, because
+/// `validate_group_bindings_v1` requires the mode and the run's declared
+/// trainer identity to agree.
 pub(crate) fn build_compact_update_group_v2(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     transition: NativeTrainingPreparedTransitionV2,
+    baseline_v4: Option<&NativeBaselineStateV4>,
 ) -> Result<(
     ValidatedUpdateGroupAdvanceV1,
     NativeTrainingIntrinsicCheckpointFactsV2,
@@ -1086,22 +1134,55 @@ pub(crate) fn build_compact_update_group_v2(
     let (predecessor, successor, observation, final_checkpoint) = transition.into_parts_v2();
     let predecessor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&predecessor);
     let successor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&successor);
-    let advance = build_update_group_from_parts_v1(
+    let advance = build_update_group_from_parts_mode_v1(
         run,
         context,
         &predecessor_view,
         &observation,
         &successor_view,
+        baseline_mode_v1(baseline_v4),
     )?;
     Ok((advance, successor, final_checkpoint))
 }
 
+/// Frozen v3 producer shape: always `Plain`. A run declaring
+/// `trainer_v4_candidate` fails closed inside `validate_group_bindings_v1`.
 fn build_update_group_from_parts_v1(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     predecessor: &UpdateCheckpointFactsV1,
     observation: &NativeTrainingUpdateObservationV2,
     successor: &UpdateCheckpointFactsV1,
+) -> Result<ValidatedUpdateGroupAdvanceV1> {
+    build_update_group_from_parts_mode_v1(
+        run,
+        context,
+        predecessor,
+        observation,
+        successor,
+        UpdateGroupValidationModeV1::Plain,
+    )
+}
+
+/// Round B: maps the launcher's optional prior baseline state onto the
+/// private validation mode, so exactly one place in this module decides what
+/// `Some`/`None` mean.
+const fn baseline_mode_v1(
+    baseline_v4: Option<&NativeBaselineStateV4>,
+) -> UpdateGroupValidationModeV1<'_> {
+    match baseline_v4 {
+        None => UpdateGroupValidationModeV1::Plain,
+        Some(prior_state) => UpdateGroupValidationModeV1::V4Baseline(prior_state),
+    }
+}
+
+fn build_update_group_from_parts_mode_v1(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    predecessor: &UpdateCheckpointFactsV1,
+    observation: &NativeTrainingUpdateObservationV2,
+    successor: &UpdateCheckpointFactsV1,
+    mode: UpdateGroupValidationModeV1<'_>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_predecessor_checkpoint_v1(run, &context, predecessor)?;
     validate_observation_checkpoint_v1(run, &context, observation, successor)?;
@@ -1129,7 +1210,7 @@ fn build_update_group_from_parts_v1(
     if canonical_bytes.len() > CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1 {
         return Err(error_v1(UpdateGroupV1ErrorKind::RecordTooLarge));
     }
-    validate_and_advance_wire_v1(run, context, wire, canonical_bytes)
+    validate_and_advance_wire_v1(run, context, wire, canonical_bytes, mode)
 }
 
 pub(crate) fn validate_prepared_execution_config_v1(
@@ -1231,10 +1312,33 @@ fn preflight_observation_cardinality_v1(
 
 /// Decodes canonical standalone group bytes and advances the consumed context.
 /// The ceiling here is only defensive; continuation planning owns Store caps.
+///
+/// Plain-mode only (`UpdateGroupValidationModeV1::Plain`): a run declaring
+/// `trainer_v4_candidate` fails closed here with `V4RequiresBaselineSidecar`
+/// (review finding P1-1) -- `decode_update_group_with_baseline_v4_v1` is the
+/// only entry point that can validate a v4-candidate group.
 pub fn decode_update_group_v1(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     canonical_group_bytes: &[u8],
+) -> Result<ValidatedUpdateGroupAdvanceV1> {
+    decode_update_group_core_v1(
+        run,
+        context,
+        canonical_group_bytes,
+        UpdateGroupValidationModeV1::Plain,
+    )
+}
+
+/// Shared decode core behind `decode_update_group_v1` (`Plain`) and
+/// `decode_update_group_with_baseline_v4_v1` (`V4Baseline`): identical byte
+/// handling and canonical-JSON round trip either way, differing only in
+/// which structural-validation mode `validate_and_advance_wire_v1` runs.
+fn decode_update_group_core_v1(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    canonical_group_bytes: &[u8],
+    mode: UpdateGroupValidationModeV1<'_>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     if canonical_group_bytes.len() > CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1 {
         return Err(error_v1(UpdateGroupV1ErrorKind::RecordTooLarge));
@@ -1248,20 +1352,32 @@ pub fn decode_update_group_v1(
             CanonicalJsonErrorKindV1::NonCanonicalBytes,
         )));
     }
-    validate_and_advance_wire_v1(run, context, wire, reencoded)
+    validate_and_advance_wire_v1(run, context, wire, reencoded, mode)
 }
 
+/// `baseline_v4` is round B's per-update prior committed baseline state:
+/// `None` reproduces the frozen v3 embedded-group validation byte for byte;
+/// `Some(prior_state)` is the only shape a `trainer_v4_candidate` run can
+/// validate under. The caller folds the successor state forward across the
+/// segment's groups (see `native_training_store_segment_continuation_v2`).
 pub(crate) fn validate_embedded_update_group_wire_v1(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     wire: UpdateGroupWireV1,
+    baseline_v4: Option<&NativeBaselineStateV4>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_context_run_v1(run, &context)?;
     let canonical_bytes = to_canonical_json_bytes_v1(&wire, GROUP_NULL_POLICY_V1)?;
     if canonical_bytes.len() > CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1 {
         return Err(error_v1(UpdateGroupV1ErrorKind::RecordTooLarge));
     }
-    validate_and_advance_wire_v1(run, context, wire, canonical_bytes)
+    validate_and_advance_wire_v1(
+        run,
+        context,
+        wire,
+        canonical_bytes,
+        baseline_mode_v1(baseline_v4),
+    )
 }
 
 pub(crate) fn validate_update_evidence_chain_context_v1(
@@ -1880,8 +1996,9 @@ fn validate_and_advance_wire_v1(
     context: UpdateEvidenceChainContextV1,
     wire: UpdateGroupWireV1,
     canonical_bytes: Vec<u8>,
+    mode: UpdateGroupValidationModeV1<'_>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
-    validate_group_bindings_v1(run, &context, &wire)?;
+    validate_group_bindings_v1(run, &context, &wire, mode)?;
     let evidence_cj = to_canonical_json_bytes_v1(&wire.evidence, episode_null_policy_v1())?;
     let expected_update_sha256 = update_evidence_sha256_v1(
         context.run_sha256,
@@ -1928,7 +2045,28 @@ fn validate_group_bindings_v1(
     run: &ValidatedTrainRunV2,
     context: &UpdateEvidenceChainContextV1,
     group: &UpdateGroupWireV1,
+    mode: UpdateGroupValidationModeV1<'_>,
 ) -> Result<()> {
+    // Review finding P1-1: a v4-candidate run's policy term is trained
+    // against a per-cell baseline that only the sidecar-aware mode can
+    // verify (the sidecar dispatch below `validate_physical_and_loss_v1`,
+    // plus the v4-aware gauge recompute this mode feeds `validate_gauge_v1`).
+    // `V4Baseline` carries the prior baseline state; `Plain` carries none.
+    // These two facts -- the run's own declared trainer identity and which
+    // mode the caller used -- must agree exactly, or fail closed: a
+    // `V4Baseline` call against a `V3` run is equally wrong (nothing would
+    // ever supply it in practice, but the mismatch is checked, not assumed).
+    let baseline = match mode {
+        UpdateGroupValidationModeV1::Plain => None,
+        UpdateGroupValidationModeV1::V4Baseline(prior_state) => Some(prior_state),
+    };
+    let is_v4_identity = matches!(
+        run.record().contracts().trainer_loss_identity_v2(),
+        TrainerLossIdentityV2::V4Candidate
+    );
+    if is_v4_identity != baseline.is_some() {
+        return Err(error_v1(UpdateGroupV1ErrorKind::V4RequiresBaselineSidecar));
+    }
     let evidence = &group.evidence;
     let expected_previous = context
         .previous_update_evidence_sha256
@@ -1967,7 +2105,7 @@ fn validate_group_bindings_v1(
     }
     validate_episodes_v1(run, evidence)?;
     validate_physical_and_loss_v1(run, evidence)?;
-    validate_gauge_v1(run, context, evidence)?;
+    validate_gauge_v1(run, context, evidence, baseline)?;
     validate_rollout_v1(run, evidence)?;
     let expected_progress = fold_progress_v1(&context.progress, &evidence.episodes)?;
     if evidence.progress_after != expected_progress {
@@ -2201,56 +2339,553 @@ fn validate_physical_and_loss_v1(
         return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
     }
 
-    let group_f32 = exact_u64_as_f32_v1(evidence.learner_group_count)?;
     let value_coefficient =
         parse_f32_hex_v1(&run.record().optimization.value_coefficient_f32_bits)?;
     if !value_coefficient.is_finite() {
         return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
     }
-    let mut policy_sum = 0.0_f32;
-    let mut value_sum = 0.0_f32;
-    for term in &evidence.physical_terms {
-        let q = parse_f32_hex_v1(&term.joint_log_probability_f32_bits)?;
-        let value = parse_f32_hex_v1(&term.value_f32_bits)?;
-        let target = f32::from(term.terminal_return_i8);
-        let advantage = target - value;
-        let policy_term = (-q) * advantage;
-        let value_error = value - target;
-        let value_term = value_error * value_error;
-        policy_sum += policy_term;
-        value_sum += value_term;
-        if !advantage.is_finite()
-            || !policy_term.is_finite()
-            || !value_error.is_finite()
-            || !value_term.is_finite()
-            || !policy_sum.is_finite()
-            || !value_sum.is_finite()
-        {
-            return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+
+    // Cycle-4 v4-candidate dispatch (`docs/native_cycle4_arm_launcher_v1.md`
+    // Section 2): the v3 branch below is byte-for-byte the frozen recompute
+    // every pre-cycle-4 record already passes -- untouched, same code, same
+    // error kind, same order. A run that declares `trainer_v4_candidate`
+    // trained its policy term against a per-cell baseline
+    // (`advantage_v4 = (target - value) - c_t(cell)`,
+    // `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    // Section 1), so `evidence.loss.policy_sum_f32_bits` is NOT the v3
+    // bit-exact recompute below and must not be checked against it; that
+    // check (and the resulting `total_f32_bits` check, since `total` folds
+    // `policy_sum`) is deferred to `validate_update_group_baseline_v4_v1`,
+    // which recomputes the v4 policy sum bit-exactly from the per-update
+    // baseline sidecar and cross-checks it against these same declared
+    // fields. `value_sum_f32_bits` is unaffected by the baseline change (the
+    // value head's regression target is untouched, per that doc's Section
+    // 5 point 1) and stays checked here, identically for both trainer
+    // identities.
+    match run.record().contracts().trainer_loss_identity_v2() {
+        TrainerLossIdentityV2::V3 => {
+            let group_f32 = exact_u64_as_f32_v1(evidence.learner_group_count)?;
+            let mut policy_sum = 0.0_f32;
+            let mut value_sum = 0.0_f32;
+            for term in &evidence.physical_terms {
+                let q = parse_f32_hex_v1(&term.joint_log_probability_f32_bits)?;
+                let value = parse_f32_hex_v1(&term.value_f32_bits)?;
+                let target = f32::from(term.terminal_return_i8);
+                let advantage = target - value;
+                let policy_term = (-q) * advantage;
+                let value_error = value - target;
+                let value_term = value_error * value_error;
+                policy_sum += policy_term;
+                value_sum += value_term;
+                if !advantage.is_finite()
+                    || !policy_term.is_finite()
+                    || !value_error.is_finite()
+                    || !value_term.is_finite()
+                    || !policy_sum.is_finite()
+                    || !value_sum.is_finite()
+                {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+                }
+            }
+            let weighted_value = value_coefficient * value_sum;
+            let numerator = policy_sum + weighted_value;
+            let total = numerator / group_f32;
+            if !weighted_value.is_finite() || !numerator.is_finite() || !total.is_finite() {
+                return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+            }
+            let declared_policy = parse_f32_hex_v1(&evidence.loss.policy_sum_f32_bits)?;
+            let declared_value = parse_f32_hex_v1(&evidence.loss.value_sum_f32_bits)?;
+            let declared_total = parse_f32_hex_v1(&evidence.loss.total_f32_bits)?;
+            if declared_policy.to_bits() != policy_sum.to_bits()
+                || declared_value.to_bits() != value_sum.to_bits()
+                || declared_total.to_bits() != total.to_bits()
+            {
+                return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+            }
+        }
+        TrainerLossIdentityV2::V4Candidate => {
+            let mut value_sum = 0.0_f32;
+            for term in &evidence.physical_terms {
+                let value = parse_f32_hex_v1(&term.value_f32_bits)?;
+                let target = f32::from(term.terminal_return_i8);
+                let value_error = value - target;
+                let value_term = value_error * value_error;
+                value_sum += value_term;
+                if !value_error.is_finite() || !value_term.is_finite() || !value_sum.is_finite() {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+                }
+                // `joint_log_probability_f32_bits` isn't consumed by the
+                // value-only pass, but every term's bit pattern must still
+                // parse to a finite f32 (format well-formedness holds
+                // regardless of trainer identity); `parse_f32_hex_v1` itself
+                // rejects a non-finite bit pattern, so `?` alone enforces
+                // this.
+                parse_f32_hex_v1(&term.joint_log_probability_f32_bits)?;
+            }
+            let declared_value = parse_f32_hex_v1(&evidence.loss.value_sum_f32_bits)?;
+            if declared_value.to_bits() != value_sum.to_bits() {
+                return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+            }
+            // Format/finiteness only here (`parse_f32_hex_v1` rejects a
+            // non-finite bit pattern via `?`); bit-exact validation against
+            // the v4 baseline sidecar happens in
+            // `validate_update_group_baseline_v4_v1`.
+            parse_f32_hex_v1(&evidence.loss.policy_sum_f32_bits)?;
+            parse_f32_hex_v1(&evidence.loss.total_f32_bits)?;
         }
     }
-    let weighted_value = value_coefficient * value_sum;
-    let numerator = policy_sum + weighted_value;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Cycle-4 v4-candidate evidence dispatch
+// (`docs/native_cycle4_arm_launcher_v1.md` Section 2)
+//
+// `UpdateGroupV1ErrorKind`/`UpdateGroupV1Error` above are this module's
+// PUBLIC per-update error taxonomy (`native_training_store_update_group_v1`
+// is a `pub mod`); the v4 baseline module it would need to wrap
+// (`native_training_store_update_group_v4`) is `pub(crate) mod` entirely
+// (round B/C's job to decide whether and how to expose it further), so
+// folding `UpdateBaselineV4ErrorKind` into a variant of the public
+// `UpdateGroupV1ErrorKind` would leak a crate-private type through a public
+// enum. `validate_update_group_baseline_v4_v1` below is itself
+// `pub(crate)`-only, so it gets its own, separate, crate-private error type
+// instead.
+//
+// Round A ships this dispatch as a complete, independently unit-tested
+// algorithm (see the `baseline_v4_dispatch_*` tests below); its production
+// caller is Section 3's library entry point (`run_native_cycle4_arm_v1`,
+// round B, "depends on A" per that doc's delivery order), which is why
+// every item below is unreachable from a non-test build until that lands --
+// hence the blanket `cfg_attr(not(test), allow(dead_code))` rather than
+// leaving the warning to reappear at every `cargo build --lib`.
+// ---------------------------------------------------------------------
+
+/// Round-A pure v4 evidence-dispatch failure
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 2). See the module note
+/// above for why this is a separate type from the public
+/// `UpdateGroupV1ErrorKind`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum UpdateGroupBaselineV4ErrorKind {
+    /// A hex-encoded scalar field failed to parse, or decoded to a
+    /// non-finite value.
+    InvalidScalar,
+    /// The episode-cursor walk over `physical_terms` didn't land on exact
+    /// slice boundaries. `validate_physical_and_loss_v1`'s v4 branch (a
+    /// prerequisite of `group: &ValidatedUpdateGroupV1` existing at all)
+    /// already proved `physical_terms.len()` and every episode's
+    /// `learner_physical_decision_count` are mutually consistent, so this
+    /// is unreachable in practice; present defensively rather than
+    /// `unwrap`-ing the cursor arithmetic.
+    PhysicalLattice,
+    InvalidArithmetic,
+    /// An episode's opponent identity isn't a checkpoint-manifest identity
+    /// (`opponent_checkpoint_manifest_sha256` absent): v4 requires the
+    /// population-manifest engine
+    /// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// Section 5).
+    EpisodeBinding,
+    /// `run` does not declare `trainer_v4_candidate`.
+    TrainerIdentityMismatch,
+    /// `BaselineSidecarSourceV4` returned no bytes for this update's index:
+    /// "a missing or unbound sidecar fails closed."
+    BaselineSidecarMissing,
+    /// The v4 baseline module rejected the sidecar record's decode, or its
+    /// cross-check against this update's evidence and the prior baseline
+    /// state.
+    BaselineV4(UpdateBaselineV4ErrorKind),
+    /// The v1 evidence's own declared `loss.policy_sum_f32_bits`/
+    /// `loss.total_f32_bits` disagree with the bit-exact v4 recompute the
+    /// sidecar validator just proved (a v3-shaped declared policy sum lands
+    /// here whenever some observed cell's committed `c_t` is nonzero).
+    LossMismatch,
+}
+
+impl UpdateGroupBaselineV4ErrorKind {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::InvalidScalar => "native_train_update_group_baseline_v4_invalid_scalar",
+            Self::PhysicalLattice => "native_train_update_group_baseline_v4_physical_lattice",
+            Self::InvalidArithmetic => "native_train_update_group_baseline_v4_invalid_arithmetic",
+            Self::EpisodeBinding => "native_train_update_group_baseline_v4_episode_binding",
+            Self::TrainerIdentityMismatch => {
+                "native_train_update_group_baseline_v4_trainer_identity_mismatch"
+            }
+            Self::BaselineSidecarMissing => "native_train_update_group_baseline_v4_sidecar_missing",
+            Self::BaselineV4(kind) => kind.code(),
+            Self::LossMismatch => "native_train_update_group_baseline_v4_loss_mismatch",
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+type DispatchResult<T> = std::result::Result<T, UpdateGroupBaselineV4ErrorKind>;
+
+#[cfg_attr(not(test), allow(dead_code))]
+const fn baseline_role_v4_from_seat_v1(seat: SeatWireV1) -> BaselineRoleV4 {
+    match seat {
+        SeatWireV1::P0 => BaselineRoleV4::P0,
+        SeatWireV1::P1 => BaselineRoleV4::P1,
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn parse_f32_hex_dispatch_v4(value: &str) -> DispatchResult<f32> {
+    parse_f32_hex_v1(value).map_err(|_| UpdateGroupBaselineV4ErrorKind::InvalidScalar)
+}
+
+/// Parses every physical term's transported bits into the v4 module's term
+/// view, in original flat batch order. Pure format/finiteness parsing only
+/// (`parse_f32_hex_v1` already rejects a non-finite bit pattern); no
+/// semantic check happens here.
+#[cfg_attr(not(test), allow(dead_code))]
+fn build_baseline_terms_v4(
+    evidence: &UpdateEvidenceWireV1,
+) -> DispatchResult<Vec<UpdateBaselineTermViewV4>> {
+    evidence
+        .physical_terms
+        .iter()
+        .map(|term| {
+            Ok(UpdateBaselineTermViewV4 {
+                joint_log_probability_f32_bits: parse_f32_hex_dispatch_v4(
+                    &term.joint_log_probability_f32_bits,
+                )?
+                .to_bits(),
+                value_f32_bits: parse_f32_hex_dispatch_v4(&term.value_f32_bits)?.to_bits(),
+                terminal_return_i8: term.terminal_return_i8,
+            })
+        })
+        .collect()
+}
+
+/// Adapts already-structurally-validated v1 evidence into the v4 baseline
+/// module's borrowed evidence view: `terms` sliced per episode by that
+/// episode's own `learner_physical_decision_count`, the identical cursor
+/// walk `validate_physical_and_loss_v1` performs to bind `physical_terms`
+/// to episodes (`docs/native_cycle4_arm_launcher_v1.md` Section 2: "the
+/// documented per-episode cursor walk"). Every yielded episode carries a
+/// `Some` `opponent_checkpoint_manifest_sha256`: an episode recorded under
+/// any other opponent-identity shape (ladder, a search-occupied slot, or no
+/// opponent at all) fails closed here, since v4 requires the
+/// population-manifest engine
+/// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+/// Section 5).
+#[cfg_attr(not(test), allow(dead_code))]
+fn build_baseline_episode_views_v4<'a>(
+    evidence: &'a UpdateEvidenceWireV1,
+    terms: &'a [UpdateBaselineTermViewV4],
+) -> DispatchResult<Vec<UpdateBaselineEpisodeViewV4<'a>>> {
+    let mut views = Vec::with_capacity(evidence.episodes.len());
+    let mut cursor = 0_usize;
+    for episode in &evidence.episodes {
+        let count = usize::try_from(episode.learner_physical_decision_count)
+            .map_err(|_| UpdateGroupBaselineV4ErrorKind::PhysicalLattice)?;
+        let end = cursor
+            .checked_add(count)
+            .ok_or(UpdateGroupBaselineV4ErrorKind::InvalidArithmetic)?;
+        let slice = terms
+            .get(cursor..end)
+            .ok_or(UpdateGroupBaselineV4ErrorKind::PhysicalLattice)?;
+        let opponent_checkpoint_manifest_sha256 = episode
+            .opponent_checkpoint_manifest_sha256
+            .as_deref()
+            .ok_or(UpdateGroupBaselineV4ErrorKind::EpisodeBinding)?;
+        views.push(UpdateBaselineEpisodeViewV4 {
+            learner_seat: baseline_role_v4_from_seat_v1(episode.learner_seat),
+            learner_return: episode.learner_return,
+            opponent_checkpoint_manifest_sha256,
+            terms: slice,
+        });
+        cursor = end;
+    }
+    Ok(views)
+}
+
+/// Round-A pure v4 evidence dispatch (`docs/native_cycle4_arm_launcher_v1.md`
+/// Section 2). Call this only after `decode_update_group_v1`/
+/// `build_update_group_v1` has already structurally validated `group`
+/// (grouping, counts, identities, value loss -- `validate_group_bindings_v1`
+/// always runs those; `validate_physical_and_loss_v1`'s v4 branch
+/// deliberately leaves `loss.policy_sum_f32_bits`/`loss.total_f32_bits`
+/// unchecked for a run that declares `trainer_v4_candidate`, deferring both
+/// to this function): recomputes the v4 policy sum and the baseline EMA
+/// trajectory bit-exactly from the sidecar `sidecar_source` supplies for
+/// this update's index, then cross-checks the recomputed policy sum and the
+/// resulting total against the v1 evidence's own declared
+/// `loss.policy_sum_f32_bits`/`loss.total_f32_bits` -- the bridge invariant
+/// tying what the Store persisted to what the sidecar proves the device
+/// actually optimized. A v3-shaped declared policy sum (the pre-baseline
+/// value, as if `c` were always 0) fails that cross-check whenever some
+/// observed cell's committed `c_t` is nonzero.
+///
+/// Pure over the bytes `sidecar_source` returns: no file I/O happens here or
+/// in anything this calls -- reading the launcher-level chain directory
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 3) is the caller's job.
+///
+/// Returns the freshly recomputed successor baseline state on success,
+/// never a value that merely rode through on a declared-consistent sidecar.
+pub(crate) fn validate_update_group_baseline_v4_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+    sidecar_source: &dyn BaselineSidecarSourceV4,
+) -> DispatchResult<NativeBaselineStateV4> {
+    if !matches!(
+        run.record().contracts().trainer_loss_identity_v2(),
+        TrainerLossIdentityV2::V4Candidate
+    ) {
+        return Err(UpdateGroupBaselineV4ErrorKind::TrainerIdentityMismatch);
+    }
+    let evidence = &group.wire.evidence;
+    let sidecar_bytes = sidecar_source
+        .sidecar_record_bytes_v4(evidence.update_index)
+        .ok_or(UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing)?;
+    let record = decode_update_baseline_record_v4(&sidecar_bytes)
+        .map_err(|error| UpdateGroupBaselineV4ErrorKind::BaselineV4(error.kind()))?;
+    let terms = build_baseline_terms_v4(evidence)?;
+    let episodes = build_baseline_episode_views_v4(evidence, &terms)?;
+    let successor = validate_update_baseline_v4(
+        &episodes,
+        &record,
+        prior_state,
+        evidence.update_index,
+        group.update_evidence_sha256(),
+    )
+    .map_err(|error| UpdateGroupBaselineV4ErrorKind::BaselineV4(error.kind()))?;
+
+    let declared_policy = parse_f32_hex_dispatch_v4(&evidence.loss.policy_sum_f32_bits)?;
+    if declared_policy.to_bits() != record.declared_policy_sum_bits() {
+        return Err(UpdateGroupBaselineV4ErrorKind::LossMismatch);
+    }
+    let group_f32 = exact_u64_as_f32_v1(evidence.learner_group_count)
+        .map_err(|_| UpdateGroupBaselineV4ErrorKind::InvalidScalar)?;
+    let value_coefficient =
+        parse_f32_hex_dispatch_v4(&run.record().optimization.value_coefficient_f32_bits)?;
+    // Already verified bit-exact against the physical terms by
+    // `validate_physical_and_loss_v1`'s v4 branch (a prerequisite of
+    // `group: &ValidatedUpdateGroupV1` existing at all): reused rather than
+    // recomputed, so this stays a pure cross-check pass, not a duplicate
+    // full walk of `physical_terms`.
+    let declared_value = parse_f32_hex_dispatch_v4(&evidence.loss.value_sum_f32_bits)?;
+    let weighted_value = value_coefficient * declared_value;
+    let numerator = declared_policy + weighted_value;
     let total = numerator / group_f32;
     if !weighted_value.is_finite() || !numerator.is_finite() || !total.is_finite() {
-        return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+        return Err(UpdateGroupBaselineV4ErrorKind::LossMismatch);
     }
-    let declared_policy = parse_f32_hex_v1(&evidence.loss.policy_sum_f32_bits)?;
-    let declared_value = parse_f32_hex_v1(&evidence.loss.value_sum_f32_bits)?;
-    let declared_total = parse_f32_hex_v1(&evidence.loss.total_f32_bits)?;
-    if declared_policy.to_bits() != policy_sum.to_bits()
-        || declared_value.to_bits() != value_sum.to_bits()
-        || declared_total.to_bits() != total.to_bits()
+    let declared_total = parse_f32_hex_dispatch_v4(&evidence.loss.total_f32_bits)?;
+    if declared_total.to_bits() != total.to_bits() {
+        return Err(UpdateGroupBaselineV4ErrorKind::LossMismatch);
+    }
+    Ok(successor)
+}
+
+/// Failure of [`decode_update_group_with_baseline_v4_v1`]: either the
+/// shared v1 structural decode (`Structural`, the same
+/// `UpdateGroupV1ErrorKind` `decode_update_group_v1` itself would report)
+/// or the sidecar dispatch layered on top (`Baseline`, exactly
+/// [`validate_update_group_baseline_v4_v1`]'s own error kind). Kept
+/// `pub(crate)` and separate from the public `UpdateGroupV1ErrorKind` for
+/// the same reason `UpdateGroupBaselineV4ErrorKind` is (see the module note
+/// above this dispatch section): folding a `pub(crate)`-only variant into a
+/// public enum would leak it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum DecodeUpdateGroupBaselineV4ErrorKind {
+    Structural(UpdateGroupV1ErrorKind),
+    Baseline(UpdateGroupBaselineV4ErrorKind),
+}
+
+impl DecodeUpdateGroupBaselineV4ErrorKind {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::Structural(kind) => kind.code(),
+            Self::Baseline(kind) => kind.code(),
+        }
+    }
+}
+
+/// The only way a v4-candidate update group becomes validated (review
+/// finding P1-1): decodes canonical group bytes exactly as
+/// `decode_update_group_v1` does (same size ceiling, same canonical-JSON
+/// round trip, same `validate_context_run_v1` precondition -- shared via
+/// `decode_update_group_core_v1`, not duplicated), but in `V4Baseline` mode,
+/// so `validate_group_bindings_v1` requires the run to declare
+/// `trainer_v4_candidate` and recomputes the gauge with `prior_state`'s
+/// committed `c_t` per cell (P1-2). Once the group itself is structurally
+/// valid, it layers the sidecar dispatch on top by calling
+/// `validate_update_group_baseline_v4_v1` (reused, not reimplemented): the
+/// same bit-exact EMA-trajectory and v4-policy-sum recompute from
+/// `sidecar_source`'s bytes for this update's index, against `prior_state`.
+///
+/// Returns the validated group's chain advance (as `build_update_group_v1`/
+/// `decode_update_group_v1` do) paired with the freshly recomputed successor
+/// baseline state -- never a state that merely rode through on a
+/// declared-consistent sidecar.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn decode_update_group_with_baseline_v4_v1(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    canonical_group_bytes: &[u8],
+    prior_state: &NativeBaselineStateV4,
+    sidecar_source: &dyn BaselineSidecarSourceV4,
+) -> std::result::Result<
+    (ValidatedUpdateGroupAdvanceV1, NativeBaselineStateV4),
+    DecodeUpdateGroupBaselineV4ErrorKind,
+> {
+    let advance = decode_update_group_core_v1(
+        run,
+        context,
+        canonical_group_bytes,
+        UpdateGroupValidationModeV1::V4Baseline(prior_state),
+    )
+    .map_err(|error| DecodeUpdateGroupBaselineV4ErrorKind::Structural(error.kind()))?;
+    let successor =
+        validate_update_group_baseline_v4_v1(run, advance.group(), prior_state, sidecar_source)
+            .map_err(DecodeUpdateGroupBaselineV4ErrorKind::Baseline)?;
+    Ok((advance, successor))
+}
+
+/// Round B validator-side step for one already-structurally-validated group:
+/// reads that update's sidecar from the launcher's chain directory through
+/// `access` and returns the recomputed successor baseline state. This is the
+/// single entry point every Store walk (resume, publish revalidation, full
+/// validation) uses to fold the baseline forward across a segment.
+pub(crate) fn advance_baseline_v4_for_group_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+    access: &dyn BaselineChainAccessV4,
+) -> DispatchResult<NativeBaselineStateV4> {
+    // Review finding P1, third reconcile case: a committed update whose
+    // sidecar is absent from both the staged and the promoted namespace is
+    // re-derivable from its OWN committed evidence, by exactly the mint the
+    // producer ran. `access` decides whether that is admissible (it is only
+    // ever the Store's tip update); the reconstructed record is staged, so
+    // it is promoted with the rest once the walk has accepted the Store, and
+    // it is then read back and validated below like any other, so a record
+    // that disagrees with the committed evidence still fails closed.
+    let update_index = group.wire.evidence.update_index;
+    if access.sidecar_record_bytes_v4(update_index).is_none()
+        && access.may_reconstruct_sidecar_v4(update_index)
     {
-        return Err(error_v1(UpdateGroupV1ErrorKind::LossMismatch));
+        let record = mint_update_group_baseline_sidecar_v4_v1(run, group, prior_state)?;
+        if record.update_index() != update_index
+            || !access.stage_sidecar_record_v4(update_index, record.canonical_bytes())
+        {
+            return Err(UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing);
+        }
     }
-    Ok(())
+    let source = |update_index: u64| access.sidecar_record_bytes_v4(update_index);
+    validate_update_group_baseline_v4_v1(run, group, prior_state, &source)
+}
+
+/// Round B producer-side step: mints the `baseline_v4` sidecar for one
+/// just-built update group from that group's own persisted evidence, hands
+/// it to `access` to STAGE, and then re-reads and revalidates it through
+/// exactly the validator path a later resume will take. A sidecar the
+/// validator would reject therefore never becomes that update's record.
+///
+/// Staging, not publication, is what happens here: the record reaches its
+/// immutable name only when the caller commits the staged set after the
+/// Store durably commits the segment's evidence
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 2 -- "published
+/// atomically right after the Store commits update `t` and BEFORE update
+/// `t + 1` begins"). A segment abandoned between preparation and the Store
+/// commit thus leaves no sidecar behind for an update the Store never
+/// contained.
+///
+/// Returns the recomputed successor state, which the caller installs as the
+/// next update's `c_t`.
+pub(crate) fn stage_and_validate_group_baseline_v4_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+    access: &dyn BaselineChainAccessV4,
+) -> DispatchResult<NativeBaselineStateV4> {
+    let record = mint_update_group_baseline_sidecar_v4_v1(run, group, prior_state)?;
+    // Staged under the evidence's own update index, which is the index the
+    // validator below reads back; a validated group binds the two together,
+    // so this can never diverge on a real Store group.
+    if !access.stage_sidecar_record_v4(record.update_index(), record.canonical_bytes()) {
+        return Err(UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing);
+    }
+    advance_baseline_v4_for_group_v1(run, group, prior_state, access)
+}
+
+/// Builds (but does not publish) the `baseline_v4` sidecar record for one
+/// validated group, from the group's own evidence and the committed prior
+/// state. Split out so the producer's minting arithmetic can be exercised
+/// without any filesystem.
+pub(crate) fn mint_update_group_baseline_sidecar_v4_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+) -> DispatchResult<UpdateBaselineRecordV4> {
+    if !matches!(
+        run.record().contracts().trainer_loss_identity_v2(),
+        TrainerLossIdentityV2::V4Candidate
+    ) {
+        return Err(UpdateGroupBaselineV4ErrorKind::TrainerIdentityMismatch);
+    }
+    let evidence = &group.wire.evidence;
+    let terms = build_baseline_terms_v4(evidence)?;
+    let episodes = build_baseline_episode_views_v4(evidence, &terms)?;
+    let declared_policy = parse_f32_hex_dispatch_v4(&evidence.loss.policy_sum_f32_bits)?;
+    build_update_baseline_record_from_episodes_v4(
+        &episodes,
+        prior_state,
+        evidence.update_index,
+        group.update_evidence_sha256(),
+        declared_policy.to_bits(),
+    )
+    .map_err(|error| UpdateGroupBaselineV4ErrorKind::BaselineV4(error.kind()))
+}
+
+/// Per-term committed baseline value `c_t`
+/// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+/// Section 2), aligned with `evidence.physical_terms` in original flat batch
+/// order: walks episodes in order, resolving each episode's cell key
+/// `(opponent_checkpoint_manifest_sha256, learner_seat)` and repeating that
+/// cell's `prior_state.c_for_cell_v4` across the episode's
+/// `learner_physical_decision_count` terms -- the identical cursor walk
+/// `validate_physical_and_loss_v1` performs to bind `physical_terms` to
+/// episodes. Only called from `validate_gauge_v1`'s `V4Baseline` branch,
+/// which runs after `validate_physical_and_loss_v1` has already proved the
+/// episode/term-count lattice consistent, so the trailing length check is
+/// defensive rather than load-bearing.
+fn baseline_c_t_by_term_v1(
+    evidence: &UpdateEvidenceWireV1,
+    prior_state: &NativeBaselineStateV4,
+) -> Result<Vec<f32>> {
+    let mut values = Vec::with_capacity(evidence.physical_terms.len());
+    for episode in &evidence.episodes {
+        let opponent = episode
+            .opponent_checkpoint_manifest_sha256
+            .as_deref()
+            .ok_or_else(|| error_v1(UpdateGroupV1ErrorKind::EpisodeBinding))?;
+        let role = baseline_role_v4_from_seat_v1(episode.learner_seat);
+        let key = BaselineCellKeyV4::new_v4(opponent, role)
+            .map_err(|_| error_v1(UpdateGroupV1ErrorKind::EpisodeBinding))?;
+        let c_t = prior_state.c_for_cell_v4(&key);
+        let count = usize::try_from(episode.learner_physical_decision_count)
+            .map_err(|_| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
+        values.extend(std::iter::repeat_n(c_t, count));
+    }
+    if values.len() != evidence.physical_terms.len() {
+        return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
+    }
+    Ok(values)
 }
 
 fn validate_gauge_v1(
     run: &ValidatedTrainRunV2,
     context: &UpdateEvidenceChainContextV1,
     evidence: &UpdateEvidenceWireV1,
+    baseline: Option<&NativeBaselineStateV4>,
 ) -> Result<()> {
     let gauge = &evidence.gauge;
     let policy_count = evidence.learner_policy_step_count;
@@ -2278,10 +2913,26 @@ fn validate_gauge_v1(
     let mut max_action_count = 0_u64;
     let mut sum_abs_coefficients = 0.0_f64;
     let mut per_substep_bound_sum = 0.0_f64;
-    for term in evidence.physical_terms.iter().rev() {
+    // Review finding P1-2: under a v4-candidate run, the producer trains the
+    // policy term against `advantage_v4 = (target - value) - c_t(cell)`
+    // (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    // Section 1), so the gauge's per-term coefficient -- the same
+    // `-advantage / group_count` the policy gradient actually used -- must
+    // be recomputed with that same per-cell baseline subtracted, or the
+    // numerical-precision bound below is proven over the wrong objective.
+    // `Plain` mode (`baseline` is `None`) is exactly the v3 arithmetic this
+    // block always ran, untouched.
+    let c_t_by_term = match baseline {
+        None => None,
+        Some(prior_state) => Some(baseline_c_t_by_term_v1(evidence, prior_state)?),
+    };
+    for (term_index, term) in evidence.physical_terms.iter().enumerate().rev() {
         let value = parse_f32_hex_v1(&term.value_f32_bits)?;
         let target = f32::from(term.terminal_return_i8);
-        let advantage = target - value;
+        let advantage = match &c_t_by_term {
+            None => target - value,
+            Some(c_t_by_term) => target - value - c_t_by_term[term_index],
+        };
         let coefficient = (-advantage) / group_f32;
         let expected_abs_coefficient = f64::from(coefficient).abs();
         if !advantage.is_finite()
@@ -2718,6 +3369,7 @@ mod tests {
     use super::*;
     use crate::canonical_json_v1::to_canonical_json_bytes_v1;
     use crate::common_model_snapshot_v1::common_model_snapshot_paths_v1;
+    use crate::native_policy_baseline_state_v4::{BaselineCellKeyV4, BaselineObservationV4};
     use crate::native_policy_train_step_v1::{
         reset_train_state_snapshot_call_count_for_test_v1,
         train_state_snapshot_call_count_for_test_v1, NativeTrainingNumericalBackendV1,
@@ -2733,9 +3385,13 @@ mod tests {
         build_genesis_checkpoint_manifest_v3, decode_genesis_checkpoint_manifest_v3,
     };
     use crate::native_training_store_run_v2::{
-        decode_train_run_v2, test_fixture_bytes_environment_randomization_v2, test_fixture_bytes_v2,
+        decode_train_run_v2, test_fixture_bytes_environment_randomization_v2,
+        test_fixture_bytes_trainer_v4_candidate_v1, test_fixture_bytes_v2,
     };
     use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
+    use crate::native_training_store_update_group_v4::{
+        build_update_baseline_record_v4, UpdateBaselineCellPartsV4, UpdateBaselineRecordPartsV4,
+    };
     use serde_json::Value;
     use sha2::{Digest, Sha256};
     use std::sync::OnceLock;
@@ -2968,7 +3624,7 @@ mod tests {
         let mut candidate = compact_executor.begin_segment_candidate_v2().unwrap();
         let transition = candidate.prepare_transition_v2(predecessor, true).unwrap();
         let (compact, successor, compact_checkpoint) =
-            build_compact_update_group_v2(&run, compact_context, transition).unwrap();
+            build_compact_update_group_v2(&run, compact_context, transition, None).unwrap();
         let compact_checkpoint = compact_checkpoint.unwrap();
         assert_eq!(compact_checkpoint, full_checkpoint);
         assert_eq!(
@@ -3165,6 +3821,7 @@ mod tests {
                 &run,
                 begin_update_evidence_chain_v1(&run, &genesis).unwrap(),
                 transition,
+                None,
             )
             .unwrap_err()
             .kind(),
@@ -5287,7 +5944,7 @@ mod tests {
                     }
                     let scope = store_evidence_count_scope_v2();
                     let outcome =
-                        build_compact_update_group_v2(&authorities.run, context, transition);
+                        build_compact_update_group_v2(&authorities.run, context, transition, None);
                     match (run_is_v2, transition_is_v2, receipts_are_v2) {
                         (false, false, false) | (true, true, true) => {
                             let (advance, _successor, checkpoint) =
@@ -5331,7 +5988,7 @@ mod tests {
         mixed.swap_observation_receipt_for_test_v2(1, legacy_receipts[1]);
         let scope = store_evidence_count_scope_v2();
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, mixed)
+            build_compact_update_group_v2(&v2.run, context, mixed, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -5349,7 +6006,7 @@ mod tests {
         crossed.swap_observation_receipt_for_test_v2(0, second);
         crossed.swap_observation_receipt_for_test_v2(1, first);
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, crossed)
+            build_compact_update_group_v2(&v2.run, context, crossed, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -5385,7 +6042,7 @@ mod tests {
             })
             .collect();
         let (advance, _successor, _checkpoint) =
-            build_compact_update_group_v2(&v2.run, context, transition).unwrap();
+            build_compact_update_group_v2(&v2.run, context, transition, None).unwrap();
         let (group, _advanced) = advance.into_parts();
 
         let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
@@ -5589,7 +6246,8 @@ mod tests {
         let compact_context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
         let compact_transition = sealed_transition_v1(&v2, true);
         let (compact_advance, _successor, _checkpoint) =
-            build_compact_update_group_v2(&v2.run, compact_context, compact_transition).unwrap();
+            build_compact_update_group_v2(&v2.run, compact_context, compact_transition, None)
+                .unwrap();
         let (compact_group, _compact_advanced) = compact_advance.into_parts();
         assert_eq!(
             guard_group.canonical_bytes(),
@@ -5678,7 +6336,7 @@ mod tests {
             corrupted.mutate_environment_fact_for_test_v2(mutation);
             transition.swap_observation_receipt_for_test_v2(0, corrupted);
             assert_eq!(
-                build_compact_update_group_v2(&v2.run, context, transition)
+                build_compact_update_group_v2(&v2.run, context, transition, None)
                     .map(|_| ())
                     .unwrap_err()
                     .kind(),
@@ -5700,7 +6358,7 @@ mod tests {
         let mut scalar = sealed_transition_v1(&v2, true);
         scalar.mutate_observation_episode_index_for_test_v2(0);
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, scalar)
+            build_compact_update_group_v2(&v2.run, context, scalar, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -5713,12 +6371,1193 @@ mod tests {
         let mut swapped = sealed_transition_v1(&v2, true);
         swapped.swap_observation_episodes_for_test_v2(0, 1);
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, swapped)
+            build_compact_update_group_v2(&v2.run, context, swapped, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
             UpdateGroupV1ErrorKind::EpisodeBinding,
             "a whole episode-wrapper swap must reject evidence construction"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Cycle-4 v4-candidate evidence dispatch
+    // (`docs/native_cycle4_arm_launcher_v1.md` Section 2)
+    // ------------------------------------------------------------------
+
+    fn hex32_v1(value: f32) -> String {
+        format!("{:08x}", value.to_bits())
+    }
+
+    struct BaselineDispatchFixtureV1 {
+        run: ValidatedTrainRunV2,
+        wire: UpdateGroupWireV1,
+        update_evidence_sha256: [u8; 32],
+        prior_state: NativeBaselineStateV4,
+        sidecar_parts: UpdateBaselineRecordPartsV4,
+        /// The v1 evidence's own (genuinely v3-shaped) declared policy sum:
+        /// the same terms folded WITHOUT the per-cell baseline subtraction,
+        /// as if `c` were always 0. Distinct from `sidecar_parts`'
+        /// `declared_policy_sum_bits` (the real v4 value) whenever some
+        /// observed cell's committed `c_t` is nonzero, which the seeded cell
+        /// below guarantees.
+        policy_sum_v3_bits: u32,
+    }
+
+    fn wrap_group_v1(
+        wire: UpdateGroupWireV1,
+        update_evidence_sha256: [u8; 32],
+    ) -> ValidatedUpdateGroupV1 {
+        let canonical_bytes = to_canonical_json_bytes_v1(&wire, GROUP_NULL_POLICY_V1).unwrap();
+        ValidatedUpdateGroupV1 {
+            canonical_bytes,
+            update_evidence_sha256,
+            wire,
+        }
+    }
+
+    fn sidecar_bytes_from_parts_v1(parts: &UpdateBaselineRecordPartsV4) -> Vec<u8> {
+        build_update_baseline_record_v4(parts.clone())
+            .unwrap()
+            .canonical_bytes()
+            .to_vec()
+    }
+
+    /// Builds a small synthetic v4-shaped update (2 episodes, 3 learner
+    /// physical terms, matching the v4 module's own two-cell fixture shape)
+    /// against a `trainer_v4_candidate` run, a prior baseline state where
+    /// cell `(digest0, P0)` already carries a seeded nonzero `c_t` (so the
+    /// v4 and v3 policy sums genuinely differ) and cell `(digest1, P1)` is
+    /// genuinely new, and a matching `baseline_v4` sidecar record. Every
+    /// non-loss-relevant evidence field (schema, gauge, rollout_counts,
+    /// progress, hashes) is reused from the real executor-driven v3 fixture
+    /// (`fixture_v1()`) purely as boilerplate filler: `validate_physical_and_loss_v1`
+    /// and `validate_update_group_baseline_v4_v1` never read those fields.
+    fn baseline_dispatch_fixture_v1() -> BaselineDispatchFixtureV1 {
+        let run = decode_train_run_v2(&test_fixture_bytes_trainer_v4_candidate_v1()).unwrap();
+
+        let v3_fixture = fixture_v1();
+        let mut wire: UpdateGroupWireV1 = serde_json::from_slice(&v3_fixture.group_bytes).unwrap();
+        let template_episode = wire.evidence.episodes[0].clone();
+
+        let digest0 = "11".repeat(32);
+        let digest1 = "22".repeat(32);
+
+        let q0 = -0.5_f32;
+        let v0 = 0.2_f32;
+        let q1 = -0.25_f32;
+        let v1 = 0.4_f32;
+        let q2 = -1.0_f32;
+        let v2 = 0.1_f32;
+
+        let episode0 = EpisodeWireV1 {
+            learner_seat: SeatWireV1::P0,
+            learner_return: 1,
+            opponent_checkpoint_manifest_sha256: Some(digest0.clone()),
+            learner_physical_decision_count: 2,
+            learner_policy_step_count: 2,
+            ..template_episode.clone()
+        };
+        let episode1 = EpisodeWireV1 {
+            learner_seat: SeatWireV1::P1,
+            learner_return: -1,
+            opponent_checkpoint_manifest_sha256: Some(digest1.clone()),
+            learner_physical_decision_count: 1,
+            learner_policy_step_count: 1,
+            ..template_episode
+        };
+        let physical_terms = vec![
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q0),
+                value_f32_bits: hex32_v1(v0),
+                terminal_return_i8: 1,
+                substep_count: 1,
+            },
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q1),
+                value_f32_bits: hex32_v1(v1),
+                terminal_return_i8: 1,
+                substep_count: 1,
+            },
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q2),
+                value_f32_bits: hex32_v1(v2),
+                terminal_return_i8: -1,
+                substep_count: 1,
+            },
+        ];
+
+        // Seed cell (digest0, P0) with a nonzero committed c_t: one
+        // synthetic observation applied to the empty state.
+        let seeded_key = BaselineCellKeyV4::new_v4(digest0.clone(), BaselineRoleV4::P0).unwrap();
+        let prior_state = NativeBaselineStateV4::empty_v4()
+            .apply_update_v4(&[BaselineObservationV4 {
+                key: seeded_key.clone(),
+                residual_sum_f64: 6.0,
+                decision_count: 1,
+                episode_count: 1,
+            }])
+            .unwrap();
+        let c_t0 = prior_state.c_for_cell_v4(&seeded_key);
+        let new_key1 = BaselineCellKeyV4::new_v4(digest1.clone(), BaselineRoleV4::P1).unwrap();
+        let c_t1 = prior_state.c_for_cell_v4(&new_key1);
+        assert_ne!(c_t0.to_bits(), 0.0_f32.to_bits(), "seed must be nonzero");
+        assert_eq!(c_t1.to_bits(), 0.0_f32.to_bits(), "new cell starts at 0");
+
+        let residual0a = f32::from(1_i8) - v0;
+        let residual0b = f32::from(1_i8) - v1;
+        let residual1 = f32::from(-1_i8) - v2;
+        let policy_sum_v4 =
+            (-q0) * (residual0a - c_t0) + (-q1) * (residual0b - c_t0) + (-q2) * (residual1 - c_t1);
+        let policy_sum_v3 = (-q0) * residual0a + (-q1) * residual0b + (-q2) * residual1;
+        assert_ne!(
+            policy_sum_v4.to_bits(),
+            policy_sum_v3.to_bits(),
+            "the seeded c_t must make the v3 and v4 policy sums genuinely differ"
+        );
+        let value_sum = {
+            let e0a = v0 - 1.0_f32;
+            let e0b = v1 - 1.0_f32;
+            let e1 = v2 - (-1.0_f32);
+            e0a * e0a + e0b * e0b + e1 * e1
+        };
+        let residual_sum0_f64 = f64::from(residual0a) + f64::from(residual0b);
+        let residual_sum1_f64 = f64::from(residual1);
+
+        let successor = prior_state
+            .apply_update_v4(&[
+                BaselineObservationV4 {
+                    key: seeded_key.clone(),
+                    residual_sum_f64: residual_sum0_f64,
+                    decision_count: 2,
+                    episode_count: 1,
+                },
+                BaselineObservationV4 {
+                    key: new_key1.clone(),
+                    residual_sum_f64: residual_sum1_f64,
+                    decision_count: 1,
+                    episode_count: 1,
+                },
+            ])
+            .unwrap();
+
+        let update_index = 7_u64;
+        let update_evidence_sha256 = [0xAB_u8; 32];
+        let sidecar_parts = UpdateBaselineRecordPartsV4 {
+            update_index,
+            update_evidence_sha256,
+            cells: vec![
+                UpdateBaselineCellPartsV4 {
+                    opponent_checkpoint_manifest_sha256: digest0.clone(),
+                    role: BaselineRoleV4::P0,
+                    c_t_bits: c_t0.to_bits(),
+                    c_next_bits: successor.c_for_cell_v4(&seeded_key).to_bits(),
+                    residual_sum_f64: residual_sum0_f64,
+                    decision_count: 2,
+                    episode_count: 1,
+                },
+                UpdateBaselineCellPartsV4 {
+                    opponent_checkpoint_manifest_sha256: digest1.clone(),
+                    role: BaselineRoleV4::P1,
+                    c_t_bits: c_t1.to_bits(),
+                    c_next_bits: successor.c_for_cell_v4(&new_key1).to_bits(),
+                    residual_sum_f64: residual_sum1_f64,
+                    decision_count: 1,
+                    episode_count: 1,
+                },
+            ],
+            declared_policy_sum_bits: policy_sum_v4.to_bits(),
+        };
+
+        let value_coefficient =
+            parse_f32_hex_v1(&run.record().optimization.value_coefficient_f32_bits).unwrap();
+        let total = (policy_sum_v4 + value_coefficient * value_sum) / 3.0_f32;
+
+        wire.evidence.episodes = vec![episode0, episode1];
+        wire.evidence.physical_terms = physical_terms;
+        wire.evidence.learner_group_count = 3;
+        wire.evidence.learner_physical_decision_count = 3;
+        wire.evidence.learner_policy_step_count = 3;
+        wire.evidence.update_index = update_index;
+        wire.evidence.loss = LossWireV1 {
+            policy_sum_f32_bits: hex32_v1(policy_sum_v4),
+            value_sum_f32_bits: hex32_v1(value_sum),
+            total_f32_bits: hex32_v1(total),
+        };
+
+        BaselineDispatchFixtureV1 {
+            run,
+            wire,
+            update_evidence_sha256,
+            prior_state,
+            sidecar_parts,
+            policy_sum_v3_bits: policy_sum_v3.to_bits(),
+        }
+    }
+
+    #[test]
+    fn baseline_v4_dispatch_error_kinds_have_distinct_codes() {
+        let kinds = [
+            UpdateGroupBaselineV4ErrorKind::InvalidScalar,
+            UpdateGroupBaselineV4ErrorKind::PhysicalLattice,
+            UpdateGroupBaselineV4ErrorKind::InvalidArithmetic,
+            UpdateGroupBaselineV4ErrorKind::EpisodeBinding,
+            UpdateGroupBaselineV4ErrorKind::TrainerIdentityMismatch,
+            UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing,
+            UpdateGroupBaselineV4ErrorKind::BaselineV4(
+                UpdateBaselineV4ErrorKind::PolicySumMismatch,
+            ),
+            UpdateGroupBaselineV4ErrorKind::LossMismatch,
+        ];
+        let codes: std::collections::BTreeSet<&str> =
+            kinds.iter().map(|kind| kind.code()).collect();
+        assert_eq!(
+            codes.len(),
+            kinds.len(),
+            "every error kind must have a distinct code"
+        );
+    }
+
+    #[test]
+    fn baseline_v4_dispatch_end_to_end_synthetic_update_validates() {
+        let fixture = baseline_dispatch_fixture_v1();
+        assert!(validate_physical_and_loss_v1(&fixture.run, &fixture.wire.evidence).is_ok());
+
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let sidecar = sidecar_bytes_from_parts_v1(&fixture.sidecar_parts);
+        let expected_index = fixture.sidecar_parts.update_index;
+        let source =
+            move |update_index: u64| (update_index == expected_index).then(|| sidecar.clone());
+
+        let successor = validate_update_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &source,
+        )
+        .expect("synthetic v4 update must validate end to end");
+        assert_eq!(successor.cell_count_v4(), 2);
+    }
+
+    /// Round B producer path: an in-memory chain-directory stand-in. The
+    /// launcher's own implementation adds atomic file publication; the
+    /// contract this exercises is that minting, publishing, and validating
+    /// agree bit for bit.
+    struct RecordingBaselineAccessV1 {
+        published: std::cell::RefCell<std::collections::BTreeMap<u64, Vec<u8>>>,
+        /// The one update index this double will let the walk reconstruct,
+        /// standing in for the launcher's "only the Store's tip" rule.
+        reconstructable: Option<u64>,
+    }
+
+    impl RecordingBaselineAccessV1 {
+        fn new_v1() -> Self {
+            Self {
+                published: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+                reconstructable: None,
+            }
+        }
+
+        fn reconstructing_v1(update_index: u64) -> Self {
+            Self {
+                published: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+                reconstructable: Some(update_index),
+            }
+        }
+    }
+
+    impl BaselineSidecarSourceV4 for RecordingBaselineAccessV1 {
+        fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>> {
+            self.published.borrow().get(&update_index).cloned()
+        }
+    }
+
+    impl BaselineChainAccessV4 for RecordingBaselineAccessV1 {
+        fn committed_state_for_generation_v4(
+            &self,
+            _generation_index: u64,
+        ) -> Option<NativeBaselineStateV4> {
+            None
+        }
+
+        fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
+            self.published
+                .borrow_mut()
+                .insert(update_index, record_bytes.to_vec());
+            true
+        }
+
+        fn may_reconstruct_sidecar_v4(&self, update_index: u64) -> bool {
+            self.reconstructable == Some(update_index)
+        }
+    }
+
+    #[test]
+    fn baseline_v4_producer_mints_exactly_the_sidecar_the_validator_recomputes() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let minted =
+            mint_update_group_baseline_sidecar_v4_v1(&fixture.run, &group, &fixture.prior_state)
+                .expect("the producer must mint the sidecar from the group's own evidence");
+        let expected = sidecar_bytes_from_parts_v1(&fixture.sidecar_parts);
+        assert_eq!(
+            minted.canonical_bytes(),
+            expected.as_slice(),
+            "the minted sidecar must be byte-identical to the hand-derived one"
+        );
+    }
+
+    #[test]
+    fn baseline_v4_producer_stages_before_validating_and_returns_the_successor() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let access = RecordingBaselineAccessV1::new_v1();
+        let successor = stage_and_validate_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &access,
+        )
+        .expect("mint, stage, then validate through the resume path");
+        assert_eq!(successor.cell_count_v4(), 2);
+        let staged = access
+            .sidecar_record_bytes_v4(fixture.sidecar_parts.update_index)
+            .expect("the sidecar must be staged before validation returns");
+        assert_eq!(staged, sidecar_bytes_from_parts_v1(&fixture.sidecar_parts));
+        // The successor the producer returns is exactly what a later resume
+        // recomputes from the staged bytes alone.
+        let resumed =
+            advance_baseline_v4_for_group_v1(&fixture.run, &group, &fixture.prior_state, &access)
+                .expect("resume must accept the staged sidecar");
+        assert_eq!(resumed, successor);
+    }
+
+    #[test]
+    fn baseline_v4_walk_reconstructs_an_authorized_missing_sidecar() {
+        // Review finding P1, reconcile case three: a committed update whose
+        // sidecar is gone is re-derivable from its OWN committed evidence,
+        // by exactly the mint the producer ran. The walk does that only for
+        // the update the access authorizes, stages the result so it is
+        // promoted with the rest, and validates it like any other record.
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let update_index = fixture.sidecar_parts.update_index;
+        let access = RecordingBaselineAccessV1::reconstructing_v1(update_index);
+        assert!(
+            access.sidecar_record_bytes_v4(update_index).is_none(),
+            "the record starts missing"
+        );
+        let successor =
+            advance_baseline_v4_for_group_v1(&fixture.run, &group, &fixture.prior_state, &access)
+                .expect("the tip update's sidecar is reconstructed from its evidence");
+        assert_eq!(successor.cell_count_v4(), 2);
+        // What it reconstructed is byte-identical to what the producer mints.
+        assert_eq!(
+            access
+                .sidecar_record_bytes_v4(update_index)
+                .expect("reconstructed and staged"),
+            sidecar_bytes_from_parts_v1(&fixture.sidecar_parts)
+        );
+    }
+
+    #[test]
+    fn baseline_v4_walk_fails_closed_on_an_unauthorized_missing_sidecar() {
+        // Any update the access does not authorize keeps the fail-closed
+        // behavior: unrecoverable evidence is never invented.
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let other = fixture
+            .sidecar_parts
+            .update_index
+            .checked_add(1)
+            .expect("index");
+        for access in [
+            RecordingBaselineAccessV1::new_v1(),
+            RecordingBaselineAccessV1::reconstructing_v1(other),
+        ] {
+            let error = advance_baseline_v4_for_group_v1(
+                &fixture.run,
+                &group,
+                &fixture.prior_state,
+                &access,
+            )
+            .expect_err("an unauthorized missing sidecar fails the walk closed");
+            assert_eq!(
+                error,
+                UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing
+            );
+            assert!(access
+                .sidecar_record_bytes_v4(fixture.sidecar_parts.update_index)
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn baseline_v4_producer_fails_closed_when_staging_fails() {
+        struct RefusingAccessV1;
+        impl BaselineSidecarSourceV4 for RefusingAccessV1 {
+            fn sidecar_record_bytes_v4(&self, _update_index: u64) -> Option<Vec<u8>> {
+                None
+            }
+        }
+        impl BaselineChainAccessV4 for RefusingAccessV1 {
+            fn committed_state_for_generation_v4(
+                &self,
+                _generation_index: u64,
+            ) -> Option<NativeBaselineStateV4> {
+                None
+            }
+            fn stage_sidecar_record_v4(&self, _update_index: u64, _bytes: &[u8]) -> bool {
+                false
+            }
+        }
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let error = stage_and_validate_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &RefusingAccessV1,
+        )
+        .expect_err("a refused staging must fail the update closed");
+        assert_eq!(
+            error,
+            UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing
+        );
+    }
+
+    #[test]
+    fn baseline_v4_dispatch_missing_sidecar_fails_closed() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let source = |_update_index: u64| None::<Vec<u8>>;
+
+        let error = validate_update_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &source,
+        )
+        .expect_err("a missing sidecar must fail closed");
+        assert_eq!(
+            error,
+            UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing
+        );
+    }
+
+    #[test]
+    fn baseline_v4_dispatch_mismatched_sidecar_fails_closed() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let mut tampered_parts = fixture.sidecar_parts.clone();
+        tampered_parts.cells[0].residual_sum_f64 += 1.0;
+        let sidecar = sidecar_bytes_from_parts_v1(&tampered_parts);
+        let expected_index = fixture.sidecar_parts.update_index;
+        let source =
+            move |update_index: u64| (update_index == expected_index).then(|| sidecar.clone());
+
+        let error = validate_update_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &source,
+        )
+        .expect_err("a sidecar mismatched against evidence must fail closed");
+        assert!(matches!(
+            error,
+            UpdateGroupBaselineV4ErrorKind::BaselineV4(_)
+        ));
+    }
+
+    /// Round A's central regression: a v1 evidence record declaring the v3
+    /// policy sum (the terms folded without the per-cell baseline
+    /// subtraction, as if `c` were always 0) against a run that declares
+    /// `trainer_v4_candidate` must fail closed, even though a genuinely
+    /// correct v4 baseline sidecar is supplied for the same update -- the
+    /// bridge invariant tying the Store's persisted evidence to what the
+    /// sidecar proves the device actually optimized.
+    #[test]
+    fn baseline_v4_dispatch_v3_form_declared_policy_sum_fails_closed() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let mut wire = fixture.wire.clone();
+        wire.evidence.loss.policy_sum_f32_bits = format!("{:08x}", fixture.policy_sum_v3_bits);
+        // `validate_physical_and_loss_v1`'s v4 branch checks only format and
+        // finiteness for `policy_sum_f32_bits`/`total_f32_bits` (the
+        // bit-exact check is deferred to `validate_update_group_baseline_v4_v1`),
+        // so this v3-shaped evidence still passes it -- proving the failure
+        // below comes from the dispatch cross-check, not this earlier one.
+        assert!(validate_physical_and_loss_v1(&fixture.run, &wire.evidence).is_ok());
+
+        let group = wrap_group_v1(wire, fixture.update_evidence_sha256);
+        let sidecar = sidecar_bytes_from_parts_v1(&fixture.sidecar_parts);
+        let expected_index = fixture.sidecar_parts.update_index;
+        let source =
+            move |update_index: u64| (update_index == expected_index).then(|| sidecar.clone());
+
+        let error = validate_update_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &source,
+        )
+        .expect_err("a v3-shaped declared policy sum must fail closed under a v4 run");
+        assert_eq!(error, UpdateGroupBaselineV4ErrorKind::LossMismatch);
+    }
+
+    #[test]
+    fn baseline_v4_dispatch_rejects_a_v3_run() {
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire, fixture.update_evidence_sha256);
+        let sidecar = sidecar_bytes_from_parts_v1(&fixture.sidecar_parts);
+        let source = move |_update_index: u64| Some(sidecar.clone());
+
+        let error =
+            validate_update_group_baseline_v4_v1(&run, &group, &fixture.prior_state, &source)
+                .expect_err("a v3 run has no baseline sidecar to validate");
+        assert_eq!(
+            error,
+            UpdateGroupBaselineV4ErrorKind::TrainerIdentityMismatch
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Round-A review fixes: P1-1 (fail-open v4 admission through the plain
+    // decode/build paths) and P1-2 (gauge recompute ignoring the committed
+    // baseline). `docs/native_cycle4_arm_launcher_v1.md` Section 2.
+    // ------------------------------------------------------------------
+
+    /// A genuine chain-genesis context for the `trainer_v4_candidate`
+    /// fixture (`test_fixture_bytes_trainer_v4_candidate_v1`), built the
+    /// same way `fixture_v1()` builds the v3 one. Reuses `fixture_v1()`'s
+    /// own executor-produced genesis payload: it decodes identically
+    /// against the v4 run because `trainer_v4_candidate_record` touches
+    /// only the loss identity, the two new contract sections, and the
+    /// runtime/backend pair -- never `model_snapshot` -- so no separate
+    /// executor run is needed to mint a v4 genesis.
+    fn v4_genesis_context_v1() -> (ValidatedTrainRunV2, UpdateEvidenceChainContextV1) {
+        let run = decode_train_run_v2(&test_fixture_bytes_trainer_v4_candidate_v1()).unwrap();
+        let genesis =
+            build_genesis_checkpoint_manifest_v3(&run, &fixture_v1().genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        (run, context)
+    }
+
+    /// Review finding P1-1's central regression: a run declaring
+    /// `trainer_v4_candidate` must reject the plain decode path even for
+    /// otherwise well-formed canonical group bytes. The gate in
+    /// `validate_group_bindings_v1` fires before any evidence content is
+    /// read (grouping, loss, gauge...), so the real v3 fixture's own
+    /// canonical group bytes serve as well-formed filler here; their
+    /// (run-mismatched) content is irrelevant to what this test proves.
+    #[test]
+    fn v4_candidate_run_rejects_the_plain_decode_path() {
+        let (run, context) = v4_genesis_context_v1();
+        let error = decode_update_group_v1(&run, context, &fixture_v1().group_bytes)
+            .expect_err("a v4-candidate run must reject the plain decode path");
+        assert_eq!(
+            error.kind(),
+            UpdateGroupV1ErrorKind::V4RequiresBaselineSidecar
+        );
+    }
+
+    /// The same gate through `validate_embedded_update_group_wire_v1` (the
+    /// segment-continuation plain path): a different entry point into the
+    /// same `validate_and_advance_wire_v1` core, so it must fail exactly
+    /// the same way.
+    #[test]
+    fn v4_candidate_run_rejects_the_plain_embedded_wire_path() {
+        let (run, context) = v4_genesis_context_v1();
+        let wire: UpdateGroupWireV1 = serde_json::from_slice(&fixture_v1().group_bytes).unwrap();
+        let error = validate_embedded_update_group_wire_v1(&run, context, wire, None)
+            .expect_err("a v4-candidate run must reject the plain embedded-wire path");
+        assert_eq!(
+            error.kind(),
+            UpdateGroupV1ErrorKind::V4RequiresBaselineSidecar
+        );
+    }
+
+    #[test]
+    fn decode_update_group_with_baseline_v4_error_kinds_have_distinct_codes() {
+        let kinds = [
+            DecodeUpdateGroupBaselineV4ErrorKind::Structural(
+                UpdateGroupV1ErrorKind::V4RequiresBaselineSidecar,
+            ),
+            DecodeUpdateGroupBaselineV4ErrorKind::Structural(UpdateGroupV1ErrorKind::GaugeMismatch),
+            DecodeUpdateGroupBaselineV4ErrorKind::Baseline(
+                UpdateGroupBaselineV4ErrorKind::TrainerIdentityMismatch,
+            ),
+            DecodeUpdateGroupBaselineV4ErrorKind::Baseline(
+                UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing,
+            ),
+        ];
+        let codes: std::collections::BTreeSet<&str> =
+            kinds.iter().map(|kind| kind.code()).collect();
+        assert_eq!(
+            codes.len(),
+            kinds.len(),
+            "every error kind must have a distinct code"
+        );
+    }
+
+    /// Builds a `GaugeWireV1` that `validate_gauge_v1` accepts bit-exactly
+    /// for the given per-term advantages, by literally replicating its own
+    /// reverse-order recompute (one substep per term, i.e. `advantages` and
+    /// the resulting rows are parallel, index for index, once both are read
+    /// in the SAME reverse order the validator uses -- the simplest shape
+    /// that still exercises the real per-row and aggregate formulas).
+    fn gauge_wire_for_advantages_v1(
+        advantages: &[f32],
+        group_count: u64,
+        parameter_bits: u32,
+    ) -> GaugeWireV1 {
+        let group_f32 = group_count as f32;
+        let unit_roundoff = f64::from(f32::EPSILON) / 2.0;
+        let action_count = 1_u64;
+        let mut substep_bounds = Vec::with_capacity(advantages.len());
+        let mut sum_abs_coefficients = 0.0_f64;
+        let mut per_substep_bound_sum = 0.0_f64;
+        for advantage in advantages.iter().rev() {
+            let coefficient = (-advantage) / group_f32;
+            let expected_abs_coefficient = f64::from(coefficient).abs();
+            let gamma_operation_count = action_count * 8 + 8;
+            let x = gamma_operation_count as f64 * unit_roundoff;
+            let gamma = x / (1.0 - x);
+            let bound_component = expected_abs_coefficient * gamma;
+            sum_abs_coefficients += expected_abs_coefficient;
+            per_substep_bound_sum += bound_component;
+            substep_bounds.push(GaugeSubstepBoundWireV1 {
+                action_count,
+                abs_policy_coefficient_f64_bits: format!(
+                    "{:016x}",
+                    expected_abs_coefficient.to_bits()
+                ),
+                gamma_operation_count,
+                gamma_f64_bits: format!("{:016x}", gamma.to_bits()),
+                bound_component_f64_bits: format!("{:016x}", bound_component.to_bits()),
+            });
+        }
+        let policy_count = advantages.len() as u64;
+        let total_action_count = policy_count * action_count;
+        let cross_operations = policy_count - 1;
+        let cross_x = cross_operations as f64 * unit_roundoff;
+        let cross_gamma = cross_x / (1.0 - cross_x);
+        let cross_substep_bound = cross_gamma * 2.0 * sum_abs_coefficients;
+        let derived_absolute_bound = per_substep_bound_sum + cross_substep_bound;
+        GaugeWireV1 {
+            identity: NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1.to_owned(),
+            parameter_name: "scorer.2.bias".to_owned(),
+            substep_count: policy_count,
+            total_action_count,
+            max_action_count: action_count,
+            sum_abs_policy_coefficients_f64_bits: format!(
+                "{:016x}",
+                sum_abs_coefficients.to_bits()
+            ),
+            substep_bounds,
+            per_substep_bound_sum_f64_bits: format!("{:016x}", per_substep_bound_sum.to_bits()),
+            cross_substep_bound_f64_bits: format!("{:016x}", cross_substep_bound.to_bits()),
+            raw_gradient_residual_f32_bits: hex32_v1(0.0),
+            derived_absolute_bound_f64_bits: format!("{:016x}", derived_absolute_bound.to_bits()),
+            high_precision_residual_f64_bits: format!("{:016x}", 0.0_f64.to_bits()),
+            canonical_gradient_f32_bits: hex32_v1(0.0),
+            parameter_before_f32_bits: parameter_bits,
+            parameter_after_f32_bits: parameter_bits,
+        }
+    }
+
+    /// The synthetic two-cell batch shared by the gauge tests below: cell
+    /// `(digest0, P0)` carries a seeded nonzero committed `c_t`, cell
+    /// `(digest1, P1)` is genuinely new, matching
+    /// `baseline_dispatch_fixture_v1`'s own shape (so the v4 and v3
+    /// per-term advantages genuinely differ).
+    struct GaugeBaselineFixtureV1 {
+        run: ValidatedTrainRunV2,
+        context: UpdateEvidenceChainContextV1,
+        evidence: UpdateEvidenceWireV1,
+        prior_state: NativeBaselineStateV4,
+        /// `(target - value) - c_t(cell)` per physical term, batch order.
+        v4_advantages: Vec<f32>,
+        /// `target - value` per physical term (the v3-shaped advantage,
+        /// ignoring `c_t`), batch order -- distinct from `v4_advantages`
+        /// wherever a cell's committed `c_t` is nonzero.
+        v3_advantages: Vec<f32>,
+    }
+
+    fn gauge_baseline_fixture_v1() -> GaugeBaselineFixtureV1 {
+        let (run, context) = v4_genesis_context_v1();
+        let v3_fixture = fixture_v1();
+        let mut wire: UpdateGroupWireV1 = serde_json::from_slice(&v3_fixture.group_bytes).unwrap();
+        let template_episode = wire.evidence.episodes[0].clone();
+
+        let digest0 = "55".repeat(32);
+        let digest1 = "66".repeat(32);
+        let q0 = -0.5_f32;
+        let v0 = 0.2_f32;
+        let q1 = -0.25_f32;
+        let v1 = 0.4_f32;
+        let q2 = -1.0_f32;
+        let v2 = 0.1_f32;
+
+        let episode0 = EpisodeWireV1 {
+            learner_seat: SeatWireV1::P0,
+            learner_return: 1,
+            opponent_checkpoint_manifest_sha256: Some(digest0.clone()),
+            learner_physical_decision_count: 2,
+            learner_policy_step_count: 2,
+            ..template_episode.clone()
+        };
+        let episode1 = EpisodeWireV1 {
+            learner_seat: SeatWireV1::P1,
+            learner_return: -1,
+            opponent_checkpoint_manifest_sha256: Some(digest1.clone()),
+            learner_physical_decision_count: 1,
+            learner_policy_step_count: 1,
+            ..template_episode
+        };
+        wire.evidence.physical_terms = vec![
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q0),
+                value_f32_bits: hex32_v1(v0),
+                terminal_return_i8: 1,
+                substep_count: 1,
+            },
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q1),
+                value_f32_bits: hex32_v1(v1),
+                terminal_return_i8: 1,
+                substep_count: 1,
+            },
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q2),
+                value_f32_bits: hex32_v1(v2),
+                terminal_return_i8: -1,
+                substep_count: 1,
+            },
+        ];
+        wire.evidence.episodes = vec![episode0, episode1];
+        wire.evidence.learner_group_count = 3;
+        wire.evidence.learner_physical_decision_count = 3;
+        wire.evidence.learner_policy_step_count = 3;
+
+        let seeded_key = BaselineCellKeyV4::new_v4(digest0.clone(), BaselineRoleV4::P0).unwrap();
+        let prior_state = NativeBaselineStateV4::empty_v4()
+            .apply_update_v4(&[BaselineObservationV4 {
+                key: seeded_key.clone(),
+                residual_sum_f64: 6.0,
+                decision_count: 1,
+                episode_count: 1,
+            }])
+            .unwrap();
+        let c_t0 = prior_state.c_for_cell_v4(&seeded_key);
+        let new_key1 = BaselineCellKeyV4::new_v4(digest1, BaselineRoleV4::P1).unwrap();
+        let c_t1 = prior_state.c_for_cell_v4(&new_key1);
+        assert_ne!(c_t0.to_bits(), 0.0_f32.to_bits(), "seed must be nonzero");
+
+        let residual0a = f32::from(1_i8) - v0;
+        let residual0b = f32::from(1_i8) - v1;
+        let residual1 = f32::from(-1_i8) - v2;
+        let v4_advantages = vec![residual0a - c_t0, residual0b - c_t0, residual1 - c_t1];
+        let v3_advantages = vec![residual0a, residual0b, residual1];
+        assert_ne!(
+            v4_advantages[0].to_bits(),
+            v3_advantages[0].to_bits(),
+            "the seeded c_t must make the v3 and v4 advantages genuinely differ"
+        );
+
+        GaugeBaselineFixtureV1 {
+            run,
+            context,
+            evidence: wire.evidence,
+            prior_state,
+            v4_advantages,
+            v3_advantages,
+        }
+    }
+
+    /// Review finding P1-2: a v4-shaped gauge (coefficients produced with
+    /// `advantage_v4 = (target - value) - c_t`) validates under
+    /// `V4Baseline` mode against the seeded nonzero-`c_t` prior state.
+    #[test]
+    fn validate_gauge_v1_v4_advantage_validates_under_v4_baseline_mode() {
+        let fixture = gauge_baseline_fixture_v1();
+        let mut evidence = fixture.evidence;
+        evidence.gauge = gauge_wire_for_advantages_v1(
+            &fixture.v4_advantages,
+            evidence.learner_group_count,
+            fixture.context.scorer_bias_anchor_bits_v1(),
+        );
+        assert!(validate_gauge_v1(
+            &fixture.run,
+            &fixture.context,
+            &evidence,
+            Some(&fixture.prior_state)
+        )
+        .is_ok());
+    }
+
+    /// Review finding P1-2, the fail-closed direction: the SAME evidence
+    /// but a v3-shaped gauge (coefficients produced from `target - value`
+    /// alone, ignoring the committed `c_t`) must be rejected under
+    /// `V4Baseline` mode -- the bound was proven over the wrong objective.
+    #[test]
+    fn validate_gauge_v1_v3_form_fails_closed_under_v4_baseline_mode() {
+        let fixture = gauge_baseline_fixture_v1();
+        let mut evidence = fixture.evidence;
+        evidence.gauge = gauge_wire_for_advantages_v1(
+            &fixture.v3_advantages,
+            evidence.learner_group_count,
+            fixture.context.scorer_bias_anchor_bits_v1(),
+        );
+        let error = validate_gauge_v1(
+            &fixture.run,
+            &fixture.context,
+            &evidence,
+            Some(&fixture.prior_state),
+        )
+        .expect_err("a v3-shaped gauge must fail closed under v4 baseline mode");
+        assert_eq!(error.kind(), UpdateGroupV1ErrorKind::GaugeMismatch);
+    }
+
+    /// Sanity check that `Plain` mode's arithmetic is genuinely the frozen
+    /// v3 formula: the SAME evidence and v3-shaped gauge validate when
+    /// `baseline` is `None`, proving the rejection above comes from the
+    /// v4-aware recompute, not some unrelated shape mismatch.
+    #[test]
+    fn validate_gauge_v1_v3_form_validates_under_plain_mode() {
+        let fixture = gauge_baseline_fixture_v1();
+        let mut evidence = fixture.evidence;
+        evidence.gauge = gauge_wire_for_advantages_v1(
+            &fixture.v3_advantages,
+            evidence.learner_group_count,
+            fixture.context.scorer_bias_anchor_bits_v1(),
+        );
+        assert!(validate_gauge_v1(&fixture.run, &fixture.context, &evidence, None).is_ok());
+    }
+
+    /// A fully self-consistent, synthetic v4-candidate update group. Unlike
+    /// `baseline_dispatch_fixture_v1` (which hand-crafts only grouping/loss
+    /// and reuses UNRELATED v3 boilerplate for gauge/rollout/episodes,
+    /// bypassing `validate_group_bindings_v1`'s other checks), every field
+    /// here is built to satisfy the COMPLETE structural walk -- real
+    /// schedule-derived episode seeds and seats, a gauge recomputed for the
+    /// v4 advantage, matching rollout counts, and a genuinely folded
+    /// `progress_after` -- so it proves `decode_update_group_with_baseline_v4_v1`
+    /// end to end (P1-1's "the only way a v4 group becomes validated"), not
+    /// just the sidecar dispatch in isolation.
+    struct V4EndToEndFixtureV1 {
+        run: ValidatedTrainRunV2,
+        context: UpdateEvidenceChainContextV1,
+        canonical_group_bytes: Vec<u8>,
+        prior_state: NativeBaselineStateV4,
+        sidecar_bytes: Vec<u8>,
+    }
+
+    fn v4_end_to_end_fixture_v1() -> V4EndToEndFixtureV1 {
+        let (run, context) = v4_genesis_context_v1();
+
+        let digest0 = "77".repeat(32);
+        let digest1 = "88".repeat(32);
+        let opponent_run_digest = "99".repeat(32);
+
+        let schedule0 =
+            native_training_episode_schedule_v1(run.record().schedule.base_seed, 0).unwrap();
+        let schedule1 =
+            native_training_episode_schedule_v1(run.record().schedule.base_seed, 1).unwrap();
+        let seat0 = seat_wire_v1(schedule0.learner_seat);
+        let seat1 = seat_wire_v1(schedule1.learner_seat);
+
+        // learner_return is a free choice; terminal_outcome/winner are
+        // derived from it and the schedule-determined seat, matching
+        // `validate_episodes_v1`'s own `learner_return_wire_v1` cross-check.
+        let outcome_for_v1 = |seat: SeatWireV1, learner_return: i8| {
+            let outcome = match (seat, learner_return) {
+                (SeatWireV1::P0, 1) | (SeatWireV1::P1, -1) => OutcomeWireV1::P0Win,
+                (SeatWireV1::P1, 1) | (SeatWireV1::P0, -1) => OutcomeWireV1::P1Win,
+                _ => unreachable!("this fixture only uses +-1 learner returns"),
+            };
+            let winner = match outcome {
+                OutcomeWireV1::P0Win => Some(SeatWireV1::P0),
+                OutcomeWireV1::P1Win => Some(SeatWireV1::P1),
+                OutcomeWireV1::Draw => None,
+            };
+            (outcome, winner)
+        };
+        let (outcome0, winner0) = outcome_for_v1(seat0, 1);
+        let (outcome1, winner1) = outcome_for_v1(seat1, -1);
+
+        let q0 = -0.5_f32;
+        let v0 = 0.2_f32;
+        let q1 = -0.25_f32;
+        let v1 = 0.4_f32;
+        let q2 = -1.0_f32;
+        let v2 = 0.1_f32;
+
+        let episode0 = EpisodeWireV1 {
+            schema: run.record().artifact_schemas.episode.clone(),
+            episode_index: 0,
+            environment_seed_u64_hex: format!("{:016x}", schedule0.environment_seed),
+            deck_ids: run.record().environment.deck_ids.clone(),
+            deck_hashes_u64_hex: run.record().environment.deck_hashes_u64_hex.clone(),
+            learner_seat: seat0,
+            learner_return: 1,
+            terminal_outcome: outcome0,
+            winner: winner0,
+            terminal_classification: "natural".to_owned(),
+            terminal_code: "natural-game-over".to_owned(),
+            policy_step_count: 2,
+            physical_decision_count: 2,
+            learner_policy_step_count: 2,
+            opponent_policy_step_count: 0,
+            learner_physical_decision_count: 2,
+            opponent_physical_decision_count: 0,
+            trajectory_sha256: lower_hex_raw32_v1([0x01_u8; 32]),
+            opponent_population_slot: Some(0),
+            opponent_occupant_class: None,
+            opponent_run_sha256: Some(opponent_run_digest.clone()),
+            opponent_checkpoint_manifest_sha256: Some(digest0.clone()),
+            opponent_search_tier: None,
+            opponent_search_authority_sha256: None,
+            scoring_weight_version: None,
+            consuming_update_version: None,
+        };
+        let episode1 = EpisodeWireV1 {
+            schema: run.record().artifact_schemas.episode.clone(),
+            episode_index: 1,
+            environment_seed_u64_hex: format!("{:016x}", schedule1.environment_seed),
+            deck_ids: run.record().environment.deck_ids.clone(),
+            deck_hashes_u64_hex: run.record().environment.deck_hashes_u64_hex.clone(),
+            learner_seat: seat1,
+            learner_return: -1,
+            terminal_outcome: outcome1,
+            winner: winner1,
+            terminal_classification: "natural".to_owned(),
+            terminal_code: "natural-game-over".to_owned(),
+            policy_step_count: 1,
+            physical_decision_count: 1,
+            learner_policy_step_count: 1,
+            opponent_policy_step_count: 0,
+            learner_physical_decision_count: 1,
+            opponent_physical_decision_count: 0,
+            trajectory_sha256: lower_hex_raw32_v1([0x02_u8; 32]),
+            opponent_population_slot: Some(0),
+            opponent_occupant_class: None,
+            opponent_run_sha256: Some(opponent_run_digest),
+            opponent_checkpoint_manifest_sha256: Some(digest1.clone()),
+            opponent_search_tier: None,
+            opponent_search_authority_sha256: None,
+            scoring_weight_version: None,
+            consuming_update_version: None,
+        };
+        let episodes = vec![episode0, episode1];
+
+        let physical_terms = vec![
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q0),
+                value_f32_bits: hex32_v1(v0),
+                terminal_return_i8: 1,
+                substep_count: 1,
+            },
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q1),
+                value_f32_bits: hex32_v1(v1),
+                terminal_return_i8: 1,
+                substep_count: 1,
+            },
+            PhysicalLossTermWireV1 {
+                joint_log_probability_f32_bits: hex32_v1(q2),
+                value_f32_bits: hex32_v1(v2),
+                terminal_return_i8: -1,
+                substep_count: 1,
+            },
+        ];
+
+        // Seed cell (digest0, seat0) with a nonzero committed c_t; cell
+        // (digest1, seat1) stays genuinely new (c_t = 0).
+        let seeded_key =
+            BaselineCellKeyV4::new_v4(digest0.clone(), baseline_role_v4_from_seat_v1(seat0))
+                .unwrap();
+        let prior_state = NativeBaselineStateV4::empty_v4()
+            .apply_update_v4(&[BaselineObservationV4 {
+                key: seeded_key.clone(),
+                residual_sum_f64: 6.0,
+                decision_count: 1,
+                episode_count: 1,
+            }])
+            .unwrap();
+        let c_t0 = prior_state.c_for_cell_v4(&seeded_key);
+        let new_key1 =
+            BaselineCellKeyV4::new_v4(digest1.clone(), baseline_role_v4_from_seat_v1(seat1))
+                .unwrap();
+        let c_t1 = prior_state.c_for_cell_v4(&new_key1);
+        assert_ne!(c_t0.to_bits(), 0.0_f32.to_bits(), "seed must be nonzero");
+
+        let residual0a = f32::from(1_i8) - v0;
+        let residual0b = f32::from(1_i8) - v1;
+        let residual1 = f32::from(-1_i8) - v2;
+        let advantages = [residual0a - c_t0, residual0b - c_t0, residual1 - c_t1];
+        let policy_sum_v4 = (-q0) * advantages[0] + (-q1) * advantages[1] + (-q2) * advantages[2];
+        let value_sum = {
+            let e0a = v0 - 1.0_f32;
+            let e0b = v1 - 1.0_f32;
+            let e1 = v2 - (-1.0_f32);
+            e0a * e0a + e0b * e0b + e1 * e1
+        };
+        let value_coefficient =
+            parse_f32_hex_v1(&run.record().optimization.value_coefficient_f32_bits).unwrap();
+        let total = (policy_sum_v4 + value_coefficient * value_sum) / 3.0_f32;
+
+        let residual_sum0_f64 = f64::from(residual0a) + f64::from(residual0b);
+        let residual_sum1_f64 = f64::from(residual1);
+        let successor = prior_state
+            .apply_update_v4(&[
+                BaselineObservationV4 {
+                    key: seeded_key.clone(),
+                    residual_sum_f64: residual_sum0_f64,
+                    decision_count: 2,
+                    episode_count: 1,
+                },
+                BaselineObservationV4 {
+                    key: new_key1.clone(),
+                    residual_sum_f64: residual_sum1_f64,
+                    decision_count: 1,
+                    episode_count: 1,
+                },
+            ])
+            .unwrap();
+
+        let gauge =
+            gauge_wire_for_advantages_v1(&advantages, 3, context.scorer_bias_anchor_bits_v1());
+        let progress_after = fold_progress_v1(context.progress(), &episodes).unwrap();
+
+        let evidence = UpdateEvidenceWireV1 {
+            schema: UPDATE_EVIDENCE_SCHEMA_V1.to_owned(),
+            run_sha256: run.run_sha256().to_owned(),
+            identity_bundle_sha256: run.identity_bundle_sha256().to_owned(),
+            batch_episodes: run.batch_episodes(),
+            checkpoint_segment_updates: run.checkpoint_segment_updates(),
+            update_index: context.next_update_index(),
+            episode_start: 0,
+            episode_count: run.batch_episodes(),
+            episode_end_exclusive: run.batch_episodes(),
+            optimizer_step: true,
+            adam_step_before: 0,
+            adam_step_after: 1,
+            learner_group_count: 3,
+            learner_policy_step_count: 3,
+            learner_physical_decision_count: 3,
+            physical_terms,
+            loss: LossWireV1 {
+                policy_sum_f32_bits: hex32_v1(policy_sum_v4),
+                value_sum_f32_bits: hex32_v1(value_sum),
+                total_f32_bits: hex32_v1(total),
+            },
+            gauge,
+            rollout_counts: RolloutCountsWireV1 {
+                complete_round_count: 1,
+                scorer_batch_count: 1,
+                scored_decision_count: 3,
+                scored_action_logit_count: 3,
+                sampled_action_count: 3,
+                terminal_notification_count: 2,
+                batch_width_sum: 3,
+                max_batch_width: 3,
+                full_target_batch_count: 0,
+                short_batch_count: 1,
+                batch_membership_digest_identity: BATCH_MEMBERSHIP_DIGEST_IDENTITY_V1.to_owned(),
+                batch_membership_digest_hex: lower_hex_raw32_v1([0x03_u8; 32]),
+                natural_terminal_count: 2,
+                halted_count: 0,
+                truncated_count: 0,
+                apply_error_count: 0,
+                partial_group_count: 0,
+                association_failure_count: 0,
+            },
+            episodes,
+            model_parameter_sha256_before: lower_hex_raw32_v1(context.model_parameter_sha256()),
+            model_parameter_sha256_after: lower_hex_raw32_v1([0x04_u8; 32]),
+            train_state_sha256_after: lower_hex_raw32_v1([0x05_u8; 32]),
+            progress_after,
+        };
+
+        let evidence_cj = to_canonical_json_bytes_v1(&evidence, episode_null_policy_v1()).unwrap();
+        let update_evidence_sha256 = update_evidence_sha256_v1(
+            context.run_sha256_raw_v1(),
+            context.next_update_index(),
+            context.previous_update_evidence_sha256(),
+            &evidence_cj,
+        )
+        .unwrap();
+        let wire = UpdateGroupWireV1 {
+            update_index: context.next_update_index(),
+            previous_update_evidence_sha256: context
+                .previous_update_evidence_sha256()
+                .map(lower_hex_raw32_v1),
+            logical_row_count: logical_row_count_v1(&evidence).unwrap(),
+            update_evidence_sha256: lower_hex_raw32_v1(update_evidence_sha256),
+            evidence,
+        };
+        let canonical_group_bytes =
+            to_canonical_json_bytes_v1(&wire, GROUP_NULL_POLICY_V1).unwrap();
+
+        let sidecar_parts = UpdateBaselineRecordPartsV4 {
+            update_index: context.next_update_index(),
+            update_evidence_sha256,
+            cells: vec![
+                UpdateBaselineCellPartsV4 {
+                    opponent_checkpoint_manifest_sha256: digest0,
+                    role: baseline_role_v4_from_seat_v1(seat0),
+                    c_t_bits: c_t0.to_bits(),
+                    c_next_bits: successor.c_for_cell_v4(&seeded_key).to_bits(),
+                    residual_sum_f64: residual_sum0_f64,
+                    decision_count: 2,
+                    episode_count: 1,
+                },
+                UpdateBaselineCellPartsV4 {
+                    opponent_checkpoint_manifest_sha256: digest1.clone(),
+                    role: baseline_role_v4_from_seat_v1(seat1),
+                    c_t_bits: c_t1.to_bits(),
+                    c_next_bits: successor.c_for_cell_v4(&new_key1).to_bits(),
+                    residual_sum_f64: residual_sum1_f64,
+                    decision_count: 1,
+                    episode_count: 1,
+                },
+            ],
+            declared_policy_sum_bits: policy_sum_v4.to_bits(),
+        };
+        let sidecar_bytes = sidecar_bytes_from_parts_v1(&sidecar_parts);
+
+        V4EndToEndFixtureV1 {
+            run,
+            context,
+            canonical_group_bytes,
+            prior_state,
+            sidecar_bytes,
+        }
+    }
+
+    /// The end-to-end proof review finding P1-1 asks for: a genuinely
+    /// consistent v4-candidate group validates through
+    /// `decode_update_group_with_baseline_v4_v1` -- the ONLY path that can
+    /// validate one -- and yields the freshly recomputed successor baseline
+    /// state.
+    #[test]
+    fn decode_update_group_with_baseline_v4_v1_end_to_end_validates() {
+        let fixture = v4_end_to_end_fixture_v1();
+        let sidecar = fixture.sidecar_bytes.clone();
+        let expected_index = fixture.context.next_update_index();
+        let source =
+            move |update_index: u64| (update_index == expected_index).then(|| sidecar.clone());
+
+        let (advance, successor) = decode_update_group_with_baseline_v4_v1(
+            &fixture.run,
+            fixture.context,
+            &fixture.canonical_group_bytes,
+            &fixture.prior_state,
+            &source,
+        )
+        .expect("a genuinely consistent v4-candidate group must validate end to end");
+        assert_eq!(advance.group().update_index(), 1);
+        assert_eq!(successor.cell_count_v4(), 2);
     }
 }

@@ -426,6 +426,212 @@ pub(crate) struct UpdateBaselineEpisodeViewV4<'a> {
 }
 
 // ---------------------------------------------------------------------
+// Sidecar source (round A: an injected pure source; the launcher-level
+// chain-directory reader is round B's job -- see
+// `docs/native_cycle4_arm_launcher_v1.md` Sections 2-3)
+// ---------------------------------------------------------------------
+
+/// Supplies the raw canonical-JSON bytes of the `baseline_v4` sidecar record
+/// for one update index (`docs/native_cycle4_arm_launcher_v1.md` Section 2:
+/// `baseline-update-<8-digit index>.record.json`, published atomically
+/// right after the Store commits that update and before the next one
+/// begins). `None` means no sidecar was found for that index -- the
+/// evidence-dispatch caller (`native_training_store_update_group_v1`) fails
+/// closed on that, exactly as the doc's "a missing or unbound sidecar fails
+/// closed" requires.
+///
+/// This module, and everything downstream of it, stay pure over the bytes
+/// an implementation returns: no file I/O happens in the validation path
+/// itself. A production implementation (round B, the launcher-level chain
+/// reader) reads the sidecar file for `update_index` and returns its bytes;
+/// tests use the blanket closure impl below.
+pub(crate) trait BaselineSidecarSourceV4 {
+    fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>>;
+}
+
+impl<F: Fn(u64) -> Option<Vec<u8>>> BaselineSidecarSourceV4 for F {
+    fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>> {
+        self(update_index)
+    }
+}
+
+/// Round B: the launcher-level chain-directory access threaded through the
+/// Store's publish and resume paths so a `trainer_v4_candidate` run's
+/// evidence validation can dispatch to the v4 recompute
+/// (`docs/native_cycle4_arm_launcher_v1.md` Sections 2-3). Every frozen v3
+/// path passes `None` for this and therefore behaves byte for byte as it
+/// did before; only a run that declares the v4 trainer ever reaches an
+/// implementation.
+///
+/// The access is deliberately STATELESS with respect to the walk order: a
+/// caller asks for the committed state at a checkpoint boundary generation
+/// and then folds forward through the in-boundary sidecars itself, so the
+/// same segment can be validated any number of times (the publisher
+/// revalidates each generation more than once) without a running state
+/// drifting.
+pub(crate) trait BaselineChainAccessV4: BaselineSidecarSourceV4 {
+    /// The committed baseline state at one Store checkpoint boundary
+    /// generation. Generation 0 is the pre-training genesis state and is
+    /// always the empty state. `None` fails the caller closed.
+    fn committed_state_for_generation_v4(
+        &self,
+        generation_index: u64,
+    ) -> Option<NativeBaselineStateV4>;
+
+    /// Registers the Store's own core train-state SHA-256 for one already
+    /// validated checkpoint boundary. The Store walk calls this for every
+    /// generation it proves, so a launcher-level chain record is only ever
+    /// decoded against a hash the Store itself authenticated, never against
+    /// a caller's claim. Implementations that need no such registration
+    /// leave the default no-op.
+    fn observe_store_checkpoint_v4(&self, _generation_index: u64, _core_state_sha256: [u8; 32]) {}
+
+    /// Stages the per-update sidecar record for `update_index`. Producer-only:
+    /// every validation path leaves this untouched. Returns `false` on any
+    /// failure so the caller fails closed rather than continuing with an
+    /// unstaged sidecar.
+    ///
+    /// A staged record is immediately readable through
+    /// [`BaselineSidecarSourceV4::sidecar_record_bytes_v4`] (the producer
+    /// revalidates it through the validator's own path before training the
+    /// next update) but is NOT yet at its immutable on-disk name. It reaches
+    /// that name only through [`Self::commit_staged_sidecar_records_v4`],
+    /// which the producer calls once the Store has durably committed the
+    /// evidence those updates belong to. A segment that fails between
+    /// preparation and the Store commit therefore leaves no sidecar for an
+    /// update the Store does not contain, and its retry has nothing orphaned
+    /// to reproduce.
+    fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool;
+
+    /// Whether the sidecar for `update_index` may be RECONSTRUCTED from that
+    /// update's own committed evidence when no staged or promoted record for
+    /// it exists. Default: never, so every validation path stays fail-closed
+    /// on missing evidence.
+    ///
+    /// An implementation grants this only for a Store's own tip update, and
+    /// only after it has reconciled its staging area against that Store: the
+    /// producer mints each sidecar from the update's persisted evidence, so
+    /// the tip's record is exactly re-derivable, while an earlier update
+    /// whose sidecar is gone is unrecoverable and must fail the walk closed.
+    fn may_reconstruct_sidecar_v4(&self, _update_index: u64) -> bool {
+        false
+    }
+
+    /// Publishes every sidecar staged since the last commit at its immutable
+    /// name, in ascending update order. Called only after the Store durably
+    /// committed the evidence for those updates. Returns `false` on any
+    /// failure so the caller fails closed. Implementations that have no
+    /// staging step (an in-memory double, say) leave the default, which
+    /// reports the empty commit as successful.
+    fn commit_staged_sidecar_records_v4(&self) -> bool {
+        true
+    }
+}
+
+/// Producer-side sibling of [`validate_update_baseline_v4`]: mints the
+/// `baseline_v4` sidecar record for one just-built update group from the
+/// SAME persisted-evidence walk the validator uses, so the record the
+/// producer publishes is by construction the record the validator
+/// recomputes.
+///
+/// `declared_policy_sum_bits` is the evidence's own
+/// `loss.policy_sum_f32_bits`; the recomputed v4 policy sum must equal it
+/// bit for bit, otherwise the device did not optimize what the evidence
+/// declares and the update fails closed here rather than at the next
+/// validation.
+pub(crate) fn build_update_baseline_record_from_episodes_v4(
+    episodes: &[UpdateBaselineEpisodeViewV4<'_>],
+    prior_state: &NativeBaselineStateV4,
+    update_index: u64,
+    update_evidence_sha256: [u8; 32],
+    declared_policy_sum_bits: u32,
+) -> Result<UpdateBaselineRecordV4> {
+    let mut accumulator: BTreeMap<BaselineCellKeyV4, (f64, u64, u64)> = BTreeMap::new();
+    let mut policy_sum = 0.0_f32;
+    for episode in episodes {
+        let key = BaselineCellKeyV4::new_v4(
+            episode.opponent_checkpoint_manifest_sha256,
+            episode.learner_seat,
+        )
+        .map_err(|error| error_v4(UpdateBaselineV4ErrorKind::InvalidCellKey(error.kind_v4())))?;
+        let c_t = prior_state.c_for_cell_v4(&key);
+        let entry = accumulator.entry(key).or_insert((0.0_f64, 0_u64, 0_u64));
+        entry.2 = entry
+            .2
+            .checked_add(1)
+            .ok_or_else(|| error_v4(UpdateBaselineV4ErrorKind::InvalidCounts))?;
+        for term in episode.terms {
+            if term.terminal_return_i8 != episode.learner_return {
+                return Err(error_v4(UpdateBaselineV4ErrorKind::TermReturnMismatch));
+            }
+            let q = f32::from_bits(term.joint_log_probability_f32_bits);
+            let value = f32::from_bits(term.value_f32_bits);
+            if !q.is_finite() || !value.is_finite() {
+                return Err(error_v4(UpdateBaselineV4ErrorKind::InvalidScalar));
+            }
+            let target = f32::from(term.terminal_return_i8);
+            let residual = target - value;
+            let advantage = residual - c_t;
+            let policy_term = (-q) * advantage;
+            policy_sum += policy_term;
+            if !residual.is_finite()
+                || !advantage.is_finite()
+                || !policy_term.is_finite()
+                || !policy_sum.is_finite()
+            {
+                return Err(error_v4(UpdateBaselineV4ErrorKind::InvalidScalar));
+            }
+            entry.0 += f64::from(residual);
+            entry.1 = entry
+                .1
+                .checked_add(1)
+                .ok_or_else(|| error_v4(UpdateBaselineV4ErrorKind::InvalidCounts))?;
+            if !entry.0.is_finite() {
+                return Err(error_v4(UpdateBaselineV4ErrorKind::InvalidScalar));
+            }
+        }
+    }
+    if policy_sum.to_bits() != declared_policy_sum_bits {
+        return Err(error_v4(UpdateBaselineV4ErrorKind::PolicySumMismatch));
+    }
+    let observations = accumulator
+        .iter()
+        .map(
+            |(key, (residual_sum, decision_count, episode_count))| BaselineObservationV4 {
+                key: key.clone(),
+                residual_sum_f64: *residual_sum,
+                decision_count: *decision_count,
+                episode_count: *episode_count,
+            },
+        )
+        .collect::<Vec<_>>();
+    let successor = prior_state
+        .apply_update_v4(&observations)
+        .map_err(|error| error_v4(UpdateBaselineV4ErrorKind::BaselineApply(error.kind_v4())))?;
+    let cells = observations
+        .iter()
+        .map(|observation| UpdateBaselineCellPartsV4 {
+            opponent_checkpoint_manifest_sha256: observation
+                .key
+                .opponent_checkpoint_manifest_sha256
+                .clone(),
+            role: observation.key.role,
+            c_t_bits: prior_state.c_for_cell_v4(&observation.key).to_bits(),
+            c_next_bits: successor.c_for_cell_v4(&observation.key).to_bits(),
+            residual_sum_f64: observation.residual_sum_f64,
+            decision_count: observation.decision_count,
+            episode_count: observation.episode_count,
+        })
+        .collect::<Vec<_>>();
+    build_update_baseline_record_v4(UpdateBaselineRecordPartsV4 {
+        update_index,
+        update_evidence_sha256,
+        cells,
+        declared_policy_sum_bits,
+    })
+}
+
+// ---------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------
 

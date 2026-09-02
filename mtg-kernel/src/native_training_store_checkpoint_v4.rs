@@ -35,8 +35,8 @@ use crate::native_policy_baseline_state_v4::{
     NATIVE_BASELINE_STATE_SCHEMA_V4,
 };
 use crate::native_training_store_checkpoint_v3::{
-    CheckpointPayloadBindingV1, CheckpointProgressV3, CHECKPOINT_LOGICAL_STATE_IDENTITY_V1,
-    NATIVE_POLICY_VALUE_TRAIN_STATE_SCHEMA_V1,
+    CheckpointManifestV3, CheckpointPayloadBindingV1, CheckpointProgressV3,
+    CHECKPOINT_LOGICAL_STATE_IDENTITY_V1, NATIVE_POLICY_VALUE_TRAIN_STATE_SCHEMA_V1,
 };
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1, NativeTrainingStoreAtomSha256V1,
@@ -310,6 +310,39 @@ pub(crate) struct CheckpointManifestPartsV4 {
     pub(crate) core_state_sha256: [u8; 32],
     pub(crate) payload: CheckpointPayloadBindingV1,
     pub(crate) baseline: NativeBaselineStateV4,
+}
+
+/// Round B: composes the v4 manifest parts for one committed Store
+/// checkpoint boundary from that boundary's own (frozen, v3) checkpoint
+/// manifest plus the committed baseline state. Every field except the
+/// baseline is copied verbatim from the v3 authority, so the launcher-level
+/// chain record can never claim checkpoint facts the Store does not have.
+/// `core_state_sha256` is the v3 manifest's own `train_state.state_sha256`
+/// (the payload-derived snapshot hash), which is exactly what the v4
+/// composition hashes together with the baseline.
+pub(crate) fn checkpoint_manifest_parts_v4_from_v3(
+    checkpoint: &CheckpointManifestV3,
+    baseline: NativeBaselineStateV4,
+) -> CheckpointManifestPartsV4 {
+    let train_state = checkpoint.train_state();
+    CheckpointManifestPartsV4 {
+        run_sha256: checkpoint.run_sha256().to_owned(),
+        identity_bundle_sha256: checkpoint.identity_bundle_sha256().to_owned(),
+        segment_ordinal: checkpoint.segment_ordinal(),
+        generation_index: checkpoint.generation_index(),
+        batch_episodes: checkpoint.batch_episodes(),
+        checkpoint_segment_updates: checkpoint.checkpoint_segment_updates(),
+        progress: *checkpoint.progress(),
+        adam_step: train_state.adam_step,
+        scorer_bias_anchor_f32_bits: train_state.scorer_bias_anchor_f32_bits,
+        parameter_layout_sha256: train_state.parameter_layout_sha256.clone(),
+        parameter_tensor_count: train_state.parameter_tensor_count,
+        parameter_element_count: train_state.parameter_element_count,
+        model_parameter_sha256: checkpoint.model_parameter_sha256(),
+        core_state_sha256: checkpoint.train_state_sha256(),
+        payload: checkpoint.payload().clone(),
+        baseline,
+    }
 }
 
 fn build_wire_v4(parts: CheckpointManifestPartsV4) -> Result<CheckpointManifestWireV4> {
