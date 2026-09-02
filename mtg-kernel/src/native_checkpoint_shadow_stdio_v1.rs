@@ -13,6 +13,21 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
+use crate::model_guided_search_authority_v1::{
+    authorized_seed_block_v1, ModelGuidedSearchAuthorityV1, ModelGuidedSearchConsumptionModeV1,
+};
+use crate::model_guided_search_contract_digests_v1::MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1;
+use crate::model_guided_search_core_v1::{
+    ModelGuidedSearchCoreV1, ModelGuidedSearchRealForwardValueEvaluatorV1,
+    ModelGuidedSearchSeedHalfV1,
+};
+use crate::model_guided_search_outcome_v3::{
+    lower_hex_sha256_v3, root_statistics_digest_v3, visit_margin_v3, CeilingStatusV3,
+    ModelGuidedSearchOutcomeWriterV3, SearchDecisionRecordV3, StabilityV3, WallTimeV3,
+    WrapperIdentityV3,
+};
+use crate::model_guided_search_value_quantization_v1::ModelGuidedSearchValueHeadDomainV1;
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
@@ -62,6 +77,15 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::Instant;
+
+/// Elapsed microseconds since `started`, saturating rather than wrapping.
+/// DIAGNOSTIC ONLY: no caller compares this against anything that could
+/// change a chosen action; see
+/// `ShadowScorerServiceV1::model_guided_search_selection_v1`.
+fn elapsed_micros_v1(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
 
 pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1: &str = "mtg-kernel-checkpoint-shadow-stdio/v1";
 pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
@@ -98,6 +122,15 @@ pub enum ShadowCandidateSelectorV1 {
     Depth8HistoryValueBootstrap,
     Depth8BoundedValueTeacherShadow,
     Depth8Cp7OpponentHistoryValueBootstrap,
+    /// The test-time-search wrapper
+    /// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md`): bounded PUCT IS-MCTS
+    /// over `ModelGuidedSearchCoreV1` with the fixed checkpoint's own
+    /// policy prior and value head, overriding the sampled index AFTER the
+    /// policy forward so the step-protocol invariant (Java cannot override
+    /// the Rust-side choice) is preserved unchanged. Selectable only
+    /// through the scorer binary's strict CLI flags, never an environment
+    /// variable.
+    ModelGuidedSearch,
 }
 
 const ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1: u64 = 20;
@@ -541,9 +574,42 @@ struct ShadowModelOutputV1 {
     structured_parent_value: Option<f32>,
 }
 
+/// The narrow search-capable model seam (test-time-search sketch V2
+/// Section 5, S0: "a narrow search-capable model interface that retains
+/// the typed native net for the searcher while the existing `dyn` scorer
+/// keeps flat scoring").
+///
+/// Exactly one method, returning exactly the one thing the searcher cannot
+/// get through [`ShadowModelScorerV1`]: the typed
+/// `NativePolicyValueNetV1`, whose `forward_search_deterministic_v1` (the
+/// MXCSR-gated, kernel-tanh forward the whole determinism argument rests
+/// on) has no flat-scoring equivalent. Everything else the searcher needs
+/// -- encoding, tensorizing, quantization, tree mechanics -- already
+/// exists behind `ModelGuidedSearchRealForwardValueEvaluatorV1` and is not
+/// re-plumbed here.
+///
+/// Deliberately NOT a supertrait of `ShadowModelScorerV1` and not a new
+/// required method on it: the flat scoring path must be unchanged, and
+/// making every scorer implement this would force the recurrent and
+/// test-only scorers (which have no native net at all) to either fabricate
+/// one or panic.
+trait ShadowSearchCapableModelV1 {
+    fn search_native_net_v1(&self) -> &NativePolicyValueNetV1;
+}
+
 trait ShadowModelScorerV1 {
     fn uses_structured_history_v1(&self) -> bool {
         false
+    }
+
+    /// Search capability, if this scorer has it. The default is `None`, so
+    /// every existing scorer keeps flat scoring with no behavior change of
+    /// any kind: the `PolicySample` path never calls this, and a scorer
+    /// that does not override it simply cannot be selected for search
+    /// (the selector fails closed at configuration time rather than
+    /// silently degrading to something else).
+    fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+        None
     }
 
     fn score_v1(
@@ -559,7 +625,17 @@ struct NativeShadowModelScorerV1 {
     inference: NativeCheckpointInferenceV1,
 }
 
+impl ShadowSearchCapableModelV1 for NativeShadowModelScorerV1 {
+    fn search_native_net_v1(&self) -> &NativePolicyValueNetV1 {
+        self.inference.search_model_v1()
+    }
+}
+
 impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
+    fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+        Some(self)
+    }
+
     fn score_v1(
         &self,
         decision: FlatScoringDecisionViewV2<'_>,
@@ -623,7 +699,17 @@ struct FixedNativeStateShadowModelScorerV1 {
     state: NativePolicyValueTrainStateV1,
 }
 
+impl ShadowSearchCapableModelV1 for FixedNativeStateShadowModelScorerV1 {
+    fn search_native_net_v1(&self) -> &NativePolicyValueNetV1 {
+        self.state.model_v1()
+    }
+}
+
 impl ShadowModelScorerV1 for FixedNativeStateShadowModelScorerV1 {
+    fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+        Some(self)
+    }
+
     fn score_v1(
         &self,
         decision: FlatScoringDecisionViewV2<'_>,
@@ -2409,12 +2495,182 @@ fn rl_error_code_v1(code: RlSessionErrorCode) -> &'static str {
     }
 }
 
+/// Everything the `ModelGuidedSearch` selector needs, held on the service
+/// so `score_session_v1` can reach it without widening any existing type.
+///
+/// The AUTHORITY is not built here. It is bound on the first reset, from
+/// the live session's own
+/// `kernel_search_private_diagnostic_identity_v1()`, because
+/// `ModelGuidedSearchAuthorityV1` commits to that identity and the core
+/// refuses to search a session whose identity disagrees with the record's.
+/// Which of the two admissible identities a session carries is a property
+/// of the loaded checkpoint's environment contract, and reading it off the
+/// real session is the only way to be right about it that does not
+/// duplicate the environment-contract mapping in a second place where it
+/// could drift. Later resets must agree with the first, or the search
+/// fails closed rather than silently re-minting an authority mid-run.
+struct ModelGuidedSearchRuntimeV1 {
+    tier: KernelNativeSearchTierV1,
+    seed_block_id: usize,
+    action_seed: u64,
+    value_domain: ModelGuidedSearchValueHeadDomainV1,
+    diagnostics: ModelGuidedSearchOutcomeWriterV3,
+    bound: Option<BoundModelGuidedSearchV1>,
+}
+
+struct BoundModelGuidedSearchV1 {
+    core: ModelGuidedSearchCoreV1,
+    private_diagnostic_identity: String,
+    wrapper_identity: WrapperIdentityV3,
+    authority_digest_sha256: String,
+}
+
+fn value_head_domain_tag_v1(domain: &ModelGuidedSearchValueHeadDomainV1) -> String {
+    match domain {
+        ModelGuidedSearchValueHeadDomainV1::Tanh => "tanh".to_owned(),
+        ModelGuidedSearchValueHeadDomainV1::SigmoidFamily => "sigmoid_family".to_owned(),
+        ModelGuidedSearchValueHeadDomainV1::Calibrated { lower, upper } => {
+            format!("calibrated:{:08x}:{:08x}", lower.to_bits(), upper.to_bits())
+        }
+    }
+}
+
+fn search_tier_tag_v1(tier: KernelNativeSearchTierV1) -> &'static str {
+    match tier {
+        KernelNativeSearchTierV1::T512 => "t512",
+        KernelNativeSearchTierV1::T2048 => "t2048",
+        KernelNativeSearchTierV1::T8192 => "t8192",
+        KernelNativeSearchTierV1::T32768 => "t32768",
+    }
+}
+
+impl ModelGuidedSearchRuntimeV1 {
+    /// Resolves the CLI-supplied seed BLOCK ID against the launcher-owned
+    /// allowlist and opens the diagnostics directory. Both fail closed:
+    /// an unregistered block id and a missing directory are startup
+    /// errors, never warnings.
+    fn new_v1(
+        tier: KernelNativeSearchTierV1,
+        seed_block_id: usize,
+        diagnostics_directory: PathBuf,
+    ) -> Result<Self, Box<dyn Error>> {
+        let action_seed = authorized_seed_block_v1(seed_block_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "model-guided search seed block id is not in the authorized allowlist",
+            )
+        })?;
+        let diagnostics = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(
+            diagnostics_directory,
+        )
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("model-guided search diagnostics directory is unusable: {error}"),
+            )
+        })?;
+        Ok(Self {
+            tier,
+            seed_block_id,
+            action_seed,
+            value_domain: MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1,
+            diagnostics,
+            bound: None,
+        })
+    }
+
+    /// Binds (or re-checks) the authority against a live session, then
+    /// opens this episode's diagnostics file. Returns a stable error code
+    /// on any failure so the caller can surface it through the protocol's
+    /// existing error body.
+    fn begin_episode_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+        checkpoint: &ShadowCheckpointIdentityV1,
+        episode_id: u64,
+        base_seed: u64,
+        candidate_seat: PlayerSeatV1,
+    ) -> Result<(), &'static str> {
+        let live_identity = session
+            .kernel_search_private_diagnostic_identity_v1()
+            .to_owned();
+        if self.bound.is_none() {
+            let authority = ModelGuidedSearchAuthorityV1::new(
+                self.tier,
+                self.action_seed,
+                &live_identity,
+                &checkpoint.authority_kind,
+                checkpoint.loaded_generation,
+                &checkpoint.model_parameter_sha256,
+                NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+                // Mode (a): the wrapper IS the presented agent's decision
+                // rule, not an opponent and not a training-target source.
+                ModelGuidedSearchConsumptionModeV1::SearchAtInference,
+            )
+            .map_err(|_| "model_guided_search_authority_invalid")?;
+            let authority_digest = authority
+                .digest()
+                .map_err(|_| "model_guided_search_authority_invalid")?;
+            let wrapper_identity = WrapperIdentityV3 {
+                core_algorithm_identity: authority.algorithm_identity.clone(),
+                authority_kind: authority.authority_kind.clone(),
+                authority_schema: authority.schema.clone(),
+                node_key_identity: authority.node_key_identity.clone(),
+                seed_domain: authority.seed_domain.clone(),
+                tier: search_tier_tag_v1(self.tier).to_owned(),
+                transition_budget: authority.transition_budget,
+                policy_step_depth_cap: authority.policy_step_depth_cap,
+                seed_block_id: self.seed_block_id as u64,
+                action_seed_u64_hex: u64_hex_v1(self.action_seed),
+                search_authority_digest_sha256: lower_hex_sha256_v3(authority_digest),
+                puct_prior_quantization_contract_sha256: authority
+                    .puct_prior_quantization_contract_sha256
+                    .clone(),
+                value_quantization_contract_sha256: authority
+                    .value_quantization_contract_sha256
+                    .clone(),
+                forward_determinism_build_identity: authority
+                    .forward_determinism_build_identity
+                    .clone(),
+                value_head_domain: value_head_domain_tag_v1(&self.value_domain),
+                checkpoint_manifest_sha256: checkpoint.loaded_checkpoint_sha256.clone(),
+                checkpoint_model_parameter_sha256: checkpoint.model_parameter_sha256.clone(),
+                engine_commit: authority.engine_commit.clone(),
+            };
+            let core = ModelGuidedSearchCoreV1::new(authority)
+                .map_err(|_| "model_guided_search_authority_invalid")?;
+            self.bound = Some(BoundModelGuidedSearchV1 {
+                core,
+                private_diagnostic_identity: live_identity.clone(),
+                wrapper_identity,
+                authority_digest_sha256: lower_hex_sha256_v3(authority_digest),
+            });
+        }
+        let bound = self
+            .bound
+            .as_ref()
+            .ok_or("model_guided_search_authority_invalid")?;
+        if bound.private_diagnostic_identity != live_identity {
+            return Err("model_guided_search_diagnostic_identity_changed");
+        }
+        let wrapper_identity = bound.wrapper_identity.clone();
+        self.diagnostics
+            .begin_episode_v3(episode_id, base_seed, candidate_seat, wrapper_identity)
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")
+    }
+}
+
 struct ShadowScorerServiceV1 {
     model: Box<dyn ShadowModelScorerV1>,
     opponent_model: Option<Box<dyn ShadowModelScorerV1>>,
     population_opponent: Option<LadderOpponentEngineV1>,
     identity: ShadowCheckpointIdentityV1,
     candidate_selector: ShadowCandidateSelectorV1,
+    /// Present exactly when `candidate_selector` is
+    /// `ModelGuidedSearch`; the two are installed together by
+    /// `run_checkpoint_shadow_stdio_with_model_guided_search_v1` and the
+    /// selector fails closed if this is absent.
+    search: Option<ModelGuidedSearchRuntimeV1>,
     max_physical_decisions: u64,
     max_policy_steps: u64,
     active: Option<ActiveShadowSessionV1>,
@@ -2483,6 +2739,7 @@ impl ShadowScorerServiceV1 {
                     population_opponent: None,
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+                    search: None,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                     max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                     active: None,
@@ -2501,6 +2758,7 @@ impl ShadowScorerServiceV1 {
             population_opponent: None,
             identity: loaded.identity,
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+            search: None,
             max_physical_decisions: loaded.max_physical_decisions,
             max_policy_steps: loaded.max_policy_steps,
             active: None,
@@ -2535,6 +2793,7 @@ impl ShadowScorerServiceV1 {
                 sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
             },
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
+            search: None,
             max_physical_decisions: 128,
             max_policy_steps: 16_384,
             active: None,
@@ -2850,6 +3109,166 @@ impl ShadowScorerServiceV1 {
         Err("value_search_redeterminization_unavailable_on_this_lineage")
     }
 
+    /// The `ModelGuidedSearch` selector.
+    ///
+    /// Runs AFTER the policy forward and after the sampler has produced
+    /// `policy_sample`, and returns an index that OVERRIDES it. That
+    /// ordering is deliberate and load-bearing: `handle_step_v1` rejects
+    /// any `selected_index` that is not `scored.selected_action_index`, so
+    /// as long as the override lands in that same field before the
+    /// response is emitted, the existing protocol invariant -- Java can
+    /// never override the Rust-side choice -- holds for the wrapper
+    /// exactly as it does for a raw policy sample. No change to
+    /// `handle_step_v1` is needed or made.
+    ///
+    /// PURITY. The returned index is a function of (checkpoint weights,
+    /// game seed and episode, decision identity, authority) and nothing
+    /// else. The search's own seeds come from
+    /// `derive_simulation_seed_v1(authority digest, decision, simulation
+    /// ordinal, player)`; the tree is rebuilt from scratch per decision;
+    /// the two stability halves run on domain-separated digests and their
+    /// results are recorded, never read. Wall time is measured after the
+    /// fact and only ever written to a diagnostics field.
+    ///
+    /// MXCSR. This is layer three of the S0 requirement: the thread about
+    /// to run a search normalizes its own control register (a worker
+    /// thread that has never searched normalizes here), and then verifies
+    /// fail-closed BEFORE the first search forward. A mismatch is a hard
+    /// error returned through the protocol, never a fallback to the policy
+    /// sample: silently playing an unwrapped action while the panel
+    /// believes it measured the wrapper would be the worst possible
+    /// failure mode.
+    fn model_guided_search_selection_v1(
+        model: &dyn ShadowModelScorerV1,
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        policy_sample: u32,
+        search: &mut ModelGuidedSearchRuntimeV1,
+    ) -> Result<u32, &'static str> {
+        crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
+            .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
+        crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+            .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
+
+        let capable = model
+            .search_capable_v1()
+            .ok_or("model_guided_search_model_not_search_capable")?;
+        let net = capable.search_native_net_v1();
+        // Field-disjoint borrows: the searcher reads `bound` while the
+        // diagnostics writer needs `&mut diagnostics`. Destructuring is
+        // what lets both live at once without cloning the authority
+        // record on every decision.
+        let ModelGuidedSearchRuntimeV1 {
+            value_domain,
+            diagnostics,
+            bound,
+            ..
+        } = search;
+        let value_domain = *value_domain;
+        let bound = bound
+            .as_ref()
+            .ok_or("model_guided_search_authority_unbound")?;
+        let core = &bound.core;
+        let evaluator = ModelGuidedSearchRealForwardValueEvaluatorV1::new(net, value_domain);
+
+        let started = Instant::now();
+        let full = core
+            .select_action_v1(session, expected, &evaluator, &value_domain)
+            .map_err(|error| {
+                eprintln!("MODEL_GUIDED_SEARCH_FAILED full_budget error={error}");
+                "model_guided_search_failed"
+            })?;
+        let full_micros = elapsed_micros_v1(started);
+
+        // Diagnostic stability halves. Their results are recorded and
+        // never consulted; the chosen action above is already fixed.
+        let half_a_started = Instant::now();
+        let half_a = core
+            .select_action_seed_half_v1(
+                session,
+                expected,
+                &evaluator,
+                &value_domain,
+                ModelGuidedSearchSeedHalfV1::A,
+            )
+            .map_err(|error| {
+                eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_a error={error}");
+                "model_guided_search_stability_half_failed"
+            })?;
+        let half_a_micros = elapsed_micros_v1(half_a_started);
+        let half_b_started = Instant::now();
+        let half_b = core
+            .select_action_seed_half_v1(
+                session,
+                expected,
+                &evaluator,
+                &value_domain,
+                ModelGuidedSearchSeedHalfV1::B,
+            )
+            .map_err(|error| {
+                eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_b error={error}");
+                "model_guided_search_stability_half_failed"
+            })?;
+        let half_b_micros = elapsed_micros_v1(half_b_started);
+        let total_micros = elapsed_micros_v1(started);
+
+        let record = SearchDecisionRecordV3 {
+            // Chain and contract fields are writer-assigned; see
+            // `write_decision_v3`.
+            contract: String::new(),
+            schema_version: 0,
+            record_kind: String::new(),
+            record_ordinal: 0,
+            previous_record_sha256: String::new(),
+            decision_ordinal: 0,
+            episode_id: expected.episode_id,
+            step: expected.step,
+            physical_decision_id: expected.physical_decision_id,
+            substep_index: expected.substep_index,
+            acting_player: expected.acting_player,
+            legal_action_count: expected.legal_action_count,
+            search_authority_digest_sha256: bound.authority_digest_sha256.clone(),
+            requested_transitions: core.authority().transition_budget,
+            actual_transitions: full.transitions_used,
+            simulations: full.simulations,
+            tree_node_count: full.tree_node_count,
+            leaf_census: full.leaf_census,
+            root_statistics_digest_sha256: lower_hex_sha256_v3(root_statistics_digest_v3(&full)),
+            chosen_action_index: full.selected_index,
+            visit_margin: visit_margin_v3(&full),
+            policy_sample_index: policy_sample,
+            search_overrode_policy_sample: full.selected_index != policy_sample,
+            stability: StabilityV3 {
+                half_a_selected_index: half_a.selected_index,
+                half_b_selected_index: half_b.selected_index,
+                half_transition_budget: half_a.transitions_used.max(half_b.transitions_used),
+                halves_agree: half_a.selected_index == half_b.selected_index,
+                halves_agree_with_full_budget: half_a.selected_index == full.selected_index
+                    && half_b.selected_index == full.selected_index,
+            },
+            // Classified from the FULL-BUDGET search's own elapsed time,
+            // not from `total_micros`: the pre-registered SLO is a
+            // per-decision ceiling on the PRODUCT's decision cost, and the
+            // two stability halves are S2 diagnostics that a formal panel
+            // need not run at all. Charging their time against the
+            // product's ceiling would report a p99 that no shipped
+            // configuration ever pays. `total_micros` is recorded
+            // alongside so the diagnostic overhead stays visible.
+            // Computed after the decision is already fixed; never acted on.
+            ceiling_status: CeilingStatusV3::classify_v3(full_micros as f64 / 1_000_000.0),
+            wall_time: WallTimeV3 {
+                full_search_micros: full_micros,
+                stability_half_a_micros: half_a_micros,
+                stability_half_b_micros: half_b_micros,
+                total_micros,
+            },
+        };
+        diagnostics
+            .write_decision_v3(record)
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")?;
+        Ok(full.selected_index)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn score_session_v1(
         model: &dyn ShadowModelScorerV1,
@@ -2857,6 +3276,7 @@ impl ShadowScorerServiceV1 {
         population_opponent: Option<&LadderOpponentEngineV1>,
         population_opponent_member: Option<OpponentLadderPoolMemberV2>,
         candidate_selector: ShadowCandidateSelectorV1,
+        search: Option<&mut ModelGuidedSearchRuntimeV1>,
         max_physical_decisions: u64,
         max_policy_steps: u64,
         base_seed: u64,
@@ -2978,12 +3398,22 @@ impl ShadowScorerServiceV1 {
                     | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
                     | ShadowCandidateSelectorV1::Depth8BoundedValueTeacherShadow
                     | ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap
+                    | ShadowCandidateSelectorV1::ModelGuidedSearch
             )
         {
             let fallback = scored
                 .selected_action_index
                 .ok_or("value_search_fallback_selection_missing")?;
             let selected = match candidate_selector {
+                ShadowCandidateSelectorV1::ModelGuidedSearch => {
+                    Some(Self::model_guided_search_selection_v1(
+                        model,
+                        session,
+                        expected,
+                        fallback,
+                        search.ok_or("model_guided_search_runtime_missing")?,
+                    )?)
+                }
                 ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap => {
                     Self::one_step_history_value_selection_v1(
                         model,
@@ -3209,6 +3639,29 @@ impl ShadowScorerServiceV1 {
             },
             None => None,
         };
+        // The search-diagnostics episode opens BEFORE the first decision is
+        // scored, because that first call may already search: an episode
+        // whose header had not been published yet would produce a decision
+        // record with nothing to chain to. Publishing the header here also
+        // means an episode that terminates before any searched decision
+        // still leaves an auditable file naming the wrapper that was
+        // configured for it.
+        let checkpoint_identity = self.identity.clone();
+        if let Some(search) = self.search.as_mut() {
+            if let Err(code) = search.begin_episode_v1(
+                &session,
+                &checkpoint_identity,
+                episode_id,
+                base_seed,
+                candidate_seat,
+            ) {
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(code, "model-guided search episode could not be opened"),
+                );
+            }
+        }
         let mut schedule = NativeLaneScheduleStateV1::new(
             base_seed,
             episode_id,
@@ -3222,6 +3675,7 @@ impl ShadowScorerServiceV1 {
             self.population_opponent.as_ref(),
             population_opponent_member,
             self.candidate_selector,
+            self.search.as_mut(),
             self.max_physical_decisions,
             self.max_policy_steps,
             base_seed,
@@ -3527,6 +3981,7 @@ impl ShadowScorerServiceV1 {
                 self.population_opponent.as_ref(),
                 active.population_opponent_member,
                 self.candidate_selector,
+                self.search.as_mut(),
                 self.max_physical_decisions,
                 self.max_policy_steps,
                 active.base_seed,
@@ -3772,6 +4227,57 @@ pub fn run_checkpoint_shadow_stdio_with_depth8_teacher_exports_jsonl_v1(
     )
 }
 
+/// The test-time-search wrapper as a first-class scorer decision mode
+/// (`LEAD_RULING_TEST_TIME_SEARCH_V1.md` consequence 1: "The CP7 scorer
+/// gains a search-wrapped decision mode as a first-class,
+/// contract-validated path"). Every parameter is supplied by an explicit
+/// CLI flag on the scorer binary; nothing here reads an environment
+/// variable, and there is no default that could turn the wrapper on by
+/// accident.
+///
+/// `seed_block_id` indexes
+/// `MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`, so an unregistered
+/// seed cannot reach an authority record through a command line at all.
+/// `diagnostics_directory` must already exist.
+///
+/// Deliberately incompatible with the two trajectory exports, for the same
+/// reason `run_checkpoint_shadow_stdio_with_selector_v1` documents for the
+/// value-search selectors: those export schemas record
+/// `selected_action_index` as a direct checkpoint-policy sample, and a
+/// wrapped decision is not one. Emitting search-chosen actions into a
+/// schema that claims they were policy samples would silently corrupt
+/// every downstream consumer of those files, so it fails closed at
+/// startup.
+pub fn run_checkpoint_shadow_stdio_with_model_guided_search_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    tier: KernelNativeSearchTierV1,
+    seed_block_id: usize,
+    diagnostics_directory: PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    normalize_scorer_process_mxcsr_v1()?;
+    let search = ModelGuidedSearchRuntimeV1::new_v1(tier, seed_block_id, diagnostics_directory)?;
+    let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    if service.model.search_capable_v1().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "model-guided search requires a checkpoint whose model exposes the typed native net",
+        )
+        .into());
+    }
+    eprintln!(
+        "MODEL_GUIDED_SEARCH tier={} transition_budget={} seed_block_id={} action_seed={} diagnostics_dir={}",
+        search_tier_tag_v1(search.tier),
+        search.tier.transition_budget(),
+        search.seed_block_id,
+        search.action_seed,
+        search.diagnostics.directory_v3().display(),
+    );
+    service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
+    service.search = Some(search);
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
+}
+
 /// Opt-in XMage CP7 teacher export. The destination is created exclusively;
 /// callers must promote only the file from a fully successful anchor run.
 pub fn run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1(
@@ -3883,6 +4389,17 @@ fn run_checkpoint_shadow_stdio_configured_v1(
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
     normalize_scorer_process_mxcsr_v1()?;
+    if selector == ShadowCandidateSelectorV1::ModelGuidedSearch {
+        // The wrapper needs a tier, a seed block, and a diagnostics
+        // directory that this entry point has no way to supply, and it is
+        // incompatible with both trajectory exports; see
+        // `run_checkpoint_shadow_stdio_with_model_guided_search_v1`.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the model-guided search selector has its own entry point and cannot be configured here",
+        )
+        .into());
+    }
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     if selector == ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap {
         return Err(io::Error::new(
@@ -3974,6 +4491,7 @@ fn run_jsonl_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_guided_search_outcome_v3::verify_episode_chain_v3;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -4162,6 +4680,464 @@ mod tests {
 
     fn service_v1() -> ShadowScorerServiceV1 {
         ShadowScorerServiceV1::with_test_model_v1(Box::new(DeterministicTestModelV1))
+    }
+
+    /// Pinned `PolicySample` outputs for episode 2 / base seed 71,501 with
+    /// `DeterministicTestModelV1`, recorded before the search-capable seam
+    /// was added. See
+    /// `policy_sample_choice_is_unchanged_for_a_fixed_seed_v1`.
+    const POLICY_SAMPLE_REGRESSION_ACTION_SEED_HEX_V1: &str = "3b80443fc0e5af4d";
+    const POLICY_SAMPLE_REGRESSION_SELECTED_INDEX_V1: u64 = 0;
+    const POLICY_SAMPLE_REGRESSION_MODEL_INPUT_SHA256_V1: &str =
+        "fd13e231da01867dfa6ea0897d38baa05ba81bb761c7856374707a58160dddc6";
+    const POLICY_SAMPLE_REGRESSION_LEGAL_ACTION_COUNT_V1: u64 = 2;
+
+    // ------------------------------------------------------------------
+    // Test-time-search wrapper (LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md
+    // Section 5, S0)
+    // ------------------------------------------------------------------
+
+    /// A search-capable model over the runner-fixed native net: the same
+    /// in-memory net `model_guided_search_core_v1`'s own real-forward
+    /// tests use, with no checkpoint-manifest or Store dependency. Its
+    /// flat `score_v1` mirrors `FixedNativeStateShadowModelScorerV1`'s
+    /// exactly, so the policy-sample path this test model drives is the
+    /// production one.
+    struct SearchCapableTestModelV1 {
+        net: NativePolicyValueNetV1,
+    }
+
+    impl SearchCapableTestModelV1 {
+        fn new_v1() -> Self {
+            Self {
+                net: NativePolicyValueNetV1::runner_fixed_v1(
+                    NativePolicyValueModelConfigV1::contract_v1(),
+                )
+                .expect("runner-fixed model builds"),
+            }
+        }
+    }
+
+    impl ShadowSearchCapableModelV1 for SearchCapableTestModelV1 {
+        fn search_native_net_v1(&self) -> &NativePolicyValueNetV1 {
+            &self.net
+        }
+    }
+
+    impl ShadowModelScorerV1 for SearchCapableTestModelV1 {
+        fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+            Some(self)
+        }
+
+        fn score_v1(
+            &self,
+            decision: FlatScoringDecisionViewV2<'_>,
+            _history: &[NativeStructuredHistoryEntryV1],
+            _acting_player: u8,
+            _substep_count: u32,
+        ) -> Result<ShadowModelOutputV1, ()> {
+            let mut tensorizer = NativeFlatTensorizerV2::new();
+            let mut tensor = NativeFlatDecisionTensorV2::default();
+            tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+            let encoded = crate::native_checkpoint_inference_v1::encoded_decision_view_v1(&tensor);
+            let output = self.net.forward_v1(encoded).map_err(|_| ())?;
+            if output.logits.len() != decision.actions().len() {
+                return Err(());
+            }
+            Ok(ShadowModelOutputV1 {
+                logits: output.logits,
+                value: output.value,
+                structured_parent_logits: None,
+                structured_parent_value: None,
+            })
+        }
+    }
+
+    fn search_scratch_directory_v1(tag: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "mtg-kernel-scorer-search-{}-{tag}",
+            std::process::id()
+        ));
+        fs::remove_dir_all(&directory).ok();
+        fs::create_dir_all(&directory).expect("scratch directory");
+        directory
+    }
+
+    fn search_runtime_v1(directory: PathBuf) -> ModelGuidedSearchRuntimeV1 {
+        ModelGuidedSearchRuntimeV1::new_v1(KernelNativeSearchTierV1::T512, 0, directory)
+            .expect("the T512 tier and seed block zero are registered")
+    }
+
+    fn search_service_v1(directory: PathBuf) -> ShadowScorerServiceV1 {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(SearchCapableTestModelV1::new_v1()));
+        service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
+        service.search = Some(search_runtime_v1(directory));
+        service
+    }
+
+    /// Neutralizes wall time in a published episode file so two runs can
+    /// be compared for the bit identity the sketch requires "apart from
+    /// wall-time fields". The whole timing surface lives in one
+    /// `wall_time` object precisely so this is one substitution and not a
+    /// field-by-field allowlist that could silently miss a new field.
+    ///
+    /// The chain link is RE-DERIVED over the neutralized lines rather than
+    /// carried through. `previous_record_sha256` covers the previous
+    /// record's published bytes, wall time included, so two runs of the
+    /// same decision legitimately publish different links; comparing them
+    /// would be asserting that timing is reproducible, which it is not and
+    /// must not need to be. Re-deriving keeps the comparison sensitive to
+    /// record ORDER and content (a reordering still breaks it) while
+    /// dropping only the timing dependence. The published chain is
+    /// separately verified as-is by `verify_episode_chain_v3`.
+    fn strip_wall_time_v1(bytes: &[u8]) -> Vec<String> {
+        let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
+        let mut previous =
+            crate::model_guided_search_outcome_v3::MODEL_GUIDED_SEARCH_OUTCOME_CHAIN_GENESIS_V3
+                .to_owned();
+        let mut normalized_lines = Vec::new();
+        for line in text.lines() {
+            let mut value: serde_json::Value = serde_json::from_str(line).expect("record is JSON");
+            let object = value.as_object_mut().expect("record is an object");
+            if object.contains_key("wall_time") {
+                object.insert(
+                    "wall_time".to_owned(),
+                    serde_json::to_value(WallTimeV3::default()).unwrap(),
+                );
+            }
+            object.insert(
+                "previous_record_sha256".to_owned(),
+                serde_json::Value::String(previous.clone()),
+            );
+            let normalized = serde_json::to_string(&value).unwrap();
+            previous = lower_hex_sha256_v3(
+                crate::model_guided_search_outcome_v3::record_chain_link_v3(&normalized),
+            );
+            normalized_lines.push(normalized);
+        }
+        normalized_lines
+    }
+
+    /// Drives one short wrapped episode through the production protocol
+    /// (reset, then `steps` accepted steps on the scorer's own chosen
+    /// index) and returns the published diagnostics bytes.
+    fn run_wrapped_episode_v1(directory: &Path, steps: usize) -> (Vec<u32>, Vec<u8>) {
+        let mut service = search_service_v1(directory.to_path_buf());
+        let mut chosen = Vec::new();
+        let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("mgs-reset")));
+        assert_eq!(
+            response["response_type"], "decision",
+            "wrapped reset must produce a decision: {response}"
+        );
+        for index in 0..steps {
+            let decision = &response["decision"];
+            let selected = decision["selected_action_index"]
+                .as_u64()
+                .expect("the wrapper always fixes a selected index")
+                as u32;
+            chosen.push(selected);
+            let episode_id = decision["episode_id"].as_u64().expect("episode id");
+            let step = decision["step"].as_u64().expect("step");
+            response = value_v1(&service.handle_line_v1(&format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"mgs-step-{index}\",\"episode_id\":{episode_id},\"expected_step\":{step},\"selected_index\":{selected}}}"
+            )));
+            if response["response_type"] != "decision" {
+                break;
+            }
+        }
+        let path = service
+            .search
+            .as_ref()
+            .expect("search runtime installed")
+            .diagnostics
+            .episode_path_v3(2, 71_501);
+        let bytes = fs::read(path).expect("episode diagnostics published");
+        (chosen, bytes)
+    }
+
+    /// DELIVERABLE 2's regression guard. The `PolicySample` path must be
+    /// byte-identical to what it was before the search-capable seam
+    /// existed: the seam is a defaulted trait method that `PolicySample`
+    /// never calls, so the sampled index, its seed, the model input
+    /// digest, and the logits for a fixed seed must all be exactly what
+    /// they were. Pinned by literal, not merely by self-consistency, so
+    /// this catches a change the two-runs-agree tests never would.
+    #[test]
+    fn policy_sample_choice_is_unchanged_for_a_fixed_seed_v1() {
+        let mut service = service_v1();
+        assert_eq!(
+            service.candidate_selector,
+            ShadowCandidateSelectorV1::PolicySample
+        );
+        assert!(service.search.is_none());
+        let reset = value_v1(&service.handle_line_v1(&reset_line_v1("policy-sample-regression")));
+        assert_eq!(reset["response_type"], "decision");
+        assert_eq!(reset["decision"]["candidate_controls_current_actor"], true);
+        assert_eq!(reset["decision"]["episode_id"], 2);
+        assert_eq!(reset["decision"]["step"], 0);
+        assert_eq!(
+            reset["decision"]["candidate_action_seed_u64_hex"],
+            POLICY_SAMPLE_REGRESSION_ACTION_SEED_HEX_V1
+        );
+        assert_eq!(
+            reset["decision"]["selected_action_index"],
+            POLICY_SAMPLE_REGRESSION_SELECTED_INDEX_V1
+        );
+        assert_eq!(
+            reset["decision"]["model_input_sha256"],
+            POLICY_SAMPLE_REGRESSION_MODEL_INPUT_SHA256_V1
+        );
+        assert_eq!(
+            reset["decision"]["legal_action_count"],
+            POLICY_SAMPLE_REGRESSION_LEGAL_ACTION_COUNT_V1
+        );
+    }
+
+    /// DELIVERABLE 6, first half: one end-to-end bit-identical replay
+    /// through the PRODUCTION selector. Same checkpoint fixture, same
+    /// seed, two runs; identical chosen actions and identical diagnostics
+    /// bytes apart from the wall-time fields.
+    #[test]
+    fn model_guided_search_replay_is_bit_identical_apart_from_wall_time_v1() {
+        let first_directory = search_scratch_directory_v1("replay-a");
+        let second_directory = search_scratch_directory_v1("replay-b");
+        let (first_chosen, first_bytes) = run_wrapped_episode_v1(&first_directory, 2);
+        let (second_chosen, second_bytes) = run_wrapped_episode_v1(&second_directory, 2);
+
+        assert!(
+            !first_chosen.is_empty(),
+            "the replay must exercise at least one wrapped decision"
+        );
+        assert_eq!(first_chosen, second_chosen, "chosen actions must replay");
+        assert_eq!(
+            verify_episode_chain_v3(&first_bytes),
+            verify_episode_chain_v3(&second_bytes)
+        );
+        assert!(verify_episode_chain_v3(&first_bytes).is_ok());
+        assert_eq!(
+            strip_wall_time_v1(&first_bytes),
+            strip_wall_time_v1(&second_bytes),
+            "diagnostics must be bit-identical apart from wall time"
+        );
+        // The diagnostics are NOT trivially equal: the wall-time fields
+        // really are present and really do carry a measurement, so the
+        // comparison above is a stripping, not a no-op on empty data.
+        let text = String::from_utf8(first_bytes).unwrap();
+        let decision: serde_json::Value =
+            serde_json::from_str(text.lines().nth(1).expect("a decision record")).unwrap();
+        assert_eq!(decision["record_kind"], "search_decision");
+        assert!(decision["wall_time"]["total_micros"].as_u64().is_some());
+        assert_eq!(decision["requested_transitions"], 512);
+        assert!(decision["actual_transitions"].as_u64().unwrap() >= 1);
+        assert!(decision["root_statistics_digest_sha256"]
+            .as_str()
+            .is_some_and(|value| value.len() == 64));
+        assert!(decision["stability"]["halves_agree"].is_boolean());
+        assert_eq!(decision["ceiling_status"].as_str().is_some(), true);
+        // Every simulation ends at exactly one leaf class, so the census
+        // partitions the simulation count exactly.
+        let census = &decision["leaf_census"];
+        let total = census["natural_terminal_leaves"].as_u64().unwrap()
+            + census["truncated_terminal_leaves"].as_u64().unwrap()
+            + census["newly_expanded_leaves"].as_u64().unwrap()
+            + census["depth_cap_leaves"].as_u64().unwrap();
+        assert_eq!(total, decision["simulations"].as_u64().unwrap());
+        fs::remove_dir_all(&first_directory).ok();
+        fs::remove_dir_all(&second_directory).ok();
+    }
+
+    /// DELIVERABLE 6, second half: the metamorphic NON-LEAKAGE test.
+    /// Changing the authoritative hidden cards (the opponent's hand and
+    /// library arrangement) while holding public information and the
+    /// simulation seed fixed must leave the search result bit-identical.
+    ///
+    /// If the searcher ever read the authoritative hidden state instead of
+    /// its own per-simulation redeterminization, this is the test that
+    /// fails: the two sessions below are indistinguishable to every public
+    /// observer and differ only in which specific card sits in an unknown
+    /// opponent hand slot versus an unknown library slot.
+    ///
+    /// Run through the production selector
+    /// (`ShadowScorerServiceV1::model_guided_search_selection_v1`), not
+    /// through `ModelGuidedSearchCoreV1` directly, so the encode bridge,
+    /// the real forward, the MXCSR gate, and the diagnostics record are
+    /// all inside the invariance claim.
+    #[test]
+    fn model_guided_search_is_invariant_to_authoritative_hidden_cards_v1() {
+        let a = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            50_301,
+            81_101,
+            256,
+            32_768,
+            ["Rally".to_owned(), "Burn".to_owned()],
+        )
+        .expect("session resets");
+        let mut b = a.clone();
+        let FastActorResponseV1::Decision(decision_a) = a.current_response() else {
+            panic!("reset terminated")
+        };
+        let actor = crate::kernel_native_search_opponent_v1::player_id_v1(decision_a.acting_player);
+        let opponent = actor.opponent();
+        let unknown_hand = a.kernel_search_state_v1().players[opponent.index()].hand[0];
+        let unknown_library = a.kernel_search_state_v1().players[opponent.index()].library[0];
+        let hand_def = a
+            .kernel_search_state_v1()
+            .objects
+            .get(unknown_hand)
+            .card_def;
+        let library_def = a
+            .kernel_search_state_v1()
+            .objects
+            .get(unknown_library)
+            .card_def;
+        assert_ne!(
+            hand_def, library_def,
+            "the non-leakage witness must swap two DISTINCT hidden definitions"
+        );
+        {
+            let state = b.kernel_search_state_mut_for_test_v1();
+            for (object, definition) in [(unknown_hand, library_def), (unknown_library, hand_def)] {
+                state.objects.get_mut(object).card_def = definition;
+                state.objects.get_mut(object).name = crate::card_def::CARD_DEFS
+                    [definition as usize]
+                    .name
+                    .to_string();
+                state.objects.get_mut(object).v4 =
+                    crate::state::ObjectStateV4::from_card_def(definition);
+            }
+        }
+        let FastActorResponseV1::Decision(decision_b) = b.current_response() else {
+            panic!("reset terminated")
+        };
+        assert_eq!(
+            decision_a, decision_b,
+            "the two sessions must be publicly indistinguishable"
+        );
+
+        let model = SearchCapableTestModelV1::new_v1();
+        let identity = search_checkpoint_identity_v1();
+        let mut results = Vec::new();
+        let mut published = Vec::new();
+        for (tag, session) in [("leak-a", &a), ("leak-b", &b)] {
+            let directory = search_scratch_directory_v1(tag);
+            let mut runtime = search_runtime_v1(directory.clone());
+            runtime
+                .begin_episode_v1(session, &identity, 50_301, 81_101, PlayerSeatV1::P0)
+                .expect("search episode opens");
+            let selected = ShadowScorerServiceV1::model_guided_search_selection_v1(
+                &model,
+                session,
+                decision_a,
+                0,
+                &mut runtime,
+            )
+            .expect("the wrapped decision completes");
+            results.push(selected);
+            published.push(strip_wall_time_v1(
+                &fs::read(runtime.diagnostics.episode_path_v3(50_301, 81_101)).unwrap(),
+            ));
+            fs::remove_dir_all(&directory).ok();
+        }
+        assert_eq!(
+            results[0], results[1],
+            "the chosen action must not depend on authoritative hidden cards"
+        );
+        assert_eq!(
+            published[0], published[1],
+            "the whole search record, not just the verdict, must be invariant"
+        );
+    }
+
+    fn search_checkpoint_identity_v1() -> ShadowCheckpointIdentityV1 {
+        ShadowCheckpointIdentityV1 {
+            authority_kind: "test-only".to_owned(),
+            source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            source_generation: SOURCE_GENERATION_V1,
+            source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+            source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            loaded_generation: SOURCE_GENERATION_V1,
+            loaded_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            loaded_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            loaded_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            model_parameter_sha256: SOURCE_MODEL_PARAMETER_SHA256_V1.to_owned(),
+            environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+            sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+            sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+        }
+    }
+
+    /// The wrapper refuses a model that cannot expose the typed native
+    /// net, rather than falling back to the policy sample. A silent
+    /// fallback would let a panel believe it measured the wrapper while it
+    /// measured the raw policy.
+    #[test]
+    fn model_guided_search_fails_closed_without_a_search_capable_model_v1() {
+        let directory = search_scratch_directory_v1("not-capable");
+        let mut runtime = search_runtime_v1(directory.clone());
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            50_302,
+            81_103,
+            256,
+            32_768,
+            ["Rally".to_owned(), "Burn".to_owned()],
+        )
+        .expect("session resets");
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        runtime
+            .begin_episode_v1(
+                &session,
+                &search_checkpoint_identity_v1(),
+                50_302,
+                81_103,
+                PlayerSeatV1::P0,
+            )
+            .expect("search episode opens");
+        assert!(DeterministicTestModelV1.search_capable_v1().is_none());
+        assert_eq!(
+            ShadowScorerServiceV1::model_guided_search_selection_v1(
+                &DeterministicTestModelV1,
+                &session,
+                decision,
+                0,
+                &mut runtime,
+            ),
+            Err("model_guided_search_model_not_search_capable")
+        );
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// The wrapper is not reachable through the general selector entry
+    /// point, and an unregistered seed block is a startup error rather
+    /// than a silently substituted default.
+    #[test]
+    fn model_guided_search_configuration_fails_closed_v1() {
+        assert!(run_checkpoint_shadow_stdio_with_selector_v1(
+            ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis {
+                root: PathBuf::from("unused"),
+            },
+            ShadowCandidateSelectorV1::ModelGuidedSearch,
+        )
+        .is_err());
+        let directory = search_scratch_directory_v1("bad-seed-block");
+        assert!(ModelGuidedSearchRuntimeV1::new_v1(
+            KernelNativeSearchTierV1::T512,
+            usize::MAX,
+            directory.clone(),
+        )
+        .is_err());
+        assert!(ModelGuidedSearchRuntimeV1::new_v1(
+            KernelNativeSearchTierV1::T512,
+            0,
+            directory.join("missing-subdirectory"),
+        )
+        .is_err());
+        fs::remove_dir_all(&directory).ok();
     }
 
     #[test]
