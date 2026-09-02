@@ -804,15 +804,15 @@ struct OpenEpisodeV4 {
     /// [`ModelGuidedSearchOutcomeWriterV4::note_request_completed_v4`],
     /// which the serving loop calls once the response has been flushed.
     last_response_micros: u64,
-    /// The instant the most recent publication COMPLETED, and the anchor
-    /// the response tail is measured from.
+    /// The writer-clock reading at which the most recent publication
+    /// COMPLETED, and the anchor the response tail is measured from.
     ///
     /// `Some` exactly while a response boundary is still owed for that
     /// publication, so a request that published nothing (a `score_current`,
-    /// a rejected request) and a second boundary for the same publish are
-    /// both no-ops rather than overwriting a measured tail with an
+    /// a rejected request) and a second boundary for the same publication
+    /// are both no-ops rather than overwriting a measured tail with an
     /// interval that belongs to no record.
-    publication_completed_at: Option<Instant>,
+    publication_completed_at_micros: Option<u64>,
 }
 
 /// Per-episode JSONL diagnostics writer: one file per episode in the
@@ -820,6 +820,21 @@ struct OpenEpisodeV4 {
 pub struct ModelGuidedSearchOutcomeWriterV4 {
     directory: PathBuf,
     open: Option<OpenEpisodeV4>,
+    /// Origin of this writer's monotonic clock. Every phase boundary is a
+    /// microsecond offset from here rather than a bare `Instant`, which is
+    /// what lets a test substitute a clock it controls.
+    opened_at: Instant,
+    /// Test-only MANUAL clock, in microseconds.
+    ///
+    /// When installed, every instant the writer reads comes from here and
+    /// only an explicit advance moves it, so a phase boundary is exact
+    /// arithmetic. Sleeping guarantees a lower bound and nothing else, so
+    /// any UPPER bound asserted over a real clock ("the tail stays under
+    /// 25 ms") is a flake waiting for a descheduled thread. With this
+    /// installed, "the tail is 220 ms" and "the tail is zero" are
+    /// statements about the writer, not about the scheduler.
+    #[cfg(test)]
+    manual_clock_micros_v4: Option<u64>,
     /// Test-only fault injection: an artificial delay inside the measured
     /// publication window, so the publication-inclusive ceiling
     /// classification can be exercised without a genuinely slow disk.
@@ -849,11 +864,64 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         Ok(Self {
             directory,
             open: None,
+            opened_at: Instant::now(),
+            #[cfg(test)]
+            manual_clock_micros_v4: None,
             #[cfg(test)]
             publish_delay_for_test_v4: None,
             #[cfg(test)]
             prepare_delay_for_test_v4: None,
         })
+    }
+
+    /// This writer's monotonic clock, in microseconds since it was
+    /// opened. Every phase boundary reads it, so substituting a manual
+    /// clock substitutes all of them at once and none can drift apart.
+    fn now_micros_v4(&self) -> u64 {
+        #[cfg(test)]
+        if let Some(micros) = self.manual_clock_micros_v4 {
+            return micros;
+        }
+        u64::try_from(self.opened_at.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// Test-only: replaces the system clock with one the test moves by
+    /// hand, starting at zero. See `manual_clock_micros_v4`.
+    #[cfg(test)]
+    fn install_manual_clock_for_test_v4(&mut self) {
+        self.manual_clock_micros_v4 = Some(0);
+    }
+
+    /// Test-only: moves the manual clock forward. Panics if no manual
+    /// clock is installed, because silently measuring the system clock
+    /// instead is exactly the ambiguity this exists to remove.
+    #[cfg(test)]
+    fn advance_manual_clock_for_test_v4(&mut self, micros: u64) {
+        let clock = self
+            .manual_clock_micros_v4
+            .as_mut()
+            .expect("a manual clock must be installed before it can be advanced");
+        *clock = clock.saturating_add(micros);
+    }
+
+    /// Test-only: consumes an injected phase delay.
+    ///
+    /// With a manual clock installed this ADVANCES it, which costs no real
+    /// time and makes the resulting phase exact. Without one it sleeps,
+    /// which is what an end-to-end test driving the real serving loop
+    /// needs. Same knob, so a test picks its clock and the injection
+    /// follows.
+    #[cfg(test)]
+    fn apply_test_phase_delay_v4(&mut self, delay: Option<std::time::Duration>) {
+        let Some(delay) = delay else {
+            return;
+        };
+        let micros = u64::try_from(delay.as_micros()).unwrap_or(u64::MAX);
+        if self.manual_clock_micros_v4.is_some() {
+            self.advance_manual_clock_for_test_v4(micros);
+        } else {
+            std::thread::sleep(delay);
+        }
     }
 
     /// Test-only: injects an artificial delay INSIDE the measured
@@ -935,7 +1003,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         };
         // The publish clock starts BEFORE the serialization, because
         // serializing is part of publishing; see `append_and_publish_v4`.
-        let publish_started = Instant::now();
+        let publish_started_micros = self.now_micros_v4();
         let line = serde_json::to_string(&header).map_err(io::Error::other)?;
         self.open = Some(OpenEpisodeV4 {
             episode_id,
@@ -946,9 +1014,9 @@ impl ModelGuidedSearchOutcomeWriterV4 {
             next_decision_ordinal: 0,
             last_publish_micros: 0,
             last_response_micros: 0,
-            publication_completed_at: None,
+            publication_completed_at_micros: None,
         });
-        let published = self.append_and_publish_v4(line, false, publish_started);
+        let published = self.append_and_publish_v4(line, false, publish_started_micros);
         if published.is_err() {
             // The header never reached disk, so there is no episode to
             // close and no file for a footer to belong to. Dropping the
@@ -980,7 +1048,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         // episode. Starting the clock at the durable move left all of it
         // outside every timer, and it then reappeared in whichever phase
         // was computed as a residual.
-        let publish_started = Instant::now();
+        let publish_started_micros = self.now_micros_v4();
         let (ordinal, decision_ordinal, previous, last_publish_micros, last_response_micros) = {
             let episode = self
                 .open
@@ -1008,7 +1076,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         record.wall_time.previous_record_publish_micros = last_publish_micros;
         record.wall_time.previous_record_response_micros = last_response_micros;
         let line = serde_json::to_string(&record).map_err(io::Error::other)?;
-        self.append_and_publish_v4(line, true, publish_started)
+        self.append_and_publish_v4(line, true, publish_started_micros)
     }
 
     /// Closes the OUTER request boundary: the response line for the
@@ -1035,14 +1103,14 @@ impl ModelGuidedSearchOutcomeWriterV4 {
     /// the same publication: attributing an unrelated interval to an
     /// already measured record would be worse than measuring nothing.
     pub fn note_request_completed_v4(&mut self) {
+        let now_micros = self.now_micros_v4();
         let Some(episode) = self.open.as_mut() else {
             return;
         };
-        let Some(publication_completed_at) = episode.publication_completed_at.take() else {
+        let Some(completed_at_micros) = episode.publication_completed_at_micros.take() else {
             return;
         };
-        episode.last_response_micros =
-            u64::try_from(publication_completed_at.elapsed().as_micros()).unwrap_or(u64::MAX);
+        episode.last_response_micros = now_micros.saturating_sub(completed_at_micros);
     }
 
     /// CLOSES the open episode with a footer, then forgets it.
@@ -1060,7 +1128,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
     pub fn close_episode_v4(&mut self, close_reason: EpisodeCloseReasonV4) -> io::Result<()> {
         // As in `write_decision_v4`: publishing the footer starts here,
         // and the whole-episode digest it commits to is part of that cost.
-        let publish_started = Instant::now();
+        let publish_started_micros = self.now_micros_v4();
         let footer = {
             let episode = self
                 .open
@@ -1088,7 +1156,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
             }
         };
         let line = serde_json::to_string(&footer).map_err(io::Error::other)?;
-        self.append_and_publish_v4(line, false, publish_started)?;
+        self.append_and_publish_v4(line, false, publish_started_micros)?;
         self.open = None;
         Ok(())
     }
@@ -1125,7 +1193,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         &mut self,
         line: String,
         is_decision: bool,
-        publish_started: Instant,
+        publish_started_micros: u64,
     ) -> io::Result<()> {
         let episode = self
             .open
@@ -1146,9 +1214,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         // The rebuild above is the phase that grows with the episode, and
         // it sits INSIDE the measured publication window on purpose.
         #[cfg(test)]
-        if let Some(delay) = self.prepare_delay_for_test_v4 {
-            std::thread::sleep(delay);
-        }
+        self.apply_test_phase_delay_v4(self.prepare_delay_for_test_v4);
         // The publication is SYNCHRONOUS: it rewrites, syncs, and
         // reverifies the episode file before the caller can respond to its
         // client, so its cost is part of the protocol latency. Measured
@@ -1157,16 +1223,9 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         // `WallTimeV4`.
         publish_atomically_v4(&path, &bytes)?;
         #[cfg(test)]
-        if let Some(delay) = self.publish_delay_for_test_v4 {
-            std::thread::sleep(delay);
-        }
-        let publication_completed_at = Instant::now();
-        let publish_micros = u64::try_from(
-            publication_completed_at
-                .duration_since(publish_started)
-                .as_micros(),
-        )
-        .unwrap_or(u64::MAX);
+        self.apply_test_phase_delay_v4(self.publish_delay_for_test_v4);
+        let publication_completed_at_micros = self.now_micros_v4();
+        let publish_micros = publication_completed_at_micros.saturating_sub(publish_started_micros);
         // Commit. Nothing above this line mutated the writer.
         let episode = self
             .open
@@ -1180,7 +1239,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         // reads as zero until the response boundary measures it from the
         // instant recorded here.
         episode.last_response_micros = 0;
-        episode.publication_completed_at = Some(publication_completed_at);
+        episode.publication_completed_at_micros = Some(publication_completed_at_micros);
         if is_decision {
             episode.next_decision_ordinal += 1;
         }
@@ -1863,6 +1922,10 @@ mod tests {
         let directory = scratch_directory_v4(16);
         let mut writer = ModelGuidedSearchOutcomeWriterV4::open_directory_v4(directory.clone())
             .expect("directory opens");
+        // A CONTROLLED CLOCK, so every phase below is exact arithmetic
+        // rather than a race with the scheduler.
+        writer.install_manual_clock_for_test_v4();
+        writer.set_publish_delay_for_test_v4(std::time::Duration::from_micros(40_000));
         writer
             .begin_episode_v4(14, 707, PlayerSeatV1::P0, wrapper_identity_v4())
             .expect("header publishes");
@@ -1877,16 +1940,18 @@ mod tests {
         writer
             .write_decision_v4(decision_record_v4(14, near_slo))
             .expect("decision publishes");
-        // A slow response path: 220 ms of real elapsed time between the
-        // record reaching disk and the client's response going out. That
-        // is where a slow export or a slow stdout sits, and the tail is
-        // measured across it rather than inferred.
-        std::thread::sleep(std::time::Duration::from_millis(220));
+        // A slow response path: 220 ms between the record reaching disk
+        // and the client's response going out. That is where a slow export
+        // or a slow stdout sits, and the tail is measured across it rather
+        // than inferred.
+        writer.advance_manual_clock_for_test_v4(220_000);
         writer.note_request_completed_v4();
         // A second boundary for the same publish changes nothing: the tail
         // was already attributed, and a later request that published no
-        // record must not overwrite it.
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        // record must not overwrite it. On a controlled clock that is an
+        // exact statement, and the assertions below make it: the tail
+        // reads 220 ms, not 250 ms.
+        writer.advance_manual_clock_for_test_v4(30_000);
         writer.note_request_completed_v4();
         writer
             .close_episode_v4(EpisodeCloseReasonV4::EpisodeTerminal)
@@ -1897,17 +1962,23 @@ mod tests {
         assert_eq!(ceilings.len(), 1);
         let only = ceilings[0];
         assert_eq!(only.decision_micros, 3_900_000);
-        let tail = only.response_micros.expect("the footer reports the tail");
-        assert!(
-            (220_000..300_000).contains(&tail),
-            "the tail is the 220 ms that really elapsed after publication, not a residual: {tail}"
+        // EXACT, because the clock is controlled: the tail is the 220 ms
+        // that separated publication from the response, the publish is the
+        // 40 ms injected into it, and neither absorbed the other. A real
+        // clock could only support a lower bound here, since sleeping
+        // guarantees a minimum and a descheduled thread can blow through
+        // any upper bound.
+        assert_eq!(only.publish_micros, Some(40_000));
+        assert_eq!(
+            only.response_micros,
+            Some(220_000),
+            "the tail is the interval after publication, and the second \
+             boundary call did not extend it by its own 30 ms"
         );
-        // The second boundary call must not have extended it by its own
-        // 30 ms: one publication, one tail.
-        assert!(
-            only.protocol_micros.unwrap() >= 4_120_000,
-            "the three phases must reconstruct the client's whole wait: {:?}",
-            only.protocol_micros
+        assert_eq!(
+            only.protocol_micros,
+            Some(4_160_000),
+            "the three phases must reconstruct the client's whole wait"
         );
         // The record's own field, over the search alone, is within SLO.
         // The protocol verdict is not, and only the chain-level read can
@@ -1932,15 +2003,19 @@ mod tests {
     /// have concluded its output path was slow and growing when the output
     /// was instant.
     ///
-    /// A long episode with a fast response path is the shape that exposes
-    /// it. The injected pre-publication delay stands in for the rebuild at
-    /// a magnitude a timer can resolve; without the fix it lands in the
-    /// tail, with it in the publish.
+    /// A long episode with an instant response path is the shape that
+    /// exposes it, and the whole thing runs on a CONTROLLED CLOCK: the
+    /// injected pre-publication delay advances it by an exact amount and
+    /// nothing else does, so "the tail stays small" is not a bound on a
+    /// real interval (which a descheduled thread can always exceed) but
+    /// the exact claim that the tail is zero while the publish carries the
+    /// whole injected cost.
     #[test]
     fn pre_publication_work_is_charged_to_the_publish_and_never_to_the_tail_v4() {
         let directory = scratch_directory_v4(17);
         let mut writer = ModelGuidedSearchOutcomeWriterV4::open_directory_v4(directory.clone())
             .expect("directory opens");
+        writer.install_manual_clock_for_test_v4();
         writer
             .begin_episode_v4(15, 808, PlayerSeatV1::P0, wrapper_identity_v4())
             .expect("header publishes");
@@ -1949,8 +2024,9 @@ mod tests {
         // A DELIBERATELY LARGE episode, published one record at a time, so
         // the rebuild the publish phase absorbs really does grow: the last
         // record is rebuilt over forty times the bytes of the first. The
-        // response path is as fast as it can be, closing the boundary the
-        // instant the publish returns.
+        // response path is INSTANT: the boundary closes with no clock
+        // advance at all, which is the sharpest possible version of "the
+        // output was fast".
         const FAST_DECISIONS_V4: usize = 40;
         for _ in 0..FAST_DECISIONS_V4 {
             writer
@@ -1985,27 +2061,32 @@ mod tests {
         assert_eq!(ceilings.len(), FAST_DECISIONS_V4 + 3);
 
         // EVERY decision, early or late, cheap or expensive to publish,
-        // has a small tail: the response path was fast throughout, and
-        // nothing else may leak into the phase that reports it.
+        // has a ZERO tail: the response path never advanced the clock, so
+        // anything that showed up here would be another phase leaking in.
+        // This is the assertion the old residual computation could not
+        // survive, because the pre-publication work landed here.
         for ceiling in &ceilings {
-            let tail = ceiling
-                .response_micros
-                .expect("a closed episode reports every tail");
-            assert!(
-                tail < 25_000,
-                "decision {} tail {tail} us: a fast response path must stay small",
+            assert_eq!(
+                ceiling.response_micros,
+                Some(0),
+                "decision {}: an instant response path leaves an empty tail",
                 ceiling.decision_ordinal
             );
         }
 
-        // The pre-publication work is charged, and charged to the publish.
+        // The forty cheap decisions cost nothing to publish either, so the
+        // comparison below is against a real zero rather than noise.
+        for ceiling in &ceilings[..FAST_DECISIONS_V4] {
+            assert_eq!(ceiling.publish_micros, Some(0));
+        }
+
+        // The pre-publication work is charged, charged to the publish, and
+        // charged EXACTLY.
         for ceiling in &ceilings[FAST_DECISIONS_V4..] {
-            let publish = ceiling
-                .publish_micros
-                .expect("a closed episode reports every publish");
-            assert!(
-                publish >= SLOW_PREPARE_MICROS_V4,
-                "decision {} publish {publish} us must carry the pre-publication work",
+            assert_eq!(
+                ceiling.publish_micros,
+                Some(SLOW_PREPARE_MICROS_V4),
+                "decision {} must carry the pre-publication work in its publish",
                 ceiling.decision_ordinal
             );
         }

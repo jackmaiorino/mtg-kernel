@@ -5968,9 +5968,14 @@ mod tests {
                 publish >= 120_000,
                 "decision {index} publish {publish} us must carry the injected delay"
             );
+            // A statement about the DELAYED run alone. Comparing the two
+            // runs' totals would make the fast run an implicit upper
+            // bound, and a sleep only ever guarantees a minimum: a
+            // descheduled fast run could exceed the delayed one and fail
+            // a test that is really about where the delay landed.
             assert!(
-                ceiling.protocol_micros.unwrap() > fast[index].protocol_micros.unwrap(),
-                "decision {index} must be measured as slower in the delayed run"
+                ceiling.protocol_micros.unwrap() >= ceiling.decision_micros + 120_000,
+                "decision {index} must classify a total that contains the injected delay"
             );
         }
         fs::remove_dir_all(&fast_directory).ok();
@@ -6016,9 +6021,10 @@ mod tests {
                 response >= 150_000,
                 "decision {index} response tail {response} us must carry the injected flush delay"
             );
+            // Again a statement about the delayed run alone; see above.
             assert!(
-                ceiling.protocol_micros.unwrap() > prompt[index].protocol_micros.unwrap(),
-                "decision {index} must be measured as slower when only the response path is slow"
+                ceiling.protocol_micros.unwrap() >= ceiling.decision_micros + 150_000,
+                "decision {index} must classify a total that contains the slow response path"
             );
         }
         // And the fast loop run really did measure a tail rather than
