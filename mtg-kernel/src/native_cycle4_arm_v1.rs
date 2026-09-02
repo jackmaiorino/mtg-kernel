@@ -709,14 +709,105 @@ pub(crate) struct Cycle4BaselineChainAccessV1 {
 /// records and the promoted per-update sidecars, and a DIRECTORY rather than
 /// a name prefix so the chain's record listing (which skips non-files) can
 /// never mistake a staged record for a boundary record.
-const CYCLE4_STAGED_SIDECAR_DIRNAME_V1: &str = "baseline-staged";
+/// Reserved suffix marking a sidecar record that is staged but not yet
+/// promoted, appended to that record's own final name.
+///
+/// Staging lives IN the chain directory under this grammar rather than in a
+/// `baseline-staged/` subdirectory (review finding P1). A subdirectory
+/// created fresh on the first sidecar of a run is itself a new entry in the
+/// chain directory, and the durable move primitive syncs files inside a
+/// parent, never the parent's own entry one level up, so a crash after the
+/// Store commit could lose the whole staging directory and with it every
+/// unpromoted record. Naming staged records inside the directory that
+/// already holds the chain's own boundary records removes that level
+/// entirely: a staged record is exactly as durable as the chain records
+/// beside it, with no new directory entry to lose and no new unsafe
+/// directory-flush code. `list_record_generations_v4` tolerates the grammar
+/// (the suffix defeats its `.record.json` match, so the name is skipped, and
+/// the primitive's own dot-prefixed staging file defeats its `baseline-`
+/// match), which is the property that makes sharing the directory legal.
+const CYCLE4_STAGED_SIDECAR_SUFFIX_V1: &str = ".staged-cycle4-v1";
 
-/// Staging-file name the durable move primitive writes before moving a
-/// sidecar onto its final name, mirroring the chain module's own
-/// `stage_name_v4` shape: dot-prefixed, so the staged listing can skip the
-/// whole staging namespace without ever mistaking one for a record.
+/// Directory the PREVIOUS staging layout used. Read-only from here: a Store
+/// left mid-segment by that layout still has records and debris in it, so
+/// reconciliation drains it and then removes it, and nothing is ever written
+/// there again.
+const CYCLE4_LEGACY_STAGED_SIDECAR_DIRNAME_V1: &str = "baseline-staged";
+
+/// Legacy temporary-file infix `write_file_atomically_v1` used before staged
+/// records became durable publications: `<final name>.tmp-<pid>`.
+const CYCLE4_LEGACY_TEMPORARY_INFIX_V1: &str = ".tmp-";
+
+/// Staged name for one sidecar record's final name.
+fn cycle4_staged_sidecar_name_v1(final_name: &str) -> String {
+    format!("{final_name}{CYCLE4_STAGED_SIDECAR_SUFFIX_V1}")
+}
+
+/// Staging-file name the durable move primitive writes before moving a file
+/// onto `final_name`, mirroring the chain module's own `stage_name_v4`
+/// shape: dot-prefixed, so it can never be mistaken for a record.
 fn cycle4_sidecar_stage_name_v1(final_name: &str) -> String {
     format!(".{final_name}.stage-cycle4-v1")
+}
+
+/// What one directory entry is, as far as the staging path is concerned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Cycle4StagedEntryV1 {
+    /// A staged sidecar record for this update index.
+    Record(u64),
+    /// Removable debris from an interrupted publication. Exactly two
+    /// grammars qualify (review finding P2): the legacy
+    /// `<sidecar name>.tmp-<pid>` temporary the pre-durable writer left, and
+    /// the durable primitive's own `.<name>.stage-cycle4-v1` staging file.
+    /// Both are recognized ONLY when what they decorate is itself a sidecar
+    /// or staged-sidecar name, so debris belonging to another writer in the
+    /// shared chain directory is never swept up.
+    Debris,
+    /// Nothing to do with the staging grammar.
+    Foreign,
+}
+
+/// Classifies one entry name against the staging grammar.
+///
+/// `Foreign` is the honest answer for the chain directory, which several
+/// writers share; each namespace owner fails closed on its OWN grammar. A
+/// name that is in this grammar but malformed is the one case that must fail
+/// closed, and it is reported by returning `None`.
+fn classify_staged_entry_v1(name: &str) -> Option<Cycle4StagedEntryV1> {
+    // The primitive's staging file, decorating a staged record name.
+    if let Some(inner) = name
+        .strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix(".stage-cycle4-v1"))
+    {
+        return Some(if is_sidecar_or_staged_sidecar_name_v1(inner) {
+            Cycle4StagedEntryV1::Debris
+        } else {
+            Cycle4StagedEntryV1::Foreign
+        });
+    }
+    // The legacy temporary, decorating a sidecar or staged-sidecar name.
+    if let Some((base, pid)) = name.rsplit_once(CYCLE4_LEGACY_TEMPORARY_INFIX_V1) {
+        if !pid.is_empty()
+            && pid.bytes().all(|byte| byte.is_ascii_digit())
+            && is_sidecar_or_staged_sidecar_name_v1(base)
+        {
+            return Some(Cycle4StagedEntryV1::Debris);
+        }
+        return Some(Cycle4StagedEntryV1::Foreign);
+    }
+    // A staged record.
+    if let Some(base) = name.strip_suffix(CYCLE4_STAGED_SIDECAR_SUFFIX_V1) {
+        // In this grammar but not a record name: the one fail-closed case.
+        return parse_sidecar_record_name_v4(base).map(Cycle4StagedEntryV1::Record);
+    }
+    Some(Cycle4StagedEntryV1::Foreign)
+}
+
+fn is_sidecar_or_staged_sidecar_name_v1(name: &str) -> bool {
+    let base = name
+        .strip_suffix(CYCLE4_STAGED_SIDECAR_SUFFIX_V1)
+        .unwrap_or(name);
+    parse_sidecar_record_name_v4(base).is_some()
 }
 
 impl Cycle4BaselineChainAccessV1 {
@@ -734,8 +825,8 @@ impl Cycle4BaselineChainAccessV1 {
         }
     }
 
-    fn staged_dir_v1(&self) -> PathBuf {
-        self.chain_dir.join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
+    fn legacy_staged_dir_v1(&self) -> PathBuf {
+        self.chain_dir.join(CYCLE4_LEGACY_STAGED_SIDECAR_DIRNAME_V1)
     }
 
     /// Publishes one sidecar's exact bytes at `final_name` under `parent_dir`
@@ -786,52 +877,130 @@ impl Cycle4BaselineChainAccessV1 {
     fn staged_sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
         sidecar_record_name_v4(update_index)
             .ok()
-            .map(|name| self.staged_dir_v1().join(name))
+            .map(|name| self.chain_dir.join(cycle4_staged_sidecar_name_v1(&name)))
     }
 
-    /// Every update index currently staged, ascending. A staged directory
-    /// that does not exist is an empty staging area, not an error.
-    fn staged_update_indexes_v1(&self) -> Result<Vec<u64>> {
-        let dir = self.staged_dir_v1();
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => {
-                return Err(Cycle4ArmErrorV1::runtime(
-                    "cycle4_arm_v1_baseline_sidecar_staging",
-                    format!("{}: {error}", dir.display()),
-                ))
-            }
+    /// Where the previous layout would have staged this update.
+    fn legacy_staged_sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
+        sidecar_record_name_v4(update_index)
+            .ok()
+            .map(|name| self.legacy_staged_dir_v1().join(name))
+    }
+
+    /// The staged record for one update, wherever it currently lives.
+    fn any_staged_sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
+        self.staged_sidecar_path_v1(update_index)
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                self.legacy_staged_sidecar_path_v1(update_index)
+                    .filter(|path| path.is_file())
+            })
+    }
+
+    /// Scans one directory for staging-grammar entries.
+    ///
+    /// `exclusive` says whether this process owns every name in it: the
+    /// legacy staging directory is ours alone, so a foreign name there fails
+    /// closed, while the chain directory is shared with the chain's own
+    /// records, the origin record, and the genesis authority, so a foreign
+    /// name there is simply not ours. Either way a name that IS in the
+    /// staging grammar but malformed fails closed, and recognized debris is
+    /// reported for removal rather than tripping the scan.
+    fn scan_staging_entries_v1(dir: &Path, exclusive: bool) -> Result<(Vec<u64>, Vec<PathBuf>)> {
+        let staging_error = |detail: String| {
+            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_baseline_sidecar_staging", detail)
         };
-        let mut indexes = Vec::new();
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), Vec::new()))
+            }
+            Err(error) => return Err(staging_error(format!("{}: {error}", dir.display()))),
+        };
+        let mut records = Vec::new();
+        let mut debris = Vec::new();
         for entry in entries {
-            let entry = entry.map_err(|error| {
-                Cycle4ArmErrorV1::runtime(
-                    "cycle4_arm_v1_baseline_sidecar_staging",
-                    format!("{}: {error}", dir.display()),
-                )
-            })?;
+            let entry =
+                entry.map_err(|error| staging_error(format!("{}: {error}", dir.display())))?;
+            if !entry
+                .file_type()
+                .map_err(|error| staging_error(format!("{}: {error}", dir.display())))?
+                .is_file()
+            {
+                continue;
+            }
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
+                if exclusive {
+                    return Err(Cycle4ArmErrorV1::contract(
+                        "cycle4_arm_v1_baseline_sidecar_staging",
+                        format!("{}: a non-UTF-8 name is not a staged record", dir.display()),
+                    ));
+                }
                 continue;
             };
-            // A staged directory carries exactly the sidecar namespace and
-            // the durable primitive's own staging files, which are dot-
-            // prefixed; anything else is someone else's file and fails
-            // closed rather than being swept up or silently ignored.
-            if name.starts_with('.') {
-                continue;
+            // The legacy layout staged records under their bare final names;
+            // the current one appends the reserved suffix. Both are read.
+            let classified = if exclusive {
+                parse_sidecar_record_name_v4(name)
+                    .map(Cycle4StagedEntryV1::Record)
+                    .or_else(|| classify_staged_entry_v1(name))
+            } else {
+                classify_staged_entry_v1(name)
+            };
+            match classified {
+                Some(Cycle4StagedEntryV1::Record(index)) => records.push(index),
+                Some(Cycle4StagedEntryV1::Debris) => debris.push(entry.path()),
+                Some(Cycle4StagedEntryV1::Foreign) if !exclusive => {}
+                Some(Cycle4StagedEntryV1::Foreign) | None => {
+                    return Err(Cycle4ArmErrorV1::contract(
+                        "cycle4_arm_v1_baseline_sidecar_staging",
+                        format!("{name} is not a staged sidecar record name"),
+                    ))
+                }
             }
-            let index = parse_sidecar_record_name_v4(name).ok_or_else(|| {
-                Cycle4ArmErrorV1::contract(
-                    "cycle4_arm_v1_baseline_sidecar_staging",
-                    format!("{name} is not a staged sidecar record name"),
-                )
-            })?;
-            indexes.push(index);
         }
+        records.sort_unstable();
+        Ok((records, debris))
+    }
+
+    /// Every update index currently staged, ascending, across the current
+    /// grammar in the chain directory and the legacy staging directory a
+    /// previous layout may have left behind.
+    fn staged_update_indexes_v1(&self) -> Result<Vec<u64>> {
+        let (mut indexes, _) = Self::scan_staging_entries_v1(&self.chain_dir, false)?;
+        let (legacy, _) = Self::scan_staging_entries_v1(&self.legacy_staged_dir_v1(), true)?;
+        indexes.extend(legacy);
         indexes.sort_unstable();
+        indexes.dedup();
         Ok(indexes)
+    }
+
+    /// Deletes exactly the two recognized debris grammars from both staging
+    /// namespaces (review finding P2), so a Store left mid-publication by an
+    /// earlier layout does not abort the first reconciliation under this one.
+    fn sweep_staging_debris_v1(&self) -> Result<()> {
+        let mut debris = Vec::new();
+        for (dir, exclusive) in [
+            (self.chain_dir.clone(), false),
+            (self.legacy_staged_dir_v1(), true),
+        ] {
+            let (_, found) = Self::scan_staging_entries_v1(&dir, exclusive)?;
+            debris.extend(found);
+        }
+        for path in debris {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(Cycle4ArmErrorV1::runtime(
+                        "cycle4_arm_v1_baseline_sidecar_staging",
+                        format!("removing debris {}: {error}", path.display()),
+                    ))
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Reconciles the staged area against the Store's committed tip, BEFORE
@@ -848,11 +1017,15 @@ impl Cycle4BaselineChainAccessV1 {
     /// reconstructible only at the tip, which `may_reconstruct_sidecar_v4`
     /// authorizes from here.
     fn reconcile_staged_sidecars_v1(&self, tip_update: u64) -> Result<()> {
+        // Debris first (review finding P2): an interrupted publication under
+        // this layout or the previous one leaves a recognizable temporary,
+        // and a scan that tripped over it would abort the whole reconcile.
+        self.sweep_staging_debris_v1()?;
         for update_index in self.staged_update_indexes_v1()? {
             if update_index <= tip_update {
                 continue;
             }
-            let Some(path) = self.staged_sidecar_path_v1(update_index) else {
+            let Some(path) = self.any_staged_sidecar_path_v1(update_index) else {
                 continue;
             };
             std::fs::remove_file(&path).map_err(|error| {
@@ -987,7 +1160,7 @@ impl BaselineSidecarSourceV4 for Cycle4BaselineChainAccessV1 {
         if let Ok(bytes) = std::fs::read(self.sidecar_path_v1(update_index)?) {
             return Some(bytes);
         }
-        std::fs::read(self.staged_sidecar_path_v1(update_index)?).ok()
+        std::fs::read(self.any_staged_sidecar_path_v1(update_index)?).ok()
     }
 }
 
@@ -1011,10 +1184,7 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
     }
 
     fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
-        let (Some(promoted), Some(staged)) = (
-            self.sidecar_path_v1(update_index),
-            self.staged_sidecar_path_v1(update_index),
-        ) else {
+        let Some(promoted) = self.sidecar_path_v1(update_index) else {
             return false;
         };
         // Crash replay: an already-promoted sidecar with identical bytes is
@@ -1023,17 +1193,27 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         if let Ok(existing) = std::fs::read(&promoted) {
             return existing == record_bytes;
         }
-        if let Ok(existing) = std::fs::read(&staged) {
-            return existing == record_bytes;
+        if let Some(staged) = self.any_staged_sidecar_path_v1(update_index) {
+            if let Ok(existing) = std::fs::read(&staged) {
+                return existing == record_bytes;
+            }
         }
         // Durable BEFORE the Store publishes the update this record explains
         // (review finding P1): the Store must never hold v4 evidence whose
         // sidecar exists only in this process's memory, nor whose name a
-        // reboot can lose out from under a committed Store.
+        // reboot can lose out from under a committed Store. Published INTO
+        // the chain directory under the reserved staged suffix, so it is
+        // exactly as durable as the chain records beside it and no new
+        // directory entry has to survive with it.
         let Ok(final_name) = sidecar_record_name_v4(update_index) else {
             return false;
         };
-        Self::publish_sidecar_bytes_v1(&self.staged_dir_v1(), &final_name, record_bytes).is_ok()
+        Self::publish_sidecar_bytes_v1(
+            &self.chain_dir,
+            &cycle4_staged_sidecar_name_v1(&final_name),
+            record_bytes,
+        )
+        .is_ok()
     }
 
     fn commit_staged_sidecar_records_v4(&self) -> bool {
@@ -1052,7 +1232,7 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         for update_index in staged {
             let (Some(promoted), Some(staged_path), Ok(final_name)) = (
                 self.sidecar_path_v1(update_index),
-                self.staged_sidecar_path_v1(update_index),
+                self.any_staged_sidecar_path_v1(update_index),
                 sidecar_record_name_v4(update_index),
             ) else {
                 return false;
@@ -1079,6 +1259,9 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
                 return false;
             }
         }
+        // A drained legacy staging directory is removed; `remove_dir` refuses
+        // a non-empty one, so this can never discard an unpromoted record.
+        let _ = std::fs::remove_dir(self.legacy_staged_dir_v1());
         true
     }
 }
@@ -4136,9 +4319,9 @@ mod tests {
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 3);
         let promoted = dir.join("baseline-update-00000001.record.json");
-        let staged = dir
-            .join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
-            .join("baseline-update-00000001.record.json");
+        let staged = dir.join(cycle4_staged_sidecar_name_v1(
+            "baseline-update-00000001.record.json",
+        ));
         assert!(access.stage_sidecar_record_v4(1, &bytes));
         // Review finding P1: staging is DURABLE and happens before the Store
         // publishes this update, so the Store can never hold v4 evidence
@@ -4165,16 +4348,13 @@ mod tests {
         // for the same update are not.
         assert!(access.stage_sidecar_record_v4(1, &bytes));
         assert!(!access.stage_sidecar_record_v4(1, b"different"));
-        for directory in [dir.clone(), dir.join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)] {
-            assert!(
-                !directory
-                    .read_dir()
-                    .expect("read dir")
-                    .filter_map(std::result::Result::ok)
-                    .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-")),
-                "no temporary file may survive a publication"
-            );
-        }
+        assert!(
+            !dir.read_dir()
+                .expect("read dir")
+                .filter_map(std::result::Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-")),
+            "no temporary file may survive a publication"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4205,29 +4385,27 @@ mod tests {
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 9);
         let final_name = sidecar_record_name_v4(1).expect("name");
+        let staged_name = cycle4_staged_sidecar_name_v1(&final_name);
 
-        let staged_receipt = Cycle4BaselineChainAccessV1::publish_sidecar_bytes_v1(
-            &access.staged_dir_v1(),
-            &final_name,
-            &bytes,
-        )
-        .expect("the staged record publishes durably");
+        let staged_receipt =
+            Cycle4BaselineChainAccessV1::publish_sidecar_bytes_v1(&dir, &staged_name, &bytes)
+                .expect("the staged record publishes durably");
         assert_eq!(staged_receipt.mechanism(), EXPECTED_DURABLE_MECHANISM_V1);
         // The primitive canonicalizes its parent, which on Windows is an
         // extended-length path, so the receipt is compared canonically.
         assert_eq!(
             staged_receipt.final_path(),
-            std::fs::canonicalize(access.staged_dir_v1().join(&final_name))
-                .expect("the staged record exists")
+            std::fs::canonicalize(dir.join(&staged_name)).expect("the staged record exists")
         );
         assert_eq!(staged_receipt.sha256(), sha256_v1(&bytes));
         // The primitive leaves no staging debris of its own behind.
-        assert!(!access
-            .staged_dir_v1()
-            .join(cycle4_sidecar_stage_name_v1(&final_name))
+        assert!(!dir
+            .join(cycle4_sidecar_stage_name_v1(&staged_name))
             .exists());
-        // And the staged listing still sees exactly the record, never the
-        // dot-prefixed staging namespace the primitive uses.
+        // Staging shares the chain directory, so the scan must find exactly
+        // the staged record and be untroubled by everything else there.
+        std::fs::write(dir.join("arm-origin.record.json"), b"another writer's file")
+            .expect("write");
         assert_eq!(access.staged_update_indexes_v1().expect("staged"), vec![1]);
 
         // Promotion republishes through the same primitive rather than
@@ -4258,15 +4436,192 @@ mod tests {
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 11);
         let final_name = sidecar_record_name_v4(1).expect("name");
-        let staged_dir = access.staged_dir_v1();
-        std::fs::create_dir_all(&staged_dir).expect("create staged dir");
+        let staged_name = cycle4_staged_sidecar_name_v1(&final_name);
+        std::fs::create_dir_all(&dir).expect("create chain dir");
         std::fs::write(
-            staged_dir.join(cycle4_sidecar_stage_name_v1(&final_name)),
+            dir.join(cycle4_sidecar_stage_name_v1(&staged_name)),
             b"debris from an interrupted publication",
         )
         .expect("write debris");
         assert!(access.stage_sidecar_record_v4(1, &bytes));
         assert_eq!(access.sidecar_record_bytes_v4(1).expect("staged"), bytes);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn exactly_two_debris_grammars_are_removable_v1() {
+        // Review finding P2: a process running the previous layout dies
+        // before its rename and leaves `<name>.tmp-<pid>`; this layout's own
+        // interrupted publication leaves `.<name>.stage-cycle4-v1`. Those two
+        // shapes, and only those, are debris. Everything else in the shared
+        // chain directory is either a staged record or none of our business,
+        // and a name inside our own grammar that is malformed fails closed.
+        let record = sidecar_record_name_v4(7).expect("name");
+        let staged = cycle4_staged_sidecar_name_v1(&record);
+        for (name, expected) in [
+            // The two removable grammars, over both the record and the
+            // staged name the previous and current layouts each produced.
+            (
+                format!("{record}.tmp-4436"),
+                Some(Cycle4StagedEntryV1::Debris),
+            ),
+            (
+                format!("{staged}.tmp-4436"),
+                Some(Cycle4StagedEntryV1::Debris),
+            ),
+            (
+                cycle4_sidecar_stage_name_v1(&staged),
+                Some(Cycle4StagedEntryV1::Debris),
+            ),
+            (
+                cycle4_sidecar_stage_name_v1(&record),
+                Some(Cycle4StagedEntryV1::Debris),
+            ),
+            // The staged record itself.
+            (staged.clone(), Some(Cycle4StagedEntryV1::Record(7))),
+            // Another writer's names in the shared chain directory, and
+            // another writer's debris: never ours to sweep.
+            (record.clone(), Some(Cycle4StagedEntryV1::Foreign)),
+            (
+                "baseline-00000004.record.json".to_owned(),
+                Some(Cycle4StagedEntryV1::Foreign),
+            ),
+            (
+                "arm-origin.record.json".to_owned(),
+                Some(Cycle4StagedEntryV1::Foreign),
+            ),
+            (
+                "arm-origin.record.json.tmp-4436".to_owned(),
+                Some(Cycle4StagedEntryV1::Foreign),
+            ),
+            (
+                ".baseline-00000004.record.json.stage-v4".to_owned(),
+                Some(Cycle4StagedEntryV1::Foreign),
+            ),
+            // A non-numeric process id is not the legacy grammar.
+            (
+                format!("{record}.tmp-notapid"),
+                Some(Cycle4StagedEntryV1::Foreign),
+            ),
+            // In our grammar, but not a record name: the fail-closed case.
+            (
+                format!("baseline-update-0000000x.record.json{CYCLE4_STAGED_SIDECAR_SUFFIX_V1}"),
+                None,
+            ),
+            (
+                format!("not-a-sidecar{CYCLE4_STAGED_SIDECAR_SUFFIX_V1}"),
+                None,
+            ),
+        ] {
+            assert_eq!(
+                classify_staged_entry_v1(&name),
+                expected,
+                "classifying {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn both_debris_shapes_are_swept_before_reconciliation_v1() {
+        // Both grammars, in both namespaces, are deleted rather than
+        // aborting the scan; a foreign name in the SHARED chain directory
+        // survives untouched, and a foreign name in the legacy directory we
+        // own outright still fails closed.
+        let dir = fresh_temp_dir_v1("debris-sweep");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let legacy = dir.join(CYCLE4_LEGACY_STAGED_SIDECAR_DIRNAME_V1);
+        std::fs::create_dir_all(&legacy).expect("create legacy dir");
+        let record = sidecar_record_name_v4(3).expect("name");
+        let staged = cycle4_staged_sidecar_name_v1(&record);
+
+        // Debris the previous layout left in its own staging directory, and
+        // debris this layout can leave in the chain directory.
+        let legacy_temporary = legacy.join(format!("{record}.tmp-4436"));
+        let chain_temporary = dir.join(format!("{staged}.tmp-4436"));
+        let chain_stage = dir.join(cycle4_sidecar_stage_name_v1(&staged));
+        let legacy_stage = legacy.join(cycle4_sidecar_stage_name_v1(&record));
+        for path in [
+            &legacy_temporary,
+            &chain_temporary,
+            &chain_stage,
+            &legacy_stage,
+        ] {
+            std::fs::write(path, b"debris").expect("write debris");
+        }
+        // A neighbour in the shared directory that is none of our business.
+        let foreign = dir.join("arm-origin.record.json");
+        std::fs::write(&foreign, b"another writer's record").expect("write");
+
+        access
+            .sweep_staging_debris_v1()
+            .expect("debris is removable");
+        for path in [
+            &legacy_temporary,
+            &chain_temporary,
+            &chain_stage,
+            &legacy_stage,
+        ] {
+            assert!(!path.exists(), "{} must be swept", path.display());
+        }
+        assert!(foreign.is_file(), "another writer's file is never swept");
+
+        // And the first reconciliation under this layout completes rather
+        // than aborting on the legacy temporary, which is the regression.
+        access
+            .reconcile_staged_sidecars_v1(0)
+            .expect("debris never aborts reconciliation");
+
+        // A genuinely unexpected name in the directory we own outright still
+        // fails closed.
+        std::fs::write(legacy.join("unexpected.json"), b"?").expect("write");
+        let error = access
+            .staged_update_indexes_v1()
+            .expect_err("an unknown name in our own staging directory fails closed");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_baseline_sidecar_staging");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn records_staged_by_the_previous_layout_are_still_reconciled_v1() {
+        // A Store left mid-segment by the previous layout has its records in
+        // `baseline-staged/`. They are still found, still served to the walk,
+        // still promoted, and the drained directory is then removed.
+        let dir = fresh_temp_dir_v1("legacy-staged");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let legacy = dir.join(CYCLE4_LEGACY_STAGED_SIDECAR_DIRNAME_V1);
+        std::fs::create_dir_all(&legacy).expect("create legacy dir");
+        let mut state = NativeBaselineStateV4::empty_v4();
+        let mut expected = Vec::new();
+        for update_index in 1_u64..=4 {
+            let bytes = synthetic_sidecar_v1(&state, update_index, update_index as u8);
+            std::fs::write(
+                legacy.join(sidecar_record_name_v4(update_index).expect("name")),
+                &bytes,
+            )
+            .expect("write legacy staged record");
+            state = access
+                .replay_sidecar_v1(&state, update_index)
+                .expect("a legacy staged record still replays");
+            expected.push(bytes);
+        }
+        assert_eq!(
+            access.staged_update_indexes_v1().expect("staged"),
+            vec![1, 2, 3, 4]
+        );
+        access
+            .reconcile_staged_sidecars_v1(4)
+            .expect("all committed");
+        assert!(access.commit_staged_sidecar_records_v4());
+        for (offset, bytes) in expected.iter().enumerate() {
+            let update_index = u64::try_from(offset).expect("offset") + 1;
+            let promoted = dir.join(sidecar_record_name_v4(update_index).expect("name"));
+            assert!(promoted.is_file(), "legacy staged records are promoted");
+            assert_eq!(&std::fs::read(&promoted).expect("read"), bytes);
+        }
+        assert!(
+            !legacy.exists(),
+            "a drained legacy staging directory is removed"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4334,10 +4689,9 @@ mod tests {
             dir.read_dir()
                 .expect("read dir")
                 .filter_map(std::result::Result::ok)
-                .filter(|entry| entry.file_name() != CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
                 .count(),
             0,
-            "nothing was promoted"
+            "nothing was promoted, and the discarded records are gone"
         );
         // A partially committed segment keeps exactly its committed prefix.
         let retry = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
