@@ -3331,12 +3331,16 @@ impl ShadowScorerServiceV1 {
             // which configuration produced the number.
             //
             // Computed after the decision is already fixed; never acted on.
-            ceiling_status: CeilingStatusV3::classify_v3(total_micros as f64 / 1_000_000.0),
+            search_ceiling_status: CeilingStatusV3::classify_v3(total_micros as f64 / 1_000_000.0),
             wall_time: WallTimeV3 {
                 full_search_micros: full_micros,
                 stability_half_a_micros: half_a_micros,
                 stability_half_b_micros: half_b_micros,
                 total_micros,
+                // Writer-assigned: the diagnostics writer knows how long
+                // it spent publishing the previous record, and a caller
+                // that could set this could understate its own latency.
+                previous_record_publish_micros: 0,
             },
         };
         diagnostics
@@ -5075,7 +5079,7 @@ mod tests {
             .as_str()
             .is_some_and(|value| value.len() == 64));
         assert!(decision["stability"]["halves_agree"].is_boolean());
-        assert!(decision["ceiling_status"].as_str().is_some());
+        assert!(decision["search_ceiling_status"].as_str().is_some());
         // Every simulation ends at exactly one leaf class, so the census
         // partitions the simulation count exactly.
         let census = &decision["leaf_census"];
@@ -5364,7 +5368,7 @@ mod tests {
         for record in [&with_record, &without_record] {
             let total = record["wall_time"]["total_micros"].as_u64().unwrap();
             assert_eq!(
-                record["ceiling_status"].as_str().unwrap(),
+                record["search_ceiling_status"].as_str().unwrap(),
                 match CeilingStatusV3::classify_v3(total as f64 / 1_000_000.0) {
                     CeilingStatusV3::WithinSlo => "within_slo",
                     CeilingStatusV3::SloExceeded => "slo_exceeded",

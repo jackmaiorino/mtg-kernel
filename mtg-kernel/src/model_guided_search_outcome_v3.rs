@@ -38,9 +38,26 @@
 //! records of a few hundred bytes) while a single decision costs a full
 //! tiered search, orders of magnitude more work than the rewrite.
 //!
-//! **Commit-after-publish.** No chain state advances until the publish has
-//! succeeded, so a failed publish is retryable and a retry republishes the
-//! same decision at the same ordinals. See `append_and_publish_v3`.
+//! **Commit-after-publish, and stage recovery.** No chain state advances
+//! until the publish has succeeded, so a failed publish is retryable and a
+//! retry republishes the same decision at the same ordinals. The staging
+//! file is cleared on entry (a leftover stage is stale by construction,
+//! never a published artifact) and removed again on any failure, so one
+//! interrupted publish cannot turn every later one into a permanent stage
+//! collision. See `append_and_publish_v3` and `publish_atomically_v3`.
+//!
+//! **Latency accounting spans the publication.** Publishing is
+//! synchronous: it rewrites, syncs and reverifies the whole episode file
+//! before the scorer can answer its client, so it is part of the
+//! per-decision latency a panel host pays. A record cannot measure its own
+//! publication (measuring it requires publishing, which requires the
+//! finished bytes), so each record carries its PREDECESSOR's publish time
+//! in `wall_time.previous_record_publish_micros` and the true verdict is a
+//! chain-level read: [`episode_decision_ceilings_v3`]. The in-record
+//! [`SearchDecisionRecordV3::search_ceiling_status`] is named for what it
+//! actually covers, the search alone; a field called `ceiling_status` that
+//! silently omitted a synchronous phase of the latency it claimed to bound
+//! was being misread, which is why it no longer has that name.
 //!
 //! **Hash chaining across decisions within an episode.** Each record
 //! carries `previous_record_sha256`, the SHA-256 of the previous record's
@@ -73,6 +90,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub const MODEL_GUIDED_SEARCH_OUTCOME_CONTRACT_V3: &str =
     "mtg-kernel-model-guided-search-outcome-jsonl/v3";
@@ -134,7 +152,24 @@ pub struct WallTimeV3 {
     pub full_search_micros: u64,
     pub stability_half_a_micros: u64,
     pub stability_half_b_micros: u64,
+    /// Search time for this decision: everything the client waits for
+    /// EXCEPT this record's own publication, which by construction cannot
+    /// be known while the record is still being built.
     pub total_micros: u64,
+    /// How long the writer spent publishing the PRECEDING record.
+    ///
+    /// Publication is synchronous and completes before the client gets its
+    /// response, so it is part of the protocol latency the panel host
+    /// pays. A record cannot carry its own publish time (measuring it
+    /// requires publishing, and publishing requires the finished bytes),
+    /// so each record carries its predecessor's instead and a decision's
+    /// true latency is read off the chain. See
+    /// `episode_decision_ceilings_v3`, which is the only correct way to
+    /// classify a decision's protocol ceiling.
+    ///
+    /// Writer-assigned, like every other chain field: a caller that could
+    /// set this could understate the latency it is being measured on.
+    pub previous_record_publish_micros: u64,
 }
 
 /// Wrapper identity, carried once per episode in the header record (sketch
@@ -251,7 +286,18 @@ pub struct SearchDecisionRecordV3 {
     /// covers the full synchronous latency including them; with halves
     /// disabled it covers the product's own per-decision cost.
     pub stability_halves_enabled: bool,
-    pub ceiling_status: CeilingStatusV3,
+    /// Classification of `wall_time.total_micros` ALONE, i.e. of the
+    /// search. It deliberately does NOT include this record's own
+    /// publication, which is synchronous and which the record cannot
+    /// measure about itself.
+    ///
+    /// Named `search_ceiling_status` rather than `ceiling_status` for
+    /// exactly that reason: a field called `ceiling_status` that omits a
+    /// synchronous phase of the very latency it claims to bound is a field
+    /// that will be misread, and was. For the protocol-latency verdict use
+    /// `episode_decision_ceilings_v3`, which adds the publish time the
+    /// successor record reports.
+    pub search_ceiling_status: CeilingStatusV3,
     /// DIAGNOSTIC ONLY. Excluded from every determinism comparison; see
     /// the module docs.
     pub wall_time: WallTimeV3,
@@ -325,6 +371,93 @@ pub fn record_chain_link_v3(line: &str) -> [u8; 32] {
 /// Re-derives the chain over an already-published episode file and returns
 /// the record count, or an error naming the first broken link. Used by
 /// this module's tests and available to any auditor of a published file.
+/// One decision's latency accounting, reconstructed from the chain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecisionCeilingV3 {
+    pub decision_ordinal: u64,
+    /// `wall_time.total_micros`: the search.
+    pub search_micros: u64,
+    /// The synchronous publication of THIS decision's own record, read
+    /// from the successor record's `previous_record_publish_micros`.
+    ///
+    /// `None` for the last record in the file, whose publication no
+    /// successor has yet observed. That is a real and bounded gap, not an
+    /// error: an episode still being written, or one whose process died,
+    /// simply has one decision whose publish cost was never recorded.
+    pub publish_micros: Option<u64>,
+    /// What the record itself claims, over the search alone.
+    pub search_ceiling_status: CeilingStatusV3,
+    /// The protocol verdict: `search_micros + publish_micros`, classified.
+    /// `None` exactly when `publish_micros` is `None`.
+    pub protocol_ceiling_status: Option<CeilingStatusV3>,
+}
+
+/// Reconstructs every decision's TRUE per-decision protocol latency from a
+/// published episode file, and classifies it.
+///
+/// # The classification rule
+///
+/// A client waiting on decision `n` waits for the search AND for the
+/// synchronous publication of decision `n`'s record, because
+/// `write_decision_v3` rewrites, syncs and reverifies the episode file
+/// before the scorer can answer. So:
+///
+/// ```text
+/// latency(n)  = record[n].wall_time.total_micros
+///             + record[n + 1].wall_time.previous_record_publish_micros
+/// status(n)   = CeilingStatusV3::classify_v3(latency(n) / 1e6)
+/// ```
+///
+/// where `record[n + 1]` is the immediately following record in the file,
+/// decision or not. A record cannot carry its own publish time (measuring
+/// it requires publishing, and publishing requires the finished bytes), so
+/// the successor carries it and the verdict is a chain-level read. This
+/// function is the only correct way to classify a decision's ceiling;
+/// `SearchDecisionRecordV3::search_ceiling_status` deliberately covers the
+/// search alone and is named to say so.
+///
+/// The episode's chain is verified first, so a tampered file cannot
+/// produce a latency report.
+pub fn episode_decision_ceilings_v3(bytes: &[u8]) -> Result<Vec<DecisionCeilingV3>, String> {
+    verify_episode_chain_v3(bytes)?;
+    let text = std::str::from_utf8(bytes).map_err(|_| "episode file is not UTF-8".to_owned())?;
+    let values: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| {
+            serde_json::from_str(line).map_err(|error| format!("record is not JSON: {error}"))
+        })
+        .collect::<Result<_, _>>()?;
+    let publish_micros_of = |index: usize| -> Option<u64> {
+        values.get(index + 1).and_then(|next| {
+            next.get("wall_time")?
+                .get("previous_record_publish_micros")?
+                .as_u64()
+        })
+    };
+    let mut out = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        if value.get("record_kind").and_then(|kind| kind.as_str()) != Some("search_decision") {
+            continue;
+        }
+        let record: SearchDecisionRecordV3 = serde_json::from_value(value.clone())
+            .map_err(|error| format!("decision record does not match the schema: {error}"))?;
+        let publish_micros = publish_micros_of(index);
+        let protocol_ceiling_status = publish_micros.map(|publish| {
+            CeilingStatusV3::classify_v3(
+                record.wall_time.total_micros.saturating_add(publish) as f64 / 1_000_000.0,
+            )
+        });
+        out.push(DecisionCeilingV3 {
+            decision_ordinal: record.decision_ordinal,
+            search_micros: record.wall_time.total_micros,
+            publish_micros,
+            search_ceiling_status: record.search_ceiling_status,
+            protocol_ceiling_status,
+        });
+    }
+    Ok(out)
+}
+
 pub fn verify_episode_chain_v3(bytes: &[u8]) -> Result<usize, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "episode file is not UTF-8".to_owned())?;
     if !text.ends_with('\n') || text.contains('\r') {
@@ -362,6 +495,11 @@ struct OpenEpisodeV3 {
     previous_record_sha256: String,
     next_record_ordinal: u64,
     next_decision_ordinal: u64,
+    /// Wall time the most recent successful publish took, carried into the
+    /// NEXT record so a decision's synchronous publication cost is
+    /// recoverable from the chain. Zero before anything has been
+    /// published.
+    last_publish_micros: u64,
 }
 
 /// Per-episode JSONL diagnostics writer: one file per episode in the
@@ -369,6 +507,11 @@ struct OpenEpisodeV3 {
 pub struct ModelGuidedSearchOutcomeWriterV3 {
     directory: PathBuf,
     open: Option<OpenEpisodeV3>,
+    /// Test-only fault injection: an artificial delay inside the measured
+    /// publication window, so the publication-inclusive ceiling
+    /// classification can be exercised without a genuinely slow disk.
+    #[cfg(test)]
+    publish_delay_for_test_v3: Option<std::time::Duration>,
 }
 
 impl ModelGuidedSearchOutcomeWriterV3 {
@@ -385,7 +528,18 @@ impl ModelGuidedSearchOutcomeWriterV3 {
         Ok(Self {
             directory,
             open: None,
+            #[cfg(test)]
+            publish_delay_for_test_v3: None,
         })
+    }
+
+    /// Test-only: injects an artificial delay INSIDE the measured
+    /// publication window, so a test can drive the publication-inclusive
+    /// ceiling classification past a pre-registered boundary without
+    /// needing a genuinely slow disk.
+    #[cfg(test)]
+    fn set_publish_delay_for_test_v3(&mut self, delay: std::time::Duration) {
+        self.publish_delay_for_test_v3 = Some(delay);
     }
 
     pub fn directory_v3(&self) -> &Path {
@@ -438,6 +592,7 @@ impl ModelGuidedSearchOutcomeWriterV3 {
             previous_record_sha256: MODEL_GUIDED_SEARCH_OUTCOME_CHAIN_GENESIS_V3.to_owned(),
             next_record_ordinal: 0,
             next_decision_ordinal: 0,
+            last_publish_micros: 0,
         });
         self.append_and_publish_v3(line, false)
     }
@@ -457,7 +612,7 @@ impl ModelGuidedSearchOutcomeWriterV3 {
     /// from the caller: they are chain state, and a caller that could set
     /// them could forge a chain.
     pub fn write_decision_v3(&mut self, mut record: SearchDecisionRecordV3) -> io::Result<()> {
-        let (ordinal, decision_ordinal, previous) = {
+        let (ordinal, decision_ordinal, previous, last_publish_micros) = {
             let episode = self
                 .open
                 .as_ref()
@@ -471,6 +626,7 @@ impl ModelGuidedSearchOutcomeWriterV3 {
                 episode.next_record_ordinal,
                 episode.next_decision_ordinal,
                 episode.previous_record_sha256.clone(),
+                episode.last_publish_micros,
             )
         };
         record.contract = MODEL_GUIDED_SEARCH_OUTCOME_CONTRACT_V3.to_owned();
@@ -479,6 +635,7 @@ impl ModelGuidedSearchOutcomeWriterV3 {
         record.record_ordinal = ordinal;
         record.decision_ordinal = decision_ordinal;
         record.previous_record_sha256 = previous;
+        record.wall_time.previous_record_publish_micros = last_publish_micros;
         let line = serde_json::to_string(&record).map_err(io::Error::other)?;
         self.append_and_publish_v3(line, true)
     }
@@ -522,7 +679,18 @@ impl ModelGuidedSearchOutcomeWriterV3 {
         bytes.extend_from_slice(line.as_bytes());
         bytes.push(b'\n');
         let path = episode.path.clone();
+        // The publication is SYNCHRONOUS: it rewrites, syncs, and
+        // reverifies the episode file before the caller can respond to its
+        // client, so its cost is part of the protocol latency. Measured
+        // here and carried into the next record; see `WallTimeV3`.
+        let publish_started = Instant::now();
         publish_atomically_v3(&path, &bytes)?;
+        #[cfg(test)]
+        if let Some(delay) = self.publish_delay_for_test_v3 {
+            std::thread::sleep(delay);
+        }
+        let publish_micros =
+            u64::try_from(publish_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         // Commit. Nothing above this line mutated the writer.
         let episode = self
             .open
@@ -531,6 +699,7 @@ impl ModelGuidedSearchOutcomeWriterV3 {
         episode.previous_record_sha256 = staged_previous;
         episode.lines.push(line);
         episode.next_record_ordinal += 1;
+        episode.last_publish_micros = publish_micros;
         if is_decision {
             episode.next_decision_ordinal += 1;
         }
@@ -564,13 +733,53 @@ fn publish_atomically_v3(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("search diagnostics path has no parent"))?;
     let mut stage_name = file_name.clone();
     stage_name.push(".tmp");
+    let stage_path = directory.join(&stage_name);
+
+    // A pre-existing stage file is STALE, always, and is cleared rather
+    // than treated as a conflict.
+    //
+    // `replace_file_by_move_v2` opens the stage with `create_new`, so a
+    // leftover stage makes every subsequent attempt fail with a stage
+    // collision: one interrupted publish (ENOSPC, a sharing violation, a
+    // kill between staging and the move) would otherwise poison the rest
+    // of the episode, turning a transient fault into a permanent one. The
+    // stage name is by construction never the published artifact and
+    // never anything a reader consumes, so nothing can be lost by
+    // removing it. Only a failure to remove it is an error, and it is
+    // reported as itself rather than as the collision it would later
+    // cause.
+    clear_stale_stage_file_v3(&stage_path)?;
+
     let parent = capture_existing_publication_parent_v1(directory)
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
     let expectation = DurableFileExpectationV1::from_bytes(bytes)
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
-    replace_file_by_move_v2(&parent, &stage_name, &file_name, bytes, expectation)
-        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    let published = replace_file_by_move_v2(&parent, &stage_name, &file_name, bytes, expectation)
+        .map_err(|error| io::Error::other(format!("{error:?}")));
+    if published.is_err() {
+        // Leave no stage behind on the way out either, so the NEXT
+        // attempt starts from the same clean state this one did. Best
+        // effort: the publish error is the one worth reporting, and the
+        // entry-side sweep above is what guarantees recovery even if this
+        // removal could not run (a crash, say).
+        let _ = fs::remove_file(&stage_path);
+    }
+    published?;
     Ok(())
+}
+
+/// Removes a leftover staging file, tolerating its absence.
+///
+/// Only a real removal failure is propagated; "it was not there" is the
+/// normal case and is success.
+fn clear_stale_stage_file_v3(stage_path: &Path) -> io::Result<()> {
+    match fs::remove_file(stage_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io::Error::other(format!(
+            "a stale search-diagnostics staging file could not be removed: {error}"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -676,7 +885,7 @@ mod tests {
                 halves_agree: true,
                 halves_agree_with_full_budget: true,
             }),
-            ceiling_status: CeilingStatusV3::WithinSlo,
+            search_ceiling_status: CeilingStatusV3::WithinSlo,
             wall_time: wall,
         }
     }
@@ -856,6 +1065,220 @@ mod tests {
         fs::remove_dir_all(&directory).ok();
     }
 
+    /// A leftover staging file must not poison the episode.
+    ///
+    /// This is the exact state a publish interrupted between staging and
+    /// the move leaves behind (ENOSPC, a sharing violation, a kill).
+    /// Because `replace_file_by_move_v2` opens the stage with
+    /// `create_new`, that leftover used to make EVERY subsequent publish
+    /// fail with a stage collision, turning one transient fault into a
+    /// permanently dead episode. A stage file is by construction never the
+    /// published artifact, so the right response is to clear it.
+    #[test]
+    fn a_leftover_stage_file_is_stale_and_does_not_block_publication_v3() {
+        let directory = scratch_directory_v3(9);
+        let mut writer = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v3(5, 99, PlayerSeatV1::P0, wrapper_identity_v3())
+            .expect("header publishes");
+        let path = writer.episode_path_v3(5, 99);
+        writer
+            .write_decision_v3(decision_record_v3(5, WallTimeV3::default()))
+            .expect("first decision publishes");
+
+        // Simulate the interrupted publish: a stage file with junk in it.
+        let mut stage = path.clone().into_os_string();
+        stage.push(".tmp");
+        let stage = PathBuf::from(stage);
+        fs::write(&stage, b"a half-written staging artifact").expect("stage file writes");
+        assert!(stage.exists());
+
+        // The next publish must succeed anyway, and must consume the
+        // stale stage rather than colliding with it.
+        writer
+            .write_decision_v3(decision_record_v3(5, WallTimeV3::default()))
+            .expect("a stale stage file must not block publication");
+        assert!(
+            !stage.exists(),
+            "the stage file must not survive a successful publish"
+        );
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(verify_episode_chain_v3(text.as_bytes()), Ok(3));
+        // The junk never reached the published file.
+        assert!(!text.contains("half-written"));
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A failed publish must leave no staging file behind, so the retry
+    /// starts from the same clean state the failed attempt did.
+    #[test]
+    fn a_failed_publish_leaves_no_stage_file_and_the_retry_succeeds_v3() {
+        let directory = scratch_directory_v3(10);
+        let mut writer = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v3(6, 101, PlayerSeatV1::P0, wrapper_identity_v3())
+            .expect("header publishes");
+        let path = writer.episode_path_v3(6, 101);
+        let mut stage = path.clone().into_os_string();
+        stage.push(".tmp");
+        let stage = PathBuf::from(stage);
+
+        // Block the publish by occupying the STAGE name with a directory,
+        // which `remove_file` cannot clear and the stage open cannot use.
+        fs::create_dir(&stage).expect("stage name is occupiable");
+        assert!(writer
+            .write_decision_v3(decision_record_v3(6, WallTimeV3::default()))
+            .is_err());
+        // The blocking directory is still a directory: the cleanup must
+        // not have blindly destroyed something it did not create.
+        assert!(stage.is_dir());
+
+        // Clear the block; the retry must succeed and leave no stage.
+        fs::remove_dir(&stage).expect("stage name frees");
+        writer
+            .write_decision_v3(decision_record_v3(6, WallTimeV3::default()))
+            .expect("the retry must succeed");
+        assert!(
+            !stage.exists(),
+            "no staging file may survive a successful publish"
+        );
+        assert_eq!(verify_episode_chain_v3(&fs::read(&path).unwrap()), Ok(2));
+
+        // And an ordinary sequence after the recovery still chains.
+        writer
+            .write_decision_v3(decision_record_v3(6, WallTimeV3::default()))
+            .expect("publishing continues");
+        assert_eq!(verify_episode_chain_v3(&fs::read(&path).unwrap()), Ok(3));
+        assert!(!stage.exists());
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// CODEX P1. `total_micros` stops before `write_decision_v3`, but the
+    /// publication that call performs is synchronous and completes before
+    /// the client can be answered. A slow publish can therefore push the
+    /// real protocol latency across a pre-registered boundary while the
+    /// record's own `search_ceiling_status` still says `within_slo`.
+    ///
+    /// The publish is made artificially slow so the crossing is real and
+    /// not merely arithmetic: the injected delay sits INSIDE the measured
+    /// publication window, exactly where a slow disk would.
+    #[test]
+    fn a_slow_publication_is_charged_to_the_decision_it_publishes_v3() {
+        let directory = scratch_directory_v3(11);
+        let mut writer = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v3(7, 202, PlayerSeatV1::P0, wrapper_identity_v3())
+            .expect("header publishes");
+        let path = writer.episode_path_v3(7, 202);
+
+        // A search comfortably inside the SLO on its own.
+        let fast_search = WallTimeV3 {
+            full_search_micros: 3_500_000,
+            stability_half_a_micros: 0,
+            stability_half_b_micros: 0,
+            total_micros: 3_900_000,
+            previous_record_publish_micros: 0,
+        };
+        writer.set_publish_delay_for_test_v3(std::time::Duration::from_millis(250));
+        writer
+            .write_decision_v3(decision_record_v3(7, fast_search))
+            .expect("slow decision publishes");
+        // A second record, whose only job here is to observe the first
+        // one's publication.
+        writer
+            .write_decision_v3(decision_record_v3(7, WallTimeV3::default()))
+            .expect("second decision publishes");
+
+        let bytes = fs::read(&path).unwrap();
+        let ceilings = episode_decision_ceilings_v3(&bytes).expect("chain verifies");
+        assert_eq!(ceilings.len(), 2);
+
+        let first = ceilings[0];
+        assert_eq!(first.decision_ordinal, 0);
+        assert_eq!(first.search_micros, 3_900_000);
+        let publish = first
+            .publish_micros
+            .expect("the successor record observed this record's publication");
+        assert!(
+            publish >= 250_000,
+            "the injected 250 ms delay must be charged to the publish: {publish} us"
+        );
+        // The record's own field, over the search alone, is within SLO.
+        assert_eq!(first.search_ceiling_status, CeilingStatusV3::WithinSlo);
+        // The protocol verdict, which includes the publication, is not:
+        // 3.9 s + 0.25 s crosses the 4.0 s SLO. This is precisely the
+        // under-report the record alone would have produced.
+        assert_eq!(
+            first.protocol_ceiling_status,
+            Some(CeilingStatusV3::SloExceeded),
+            "a synchronous publish that crosses the SLO must be visible"
+        );
+
+        // The LAST record's publication has no successor to observe it.
+        // That gap is reported honestly rather than silently zeroed.
+        let last = ceilings[1];
+        assert_eq!(last.publish_micros, None);
+        assert_eq!(last.protocol_ceiling_status, None);
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// The chain-level rule is arithmetic over two adjacent records, so it
+    /// is worth pinning directly: a decision's latency is its OWN search
+    /// plus its SUCCESSOR's reported publish time, never its own
+    /// `previous_record_publish_micros` (which belongs to the record
+    /// before it).
+    #[test]
+    fn decision_ceilings_attribute_each_publish_to_the_record_it_published_v3() {
+        let directory = scratch_directory_v3(12);
+        let mut writer = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v3(8, 303, PlayerSeatV1::P0, wrapper_identity_v3())
+            .expect("header publishes");
+        for total_micros in [1_000_000u64, 2_000_000, 3_000_000] {
+            writer
+                .write_decision_v3(decision_record_v3(
+                    8,
+                    WallTimeV3 {
+                        total_micros,
+                        ..WallTimeV3::default()
+                    },
+                ))
+                .expect("decision publishes");
+        }
+        let bytes = fs::read(writer.episode_path_v3(8, 303)).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        let reported: Vec<u64> = text
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["wall_time"]
+                    ["previous_record_publish_micros"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .collect();
+        let ceilings = episode_decision_ceilings_v3(&bytes).expect("chain verifies");
+        assert_eq!(ceilings.len(), 3);
+        assert_eq!(
+            ceilings.iter().map(|c| c.search_micros).collect::<Vec<_>>(),
+            vec![1_000_000, 2_000_000, 3_000_000]
+        );
+        // Decision n's publish time is what record n+1 reported.
+        assert_eq!(ceilings[0].publish_micros, Some(reported[2]));
+        assert_eq!(ceilings[1].publish_micros, Some(reported[3]));
+        assert_eq!(ceilings[2].publish_micros, None);
+        // The header's own publish time is attributed to no decision.
+        assert!(reported[1] > 0 || reported[1] == 0);
+        // A tampered file yields no latency report at all.
+        let mut tampered = text.clone();
+        tampered = tampered.replacen("\"total_micros\":1000000", "\"total_micros\":1000001", 1);
+        assert!(episode_decision_ceilings_v3(tampered.as_bytes()).is_err());
+        fs::remove_dir_all(&directory).ok();
+    }
+
     #[test]
     fn a_tampered_record_breaks_the_chain_v3() {
         let directory = scratch_directory_v3(2);
@@ -891,6 +1314,7 @@ mod tests {
                 stability_half_a_micros: 1,
                 stability_half_b_micros: 2,
                 total_micros: 9_000_003,
+                previous_record_publish_micros: 4,
             },
         );
         assert_ne!(fast, slow);
