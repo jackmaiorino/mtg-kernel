@@ -1026,8 +1026,14 @@ $complete = New-InterruptionCampaign -Name 'complete' -ArmKind 'treatment-rb' `
     -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 4 -ChainThroughPanel 4 `
     -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'manifest-complete' }
 $run = Invoke-ResumeCase -Case $complete
-Assert-That -Condition (@($run.records | Where-Object { $_.label -cne 'run-record' }).Count -eq 0) `
-    -Message 'a finished campaign plans no work beyond re-deriving its run record'
+# The inputs-phase decode check (round F item 3) runs on every launch,
+# finished campaign included: it is an input proof, not a unit of campaign
+# work, and it is what makes a resumed launch fail in a second rather than
+# after a bootstrap when a roster Store has become unreadable.
+Assert-That -Condition (@($run.records | Where-Object { $_.label -cne 'run-record' -and $_.label -cne 'inputs-slot-decode' }).Count -eq 0) `
+    -Message 'a finished campaign plans no work beyond re-deriving its run record and re-proving its inputs'
+Assert-That -Condition (@($run.records | Where-Object { $_.label -ceq 'inputs-slot-decode' }).Count -eq 1) `
+    -Message 'even a finished campaign re-proves that every roster Store still decodes'
 Assert-That -Condition ([string]$run.result.status -ceq 'DRY_RUN_PLANNED') `
     -Message 'a finished campaign still only plans under -DryRun'
 
@@ -1442,6 +1448,208 @@ Assert-Throws -Action { Assert-Cycle4ProcessSucceeded -Result $nullExit } `
     -Message 'a null exit code is never treated as success'
 Assert-That -Condition ([int]$null -eq 0) `
     -Message 'the cast this fix removed really does turn an unknown outcome into a zero'
+
+# ---------------------------------------------------------------------------
+# 10. Round F defect 3: the inputs-phase decode check runs before any bootstrap
+# ---------------------------------------------------------------------------
+
+$checkEvidence = Join-Path $WorkRoot 'evidence-inputs-check'
+$checkArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $checkEvidence
+& $wrapper @checkArguments *>&1 | Out-Null
+$checkAttempt = Get-LatestAttemptRoot -EvidenceRoot $checkEvidence -GateName 'cycle4-treatment-rb-formal'
+$checkRecords = Get-CommandRecords -AttemptRoot $checkAttempt
+$checkCommands = @($checkRecords | Where-Object { $_.label -ceq 'inputs-slot-decode' })
+Assert-That -Condition ($checkCommands.Count -eq 1) `
+    -Message "the inputs decode check runs exactly once per launch (saw $($checkCommands.Count))"
+$checkLine = [string]$checkCommands[0].command_line
+Assert-That -Condition ($checkLine -like '*"--check-slot-locator"*') `
+    -Message 'the inputs decode check drives the arm bin read-only mode'
+Assert-That -Condition ($checkLine -like '*inputs-check-slot-locator.json*') `
+    -Message 'and it names the locator the wrapper wrote for it'
+Assert-That -Condition ($checkLine -notlike '*--store-root*' -and $checkLine -notlike '*--device*') `
+    -Message 'the check command carries no Store and no device flag'
+
+$checkOrder = @($checkRecords | ForEach-Object { [string]$_.label })
+$checkIndex = [array]::IndexOf($checkOrder, 'inputs-slot-decode')
+$bootstrapIndex = [array]::IndexOf($checkOrder, 'bootstrap-genesis')
+Assert-That -Condition ($checkIndex -ge 0 -and $bootstrapIndex -ge 0 -and $checkIndex -lt $bootstrapIndex) `
+    -Message 'the inputs decode check is planned before the genesis bootstrap, not after it'
+
+$checkLocatorPath = Join-Path $checkAttempt 'inputs-check-slot-locator.json'
+Assert-That -Condition (Test-Path -LiteralPath $checkLocatorPath -PathType Leaf) `
+    -Message 'the inputs check locator is written even in a dry run'
+$checkLocator = Get-Content -Raw -LiteralPath $checkLocatorPath | ConvertFrom-Json
+Assert-That -Condition ([string]$checkLocator.schema -ceq 'mtg-kernel-cycle4-arm-slot-locator/v1') `
+    -Message 'the inputs check locator carries the arm locator schema'
+Assert-That -Condition (@($checkLocator.stores).Count -eq 8) `
+    -Message 'the inputs check locator names all eight slots'
+Assert-That -Condition ([string]$checkLocator.genesis_parent_store_root -ceq (Resolve-Path -LiteralPath $parentStore).Path) `
+    -Message 'the inputs check locator names the genesis parent so the parent record is decoded too'
+$checkBinding = Get-Content -Raw -LiteralPath (Join-Path $checkAttempt 'inputs-check-binding.json') | ConvertFrom-Json
+Assert-That -Condition ($checkBinding.own_run_slot_substituted_with_parent -eq $true) `
+    -Message 'the own-run slot substitution is recorded, never hidden'
+
+# ---------------------------------------------------------------------------
+# 11. Round F defect 4: -ParameterFile
+# ---------------------------------------------------------------------------
+
+function Write-ParameterFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][hashtable]$Arguments,
+        [string]$Schema = 'mtg-kernel-cycle4-arm-parameters/v1'
+    )
+    $parameters = [ordered]@{}
+    foreach ($name in @($Arguments.Keys | Sort-Object)) {
+        $parameters[$name] = $Arguments[$name]
+    }
+    Write-SyntheticJson -Value ([ordered]@{ schema = $Schema; parameters = $parameters }) -Path $Path
+}
+
+$parameterFileEvidence = Join-Path $WorkRoot 'evidence-parameter-file'
+$parameterFileArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $parameterFileEvidence
+$parameterFilePath = Join-Path $WorkRoot 'launch-parameters.json'
+Write-ParameterFile -Path $parameterFilePath -Arguments $parameterFileArguments
+& $wrapper -ParameterFile $parameterFilePath *>&1 | Out-Null
+$parameterFileAttempt = Get-LatestAttemptRoot -EvidenceRoot $parameterFileEvidence -GateName 'cycle4-treatment-rb-formal'
+$parameterFileResult = Get-Content -Raw -LiteralPath (Join-Path $parameterFileAttempt 'result.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$parameterFileResult.status -ceq 'DRY_RUN_PLANNED') `
+    -Message 'a launch driven entirely from a parameter file plans the same campaign'
+$parameterFileManifest = Get-Content -Raw -LiteralPath (Join-Path $parameterFileAttempt 'launch-manifest.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$parameterFileManifest.arm -ceq 'treatment-rb') `
+    -Message 'the parameter file really did bind -Arm'
+Assert-That -Condition (@($parameterFileManifest.slot_store_roots).Count -eq 8) `
+    -Message 'a parameter file passes an eight-element array intact, which -File cannot'
+Assert-That -Condition ($null -ne $parameterFileManifest.parameter_file) `
+    -Message 'the launch manifest records the parameter file it was driven from'
+
+$badSchemaPath = Join-Path $WorkRoot 'launch-parameters-bad-schema.json'
+Write-ParameterFile -Path $badSchemaPath -Arguments $parameterFileArguments -Schema 'mtg-kernel-cycle4-arm-parameters/v2'
+Assert-Throws -Action { & $wrapper -ParameterFile $badSchemaPath *>&1 | Out-Null } `
+    -ExpectedSubstring 'unexpected parameter-file schema' `
+    -Message 'a parameter file of the wrong schema is refused'
+
+$unknownKeyArguments = $parameterFileArguments.Clone()
+$unknownKeyArguments['SlotStoreRootz'] = 'typo'
+$unknownKeyPath = Join-Path $WorkRoot 'launch-parameters-unknown-key.json'
+Write-ParameterFile -Path $unknownKeyPath -Arguments $unknownKeyArguments
+Assert-Throws -Action { & $wrapper -ParameterFile $unknownKeyPath *>&1 | Out-Null } `
+    -ExpectedSubstring 'unknown wrapper parameter' `
+    -Message 'a misspelled parameter name in a parameter file is refused, never ignored'
+
+$nestedArguments = $parameterFileArguments.Clone()
+$nestedArguments['ParameterFile'] = $parameterFilePath
+$nestedPath = Join-Path $WorkRoot 'launch-parameters-nested.json'
+Write-ParameterFile -Path $nestedPath -Arguments $nestedArguments
+Assert-Throws -Action { & $wrapper -ParameterFile $nestedPath *>&1 | Out-Null } `
+    -ExpectedSubstring 'never names another parameter file' `
+    -Message 'a parameter file may not name another parameter file'
+
+$incompleteArguments = $parameterFileArguments.Clone()
+$incompleteArguments.Remove('PanelBaseSeed') | Out-Null
+$incompletePath = Join-Path $WorkRoot 'launch-parameters-incomplete.json'
+Write-ParameterFile -Path $incompletePath -Arguments $incompleteArguments
+Assert-Throws -Action { & $wrapper -ParameterFile $incompletePath *>&1 | Out-Null } `
+    -ExpectedSubstring 'missing: PanelBaseSeed' `
+    -Message 'a parameter file that omits a required parameter is refused by name'
+
+$badValueArguments = $parameterFileArguments.Clone()
+$badValueArguments['Mode'] = 'sideways'
+$badValuePath = Join-Path $WorkRoot 'launch-parameters-bad-value.json'
+Write-ParameterFile -Path $badValuePath -Arguments $badValueArguments
+Assert-Throws -Action { & $wrapper -ParameterFile $badValuePath *>&1 | Out-Null } `
+    -ExpectedSubstring 'sideways' `
+    -Message "a parameter file value still faces the parameter's own ValidateSet"
+
+# ---------------------------------------------------------------------------
+# 12. Round F defect 5: a failed attempt publishes a result document
+# ---------------------------------------------------------------------------
+
+$failureEvidence = New-RejectionEvidenceRoot -Name 'failure-result'
+$failureArguments = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $failureEvidence
+$failureRotation = @($historicalOneRoots)
+$failureArguments['HistoricalOneStoreRoots'] = @($failureRotation[0], $failureRotation[1])
+Assert-Throws -Action { & $wrapper @failureArguments *>&1 | Out-Null } `
+    -ExpectedSubstring '-HistoricalOneStoreRoots must name exactly 3 store roots' `
+    -Message 'the failure fixture fails where it is meant to'
+
+$laterFailureEvidence = New-RejectionEvidenceRoot -Name 'failure-result-late'
+$laterFailureArguments = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $laterFailureEvidence
+$laterFailureRoots = @($slotStoreRoots)
+$laterFailureRoots[7] = $laterFailureRoots[6]
+$laterFailureArguments['SlotStoreRoots'] = $laterFailureRoots
+Assert-Throws -Action { & $wrapper @laterFailureArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'two slots to the same store root' `
+    -Message 'the late failure fixture fails after the attempt root exists'
+$laterAttempt = Get-LatestAttemptRoot -EvidenceRoot $laterFailureEvidence -GateName 'cycle4-control-r-formal'
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $laterAttempt 'RUN_FAILED')) `
+    -Message 'a failed attempt still writes RUN_FAILED'
+$failureResultPath = Join-Path $laterAttempt 'result.json'
+Assert-That -Condition (Test-Path -LiteralPath $failureResultPath -PathType Leaf) `
+    -Message 'a failed attempt now also writes result.json'
+$failureResult = Get-Content -Raw -LiteralPath $failureResultPath | ConvertFrom-Json
+Assert-That -Condition ([string]$failureResult.status -ceq 'RUN_FAILED') `
+    -Message 'the failure result document says plainly that the run failed'
+Assert-That -Condition (-not [string]::IsNullOrWhiteSpace([string]$failureResult.failed_phase)) `
+    -Message 'the failure result document names the phase it died in'
+Assert-That -Condition ([string]$failureResult.error -like '*two slots to the same store root*') `
+    -Message 'the failure result document carries the error text'
+Assert-That -Condition (@($failureResult.commands_run).Count -ge 1) `
+    -Message 'the failure result document carries the commands run so far'
+Assert-That -Condition ([string]$failureResult.arm -ceq 'control-r' -and [string]$failureResult.mode -ceq 'formal') `
+    -Message 'the failure result document identifies the arm and mode'
+
+# ---------------------------------------------------------------------------
+# 13. Round F defect 6: the panel executable's build identity
+# ---------------------------------------------------------------------------
+
+$panelIdentityRoot = Join-Path $WorkRoot 'panel-identity'
+New-Item -ItemType Directory -Force -Path $panelIdentityRoot | Out-Null
+$launchCommit = ('a' * 40)
+$otherCommit = ('b' * 40)
+
+$plainPanel = Join-Path $panelIdentityRoot 'mtg_kernel-plain.exe'
+[System.IO.File]::WriteAllText($plainPanel, 'no identity here', [System.Text.UTF8Encoding]::new($false))
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $plainPanel -LaunchCommit $launchCommit } `
+    -ExpectedSubstring 'no build receipt is present' `
+    -Message 'a panel binary with neither an embedded identity nor a receipt is refused'
+
+$embeddedPanel = Join-Path $panelIdentityRoot 'mtg_kernel-embedded.exe'
+[System.IO.File]::WriteAllText($embeddedPanel, "prefix $launchCommit suffix", [System.Text.UTF8Encoding]::new($false))
+$embeddedIdentity = Assert-Cycle4PanelBuildIdentity -PanelExecutable $embeddedPanel -LaunchCommit $launchCommit
+Assert-That -Condition ([string]$embeddedIdentity.source -ceq 'embedded') `
+    -Message 'an embedded launch-commit identity is accepted on its own'
+
+$receiptPanel = Join-Path $panelIdentityRoot 'mtg_kernel-receipt.exe'
+[System.IO.File]::WriteAllText($receiptPanel, 'built by the documented step', [System.Text.UTF8Encoding]::new($false))
+$receiptPath = "$receiptPanel.cycle4-panel-build.json"
+Write-SyntheticJson -Value ([ordered]@{
+    schema = 'mtg-kernel-cycle4-panel-build/v1'
+    source_git_commit = $launchCommit
+    panel_executable = $receiptPanel
+    panel_executable_sha256 = (Get-Cycle4Sha256 -Path $receiptPanel)
+    built_utc = '2026-09-02T00:00:00.0000000+00:00'
+}) -Path $receiptPath
+$receiptIdentity = Assert-Cycle4PanelBuildIdentity -PanelExecutable $receiptPanel -LaunchCommit $launchCommit
+Assert-That -Condition ([string]$receiptIdentity.source -ceq 'receipt') `
+    -Message 'a matching build receipt is accepted when there is no embedded identity'
+
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $receiptPanel -LaunchCommit $otherCommit } `
+    -ExpectedSubstring 'but this is a formal launch on commit' `
+    -Message 'a receipt from a different commit than the launch commit is refused'
+
+$staleReceiptPanel = Join-Path $panelIdentityRoot 'mtg_kernel-stale.exe'
+[System.IO.File]::WriteAllText($staleReceiptPanel, 'rebuilt after the receipt was written', [System.Text.UTF8Encoding]::new($false))
+Write-SyntheticJson -Value ([ordered]@{
+    schema = 'mtg-kernel-cycle4-panel-build/v1'
+    source_git_commit = $launchCommit
+    panel_executable = $staleReceiptPanel
+    panel_executable_sha256 = ('0' * 64)
+    built_utc = '2026-09-02T00:00:00.0000000+00:00'
+}) -Path "$staleReceiptPanel.cycle4-panel-build.json"
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $staleReceiptPanel -LaunchCommit $launchCommit } `
+    -ExpectedSubstring 'describes a different binary' `
+    -Message 'a receipt that does not hash to its binary is refused'
 
 # ---------------------------------------------------------------------------
 

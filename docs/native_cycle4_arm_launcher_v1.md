@@ -241,6 +241,36 @@ with status `DRY_RUN_PLANNED` instead, because a run that trained and
 compared nothing may not leave behind the file an operator reads as
 "finished".
 
+Round F corrections, all five from the first CONTROL preflight ladder
+attempt:
+
+- **Exit codes are captured, or the launch stops.** `Start-Process -PassThru`
+  under PowerShell 5.1 can return a `Process` holding no cached native
+  handle; once the child is reaped `.ExitCode` answers `$null` forever, and
+  `[int]$null` is `0`. The ladder therefore recorded exit_code 0 for two arm
+  rungs that had in fact exited 3. `Invoke-Cycle4Process` now reads
+  `.Handle` immediately after the start, which caches the handle for the
+  object's lifetime, and treats a `$null` exit code as a hard failure rather
+  than casting it. The `WaitForExit()` plus `Refresh()` pair is kept.
+- **Inputs are proven before any bootstrap.** Section 4's
+  `--check-slot-locator` runs in the inputs phase, over a locator the wrapper
+  writes from the operator's roster plus the genesis parent, so an
+  undecodable roster record stops the launch in a second instead of after two
+  five-minute genesis bootstraps.
+- **A launch form that works.** `-ParameterFile` takes one deny-unknown-keys
+  JSON document naming every parameter, because `powershell -File` cannot
+  pass an array at all; splatting from inside a session is the documented
+  alternative.
+- **A failure publishes a result document.** `RUN_FAILED` is still written,
+  and beside it a `result.json` with status `RUN_FAILED`, the failing phase,
+  the error text, and the commands run so far.
+- **The panel executable's build identity is proven for a formal interval.**
+  `-PanelExecutable` is a cargo test binary whose name is a content hash, and
+  a preflight only hashed it; the first attempt used one that predated the
+  launch commit. A formal launch now requires its embedded build identity, or
+  a build receipt written beside it by the documented build step, to name the
+  launch commit.
+
 ## 7. Delivery order
 
 A. Section 1 plus 2 (contract widening, validators, evidence dispatch).

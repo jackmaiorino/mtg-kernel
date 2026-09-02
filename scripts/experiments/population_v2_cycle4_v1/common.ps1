@@ -173,6 +173,158 @@ function Write-Cycle4JsonFile {
     }
 }
 
+$script:Cycle4ParameterFileSchema = 'mtg-kernel-cycle4-arm-parameters/v1'
+$script:Cycle4PanelBuildReceiptSchema = 'mtg-kernel-cycle4-panel-build/v1'
+$script:Cycle4PanelBuildReceiptSuffix = '.cycle4-panel-build.json'
+
+function Read-Cycle4ParameterFile {
+    # Round F defect 4. `powershell -NoProfile -File run-cycle4-arm.ps1
+    # -SlotStoreRoots @('a','b')` does NOT pass an array: -File hands the
+    # script a flat list of strings, so the array literal arrives as the
+    # separate tokens `@('a',` and `'b')`, and the eight-root check then
+    # rejects a command line that looks correct in a README. Splatting from
+    # inside PowerShell works, but a launch that has to be typed into a
+    # running session is not a launch an operator can paste from a
+    # pre-registered document.
+    #
+    # This is the paste-able form: one JSON file, read with the same
+    # deny-unknown-keys discipline every other artifact in this stack uses.
+    # Every key must be a real wrapper parameter, spelled exactly (parameter
+    # names are matched case-sensitively here even though PowerShell's own
+    # binder is not, so a typo is a refusal rather than a silent miss), and
+    # no key may be null. `ParameterFile` itself is refused: a parameter file
+    # never names another parameter file.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string[]]$KnownNames
+    )
+    $document = Read-Cycle4Json -Path $Path
+    if ([string]$document.schema -cne $script:Cycle4ParameterFileSchema) {
+        throw "unexpected parameter-file schema at $Path`: '$($document.schema)', expected '$($script:Cycle4ParameterFileSchema)'"
+    }
+    if ($null -eq $document.parameters) {
+        throw "$Path carries no 'parameters' object"
+    }
+    $values = [ordered]@{}
+    foreach ($property in @($document.parameters.PSObject.Properties)) {
+        $name = [string]$property.Name
+        if ($name -ceq 'ParameterFile') {
+            throw "$Path names ParameterFile; a parameter file never names another parameter file"
+        }
+        $match = @($KnownNames | Where-Object { $_ -ceq $name })
+        if ($match.Count -ne 1) {
+            throw "$Path names an unknown wrapper parameter: '$name'. Known parameters: $($KnownNames -join ', ')"
+        }
+        if ($null -eq $property.Value) {
+            throw "$Path sets '$name' to null; every parameter it names must carry a value"
+        }
+        $values[$name] = $property.Value
+    }
+    if ($values.Count -eq 0) {
+        throw "$Path names no parameters"
+    }
+    return $values
+}
+
+function Test-Cycle4FileContainsAscii {
+    # Streams a file in overlapping chunks looking for one ASCII needle.
+    # Used to probe a large executable for an embedded build identity without
+    # reading the whole thing into memory at once.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Needle
+    )
+    if ([string]::IsNullOrEmpty($Needle)) { throw 'Test-Cycle4FileContainsAscii needs a non-empty needle' }
+    $needleBytes = [System.Text.Encoding]::ASCII.GetBytes($Needle)
+    $overlap = $needleBytes.Length - 1
+    $chunk = 1048576
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        $buffer = New-Object byte[] ($chunk + $overlap)
+        $carried = 0
+        while ($true) {
+            $read = $stream.Read($buffer, $carried, $chunk)
+            if ($read -le 0) { break }
+            $filled = $carried + $read
+            $text = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $filled)
+            if ($text.Contains($Needle)) { return $true }
+            if ($overlap -gt 0) {
+                $keep = [Math]::Min($overlap, $filled)
+                [System.Array]::Copy($buffer, $filled - $keep, $buffer, 0, $keep)
+                $carried = $keep
+            }
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    return $false
+}
+
+function Assert-Cycle4PanelBuildIdentity {
+    # Round F defect 6. -PanelExecutable is a cargo test binary
+    # (`deps\mtg_kernel-<hash>.exe`), and a preflight only hashed it, so a
+    # formal interval could be driven by a panel binary built from a
+    # DIFFERENT commit than the one the campaign launched on -- which is
+    # exactly what the first preflight attempt used: a binary that predated
+    # the launch commit.
+    #
+    # Two acceptable proofs, tried in that order:
+    #
+    #   embedded: the launch commit's own 40-hex string appears verbatim in
+    #             the executable. A build that carried the store build-capture
+    #             constants embeds it; nothing else in a binary built from a
+    #             different commit would.
+    #   receipt:  a `<panel executable><suffix>` JSON receipt written beside
+    #             the binary by the documented build step, whose
+    #             `panel_executable_sha256` is that binary's actual hash and
+    #             whose `source_git_commit` is the launch commit. This is the
+    #             fallback the README's build step always writes, because a
+    #             test binary built without the production feature carries no
+    #             embedded identity at all.
+    #
+    # Neither: hard failure. A panel binary of unknown provenance is not a
+    # thing a formal interval may run.
+    param(
+        [Parameter(Mandatory = $true)][string]$PanelExecutable,
+        [Parameter(Mandatory = $true)][string]$LaunchCommit
+    )
+    if ($LaunchCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "the launch commit must be a 40-character lowercase hex sha, got '$LaunchCommit'"
+    }
+    $record = Get-Cycle4FileRecord -Path $PanelExecutable
+    if (Test-Cycle4FileContainsAscii -Path $record.path -Needle $LaunchCommit) {
+        return [ordered]@{
+            source = 'embedded'
+            panel_executable = $record
+            source_git_commit = $LaunchCommit
+            receipt = $null
+        }
+    }
+    $receiptPath = "$($record.path)$($script:Cycle4PanelBuildReceiptSuffix)"
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        throw "the panel executable carries no embedded build identity for the launch commit $LaunchCommit, and no build receipt is present at $receiptPath. Build it with the README's documented panel build step, which writes that receipt."
+    }
+    $receipt = Read-Cycle4Json -Path $receiptPath
+    if ([string]$receipt.schema -cne $script:Cycle4PanelBuildReceiptSchema) {
+        throw "unexpected panel build receipt schema at $receiptPath`: '$($receipt.schema)', expected '$($script:Cycle4PanelBuildReceiptSchema)'"
+    }
+    $receiptExecutableSha256 = ([string]$receipt.panel_executable_sha256).ToLowerInvariant()
+    if ($receiptExecutableSha256 -cne $record.sha256) {
+        throw "the panel build receipt at $receiptPath describes a different binary: it names sha256 $receiptExecutableSha256, but $($record.path) hashes to $($record.sha256)"
+    }
+    $receiptCommit = ([string]$receipt.source_git_commit).ToLowerInvariant()
+    if ($receiptCommit -cne $LaunchCommit) {
+        throw "the panel executable was built from commit $receiptCommit, but this is a formal launch on commit $LaunchCommit; rebuild the panel executable at the launch commit"
+    }
+    return [ordered]@{
+        source = 'receipt'
+        panel_executable = $record
+        source_git_commit = $receiptCommit
+        receipt = (Get-Cycle4FileRecord -Path $receiptPath)
+    }
+}
+
 function Test-Cycle4ArmUsesBaselineChain {
     # Mirrors Cycle4ArmKindV1::uses_baseline_v4_v1: TREATMENT-RB and STATIC-RB
     # run terminal_reinforce_value/v4-candidate and therefore carry a baseline
@@ -696,6 +848,57 @@ function New-Cycle4BootstrapLocator {
         genesis_parent_store_root = $GenesisParentStoreRoot
     }) -Path $Path
     return Get-Cycle4FileRecord -Path $Path
+}
+
+function New-Cycle4InputsCheckLocator {
+    # Round F defect 3. The locator `cycle4_arm_v1 --check-slot-locator`
+    # reads during the INPUTS phase, before a single Store is bootstrapped.
+    #
+    # Same shape as the bootstrap locator (identical schema, the same eight
+    # roster identities, the same genesis parent), with one deliberate
+    # difference: the slot the manifest binds to the ARM's own run has no
+    # Store to name yet on a fresh campaign, because this launcher is what
+    # creates it. That slot is therefore pointed at the genesis PARENT Store
+    # -- a real, decodable record that this launch depends on anyway, and the
+    # one the arm's own genesis is copied from -- and the substitution is
+    # recorded in the returned record rather than hidden. Once the arm's own
+    # Store exists (every resumed attempt), its real root is used and the
+    # check covers it too.
+    #
+    # What this proves: every roster Store this launch will read as an
+    # opponent, and the parent, hold a `run.json` this build can decode. What
+    # it does NOT prove: identity binding, which needs a refresh manifest and
+    # stays where it has always been proven, at the slot resolver.
+    param(
+        [Parameter(Mandatory = $true)]$SlotTable,
+        [Parameter(Mandatory = $true)][string]$RosterPath,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot,
+        [string]$ArmStoreRoot
+    )
+    if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
+        throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+    }
+    $ownRunRoot = $GenesisParentStoreRoot
+    $ownRunSubstituted = $true
+    if (-not [string]::IsNullOrWhiteSpace($ArmStoreRoot) -and
+        (Test-Path -LiteralPath (Join-Path $ArmStoreRoot 'run.json') -PathType Leaf)) {
+        $ownRunRoot = $ArmStoreRoot
+        $ownRunSubstituted = $false
+    }
+    $record = New-Cycle4BootstrapLocator `
+        -SlotTable $SlotTable `
+        -RosterPath $RosterPath `
+        -ArmStoreRoot $ownRunRoot `
+        -Path $Path `
+        -GenesisParentStoreRoot $GenesisParentStoreRoot
+    return [ordered]@{
+        locator = $record
+        own_run_slot_index = $script:Cycle4ArmOwnedSlotIndex
+        own_run_store_root = $ownRunRoot
+        own_run_slot_substituted_with_parent = $ownRunSubstituted
+        note = 'The own-run slot names the genesis parent Store until the arm''s own Store exists; this file is a decode check, never a training locator.'
+    }
 }
 
 function Read-Cycle4ArmOriginRecord {
@@ -1355,5 +1558,51 @@ function Write-Cycle4RunFailed {
     $path = Join-Path $Root 'RUN_FAILED'
     $line = "$([DateTimeOffset]::UtcNow.ToString('O')) phase=$Phase error=$Message"
     [System.IO.File]::WriteAllText($path, $line, [System.Text.UTF8Encoding]::new($false))
+    return $path
+}
+
+function Write-Cycle4FailureResult {
+    # Round F defect 5. The failure path used to write RUN_FAILED and
+    # rethrow, leaving the attempt root with NO result.json at all -- so the
+    # one file every reader of this evidence tree opens first was the one
+    # file a failed attempt did not have, and the commands that did run were
+    # recoverable only by re-deriving them from commands.jsonl by hand.
+    #
+    # A failed attempt now publishes the same document a successful one does,
+    # with status RUN_FAILED, the phase it died in, the error text, and the
+    # commands it had run up to that point. Best-effort by construction: it
+    # runs inside a catch block that is about to rethrow, so a failure to
+    # write the failure document must never replace the real error.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [Parameter(Mandatory = $true)][string]$Arm,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [bool]$DryRun = $false,
+        [string]$CommandLog
+    )
+    $commands = @()
+    if (-not [string]::IsNullOrWhiteSpace($CommandLog) -and (Test-Path -LiteralPath $CommandLog -PathType Leaf)) {
+        $commands = @(
+            foreach ($line in [System.IO.File]::ReadAllLines($CommandLog)) {
+                if (-not [string]::IsNullOrWhiteSpace($line)) { $line | ConvertFrom-Json }
+            }
+        )
+    }
+    $path = Join-Path $Root 'result.json'
+    Write-Cycle4JsonFile -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle4-arm-training-result/v1'
+        status = 'RUN_FAILED'
+        completed_utc = [DateTimeOffset]::UtcNow.ToString('O')
+        arm = $Arm
+        mode = $Mode
+        dry_run = $DryRun
+        failed_phase = $Phase
+        error = $Message
+        commands_run = @($commands)
+        command_log = $CommandLog
+        nonclaim = 'A failed attempt claims nothing about training, playing strength, or the campaign; it records only where it stopped and why.'
+    }) -Path $path
     return $path
 }
