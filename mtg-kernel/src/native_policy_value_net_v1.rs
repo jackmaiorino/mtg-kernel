@@ -534,6 +534,18 @@ pub(crate) struct NativePolicyValueNetV1 {
 }
 
 impl NativePolicyValueNetV1 {
+    /// This net's own architecture identity, taken from the config it was
+    /// built with rather than from a constant the caller guesses.
+    ///
+    /// It really does discriminate: `contract_v1` carries
+    /// `kernel-policy-value-net-8` and the capacity-experiment wide fork
+    /// carries `kernel-policy-value-net-8w128`. A caller that pinned the
+    /// former by hand would mislabel the latter, which is exactly the
+    /// failure an architecture field exists to prevent.
+    pub(crate) fn architecture_identity_v1(&self) -> &'static str {
+        self.config.model_architecture_version
+    }
+
     pub(crate) fn runner_fixed_v1(
         config: NativePolicyValueModelConfigV1,
     ) -> Result<Self, NativePolicyValueErrorV1> {

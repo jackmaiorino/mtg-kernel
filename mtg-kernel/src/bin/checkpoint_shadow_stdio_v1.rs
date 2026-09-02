@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: checkpoint_shadow_stdio_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH | --cp7-behavior-clone-root PATH | --xmage-cp7-outcome-root PATH) ([--xmage-cp7-teacher-jsonl PATH] [--xmage-cp7-outcome-jsonl PATH] | --model-guided-search-tier (t512|t2048|t8192|t32768) --model-guided-search-seed-block N --model-guided-search-diagnostics-dir PATH)"
+        "usage: checkpoint_shadow_stdio_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH | --cp7-behavior-clone-root PATH | --xmage-cp7-outcome-root PATH) ([--xmage-cp7-teacher-jsonl PATH] [--xmage-cp7-outcome-jsonl PATH] | --model-guided-search-tier (t512|t2048|t8192|t32768) --model-guided-search-seed-block N --model-guided-search-diagnostics-dir PATH [--model-guided-search-stability-halves (on|off)])"
     );
     std::process::exit(2);
 }
@@ -35,6 +35,16 @@ struct ModelGuidedSearchArgsV1 {
     tier: KernelNativeSearchTierV1,
     seed_block_id: usize,
     diagnostics_directory: PathBuf,
+    /// Whether the two diagnostic stability halves run inside each
+    /// decision. Defaults to ON, which is the S2-diagnostics
+    /// configuration and the one every existing record was produced
+    /// under; a formal panel measuring product latency passes `off`.
+    ///
+    /// Spelled with an explicit `on`/`off` value rather than as a bare
+    /// `--disable-...` switch so a command line always states the
+    /// configuration it ran under, and a reviewer reading a launch
+    /// invocation never has to know the default to know what happened.
+    stability_halves_enabled: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -60,7 +70,7 @@ fn parse_tier_v1(value: &OsString) -> Result<KernelNativeSearchTierV1, ()> {
 }
 
 fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
-    if raw.len() < 2 || raw.len() > 14 || !raw.len().is_multiple_of(2) {
+    if raw.len() < 2 || raw.len() > 16 || !raw.len().is_multiple_of(2) {
         return Err(());
     }
     let mut authority_root = None;
@@ -70,6 +80,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut search_tier = None;
     let mut search_seed_block = None;
     let mut search_diagnostics_dir = None;
+    let mut search_stability_halves = None;
     for pair in raw.chunks_exact(2) {
         let flag = &pair[0];
         if flag == "--original-store-root" && authority_root.is_none() {
@@ -102,6 +113,14 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             && search_diagnostics_dir.is_none()
         {
             search_diagnostics_dir = Some(PathBuf::from(&pair[1]));
+        } else if flag == "--model-guided-search-stability-halves"
+            && search_stability_halves.is_none()
+        {
+            search_stability_halves = Some(match pair[1].to_str().ok_or(())? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(()),
+            });
         } else {
             return Err(());
         }
@@ -112,9 +131,14 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
                 tier,
                 seed_block_id,
                 diagnostics_directory,
+                stability_halves_enabled: search_stability_halves.unwrap_or(true),
             })
         }
-        (None, None, None) => None,
+        // The stability-halves flag is a MODIFIER of the wrapper, never a
+        // way to reach it: on its own it selects nothing, so passing it
+        // without the three required flags is a usage error rather than a
+        // silently ignored argument.
+        (None, None, None) if search_stability_halves.is_none() => None,
         // Any partial combination is a usage error.
         _ => return Err(()),
     };
@@ -172,6 +196,7 @@ fn main() {
             search.tier,
             search.seed_block_id,
             search.diagnostics_directory,
+            search.stability_halves_enabled,
         ),
         (None, Some(path), None) => {
             run_checkpoint_shadow_stdio_with_xmage_cp7_teacher_jsonl_v1(parsed.authority, path)
@@ -356,6 +381,52 @@ mod tests {
             "outcome-derivative".into(),
             "--generation".into(),
             "1".into(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn stability_halves_flag_is_explicit_and_defaults_to_on_v1() {
+        // Default: absent means ON, the configuration every existing
+        // record was produced under.
+        let parsed = parse_args_v1(model_guided_search_argv_v1("t512")).unwrap();
+        assert!(parsed.model_guided_search.unwrap().stability_halves_enabled);
+
+        for (value, expected) in [("on", true), ("off", false)] {
+            let mut argv = model_guided_search_argv_v1("t512");
+            argv.push("--model-guided-search-stability-halves".into());
+            argv.push(value.into());
+            let parsed = parse_args_v1(argv).unwrap();
+            assert_eq!(
+                parsed.model_guided_search.unwrap().stability_halves_enabled,
+                expected
+            );
+        }
+
+        // Only the two spellings, and only in lower case: a tri-state
+        // pre-registered switch must never be set by a typo.
+        for bad in ["ON", "true", "1", "yes", "", "disabled"] {
+            let mut argv = model_guided_search_argv_v1("t512");
+            argv.push("--model-guided-search-stability-halves".into());
+            argv.push(bad.into());
+            assert!(parse_args_v1(argv).is_err(), "{bad:?} must be rejected");
+        }
+
+        // Repeating it is rejected, like every other flag here.
+        let mut repeated = model_guided_search_argv_v1("t512");
+        for value in ["on", "off"] {
+            repeated.push("--model-guided-search-stability-halves".into());
+            repeated.push(value.into());
+        }
+        assert!(parse_args_v1(repeated).is_err());
+
+        // It is a MODIFIER, not a selector: on its own it cannot turn the
+        // wrapper on, and it cannot be silently ignored either.
+        assert!(parse_args_v1(vec![
+            "--original-store-root".into(),
+            "store".into(),
+            "--model-guided-search-stability-halves".into(),
+            "off".into(),
         ])
         .is_err());
     }

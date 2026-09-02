@@ -2514,6 +2514,14 @@ struct ModelGuidedSearchRuntimeV1 {
     seed_block_id: usize,
     action_seed: u64,
     value_domain: ModelGuidedSearchValueHeadDomainV1,
+    /// Whether the two diagnostic stability halves run. They execute
+    /// synchronously inside each decision, so leaving them on roughly
+    /// triples the per-decision transition count and the latency that goes
+    /// with it. A formal panel measuring product latency turns them off;
+    /// an S2 diagnostics run leaves them on. Either way the per-decision
+    /// record says which ran, and `ceiling_status` is classified from the
+    /// latency that configuration actually paid.
+    stability_halves_enabled: bool,
     diagnostics: ModelGuidedSearchOutcomeWriterV3,
     bound: Option<BoundModelGuidedSearchV1>,
 }
@@ -2553,6 +2561,7 @@ impl ModelGuidedSearchRuntimeV1 {
         tier: KernelNativeSearchTierV1,
         seed_block_id: usize,
         diagnostics_directory: PathBuf,
+        stability_halves_enabled: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let action_seed = authorized_seed_block_v1(seed_block_id).ok_or_else(|| {
             io::Error::new(
@@ -2574,19 +2583,54 @@ impl ModelGuidedSearchRuntimeV1 {
             seed_block_id,
             action_seed,
             value_domain: MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1,
+            stability_halves_enabled,
             diagnostics,
             bound: None,
         })
+    }
+
+    /// The lineage this authority binds: the identity of the checkpoint
+    /// that was actually LOADED, not the generic kind string every
+    /// Store-backed checkpoint shares.
+    ///
+    /// `authority_kind` alone is not a lineage. Every checkpoint drawn
+    /// from a population Store carries the same value for it, so two
+    /// different checkpoints from the same Store produced the same
+    /// `checkpoint_store_path_or_lineage_id`, and the authority record and
+    /// every seed derived from its digest failed to bind the lineage the
+    /// field promises. Composing the loaded run identity, the loaded
+    /// checkpoint manifest digest, and the loaded payload digest makes the
+    /// field discriminate exactly what it claims to: two different
+    /// checkpoints can no longer share an authority digest even when they
+    /// share a kind, a generation, and (in the degenerate case) their
+    /// weight bytes.
+    ///
+    /// The kind is kept as a readable prefix, so the field still says at a
+    /// glance which authority family a record came from.
+    fn checkpoint_lineage_id_v1(checkpoint: &ShadowCheckpointIdentityV1) -> String {
+        format!(
+            "{}|loaded_run_sha256={}|loaded_generation={}|loaded_checkpoint_sha256={}|loaded_payload_sha256={}",
+            checkpoint.authority_kind,
+            checkpoint.loaded_run_sha256,
+            checkpoint.loaded_generation,
+            checkpoint.loaded_checkpoint_sha256,
+            checkpoint.loaded_payload_sha256,
+        )
     }
 
     /// Binds (or re-checks) the authority against a live session, then
     /// opens this episode's diagnostics file. Returns a stable error code
     /// on any failure so the caller can surface it through the protocol's
     /// existing error body.
+    ///
+    /// `net_architecture_identity` is read off the LOADED net rather than
+    /// pinned here, so the authority names the architecture that will
+    /// actually run.
     fn begin_episode_v1(
         &mut self,
         session: &FastActorSessionV1,
         checkpoint: &ShadowCheckpointIdentityV1,
+        net_architecture_identity: &str,
         episode_id: u64,
         base_seed: u64,
         candidate_seat: PlayerSeatV1,
@@ -2595,14 +2639,15 @@ impl ModelGuidedSearchRuntimeV1 {
             .kernel_search_private_diagnostic_identity_v1()
             .to_owned();
         if self.bound.is_none() {
+            let lineage = Self::checkpoint_lineage_id_v1(checkpoint);
             let authority = ModelGuidedSearchAuthorityV1::new(
                 self.tier,
                 self.action_seed,
                 &live_identity,
-                &checkpoint.authority_kind,
+                &lineage,
                 checkpoint.loaded_generation,
                 &checkpoint.model_parameter_sha256,
-                NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+                net_architecture_identity,
                 // Mode (a): the wrapper IS the presented agent's decision
                 // rule, not an opponent and not a training-target source.
                 ModelGuidedSearchConsumptionModeV1::SearchAtInference,
@@ -2623,6 +2668,8 @@ impl ModelGuidedSearchRuntimeV1 {
                 seed_block_id: self.seed_block_id as u64,
                 action_seed_u64_hex: u64_hex_v1(self.action_seed),
                 search_authority_digest_sha256: lower_hex_sha256_v3(authority_digest),
+                checkpoint_lineage_id: authority.checkpoint_store_path_or_lineage_id.clone(),
+                net_architecture_identity: authority.net_architecture_identity.clone(),
                 puct_prior_quantization_contract_sha256: authority
                     .puct_prior_quantization_contract_sha256
                     .clone(),
@@ -3160,11 +3207,13 @@ impl ShadowScorerServiceV1 {
         // record on every decision.
         let ModelGuidedSearchRuntimeV1 {
             value_domain,
+            stability_halves_enabled,
             diagnostics,
             bound,
             ..
         } = search;
         let value_domain = *value_domain;
+        let stability_halves_enabled = *stability_halves_enabled;
         let bound = bound
             .as_ref()
             .ok_or("model_guided_search_authority_unbound")?;
@@ -3182,34 +3231,57 @@ impl ShadowScorerServiceV1 {
 
         // Diagnostic stability halves. Their results are recorded and
         // never consulted; the chosen action above is already fixed.
-        let half_a_started = Instant::now();
-        let half_a = core
-            .select_action_seed_half_v1(
-                session,
-                expected,
-                &evaluator,
-                &value_domain,
-                ModelGuidedSearchSeedHalfV1::A,
+        //
+        // They run SYNCHRONOUSLY inside the decision, so when they are
+        // enabled their cost is part of the protocol latency the panel
+        // host actually pays. That is why `--model-guided-search-stability
+        // -halves off` exists and why `ceiling_status` is classified from
+        // `total_micros` below: a formal panel measuring product latency
+        // turns them off, and the record says which configuration ran.
+        let (stability, half_a_micros, half_b_micros) = if stability_halves_enabled {
+            let half_a_started = Instant::now();
+            let half_a = core
+                .select_action_seed_half_v1(
+                    session,
+                    expected,
+                    &evaluator,
+                    &value_domain,
+                    ModelGuidedSearchSeedHalfV1::A,
+                )
+                .map_err(|error| {
+                    eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_a error={error}");
+                    "model_guided_search_stability_half_failed"
+                })?;
+            let half_a_micros = elapsed_micros_v1(half_a_started);
+            let half_b_started = Instant::now();
+            let half_b = core
+                .select_action_seed_half_v1(
+                    session,
+                    expected,
+                    &evaluator,
+                    &value_domain,
+                    ModelGuidedSearchSeedHalfV1::B,
+                )
+                .map_err(|error| {
+                    eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_b error={error}");
+                    "model_guided_search_stability_half_failed"
+                })?;
+            let half_b_micros = elapsed_micros_v1(half_b_started);
+            (
+                Some(StabilityV3 {
+                    half_a_selected_index: half_a.selected_index,
+                    half_b_selected_index: half_b.selected_index,
+                    half_transition_budget: half_a.transitions_used.max(half_b.transitions_used),
+                    halves_agree: half_a.selected_index == half_b.selected_index,
+                    halves_agree_with_full_budget: half_a.selected_index == full.selected_index
+                        && half_b.selected_index == full.selected_index,
+                }),
+                half_a_micros,
+                half_b_micros,
             )
-            .map_err(|error| {
-                eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_a error={error}");
-                "model_guided_search_stability_half_failed"
-            })?;
-        let half_a_micros = elapsed_micros_v1(half_a_started);
-        let half_b_started = Instant::now();
-        let half_b = core
-            .select_action_seed_half_v1(
-                session,
-                expected,
-                &evaluator,
-                &value_domain,
-                ModelGuidedSearchSeedHalfV1::B,
-            )
-            .map_err(|error| {
-                eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_b error={error}");
-                "model_guided_search_stability_half_failed"
-            })?;
-        let half_b_micros = elapsed_micros_v1(half_b_started);
+        } else {
+            (None, 0, 0)
+        };
         let total_micros = elapsed_micros_v1(started);
 
         let record = SearchDecisionRecordV3 {
@@ -3238,24 +3310,28 @@ impl ShadowScorerServiceV1 {
             visit_margin: visit_margin_v3(&full),
             policy_sample_index: policy_sample,
             search_overrode_policy_sample: full.selected_index != policy_sample,
-            stability: StabilityV3 {
-                half_a_selected_index: half_a.selected_index,
-                half_b_selected_index: half_b.selected_index,
-                half_transition_budget: half_a.transitions_used.max(half_b.transitions_used),
-                halves_agree: half_a.selected_index == half_b.selected_index,
-                halves_agree_with_full_budget: half_a.selected_index == full.selected_index
-                    && half_b.selected_index == full.selected_index,
-            },
-            // Classified from the FULL-BUDGET search's own elapsed time,
-            // not from `total_micros`: the pre-registered SLO is a
-            // per-decision ceiling on the PRODUCT's decision cost, and the
-            // two stability halves are S2 diagnostics that a formal panel
-            // need not run at all. Charging their time against the
-            // product's ceiling would report a p99 that no shipped
-            // configuration ever pays. `total_micros` is recorded
-            // alongside so the diagnostic overhead stays visible.
+            stability,
+            stability_halves_enabled,
+            // Classified from `total_micros`: the FULL SYNCHRONOUS LATENCY
+            // of whatever actually ran for this decision, halves included
+            // when they are enabled.
+            //
+            // An earlier version classified from `full_micros` on the
+            // reasoning that the halves are S2 diagnostics a panel need
+            // not run. That was wrong while there was no way to not run
+            // them: the halves execute inside this call, before the
+            // response goes back, so with them enabled the protocol's
+            // per-decision latency IS `total_micros`, and reporting the
+            // full-budget time alone would understate the p99 the panel
+            // host actually experiences by roughly a factor of two. The
+            // fix is the flag, not a friendlier denominator: a panel that
+            // wants product latency turns the halves off, at which point
+            // `total_micros` equals `full_micros` and this classification
+            // is the product's own. `stability_halves_enabled` records
+            // which configuration produced the number.
+            //
             // Computed after the decision is already fixed; never acted on.
-            ceiling_status: CeilingStatusV3::classify_v3(full_micros as f64 / 1_000_000.0),
+            ceiling_status: CeilingStatusV3::classify_v3(total_micros as f64 / 1_000_000.0),
             wall_time: WallTimeV3 {
                 full_search_micros: full_micros,
                 stability_half_a_micros: half_a_micros,
@@ -3647,10 +3723,29 @@ impl ShadowScorerServiceV1 {
         // still leaves an auditable file naming the wrapper that was
         // configured for it.
         let checkpoint_identity = self.identity.clone();
+        // Read off the LOADED net, so the authority names the architecture
+        // that will actually run rather than one the caller assumed. A
+        // model with no native net cannot be searched with, and saying so
+        // here fails the episode closed instead of at the first decision.
+        let net_architecture = self
+            .model
+            .search_capable_v1()
+            .map(|capable| capable.search_native_net_v1().architecture_identity_v1());
         if let Some(search) = self.search.as_mut() {
+            let Some(net_architecture) = net_architecture else {
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(
+                        "model_guided_search_model_not_search_capable",
+                        "model-guided search episode could not be opened",
+                    ),
+                );
+            };
             if let Err(code) = search.begin_episode_v1(
                 &session,
                 &checkpoint_identity,
+                net_architecture,
                 episode_id,
                 base_seed,
                 candidate_seat,
@@ -4253,9 +4348,15 @@ pub fn run_checkpoint_shadow_stdio_with_model_guided_search_v1(
     tier: KernelNativeSearchTierV1,
     seed_block_id: usize,
     diagnostics_directory: PathBuf,
+    stability_halves_enabled: bool,
 ) -> Result<(), Box<dyn Error>> {
     normalize_scorer_process_mxcsr_v1()?;
-    let search = ModelGuidedSearchRuntimeV1::new_v1(tier, seed_block_id, diagnostics_directory)?;
+    let search = ModelGuidedSearchRuntimeV1::new_v1(
+        tier,
+        seed_block_id,
+        diagnostics_directory,
+        stability_halves_enabled,
+    )?;
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     if service.model.search_capable_v1().is_none() {
         return Err(io::Error::new(
@@ -4265,11 +4366,12 @@ pub fn run_checkpoint_shadow_stdio_with_model_guided_search_v1(
         .into());
     }
     eprintln!(
-        "MODEL_GUIDED_SEARCH tier={} transition_budget={} seed_block_id={} action_seed={} diagnostics_dir={}",
+        "MODEL_GUIDED_SEARCH tier={} transition_budget={} seed_block_id={} action_seed={} stability_halves={} diagnostics_dir={}",
         search_tier_tag_v1(search.tier),
         search.tier.transition_budget(),
         search.seed_block_id,
         search.action_seed,
+        if search.stability_halves_enabled { "on" } else { "off" },
         search.diagnostics.directory_v3().display(),
     );
     service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
@@ -4764,16 +4866,46 @@ mod tests {
     }
 
     fn search_runtime_v1(directory: PathBuf) -> ModelGuidedSearchRuntimeV1 {
-        ModelGuidedSearchRuntimeV1::new_v1(KernelNativeSearchTierV1::T512, 0, directory)
-            .expect("the T512 tier and seed block zero are registered")
+        search_runtime_with_halves_v1(directory, true)
+    }
+
+    fn search_runtime_with_halves_v1(
+        directory: PathBuf,
+        stability_halves_enabled: bool,
+    ) -> ModelGuidedSearchRuntimeV1 {
+        ModelGuidedSearchRuntimeV1::new_v1(
+            KernelNativeSearchTierV1::T512,
+            0,
+            directory,
+            stability_halves_enabled,
+        )
+        .expect("the T512 tier and seed block zero are registered")
     }
 
     fn search_service_v1(directory: PathBuf) -> ShadowScorerServiceV1 {
+        search_service_with_halves_v1(directory, true)
+    }
+
+    fn search_service_with_halves_v1(
+        directory: PathBuf,
+        stability_halves_enabled: bool,
+    ) -> ShadowScorerServiceV1 {
         let mut service =
             ShadowScorerServiceV1::with_test_model_v1(Box::new(SearchCapableTestModelV1::new_v1()));
         service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
-        service.search = Some(search_runtime_v1(directory));
+        service.search = Some(search_runtime_with_halves_v1(
+            directory,
+            stability_halves_enabled,
+        ));
         service
+    }
+
+    /// The architecture identity of the runner-fixed net the scorer tests
+    /// search with, read off the net rather than pinned by hand.
+    fn search_test_net_architecture_v1() -> &'static str {
+        SearchCapableTestModelV1::new_v1()
+            .search_native_net_v1()
+            .architecture_identity_v1()
     }
 
     /// Neutralizes wall time in a published episode file so two runs can
@@ -4823,7 +4955,16 @@ mod tests {
     /// (reset, then `steps` accepted steps on the scorer's own chosen
     /// index) and returns the published diagnostics bytes.
     fn run_wrapped_episode_v1(directory: &Path, steps: usize) -> (Vec<u32>, Vec<u8>) {
-        let mut service = search_service_v1(directory.to_path_buf());
+        run_wrapped_episode_with_halves_v1(directory, steps, true)
+    }
+
+    fn run_wrapped_episode_with_halves_v1(
+        directory: &Path,
+        steps: usize,
+        stability_halves_enabled: bool,
+    ) -> (Vec<u32>, Vec<u8>) {
+        let mut service =
+            search_service_with_halves_v1(directory.to_path_buf(), stability_halves_enabled);
         let mut chosen = Vec::new();
         let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("mgs-reset")));
         assert_eq!(
@@ -5023,7 +5164,14 @@ mod tests {
             let directory = search_scratch_directory_v1(tag);
             let mut runtime = search_runtime_v1(directory.clone());
             runtime
-                .begin_episode_v1(session, &identity, 50_301, 81_101, PlayerSeatV1::P0)
+                .begin_episode_v1(
+                    session,
+                    &identity,
+                    search_test_net_architecture_v1(),
+                    50_301,
+                    81_101,
+                    PlayerSeatV1::P0,
+                )
                 .expect("search episode opens");
             let selected = ShadowScorerServiceV1::model_guided_search_selection_v1(
                 &model,
@@ -5047,6 +5195,194 @@ mod tests {
             published[0], published[1],
             "the whole search record, not just the verdict, must be invariant"
         );
+    }
+
+    /// CODEX P1. The authority must bind the LOADED checkpoint's lineage,
+    /// not the generic authority-kind string every Store-backed checkpoint
+    /// shares, and the ACTUAL net architecture, not the tensorizer's
+    /// encoding identity.
+    ///
+    /// The witness is deliberately the hardest case: two Store-backed
+    /// checkpoints that agree on authority kind, generation, AND weight
+    /// digest, differing only in the run and manifest identity of the
+    /// checkpoint that was loaded. Under the previous binding these
+    /// produced the SAME authority digest, so every simulation seed
+    /// derived from it was the same too, and the record's promise to name
+    /// a lineage was empty.
+    #[test]
+    fn two_store_backed_checkpoints_yield_different_authority_digests_v1() {
+        let mut first = search_checkpoint_identity_v1();
+        first.authority_kind = "population-store-generation".to_owned();
+        first.loaded_run_sha256 = "1".repeat(64);
+        first.loaded_checkpoint_sha256 = "2".repeat(64);
+        first.loaded_payload_sha256 = "3".repeat(64);
+        let mut second = first.clone();
+        second.loaded_run_sha256 = "4".repeat(64);
+        second.loaded_checkpoint_sha256 = "5".repeat(64);
+        second.loaded_payload_sha256 = "6".repeat(64);
+
+        // Everything the OLD binding looked at is identical.
+        assert_eq!(first.authority_kind, second.authority_kind);
+        assert_eq!(first.loaded_generation, second.loaded_generation);
+        assert_eq!(first.model_parameter_sha256, second.model_parameter_sha256);
+
+        let mut digests = Vec::new();
+        let mut lineages = Vec::new();
+        for (tag, identity) in [("lineage-a", &first), ("lineage-b", &second)] {
+            let directory = search_scratch_directory_v1(tag);
+            let mut runtime = search_runtime_v1(directory.clone());
+            let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                50_401,
+                81_201,
+                256,
+                32_768,
+                ["Rally".to_owned(), "Burn".to_owned()],
+            )
+            .expect("session resets");
+            runtime
+                .begin_episode_v1(
+                    &session,
+                    identity,
+                    search_test_net_architecture_v1(),
+                    50_401,
+                    81_201,
+                    PlayerSeatV1::P0,
+                )
+                .expect("search episode opens");
+            let bound = runtime.bound.as_ref().expect("authority bound");
+            digests.push(bound.authority_digest_sha256.clone());
+            lineages.push(bound.wrapper_identity.checkpoint_lineage_id.clone());
+            // The architecture really is the net's, not the tensorizer's.
+            assert_eq!(
+                bound.wrapper_identity.net_architecture_identity,
+                "kernel-policy-value-net-8"
+            );
+            assert_ne!(
+                bound.wrapper_identity.net_architecture_identity,
+                NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+                "the tensorizer identity describes encoding, not architecture"
+            );
+            fs::remove_dir_all(&directory).ok();
+        }
+        assert_ne!(
+            lineages[0], lineages[1],
+            "the lineage id must discriminate two different loaded checkpoints"
+        );
+        assert_ne!(
+            digests[0], digests[1],
+            "two Store-backed checkpoints must not share an authority digest"
+        );
+        // The lineage names what it binds, so a reader of a published
+        // header can tell which checkpoint produced it.
+        assert!(lineages[0].contains(&first.loaded_run_sha256));
+        assert!(lineages[0].contains(&first.loaded_checkpoint_sha256));
+        assert!(lineages[0].starts_with("population-store-generation|"));
+    }
+
+    /// CODEX P1. The stability halves run synchronously inside the
+    /// decision, so with them enabled the protocol's per-decision latency
+    /// includes them and `ceiling_status` must be classified from that
+    /// full synchronous latency. Turning them off is what a formal panel
+    /// does to measure product latency, and the record says which ran.
+    #[test]
+    fn stability_halves_are_optional_and_the_ceiling_measures_what_actually_ran_v1() {
+        // The classifier itself, at both pre-registered boundaries. `>`
+        // for the SLO and `>=` for the hard timeout, as pinned.
+        assert_eq!(
+            CeilingStatusV3::classify_v3(0.0),
+            CeilingStatusV3::WithinSlo
+        );
+        assert_eq!(
+            CeilingStatusV3::classify_v3(4.0),
+            CeilingStatusV3::WithinSlo
+        );
+        assert_eq!(
+            CeilingStatusV3::classify_v3(4.000_001),
+            CeilingStatusV3::SloExceeded
+        );
+        assert_eq!(
+            CeilingStatusV3::classify_v3(19.999),
+            CeilingStatusV3::SloExceeded
+        );
+        assert_eq!(
+            CeilingStatusV3::classify_v3(20.0),
+            CeilingStatusV3::HardTimeoutExceeded
+        );
+
+        let with_directory = search_scratch_directory_v1("halves-on");
+        let without_directory = search_scratch_directory_v1("halves-off");
+        let (with_chosen, with_bytes) =
+            run_wrapped_episode_with_halves_v1(&with_directory, 2, true);
+        let (without_chosen, without_bytes) =
+            run_wrapped_episode_with_halves_v1(&without_directory, 2, false);
+
+        // Disabling a DIAGNOSTIC must not change the product's decision.
+        assert_eq!(
+            with_chosen, without_chosen,
+            "the stability halves are diagnostics; they cannot move the chosen action"
+        );
+
+        let with_record = search_decision_record_v1(&with_bytes);
+        let without_record = search_decision_record_v1(&without_bytes);
+        assert_eq!(
+            with_record["root_statistics_digest_sha256"],
+            without_record["root_statistics_digest_sha256"],
+            "the full-budget search is identical either way"
+        );
+
+        // Halves ON: recorded, and the total exceeds the full search.
+        assert_eq!(with_record["stability_halves_enabled"], true);
+        assert!(with_record["stability"].is_object());
+        assert!(with_record["stability"]["halves_agree"].is_boolean());
+        let with_full = with_record["wall_time"]["full_search_micros"]
+            .as_u64()
+            .unwrap();
+        let with_total = with_record["wall_time"]["total_micros"].as_u64().unwrap();
+        assert!(
+            with_total >= with_full,
+            "the halves run inside the decision, so the total cannot be smaller"
+        );
+
+        // Halves OFF: nulled, zero-timed, and the total IS the full search,
+        // which is exactly the product latency a panel wants to classify.
+        assert_eq!(without_record["stability_halves_enabled"], false);
+        assert!(without_record["stability"].is_null());
+        assert_eq!(without_record["wall_time"]["stability_half_a_micros"], 0);
+        assert_eq!(without_record["wall_time"]["stability_half_b_micros"], 0);
+        let without_full = without_record["wall_time"]["full_search_micros"]
+            .as_u64()
+            .unwrap();
+        let without_total = without_record["wall_time"]["total_micros"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            without_total >= without_full,
+            "with halves off the total is the full search plus bookkeeping only"
+        );
+
+        // Both classify from their own total, and both are recorded.
+        for record in [&with_record, &without_record] {
+            let total = record["wall_time"]["total_micros"].as_u64().unwrap();
+            assert_eq!(
+                record["ceiling_status"].as_str().unwrap(),
+                match CeilingStatusV3::classify_v3(total as f64 / 1_000_000.0) {
+                    CeilingStatusV3::WithinSlo => "within_slo",
+                    CeilingStatusV3::SloExceeded => "slo_exceeded",
+                    CeilingStatusV3::HardTimeoutExceeded => "hard_timeout_exceeded",
+                },
+                "ceiling status must classify the full synchronous latency that ran"
+            );
+        }
+        fs::remove_dir_all(&with_directory).ok();
+        fs::remove_dir_all(&without_directory).ok();
+    }
+
+    fn search_decision_record_v1(bytes: &[u8]) -> serde_json::Value {
+        let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
+        let record: serde_json::Value =
+            serde_json::from_str(text.lines().nth(1).expect("a decision record")).unwrap();
+        assert_eq!(record["record_kind"], "search_decision");
+        record
     }
 
     fn search_checkpoint_identity_v1() -> ShadowCheckpointIdentityV1 {
@@ -5093,6 +5429,7 @@ mod tests {
             .begin_episode_v1(
                 &session,
                 &search_checkpoint_identity_v1(),
+                search_test_net_architecture_v1(),
                 50_302,
                 81_103,
                 PlayerSeatV1::P0,
@@ -5129,12 +5466,14 @@ mod tests {
             KernelNativeSearchTierV1::T512,
             usize::MAX,
             directory.clone(),
+            true,
         )
         .is_err());
         assert!(ModelGuidedSearchRuntimeV1::new_v1(
             KernelNativeSearchTierV1::T512,
             0,
             directory.join("missing-subdirectory"),
+            true,
         )
         .is_err());
         fs::remove_dir_all(&directory).ok();

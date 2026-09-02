@@ -154,6 +154,13 @@ pub struct WrapperIdentityV3 {
     pub seed_block_id: u64,
     pub action_seed_u64_hex: String,
     pub search_authority_digest_sha256: String,
+    /// The lineage the authority binds: the identity of the checkpoint
+    /// actually loaded, not the generic authority-kind string every
+    /// Store-backed checkpoint shares.
+    pub checkpoint_lineage_id: String,
+    /// The architecture identity of the net that actually runs the search
+    /// forward, read off the loaded net.
+    pub net_architecture_identity: String,
     pub puct_prior_quantization_contract_sha256: String,
     pub value_quantization_contract_sha256: String,
     pub forward_determinism_build_identity: String,
@@ -233,7 +240,17 @@ pub struct SearchDecisionRecordV3 {
     /// choice can be compared on the same decision without a second run.
     pub policy_sample_index: u32,
     pub search_overrode_policy_sample: bool,
-    pub stability: StabilityV3,
+    /// `None` when the stability halves were disabled for this run. A
+    /// null here and `stability_halves_enabled: false` say the same thing
+    /// two ways on purpose: a reader that only knows one of the fields
+    /// still cannot mistake "halves not run" for "halves disagreed".
+    pub stability: Option<StabilityV3>,
+    /// Whether the two diagnostic stability halves ran for this decision.
+    /// Because they run synchronously inside the decision, this is also
+    /// what `ceiling_status` is measuring: with halves enabled the status
+    /// covers the full synchronous latency including them; with halves
+    /// disabled it covers the product's own per-decision cost.
+    pub stability_halves_enabled: bool,
     pub ceiling_status: CeilingStatusV3,
     /// DIAGNOSTIC ONLY. Excluded from every determinism comparison; see
     /// the module docs.
@@ -584,6 +601,8 @@ mod tests {
             seed_block_id: 0,
             action_seed_u64_hex: "00000000002f5c49".to_owned(),
             search_authority_digest_sha256: "a".repeat(64),
+            checkpoint_lineage_id: "store|loaded_run_sha256=abc".to_owned(),
+            net_architecture_identity: "kernel-policy-value-net-8".to_owned(),
             puct_prior_quantization_contract_sha256: "b".repeat(64),
             value_quantization_contract_sha256: "c".repeat(64),
             forward_determinism_build_identity: "d".repeat(64),
@@ -649,13 +668,14 @@ mod tests {
             visit_margin: visit_margin_v3(&decision),
             policy_sample_index: 0,
             search_overrode_policy_sample: true,
-            stability: StabilityV3 {
+            stability_halves_enabled: true,
+            stability: Some(StabilityV3 {
                 half_a_selected_index: 1,
                 half_b_selected_index: 1,
                 half_transition_budget: 256,
                 halves_agree: true,
                 halves_agree_with_full_budget: true,
-            },
+            }),
             ceiling_status: CeilingStatusV3::WithinSlo,
             wall_time: wall,
         }
