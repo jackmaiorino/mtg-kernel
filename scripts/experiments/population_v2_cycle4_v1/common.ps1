@@ -838,6 +838,12 @@ function Assert-Cycle4GenesisParentBinding {
         [Parameter(Mandatory = $true)][uint64]$ParentGeneration,
         [Parameter(Mandatory = $true)][string]$RunRecordPath
     )
+    # Property existence is tested rather than dereferenced: Set-StrictMode
+    # turns a missing property into an opaque PropertyNotFound error, and this
+    # is a case an operator has to be able to read.
+    if ($RunRecordDocument.PSObject.Properties.Name -notcontains 'contracts') {
+        throw "$RunRecordPath declares no contracts section; it is not a cycle-4 arm run record"
+    }
     $contracts = $RunRecordDocument.contracts
     if ($null -eq $contracts -or ($contracts.PSObject.Properties.Name -notcontains 'opponent_ladder_initialization')) {
         throw "$RunRecordPath declares no contracts.opponent_ladder_initialization; a cycle-4 arm's genesis parent is pinned there, not on the command line"

@@ -1292,6 +1292,19 @@ Assert-Throws -Action { & $wrapper @wrongHash *>&1 | Out-Null } `
     -ExpectedSubstring 'does not reproduce the run record' `
     -Message 'a parent store whose artifacts do not hash to the pinned origin is refused'
 
+$noContractsRecord = Join-Path $mismatchedRecordRoot 'run-no-contracts.json'
+Write-SyntheticJson -Value ([ordered]@{
+    schema = 'mtg-kernel-native-train-run/v2'
+    schedule = [ordered]@{ base_seed = $traineeBaseSeed; checkpoint_segment_updates = 4; batch_episodes = 64 }
+}) -Path $noContractsRecord
+$noContracts = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-contracts-record')
+$noContracts['RunRecord'] = $noContractsRecord
+$noContracts.Remove('RunRecordExecutable') | Out-Null
+$noContracts['UseExistingRunRecord'] = $true
+Assert-Throws -Action { & $wrapper @noContracts *>&1 | Out-Null } `
+    -ExpectedSubstring 'declares no contracts section' `
+    -Message 'a run record with no contracts section is refused with a readable message, not a strict-mode error'
+
 # (f) historical-1 rotates: slot 3 names a different Store at every phase, and
 # every one of them is proven against that boundary's manifest identity.
 function Get-ArmLocatorSlotRoot {
