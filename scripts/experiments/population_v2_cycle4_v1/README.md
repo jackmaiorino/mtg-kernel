@@ -69,7 +69,8 @@ itself occupies (`current-1` at every refresh including genesis, `historical-0`
 from refresh 4), read from the arm's own Store head.
 
 Nothing else is an operator input. In particular `refresh-00.manifest.json` is
-NOT: see the genesis sequence below.
+NOT (see the genesis sequence below) and neither is the arm's `run.json`
+(`cycle4_run_record_v1` derives it, and re-derives it on every later launch).
 
 ### The genesis sequence
 
