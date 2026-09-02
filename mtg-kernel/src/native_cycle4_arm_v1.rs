@@ -1470,6 +1470,25 @@ struct Cycle4ArmContractV1 {
     trainee_local_generation: u64,
 }
 
+/// The record-level cycle-4 arm check, exposed for the run-record BUILDER
+/// (`native_cycle4_run_record_v1`) so a record is proven acceptable to this
+/// launcher before it is ever written, rather than only when the first
+/// invocation reads it back. Exactly [`validate_run_contract_v1`], no
+/// separate restatement: what the builder proves is what the launcher
+/// enforces, by construction.
+///
+/// # Errors
+///
+/// Returns the same classified [`Cycle4ArmErrorV1`] an invocation would.
+pub fn validate_cycle4_arm_run_record_v1(
+    run: &ValidatedTrainRunV2,
+    arm: Cycle4ArmKindV1,
+) -> Result<()> {
+    validate_run_contract_v1(run, arm)?;
+    validate_device_contract_v1(run, arm)?;
+    Ok(())
+}
+
 fn validate_run_contract_v1(run: &ValidatedTrainRunV2, arm: Cycle4ArmKindV1) -> Result<()> {
     let contracts = run.record().contracts();
     let program = contracts
