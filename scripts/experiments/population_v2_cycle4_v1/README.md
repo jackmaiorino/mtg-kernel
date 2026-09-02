@@ -14,6 +14,7 @@ Files here:
 | `run-cycle4-arm-tests.ps1` | Dry-run tests over a synthetic campaign. Launches nothing. |
 | `run_payoff_panel_v1.py` | Round C: the 28-matchup payoff panel runner. |
 | `bt_rating_v1.py` | Round C: the BT rating derived metric. |
+| `run_m2_common_root_panel_v1.py` | Routing: the M2 common-root panel. Four endpoints against the frozen genesis pool on N = 1,024 common roots. See "Routing" below. |
 
 ## Operator inputs
 
@@ -259,3 +260,169 @@ value the manifest validator requires (trainee-local), because no other value
 is admissible into a manifest, and reads the hashes at the corresponding store
 generation. The 896-offset translation on the reading side is being added
 separately in `resolve_population_opponent_cycle4_v1` and the panel runner.
+
+## Routing (section-6 mechanical amendment V2)
+
+The ratified amendment (`LEAD_CYCLE4_SECTION6_MECHANICAL_AMENDMENT_V2.md` in
+the lane home) makes the recipe decision mechanical and CP7-free. Three tools
+implement it, and nothing else in the campaign may alter what they record.
+
+| Tool | What it is |
+| --- | --- |
+| `cycle4_m3_audit_v1` | Section A. The M3 centering audit over one arm's final 512 updates, plus the cycle-3 reference statistic it is measured against. |
+| `run_m2_common_root_panel_v1.py` | Section B's measurement. Four endpoints against the frozen genesis pool on N = 1,024 COMMON roots. |
+| `cycle4_routing_v1` | Sections B, C and D. The selector and the immutable routing record. |
+
+### Freeze order (binding)
+
+**The routing record is written BEFORE any M1 CP7 byte becomes readable.**
+Section D: M1 "may inform Jack's continue/escalate decision; it cannot alter
+the recorded parent, recipe, constants, or any later selector." So the order
+is:
+
+1. All three arms finish. Endpoints are the pinned update-2048 checkpoints;
+   there is no in-arm checkpoint selection.
+2. `cycle4_m3_audit_v1 --mode reference` once, against the cycle-3 focal
+   Store, producing the ONE reference document both v4 arms are judged
+   against.
+3. `cycle4_m3_audit_v1 --mode audit` once per v4 arm. CONTROL-R has no M3
+   report: it is a v3 arm and is always eligible.
+4. `run_m2_common_root_panel_v1.py` once, producing
+   `m2-common-root-panel.json`.
+5. `cycle4_routing_v1` once, producing the routing record. Its
+   `--cp7-evidence-root` must hold no CP7 outcome artifact naming any of the
+   four endpoints, and it refuses to run if one is there.
+6. ONLY THEN does the M1 CP7 panel run, and only then may anyone read it.
+
+Every artifact in steps 2 to 5 is immutable: publishing over one with
+different bytes is refused, and none of these tools has a `--force`.
+Re-running a step with identical inputs is a no-op success, so a retried step
+is safe.
+
+### Invocations
+
+Build the two bins once. They need no features: both are read-only, open no
+Store handle, take no lock, and touch no device.
+
+```
+$env:CARGO_TARGET_DIR = 'D:\cargo-target-cycle4'
+cargo build -p mtg-kernel --release --bin cycle4_m3_audit_v1 --bin cycle4_routing_v1
+```
+
+**Step 2, the reference statistic.** `--audit-note` binds the ratified audit
+note's bytes by SHA-256 for provenance; it is optional because that note
+records per-role and per-slot MEANS and no per-cell standard deviation, so it
+cannot itself supply the dispersion reference. This mode computes that
+statistic "the same way" from the same evidence shape, on the RAW residual.
+
+```
+D:\cargo-target-cycle4\release\cycle4_m3_audit_v1.exe `
+  --mode reference `
+  --store-root E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store `
+  --audit-note C:\Users\Jack\mtg-kernel-gae-lane\OX_ADVANTAGE_BY_ROLE_AUDIT_RESULT_V1.md `
+  --output E:\mtg-kernel-cycle4\routing\m3-reference.json
+```
+
+**Step 3, one M3 report per v4 arm.** Both arms must name the SAME reference
+document; the selector refuses two reports that bind different ones.
+
+```
+D:\cargo-target-cycle4\release\cycle4_m3_audit_v1.exe `
+  --mode audit --arm static-rb `
+  --store-root E:\mtg-kernel-cycle4\static-rb\store `
+  --chain-dir  E:\mtg-kernel-cycle4\static-rb\baseline-chain `
+  --reference-document E:\mtg-kernel-cycle4\routing\m3-reference.json `
+  --output E:\mtg-kernel-cycle4\routing\m3-static-rb.json
+
+D:\cargo-target-cycle4\release\cycle4_m3_audit_v1.exe `
+  --mode audit --arm treatment-rb `
+  --store-root E:\mtg-kernel-cycle4\treatment-rb\store `
+  --chain-dir  E:\mtg-kernel-cycle4\treatment-rb\baseline-chain `
+  --reference-document E:\mtg-kernel-cycle4\routing\m3-reference.json `
+  --output E:\mtg-kernel-cycle4\routing\m3-treatment-rb.json
+```
+
+Each prints `verdict=PASS` or `verdict=FAIL` and exits 0 either way: a FAIL is
+a result the routing record consumes, not a failure of the program. Exit 2 is
+usage and exit 3 is a rejection (an unreadable Store, a broken sidecar chain,
+a refused overwrite).
+
+**Step 4, the M2 panel.** `--endpoint-locator` is a machine-local file naming
+only paths; the two pinned generations (arms at store generation 2048, the
+frozen start at 896) are compiled literals, so no operator can point M2 at an
+unpinned checkpoint. `--pool-arm` says whose genesis manifest and own-run slot
+the pool is read from; `control-r` is the simplest choice, since a v3 arm's
+own-run slot needs no baseline chain directory anywhere in the locator.
+
+```json
+{
+  "schema": "mtg-kernel-cycle4-m2-endpoint-locator/v1",
+  "endpoints": {
+    "control-r":    {"store_root": "E:\\mtg-kernel-cycle4\\control-r\\store"},
+    "static-rb":    {"store_root": "E:\\mtg-kernel-cycle4\\static-rb\\store",
+                     "baseline_chain_dir": "E:\\mtg-kernel-cycle4\\static-rb\\baseline-chain"},
+    "treatment-rb": {"store_root": "E:\\mtg-kernel-cycle4\\treatment-rb\\store",
+                     "baseline_chain_dir": "E:\\mtg-kernel-cycle4\\treatment-rb\\baseline-chain"},
+    "g896":         {"store_root": "E:\\mtg-kernel-population-v2-cycle3\\lineage\\real-attempt-003\\run-0\\store"}
+  }
+}
+```
+
+```
+python scripts\experiments\population_v2_cycle4_v1\run_m2_common_root_panel_v1.py `
+  --genesis-manifest E:\mtg-kernel-cycle4\control-r\refresh-chain\refresh-00.manifest.json `
+  --slot-locator     E:\mtg-kernel-cycle4\routing\panel-slot-locator.json `
+  --endpoint-locator E:\mtg-kernel-cycle4\routing\endpoints.json `
+  --pool-arm control-r `
+  --output-dir E:\mtg-kernel-cycle4\routing\m2 `
+  --executable D:\cargo-target-cycle4\release\deps\mtg_kernel-<hash>.exe `
+  --repo-root  C:\Users\Jack\IdeaProjects\mtg-kernel
+```
+
+The panel plays 4 endpoints x 8 pool slots = 32 matchups, 128 roots each (the
+genesis manifest's uniform 125,000-unit weights apportion 1,024 roots evenly),
+256 games per matchup, 8,192 games in total. Every endpoint gets the same
+`H2H_EVAL_SEED` per pool slot, which is what makes the roots common; the
+runner then proves it post hoc by requiring every endpoint to report the
+identical `environment_seed` for every root. The base seed literal
+(`M2_COMMON_ROOT_BASE_SEED_V1 = 5_100_000_000`, stride 1,000,000 per slot)
+lives in exactly one place in the runner and occupies a band no other part of
+the campaign reaches. `--dry-run` prints every command line, environment and
+seed and touches nothing; it is the only way to use a `--root-count` other
+than the ratified 1,024. `m2-common-root-panel.json` is committed last, so its
+presence is the single signal the whole run succeeded.
+
+**Step 5, routing.** The two cycle-3 flags pin the NO CARRY parent and are
+required on every invocation, so the record always states what the fallback
+would have been.
+
+```
+D:\cargo-target-cycle4\release\cycle4_routing_v1.exe `
+  --m2-panel E:\mtg-kernel-cycle4\routing\m2\m2-common-root-panel.json `
+  --m3-report-static-rb    E:\mtg-kernel-cycle4\routing\m3-static-rb.json `
+  --m3-report-treatment-rb E:\mtg-kernel-cycle4\routing\m3-treatment-rb.json `
+  --cp7-evidence-root E:\mtg-kernel-cycle4\cp7-evidence `
+  --cycle3-g2048-run-sha256 <64 lower-hex> `
+  --cycle3-g2048-checkpoint-manifest-sha256 <64 lower-hex> `
+  --output E:\mtg-kernel-cycle4\routing\routing-record.json
+```
+
+It prints the outcome, the carried arm (or `-`), the parent checkpoint hash,
+the recipe, the rank order, and the record's own SHA-256. The selector
+recomputes every M2 number from the panel's own per-root outcome table and
+requires bit equality with what the panel declared; a disagreement is exit 3,
+not a tolerance.
+
+### Tests
+
+```
+cargo test -p mtg-kernel --release --lib -- native_cycle4_m3_audit_v1 native_cycle4_routing_v1
+cargo test -p mtg-kernel --release --bin cycle4_m3_audit_v1 --bin cycle4_routing_v1
+cd scripts\experiments\population_v2_cycle4_v1
+python -m unittest discover -p "test_*.py" -v
+```
+
+The Rust suite includes a cross-language integration test that runs the M2
+runner's own Python fixture, decodes the bytes it wrote with the selector's
+canonical-JSON decoder, and re-derives every statistic; it skips (rather than
+fails) when no `python` is on PATH.
