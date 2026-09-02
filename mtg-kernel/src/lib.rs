@@ -112,10 +112,10 @@ pub mod model_guided_search_value_quantization_v1;
 // for the deterministic-forward build identity, replacing the placeholder
 // structural (lower-hex-shaped) checks the authority schema shipped with.
 pub mod model_guided_search_contract_digests_v1;
-// Test-time-search wrapper S0: outcome schema V3, the per-decision
+// Test-time-search wrapper S0: outcome schema V4, the per-decision
 // diagnostics record set the model-guided scorer selector publishes
 // (atomic per-episode JSONL, hash-chained across decisions).
-pub mod model_guided_search_outcome_v3;
+pub mod model_guided_search_outcome_v4;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;

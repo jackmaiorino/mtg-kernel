@@ -22,10 +22,10 @@ use crate::model_guided_search_core_v1::{
     ModelGuidedSearchCoreV1, ModelGuidedSearchRealForwardValueEvaluatorV1,
     ModelGuidedSearchSeedHalfV1,
 };
-use crate::model_guided_search_outcome_v3::{
-    lower_hex_sha256_v3, root_statistics_digest_v3, visit_margin_v3, CeilingStatusV3,
-    ModelGuidedSearchOutcomeWriterV3, SearchDecisionRecordV3, StabilityV3, WallTimeV3,
-    WrapperIdentityV3,
+use crate::model_guided_search_outcome_v4::{
+    lower_hex_sha256_v4, root_statistics_digest_v4, visit_margin_v4, CeilingStatusV4,
+    EpisodeCloseReasonV4, ModelGuidedSearchOutcomeWriterV4, ProtocolRequestKindV4,
+    SearchDecisionRecordV4, StabilityV4, WallTimeV4, WrapperIdentityV4,
 };
 use crate::model_guided_search_value_quantization_v1::ModelGuidedSearchValueHeadDomainV1;
 use crate::native_checkpoint_inference_v1::{
@@ -2522,14 +2522,14 @@ struct ModelGuidedSearchRuntimeV1 {
     /// record says which ran, and `ceiling_status` is classified from the
     /// latency that configuration actually paid.
     stability_halves_enabled: bool,
-    diagnostics: ModelGuidedSearchOutcomeWriterV3,
+    diagnostics: ModelGuidedSearchOutcomeWriterV4,
     bound: Option<BoundModelGuidedSearchV1>,
 }
 
 struct BoundModelGuidedSearchV1 {
     core: ModelGuidedSearchCoreV1,
     private_diagnostic_identity: String,
-    wrapper_identity: WrapperIdentityV3,
+    wrapper_identity: WrapperIdentityV4,
     authority_digest_sha256: String,
 }
 
@@ -2569,7 +2569,7 @@ impl ModelGuidedSearchRuntimeV1 {
                 "model-guided search seed block id is not in the authorized allowlist",
             )
         })?;
-        let diagnostics = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(
+        let diagnostics = ModelGuidedSearchOutcomeWriterV4::open_directory_v4(
             diagnostics_directory,
         )
         .map_err(|error| {
@@ -2656,7 +2656,7 @@ impl ModelGuidedSearchRuntimeV1 {
             let authority_digest = authority
                 .digest()
                 .map_err(|_| "model_guided_search_authority_invalid")?;
-            let wrapper_identity = WrapperIdentityV3 {
+            let wrapper_identity = WrapperIdentityV4 {
                 core_algorithm_identity: authority.algorithm_identity.clone(),
                 authority_kind: authority.authority_kind.clone(),
                 authority_schema: authority.schema.clone(),
@@ -2667,7 +2667,7 @@ impl ModelGuidedSearchRuntimeV1 {
                 policy_step_depth_cap: authority.policy_step_depth_cap,
                 seed_block_id: self.seed_block_id as u64,
                 action_seed_u64_hex: u64_hex_v1(self.action_seed),
-                search_authority_digest_sha256: lower_hex_sha256_v3(authority_digest),
+                search_authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
                 checkpoint_lineage_id: authority.checkpoint_store_path_or_lineage_id.clone(),
                 net_architecture_identity: authority.net_architecture_identity.clone(),
                 puct_prior_quantization_contract_sha256: authority
@@ -2690,7 +2690,7 @@ impl ModelGuidedSearchRuntimeV1 {
                 core,
                 private_diagnostic_identity: live_identity.clone(),
                 wrapper_identity,
-                authority_digest_sha256: lower_hex_sha256_v3(authority_digest),
+                authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
             });
         }
         let bound = self
@@ -2701,8 +2701,31 @@ impl ModelGuidedSearchRuntimeV1 {
             return Err("model_guided_search_diagnostic_identity_changed");
         }
         let wrapper_identity = bound.wrapper_identity.clone();
+        // A reset REPLACES whatever episode was open. Closing it with a
+        // footer first is what makes its final decision classifiable and
+        // marks its file complete; the writer refuses to open a second
+        // episode over an unclosed one, so this cannot be skipped by
+        // accident.
+        self.close_episode_v1(EpisodeCloseReasonV4::EpisodeReplaced)?;
         self.diagnostics
-            .begin_episode_v3(episode_id, base_seed, candidate_seat, wrapper_identity)
+            .begin_episode_v4(episode_id, base_seed, candidate_seat, wrapper_identity)
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")
+    }
+
+    /// Closes the open diagnostics episode with a footer, if one is open.
+    ///
+    /// A no-op when nothing is open, so callers on the three closing paths
+    /// (terminal, reset replacement, orderly process exit) do not each
+    /// need to ask first. A failure is reported: the footer carries the
+    /// last decision's publication and the episode's content digest, and
+    /// dropping it silently would put the episode back in exactly the
+    /// state this record exists to prevent.
+    fn close_episode_v1(&mut self, reason: EpisodeCloseReasonV4) -> Result<(), &'static str> {
+        if !self.diagnostics.has_open_episode_v4() {
+            return Ok(());
+        }
+        self.diagnostics
+            .close_episode_v4(reason)
             .map_err(|_| "model_guided_search_diagnostics_write_failed")
     }
 }
@@ -3175,7 +3198,18 @@ impl ShadowScorerServiceV1 {
     /// ordinal, player)`; the tree is rebuilt from scratch per decision;
     /// the two stability halves run on domain-separated digests and their
     /// results are recorded, never read. Wall time is measured after the
-    /// fact and only ever written to a diagnostics field.
+    /// fact and only ever written to a diagnostics field: `request_received`
+    /// below is read exactly once, to subtract, after `full.selected_index`
+    /// is already fixed.
+    ///
+    /// LATENCY. `request_received` is the instant `handle_line_v1` took
+    /// delivery of the request line, so the recorded protocol window
+    /// covers the packet encode, the tensorization, the model forward, the
+    /// policy sample, the search, the halves, and this record's own
+    /// construction. The previous shape started its clock here, after all
+    /// of the pre-search work, and stopped it before the record was built
+    /// and published, so a request genuinely sitting near the 4 s SLO or
+    /// the 20 s hard timeout could be recorded as comfortably inside it.
     ///
     /// MXCSR. This is layer three of the S0 requirement: the thread about
     /// to run a search normalizes its own control register (a worker
@@ -3191,6 +3225,8 @@ impl ShadowScorerServiceV1 {
         expected: FastActorDecisionV1,
         policy_sample: u32,
         search: &mut ModelGuidedSearchRuntimeV1,
+        request_received: Instant,
+        protocol_request_kind: ProtocolRequestKindV4,
     ) -> Result<u32, &'static str> {
         crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
             .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
@@ -3235,9 +3271,9 @@ impl ShadowScorerServiceV1 {
         // They run SYNCHRONOUSLY inside the decision, so when they are
         // enabled their cost is part of the protocol latency the panel
         // host actually pays. That is why `--model-guided-search-stability
-        // -halves off` exists and why `ceiling_status` is classified from
-        // `total_micros` below: a formal panel measuring product latency
-        // turns them off, and the record says which configuration ran.
+        // -halves off` exists and why `search_ceiling_status` is classified
+        // from `search_micros` below: a formal panel measuring product
+        // latency turns them off, and the record says which ran.
         let (stability, half_a_micros, half_b_micros) = if stability_halves_enabled {
             let half_a_started = Instant::now();
             let half_a = core
@@ -3268,7 +3304,7 @@ impl ShadowScorerServiceV1 {
                 })?;
             let half_b_micros = elapsed_micros_v1(half_b_started);
             (
-                Some(StabilityV3 {
+                Some(StabilityV4 {
                     half_a_selected_index: half_a.selected_index,
                     half_b_selected_index: half_b.selected_index,
                     half_transition_budget: half_a.transitions_used.max(half_b.transitions_used),
@@ -3282,11 +3318,11 @@ impl ShadowScorerServiceV1 {
         } else {
             (None, 0, 0)
         };
-        let total_micros = elapsed_micros_v1(started);
+        let search_micros = elapsed_micros_v1(started);
 
-        let record = SearchDecisionRecordV3 {
+        let mut record = SearchDecisionRecordV4 {
             // Chain and contract fields are writer-assigned; see
-            // `write_decision_v3`.
+            // `write_decision_v4`.
             contract: String::new(),
             schema_version: 0,
             record_kind: String::new(),
@@ -3305,46 +3341,44 @@ impl ShadowScorerServiceV1 {
             simulations: full.simulations,
             tree_node_count: full.tree_node_count,
             leaf_census: full.leaf_census,
-            root_statistics_digest_sha256: lower_hex_sha256_v3(root_statistics_digest_v3(&full)),
+            root_statistics_digest_sha256: lower_hex_sha256_v4(root_statistics_digest_v4(&full)),
             chosen_action_index: full.selected_index,
-            visit_margin: visit_margin_v3(&full),
+            visit_margin: visit_margin_v4(&full),
             policy_sample_index: policy_sample,
             search_overrode_policy_sample: full.selected_index != policy_sample,
             stability,
             stability_halves_enabled,
-            // Classified from `total_micros`: the FULL SYNCHRONOUS LATENCY
-            // of whatever actually ran for this decision, halves included
-            // when they are enabled.
-            //
-            // An earlier version classified from `full_micros` on the
-            // reasoning that the halves are S2 diagnostics a panel need
-            // not run. That was wrong while there was no way to not run
-            // them: the halves execute inside this call, before the
-            // response goes back, so with them enabled the protocol's
-            // per-decision latency IS `total_micros`, and reporting the
-            // full-budget time alone would understate the p99 the panel
-            // host actually experiences by roughly a factor of two. The
-            // fix is the flag, not a friendlier denominator: a panel that
-            // wants product latency turns the halves off, at which point
-            // `total_micros` equals `full_micros` and this classification
-            // is the product's own. `stability_halves_enabled` records
-            // which configuration produced the number.
+            protocol_request_kind,
+            // The SEARCH-ONLY verdict, classified from `search_micros`:
+            // the full-budget search plus the halves when they ran. It is
+            // deliberately NOT the protocol verdict, which additionally
+            // needs the pre-search protocol work (already inside
+            // `decision_micros` below) and this record's own publication
+            // (which only a later record can observe). Read the protocol
+            // verdict with `episode_decision_ceilings_v4`.
             //
             // Computed after the decision is already fixed; never acted on.
-            search_ceiling_status: CeilingStatusV3::classify_v3(total_micros as f64 / 1_000_000.0),
-            wall_time: WallTimeV3 {
+            search_ceiling_status: CeilingStatusV4::classify_v4(search_micros as f64 / 1_000_000.0),
+            wall_time: WallTimeV4 {
                 full_search_micros: full_micros,
                 stability_half_a_micros: half_a_micros,
                 stability_half_b_micros: half_b_micros,
-                total_micros,
+                search_micros,
+                // Filled in below, once the record is otherwise complete:
+                // record construction and the writer's own bookkeeping are
+                // synchronous too, and leaving them outside the measured
+                // interval is how a near-boundary request gets recorded as
+                // comfortably inside the boundary.
+                decision_micros: 0,
                 // Writer-assigned: the diagnostics writer knows how long
                 // it spent publishing the previous record, and a caller
                 // that could set this could understate its own latency.
                 previous_record_publish_micros: 0,
             },
         };
+        record.wall_time.decision_micros = elapsed_micros_v1(request_received);
         diagnostics
-            .write_decision_v3(record)
+            .write_decision_v4(record)
             .map_err(|_| "model_guided_search_diagnostics_write_failed")?;
         Ok(full.selected_index)
     }
@@ -3364,6 +3398,14 @@ impl ShadowScorerServiceV1 {
         schedule: &mut NativeLaneScheduleStateV1,
         candidate_seat: PlayerSeatV1,
         structured_history: &[NativeStructuredHistoryEntryV1],
+        // The OUTER decision boundary: when `handle_line_v1` took delivery
+        // of the request whose response this scoring produces. Everything
+        // below is synchronous work the client is waiting on, so the
+        // diagnostics record's protocol window has to start here and not
+        // at the search. Threaded through rather than sampled locally for
+        // exactly that reason.
+        request_received: Instant,
+        protocol_request_kind: ProtocolRequestKindV4,
     ) -> Result<Option<ScoredCurrentDecisionV1>, &'static str> {
         let expected = match session.current_response() {
             FastActorResponseV1::Decision(expected) => expected,
@@ -3492,6 +3534,8 @@ impl ShadowScorerServiceV1 {
                         expected,
                         fallback,
                         search.ok_or("model_guided_search_runtime_missing")?,
+                        request_received,
+                        protocol_request_kind,
                     )?)
                 }
                 ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap => {
@@ -3652,6 +3696,7 @@ impl ShadowScorerServiceV1 {
         request_id: String,
         episode_id: u64,
         base_seed: u64,
+        request_received: Instant,
     ) -> ShadowScorerResponseV1 {
         if self
             .outcome_export
@@ -3782,6 +3827,8 @@ impl ShadowScorerServiceV1 {
             &mut schedule,
             candidate_seat,
             &structured_history.completed,
+            request_received,
+            ProtocolRequestKindV4::Reset,
         ) {
             Ok(current) => current,
             Err(code) => {
@@ -3792,6 +3839,20 @@ impl ShadowScorerServiceV1 {
                 );
             }
         };
+        // A reset that lands directly on a terminal has no decision to
+        // search and never will, so its diagnostics episode closes here
+        // rather than waiting for the next reset to replace it.
+        if current.is_none() {
+            if let Some(search) = self.search.as_mut() {
+                if let Err(code) = search.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal) {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(code, "model-guided search episode could not be closed"),
+                    );
+                }
+            }
+        }
         let active = ActiveShadowSessionV1 {
             session,
             schedule,
@@ -3914,6 +3975,7 @@ impl ShadowScorerServiceV1 {
         episode_id: u64,
         expected_step: u64,
         selected_index: u32,
+        request_received: Instant,
     ) -> ShadowScorerResponseV1 {
         let Some(active) = self.active.as_mut() else {
             return response_v1(
@@ -4088,6 +4150,8 @@ impl ShadowScorerServiceV1 {
                 &mut active.schedule,
                 active.candidate_seat,
                 &structured_history_after.completed,
+                request_received,
+                ProtocolRequestKindV4::Step,
             ) {
                 Ok(Some(scored)) => Some(scored),
                 Ok(None) => {
@@ -4169,6 +4233,29 @@ impl ShadowScorerServiceV1 {
         }
         active.current = next_scored;
         active.structured_history = structured_history_after;
+        // The episode is over: CLOSE the diagnostics episode with a
+        // footer. The footer carries the publication time of the last
+        // decision record, which nothing else follows to observe, so
+        // without it the final search of every game has no protocol
+        // verdict at all: one dropped sample per game, always the same
+        // one.
+        //
+        // AFTER the session state is committed above, deliberately. The
+        // action has already been consumed and every export row already
+        // written by this point, so a failed footer must be reported
+        // without also leaving the service describing a decision the
+        // session has moved past.
+        if matches!(next, FastActorResponseV1::Terminal(_)) {
+            if let Some(search) = self.search.as_mut() {
+                if let Err(code) = search.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal) {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(code, "model-guided search episode could not be closed"),
+                    );
+                }
+            }
+        }
         let body = match next {
             FastActorResponseV1::Decision(_) => match Self::decision_body_v1(active, false) {
                 Ok(decision) => ShadowScorerResponseBodyV1::Decision {
@@ -4185,7 +4272,19 @@ impl ShadowScorerServiceV1 {
         response_v1(Some(request_id), &self.identity, body)
     }
 
+    /// The OUTER decision boundary.
+    ///
+    /// `request_received` is taken here, before anything else, and
+    /// threaded down to the diagnostics record. Everything between this
+    /// instant and the record's publication is synchronous work the client
+    /// is waiting on (request parsing, packet encoding, tensorization, the
+    /// model forward, the policy sample, the search, the stability halves,
+    /// record construction), so this is where a per-decision protocol
+    /// latency has to start being counted. Only requests that actually
+    /// score a decision carry it further: `score_current` answers from the
+    /// cache and publishes nothing, so it has no decision to charge.
     fn handle_line_v1(&mut self, line: &str) -> String {
+        let request_received = Instant::now();
         if self.export_poisoned {
             let request_id = parse_strict_json_value(line)
                 .ok()
@@ -4228,7 +4327,7 @@ impl ShadowScorerServiceV1 {
                         request_id,
                         episode_id,
                         base_seed,
-                    } => self.handle_reset_v1(request_id, episode_id, base_seed),
+                    } => self.handle_reset_v1(request_id, episode_id, base_seed, request_received),
                     ShadowScorerRequestV1::ScoreCurrent {
                         request_id,
                         episode_id,
@@ -4239,7 +4338,13 @@ impl ShadowScorerServiceV1 {
                         episode_id,
                         expected_step,
                         selected_index,
-                    } => self.handle_step_v1(request_id, episode_id, expected_step, selected_index),
+                    } => self.handle_step_v1(
+                        request_id,
+                        episode_id,
+                        expected_step,
+                        selected_index,
+                        request_received,
+                    ),
                 },
                 _ => response_v1(
                     recoverable_request_id,
@@ -4252,6 +4357,23 @@ impl ShadowScorerServiceV1 {
             }
         };
         serialize_response_v1(&response)
+    }
+
+    /// Closes the model-guided search diagnostics episode, if one is open.
+    ///
+    /// A no-op when the wrapper is not installed or nothing is open. The
+    /// serving loop calls this on orderly exit so an episode that never
+    /// reached a terminal (the driver simply stopped) still ends in a
+    /// footer, which is what makes its last decision's protocol latency
+    /// recoverable and marks the file as a complete episode.
+    fn close_search_episode_v1(
+        &mut self,
+        reason: EpisodeCloseReasonV4,
+    ) -> Result<(), &'static str> {
+        match self.search.as_mut() {
+            Some(search) => search.close_episode_v1(reason),
+            None => Ok(()),
+        }
     }
 }
 
@@ -4376,7 +4498,7 @@ pub fn run_checkpoint_shadow_stdio_with_model_guided_search_v1(
         search.seed_block_id,
         search.action_seed,
         if search.stability_halves_enabled { "on" } else { "off" },
-        search.diagnostics.directory_v3().display(),
+        search.diagnostics.directory_v4().display(),
     );
     service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
     service.search = Some(search);
@@ -4591,13 +4713,25 @@ fn run_jsonl_v1(
             ));
         }
     }
+    // ORDERLY EXIT. End of input, so no further decision can be searched
+    // in the open episode: close it with a footer. Without this, a run
+    // that a driver simply stops (rather than playing to a terminal)
+    // leaves its last decision with no successor record and therefore no
+    // protocol-latency verdict at all.
+    service
+        .close_search_episode_v1(EpisodeCloseReasonV4::ProcessExit)
+        .map_err(|code| {
+            io::Error::other(format!(
+                "the model-guided search diagnostics episode could not be closed: {code}"
+            ))
+        })?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_guided_search_outcome_v3::verify_episode_chain_v3;
+    use crate::model_guided_search_outcome_v4::verify_episode_chain_v4;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -4914,9 +5048,12 @@ mod tests {
 
     /// Neutralizes wall time in a published episode file so two runs can
     /// be compared for the bit identity the sketch requires "apart from
-    /// wall-time fields". The whole timing surface lives in one
-    /// `wall_time` object precisely so this is one substitution and not a
-    /// field-by-field allowlist that could silently miss a new field.
+    /// wall-time fields". EVERY record kind's timing surface lives in one
+    /// member literally named `wall_time` precisely so this is one
+    /// substitution and not a field-by-field allowlist that could silently
+    /// miss a new field or a new record kind. The replacement value is
+    /// null rather than a typed default so this rule does not have to know
+    /// which shape of `wall_time` a given record kind carries.
     ///
     /// The chain link is RE-DERIVED over the neutralized lines rather than
     /// carried through. `previous_record_sha256` covers the previous
@@ -4926,30 +5063,45 @@ mod tests {
     /// must not need to be. Re-deriving keeps the comparison sensitive to
     /// record ORDER and content (a reordering still breaks it) while
     /// dropping only the timing dependence. The published chain is
-    /// separately verified as-is by `verify_episode_chain_v3`.
+    /// separately verified as-is by `verify_episode_chain_v4`.
+    /// The footer's `episode_content_sha256` is re-derived for the same
+    /// reason and in the same way: it commits to the published bytes,
+    /// which legitimately differ in their timing fields, so it is
+    /// recomputed over the NEUTRALIZED bytes instead of blanked. A
+    /// reordered or edited episode still changes it.
     fn strip_wall_time_v1(bytes: &[u8]) -> Vec<String> {
         let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
         let mut previous =
-            crate::model_guided_search_outcome_v3::MODEL_GUIDED_SEARCH_OUTCOME_CHAIN_GENESIS_V3
+            crate::model_guided_search_outcome_v4::MODEL_GUIDED_SEARCH_OUTCOME_CHAIN_GENESIS_V4
                 .to_owned();
-        let mut normalized_lines = Vec::new();
+        let mut normalized_lines: Vec<String> = Vec::new();
+        let mut normalized_content: Vec<u8> = Vec::new();
         for line in text.lines() {
             let mut value: serde_json::Value = serde_json::from_str(line).expect("record is JSON");
             let object = value.as_object_mut().expect("record is an object");
             if object.contains_key("wall_time") {
-                object.insert(
-                    "wall_time".to_owned(),
-                    serde_json::to_value(WallTimeV3::default()).unwrap(),
-                );
+                object.insert("wall_time".to_owned(), serde_json::Value::Null);
             }
             object.insert(
                 "previous_record_sha256".to_owned(),
                 serde_json::Value::String(previous.clone()),
             );
+            if object.contains_key("episode_content_sha256") {
+                object.insert(
+                    "episode_content_sha256".to_owned(),
+                    serde_json::Value::String(lower_hex_sha256_v4(
+                        crate::model_guided_search_outcome_v4::episode_content_digest_v4(
+                            &normalized_content,
+                        ),
+                    )),
+                );
+            }
             let normalized = serde_json::to_string(&value).unwrap();
-            previous = lower_hex_sha256_v3(
-                crate::model_guided_search_outcome_v3::record_chain_link_v3(&normalized),
+            previous = lower_hex_sha256_v4(
+                crate::model_guided_search_outcome_v4::record_chain_link_v4(&normalized),
             );
+            normalized_content.extend_from_slice(normalized.as_bytes());
+            normalized_content.push(b'\n');
             normalized_lines.push(normalized);
         }
         normalized_lines
@@ -4967,8 +5119,33 @@ mod tests {
         steps: usize,
         stability_halves_enabled: bool,
     ) -> (Vec<u32>, Vec<u8>) {
+        run_wrapped_episode_configured_v1(directory, steps, stability_halves_enabled, None, false)
+    }
+
+    /// Drives one wrapped episode and, optionally, injects an artificial
+    /// delay into every diagnostics publication and closes the episode
+    /// with a footer at the end.
+    ///
+    /// The delay goes INSIDE the measured publication window, exactly
+    /// where a slow disk would sit, so a test can make one run genuinely
+    /// slower than another without touching anything the search reads.
+    fn run_wrapped_episode_configured_v1(
+        directory: &Path,
+        steps: usize,
+        stability_halves_enabled: bool,
+        publish_delay: Option<std::time::Duration>,
+        close_episode: bool,
+    ) -> (Vec<u32>, Vec<u8>) {
         let mut service =
             search_service_with_halves_v1(directory.to_path_buf(), stability_halves_enabled);
+        if let Some(delay) = publish_delay {
+            service
+                .search
+                .as_mut()
+                .expect("search runtime installed")
+                .diagnostics
+                .set_publish_delay_for_test_v4(delay);
+        }
         let mut chosen = Vec::new();
         let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("mgs-reset")));
         assert_eq!(
@@ -4991,12 +5168,17 @@ mod tests {
                 break;
             }
         }
+        if close_episode {
+            service
+                .close_search_episode_v1(EpisodeCloseReasonV4::ProcessExit)
+                .expect("the episode closes with a footer");
+        }
         let path = service
             .search
             .as_ref()
             .expect("search runtime installed")
             .diagnostics
-            .episode_path_v3(2, 71_501);
+            .episode_path_v4(2, 71_501);
         let bytes = fs::read(path).expect("episode diagnostics published");
         (chosen, bytes)
     }
@@ -5056,10 +5238,10 @@ mod tests {
         );
         assert_eq!(first_chosen, second_chosen, "chosen actions must replay");
         assert_eq!(
-            verify_episode_chain_v3(&first_bytes),
-            verify_episode_chain_v3(&second_bytes)
+            verify_episode_chain_v4(&first_bytes),
+            verify_episode_chain_v4(&second_bytes)
         );
-        assert!(verify_episode_chain_v3(&first_bytes).is_ok());
+        assert!(verify_episode_chain_v4(&first_bytes).is_ok());
         assert_eq!(
             strip_wall_time_v1(&first_bytes),
             strip_wall_time_v1(&second_bytes),
@@ -5072,7 +5254,9 @@ mod tests {
         let decision: serde_json::Value =
             serde_json::from_str(text.lines().nth(1).expect("a decision record")).unwrap();
         assert_eq!(decision["record_kind"], "search_decision");
-        assert!(decision["wall_time"]["total_micros"].as_u64().is_some());
+        assert!(decision["wall_time"]["search_micros"].as_u64().is_some());
+        assert!(decision["wall_time"]["decision_micros"].as_u64().is_some());
+        assert_eq!(decision["protocol_request_kind"], "reset");
         assert_eq!(decision["requested_transitions"], 512);
         assert!(decision["actual_transitions"].as_u64().unwrap() >= 1);
         assert!(decision["root_statistics_digest_sha256"]
@@ -5183,11 +5367,13 @@ mod tests {
                 decision_a,
                 0,
                 &mut runtime,
+                Instant::now(),
+                ProtocolRequestKindV4::Step,
             )
             .expect("the wrapped decision completes");
             results.push(selected);
             published.push(strip_wall_time_v1(
-                &fs::read(runtime.diagnostics.episode_path_v3(50_301, 81_101)).unwrap(),
+                &fs::read(runtime.diagnostics.episode_path_v4(50_301, 81_101)).unwrap(),
             ));
             fs::remove_dir_all(&directory).ok();
         }
@@ -5293,24 +5479,24 @@ mod tests {
         // The classifier itself, at both pre-registered boundaries. `>`
         // for the SLO and `>=` for the hard timeout, as pinned.
         assert_eq!(
-            CeilingStatusV3::classify_v3(0.0),
-            CeilingStatusV3::WithinSlo
+            CeilingStatusV4::classify_v4(0.0),
+            CeilingStatusV4::WithinSlo
         );
         assert_eq!(
-            CeilingStatusV3::classify_v3(4.0),
-            CeilingStatusV3::WithinSlo
+            CeilingStatusV4::classify_v4(4.0),
+            CeilingStatusV4::WithinSlo
         );
         assert_eq!(
-            CeilingStatusV3::classify_v3(4.000_001),
-            CeilingStatusV3::SloExceeded
+            CeilingStatusV4::classify_v4(4.000_001),
+            CeilingStatusV4::SloExceeded
         );
         assert_eq!(
-            CeilingStatusV3::classify_v3(19.999),
-            CeilingStatusV3::SloExceeded
+            CeilingStatusV4::classify_v4(19.999),
+            CeilingStatusV4::SloExceeded
         );
         assert_eq!(
-            CeilingStatusV3::classify_v3(20.0),
-            CeilingStatusV3::HardTimeoutExceeded
+            CeilingStatusV4::classify_v4(20.0),
+            CeilingStatusV4::HardTimeoutExceeded
         );
 
         let with_directory = search_scratch_directory_v1("halves-on");
@@ -5334,21 +5520,22 @@ mod tests {
             "the full-budget search is identical either way"
         );
 
-        // Halves ON: recorded, and the total exceeds the full search.
+        // Halves ON: recorded, and the search timer exceeds the full
+        // search on its own.
         assert_eq!(with_record["stability_halves_enabled"], true);
         assert!(with_record["stability"].is_object());
         assert!(with_record["stability"]["halves_agree"].is_boolean());
         let with_full = with_record["wall_time"]["full_search_micros"]
             .as_u64()
             .unwrap();
-        let with_total = with_record["wall_time"]["total_micros"].as_u64().unwrap();
+        let with_search = with_record["wall_time"]["search_micros"].as_u64().unwrap();
         assert!(
-            with_total >= with_full,
-            "the halves run inside the decision, so the total cannot be smaller"
+            with_search >= with_full,
+            "the halves run inside the decision, so the search timer cannot be smaller"
         );
 
-        // Halves OFF: nulled, zero-timed, and the total IS the full search,
-        // which is exactly the product latency a panel wants to classify.
+        // Halves OFF: nulled, zero-timed, and the search timer IS the
+        // full-budget search, which is the product's own search cost.
         assert_eq!(without_record["stability_halves_enabled"], false);
         assert!(without_record["stability"].is_null());
         assert_eq!(without_record["wall_time"]["stability_half_a_micros"], 0);
@@ -5356,29 +5543,233 @@ mod tests {
         let without_full = without_record["wall_time"]["full_search_micros"]
             .as_u64()
             .unwrap();
-        let without_total = without_record["wall_time"]["total_micros"]
+        let without_search = without_record["wall_time"]["search_micros"]
             .as_u64()
             .unwrap();
         assert!(
-            without_total >= without_full,
-            "with halves off the total is the full search plus bookkeeping only"
+            without_search >= without_full,
+            "with halves off the search timer is the full-budget search alone"
         );
 
-        // Both classify from their own total, and both are recorded.
+        // Both classify `search_ceiling_status` from their own search
+        // timer, and the PROTOCOL window strictly contains it: the encode,
+        // tensorization, forward and policy sample that precede the search
+        // are inside the window a client waits on, and used not to be.
         for record in [&with_record, &without_record] {
-            let total = record["wall_time"]["total_micros"].as_u64().unwrap();
+            let search = record["wall_time"]["search_micros"].as_u64().unwrap();
             assert_eq!(
                 record["search_ceiling_status"].as_str().unwrap(),
-                match CeilingStatusV3::classify_v3(total as f64 / 1_000_000.0) {
-                    CeilingStatusV3::WithinSlo => "within_slo",
-                    CeilingStatusV3::SloExceeded => "slo_exceeded",
-                    CeilingStatusV3::HardTimeoutExceeded => "hard_timeout_exceeded",
+                match CeilingStatusV4::classify_v4(search as f64 / 1_000_000.0) {
+                    CeilingStatusV4::WithinSlo => "within_slo",
+                    CeilingStatusV4::SloExceeded => "slo_exceeded",
+                    CeilingStatusV4::HardTimeoutExceeded => "hard_timeout_exceeded",
                 },
-                "ceiling status must classify the full synchronous latency that ran"
+                "search_ceiling_status must classify the search that actually ran"
+            );
+            let decision = record["wall_time"]["decision_micros"].as_u64().unwrap();
+            assert!(
+                decision >= search,
+                "the protocol window must contain the search it wraps: {decision} < {search}"
             );
         }
         fs::remove_dir_all(&with_directory).ok();
         fs::remove_dir_all(&without_directory).ok();
+    }
+
+    /// CODEX P1. The protocol verdict for decision `n` needs the publish
+    /// time of decision `n`'s own record, which only a LATER record can
+    /// report. Before the footer existed, the final decision of every
+    /// episode had no later record, so its ceiling status was `None`:
+    /// exactly one systematically dropped sample per game, and always the
+    /// decision that ended it.
+    ///
+    /// Both closing paths a live run actually takes are exercised: end of
+    /// input with the episode open (the driver stopped), and a new reset
+    /// replacing an unfinished episode.
+    #[test]
+    fn a_closed_episode_classifies_every_decision_including_its_last_v1() {
+        use crate::model_guided_search_outcome_v4::{
+            episode_decision_ceilings_v4, EpisodeFooterRecordV4,
+        };
+
+        fn footer_of_v1(bytes: &[u8]) -> EpisodeFooterRecordV4 {
+            let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
+            serde_json::from_str(text.lines().next_back().expect("a record"))
+                .expect("the last record is an episode footer")
+        }
+
+        // ORDERLY PROCESS EXIT: the serving loop reaches end of input with
+        // the episode still open.
+        let exit_directory = search_scratch_directory_v1("footer-exit");
+        let mut service = search_service_with_halves_v1(exit_directory.clone(), false);
+        let mut output = Vec::new();
+        run_jsonl_v1(
+            &mut service,
+            format!("{}\n", reset_line_v1("footer-exit-reset")).as_bytes(),
+            &mut output,
+        )
+        .expect("the serving loop closes the open episode on exit");
+        assert!(
+            !service
+                .search
+                .as_ref()
+                .expect("search runtime installed")
+                .diagnostics
+                .has_open_episode_v4(),
+            "orderly exit must leave no episode open"
+        );
+        let exit_bytes = fs::read(
+            service
+                .search
+                .as_ref()
+                .unwrap()
+                .diagnostics
+                .episode_path_v4(2, 71_501),
+        )
+        .expect("episode diagnostics published");
+        assert!(verify_episode_chain_v4(&exit_bytes).is_ok());
+        let footer = footer_of_v1(&exit_bytes);
+        assert_eq!(footer.close_reason, EpisodeCloseReasonV4::ProcessExit);
+        assert_eq!(footer.decision_record_count, 1);
+        let ceilings = episode_decision_ceilings_v4(&exit_bytes).expect("chain verifies");
+        assert_eq!(ceilings.len(), 1);
+        assert!(
+            ceilings[0].protocol_ceiling_status.is_some(),
+            "the last decision of a closed episode must have a protocol verdict"
+        );
+        assert_eq!(
+            ceilings[0].protocol_micros,
+            Some(ceilings[0].decision_micros + ceilings[0].publish_micros.unwrap()),
+            "the protocol latency is the decision window plus its own publication"
+        );
+        fs::remove_dir_all(&exit_directory).ok();
+
+        // EPISODE REPLACEMENT: a new reset arrives before the old episode
+        // terminated. Episode 4 keeps the P0 learner seat that episode 2
+        // has, and writes a different file, so the replaced episode's
+        // footer survives to be read.
+        let replaced_directory = search_scratch_directory_v1("footer-replaced");
+        let mut service = search_service_with_halves_v1(replaced_directory.clone(), false);
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("footer-replaced-reset")));
+        assert_eq!(response["response_type"], "decision", "{response}");
+        let selected = response["decision"]["selected_action_index"]
+            .as_u64()
+            .unwrap();
+        let step = response["decision"]["step"].as_u64().unwrap();
+        let stepped = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"footer-step\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+        )));
+        assert_eq!(stepped["response_type"], "decision", "{stepped}");
+        let replacement = value_v1(&service.handle_line_v1(
+            "{\"request_type\":\"reset\",\"request_id\":\"footer-replacement\",\"episode_id\":4,\"base_seed\":71501}",
+        ));
+        assert_eq!(replacement["response_type"], "decision", "{replacement}");
+
+        let replaced_bytes = fs::read(
+            service
+                .search
+                .as_ref()
+                .unwrap()
+                .diagnostics
+                .episode_path_v4(2, 71_501),
+        )
+        .expect("the replaced episode's file survives");
+        assert!(verify_episode_chain_v4(&replaced_bytes).is_ok());
+        let footer = footer_of_v1(&replaced_bytes);
+        assert_eq!(footer.close_reason, EpisodeCloseReasonV4::EpisodeReplaced);
+        assert_eq!(footer.episode_id, 2);
+        let ceilings = episode_decision_ceilings_v4(&replaced_bytes).expect("chain verifies");
+        assert!(
+            ceilings.len() >= 2,
+            "the replaced episode searched at least twice"
+        );
+        assert_eq!(footer.decision_record_count, ceilings.len() as u64);
+        assert!(
+            ceilings
+                .iter()
+                .all(|ceiling| ceiling.protocol_ceiling_status.is_some()),
+            "no decision of a closed episode may be left unclassified"
+        );
+        fs::remove_dir_all(&replaced_directory).ok();
+    }
+
+    /// CODEX P1, the owner law. The measured latency is written down and
+    /// never read: a decision whose publication is made artificially slow
+    /// must choose the same action, with the same root statistics, as the
+    /// identical fast run.
+    ///
+    /// The delay sits inside the diagnostics publication, which is the one
+    /// timed phase that the selector could in principle observe (it calls
+    /// the writer and takes its result). Everything except the timing
+    /// fields themselves is compared, so this covers the chosen action,
+    /// the root-statistics digest, the visit margin, and the leaf census
+    /// in one assertion rather than an allowlist.
+    #[test]
+    fn the_chosen_action_is_independent_of_the_measured_latency_v1() {
+        use crate::model_guided_search_outcome_v4::episode_decision_ceilings_v4;
+
+        let fast_directory = search_scratch_directory_v1("latency-fast");
+        let slow_directory = search_scratch_directory_v1("latency-slow");
+        let (fast_chosen, fast_bytes) =
+            run_wrapped_episode_configured_v1(&fast_directory, 2, false, None, true);
+        let (slow_chosen, slow_bytes) = run_wrapped_episode_configured_v1(
+            &slow_directory,
+            2,
+            false,
+            Some(std::time::Duration::from_millis(120)),
+            true,
+        );
+
+        assert!(!fast_chosen.is_empty());
+        assert_eq!(
+            fast_chosen, slow_chosen,
+            "a slower decision must play exactly what the faster one played"
+        );
+        assert_eq!(
+            strip_wall_time_v1(&fast_bytes),
+            strip_wall_time_v1(&slow_bytes),
+            "nothing but the timing fields may depend on the timing"
+        );
+
+        let fast = episode_decision_ceilings_v4(&fast_bytes).expect("chain verifies");
+        let slow = episode_decision_ceilings_v4(&slow_bytes).expect("chain verifies");
+        assert_eq!(fast.len(), slow.len());
+        // The root-statistics digests are named explicitly by the finding,
+        // so they are compared explicitly too rather than only through the
+        // whole-record comparison above.
+        let digests = |bytes: &[u8]| -> Vec<String> {
+            String::from_utf8(bytes.to_vec())
+                .unwrap()
+                .lines()
+                .filter_map(|line| {
+                    let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    value["root_statistics_digest_sha256"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect()
+        };
+        assert!(!digests(&fast_bytes).is_empty());
+        assert_eq!(digests(&fast_bytes), digests(&slow_bytes));
+
+        // The injected delay really did change the measurement: every
+        // publication in the slow run is charged at least its 120 ms, and
+        // the protocol latency moves with it.
+        for (index, ceiling) in slow.iter().enumerate() {
+            let publish = ceiling
+                .publish_micros
+                .expect("a closed episode reports every publish");
+            assert!(
+                publish >= 120_000,
+                "decision {index} publish {publish} us must carry the injected delay"
+            );
+            assert!(
+                ceiling.protocol_micros.unwrap() > fast[index].protocol_micros.unwrap(),
+                "decision {index} must be measured as slower in the delayed run"
+            );
+        }
+        fs::remove_dir_all(&fast_directory).ok();
+        fs::remove_dir_all(&slow_directory).ok();
     }
 
     fn search_decision_record_v1(bytes: &[u8]) -> serde_json::Value {
@@ -5447,6 +5838,8 @@ mod tests {
                 decision,
                 0,
                 &mut runtime,
+                Instant::now(),
+                ProtocolRequestKindV4::Step,
             ),
             Err("model_guided_search_model_not_search_capable")
         );

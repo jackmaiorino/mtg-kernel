@@ -1201,7 +1201,7 @@ impl ModelGuidedSearchSeedHalfV1 {
 }
 
 /// How each simulation's traversal ENDED, counted across a whole decision.
-/// Added for the test-time-search wrapper's outcome schema V3, which
+/// Added for the test-time-search wrapper's outcome schema (V4 on the wire), which
 /// records "depth and terminal-leaf counts" per decision
 /// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5, S0).
 ///
