@@ -19,8 +19,8 @@ use crate::model_guided_search_authority_v1::{
 };
 use crate::model_guided_search_contract_digests_v1::MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1;
 use crate::model_guided_search_core_v1::{
-    ModelGuidedSearchCoreV1, ModelGuidedSearchRealForwardValueEvaluatorV1,
-    ModelGuidedSearchSeedHalfV1,
+    ModelGuidedSearchCoreV1, ModelGuidedSearchDecisionV1,
+    ModelGuidedSearchRealForwardValueEvaluatorV1, ModelGuidedSearchSeedHalfV1,
 };
 use crate::model_guided_search_outcome_v4::{
     lower_hex_sha256_v4, root_statistics_digest_v4, visit_margin_v4, CeilingStatusV4,
@@ -279,11 +279,17 @@ impl Display for ShadowScorerStartupErrorV1 {
 
 impl Error for ShadowScorerStartupErrorV1 {}
 
-struct LoadedShadowCheckpointV1 {
-    inference: NativeCheckpointInferenceV1,
-    identity: ShadowCheckpointIdentityV1,
-    max_physical_decisions: u64,
-    max_policy_steps: u64,
+/// `pub(crate)`, not private: the S1 feasibility tooling
+/// (`native_tts_s1_corpus_v1`, `native_tts_s1_replay_v1`) loads its
+/// checkpoint through [`load_checkpoint_v1`] rather than re-deriving the
+/// authority-to-Store resolution, the run-limit check, and the environment
+/// contract check in a second place where they could drift. Its own public
+/// surface never names this type.
+pub(crate) struct LoadedShadowCheckpointV1 {
+    pub(crate) inference: NativeCheckpointInferenceV1,
+    pub(crate) identity: ShadowCheckpointIdentityV1,
+    pub(crate) max_physical_decisions: u64,
+    pub(crate) max_policy_steps: u64,
 }
 
 fn checkpoint_ref_v1(
@@ -424,7 +430,12 @@ fn require_portable_source_binding_v1(
     Ok(())
 }
 
-fn load_checkpoint_v1(
+/// `pub(crate)` so the S1 feasibility tooling loads through the identical
+/// chokepoint the scorer does: the same authority-to-Store resolution, the
+/// same pinned-digest gate, the same run-limit and environment-contract
+/// checks, and the same [`ShadowCheckpointIdentityV1`] construction. A
+/// second loader would be a second place for those to drift.
+pub(crate) fn load_checkpoint_v1(
     requested: ShadowCheckpointAuthorityV1,
 ) -> Result<LoadedShadowCheckpointV1, ShadowScorerStartupErrorV1> {
     if matches!(
@@ -1078,7 +1089,7 @@ struct Depth8TeacherDiagnosticV1 {
     action_semantics: Vec<ActionSemanticV1>,
 }
 
-fn player_seat_index_v1(seat: PlayerSeatV1) -> u8 {
+pub(crate) fn player_seat_index_v1(seat: PlayerSeatV1) -> u8 {
     match seat {
         PlayerSeatV1::P0 => 0,
         PlayerSeatV1::P1 => 1,
@@ -2229,7 +2240,7 @@ impl ShadowStdioProtocolV1 {
 /// Stable wire spelling of `state::Step`. Written out rather than derived from
 /// `Debug`/`Serialize` so a kernel-side rename can never silently move the
 /// wire contract the Java rendezvous guard compares against.
-fn kernel_phase_step_name_v2(step: crate::state::Step) -> &'static str {
+pub(crate) fn kernel_phase_step_name_v2(step: crate::state::Step) -> &'static str {
     match step {
         crate::state::Step::Untap => "Untap",
         crate::state::Step::Upkeep => "Upkeep",
@@ -2668,11 +2679,142 @@ struct ModelGuidedSearchRuntimeV1 {
     pending_terminal_episode_id: Option<u64>,
 }
 
-struct BoundModelGuidedSearchV1 {
-    core: ModelGuidedSearchCoreV1,
-    private_diagnostic_identity: String,
-    wrapper_identity: WrapperIdentityV4,
-    authority_digest_sha256: String,
+/// `pub(crate)`: the S1 replay tool binds its authority through
+/// [`BoundModelGuidedSearchV1::bind_v1`], the same constructor
+/// `begin_episode_v1` uses, so an S1 timing is measured under exactly the
+/// authority record (and therefore exactly the seed derivation) a panel
+/// would run under. Its own public surface never names this type.
+pub(crate) struct BoundModelGuidedSearchV1 {
+    pub(crate) core: ModelGuidedSearchCoreV1,
+    pub(crate) private_diagnostic_identity: String,
+    pub(crate) wrapper_identity: WrapperIdentityV4,
+    pub(crate) authority_digest_sha256: String,
+}
+
+impl BoundModelGuidedSearchV1 {
+    /// Builds the authority record, its digest, the wrapper identity, and
+    /// the search core for one (tier, seed block, checkpoint, live
+    /// session) combination.
+    ///
+    /// Factored out of `ModelGuidedSearchRuntimeV1::begin_episode_v1`
+    /// (whose body is now a call to this, with the identical arguments in
+    /// the identical order) rather than duplicated, so the scorer's own
+    /// binding and the S1 replay's binding cannot drift: one of them
+    /// carrying a different `consumption_mode`, a different lineage
+    /// spelling, or a different `net_architecture_identity` would change
+    /// the authority digest, and with it every simulation seed the search
+    /// draws.
+    pub(crate) fn bind_v1(
+        tier: KernelNativeSearchTierV1,
+        seed_block_id: usize,
+        action_seed: u64,
+        value_domain: &ModelGuidedSearchValueHeadDomainV1,
+        live_identity: &str,
+        checkpoint: &ShadowCheckpointIdentityV1,
+        net_architecture_identity: &str,
+    ) -> Result<Self, &'static str> {
+        let lineage = ModelGuidedSearchRuntimeV1::checkpoint_lineage_id_v1(checkpoint);
+        let authority = ModelGuidedSearchAuthorityV1::new(
+            tier,
+            action_seed,
+            live_identity,
+            &lineage,
+            checkpoint.loaded_generation,
+            &checkpoint.model_parameter_sha256,
+            net_architecture_identity,
+            // Mode (a): the wrapper IS the presented agent's decision
+            // rule, not an opponent and not a training-target source.
+            ModelGuidedSearchConsumptionModeV1::SearchAtInference,
+        )
+        .map_err(|_| "model_guided_search_authority_invalid")?;
+        let authority_digest = authority
+            .digest()
+            .map_err(|_| "model_guided_search_authority_invalid")?;
+        let wrapper_identity = WrapperIdentityV4 {
+            core_algorithm_identity: authority.algorithm_identity.clone(),
+            authority_kind: authority.authority_kind.clone(),
+            authority_schema: authority.schema.clone(),
+            node_key_identity: authority.node_key_identity.clone(),
+            seed_domain: authority.seed_domain.clone(),
+            tier: search_tier_tag_v1(tier).to_owned(),
+            transition_budget: authority.transition_budget,
+            policy_step_depth_cap: authority.policy_step_depth_cap,
+            seed_block_id: seed_block_id as u64,
+            action_seed_u64_hex: u64_hex_v1(action_seed),
+            search_authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
+            checkpoint_lineage_id: authority.checkpoint_store_path_or_lineage_id.clone(),
+            net_architecture_identity: authority.net_architecture_identity.clone(),
+            puct_prior_quantization_contract_sha256: authority
+                .puct_prior_quantization_contract_sha256
+                .clone(),
+            value_quantization_contract_sha256: authority
+                .value_quantization_contract_sha256
+                .clone(),
+            forward_determinism_build_identity: authority
+                .forward_determinism_build_identity
+                .clone(),
+            value_head_domain: value_head_domain_tag_v1(value_domain),
+            checkpoint_manifest_sha256: checkpoint.loaded_checkpoint_sha256.clone(),
+            checkpoint_model_parameter_sha256: checkpoint.model_parameter_sha256.clone(),
+            engine_commit: authority.engine_commit.clone(),
+        };
+        let core = ModelGuidedSearchCoreV1::new(authority)
+            .map_err(|_| "model_guided_search_authority_invalid")?;
+        Ok(Self {
+            core,
+            private_diagnostic_identity: live_identity.to_owned(),
+            wrapper_identity,
+            authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
+        })
+    }
+}
+
+/// Pins this thread's MXCSR, verifies it fail-closed, and returns the
+/// production model-guided leaf evaluator.
+///
+/// The ONLY construction site of
+/// `ModelGuidedSearchRealForwardValueEvaluatorV1` outside that type's own
+/// tests, so passing the MXCSR gate is a precondition of being able to run
+/// a search forward at all rather than a discipline each caller has to
+/// remember. `pub(crate)` because the S1 feasibility replay
+/// (`native_tts_s1_replay_v1`) runs the production selector and must reach
+/// it through this same gate; its own public surface never names the
+/// evaluator type.
+pub(crate) fn model_guided_search_pinned_evaluator_v1(
+    net: &NativePolicyValueNetV1,
+    value_domain: ModelGuidedSearchValueHeadDomainV1,
+) -> Result<ModelGuidedSearchRealForwardValueEvaluatorV1<'_>, &'static str> {
+    crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
+        .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+        .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
+    Ok(ModelGuidedSearchRealForwardValueEvaluatorV1::new(
+        net,
+        value_domain,
+    ))
+}
+
+/// One FULL-BUDGET model-guided search, with the scorer's own failure
+/// mapping.
+///
+/// Factored out of `ShadowScorerServiceV1::model_guided_search_selection_v1`
+/// so the S1 feasibility replay times the identical call, not a re-derived
+/// copy of it: the same core (and therefore the same authority digest and
+/// the same simulation-seed derivation), the same evaluator, the same
+/// value domain, and the same fail-closed error. The caller owns the clock;
+/// nothing here reads one, so no timing can reach the chosen action.
+pub(crate) fn model_guided_search_full_budget_v1(
+    core: &ModelGuidedSearchCoreV1,
+    evaluator: &ModelGuidedSearchRealForwardValueEvaluatorV1<'_>,
+    value_domain: &ModelGuidedSearchValueHeadDomainV1,
+    session: &FastActorSessionV1,
+    expected: FastActorDecisionV1,
+) -> Result<ModelGuidedSearchDecisionV1, &'static str> {
+    core.select_action_v1(session, expected, evaluator, value_domain)
+        .map_err(|error| {
+            eprintln!("MODEL_GUIDED_SEARCH_FAILED full_budget error={error}");
+            "model_guided_search_failed"
+        })
 }
 
 fn value_head_domain_tag_v1(domain: &ModelGuidedSearchValueHeadDomainV1) -> String {
@@ -2782,59 +2924,15 @@ impl ModelGuidedSearchRuntimeV1 {
             .kernel_search_private_diagnostic_identity_v1()
             .to_owned();
         if self.bound.is_none() {
-            let lineage = Self::checkpoint_lineage_id_v1(checkpoint);
-            let authority = ModelGuidedSearchAuthorityV1::new(
+            self.bound = Some(BoundModelGuidedSearchV1::bind_v1(
                 self.tier,
+                self.seed_block_id,
                 self.action_seed,
+                &self.value_domain,
                 &live_identity,
-                &lineage,
-                checkpoint.loaded_generation,
-                &checkpoint.model_parameter_sha256,
+                checkpoint,
                 net_architecture_identity,
-                // Mode (a): the wrapper IS the presented agent's decision
-                // rule, not an opponent and not a training-target source.
-                ModelGuidedSearchConsumptionModeV1::SearchAtInference,
-            )
-            .map_err(|_| "model_guided_search_authority_invalid")?;
-            let authority_digest = authority
-                .digest()
-                .map_err(|_| "model_guided_search_authority_invalid")?;
-            let wrapper_identity = WrapperIdentityV4 {
-                core_algorithm_identity: authority.algorithm_identity.clone(),
-                authority_kind: authority.authority_kind.clone(),
-                authority_schema: authority.schema.clone(),
-                node_key_identity: authority.node_key_identity.clone(),
-                seed_domain: authority.seed_domain.clone(),
-                tier: search_tier_tag_v1(self.tier).to_owned(),
-                transition_budget: authority.transition_budget,
-                policy_step_depth_cap: authority.policy_step_depth_cap,
-                seed_block_id: self.seed_block_id as u64,
-                action_seed_u64_hex: u64_hex_v1(self.action_seed),
-                search_authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
-                checkpoint_lineage_id: authority.checkpoint_store_path_or_lineage_id.clone(),
-                net_architecture_identity: authority.net_architecture_identity.clone(),
-                puct_prior_quantization_contract_sha256: authority
-                    .puct_prior_quantization_contract_sha256
-                    .clone(),
-                value_quantization_contract_sha256: authority
-                    .value_quantization_contract_sha256
-                    .clone(),
-                forward_determinism_build_identity: authority
-                    .forward_determinism_build_identity
-                    .clone(),
-                value_head_domain: value_head_domain_tag_v1(&self.value_domain),
-                checkpoint_manifest_sha256: checkpoint.loaded_checkpoint_sha256.clone(),
-                checkpoint_model_parameter_sha256: checkpoint.model_parameter_sha256.clone(),
-                engine_commit: authority.engine_commit.clone(),
-            };
-            let core = ModelGuidedSearchCoreV1::new(authority)
-                .map_err(|_| "model_guided_search_authority_invalid")?;
-            self.bound = Some(BoundModelGuidedSearchV1 {
-                core,
-                private_diagnostic_identity: live_identity.clone(),
-                wrapper_identity,
-                authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
-            });
+            )?);
         }
         let bound = self
             .bound
@@ -3403,7 +3501,18 @@ impl ShadowScorerServiceV1 {
     /// error returned through the protocol, never a fallback to the policy
     /// sample: silently playing an unwrapped action while the panel
     /// believes it measured the wrapper would be the worst possible
-    /// failure mode.
+    /// failure mode. The gate now lives inside
+    /// [`model_guided_search_pinned_evaluator_v1`], which is the ONLY
+    /// constructor of the production leaf evaluator, so no caller (this
+    /// one or the S1 feasibility replay) can reach a search forward
+    /// without having passed it. That is structurally stronger than the
+    /// earlier top-of-function call, which any second caller could have
+    /// forgotten; the one observable change is that a broken MXCSR is now
+    /// reported after `model_guided_search_model_not_search_capable` and
+    /// `model_guided_search_authority_unbound` rather than before them,
+    /// which is a message-precedence difference on a
+    /// two-things-wrong-at-once path and not a difference in what is
+    /// admitted.
     fn model_guided_search_selection_v1(
         model: &dyn ShadowModelScorerV1,
         session: &FastActorSessionV1,
@@ -3413,11 +3522,6 @@ impl ShadowScorerServiceV1 {
         request_received: Instant,
         protocol_request_kind: ProtocolRequestKindV4,
     ) -> Result<u32, &'static str> {
-        crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
-            .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
-        crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
-            .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
-
         let capable = model
             .search_capable_v1()
             .ok_or("model_guided_search_model_not_search_capable")?;
@@ -3439,15 +3543,11 @@ impl ShadowScorerServiceV1 {
             .as_ref()
             .ok_or("model_guided_search_authority_unbound")?;
         let core = &bound.core;
-        let evaluator = ModelGuidedSearchRealForwardValueEvaluatorV1::new(net, value_domain);
+        let evaluator = model_guided_search_pinned_evaluator_v1(net, value_domain)?;
 
         let started = Instant::now();
-        let full = core
-            .select_action_v1(session, expected, &evaluator, &value_domain)
-            .map_err(|error| {
-                eprintln!("MODEL_GUIDED_SEARCH_FAILED full_budget error={error}");
-                "model_guided_search_failed"
-            })?;
+        let full =
+            model_guided_search_full_budget_v1(core, &evaluator, &value_domain, session, expected)?;
         let full_micros = elapsed_micros_v1(started);
 
         // Diagnostic stability halves. Their results are recorded and
