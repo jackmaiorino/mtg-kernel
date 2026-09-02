@@ -170,6 +170,7 @@ function New-TtsS1TestReport {
         [string]$ProjectionRule = $script:TtsS1ProjectionRule,
         [string]$CurveRule = $script:TtsS1LatencyCurveRule,
         [string]$TopologyRule = $script:TtsS1ShardTopologyRule,
+        [string]$TimeBase = $script:TtsS1TopologyTimeBase,
         [int]$MeasuredShardCount = $script:TtsS1FormalShardCount,
         [int]$PinnedShardCount = $script:TtsS1FormalShardCount,
         [int]$PinnedCpusPerShard = $script:TtsS1FormalLogicalCpusPerShard,
@@ -193,6 +194,7 @@ function New-TtsS1TestReport {
     if (-not $OmitShardTopology) {
         $body | Add-Member -NotePropertyName shard_topology -NotePropertyValue ([pscustomobject]@{
             rule = $TopologyRule
+            time_base = $TimeBase
             shard_count = $MeasuredShardCount
             formal_shard_count = $PinnedShardCount
             formal_logical_cpus_per_shard = $PinnedCpusPerShard
@@ -278,7 +280,10 @@ Assert-True ($script:TtsS1FormalShardCount -eq 8) 'the pinned formal shard count
 Assert-True ($script:TtsS1FormalLogicalCpusPerShard -eq 2) 'the pin requires two logical CPUs per shard'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*exactly-8-concurrent-replay-processes*') 'the topology rule names the pinned concurrency'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*at-least-2-logical-cpus-per-shard*') 'the topology rule names the host requirement'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*/v3') 'the pinned topology rule is the V3 one'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*/v4') 'the pinned topology rule is the V4 one'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*compared-exactly-with-no-tolerance*') 'the topology rule states the comparison carries no tolerance'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*whole-microseconds*') 'the pinned time base is whole microseconds'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*never-truncated-to-a-coarser-unit*') 'the pinned time base forbids a coarser recording'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*announcing-itself-ready*') 'the topology rule names the readiness announcement'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*released-only-after-every-such-announcement*') 'the topology rule names what gates the release'
 # The two deadlines are ordered: the token cannot go out until the launcher
@@ -298,6 +303,7 @@ Assert-True ($script:TtsS1StartBarrierTimeoutSeconds -gt 0) 'the launcher states
 # pinned binary, and its meets_formal_topology would mean something else.
 foreach ($case in @(
     @{ Name = 'a stale shard-topology rule'; Report = (New-TtsS1TestReport -TopologyRule 'pooled-whatever/v0'); Fragment = 'shard-topology rule' },
+    @{ Name = 'a report recorded on another time base'; Report = (New-TtsS1TestReport -TimeBase 'milliseconds-times-a-thousand/v0'); Fragment = 'topology time base' },
     @{ Name = 'a differently pinned formal shard count'; Report = (New-TtsS1TestReport -PinnedShardCount 4); Fragment = 'pinned formal shard count' },
     @{ Name = 'a differently pinned CPUs-per-shard'; Report = (New-TtsS1TestReport -PinnedCpusPerShard 1); Fragment = 'pinned logical CPUs per shard' },
     @{ Name = 'a differently pinned overlap tolerance'; Report = (New-TtsS1TestReport -PinnedMinPermille 500); Fragment = 'pinned full-concurrency tolerance' },
@@ -969,6 +975,59 @@ try {
         }
         Assert-True (@($readyFanOut.results | Where-Object { $_.exit_code -ne 0 }).Count -eq 0) 'every announcing child exited cleanly'
         Assert-True (@($script:TtsS1LastFanOutStopped).Count -eq 0) 'the readiness fan-out left nothing to reap'
+
+        # THE RESOLUTION OF THE RELEASE INSTANT, which is what makes the
+        # exact comparison mean anything.
+        #
+        # The shards record readiness in whole microseconds and the merge
+        # compares release >= ready with NO tolerance. A release recorded in
+        # milliseconds and multiplied by a thousand is up to 999 micros
+        # BEFORE the instant it means, so a token genuinely published after
+        # the last announcement would read as published before it and strip
+        # a correct run of its formal standing. The old form did exactly
+        # that; these cases would fail against it and pass against the
+        # microsecond one.
+        $microsA = Get-TtsS1UnixMicros
+        $microsB = Get-TtsS1UnixMicros
+        Assert-True ($microsA -gt 1600000000000000) 'the launcher clock reads microseconds since the epoch, not milliseconds'
+        Assert-True ($microsB -ge $microsA) 'the launcher clock does not go backwards'
+        Assert-True (($microsA - ([long]([System.DateTimeOffset]::UtcNow).ToUnixTimeMilliseconds() * 1000)) -lt 2000) 'the launcher clock agrees with the millisecond clock to under two milliseconds'
+        # Sub-millisecond resolution is REAL, not a multiplied millisecond:
+        # over a handful of reads at least one lands off a whole
+        # millisecond. A clock that only ever returned multiples of 1000
+        # would be the bug this closes.
+        $subMillisecond = $false
+        for ($i = 0; $i -lt 200; $i++) {
+            if (((Get-TtsS1UnixMicros) % 1000) -ne 0) { $subMillisecond = $true; break }
+        }
+        Assert-True $subMillisecond 'the launcher clock has real sub-millisecond resolution'
+
+        # AND END TO END, through the token writer: a release published
+        # immediately after an announcement is never recorded as earlier
+        # than it. Repeated, because the old millisecond form only failed
+        # when the announcement landed off a whole millisecond, which is
+        # almost always but not certainly on any single try.
+        $precisionRoot = Join-Path $processSandbox 'release-precision'
+        New-Item -ItemType Directory -Force -Path $precisionRoot | Out-Null
+        $precisionToken = Join-Path $precisionRoot 'start-barrier.token'
+        $orderHeld = $true
+        $sameMillisecondSeen = $false
+        for ($i = 0; $i -lt 25; $i++) {
+            $readyAt = Get-TtsS1UnixMicros
+            $releasedAt = Write-TtsS1StartBarrier -Path $precisionToken
+            if ($releasedAt -lt $readyAt) { $orderHeld = $false }
+            if ([math]::Floor($releasedAt / 1000) -eq [math]::Floor($readyAt / 1000)) { $sameMillisecondSeen = $true }
+            # The token on disk carries exactly what was returned.
+            $written = [long](([System.IO.File]::ReadAllText($precisionToken)).Trim())
+            if ($written -ne $releasedAt) { $orderHeld = $false }
+        }
+        Assert-True $orderHeld 'a token published after an announcement is never recorded before it'
+        Assert-True $sameMillisecondSeen 'the case really did arise inside one millisecond'
+        # The refusal side is unchanged: a release genuinely before an
+        # announcement is still out of order, with no tolerance added.
+        $lateReady = (Get-TtsS1UnixMicros) + 5000
+        $earlyRelease = Write-TtsS1StartBarrier -Path $precisionToken
+        Assert-True ($earlyRelease -lt $lateReady) 'a release genuinely before an announcement is still earlier than it'
 
         # THE TIMEOUT PATH. A shard that never announces is not a shard the
         # token may be released for: the wait fails closed, names the

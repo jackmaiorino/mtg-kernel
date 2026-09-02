@@ -95,16 +95,32 @@ $script:TtsS1FormalLogicalCpusPerShard = 2
 # contending while the others finish.
 $script:TtsS1FormalMinFullConcurrencyPermille = 950
 
-# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V3
+# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V4
 $script:TtsS1ShardTopologyRule = 'formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes' +
     '-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under' +
     '-on-a-host-with-at-least-2-logical-cpus-per-shard' +
     '-every-shard-announcing-itself-ready-after-loading-its-checkpoint' +
     '-one-start-barrier-released-only-after-every-such-announcement' +
     '-no-shard-searching-before-that-release' +
+    '-every-such-instant-in-whole-microseconds-since-the-unix-epoch-and-compared-exactly-with-no-tolerance' +
     '-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard' +
     '-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result' +
-    '/v3'
+    '/v4'
+
+# native_tts_s1_replay_v1::TTS_S1_TOPOLOGY_TIME_BASE_V1
+#
+# PINNED HERE BECAUSE THIS FILE IS WHERE THE RELEASE INSTANT IS RECORDED.
+# The readiness clause is an exact `release >= ready` with no tolerance, and
+# an exact comparison between two numbers is only meaningful when both were
+# recorded at the same resolution. A release recorded in milliseconds and
+# multiplied by a thousand is up to 999 microseconds BEFORE the instant it
+# means, which would strip formal standing from a run whose token genuinely
+# went out after every announcement. See Get-TtsS1UnixMicros.
+$script:TtsS1TopologyTimeBase = 'whole-microseconds-since-the-unix-epoch' +
+    '-each-process-advancing-one-launch-reading-by-a-monotonic-delta' +
+    '-never-truncated-to-a-coarser-unit' +
+    '-and-ordered-by-exact-comparison-with-no-tolerance' +
+    '/v1'
 
 # How long the LAUNCHER waits for every shard to announce itself ready.
 #
@@ -129,6 +145,7 @@ function Get-TtsS1PinnedContract {
         latency_curve_rule = $script:TtsS1LatencyCurveRule
         verdict_view = $script:TtsS1VerdictView
         shard_topology_rule = $script:TtsS1ShardTopologyRule
+        topology_time_base = $script:TtsS1TopologyTimeBase
         formal_shard_count = $script:TtsS1FormalShardCount
         formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
         formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
@@ -259,6 +276,10 @@ function Assert-TtsS1TierReportContract {
         # one's was produced by a differently pinned binary, and its
         # meets_formal_topology would mean something else.
         @{ Path = 'body.shard_topology.rule'; Expected = $script:TtsS1ShardTopologyRule; What = 'shard-topology rule' },
+        # The UNIT and the COMPARISON, checked on every read: the readiness
+        # clause is exact, and an exact comparison is only meaningful when
+        # both sides were recorded at the same resolution.
+        @{ Path = 'body.shard_topology.time_base'; Expected = $script:TtsS1TopologyTimeBase; What = 'topology time base' },
         @{ Path = 'body.shard_topology.formal_shard_count'; Expected = $script:TtsS1FormalShardCount; What = 'pinned formal shard count' },
         @{ Path = 'body.shard_topology.formal_logical_cpus_per_shard'; Expected = $script:TtsS1FormalLogicalCpusPerShard; What = 'pinned logical CPUs per shard' },
         @{ Path = 'body.shard_topology.min_fully_concurrent_permille'; Expected = $script:TtsS1FormalMinFullConcurrencyPermille; What = 'pinned full-concurrency tolerance' }
@@ -610,6 +631,33 @@ function Wait-TtsS1ShardReadiness {
     }
 }
 
+function Get-TtsS1UnixMicros {
+    <#
+    Whole microseconds since the UNIX epoch.
+
+    NOT ToUnixTimeMilliseconds() times a thousand, and the difference is the
+    whole reason this function exists. The shards record their readiness in
+    whole microseconds and the merge compares `release >= ready` EXACTLY,
+    with no tolerance; a release truncated to the millisecond is up to 999
+    microseconds before the instant it means, so a token genuinely published
+    after the last announcement could read as published before it and strip
+    a correct run of its formal standing.
+
+    Computed in integer arithmetic throughout. The obvious form, dividing
+    the tick count by ten, goes through a double: ticks since the epoch are
+    around 1.8e17 and a double carries only about 9.0e15 whole numbers, so
+    that form silently loses microseconds. Instead the millisecond count is
+    taken as a long and the sub-millisecond remainder is read off the ticks,
+    where it is at most 9,999 and every step is exact. The epoch is a whole
+    number of milliseconds in ticks, so the remainder of the absolute tick
+    count is the remainder since the epoch.
+    #>
+    $offset = [System.DateTimeOffset]::UtcNow
+    $milliseconds = [long]$offset.ToUnixTimeMilliseconds()
+    $subMillisecondTicks = [long]($offset.UtcTicks % 10000)
+    return ($milliseconds * 1000) + [long][System.Math]::Floor($subMillisecondTicks / 10)
+}
+
 function Write-TtsS1StartBarrier {
     # Publishes the start token every shard of a tier is waiting on.
     #
@@ -626,7 +674,10 @@ function Write-TtsS1StartBarrier {
     if (-not [string]::IsNullOrWhiteSpace($directory)) {
         New-Item -ItemType Directory -Force -Path $directory | Out-Null
     }
-    $micros = [long](([System.DateTimeOffset]::UtcNow).ToUnixTimeMilliseconds()) * 1000
+    # WHOLE MICROSECONDS. See Get-TtsS1UnixMicros: a millisecond-resolution
+    # release compares as up to 999 micros early against announcements the
+    # shards recorded in microseconds.
+    $micros = Get-TtsS1UnixMicros
     $staged = "$Path.stage-$PID"
     [System.IO.File]::WriteAllText($staged, "$micros`n", [System.Text.UTF8Encoding]::new($false))
     try {

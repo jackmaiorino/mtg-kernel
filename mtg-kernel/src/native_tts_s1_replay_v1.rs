@@ -184,16 +184,38 @@ pub const TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1: u64 = 950;
 /// every shard now ANNOUNCES itself ready, after its checkpoint is loaded
 /// and before it waits, and the token may only be released once every
 /// announcement is in.
-pub const TTS_S1_SHARD_TOPOLOGY_RULE_V3: &str = concat!(
+pub const TTS_S1_SHARD_TOPOLOGY_RULE_V4: &str = concat!(
     "formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes",
     "-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under",
     "-on-a-host-with-at-least-2-logical-cpus-per-shard",
     "-every-shard-announcing-itself-ready-after-loading-its-checkpoint",
     "-one-start-barrier-released-only-after-every-such-announcement",
     "-no-shard-searching-before-that-release",
+    "-every-such-instant-in-whole-microseconds-since-the-unix-epoch-and-compared-exactly-with-no-tolerance",
     "-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard",
     "-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result",
-    "/v3"
+    "/v4"
+);
+
+/// THE TIME BASE every instant in the topology block is expressed on, and
+/// the comparison they are subjected to.
+///
+/// It is pinned, on the wire, and checked by the launcher because the
+/// readiness clause is an EXACT `release >= ready` with no tolerance, and an
+/// exact comparison between two numbers is only meaningful when both were
+/// recorded at the same resolution. A producer that recorded the release at
+/// millisecond resolution and multiplied by a thousand would publish a
+/// number up to 999 microseconds BEFORE the instant it meant, and would
+/// strip formal standing from a run whose token genuinely went out after
+/// every announcement. No tolerance is added to paper over that: the fix is
+/// that both sides record whole microseconds, and this string is how a
+/// reader knows they did.
+pub const TTS_S1_TOPOLOGY_TIME_BASE_V1: &str = concat!(
+    "whole-microseconds-since-the-unix-epoch",
+    "-each-process-advancing-one-launch-reading-by-a-monotonic-delta",
+    "-never-truncated-to-a-coarser-unit",
+    "-and-ordered-by-exact-comparison-with-no-tolerance",
+    "/v1"
 );
 
 /// The file one shard publishes to say it has loaded and is about to wait.
@@ -1415,6 +1437,9 @@ impl TtsS1TopologyEvidenceV1 {
 #[serde(deny_unknown_fields)]
 pub struct TtsS1ShardTopologyV1 {
     pub rule: String,
+    /// [`TTS_S1_TOPOLOGY_TIME_BASE_V1`]: the unit and the comparison every
+    /// instant below is subject to, on the wire beside them.
+    pub time_base: String,
     /// Replay processes that produced these timings. One for an unsharded
     /// run.
     pub shard_count: u64,
@@ -1513,7 +1538,8 @@ impl TtsS1ShardTopologyV1 {
             failures.join("; ")
         };
         Self {
-            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V3.to_owned(),
+            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V4.to_owned(),
+            time_base: TTS_S1_TOPOLOGY_TIME_BASE_V1.to_owned(),
             shard_count,
             formal_shard_count: TTS_S1_FORMAL_SHARD_COUNT_V1,
             formal_logical_cpus_per_shard: TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1,
@@ -5680,7 +5706,7 @@ mod tests {
             &fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 40),
         );
         assert!(formal.meets_formal_topology);
-        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V3);
+        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V4);
         assert_eq!(formal.shard_count, 8);
         assert_eq!(formal.formal_shard_count, 8);
         assert_eq!(formal.formal_logical_cpus_per_shard, 2);
@@ -5978,6 +6004,78 @@ mod tests {
             .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
             .collect();
         assert!(!shard_topology_evidence_v1(&silent).released_after_every_shard_ready);
+    }
+
+    /// THE COMPARISON IS EXACT, AND THAT ONLY WORKS AT ONE RESOLUTION.
+    ///
+    /// `release >= ready` carries no tolerance, deliberately: a tolerance
+    /// would be a licence for a token to go out slightly early. What a
+    /// tolerance-free comparison requires instead is that both sides be
+    /// recorded at the same resolution. A producer that recorded the
+    /// release in milliseconds and multiplied by a thousand would publish a
+    /// number up to 999 microseconds BEFORE the instant it meant, and would
+    /// strip formal standing from a run whose token genuinely went out
+    /// after every announcement.
+    ///
+    /// So the boundary is pinned here, at the microsecond: the same instant
+    /// is accepted, anywhere later in the same millisecond is accepted, and
+    /// one microsecond earlier is refused.
+    #[test]
+    fn the_readiness_comparison_is_exact_at_the_microsecond_v1() {
+        let counts = [4u64; 8];
+        let latest_ready = SYNTHETIC_EPOCH_MICROS_V1 - 1_000;
+        let released_at = |release: u64| {
+            let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
+            for (index, body) in bodies.iter_mut().enumerate() {
+                body.start_barrier.released_unix_micros = release;
+                // One shard announces LAST, at `latest_ready`; the rest
+                // announced earlier, so the boundary is that one shard.
+                body.start_barrier.ready_unix_micros = if index == 3 {
+                    latest_ready
+                } else {
+                    latest_ready - 500
+                };
+            }
+            let reports: Vec<TtsS1ReplayShardReportV1> = bodies
+                .into_iter()
+                .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
+                .collect();
+            let evidence = shard_topology_evidence_v1(&reports);
+            assert_eq!(evidence.latest_ready_unix_micros, latest_ready);
+            evidence
+        };
+
+        // THE SAME MICROSECOND: a token published in the same instant as
+        // the last announcement is in order, and is accepted.
+        assert!(released_at(latest_ready).released_after_every_shard_ready);
+        // ANYWHERE LATER IN THE SAME MILLISECOND, which is the case a
+        // millisecond-resolution release would have wrongly refused: the
+        // announcement lands at .xxx400 and the token at .xxx999, and a
+        // release truncated to .xxx000 would read as 400 micros early.
+        for offset in [1u64, 400, 500, 999] {
+            assert!(
+                released_at(latest_ready + offset).released_after_every_shard_ready,
+                "a release {offset} micros after the last announcement is in order"
+            );
+        }
+        // ONE MICROSECOND EARLY IS STILL EARLY. No tolerance is added to
+        // paper over the resolution: the fix is that both sides record
+        // whole microseconds, not that the comparison got looser.
+        for offset in [1u64, 400, 999, 1_000] {
+            assert!(
+                !released_at(latest_ready - offset).released_after_every_shard_ready,
+                "a release {offset} micros before the last announcement is out of order"
+            );
+        }
+
+        // And the report says which unit and which comparison it means, so
+        // a reader never has to infer either.
+        let topology =
+            TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &released_at(latest_ready));
+        assert_eq!(topology.time_base, TTS_S1_TOPOLOGY_TIME_BASE_V1);
+        assert!(topology.time_base.contains("whole-microseconds"));
+        assert!(topology.time_base.contains("no-tolerance"));
+        assert!(topology.rule.contains("compared-exactly-with-no-tolerance"));
     }
 
     /// A shard ANNOUNCES BEFORE IT WAITS, and the announcement is a real
