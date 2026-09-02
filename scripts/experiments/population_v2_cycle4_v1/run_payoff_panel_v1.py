@@ -185,6 +185,12 @@ H2H_ENVIRONMENT_KEYS = (
     "H2H_CANDIDATE_USE_STORE_RUN",
     "H2H_CANDIDATE_BASE_SEED",
     "H2H_CANDIDATE_POOL_JSON",
+    # Set only for a side whose locator entry carries one. They MUST be
+    # scrubbed: an inherited value would reach a side that has none, and the
+    # probe's pairing gate then rejects the whole matchup for a chain
+    # directory this runner never asked for.
+    "H2H_CANDIDATE_CHAIN_DIR",
+    "H2H_OPPONENT_CHAIN_DIR",
     "H2H_UPDATES",
     "H2H_INIT_STORE",
     "H2H_INIT_GEN",

@@ -32,6 +32,7 @@ from run_payoff_panel_v1 import (
     commit_staged_file,
     load_manifest,
     ARM_KINDS,
+    H2H_ENVIRONMENT_KEYS,
     SlotLocation,
     load_slot_locator,
     matchup_environment,
@@ -712,6 +713,73 @@ class SlotLocatorChainDirTests(unittest.TestCase):
         environment = matchup_environment(slots, locator, spec, Path("D:/out/outcome.json"))
         self.assertEqual(environment["H2H_CANDIDATE_CHAIN_DIR"], str(Path(ABS_CHAIN)))
         self.assertNotIn("H2H_OPPONENT_CHAIN_DIR", environment)
+
+
+class EnvironmentScrubTests(unittest.TestCase):
+    """Every `H2H_*` name this runner ever sets must also be scrubbed from the
+    inherited environment before a matchup launches (review finding P2)."""
+
+    def test_every_name_matchup_environment_sets_is_scrubbed(self):
+        # The scrub list and the setter cannot be allowed to drift: a name the
+        # setter emits only conditionally is exactly the one an inherited
+        # value leaks through.
+        slots = synthetic_slots()
+        slots[5]["source_run_sha256"] = hash_tag(2)
+        slots[5]["store_generation"] = 128
+        locator = plain_locator()
+        locator[5] = SlotLocation(Path(ABS_SLOT_5), Path(ABS_CHAIN))
+        emitted: set[str] = set()
+        for spec in build_matchup_specs(1000, 4):
+            emitted.update(
+                matchup_environment(slots, locator, spec, Path("D:/out/outcome.json"))
+            )
+        self.assertIn("H2H_CANDIDATE_CHAIN_DIR", emitted)
+        self.assertIn("H2H_OPPONENT_CHAIN_DIR", emitted)
+        self.assertEqual(
+            emitted - set(H2H_ENVIRONMENT_KEYS),
+            set(),
+            "every name the runner sets must be scrubbed from the parent environment",
+        )
+
+    def test_a_polluted_parent_environment_does_not_leak_a_chain_dir(self):
+        # A side whose locator carries no chain directory must reach the probe
+        # with none: an inherited value would make the probe's pairing gate
+        # reject a matchup for a directory this runner never asked for.
+        environment = dict(os.environ)
+        environment["H2H_CANDIDATE_CHAIN_DIR"] = "D:/inherited/candidate-chain"
+        environment["H2H_OPPONENT_CHAIN_DIR"] = "D:/inherited/opponent-chain"
+        environment["H2H_CANDIDATE_GEN"] = "999999"
+        for key in H2H_ENVIRONMENT_KEYS:
+            environment.pop(key, None)
+        slots = synthetic_slots()
+        spec = build_matchup_specs(1000, 4)[0]
+        environment.update(
+            matchup_environment(slots, plain_locator(), spec, Path("D:/out/outcome.json"))
+        )
+        self.assertNotIn("H2H_CANDIDATE_CHAIN_DIR", environment)
+        self.assertNotIn("H2H_OPPONENT_CHAIN_DIR", environment)
+        self.assertEqual(environment["H2H_CANDIDATE_GEN"], str(slots[0]["store_generation"]))
+
+    def test_a_polluted_parent_does_not_survive_beside_a_real_chain_dir(self):
+        # The own-run side keeps ITS chain directory; the other side keeps
+        # none, rather than inheriting the stale value.
+        environment = dict(os.environ)
+        environment["H2H_CANDIDATE_CHAIN_DIR"] = "D:/inherited/candidate-chain"
+        environment["H2H_OPPONENT_CHAIN_DIR"] = "D:/inherited/opponent-chain"
+        for key in H2H_ENVIRONMENT_KEYS:
+            environment.pop(key, None)
+        slots = synthetic_slots()
+        slots[5]["store_generation"] = 128
+        locator = plain_locator()
+        locator[5] = SlotLocation(Path(ABS_SLOT_5), Path(ABS_CHAIN))
+        spec = next(
+            candidate
+            for candidate in build_matchup_specs(1000, 4)
+            if candidate.higher_slot == 5
+        )
+        environment.update(matchup_environment(slots, locator, spec, Path("D:/out/o.json")))
+        self.assertEqual(environment["H2H_OPPONENT_CHAIN_DIR"], str(Path(ABS_CHAIN)))
+        self.assertNotIn("H2H_CANDIDATE_CHAIN_DIR", environment)
 
 
 class WrapperEmittedLocatorTests(unittest.TestCase):

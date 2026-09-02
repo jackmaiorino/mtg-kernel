@@ -47,6 +47,14 @@
 use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
 };
+#[cfg(test)]
+use crate::durable_move_publication_v2::ImmutableMoveMechanismV2;
+use crate::durable_move_publication_v2::{
+    publish_immutable_file_by_move_v2, ImmutableMovePublicationReceiptV2,
+};
+use crate::durable_publication_v1::{
+    capture_existing_publication_parent_v1, DurableFileExpectationV1,
+};
 use crate::native_baseline_checkpoint_chain_v4::{
     manifest_final_name_v4, parse_sidecar_record_name_v4, publish_baseline_record_v4,
     record_final_name_v4, resume_baseline_chain_v4, sidecar_record_name_v4,
@@ -703,6 +711,14 @@ pub(crate) struct Cycle4BaselineChainAccessV1 {
 /// never mistake a staged record for a boundary record.
 const CYCLE4_STAGED_SIDECAR_DIRNAME_V1: &str = "baseline-staged";
 
+/// Staging-file name the durable move primitive writes before moving a
+/// sidecar onto its final name, mirroring the chain module's own
+/// `stage_name_v4` shape: dot-prefixed, so the staged listing can skip the
+/// whole staging namespace without ever mistaking one for a record.
+fn cycle4_sidecar_stage_name_v1(final_name: &str) -> String {
+    format!(".{final_name}.stage-cycle4-v1")
+}
+
 impl Cycle4BaselineChainAccessV1 {
     /// Also the payoff panel probe's constructor: an evaluator opens a slot
     /// Store read-only, so it never reconciles and therefore never
@@ -720,6 +736,51 @@ impl Cycle4BaselineChainAccessV1 {
 
     fn staged_dir_v1(&self) -> PathBuf {
         self.chain_dir.join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
+    }
+
+    /// Publishes one sidecar's exact bytes at `final_name` under `parent_dir`
+    /// through the repository's durable move primitive (review finding P1).
+    ///
+    /// `write_file_atomically_v1` syncs the staging file but then does a
+    /// plain `rename`, which leaves the DIRENT unsynced: after a host crash
+    /// or reboot the name can be gone even though the Store commit that
+    /// followed it survived, and reconciliation reconstructs only the tip, so
+    /// an earlier missing sidecar leaves a v4 Store unresumable.
+    /// `publish_immutable_file_by_move_v2` is exactly
+    /// `MoveFileExW(.., MOVEFILE_WRITE_THROUGH)` on Windows and a
+    /// no-replace rename followed by a directory `sync_all` elsewhere, and it
+    /// is the same primitive the chain's own boundary records use.
+    ///
+    /// Create-new by construction: the caller has already proven the final
+    /// name is absent, and a stale staging file from an interrupted attempt
+    /// is removed first so a replay cannot collide with its own debris.
+    fn publish_sidecar_bytes_v1(
+        parent_dir: &Path,
+        final_name: &str,
+        bytes: &[u8],
+    ) -> Result<ImmutableMovePublicationReceiptV2> {
+        let publication_error = |detail: String| {
+            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_baseline_sidecar_publish", detail)
+        };
+        std::fs::create_dir_all(parent_dir)
+            .map_err(|error| publication_error(format!("{}: {error}", parent_dir.display())))?;
+        let stage_name = cycle4_sidecar_stage_name_v1(final_name);
+        match std::fs::remove_file(parent_dir.join(&stage_name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(publication_error(format!(
+                    "{}: {error}",
+                    parent_dir.join(&stage_name).display()
+                )))
+            }
+        }
+        let parent = capture_existing_publication_parent_v1(parent_dir)
+            .map_err(|error| publication_error(format!("{}: {error}", parent_dir.display())))?;
+        let expectation = DurableFileExpectationV1::from_bytes(bytes)
+            .map_err(|error| publication_error(error.to_string()))?;
+        publish_immutable_file_by_move_v2(&parent, &stage_name, final_name, bytes, expectation)
+            .map_err(|error| publication_error(format!("{final_name}: {error}")))
     }
 
     fn staged_sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
@@ -755,10 +816,10 @@ impl Cycle4BaselineChainAccessV1 {
                 continue;
             };
             // A staged directory carries exactly the sidecar namespace and
-            // this process's own atomic temporaries; anything else is
-            // someone else's file and fails closed rather than being swept
-            // up or silently ignored.
-            if name.contains(".tmp-") {
+            // the durable primitive's own staging files, which are dot-
+            // prefixed; anything else is someone else's file and fails
+            // closed rather than being swept up or silently ignored.
+            if name.starts_with('.') {
                 continue;
             }
             let index = parse_sidecar_record_name_v4(name).ok_or_else(|| {
@@ -967,11 +1028,12 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         }
         // Durable BEFORE the Store publishes the update this record explains
         // (review finding P1): the Store must never hold v4 evidence whose
-        // sidecar exists only in the producing process's memory.
-        if std::fs::create_dir_all(self.staged_dir_v1()).is_err() {
+        // sidecar exists only in this process's memory, nor whose name a
+        // reboot can lose out from under a committed Store.
+        let Ok(final_name) = sidecar_record_name_v4(update_index) else {
             return false;
-        }
-        write_file_atomically_v1(&staged, record_bytes).is_ok()
+        };
+        Self::publish_sidecar_bytes_v1(&self.staged_dir_v1(), &final_name, record_bytes).is_ok()
     }
 
     fn commit_staged_sidecar_records_v4(&self) -> bool {
@@ -988,9 +1050,10 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         // of this segment promoted and the rest staged -- a shape the next
         // open's reconcile resolves exactly as it resolves any other.
         for update_index in staged {
-            let (Some(promoted), Some(staged_path)) = (
+            let (Some(promoted), Some(staged_path), Ok(final_name)) = (
                 self.sidecar_path_v1(update_index),
                 self.staged_sidecar_path_v1(update_index),
+                sidecar_record_name_v4(update_index),
             ) else {
                 return false;
             };
@@ -1003,10 +1066,13 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
                 Ok(existing) if existing == bytes => {}
                 Ok(_) => return false,
                 Err(_) => {
-                    if std::fs::rename(&staged_path, &promoted).is_err() {
+                    // Republished through the same durable primitive rather
+                    // than renamed across directories: the promoted name must
+                    // be as reboot-durable as the staged one it supersedes.
+                    if Self::publish_sidecar_bytes_v1(&self.chain_dir, &final_name, &bytes).is_err()
+                    {
                         return false;
                     }
-                    continue;
                 }
             }
             if std::fs::remove_file(&staged_path).is_err() {
@@ -2559,6 +2625,16 @@ mod tests {
     use crate::native_training_store_update_group_v4::{
         build_update_baseline_record_v4, UpdateBaselineCellPartsV4, UpdateBaselineRecordPartsV4,
     };
+
+    /// The one mechanism the durable move primitive may report on this
+    /// platform: `MOVEFILE_WRITE_THROUGH` on Windows, a no-replace rename
+    /// plus a directory `sync_all` everywhere else.
+    #[cfg(windows)]
+    const EXPECTED_DURABLE_MECHANISM_V1: ImmutableMoveMechanismV2 =
+        ImmutableMoveMechanismV2::WindowsMoveFileExWriteThroughNoReplace;
+    #[cfg(not(windows))]
+    const EXPECTED_DURABLE_MECHANISM_V1: ImmutableMoveMechanismV2 =
+        ImmutableMoveMechanismV2::UnixAtomicRenameNoReplaceDirectorySynced;
 
     const ROLES_V1: [&str; CYCLE4_SLOT_COUNT_V1] = [
         "anchor-0",
@@ -4114,6 +4190,84 @@ mod tests {
                 .expect("staged bytes replay before promotion");
         }
         state
+    }
+
+    #[test]
+    fn staged_sidecars_are_published_through_the_durable_move_primitive_v1() {
+        // Review finding P1: a synced staging file followed by a plain rename
+        // leaves the DIRENT unsynced, so a reboot after the Store commit can
+        // lose the name while the committed Store survives, and only the tip
+        // is reconstructible. Both the staged write and the promotion must go
+        // through the repository's durable move publication, whose receipt
+        // names the mechanism that actually ran.
+        let dir = fresh_temp_dir_v1("sidecar-durable");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let prior = NativeBaselineStateV4::empty_v4();
+        let bytes = synthetic_sidecar_v1(&prior, 1, 9);
+        let final_name = sidecar_record_name_v4(1).expect("name");
+
+        let staged_receipt = Cycle4BaselineChainAccessV1::publish_sidecar_bytes_v1(
+            &access.staged_dir_v1(),
+            &final_name,
+            &bytes,
+        )
+        .expect("the staged record publishes durably");
+        assert_eq!(staged_receipt.mechanism(), EXPECTED_DURABLE_MECHANISM_V1);
+        // The primitive canonicalizes its parent, which on Windows is an
+        // extended-length path, so the receipt is compared canonically.
+        assert_eq!(
+            staged_receipt.final_path(),
+            std::fs::canonicalize(access.staged_dir_v1().join(&final_name))
+                .expect("the staged record exists")
+        );
+        assert_eq!(staged_receipt.sha256(), sha256_v1(&bytes));
+        // The primitive leaves no staging debris of its own behind.
+        assert!(!access
+            .staged_dir_v1()
+            .join(cycle4_sidecar_stage_name_v1(&final_name))
+            .exists());
+        // And the staged listing still sees exactly the record, never the
+        // dot-prefixed staging namespace the primitive uses.
+        assert_eq!(access.staged_update_indexes_v1().expect("staged"), vec![1]);
+
+        // Promotion republishes through the same primitive rather than
+        // renaming across directories.
+        let promoted_receipt =
+            Cycle4BaselineChainAccessV1::publish_sidecar_bytes_v1(&dir, &final_name, &bytes)
+                .expect("the promoted record publishes durably");
+        assert_eq!(promoted_receipt.mechanism(), EXPECTED_DURABLE_MECHANISM_V1);
+        assert_eq!(
+            promoted_receipt.final_path(),
+            std::fs::canonicalize(dir.join(&final_name)).expect("the promoted record exists")
+        );
+
+        // Create-new by construction: republishing over a live final name is
+        // refused rather than silently replacing an immutable record.
+        Cycle4BaselineChainAccessV1::publish_sidecar_bytes_v1(&dir, &final_name, &bytes)
+            .expect_err("an immutable record is never replaced");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_stale_staging_file_never_blocks_a_replayed_publication_v1() {
+        // An interrupted publication can leave the primitive's own staging
+        // file behind. A replay removes it first, exactly as the chain's own
+        // boundary publication does, so a retry cannot die on its own debris.
+        let dir = fresh_temp_dir_v1("sidecar-stale-stage");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let prior = NativeBaselineStateV4::empty_v4();
+        let bytes = synthetic_sidecar_v1(&prior, 1, 11);
+        let final_name = sidecar_record_name_v4(1).expect("name");
+        let staged_dir = access.staged_dir_v1();
+        std::fs::create_dir_all(&staged_dir).expect("create staged dir");
+        std::fs::write(
+            staged_dir.join(cycle4_sidecar_stage_name_v1(&final_name)),
+            b"debris from an interrupted publication",
+        )
+        .expect("write debris");
+        assert!(access.stage_sidecar_record_v4(1, &bytes));
+        assert_eq!(access.sidecar_record_bytes_v4(1).expect("staged"), bytes);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
