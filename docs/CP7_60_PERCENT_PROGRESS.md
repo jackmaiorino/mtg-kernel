@@ -522,6 +522,7 @@ Status meanings: `DONE` is verified, `NOW` is current work, `NEXT` is eligible a
 | 2026-09-02 (S1 round 4 re-check) | Codex accepts the isotonic aggregation and slope corrections; one launcher P2 remains (the nested latency-curve rule string is not asserted alongside the projection rule, so a partially updated replay binary could pass). Assigned; after it, S1 merges onto the main line. |
 | 2026-09-02 (S1 fix round 5) | The S1 launcher's pinned contract (compute-cap rule, latency-curve rule, gating view) moved into a shared script and is asserted on every tier report before summarizing, echoed into provenance and summary, with missing nested blocks failing closed by name; the dry-run tests now exercise the assertion directly against stale-rule reports (94 checks) and the pins match the Rust constants byte for byte. Codex re-check in progress. |
 | 2026-09-02 (S1 round 5 re-check) | Codex confirms the stale nested rule is rejected and leaves two launcher items: the contract assertion must run before any nested field is dereferenced so a missing block fails by name, and the dry-run tests must source the shared contract script beside the wrapper they select. Assigned. |
+| 2026-09-02 (S1 fix round 6) | The S1 launcher now reads and validates each tier report in one call so no unvalidated report can be held before a dereference, and the dry-run tests load the shared contract beside the wrapper they select (verified by a tampered-copy run that fails on the copy's pin). 100 dry-run checks. Codex re-check in progress. |
 
 ## Next update trigger
 
