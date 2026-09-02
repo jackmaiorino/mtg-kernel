@@ -25,14 +25,22 @@
 //! fields, which are grouped into [`WallTimeV3`] precisely so a test (or
 //! an auditor) can excise them in one move rather than by naming fields.
 //!
-//! **Atomic publication.** The whole episode file is rewritten and
-//! `rename`d after every record, never appended to in place. A reader
-//! therefore only ever observes a complete, chain-valid file: a torn write
-//! is impossible, and a process killed mid-episode leaves the last
-//! successfully published decision rather than a half line. Rewriting is
+//! **Atomic publication, by REPLACEMENT.** The whole episode file is
+//! rewritten after every record and moved into place with a single
+//! replacing move (`durable_move_publication_v2::replace_file_by_move_v2`,
+//! which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`
+//! on Windows), never appended to in place and never unlinked first. A
+//! reader therefore only ever observes a complete, chain-valid file: a torn
+//! write is impossible, there is no instant at which the path names nothing,
+//! and a process killed mid-episode leaves the last successfully published
+//! decision rather than a half line or no file at all. Rewriting is
 //! affordable because an episode's record set is small (hundreds of
 //! records of a few hundred bytes) while a single decision costs a full
 //! tiered search, orders of magnitude more work than the rewrite.
+//!
+//! **Commit-after-publish.** No chain state advances until the publish has
+//! succeeded, so a failed publish is retryable and a retry republishes the
+//! same decision at the same ordinals. See `append_and_publish_v3`.
 //!
 //! **Hash chaining across decisions within an episode.** Each record
 //! carries `previous_record_sha256`, the SHA-256 of the previous record's
@@ -52,6 +60,10 @@
 //! `native_checkpoint_shadow_stdio_v1`; no separate canonicalization pass
 //! is needed or performed.
 
+use crate::durable_move_publication_v2::replace_file_by_move_v2;
+use crate::durable_publication_v1::{
+    capture_existing_publication_parent_v1, DurableFileExpectationV1,
+};
 use crate::model_guided_search_core_v1::{
     ModelGuidedSearchDecisionV1, ModelGuidedSearchLeafCensusV1,
 };
@@ -59,7 +71,7 @@ use crate::rl::PlayerSeatV1;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self};
 use std::path::{Path, PathBuf};
 
 pub const MODEL_GUIDED_SEARCH_OUTCOME_CONTRACT_V3: &str =
@@ -410,7 +422,7 @@ impl ModelGuidedSearchOutcomeWriterV3 {
             next_record_ordinal: 0,
             next_decision_ordinal: 0,
         });
-        self.append_and_publish_v3(line)
+        self.append_and_publish_v3(line, false)
     }
 
     /// The next decision ordinal this writer will assign, so the selector
@@ -451,57 +463,97 @@ impl ModelGuidedSearchOutcomeWriterV3 {
         record.decision_ordinal = decision_ordinal;
         record.previous_record_sha256 = previous;
         let line = serde_json::to_string(&record).map_err(io::Error::other)?;
-        if let Some(episode) = self.open.as_mut() {
-            episode.next_decision_ordinal += 1;
-        }
-        self.append_and_publish_v3(line)
+        self.append_and_publish_v3(line, true)
     }
 
-    fn append_and_publish_v3(&mut self, line: String) -> io::Result<()> {
+    /// Appends `line` and republishes the episode file.
+    ///
+    /// COMMIT-AFTER-PUBLISH. Every piece of chain state (the running hash,
+    /// the accumulated lines, the record ordinal, and the decision
+    /// ordinal) is computed into locals and written back to `self.open`
+    /// only once `publish_atomically_v3` has returned success. The earlier
+    /// shape advanced that state first, so a failed publish left the
+    /// writer believing a record it had never published was already on
+    /// disk: the caller restores the game session and retries, the SAME
+    /// decision is published a second time under later ordinals, and the
+    /// chain still verifies because the chain covers whatever bytes were
+    /// actually written. A duplicated decision that passes verification is
+    /// strictly worse than a missing one, because nothing downstream can
+    /// detect it.
+    ///
+    /// The publish is an atomic replacement, so on failure the previously
+    /// published file is still the newest complete file on disk, which is
+    /// exactly the state the un-advanced writer describes. Retry is
+    /// therefore safe and idempotent, which is why staging is the right
+    /// fix here rather than poisoning the runtime: a transient ENOSPC or a
+    /// held file handle should cost the panel one retry, not the rest of
+    /// the episode.
+    fn append_and_publish_v3(&mut self, line: String, is_decision: bool) -> io::Result<()> {
         let episode = self
             .open
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| io::Error::other("no open search-diagnostics episode"))?;
         if line.contains('\n') || line.contains('\r') {
             return Err(io::Error::other("a JSONL record may not contain a newline"));
         }
-        episode.previous_record_sha256 = lower_hex_sha256_v3(record_chain_link_v3(&line));
-        episode.lines.push(line);
-        episode.next_record_ordinal += 1;
+        let staged_previous = lower_hex_sha256_v3(record_chain_link_v3(&line));
         let mut bytes = Vec::new();
-        for line in &episode.lines {
-            bytes.extend_from_slice(line.as_bytes());
+        for published in &episode.lines {
+            bytes.extend_from_slice(published.as_bytes());
             bytes.push(b'\n');
         }
-        publish_atomically_v3(&episode.path, &bytes)
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+        let path = episode.path.clone();
+        publish_atomically_v3(&path, &bytes)?;
+        // Commit. Nothing above this line mutated the writer.
+        let episode = self
+            .open
+            .as_mut()
+            .ok_or_else(|| io::Error::other("no open search-diagnostics episode"))?;
+        episode.previous_record_sha256 = staged_previous;
+        episode.lines.push(line);
+        episode.next_record_ordinal += 1;
+        if is_decision {
+            episode.next_decision_ordinal += 1;
+        }
+        Ok(())
     }
 }
 
-/// Writes `bytes` to a sibling temporary file, flushes and syncs it, then
-/// renames it over the destination. `rename` over an existing path is
-/// atomic on the platforms this scorer runs on; the explicit `sync_all`
-/// before the rename is what makes the published file's CONTENT durable,
-/// not merely its name.
+/// Publishes `bytes` at `path` by atomic REPLACEMENT.
+///
+/// Delegates to `durable_move_publication_v2::replace_file_by_move_v2`,
+/// which stages the bytes, syncs them, and then performs a single
+/// replacing move: on Windows exactly `MoveFileExW(stage, final,
+/// MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`, elsewhere
+/// `rename`. It reopens and reverifies the published length and digest
+/// before returning, so a short or corrupted publish is an error rather
+/// than a silently truncated diagnostics file.
+///
+/// The destination is NEVER unlinked first. The earlier shape removed the
+/// existing file and then renamed, which opened a window in which a reader
+/// observes no file at all and a crash loses the last published record
+/// outright, defeating the entire point of republishing after every
+/// decision. Replacement closes that window: at every instant the path
+/// names either the previous complete file or the new one.
 fn publish_atomically_v3(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let file_name = path
         .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| io::Error::other("search diagnostics path has no file name"))?;
-    let temporary = path.with_file_name(format!("{file_name}.tmp"));
-    {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(bytes)?;
-        file.flush()?;
-        file.sync_all()?;
-    }
-    // Windows `rename` refuses to clobber, so the destination is removed
-    // first. The temporary file is deliberately not deleted on failure: a
-    // crash inside that window leaves the new content recoverable under
-    // the `.tmp` name rather than losing both copies.
-    if path.exists() {
-        fs::remove_file(path)?;
-    }
-    fs::rename(&temporary, path)
+        .ok_or_else(|| io::Error::other("search diagnostics path has no file name"))?
+        .to_owned();
+    let directory = path
+        .parent()
+        .ok_or_else(|| io::Error::other("search diagnostics path has no parent"))?;
+    let mut stage_name = file_name.clone();
+    stage_name.push(".tmp");
+    let parent = capture_existing_publication_parent_v1(directory)
+        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)
+        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    replace_file_by_move_v2(&parent, &stage_name, &file_name, bytes, expectation)
+        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -681,6 +733,106 @@ mod tests {
                 assert_eq!(value["decision_ordinal"].as_u64(), Some(index as u64 - 1));
             }
         }
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A failed publish must leave the writer exactly where it was, so a
+    /// retry republishes the SAME decision at the SAME ordinals instead of
+    /// appending a duplicate under later ones.
+    ///
+    /// The failure is induced by occupying the staging name with a
+    /// directory, which no amount of retrying inside the writer can work
+    /// around, and which leaves the already-published file untouched: the
+    /// precise shape of a transient publish failure.
+    #[test]
+    fn a_failed_publish_does_not_advance_the_writer_and_retry_publishes_once_v3() {
+        let directory = scratch_directory_v3(7);
+        let mut writer = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v3(3, 77, PlayerSeatV1::P0, wrapper_identity_v3())
+            .expect("header publishes");
+        let path = writer.episode_path_v3(3, 77);
+        writer
+            .write_decision_v3(decision_record_v3(3, WallTimeV3::default()))
+            .expect("first decision publishes");
+        assert_eq!(verify_episode_chain_v3(&fs::read(&path).unwrap()), Ok(2));
+        let published_before = fs::read(&path).unwrap();
+        assert_eq!(writer.next_decision_ordinal_v3().unwrap(), 1);
+
+        // Block the staging name so the publish cannot succeed.
+        let mut stage = path.clone().into_os_string();
+        stage.push(".tmp");
+        let stage = PathBuf::from(stage);
+        fs::create_dir(&stage).expect("stage name is occupiable");
+        assert!(writer
+            .write_decision_v3(decision_record_v3(3, WallTimeV3::default()))
+            .is_err());
+
+        // Nothing moved: not the file on disk, not the writer's ordinals.
+        assert_eq!(fs::read(&path).unwrap(), published_before);
+        assert_eq!(
+            writer.next_decision_ordinal_v3().unwrap(),
+            1,
+            "a failed publish must not consume a decision ordinal"
+        );
+
+        // Unblock and retry. Exactly one new record appears, at the
+        // ordinal the failed attempt would have used.
+        fs::remove_dir(&stage).expect("stage name frees");
+        writer
+            .write_decision_v3(decision_record_v3(3, WallTimeV3::default()))
+            .expect("retry publishes");
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(verify_episode_chain_v3(text.as_bytes()), Ok(3));
+        let decisions: Vec<u64> = text
+            .lines()
+            .skip(1)
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["decision_ordinal"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            decisions,
+            vec![0, 1],
+            "the retry must not duplicate the decision or skip an ordinal"
+        );
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// The publish never unlinks the destination, so the path always names
+    /// a complete file. Verified by checking that the file is continuously
+    /// present and chain-valid across a whole episode of republishes, and
+    /// that the inode/identity is REPLACED rather than the file being
+    /// removed and recreated with a gap.
+    #[test]
+    fn publication_replaces_in_place_and_never_unlinks_the_destination_v3() {
+        let directory = scratch_directory_v3(8);
+        let mut writer = ModelGuidedSearchOutcomeWriterV3::open_directory_v3(directory.clone())
+            .expect("directory opens");
+        writer
+            .begin_episode_v3(4, 88, PlayerSeatV1::P0, wrapper_identity_v3())
+            .expect("header publishes");
+        let path = writer.episode_path_v3(4, 88);
+        for expected in 2..=5 {
+            let before = fs::read(&path).expect("the published file exists before the republish");
+            assert!(verify_episode_chain_v3(&before).is_ok());
+            writer
+                .write_decision_v3(decision_record_v3(4, WallTimeV3::default()))
+                .expect("decision publishes");
+            let after = fs::read(&path).expect("the published file exists after the republish");
+            assert_eq!(verify_episode_chain_v3(&after), Ok(expected));
+            assert!(
+                after.starts_with(&before),
+                "a republish must extend the previous file, never rewrite its history"
+            );
+        }
+        // The staging name is not left behind.
+        let mut stage = path.clone().into_os_string();
+        stage.push(".tmp");
+        assert!(!PathBuf::from(stage).exists());
         fs::remove_dir_all(&directory).ok();
     }
 
