@@ -174,7 +174,7 @@ const SOURCE_MODEL_PARAMETER_SHA256_V1: &str =
     "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d";
 const SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "legacy-v1";
 const POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "environment-randomization-v2";
-const SHADOW_RANDOMIZATION_IDENTITY_V1: &str = "legacy_v1";
+pub(crate) const SHADOW_RANDOMIZATION_IDENTITY_V1: &str = "legacy_v1";
 
 const PORTABLE_RUN_SHA256_V1: &str =
     "e2972066ee4782f0cb0bb588f5f79e9a2cd0be4620b8b906679f15147dd42c89";
@@ -2487,7 +2487,7 @@ fn request_id_from_value_v1(value: &serde_json::Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn decision_kind_v1(kind: FastActorDecisionKindV1) -> &'static str {
+pub(crate) fn decision_kind_v1(kind: FastActorDecisionKindV1) -> &'static str {
     match kind {
         FastActorDecisionKindV1::Surface => "surface",
         FastActorDecisionKindV1::AttackerInclusion => "attacker_inclusion",
@@ -2550,7 +2550,7 @@ fn frame_i64_v1(hasher: &mut Sha256, label: &str, values: &[i64]) {
     );
 }
 
-fn model_input_sha256_v1(tensor: &NativeFlatDecisionTensorV2) -> String {
+pub(crate) fn model_input_sha256_v1(tensor: &NativeFlatDecisionTensorV2) -> String {
     let mut hasher = Sha256::new();
     framed_atom_v1(
         &mut hasher,

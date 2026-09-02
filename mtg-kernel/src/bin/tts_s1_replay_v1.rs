@@ -26,7 +26,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --output PATH [--limit-decisions N]"
+        "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --diagnostics-dir PATH --output PATH [--limit-decisions N]"
     );
     std::process::exit(2);
 }
@@ -43,12 +43,13 @@ struct ParsedArgsV1 {
     corpus: PathBuf,
     tier: KernelNativeSearchTierV1,
     seed_block_id: usize,
+    diagnostics_dir: PathBuf,
     output: PathBuf,
     limit_decisions: Option<u64>,
 }
 
 fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
-    if raw.len() < 10 || raw.len() > 14 || !raw.len().is_multiple_of(2) {
+    if raw.len() < 12 || raw.len() > 16 || !raw.len().is_multiple_of(2) {
         return Err(());
     }
     let mut authority_root = None;
@@ -56,6 +57,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut corpus = None;
     let mut tier = None;
     let mut seed_block_id = None;
+    let mut diagnostics_dir = None;
     let mut output = None;
     let mut limit_decisions = None;
     for pair in raw.chunks_exact(2) {
@@ -80,6 +82,8 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
                     .parse::<usize>()
                     .map_err(|_| ())?,
             );
+        } else if flag == "--diagnostics-dir" && diagnostics_dir.is_none() {
+            diagnostics_dir = Some(PathBuf::from(&pair[1]));
         } else if flag == "--output" && output.is_none() {
             output = Some(PathBuf::from(&pair[1]));
         } else if flag == "--limit-decisions" && limit_decisions.is_none() {
@@ -110,6 +114,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         corpus: corpus.ok_or(())?,
         tier: tier.ok_or(())?,
         seed_block_id: seed_block_id.ok_or(())?,
+        diagnostics_dir: diagnostics_dir.ok_or(())?,
         output: output.ok_or(())?,
         limit_decisions,
     })
@@ -124,6 +129,7 @@ fn main() {
         tier: parsed.tier,
         seed_block_id: parsed.seed_block_id,
         limit_decisions: parsed.limit_decisions,
+        diagnostics_directory: parsed.diagnostics_dir,
     };
     let report = match run_tts_s1_replay_v1(&config) {
         Ok(report) => report,
@@ -141,7 +147,7 @@ fn main() {
     };
     let body = &report.body;
     println!(
-        "TTS_S1_REPLAY_PUBLISHED path={} bytes={} report_sha256={} tier={} verdict={} decisions={} whole_corpus={} search_p50_micros={} search_p99_micros={} search_max_micros={} decision_p50_micros={} decision_p99_micros={} decision_max_micros={} decisions_per_second_milli={} corpus_sha256={} authority_digest={}",
+        "TTS_S1_REPLAY_PUBLISHED path={} bytes={} report_sha256={} tier={} verdict={} decisions={} whole_corpus={} search_p50_micros={} search_p99_micros={} search_max_micros={} decision_p50_micros={} decision_p99_micros={} decision_max_micros={} protocol_p50_micros={} protocol_p99_micros={} protocol_max_micros={} decisions_per_second_milli={} projected_s2_worker_hours_milli={} compute_cap_worker_hours_milli={} within_compute_cap={} corpus_sha256={} authority_digest={}",
         parsed.output.display(),
         bytes.len(),
         report.report_sha256,
@@ -155,7 +161,13 @@ fn main() {
         body.decision_wall_time.p50_micros,
         body.decision_wall_time.p99_micros,
         body.decision_wall_time.max_micros,
+        body.protocol_wall_time.p50_micros,
+        body.protocol_wall_time.p99_micros,
+        body.protocol_wall_time.max_micros,
         body.decisions_per_second_milli,
+        body.compute_cap.projected_worker_hours_milli,
+        body.compute_cap.cap_worker_hours_milli,
+        body.compute_cap.within_cap,
         body.corpus_sha256,
         body.search_authority_digest_sha256,
     );
@@ -188,6 +200,8 @@ mod tests {
             "t512".into(),
             "--seed-block".into(),
             "1".into(),
+            "--diagnostics-dir".into(),
+            "diagnostics".into(),
             "--output".into(),
             "report.json".into(),
         ]
@@ -207,6 +221,7 @@ mod tests {
             assert_eq!(parsed.tier, expected);
             assert_eq!(parsed.seed_block_id, 1);
             assert_eq!(parsed.limit_decisions, None);
+            assert_eq!(parsed.diagnostics_dir, PathBuf::from("diagnostics"));
             assert_eq!(parsed.output, PathBuf::from("report.json"));
         }
         let mut reordered = argv_v1();
@@ -233,7 +248,7 @@ mod tests {
     #[test]
     fn the_flag_surface_is_strict_v1() {
         let full = argv_v1();
-        for drop_pair in [0usize, 4, 6, 8, 10] {
+        for drop_pair in [0usize, 4, 6, 8, 10, 12] {
             let mut partial = full.clone();
             partial.drain(drop_pair..drop_pair + 2);
             assert!(
@@ -258,5 +273,13 @@ mod tests {
         unknown.push("--episodes".into());
         unknown.push("64".into());
         assert!(parse_args_v1(unknown).is_err());
+
+        // The diagnostics directory is REQUIRED, not optional: the
+        // protocol latency the SLO is classified on is measured by the
+        // production writer that publishes into it.
+        let mut repeated_dir = full.clone();
+        repeated_dir.push("--diagnostics-dir".into());
+        repeated_dir.push("other".into());
+        assert!(parse_args_v1(repeated_dir).is_err());
     }
 }

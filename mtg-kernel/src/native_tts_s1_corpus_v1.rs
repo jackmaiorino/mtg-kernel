@@ -69,14 +69,13 @@ use crate::fast_sampler::FastCategoricalScratch;
 use crate::model_guided_search_authority_v1::authorized_seed_block_v1;
 use crate::model_guided_search_outcome_v4::lower_hex_sha256_v4;
 use crate::native_checkpoint_shadow_stdio_v1::{
-    kernel_phase_step_name_v2, load_checkpoint_v1, player_seat_index_v1,
+    decision_kind_v1, kernel_phase_step_name_v2, load_checkpoint_v1, player_seat_index_v1,
     ShadowCheckpointAuthorityV1, ShadowCheckpointIdentityV1,
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
 use crate::rl_session::{
-    FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1,
-    CANONICAL_RALLY_DECK_ID,
+    FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, CANONICAL_RALLY_DECK_ID,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -95,6 +94,31 @@ pub const TTS_S1_CORPUS_SELECTION_RULE_V1: &str =
 /// every trainer, scorer, and search seed domain in the crate; see the
 /// module docs for why this module derives its own.
 pub const TTS_S1_CORPUS_POLICY_SAMPLE_DOMAIN_V1: &str = "mtg-kernel-tts-s1-corpus-policy-sample/v1";
+
+/// The percentile convention BOTH S1 artifacts use, stated on the wire so
+/// nobody has to guess which of the several common ones produced a number.
+///
+/// One rule, one implementation ([`nearest_rank_percentile_v1`]): the
+/// corpus's decisions-per-episode percentile and the replay report's
+/// latency percentiles are the same function, so a reader comparing the
+/// two is comparing like with like.
+pub const TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1: &str =
+    "nearest-rank-on-ascending-integers-rank-equals-ceil-p-times-n-over-100/v1";
+
+/// Nearest-rank percentile over ascending integers.
+///
+/// Rank is `ceil(percentile * n / 100)`, clamped to `1..=n`, and the result
+/// is the value at that 1-based rank. Integer arithmetic throughout: no
+/// interpolation, no float, and no rounding mode to argue about later.
+/// `samples` must already be sorted ascending.
+pub fn nearest_rank_percentile_v1(samples: &[u64], percentile: u64) -> Option<u64> {
+    let count = u64::try_from(samples.len()).ok()?;
+    if count == 0 {
+        return None;
+    }
+    let rank = percentile.checked_mul(count)?.div_ceil(100).clamp(1, count);
+    samples.get(usize::try_from(rank - 1).ok()?).copied()
+}
 
 /// Sketch Section 5, S1: "a FROZEN stratified corpus of >= 512 decisions".
 pub const TTS_S1_CORPUS_TARGET_DECISIONS_V1: u32 = 512;
@@ -326,6 +350,64 @@ impl TtsS1CorpusQuotasV1 {
     }
 }
 
+/// Decisions per NATURAL-TERMINAL episode, as this self-play sweep
+/// actually observed them.
+///
+/// This is the corpus's contribution to the sketch's compute cap (Section
+/// 4: "a tier whose projected S2 cost (from S1 timings) exceeds 48
+/// worker-hours on the 16-worker host is INFEASIBLE"). The replay cannot
+/// derive it: it only ever visits the 512 SELECTED decisions, which are a
+/// stratified sample and not a game's worth of decisions. So the builder,
+/// which is the only thing that ever played a whole game, records it.
+///
+/// Every count is decisions by BOTH seats, because that is what a
+/// self-play episode contains. See the replay's own projection docs for
+/// why that makes the projection conservative for a wrapped agent that
+/// occupies one seat.
+///
+/// Truncated and halted episodes contribute nothing here, for the same
+/// reason they contribute no candidates: their length is set by the
+/// decision cap rather than by the game.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1EpisodeDecisionStatsV1 {
+    pub natural_terminal_episode_count: u64,
+    pub total_decisions: u64,
+    /// Mean decisions per episode times 1,000, floored. Scaled to an
+    /// integer because the canonical JSON codec forbids floats outright;
+    /// the two operands are on the wire beside it, so the exact rational
+    /// is recoverable.
+    pub mean_decisions_milli: u64,
+    pub p50_decisions: u64,
+    pub p99_decisions: u64,
+    pub max_decisions: u64,
+    pub percentile_rule: String,
+}
+
+impl TtsS1EpisodeDecisionStatsV1 {
+    /// Summarizes an UNSORTED per-episode decision-count set.
+    pub fn summarize_v1(counts: &[u64]) -> Option<Self> {
+        if counts.is_empty() {
+            return None;
+        }
+        let mut sorted = counts.to_vec();
+        sorted.sort_unstable();
+        let episodes = sorted.len() as u64;
+        let total = sorted
+            .iter()
+            .fold(0u64, |running, value| running.saturating_add(*value));
+        Some(Self {
+            natural_terminal_episode_count: episodes,
+            total_decisions: total,
+            mean_decisions_milli: total.saturating_mul(1_000) / episodes,
+            p50_decisions: nearest_rank_percentile_v1(&sorted, 50)?,
+            p99_decisions: nearest_rank_percentile_v1(&sorted, 99)?,
+            max_decisions: *sorted.last()?,
+            percentile_rule: TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1.to_owned(),
+        })
+    }
+}
+
 /// Everything the corpus digest covers. Split out from the envelope so
 /// `corpus_sha256` can commit to the corpus without committing to itself.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -347,6 +429,10 @@ pub struct TtsS1CorpusBodyV1 {
     /// How many of `episode_count` episodes reached a natural terminal and
     /// therefore contributed candidates.
     pub natural_terminal_episode_count: u64,
+    /// Decisions per natural-terminal episode. The compute-cap projection
+    /// in `native_tts_s1_replay_v1` reads `mean_decisions_milli` from
+    /// here; nothing else in S1 can supply it.
+    pub episode_decisions: TtsS1EpisodeDecisionStatsV1,
     /// The selected corpus, in ascending (episode id, decision ordinal)
     /// order regardless of the order selection visited them in.
     pub decisions: Vec<TtsS1CorpusDecisionV1>,
@@ -427,6 +513,10 @@ pub enum TtsS1CorpusErrorV1 {
     /// than its own ordinal. Structurally unreachable (the two come from
     /// the same harvest), so it is reported rather than assumed away.
     MissingEpisodeActions,
+    /// No episode reached a natural terminal, so there is no whole-game
+    /// decision count and therefore no compute-cap projection. Fail closed
+    /// rather than publish a corpus a tier verdict cannot be built from.
+    NoNaturalTerminalEpisode,
     CanonicalJson,
     /// A decoded manifest's `corpus_sha256` does not cover its own body,
     /// or its bytes were not canonical, or its schema is not this one.
@@ -451,6 +541,7 @@ impl TtsS1CorpusErrorV1 {
             Self::QuotaUnsatisfiable { .. } => "tts_s1_corpus_quota_unsatisfiable",
             Self::CorpusTooSmall { .. } => "tts_s1_corpus_too_small",
             Self::MissingEpisodeActions => "tts_s1_corpus_missing_episode_actions",
+            Self::NoNaturalTerminalEpisode => "tts_s1_corpus_no_natural_terminal_episode",
             Self::CanonicalJson => "tts_s1_corpus_canonical_json_failed",
             Self::InvalidManifest => "tts_s1_corpus_manifest_invalid",
             Self::Publication(_) => "tts_s1_corpus_publication_failed",
@@ -521,14 +612,6 @@ pub fn corpus_policy_sample_seed_v1(
     let mut first = [0u8; 8];
     first.copy_from_slice(&digest[..8]);
     u64::from_be_bytes(first)
-}
-
-fn decision_kind_tag_v1(kind: FastActorDecisionKindV1) -> &'static str {
-    match kind {
-        FastActorDecisionKindV1::Surface => "surface",
-        FastActorDecisionKindV1::AttackerInclusion => "attacker_inclusion",
-        FastActorDecisionKindV1::BlockerInclusion => "blocker_inclusion",
-    }
 }
 
 /// Reads the stratification labels off a live session positioned at
@@ -701,24 +784,35 @@ pub fn select_tts_s1_corpus_v1(
 /// use, with no Store on disk. `pub(crate)`: it names two crate-private
 /// types, and neither S1 module's public surface mentions it.
 pub(crate) trait TtsS1DecisionScorerV1 {
-    fn action_logits_v1(
+    /// Both heads of one flat scoring pass, exactly what the scorer's own
+    /// `ShadowModelScorerV1::score_v1` returns for this decision. The
+    /// value is not used by the search (the searcher runs its own
+    /// deterministic forward at leaves) but IS part of the scorer's
+    /// response line, so the replay needs it to be scorer-shaped.
+    fn score_decision_v1(
         &self,
         decision: crate::flat_policy_v2::FlatScoringDecisionViewV2<'_>,
-    ) -> Result<Vec<f32>, ()>;
+    ) -> Result<TtsS1FlatScoreV1, ()>;
 
     fn search_net_v1(&self) -> &crate::native_policy_value_net_v1::NativePolicyValueNetV1;
 }
 
+/// One flat scoring pass's two heads.
+pub(crate) struct TtsS1FlatScoreV1 {
+    pub(crate) logits: Vec<f32>,
+    pub(crate) value: f32,
+}
+
 impl TtsS1DecisionScorerV1 for crate::native_checkpoint_inference_v1::NativeCheckpointInferenceV1 {
-    fn action_logits_v1(
+    fn score_decision_v1(
         &self,
         decision: crate::flat_policy_v2::FlatScoringDecisionViewV2<'_>,
-    ) -> Result<Vec<f32>, ()> {
-        Ok(self
-            .score_decision_v1(decision)
-            .map_err(|_| ())?
-            .action_logits()
-            .to_vec())
+    ) -> Result<TtsS1FlatScoreV1, ()> {
+        let output = Self::score_decision_v1(self, decision).map_err(|_| ())?;
+        Ok(TtsS1FlatScoreV1 {
+            logits: output.action_logits().to_vec(),
+            value: output.value(),
+        })
     }
 
     fn search_net_v1(&self) -> &crate::native_policy_value_net_v1::NativePolicyValueNetV1 {
@@ -772,6 +866,7 @@ pub(crate) struct TtsS1CorpusSelectionV1 {
     pub(crate) decisions: Vec<TtsS1CorpusDecisionV1>,
     pub(crate) candidate_count: u64,
     pub(crate) natural_terminal_episode_count: u64,
+    pub(crate) episode_decisions: TtsS1EpisodeDecisionStatsV1,
 }
 
 /// Plays one seeded self-play episode with both seats on `scorer` and
@@ -829,7 +924,10 @@ pub(crate) fn harvest_episode_v1(
             substep_index: expected.substep_index,
             substep_count: expected.substep_count,
             acting_player: expected.acting_player,
-            decision_kind: decision_kind_tag_v1(expected.decision_kind).to_owned(),
+            // The SCORER's own wire spelling, not a second copy of it:
+            // the replay's surface check compares against this string, so
+            // a kernel-side rename must move both sides at once.
+            decision_kind: decision_kind_v1(expected.decision_kind).to_owned(),
             legal_action_count: expected.legal_action_count,
             diagnostic_state_hash_u64_hex: format!("{:016x}", session.diagnostic_state_hash()),
             core_environment_hash_u64_hex: format!(
@@ -844,8 +942,9 @@ pub(crate) fn harvest_episode_v1(
         let logits = {
             let view = FlatScoredFamilyV2::packet_view(&packet);
             scorer
-                .action_logits_v1(view)
+                .score_decision_v1(view)
                 .map_err(|()| TtsS1CorpusErrorV1::Score)?
+                .logits
         };
         owned = FlatScoredFamilyV2::into_owned_packet(packet);
         if logits.len() != expected.legal_action_count as usize
@@ -897,6 +996,10 @@ pub(crate) fn harvest_and_select_v1(
     // `EpisodeHarvestV1::decisions` for why they are not cut per candidate.
     let mut episode_actions: Vec<(u64, Vec<u32>)> = Vec::new();
     let mut natural_terminal_episode_count: u64 = 0;
+    // One entry per natural-terminal episode: the whole-game decision
+    // count the compute-cap projection needs. Only a whole game supplies
+    // it, and only this loop ever plays one.
+    let mut episode_decision_counts: Vec<u64> = Vec::new();
     for episode_id in 0..episode_count {
         let harvest = harvest_episode_v1(
             scorer,
@@ -907,10 +1010,13 @@ pub(crate) fn harvest_and_select_v1(
         )?;
         if harvest.natural {
             natural_terminal_episode_count += 1;
+            episode_decision_counts.push(harvest.decisions.len() as u64);
             candidates.extend(harvest.decisions);
             episode_actions.push((episode_id, harvest.actions));
         }
     }
+    let episode_decisions = TtsS1EpisodeDecisionStatsV1::summarize_v1(&episode_decision_counts)
+        .ok_or(TtsS1CorpusErrorV1::NoNaturalTerminalEpisode)?;
     let candidate_count = candidates.len() as u64;
     let chosen = select_tts_s1_corpus_v1(&candidates)?;
     let mut decisions = Vec::with_capacity(chosen.len());
@@ -930,6 +1036,7 @@ pub(crate) fn harvest_and_select_v1(
         decisions,
         candidate_count,
         natural_terminal_episode_count,
+        episode_decisions,
     })
 }
 
@@ -960,6 +1067,7 @@ pub(crate) fn corpus_body_v1(
         quotas: TtsS1CorpusQuotasV1::pre_registered_v1(),
         candidate_count: selection.candidate_count,
         natural_terminal_episode_count: selection.natural_terminal_episode_count,
+        episode_decisions: selection.episode_decisions,
         decisions: selection.decisions,
     }
 }
@@ -1076,6 +1184,7 @@ pub(crate) fn publish_canonical_document_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rl_session::FastActorDecisionKindV1;
 
     fn labels_v1(
         seat: PlayerSeatV1,
@@ -1153,6 +1262,29 @@ mod tests {
             pool.push(candidate_v1(index / 100, index % 100, labels));
         }
         pool
+    }
+
+    #[test]
+    fn episode_decision_statistics_are_exact_on_a_known_set_v1() {
+        // 1..=100 decisions across 100 episodes: mean 50.5, p50 50, p99 99.
+        let counts: Vec<u64> = (1..=100).collect();
+        let stats = TtsS1EpisodeDecisionStatsV1::summarize_v1(&counts).unwrap();
+        assert_eq!(stats.natural_terminal_episode_count, 100);
+        assert_eq!(stats.total_decisions, 5_050);
+        assert_eq!(stats.mean_decisions_milli, 50_500);
+        assert_eq!(stats.p50_decisions, 50);
+        assert_eq!(stats.p99_decisions, 99);
+        assert_eq!(stats.max_decisions, 100);
+        assert_eq!(
+            stats.percentile_rule,
+            TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1
+        );
+        // The mean floors rather than rounds, and it is the SAME rule at
+        // one episode as at a hundred.
+        let single = TtsS1EpisodeDecisionStatsV1::summarize_v1(&[7]).unwrap();
+        assert_eq!(single.mean_decisions_milli, 7_000);
+        assert_eq!(single.p99_decisions, 7);
+        assert!(TtsS1EpisodeDecisionStatsV1::summarize_v1(&[]).is_none());
     }
 
     #[test]
@@ -1283,6 +1415,10 @@ mod tests {
             quotas: TtsS1CorpusQuotasV1::pre_registered_v1(),
             candidate_count: pool.len() as u64,
             natural_terminal_episode_count: 9,
+            episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[
+                180, 220, 240, 260, 280, 300, 320, 340, 360,
+            ])
+            .expect("nine episodes summarize"),
             decisions: chosen
                 .into_iter()
                 .map(|index| pool[index].clone())
