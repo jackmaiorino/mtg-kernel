@@ -6279,7 +6279,29 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&directory);
 
-        // 8. A SHARD WHOSE EPISODE LIST DOES NOT PARTITION ITS RECORDS.
+        // 8. THE HANDSHAKE'S OWN FILES, which live in the very directory
+        //    the merge scans. A ready file starts with "shard-" exactly as
+        //    a shard report does, and the launcher writes both into the
+        //    shard root, so a scan that matched on the prefix alone would
+        //    count the announcements as reports and refuse a whole run.
+        let directory = scratch_diagnostics_dir_v1("merge-ready-files");
+        write_shard_reports_v1(&directory, &synthetic_shard_bodies_v1(&counts, shard_count));
+        for shard_index in 0..shard_count {
+            std::fs::write(
+                directory.join(tts_s1_shard_ready_file_name_v1(shard_index)),
+                format!("4242 {SYNTHETIC_BARRIER_MICROS_V1}\n"),
+            )
+            .expect("the announcement writes");
+        }
+        std::fs::write(directory.join("start-barrier.token"), "1700000000000000\n")
+            .expect("the token writes");
+        assert!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count).is_ok(),
+            "the barrier's own files are not shard reports and must not be counted as any"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 9. A SHARD WHOSE EPISODE LIST DOES NOT PARTITION ITS RECORDS.
         let directory = scratch_diagnostics_dir_v1("merge-partition");
         let mut bodies = synthetic_shard_bodies_v1(&counts, shard_count);
         bodies[0].episodes[0].searched_decisions += 1;
