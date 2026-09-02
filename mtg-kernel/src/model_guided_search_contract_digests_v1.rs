@@ -90,11 +90,36 @@
 //! and may still perform different arithmetic: the flag changes neither
 //! the source, nor the target features, nor (necessarily) any probe this
 //! module evaluates at the same optimization site. The audit names exactly
-//! this escape hatch. `build_flag_violation_v1` therefore reads the
-//! override variables at COMPILE time via `option_env!` and
+//! this escape hatch. `build_flag_violation_v1` therefore fails closed on
+//! any override in force at build time, and
 //! `ModelGuidedSearchAuthorityV1::validate` refuses to mint an authority
-//! when any is set, so a binary built under a forbidden flag cannot
+//! when one is present, so a binary built under a forbidden flag cannot
 //! certify itself no matter where it later runs.
+//!
+//! ## Two observation points, because one is not enough
+//!
+//! `option_env!` inside this crate sees only what was in rustc's own
+//! environment. Flags configured in a `.cargo/config.toml` `[build]
+//! rustflags` key or a `[target.<triple>] rustflags` table are applied by
+//! Cargo WITHOUT passing through any such variable, so a configured
+//! `-C llvm-args=-fp-contract=fast` used to pass certification untouched:
+//! the crate simply could not see it. That is a real hole, not a
+//! theoretical one, since a config file is the ordinary way a project or a
+//! CI image sets flags.
+//!
+//! Cargo does export `CARGO_ENCODED_RUSTFLAGS` to BUILD SCRIPTS, with
+//! config-derived flags already folded in. `build.rs` therefore reads that
+//! (and `RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS`, the target-specific table,
+//! `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, and `CARGO_BUILD_TARGET`)
+//! and re-exports each through `cargo:rustc-env=MTG_KERNEL_EFFECTIVE_*`,
+//! with a `cargo:rerun-if-env-changed` for each so a changed flag
+//! re-runs the capture. `EFFECTIVE_BUILD_FLAG_VARIABLES_V1` reads those.
+//! `BUILD_OVERRIDE_VARIABLES_V1` keeps the crate-local `option_env!` view
+//! as a second, independent observation point.
+//!
+//! A variable the build script did not report at all counts as a
+//! violation, not as an absence of one: a certification that silently
+//! degrades to "no evidence" is not a certification.
 //!
 //! It deliberately does NOT commit to `MTG_KERNEL_BUILD_GIT_HEAD`. The
 //! authority record already carries `engine_commit` as its own separately
@@ -166,13 +191,66 @@ pub const MODEL_GUIDED_SEARCH_BUILD_FLAG_CONTRACT_V1: &str =
      (-ffast-math, -C llvm-args=-fp-contract=fast, -C llvm-args=-enable-unsafe-fp-math, \
      -Z fp-contract, -C target-feature=+fma) explicitly forbidden/v1";
 
-/// The build-override variables this contract rejects, captured at COMPILE
-/// time. The `CARGO_TARGET_*_RUSTFLAGS` entries must be spelled per target
-/// triple because `option_env!` takes a literal name; the two triples this
-/// project actually builds for (Windows MSVC locally, Linux GNU on the HPC
-/// cluster) are both covered, and an unrepresented triple is caught by the
-/// generic `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` / `CARGO_BUILD_RUSTFLAGS`
-/// entries that cargo also honours.
+/// The EFFECTIVE build-flag environment, captured by `build.rs` and
+/// re-exported through `cargo:rustc-env`.
+///
+/// This is the layer that closes the `.cargo/config.toml` hole. Flags
+/// configured in a `[build] rustflags` key or a `[target.<triple>]
+/// rustflags` table are applied by Cargo to the rustc invocation without
+/// ever appearing in an environment variable the compiled crate can see,
+/// so a `option_env!("RUSTFLAGS")` check alone certified a build that a
+/// configured `-C llvm-args=-fp-contract=fast` had already changed.
+/// Cargo does set `CARGO_ENCODED_RUSTFLAGS` for BUILD SCRIPTS, and that
+/// value already has the config-derived flags folded in, so `build.rs`
+/// reads it there and hands it back to the crate.
+///
+/// `None` means the build script did not report the variable at all,
+/// which is treated as a violation rather than as an absence of one: a
+/// certification that silently degrades to "no evidence" is not a
+/// certification. In a normal build every entry is `Some`, and empty when
+/// the variable is unset.
+const EFFECTIVE_BUILD_FLAG_VARIABLES_V1: &[(&str, Option<&str>)] = &[
+    (
+        "CARGO_ENCODED_RUSTFLAGS (effective, includes .cargo/config.toml)",
+        option_env!("MTG_KERNEL_EFFECTIVE_ENCODED_RUSTFLAGS"),
+    ),
+    (
+        "RUSTFLAGS (effective)",
+        option_env!("MTG_KERNEL_EFFECTIVE_RUSTFLAGS"),
+    ),
+    (
+        "CARGO_BUILD_RUSTFLAGS (effective)",
+        option_env!("MTG_KERNEL_EFFECTIVE_BUILD_RUSTFLAGS"),
+    ),
+    (
+        "CARGO_TARGET_<TRIPLE>_RUSTFLAGS (effective)",
+        option_env!("MTG_KERNEL_EFFECTIVE_TARGET_RUSTFLAGS"),
+    ),
+    (
+        "RUSTC_WRAPPER (effective)",
+        option_env!("MTG_KERNEL_EFFECTIVE_RUSTC_WRAPPER"),
+    ),
+    (
+        "RUSTC_WORKSPACE_WRAPPER (effective)",
+        option_env!("MTG_KERNEL_EFFECTIVE_RUSTC_WORKSPACE_WRAPPER"),
+    ),
+    (
+        "CARGO_BUILD_TARGET (effective)",
+        option_env!("MTG_KERNEL_EFFECTIVE_BUILD_TARGET"),
+    ),
+];
+
+/// The build-override variables visible in the CRATE's own compile-time
+/// environment. Kept alongside the build-script capture above as a second,
+/// independent observation point rather than replaced by it: the two see
+/// different things (this one sees what rustc itself was handed; the other
+/// sees what Cargo resolved), and a discrepancy between them is exactly
+/// the sort of thing a certification should not have to reason about.
+///
+/// `RUSTC` appears here and NOT in the build-script list, because Cargo
+/// always sets `RUSTC` for build scripts (to the rustc it is driving) and
+/// so its presence there means nothing, whereas at crate-compile time it
+/// is unset in a default build.
 const BUILD_OVERRIDE_VARIABLES_V1: &[(&str, Option<&str>)] = &[
     ("RUSTFLAGS", option_env!("RUSTFLAGS")),
     (
@@ -242,22 +320,54 @@ pub fn forbidden_floating_point_fragment_v1(value: &str) -> Option<&'static str>
         .find(|fragment| lowered.contains(fragment))
 }
 
-/// Fails closed on any build-override environment variable that was set
-/// when this crate was compiled. Returns the FIRST violation in the
-/// contract's declared order, so the error is deterministic.
+/// Classifies one captured build-flag value. Factored out so the
+/// build-script capture and the crate's own compile-time capture cannot
+/// drift apart, and so a test can drive it with a synthetic value that no
+/// real build in this repository produces.
 ///
-/// Empty is treated as unset: cargo and many CI shells export these names
-/// with an empty value, which changes nothing about the build.
-pub fn build_flag_violation_v1() -> Option<BuildFlagViolationV1> {
-    for &(variable, value) in BUILD_OVERRIDE_VARIABLES_V1 {
-        let Some(value) = value else { continue };
-        if value.is_empty() {
-            continue;
-        }
-        return Some(BuildFlagViolationV1 {
+/// `reported` is `None` when the observation point produced nothing at
+/// all, which is a violation in the build-script list (the script always
+/// reports) and merely an absence in the `option_env!` list (an unset
+/// variable is genuinely absent there).
+fn classify_build_flag_value_v1(
+    variable: &'static str,
+    reported: Option<&str>,
+    missing_is_violation: bool,
+) -> Option<BuildFlagViolationV1> {
+    match reported {
+        None if missing_is_violation => Some(BuildFlagViolationV1 {
+            variable,
+            forbidden_fragment: None,
+        }),
+        None => None,
+        // Empty is unset: Cargo and many CI shells export these names with
+        // an empty value, which changes nothing about the build.
+        Some(value) if value.is_empty() => None,
+        Some(value) => Some(BuildFlagViolationV1 {
             variable,
             forbidden_fragment: forbidden_floating_point_fragment_v1(value),
-        });
+        }),
+    }
+}
+
+/// Fails closed on any build-override that was in force when this crate
+/// was compiled, from either observation point. Returns the FIRST
+/// violation in the contract's declared order, so the error is
+/// deterministic.
+///
+/// The build-script capture is checked first because it is the one that
+/// sees `.cargo/config.toml`-derived flags, which is the case a
+/// crate-local `option_env!` cannot see at all.
+pub fn build_flag_violation_v1() -> Option<BuildFlagViolationV1> {
+    for &(variable, value) in EFFECTIVE_BUILD_FLAG_VARIABLES_V1 {
+        if let Some(violation) = classify_build_flag_value_v1(variable, value, true) {
+            return Some(violation);
+        }
+    }
+    for &(variable, value) in BUILD_OVERRIDE_VARIABLES_V1 {
+        if let Some(violation) = classify_build_flag_value_v1(variable, value, false) {
+            return Some(violation);
+        }
     }
     None
 }
@@ -325,7 +435,7 @@ pub const MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_SHA256_V1: &str =
 
 /// Pinned digest of the deterministic-forward build identity.
 pub const MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_SHA256_V1: &str =
-    "27d554c41fc302c86f3040c8cac2d2a50f086cbbca54fd8f9cd883a8be6d132f";
+    "093e978cacef906db300fd683349ed66f676d500c32ca5c6fb8d419b990b97d3";
 
 /// The frozen prior-contract probe battery: masked, not-necessarily-
 /// normalized legal-action weight vectors. Chosen for coverage of the
@@ -604,6 +714,13 @@ pub fn forward_determinism_build_digest_v1() -> [u8; 32] {
         for &(variable, _) in BUILD_OVERRIDE_VARIABLES_V1 {
             update_str_v1(&mut hasher, variable);
         }
+        // The build-script observation point is part of the contract's
+        // coverage, so removing it (and with it the only way to see
+        // `.cargo/config.toml` flags) moves the identity.
+        update_str_v1(&mut hasher, "effective_build_flag_variables");
+        for &(variable, _) in EFFECTIVE_BUILD_FLAG_VARIABLES_V1 {
+            update_str_v1(&mut hasher, variable);
+        }
         update_str_v1(&mut hasher, "forbidden_floating_point_fragments");
         for fragment in FORBIDDEN_FLOATING_POINT_FRAGMENTS_V1 {
             update_str_v1(&mut hasher, fragment);
@@ -691,6 +808,78 @@ mod tests {
             "this crate was compiled with a build-override environment variable set; \
              the pinned forward-determinism identity cannot describe its arithmetic"
         );
+    }
+
+    /// The build script must actually have reported, or the whole
+    /// `.cargo/config.toml` defence is inert. A missing report is a
+    /// violation, not an absence of one.
+    #[test]
+    fn the_build_script_reported_the_effective_flag_environment_v1() {
+        for &(variable, value) in EFFECTIVE_BUILD_FLAG_VARIABLES_V1 {
+            assert!(
+                value.is_some(),
+                "build.rs did not re-export {variable}; the config.toml capture is not running"
+            );
+        }
+        // Missing is a violation; present-and-empty is clean.
+        assert_eq!(
+            classify_build_flag_value_v1("probe", None, true),
+            Some(BuildFlagViolationV1 {
+                variable: "probe",
+                forbidden_fragment: None,
+            })
+        );
+        assert_eq!(classify_build_flag_value_v1("probe", Some(""), true), None);
+        assert_eq!(classify_build_flag_value_v1("probe", None, false), None);
+    }
+
+    /// A `.cargo/config.toml`-configured contraction flag reaches the
+    /// crate as an ENCODED rustflags string (unit-separated, flattened to
+    /// spaces by `build.rs`). Driving the classifier with that synthetic
+    /// shape is the only way to exercise the path without rebuilding the
+    /// crate under a poisoned config, and it proves the flattening did not
+    /// destroy the substring the scan depends on.
+    #[test]
+    fn a_synthetic_encoded_rustflags_string_with_a_contraction_flag_is_detected_v1() {
+        // What Cargo hands a build script for
+        // `rustflags = ["-C", "llvm-args=-fp-contract=fast"]`, after
+        // build.rs maps the \x1f separators to spaces.
+        let encoded = "-C llvm-args=-fp-contract=fast";
+        let violation = classify_build_flag_value_v1(
+            "CARGO_ENCODED_RUSTFLAGS (effective, includes .cargo/config.toml)",
+            Some(encoded),
+            true,
+        )
+        .expect("a configured contraction flag must be a violation");
+        assert_eq!(violation.forbidden_fragment, Some("fp-contract"));
+
+        // The raw unit-separated form must not smuggle a flag past the
+        // scan either, in case the flattening is ever changed.
+        assert_eq!(
+            forbidden_floating_point_fragment_v1("-C\u{1f}llvm-args=-fp-contract=fast"),
+            Some("fp-contract")
+        );
+        // A multi-flag config where only the last entry is forbidden.
+        assert_eq!(
+            forbidden_floating_point_fragment_v1("-C opt-level=3 -C target-feature=+fma"),
+            Some("+fma")
+        );
+        // A configured flag set with nothing forbidden in it is STILL a
+        // violation, just an unnamed one. This is deliberate and is the
+        // same rule the crate-local capture already applied: the contract
+        // pins the default build, so any configured rustflags value at all
+        // means the arithmetic was produced under conditions the pinned
+        // identity does not describe. "Not a known-bad flag" must never
+        // read as "safe".
+        assert_eq!(
+            classify_build_flag_value_v1("probe", Some("-C opt-level=3 -C debuginfo=2"), true),
+            Some(BuildFlagViolationV1 {
+                variable: "probe",
+                forbidden_fragment: None,
+            })
+        );
+        // Only genuinely empty is clean.
+        assert_eq!(classify_build_flag_value_v1("probe", Some(""), true), None);
     }
 
     /// The contract's coverage is part of the identity: dropping a
