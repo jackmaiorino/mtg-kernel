@@ -1438,7 +1438,13 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
     } else {
         Cycle4ArmStoreModeV1::Formal
     };
-    claim_store_mode_marker_v1(&parent_dir, request.arm, &run, mode)?;
+    // Verify the prefix admits this mode before touching the Store, but do not
+    // WRITE the marker yet. `formal` and `preflight` are terminal, so writing
+    // one on a prefix that turns out to hold no genesis would strand it: the
+    // operator's next `--bootstrap-genesis` would be refused by a marker this
+    // run had no business leaving behind. An unseeded prefix has to come out
+    // of a rejected interval exactly as it went in, still bootstrap-eligible.
+    verify_store_mode_marker_v1(&parent_dir, request.arm, &run, mode)?;
     let bootstrapped =
         bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
             Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
@@ -1456,6 +1462,9 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
             ),
         ));
     }
+    // Genesis is proven, so the mode may now be fixed for the life of the
+    // prefix.
+    claim_store_mode_marker_v1(&parent_dir, request.arm, &run, mode)?;
     let root = bootstrapped.into_root();
 
     // 4. Baseline chain: v4 arms only. CONTROL-R never installs one.
@@ -1743,21 +1752,33 @@ impl Cycle4ArmStoreModeV1 {
     }
 }
 
-/// Claims `parent_dir` (the Store prefix) for this run's mode, or fails
-/// closed. Runs BEFORE the Store is bootstrapped so a wrong-mode invocation
-/// never creates or touches a Store at all.
+/// What a Store prefix's marker says about admitting one particular mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Cycle4ArmStoreModeStateV1 {
+    /// No marker on disk; claiming would create one.
+    Absent,
+    /// A marker that already names exactly this mode, arm and run.
+    AlreadyClaimed,
+    /// A `bootstrap` marker for this arm and run, which this mode may promote.
+    PromotableFromBootstrap,
+}
+
+/// Proves `parent_dir`'s marker admits `mode`, WITHOUT writing anything.
 ///
-/// The arm and the run identity are fixed by whoever claimed the prefix
-/// first. The mode admits exactly one transition, `bootstrap -> formal` or
+/// Separating the check from the write is what lets a caller fail closed on a
+/// wrong-mode invocation before it touches a Store, and still leave the prefix
+/// exactly as it found it when some later precondition rejects the run. The
+/// arm and the run identity are fixed by whoever claimed the prefix first. The
+/// mode admits exactly one transition, `bootstrap -> formal` or
 /// `bootstrap -> preflight`; `formal` and `preflight` are terminal, so a
 /// preflight is rejected on any prefix a formal run has trained and the
 /// reverse holds too.
-fn claim_store_mode_marker_v1(
+fn verify_store_mode_marker_v1(
     parent_dir: &Path,
     arm: Cycle4ArmKindV1,
     run: &ValidatedTrainRunV2,
     mode: Cycle4ArmStoreModeV1,
-) -> Result<()> {
+) -> Result<Cycle4ArmStoreModeStateV1> {
     let expected = Cycle4ArmModeMarkerV1 {
         schema: CYCLE4_ARM_MODE_MARKER_SCHEMA_V1.to_owned(),
         mode: mode.wire_v1().to_owned(),
@@ -1771,7 +1792,7 @@ fn claim_store_mode_marker_v1(
     match std::fs::read(&path) {
         Ok(existing) => {
             if existing == bytes {
-                return Ok(());
+                return Ok(Cycle4ArmStoreModeStateV1::AlreadyClaimed);
             }
             let actual: Cycle4ArmModeMarkerV1 =
                 serde_json::from_slice(&existing).map_err(|error| {
@@ -1807,25 +1828,49 @@ fn claim_store_mode_marker_v1(
                     Cycle4ArmStoreModeV1::Formal | Cycle4ArmStoreModeV1::Preflight
                 )
             {
-                return write_file_atomically_v1(&path, &bytes).map_err(|error| {
-                    Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
-                });
+                return Ok(Cycle4ArmStoreModeStateV1::PromotableFromBootstrap);
             }
             Err(conflict())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir_all(parent_dir).map_err(|error| {
-                Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
-            })?;
-            write_file_atomically_v1(&path, &bytes).map_err(|error| {
-                Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
-            })
+            Ok(Cycle4ArmStoreModeStateV1::Absent)
         }
         Err(error) => Err(Cycle4ArmErrorV1::runtime(
             "cycle4_arm_v1_mode_marker",
             format!("{}: {error}", path.display()),
         )),
     }
+}
+
+/// Claims `parent_dir` (the Store prefix) for this run's mode, or fails
+/// closed. Verifies first and writes only when the marker is absent or is a
+/// promotable `bootstrap`, so re-claiming an already-claimed prefix touches
+/// nothing.
+fn claim_store_mode_marker_v1(
+    parent_dir: &Path,
+    arm: Cycle4ArmKindV1,
+    run: &ValidatedTrainRunV2,
+    mode: Cycle4ArmStoreModeV1,
+) -> Result<()> {
+    if verify_store_mode_marker_v1(parent_dir, arm, run, mode)?
+        == Cycle4ArmStoreModeStateV1::AlreadyClaimed
+    {
+        return Ok(());
+    }
+    let expected = Cycle4ArmModeMarkerV1 {
+        schema: CYCLE4_ARM_MODE_MARKER_SCHEMA_V1.to_owned(),
+        mode: mode.wire_v1().to_owned(),
+        arm_kind: arm.wire_v1().to_owned(),
+        run_sha256: run.run_sha256().to_owned(),
+    };
+    let bytes = to_canonical_json_bytes_v1(&expected, CanonicalJsonNullPolicyV1::Forbid).map_err(
+        |error| Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string()),
+    )?;
+    std::fs::create_dir_all(parent_dir).map_err(|error| {
+        Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
+    })?;
+    write_file_atomically_v1(&parent_dir.join(CYCLE4_ARM_MODE_MARKER_FILENAME_V1), &bytes)
+        .map_err(|error| Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string()))
 }
 
 // ---------------------------------------------------------------------
@@ -3598,6 +3643,138 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn verifying_a_store_mode_marker_never_writes_one_v1() {
+        let root = fresh_temp_dir_v1("mode-marker-verify");
+        let arm = Cycle4ArmKindV1::ControlR;
+        let run = run_for_arm_v1(arm);
+        let prefix = root.join("prefix");
+        std::fs::create_dir_all(&prefix).expect("create prefix");
+        let marker = prefix.join(CYCLE4_ARM_MODE_MARKER_FILENAME_V1);
+
+        // An unclaimed prefix reports Absent and stays unclaimed.
+        assert_eq!(
+            verify_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Formal)
+                .expect("an unclaimed prefix admits any mode"),
+            Cycle4ArmStoreModeStateV1::Absent
+        );
+        assert!(!marker.exists(), "verification never creates a marker");
+
+        // A bootstrap marker reports promotable, and stays a bootstrap marker
+        // until something actually claims it.
+        claim_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Bootstrap)
+            .expect("bootstrap claim");
+        let before = std::fs::read(&marker).expect("read marker");
+        assert_eq!(
+            verify_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Formal)
+                .expect("a bootstrap marker is promotable"),
+            Cycle4ArmStoreModeStateV1::PromotableFromBootstrap
+        );
+        assert_eq!(
+            std::fs::read(&marker).expect("read marker"),
+            before,
+            "verification never promotes on its own"
+        );
+        assert_eq!(
+            verify_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Bootstrap)
+                .expect("the same mode is already claimed"),
+            Cycle4ArmStoreModeStateV1::AlreadyClaimed
+        );
+
+        // A terminal mode is still refused by verification alone, so a caller
+        // can fail closed before it opens anything.
+        claim_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Formal)
+            .expect("promote to formal");
+        assert_eq!(
+            verify_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Preflight)
+                .expect_err("formal is terminal")
+                .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_interval_on_an_unseeded_prefix_leaves_it_bootstrap_eligible_v1() {
+        // Review finding P2: the interval path claimed the TERMINAL formal or
+        // preflight marker before it checked for genesis, so an interval
+        // pointed at a prefix that had never been bootstrapped stranded it --
+        // the run was rejected, but the marker it had already written made the
+        // operator's next `--bootstrap-genesis` impossible. A rejected
+        // interval must leave the prefix exactly as it found it.
+        let root = fresh_temp_dir_v1("interval-unseeded-prefix");
+        let arm = Cycle4ArmKindV1::ControlR;
+        let run = seeded_run_for_arm_v1(arm);
+        let base_seed = run.record().schedule().base_seed;
+
+        // The three plain-file inputs an interval reads before it ever looks
+        // at the Store.
+        let run_record = root.join("run.json");
+        std::fs::write(
+            &run_record,
+            test_fixture_bytes_population_program_v2_cycle4_seeded_v1(arm.wire_v1()),
+        )
+        .expect("write run record");
+        let refresh_dir = root.join("refresh");
+        std::fs::create_dir_all(&refresh_dir).expect("create refresh dir");
+        let genesis = genesis_manifest_for_v1(run.run_sha256(), base_seed);
+        let manifest_path = write_chain_v1(&refresh_dir, &genesis);
+        let locator_path = root.join("slot-locator.json");
+        std::fs::write(
+            &locator_path,
+            serde_json::to_vec(&locator_for_v1(&genesis)).expect("encode locator"),
+        )
+        .expect("write locator");
+
+        let prefix = root.join("prefix");
+        std::fs::create_dir_all(&prefix).expect("create prefix");
+        let marker = prefix.join(CYCLE4_ARM_MODE_MARKER_FILENAME_V1);
+        let request = Cycle4ArmRequestV1 {
+            arm,
+            store_root: prefix.join("store"),
+            run_record,
+            chain_dir: root.join("chain"),
+            refresh_manifest: manifest_path,
+            payoff_panel: None,
+            slot_locator: locator_path,
+            stop_generation: CYCLE4_REFRESH_INTERVAL_V1,
+            preflight_updates: None,
+        };
+
+        let error = run_native_cycle4_arm_v1(&request)
+            .expect_err("an unseeded prefix has no interval to run");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_genesis_not_bootstrapped");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(error.exit_code_v1(), 3);
+        assert!(
+            !marker.exists(),
+            "a rejected interval must not claim the prefix"
+        );
+
+        // The prefix is therefore still bootstrap-eligible, and the interval
+        // mode can be promoted onto it afterwards exactly as it should be.
+        claim_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Bootstrap)
+            .expect("a rejected interval leaves the prefix bootstrap-eligible");
+        assert!(marker.is_file());
+        claim_store_mode_marker_v1(&prefix, arm, &run, Cycle4ArmStoreModeV1::Formal)
+            .expect("the bootstrapped prefix promotes to formal");
+
+        // Repeating the interval is still refused, and now for the same
+        // reason as before: the mode marker is not what rejects it.
+        let stranded = root.join("stranded");
+        claim_store_mode_marker_v1(&stranded, arm, &run, Cycle4ArmStoreModeV1::Formal)
+            .expect("claim a formal prefix");
+        assert_eq!(
+            claim_store_mode_marker_v1(&stranded, arm, &run, Cycle4ArmStoreModeV1::Bootstrap)
+                .expect_err("this is what the old ordering left behind")
+                .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
