@@ -79,6 +79,16 @@ $script:Cycle4ExpectedRoles = @(
 $script:Cycle4ArmOwnedSlotIndex = 5
 $script:Cycle4HistoricalArmSlotIndex = 2
 $script:Cycle4HistoricalArmFirstRefreshIndex = [uint64]4
+# historical-1 (slot 3) is not one frozen occupant but a THREE-phase rotation
+# over the program-v1 endpoints 970001/970002/970003, all at generation 1024,
+# selected by `refresh_index % 3` -- the same arithmetic
+# validate_slot_assignment_cycle4_v1 performs against
+# CYCLE4_HISTORICAL_1_ROTATION_V1. One fixed slot-root table therefore cannot
+# express the campaign: two thirds of the refreshes would name the wrong
+# Store. -HistoricalOneStoreRoots supplies the three roots in rotation order
+# and Get-Cycle4SlotTableForRefresh picks the phase.
+$script:Cycle4HistoricalRotationSlotIndex = 3
+$script:Cycle4HistoricalRotationPeriod = [uint64]3
 $script:Cycle4ArmOriginRecordSchema = 'mtg-kernel-cycle4-arm-origin/v1'
 $script:Cycle4IntervalPhaseSchema = 'mtg-kernel-cycle4-interval-phase/v1'
 # The four transitions one interval passes through, in order. Every one of
@@ -348,6 +358,98 @@ function Read-Cycle4Manifest {
 }
 
 # ---------------------------------------------------------------------------
+# The machine-local slot table, per refresh boundary
+# ---------------------------------------------------------------------------
+
+function Get-Cycle4HistoricalOneRotationIndex {
+    # The rotation phase historical-1 occupies at one refresh. Mirrors
+    # `usize::try_from(wire.refresh_index % 3)` in
+    # validate_slot_assignment_cycle4_v1; restated here only so the wrapper can
+    # pick the right Store BEFORE the manifest validator would reject it.
+    param([Parameter(Mandatory = $true)][uint64]$RefreshIndex)
+    return [int]($RefreshIndex % $script:Cycle4HistoricalRotationPeriod)
+}
+
+function Get-Cycle4SlotTableForRefresh {
+    # ONE boundary's eight machine-local store roots, in slot order 0..7.
+    #
+    # Seven of them are the operator's fixed -SlotStoreRoots entries. Slot 3
+    # (historical-1) is not fixed: it rotates over three Stores by
+    # `refresh_index % 3`, so it comes from the rotation triple instead.
+    #
+    # An operator who supplies no triple gets the fixed table's slot-3 entry at
+    # every phase. That is deliberately NOT silently accepted as correct: the
+    # locator writer verifies the chosen root's four content hashes against the
+    # manifest's slot-3 identity, so a single-Store table fails closed at the
+    # first refresh whose rotation phase names a different Store rather than
+    # training an interval against the wrong opponent.
+    param(
+        [Parameter(Mandatory = $true)][string[]]$SlotStoreRoots,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [string[]]$HistoricalOneStoreRoots
+    )
+    if (@($SlotStoreRoots).Count -ne $script:Cycle4SlotCount) {
+        throw "the slot store root table must name exactly $($script:Cycle4SlotCount) store roots in slot order 0..7, got $(@($SlotStoreRoots).Count)"
+    }
+    $roots = @($SlotStoreRoots)
+    if ($null -ne $HistoricalOneStoreRoots -and @($HistoricalOneStoreRoots).Count -ne 0) {
+        if (@($HistoricalOneStoreRoots).Count -ne [int]$script:Cycle4HistoricalRotationPeriod) {
+            throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)), got $(@($HistoricalOneStoreRoots).Count)"
+        }
+        $rotation = Get-Cycle4HistoricalOneRotationIndex -RefreshIndex $RefreshIndex
+        $roots[$script:Cycle4HistoricalRotationSlotIndex] = [string]@($HistoricalOneStoreRoots)[$rotation]
+    }
+    return @(
+        foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
+            [ordered]@{ slot_index = $index; store_root = [string]$roots[$index] }
+        }
+    )
+}
+
+function Assert-Cycle4FrozenSlotContentHashes {
+    # Proves one FOREIGN slot's Store really holds the checkpoint the manifest
+    # pins it to, by recomputing all four content hashes at the slot's own
+    # pinned generation.
+    #
+    # This is a genuinely independent check for two slots the manifest
+    # validator does not fully pin against a Store:
+    #
+    #  * slot 3 (historical-1) -- the validator pins the rotation identity by
+    #    refresh index, but nothing on the launcher side proves the ROOT the
+    #    operator handed it is the Store that identity belongs to; without this
+    #    a mis-ordered rotation triple would only surface as a wrong opponent.
+    #  * slot 2 (historical-0) before refresh 4 -- the validator pins only the
+    #    cycle-3 lineage's run sha, base seed and lagged generation there, NOT
+    #    the four content hashes (they are read from that Store's roster entry),
+    #    so this is the only place they are proven against the Store.
+    #
+    # Only ever called for slots whose pinned `source_generation` is a STORE
+    # generation. The arm's own slots are excluded by the caller: their
+    # manifest generation is trainee-local (store generation plus 896).
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)][int]$SlotIndex,
+        [Parameter(Mandatory = $true)][string]$StoreRoot,
+        [switch]$AllowMissingStore
+    )
+    $slot = $Manifest.slots[$SlotIndex]
+    $role = $script:Cycle4ExpectedRoles[$SlotIndex]
+    $generation = [uint64]$slot.source_generation
+    $checkpointPath = Join-Path (Join-Path $StoreRoot 'checkpoints') ('update-{0:d8}.checkpoint.json' -f $generation)
+    if ($AllowMissingStore -and -not (Test-Path -LiteralPath $checkpointPath -PathType Leaf)) {
+        Write-Host "DRY-RUN slot-$SlotIndex ($role): would verify $checkpointPath against the manifest's four content hashes"
+        return $null
+    }
+    $identity = Get-Cycle4CheckpointIdentity -StoreRoot $StoreRoot -StoreGeneration $generation
+    foreach ($field in @('checkpoint_manifest_sha256', 'checkpoint_payload_sha256', 'model_parameter_sha256', 'train_state_sha256')) {
+        if ([string]$slot.$field -cne [string]$identity.$field) {
+            throw "slot $SlotIndex ($role) at $StoreRoot generation $generation does not match the manifest identity at refresh $($Manifest.refresh_index): $field is $($identity.$field), the manifest declares $([string]$slot.$field)"
+        }
+    }
+    return $identity
+}
+
+# ---------------------------------------------------------------------------
 # The two locator files, written from ONE machine-local slot table
 # ---------------------------------------------------------------------------
 
@@ -421,13 +523,28 @@ function New-Cycle4SlotLocatorPair {
             $armSlots += $index
         }
     }
+    # Two slots may legitimately name the SAME Store at different pinned
+    # generations -- anchor-1 is 970002 at 1536 and historical-1's middle
+    # rotation phase is 970002 at 1024, one physical Store occupying two slots
+    # as two different frozen occupants. What must be distinct is the OCCUPANT
+    # IDENTITY, not the path, and the roster identity check below enforces
+    # exactly that. So the duplicate rule keys on (root, pinned generation):
+    # the same Store at the same generation in two slots is still a typo,
+    # because it would be one occupant claiming two slots.
     $foreignRoots = @(
         foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
             if ($armSlots -notcontains $index) { $byIndex[$index].store_root.ToLowerInvariant() }
         }
     )
-    if (@($foreignRoots | Sort-Object -Unique).Count -ne $foreignRoots.Count) {
-        throw 'the slot table maps two slots to the same store root'
+    $foreignKeys = @(
+        foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
+            if ($armSlots -notcontains $index) {
+                '{0}@{1}' -f $byIndex[$index].store_root.ToLowerInvariant(), [uint64]$Manifest.slots[$index].source_generation
+            }
+        }
+    )
+    if (@($foreignKeys | Sort-Object -Unique).Count -ne $foreignKeys.Count) {
+        throw 'the slot table maps two slots to the same store root at the same pinned generation'
     }
     if ($foreignRoots -contains $ArmStoreRoot.ToLowerInvariant()) {
         throw "a slot the manifest does not bind to the arm's own run names the arm's Store root: $ArmStoreRoot"
@@ -439,6 +556,23 @@ function New-Cycle4SlotLocatorPair {
                 throw "slot $index store root does not exist: $root"
             }
         }
+    }
+
+    # The two foreign slots whose ROOT the manifest cannot vouch for: the
+    # rotating historical-1, and historical-0 while it is still the cycle-3
+    # lineage. Both are checked against the Store itself.
+    $verifiedSlots = @($script:Cycle4HistoricalRotationSlotIndex)
+    if ($armSlots -notcontains $script:Cycle4HistoricalArmSlotIndex) {
+        $verifiedSlots += $script:Cycle4HistoricalArmSlotIndex
+    }
+    $slotIdentityChecks = [ordered]@{}
+    foreach ($index in @($verifiedSlots | Sort-Object)) {
+        $checked = Assert-Cycle4FrozenSlotContentHashes `
+            -Manifest $Manifest `
+            -SlotIndex $index `
+            -StoreRoot $byIndex[$index].store_root `
+            -AllowMissingStore:$AllowMissingStores
+        $slotIdentityChecks["$index"] = $(if ($null -eq $checked) { 'deferred-dry-run' } else { $checked.checkpoint_manifest_sha256 })
     }
 
     $identities = @($Manifest.slots | ForEach-Object { [string]$_.checkpoint_manifest_sha256 })
@@ -506,6 +640,7 @@ function New-Cycle4SlotLocatorPair {
         manifest_refresh_index = $Manifest.refresh_index
         arm_owned_slot_indexes = @($armSlots)
         arm_baseline_chain_dir = $baselineChainDir
+        verified_slot_identities = $slotIdentityChecks
     }
 }
 
@@ -681,6 +816,56 @@ function Get-Cycle4GenesisAuthorityRecord {
         parent_sidecar_sha256 = Get-Cycle4Sha256 -Path $sidecar
         parent_state_sha256 = Get-Cycle4Sha256 -Path $state
         arm_run_record_sha256 = Get-Cycle4Sha256 -Path $RunRecordPath
+    }
+}
+
+function Assert-Cycle4GenesisParentBinding {
+    # -GenesisParentStoreRoot and -GenesisParentGeneration are machine-local
+    # operator inputs, but WHICH parent an arm is seeded from is not: the run
+    # record pins it in `contracts.opponent_ladder_initialization`, and the arm
+    # bin refuses to author genesis unless the parent Store reproduces that
+    # pin exactly. Checking the same equality here means a wrapper pointed at
+    # the wrong parent, or at the right parent with the wrong generation,
+    # fails at phase=inputs instead of after a Store prefix has been claimed.
+    #
+    # The five fields compared are the ones a launcher can recompute from
+    # plain files. `derived_model_parameter_sha256` is deliberately not among
+    # them: deriving it needs the genesis weights-only payload surgery, which
+    # is the bin's, and the bin does check it.
+    param(
+        [Parameter(Mandatory = $true)]$RunRecordDocument,
+        [Parameter(Mandatory = $true)]$GenesisAuthority,
+        [Parameter(Mandatory = $true)][uint64]$ParentGeneration,
+        [Parameter(Mandatory = $true)][string]$RunRecordPath
+    )
+    $contracts = $RunRecordDocument.contracts
+    if ($null -eq $contracts -or ($contracts.PSObject.Properties.Name -notcontains 'opponent_ladder_initialization')) {
+        throw "$RunRecordPath declares no contracts.opponent_ladder_initialization; a cycle-4 arm's genesis parent is pinned there, not on the command line"
+    }
+    $declared = $contracts.opponent_ladder_initialization
+    if ([uint64]$declared.generation -ne $ParentGeneration) {
+        throw "-GenesisParentGeneration $ParentGeneration disagrees with the run record's pinned origin generation $($declared.generation) ($RunRecordPath); the correct cycle-4 value is the cycle-3 focal run's store generation $($script:Cycle4TraineeStartLocalGeneration)"
+    }
+    $pairs = @(
+        @('source_run_sha256', 'parent_run_sha256'),
+        @('checkpoint_sha256', 'parent_checkpoint_sha256'),
+        @('sidecar_sha256', 'parent_sidecar_sha256'),
+        @('state_sha256', 'parent_state_sha256')
+    )
+    foreach ($pair in $pairs) {
+        $expected = [string]$declared.($pair[0])
+        $actual = [string]$GenesisAuthority.($pair[1])
+        if ($expected -cne $actual) {
+            throw "the genesis parent store does not reproduce the run record's pinned origin: $($pair[0]) is $expected in $RunRecordPath but the parent store hashes to $actual"
+        }
+    }
+    return [ordered]@{
+        parent_generation = $ParentGeneration
+        parent_run_sha256 = [string]$declared.source_run_sha256
+        parent_checkpoint_sha256 = [string]$declared.checkpoint_sha256
+        parent_sidecar_sha256 = [string]$declared.sidecar_sha256
+        parent_state_sha256 = [string]$declared.state_sha256
+        derived_model_parameter_sha256 = [string]$declared.derived_model_parameter_sha256
     }
 }
 
