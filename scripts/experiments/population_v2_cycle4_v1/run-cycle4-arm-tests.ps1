@@ -1387,6 +1387,63 @@ Assert-That -Condition ($quietOutput -like '*DRY RUN PLANNED*') `
     -Message 'and it still reports the plan it made'
 
 # ---------------------------------------------------------------------------
+# 9. Round F defect 2: the child exit code is captured, or the launch stops
+#
+# The first CONTROL preflight ladder attempt recorded exit_code 0 for both arm
+# rungs while the arm bin had in fact taken its contract-refusal path. These
+# are the only tests in this file that start a real process, and the process
+# they start is powershell.exe running `exit N`, which trains nothing and
+# touches no Store or GPU.
+# ---------------------------------------------------------------------------
+
+$exitRoot = Join-Path $WorkRoot 'exit-code'
+New-Item -ItemType Directory -Force -Path $exitRoot | Out-Null
+# powershell.exe, not cmd.exe: Invoke-Cycle4Process quotes every argument it
+# is given (a store root with a space would otherwise split in two), and
+# cmd.exe does not accept a quoted "/c". The child here is still a real,
+# separately started process whose exit code has to come back through the
+# same path a real arm rung's does.
+$shellExecutable = (Get-Command powershell.exe).Source
+
+foreach ($code in @(0, 3, 7)) {
+    $captured = Invoke-Cycle4Process `
+        -FilePath $shellExecutable `
+        -Arguments @('-NoProfile', '-Command', "exit $code") `
+        -WorkingDirectory $exitRoot `
+        -StdoutPath (Join-Path $exitRoot "exit-$code.stdout.log") `
+        -StderrPath (Join-Path $exitRoot "exit-$code.stderr.log") `
+        -Label "exit-$code"
+    Assert-That -Condition ($captured.exit_code -eq $code) `
+        -Message "a child that exits $code is recorded as exit_code $code (saw $($captured.exit_code))"
+    Assert-That -Condition ($captured.dry_run -eq $false) `
+        -Message "a real child is not recorded as a dry run (exit $code)"
+    Assert-That -Condition ($captured.process_id -gt 0) `
+        -Message "a real child records its own process id (exit $code)"
+}
+
+$nonZero = Invoke-Cycle4Process `
+    -FilePath $shellExecutable `
+    -Arguments @('-NoProfile', '-Command', 'exit 3') `
+    -WorkingDirectory $exitRoot `
+    -StdoutPath (Join-Path $exitRoot 'assert.stdout.log') `
+    -StderrPath (Join-Path $exitRoot 'assert.stderr.log') `
+    -Label 'exit-assert'
+Assert-Throws -Action { Assert-Cycle4ProcessSucceeded -Result $nonZero } `
+    -ExpectedSubstring 'exit-assert exited 3' `
+    -Message 'a nonzero child exit stops the launch'
+
+# The other half of the defect: an exit code that cannot be read is an unknown
+# outcome, and an unknown outcome must never be cast to 0. Simulated at the
+# assertion boundary, because a Process object with an unreadable ExitCode
+# cannot be manufactured on demand.
+$nullExit = [ordered]@{ label = 'unknown'; dry_run = $false; exit_code = $null; stderr = 'x' }
+Assert-Throws -Action { Assert-Cycle4ProcessSucceeded -Result $nullExit } `
+    -ExpectedSubstring 'unreadable exit code' `
+    -Message 'a null exit code is never treated as success'
+Assert-That -Condition ([int]$null -eq 0) `
+    -Message 'the cast this fix removed really does turn an unknown outcome into a zero'
+
+# ---------------------------------------------------------------------------
 
 Write-Host ''
 Write-Host "cycle-4 wrapper dry-run tests: $($script:Checks - $script:Failures)/$($script:Checks) checks passed"

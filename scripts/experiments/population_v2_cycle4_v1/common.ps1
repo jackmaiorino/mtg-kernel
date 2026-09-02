@@ -1201,15 +1201,31 @@ function Format-Cycle4CommandLine {
 }
 
 function Invoke-Cycle4Process {
-    # One child process, its exit code captured with the WaitForExit() then
-    # Refresh() double call.
+    # One child process, its exit code captured authoritatively.
     #
-    # Start-Process can leave ExitCode unset when the child exits before the
-    # caller observes HasExited; the g896 formal CONTROL run published a
-    # RUN_FAILED marker over exactly that unset property while every artifact
-    # verified. A parameterless WaitForExit() refreshes the native handle and a
-    # following Refresh() materializes the real code, so the exit code read
-    # below is always the process's own.
+    # Round F defect 2. The first CONTROL preflight ladder attempt recorded
+    # exit_code 0 for both rungs while the arm bin had in fact taken its
+    # contract-rejection path (empty stdout, the refusal on stderr, and
+    # `exit_code_v1()` maps Contract to 3). The cause is a Windows-specific
+    # Start-Process property, not the bin: under PowerShell 5.1 the
+    # Process object -PassThru returns may hold NO cached native handle, and
+    # once the child has exited and Windows has reaped it there is nothing
+    # left to read a code from, so `.ExitCode` answers $null forever no
+    # matter how many times WaitForExit() and Refresh() are called. The old
+    # body then wrote `[int]$exitCode`, and `[int]$null` is 0 in PowerShell:
+    # a silent, total inversion of the fail-closed contract, turning every
+    # child refusal into a recorded success.
+    #
+    # Two changes, both required:
+    #
+    #   1. `.Handle` is read IMMEDIATELY after the start, before the child
+    #      can exit. Touching that property makes System.Diagnostics.Process
+    #      duplicate and cache the native handle for the lifetime of the
+    #      object, which is what keeps the exit code readable after the
+    #      child is gone. This is the fix the S1 launcher family uses.
+    #   2. A $null ExitCode is a HARD FAILURE, never a cast. If the handle
+    #      trick somehow still leaves the code unreadable, the launcher must
+    #      say so and stop, not invent a zero.
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
@@ -1260,6 +1276,13 @@ function Invoke-Cycle4Process {
         $process = Start-Process -FilePath $FilePath -ArgumentList $argumentText `
             -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+        # Cache the native handle NOW, while the child is certainly still
+        # alive. See this function's header: without this the exit code of a
+        # short-lived child is unrecoverable. Best-effort on purpose -- if
+        # the handle cannot be taken this is not itself the failure; the
+        # unreadable exit code below is, and it is checked unconditionally.
+        try { $null = $process.Handle } catch { }
+        try { $processId = [int]$process.Id } catch { $processId = -1 }
         $process.WaitForExit()
         $process.Refresh()
         $exitCode = $process.ExitCode
@@ -1269,13 +1292,18 @@ function Invoke-Cycle4Process {
             [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
         }
     }
+    if ($null -eq $exitCode) {
+        # Never [int]$null (which is 0). An unreadable exit code is an
+        # unknown outcome, and an unknown outcome is a failure.
+        throw "$Label exit code could not be read from the child process (pid $processId); refusing to record an outcome. stdout=$StdoutPath stderr=$StderrPath"
+    }
     $finished = [DateTimeOffset]::UtcNow
     return [ordered]@{
         label = $Label
         command_line = $commandLine
         dry_run = $false
         exit_code = [int]$exitCode
-        process_id = [int]$process.Id
+        process_id = $processId
         started_utc = $started.ToString('O')
         completed_utc = $finished.ToString('O')
         wall_seconds = ($finished - $started).TotalSeconds
@@ -1286,6 +1314,13 @@ function Invoke-Cycle4Process {
 
 function Assert-Cycle4ProcessSucceeded {
     param([Parameter(Mandatory = $true)]$Result)
+    if ($null -eq $Result.exit_code) {
+        # The second line of defence for round F defect 2. Invoke-Cycle4Process
+        # already refuses an unreadable exit code at the source; this makes the
+        # same refusal true of any result document that reaches this gate,
+        # however it was produced.
+        throw "$($Result.label) exited with an unreadable exit code; an unknown outcome is never a success"
+    }
     if ($Result.exit_code -ne 0) {
         $detail = "$($Result.label) exited $($Result.exit_code)"
         if (-not $Result.dry_run) { $detail = "$detail; see $($Result.stderr)" }
