@@ -120,6 +120,28 @@ pub const CYCLE4_ARM_ORIGIN_RECORD_SCHEMA_V1: &str = "mtg-kernel-cycle4-arm-orig
 /// Fixed on-disk name of the origin record inside the chain directory.
 pub const CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1: &str = "arm-origin.record.json";
 
+/// Launcher-level marker pinning one Store prefix to exactly one mode, formal
+/// or preflight, for the life of that prefix. It lives in the Store root's
+/// PARENT directory (the "Store prefix"), never inside the Store: the Store's
+/// own leaf grammar is closed and a stray file under the root would be a
+/// layout violation.
+///
+/// The marker exists for one reason: `--preflight-updates` relaxes the
+/// interval check from the pre-registered 128 to a short window, so a Store a
+/// preflight ever touched can never become a formal artifact, and a formal
+/// Store can never be re-entered under the relaxed check. Both directions
+/// fail closed, and the very first thing a run does is claim its mode, before
+/// the Store is bootstrapped.
+pub const CYCLE4_ARM_MODE_MARKER_SCHEMA_V1: &str = "mtg-kernel-cycle4-arm-mode-marker/v1";
+
+/// Fixed on-disk name of the mode marker inside the Store prefix.
+pub const CYCLE4_ARM_MODE_MARKER_FILENAME_V1: &str = "cycle4-arm-mode.marker.json";
+
+/// Largest `--preflight-updates` window. The preflight ladder only ever needs
+/// a couple of updates per prefix; bounding it here keeps a mistyped flag from
+/// quietly becoming a long relaxed-interval run.
+pub const CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1: u64 = 8;
+
 /// Total Store generations the whole cycle-4 program runs (16 intervals of
 /// 128), i.e. trainee-local 896 through 2944.
 const CYCLE4_ARM_STORE_GENERATION_TOTAL_V1: u64 =
@@ -196,6 +218,15 @@ pub struct Cycle4ArmRequestV1 {
     pub slot_locator: PathBuf,
     /// STORE generation this process stops at, `resume_position + 128`.
     pub stop_generation: u64,
+    /// Bounded preflight provision (`docs/native_cycle4_arm_launcher_v1.md`
+    /// Section 6's CONTROL preflight ladder). `None` is the formal path and
+    /// is byte-for-byte the pre-registered behavior. `Some(n)` relaxes the
+    /// interval check to `stop == resume + n` for `n` in
+    /// `1 ..= CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1`, and can only ever run
+    /// against a throwaway Store prefix: the mode marker refuses a prefix
+    /// that a formal run already claimed, and refuses to let a formal run
+    /// re-enter a prefix a preflight claimed.
+    pub preflight_updates: Option<u64>,
 }
 
 /// What one interval actually did.
@@ -1055,18 +1086,38 @@ fn validate_manifest_against_run_v1(
 
 /// The interval stop is a STORE generation: exactly one refresh interval past
 /// the resume position, never past the program's own 2048-generation end.
+///
+/// `preflight_updates` is the bounded relaxation the CONTROL preflight ladder
+/// needs and nothing else may use: `Some(n)` replaces the pre-registered 128
+/// with `n`, still exact (`stop == resume + n`), still inside the program's
+/// end, and still a whole number of checkpoint segments -- the Store advances
+/// a segment at a time, so a window that is not a segment multiple could not
+/// land on its own stop and would silently overshoot.
 fn validate_interval_stop_v1(
     stop_generation: u64,
     resume_generation: u64,
     checkpoint_segment_updates: u64,
     contract: &Cycle4ArmContractV1,
     arm: Cycle4ArmKindV1,
+    preflight_updates: Option<u64>,
 ) -> Result<()> {
-    let expected = resume_generation
-        .checked_add(CYCLE4_REFRESH_INTERVAL_V1)
-        .ok_or_else(|| {
-            Cycle4ArmErrorV1::contract("cycle4_arm_v1_interval_stop", "stop generation overflow")
-        })?;
+    let window = match preflight_updates {
+        None => CYCLE4_REFRESH_INTERVAL_V1,
+        Some(updates) => {
+            if updates == 0 || updates > CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1 {
+                return Err(Cycle4ArmErrorV1::contract(
+                    "cycle4_arm_v1_preflight_updates_range",
+                    format!(
+                        "--preflight-updates must be 1..={CYCLE4_ARM_PREFLIGHT_MAX_UPDATES_V1}, got {updates}"
+                    ),
+                ));
+            }
+            updates
+        }
+    };
+    let expected = resume_generation.checked_add(window).ok_or_else(|| {
+        Cycle4ArmErrorV1::contract("cycle4_arm_v1_interval_stop", "stop generation overflow")
+    })?;
     if stop_generation != expected {
         return Err(Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_interval_stop",
@@ -1081,13 +1132,35 @@ fn validate_interval_stop_v1(
             ),
         ));
     }
-    if checkpoint_segment_updates == 0
-        || !CYCLE4_REFRESH_INTERVAL_V1.is_multiple_of(checkpoint_segment_updates)
-    {
+    if checkpoint_segment_updates == 0 || !window.is_multiple_of(checkpoint_segment_updates) {
         return Err(Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_interval_stop",
-            "the refresh interval must be a whole number of checkpoint segments",
+            "the training window must be a whole number of checkpoint segments",
         ));
+    }
+    // A preflight prefix runs one or more short windows inside the genesis
+    // interval and never chains a manifest, so it is pinned to the genesis
+    // manifest and bounded below the first refresh boundary rather than
+    // matched to a manifest position it does not have.
+    if preflight_updates.is_some() {
+        if contract.refresh_index != 0 {
+            return Err(Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_preflight_manifest_advanced",
+                format!(
+                    "a preflight runs only against the genesis manifest, got refresh index {}",
+                    contract.refresh_index
+                ),
+            ));
+        }
+        if stop_generation > CYCLE4_REFRESH_INTERVAL_V1 {
+            return Err(Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_preflight_manifest_advanced",
+                format!(
+                    "a preflight never leaves the genesis interval, got stop generation {stop_generation}"
+                ),
+            ));
+        }
+        return Ok(());
     }
     // A refresh-chained arm's manifest names the interval it opens; a
     // static-pool arm reuses the genesis manifest at every interval and
@@ -1148,6 +1221,7 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
     // 3. Open or bootstrap the Store, authoring genesis from the pinned
     //    parent checkpoint when the Store is new.
     let (parent_dir, root_basename) = store_root_parts_v1(&request.store_root)?;
+    claim_store_mode_marker_v1(&parent_dir, request.arm, &run, request.preflight_updates)?;
     let bootstrapped =
         bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
             Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
@@ -1214,6 +1288,7 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
                         run.checkpoint_segment_updates(),
                         &contract,
                         request.arm,
+                        request.preflight_updates,
                     )?;
                 }
                 break latest_generation_index;
@@ -1228,6 +1303,7 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
                         run.checkpoint_segment_updates(),
                         &contract,
                         request.arm,
+                        request.preflight_updates,
                     )?;
                 }
                 // The per-interval stop: never a multi-interval process.
@@ -1361,6 +1437,91 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
         refresh_manifest_sha256: lower_hex_raw32_v1(manifest.manifest_sha256_v1()),
         baseline_chain_generation: chain_generation,
     })
+}
+
+/// The Store prefix's mode marker: which of the two mutually exclusive modes
+/// (formal or preflight) first claimed this prefix, and for which arm and run.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Cycle4ArmModeMarkerV1 {
+    schema: String,
+    mode: String,
+    arm_kind: String,
+    run_sha256: String,
+}
+
+const CYCLE4_ARM_MODE_FORMAL_V1: &str = "formal";
+const CYCLE4_ARM_MODE_PREFLIGHT_V1: &str = "preflight";
+
+/// Claims `parent_dir` (the Store prefix) for this run's mode, or fails
+/// closed. Runs BEFORE the Store is bootstrapped so a wrong-mode invocation
+/// never creates or touches a Store at all.
+///
+/// A prefix's mode, arm, and run identity are fixed by whichever run claimed
+/// it first: a later run in the other mode, for another arm, or against
+/// another run record is refused. The formal path claims `formal`, so the
+/// contract requirement "a preflight is rejected on any Store that already
+/// holds a formal marker" holds in both directions.
+fn claim_store_mode_marker_v1(
+    parent_dir: &Path,
+    arm: Cycle4ArmKindV1,
+    run: &ValidatedTrainRunV2,
+    preflight_updates: Option<u64>,
+) -> Result<()> {
+    let expected = Cycle4ArmModeMarkerV1 {
+        schema: CYCLE4_ARM_MODE_MARKER_SCHEMA_V1.to_owned(),
+        mode: if preflight_updates.is_some() {
+            CYCLE4_ARM_MODE_PREFLIGHT_V1
+        } else {
+            CYCLE4_ARM_MODE_FORMAL_V1
+        }
+        .to_owned(),
+        arm_kind: arm.wire_v1().to_owned(),
+        run_sha256: run.run_sha256().to_owned(),
+    };
+    let bytes = to_canonical_json_bytes_v1(&expected, CanonicalJsonNullPolicyV1::Forbid).map_err(
+        |error| Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string()),
+    )?;
+    let path = parent_dir.join(CYCLE4_ARM_MODE_MARKER_FILENAME_V1);
+    match std::fs::read(&path) {
+        Ok(existing) => {
+            if existing == bytes {
+                return Ok(());
+            }
+            let actual: Cycle4ArmModeMarkerV1 =
+                serde_json::from_slice(&existing).map_err(|error| {
+                    Cycle4ArmErrorV1::contract(
+                        "cycle4_arm_v1_mode_marker_conflict",
+                        format!("{} is unreadable: {error}", path.display()),
+                    )
+                })?;
+            Err(Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_mode_marker_conflict",
+                format!(
+                    "store prefix {} is already claimed by mode={} arm={} run={}, but this run is mode={} arm={} run={}",
+                    parent_dir.display(),
+                    actual.mode,
+                    actual.arm_kind,
+                    actual.run_sha256,
+                    expected.mode,
+                    expected.arm_kind,
+                    expected.run_sha256,
+                ),
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(parent_dir).map_err(|error| {
+                Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
+            })?;
+            write_file_atomically_v1(&path, &bytes).map_err(|error| {
+                Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
+            })
+        }
+        Err(error) => Err(Cycle4ArmErrorV1::runtime(
+            "cycle4_arm_v1_mode_marker",
+            format!("{}: {error}", path.display()),
+        )),
+    }
 }
 
 fn store_root_parts_v1(store_root: &Path) -> Result<(PathBuf, String)> {
@@ -2139,13 +2300,20 @@ mod tests {
     #[test]
     fn interval_stop_is_exactly_one_refresh_interval_v1() {
         let contract = contract_at_v1(2);
-        validate_interval_stop_v1(384, 256, 4, &contract, Cycle4ArmKindV1::TreatmentRb)
+        validate_interval_stop_v1(384, 256, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
             .expect("256 + 128 == 384");
         for stop in [256_u64, 383, 385, 512] {
             assert_eq!(
-                validate_interval_stop_v1(stop, 256, 4, &contract, Cycle4ArmKindV1::TreatmentRb)
-                    .expect_err("only one interval per process")
-                    .code_v1(),
+                validate_interval_stop_v1(
+                    stop,
+                    256,
+                    4,
+                    &contract,
+                    Cycle4ArmKindV1::TreatmentRb,
+                    None
+                )
+                .expect_err("only one interval per process")
+                .code_v1(),
                 "cycle4_arm_v1_interval_stop"
             );
         }
@@ -2155,7 +2323,7 @@ mod tests {
     fn interval_stop_never_passes_the_program_end_v1() {
         let contract = contract_at_v1(CYCLE4_REFRESH_MAX_INDEX_V1);
         assert_eq!(
-            validate_interval_stop_v1(2176, 2048, 4, &contract, Cycle4ArmKindV1::TreatmentRb)
+            validate_interval_stop_v1(2176, 2048, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
                 .expect_err("2048 is the program end")
                 .code_v1(),
             "cycle4_arm_v1_interval_stop"
@@ -2166,7 +2334,7 @@ mod tests {
     fn refresh_chained_arms_must_resume_at_the_manifest_position_v1() {
         let contract = contract_at_v1(2);
         assert_eq!(
-            validate_interval_stop_v1(256, 128, 4, &contract, Cycle4ArmKindV1::TreatmentRb)
+            validate_interval_stop_v1(256, 128, 4, &contract, Cycle4ArmKindV1::TreatmentRb, None)
                 .expect_err("manifest 2 opens generation 256, not 128")
                 .code_v1(),
             "cycle4_arm_v1_resume_position_mismatch"
@@ -2175,8 +2343,174 @@ mod tests {
         // resume position is not derivable from the manifest and is not
         // checked against it.
         let genesis_contract = contract_at_v1(0);
-        validate_interval_stop_v1(256, 128, 4, &genesis_contract, Cycle4ArmKindV1::StaticRb)
-            .expect("static-rb intervals are not manifest-positioned");
+        validate_interval_stop_v1(
+            256,
+            128,
+            4,
+            &genesis_contract,
+            Cycle4ArmKindV1::StaticRb,
+            None,
+        )
+        .expect("static-rb intervals are not manifest-positioned");
+    }
+
+    // ------------------------------------------------------------------
+    // Bounded preflight provision
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn preflight_relaxes_the_interval_to_exactly_n_updates_v1() {
+        let contract = contract_at_v1(0);
+        for (updates, segment) in [(2_u64, 2_u64), (4, 4), (8, 8), (8, 4), (4, 2)] {
+            validate_interval_stop_v1(
+                updates,
+                0,
+                segment,
+                &contract,
+                Cycle4ArmKindV1::ControlR,
+                Some(updates),
+            )
+            .expect("stop == resume + n is the relaxed check");
+        }
+        // Still exact: neither the pre-registered 128 nor any other stop is
+        // admissible once a preflight window is declared.
+        for stop in [0_u64, 3, 5, 128] {
+            assert_eq!(
+                validate_interval_stop_v1(
+                    stop,
+                    0,
+                    4,
+                    &contract,
+                    Cycle4ArmKindV1::ControlR,
+                    Some(4)
+                )
+                .expect_err("only resume + n")
+                .code_v1(),
+                "cycle4_arm_v1_interval_stop"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_updates_are_bounded_to_one_through_eight_v1() {
+        let contract = contract_at_v1(0);
+        for updates in [0_u64, 9, 16, 128] {
+            assert_eq!(
+                validate_interval_stop_v1(
+                    updates,
+                    0,
+                    1,
+                    &contract,
+                    Cycle4ArmKindV1::ControlR,
+                    Some(updates)
+                )
+                .expect_err("outside 1..=8")
+                .code_v1(),
+                "cycle4_arm_v1_preflight_updates_range"
+            );
+        }
+    }
+
+    #[test]
+    fn a_preflight_window_must_be_a_whole_number_of_checkpoint_segments_v1() {
+        let contract = contract_at_v1(0);
+        // Segment 4 cannot land exactly on a 2-update stop.
+        assert_eq!(
+            validate_interval_stop_v1(2, 0, 4, &contract, Cycle4ArmKindV1::ControlR, Some(2))
+                .expect_err("2 is not a multiple of 4")
+                .code_v1(),
+            "cycle4_arm_v1_interval_stop"
+        );
+        // A segment larger than the whole bound leaves no admissible window,
+        // which is a legible rejection rather than a silent overshoot.
+        assert_eq!(
+            validate_interval_stop_v1(8, 0, 16, &contract, Cycle4ArmKindV1::ControlR, Some(8))
+                .expect_err("16 > 8")
+                .code_v1(),
+            "cycle4_arm_v1_interval_stop"
+        );
+    }
+
+    #[test]
+    fn a_preflight_never_leaves_the_genesis_interval_or_manifest_v1() {
+        assert_eq!(
+            validate_interval_stop_v1(
+                136,
+                128,
+                4,
+                &contract_at_v1(1),
+                Cycle4ArmKindV1::ControlR,
+                Some(8)
+            )
+            .expect_err("refresh 1 is not the genesis manifest")
+            .code_v1(),
+            "cycle4_arm_v1_preflight_manifest_advanced"
+        );
+        assert_eq!(
+            validate_interval_stop_v1(
+                136,
+                128,
+                4,
+                &contract_at_v1(0),
+                Cycle4ArmKindV1::ControlR,
+                Some(8)
+            )
+            .expect_err("136 is past the first refresh boundary")
+            .code_v1(),
+            "cycle4_arm_v1_preflight_manifest_advanced"
+        );
+        // Successive short windows inside the genesis interval are the
+        // ladder's own shape and stay admissible.
+        validate_interval_stop_v1(
+            16,
+            8,
+            8,
+            &contract_at_v1(0),
+            Cycle4ArmKindV1::ControlR,
+            Some(8),
+        )
+        .expect("a second short window inside the genesis interval");
+    }
+
+    #[test]
+    fn the_mode_marker_pins_a_store_prefix_to_one_mode_v1() {
+        let root = fresh_temp_dir_v1("mode-marker");
+        let run = run_for_arm_v1(Cycle4ArmKindV1::ControlR);
+        let prefix = root.join("prefix");
+
+        // A preflight claims a fresh prefix, and re-claiming it in the same
+        // mode is idempotent.
+        claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, Some(2))
+            .expect("first claim");
+        claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, Some(8))
+            .expect("same mode re-entry");
+        // The formal path may not re-enter a preflight-claimed prefix.
+        assert_eq!(
+            claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, None)
+                .expect_err("formal may not adopt a preflight prefix")
+                .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+
+        // And the reverse: a preflight is refused on a formal prefix.
+        let formal = root.join("formal");
+        claim_store_mode_marker_v1(&formal, Cycle4ArmKindV1::ControlR, &run, None)
+            .expect("formal claim");
+        assert_eq!(
+            claim_store_mode_marker_v1(&formal, Cycle4ArmKindV1::ControlR, &run, Some(2))
+                .expect_err("a formal marker forbids the relaxed check")
+                .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+        // A different arm on the same prefix is refused too.
+        assert_eq!(
+            claim_store_mode_marker_v1(&formal, Cycle4ArmKindV1::TreatmentRb, &run, None)
+                .expect_err("one prefix, one arm")
+                .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]

@@ -19,6 +19,16 @@
 //! weights, so trainee-local 896 is store generation 0 and trainee-local
 //! 2944 is store generation 2048. The launcher proves
 //! `--stop-generation == resume_position + 128` before training.
+//!
+//! Bounded preflight provision (Section 6's CONTROL preflight ladder): the
+//! ladder needs two SHORT updates per throwaway Store prefix, which the
+//! 128-generation interval check forbids. `--preflight-updates N` relaxes it
+//! to `--stop-generation == resume_position + N` for `N` in 1..=8, and is
+//! accepted ONLY together with the value-less `--preflight` marker flag --
+//! two independent statements of the same intent, so no single typo can
+//! weaken a pre-registered constant. The library additionally pins each Store
+//! prefix to one mode: a prefix a formal run claimed refuses the relaxed
+//! check, and a prefix a preflight claimed refuses to become formal.
 
 use mtg_kernel::native_cycle4_arm_v1::{
     run_native_cycle4_arm_v1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
@@ -28,7 +38,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle4_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --refresh-manifest PATH [--payoff-panel PATH] --slot-locator PATH --stop-generation N --device N"
+        "usage: cycle4_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --refresh-manifest PATH [--payoff-panel PATH] --slot-locator PATH --stop-generation N --device N [--preflight --preflight-updates N]"
     );
     std::process::exit(2);
 }
@@ -43,13 +53,18 @@ struct ParsedArgsV1 {
     slot_locator: PathBuf,
     stop_generation: u64,
     device: u64,
+    /// `Some(n)` only when BOTH `--preflight` and `--preflight-updates n`
+    /// were given; either alone is a usage error.
+    preflight_updates: Option<u64>,
 }
 
 #[allow(clippy::too_many_lines)]
 fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
-    if raw.is_empty() || !raw.len().is_multiple_of(2) {
+    if raw.is_empty() {
         return Err(());
     }
+    let mut preflight = false;
+    let mut preflight_updates: Option<u64> = None;
     let mut arm: Option<Cycle4ArmKindV1> = None;
     let mut store_root: Option<PathBuf> = None;
     let mut run_record: Option<PathBuf> = None;
@@ -60,9 +75,22 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut stop_generation: Option<u64> = None;
     let mut device: Option<u64> = None;
 
-    for pair in raw.chunks_exact(2) {
-        let flag = pair[0].to_str().ok_or(())?;
-        let value = &pair[1];
+    // `--preflight` is the one value-less flag, so the command line is walked
+    // by index (the `cycle4_refresh_build_v1.rs` `--genesis` shape) rather
+    // than by fixed name/value pairs; every other flag still consumes exactly
+    // one following value and may appear at most once.
+    let mut index = 0;
+    while index < raw.len() {
+        let flag = raw[index].to_str().ok_or(())?;
+        if flag == "--preflight" {
+            if preflight {
+                return Err(());
+            }
+            preflight = true;
+            index += 1;
+            continue;
+        }
+        let value = raw.get(index + 1).ok_or(())?;
         match flag {
             "--arm" if arm.is_none() => {
                 arm = Some(Cycle4ArmKindV1::from_wire_v1(value.to_str().ok_or(())?).ok_or(())?);
@@ -83,8 +111,20 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             "--device" if device.is_none() => {
                 device = Some(value.to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
             }
+            "--preflight-updates" if preflight_updates.is_none() => {
+                preflight_updates = Some(value.to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
+            }
             _ => return Err(()),
         }
+        index += 2;
+    }
+
+    // The relaxed interval check is only ever reachable when the operator
+    // asked for it twice, in two different ways. Either half alone is a
+    // truncated or accidental command line, never an intent to relax a
+    // pre-registered constant.
+    if preflight != preflight_updates.is_some() {
+        return Err(());
     }
 
     Ok(ParsedArgsV1 {
@@ -97,6 +137,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         slot_locator: slot_locator.ok_or(())?,
         stop_generation: stop_generation.ok_or(())?,
         device: device.ok_or(())?,
+        preflight_updates,
     })
 }
 
@@ -121,6 +162,7 @@ fn main() {
         payoff_panel: args.payoff_panel,
         slot_locator: args.slot_locator,
         stop_generation: args.stop_generation,
+        preflight_updates: args.preflight_updates,
     };
 
     match run_native_cycle4_arm_v1(&request) {
@@ -256,6 +298,75 @@ mod tests {
             .expect("arm flag present");
         values[index + 1] = "treatment-r";
         assert!(parse_args_v1(args_v1(&values)).is_err());
+    }
+
+    #[test]
+    fn the_preflight_pair_is_accepted_only_together_v1() {
+        // Both halves: the only accepted shape.
+        let mut both = complete_v1();
+        both.push("--preflight");
+        both.push("--preflight-updates");
+        both.push("8");
+        let parsed = parse_args_v1(args_v1(&both)).expect("parse");
+        assert_eq!(parsed.preflight_updates, Some(8));
+
+        // Neither half: the formal path, unchanged.
+        assert_eq!(
+            parse_args_v1(args_v1(&complete_v1()))
+                .expect("parse")
+                .preflight_updates,
+            None
+        );
+
+        // `--preflight-updates` alone never relaxes anything.
+        let mut updates_only = complete_v1();
+        updates_only.push("--preflight-updates");
+        updates_only.push("8");
+        assert!(parse_args_v1(args_v1(&updates_only)).is_err());
+
+        // `--preflight` alone is an incomplete command line, not a request
+        // to run a formal interval.
+        let mut marker_only = complete_v1();
+        marker_only.push("--preflight");
+        assert!(parse_args_v1(args_v1(&marker_only)).is_err());
+    }
+
+    #[test]
+    fn duplicate_or_malformed_preflight_flags_are_usage_v1() {
+        let mut duplicate_marker = complete_v1();
+        duplicate_marker.extend(["--preflight", "--preflight", "--preflight-updates", "8"]);
+        assert!(parse_args_v1(args_v1(&duplicate_marker)).is_err());
+
+        let mut duplicate_updates = complete_v1();
+        duplicate_updates.extend([
+            "--preflight",
+            "--preflight-updates",
+            "8",
+            "--preflight-updates",
+            "4",
+        ]);
+        assert!(parse_args_v1(args_v1(&duplicate_updates)).is_err());
+
+        let mut non_numeric = complete_v1();
+        non_numeric.extend(["--preflight", "--preflight-updates", "two"]);
+        assert!(parse_args_v1(args_v1(&non_numeric)).is_err());
+
+        let mut truncated = complete_v1();
+        truncated.extend(["--preflight", "--preflight-updates"]);
+        assert!(parse_args_v1(args_v1(&truncated)).is_err());
+    }
+
+    #[test]
+    fn the_value_less_marker_does_not_shift_later_flags_v1() {
+        // `--preflight` consumes no value, so a flag/value pair after it must
+        // still parse exactly as it does before it.
+        let mut leading = vec!["--preflight", "--preflight-updates", "4"];
+        leading.extend(complete_v1());
+        let parsed = parse_args_v1(args_v1(&leading)).expect("parse");
+        assert_eq!(parsed.preflight_updates, Some(4));
+        assert_eq!(parsed.stop_generation, 256);
+        assert_eq!(parsed.device, 1);
+        assert_eq!(parsed.arm, Cycle4ArmKindV1::TreatmentRb);
     }
 
     #[test]
