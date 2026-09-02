@@ -13,15 +13,18 @@ use crate::canonical_json_v1::{
     CanonicalJsonClosedMaxErrorV1, CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1,
     CanonicalJsonErrorV1, CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
 };
+use crate::native_policy_baseline_state_v4::NativeBaselineStateV4;
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::native_training_store_update_group_v1::{
-    maximum_update_group_json_shape_v2, validate_embedded_update_group_wire_v1,
-    validate_update_evidence_chain_context_v1, UpdateEvidenceChainContextV1, UpdateGroupV1Error,
-    UpdateGroupV1ErrorKind, UpdateGroupWireV1, ValidatedUpdateGroupV1,
+    advance_baseline_v4_for_group_v1, maximum_update_group_json_shape_v2,
+    validate_embedded_update_group_wire_v1, validate_update_evidence_chain_context_v1,
+    UpdateEvidenceChainContextV1, UpdateGroupV1Error, UpdateGroupV1ErrorKind, UpdateGroupWireV1,
+    ValidatedUpdateGroupV1,
 };
+use crate::native_training_store_update_group_v4::BaselineChainAccessV4;
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize, Serializer};
 use std::alloc::Layout;
@@ -415,6 +418,12 @@ pub enum SegmentContinuationV2ErrorKind {
     LogicalRowCount,
     PartitionMismatch,
     Unrepresentable,
+    /// Round B (`docs/native_cycle4_arm_launcher_v1.md` Section 2): a
+    /// `trainer_v4_candidate` run's per-update baseline sidecar was missing,
+    /// unbound, or failed its own bit-exact recompute. Carries the v4
+    /// dispatch error's stable code string rather than the crate-private
+    /// error kind, so this public enum names no crate-private type.
+    BaselineV4(&'static str),
 }
 
 impl SegmentContinuationV2ErrorKind {
@@ -434,6 +443,7 @@ impl SegmentContinuationV2ErrorKind {
             Self::LogicalRowCount => "native_train_segment_continuation_v2_logical_row_count",
             Self::PartitionMismatch => "native_train_segment_continuation_v2_partition_mismatch",
             Self::Unrepresentable => "native_train_segment_continuation_v2_unrepresentable",
+            Self::BaselineV4(code) => code,
         }
     }
 }
@@ -538,7 +548,33 @@ pub fn build_segment_continuations_v2(
     parent_context: UpdateEvidenceChainContextV1,
     groups: Vec<ValidatedUpdateGroupV1>,
 ) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
-    build_segment_continuations_with_limits_v2(run, parent_context, groups, PRODUCTION_LIMITS_V2)
+    build_segment_continuations_with_limits_v2(
+        run,
+        parent_context,
+        groups,
+        PRODUCTION_LIMITS_V2,
+        None,
+    )
+}
+
+/// Round B sibling of [`build_segment_continuations_v2`] for a
+/// `trainer_v4_candidate` run: every group is validated in v4 mode against
+/// the baseline state folded forward from the segment's parent checkpoint
+/// boundary through the per-update sidecars `access` serves
+/// (`docs/native_cycle4_arm_launcher_v1.md` Sections 2-3).
+pub(crate) fn build_segment_continuations_baseline_v4_v2(
+    run: &ValidatedTrainRunV2,
+    parent_context: UpdateEvidenceChainContextV1,
+    groups: Vec<ValidatedUpdateGroupV1>,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
+    build_segment_continuations_with_limits_v2(
+        run,
+        parent_context,
+        groups,
+        PRODUCTION_LIMITS_V2,
+        Some(access),
+    )
 }
 
 /// Test-only access to the unchanged production planner under strictly
@@ -568,6 +604,7 @@ pub(crate) fn build_segment_continuations_with_test_limits_v2(
             max_bytes,
             max_logical_rows,
         },
+        None,
     )
 }
 
@@ -584,7 +621,61 @@ pub fn decode_segment_continuations_v2<B: AsRef<[u8]>>(
         parent_context,
         continuation_cjs,
         PRODUCTION_LIMITS_V2,
+        None,
     )
+}
+
+/// Round B sibling of [`decode_segment_continuations_v2`] for a
+/// `trainer_v4_candidate` run: identical decoding and partition proof, with
+/// each group's evidence additionally dispatched to the v4 recompute against
+/// the baseline state replayed from the segment's parent checkpoint boundary.
+pub(crate) fn decode_segment_continuations_baseline_v4_v2<B: AsRef<[u8]>>(
+    run: &ValidatedTrainRunV2,
+    parent_context: UpdateEvidenceChainContextV1,
+    continuation_cjs: &[B],
+    access: &dyn BaselineChainAccessV4,
+) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
+    decode_segment_continuations_with_limits_v2(
+        run,
+        parent_context,
+        continuation_cjs,
+        PRODUCTION_LIMITS_V2,
+        Some(access),
+    )
+}
+
+/// Round B: the committed baseline state the segment starting at
+/// `parent_context` begins from. Store generation indexes equal cumulative
+/// update counts, so the segment's parent checkpoint boundary generation is
+/// exactly `next_update_index - 1`. A chain directory that cannot serve that
+/// boundary fails closed.
+fn segment_start_baseline_state_v4(
+    access: &dyn BaselineChainAccessV4,
+    context: &UpdateEvidenceChainContextV1,
+) -> Result<NativeBaselineStateV4> {
+    let parent_generation = context
+        .next_update_index()
+        .checked_sub(1)
+        .ok_or_else(|| error_v2(SegmentContinuationV2ErrorKind::InvalidArithmetic))?;
+    access
+        .committed_state_for_generation_v4(parent_generation)
+        .ok_or_else(|| {
+            error_v2(SegmentContinuationV2ErrorKind::BaselineV4(
+                "native_train_update_group_v1_baseline_v4_boundary_state_missing",
+            ))
+        })
+}
+
+/// Round B: folds one validated group's baseline forward. Kept next to its
+/// only two call sites so the build and decode loops cannot drift.
+fn advance_segment_baseline_v4(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<NativeBaselineStateV4> {
+    advance_baseline_v4_for_group_v1(run, group, prior_state, access)
+        .map_err(|error| error_v2(SegmentContinuationV2ErrorKind::BaselineV4(error.code())))
 }
 
 fn build_segment_continuations_with_limits_v2(
@@ -592,14 +683,28 @@ fn build_segment_continuations_with_limits_v2(
     mut context: UpdateEvidenceChainContextV1,
     groups: Vec<ValidatedUpdateGroupV1>,
     limits: ContinuationLimitsV2,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
     let bounds = validate_segment_start_v2(run, &context)?;
     require_exact_group_count_v2(groups.len(), bounds.checkpoint_segment_updates)?;
+    let mut baseline_state = baseline_v4
+        .map(|access| segment_start_baseline_state_v4(access, &context))
+        .transpose()?;
     let mut embedded = Vec::with_capacity(groups.len());
     for group in groups {
         let wire = group.into_embedded_wire_v1();
-        let advance = validate_embedded_update_group_wire_v1(run, context, wire)
-            .map_err(map_update_group_error_v2)?;
+        let advance =
+            validate_embedded_update_group_wire_v1(run, context, wire, baseline_state.as_ref())
+                .map_err(map_update_group_error_v2)?;
+        if let Some(access) = baseline_v4 {
+            let prior = baseline_state.as_ref().ok_or_else(|| {
+                error_v2(SegmentContinuationV2ErrorKind::BaselineV4(
+                    "native_train_update_group_v1_baseline_v4_boundary_state_missing",
+                ))
+            })?;
+            let successor = advance_segment_baseline_v4(run, advance.group(), prior, access)?;
+            baseline_state = Some(successor);
+        }
         let (validated, advanced) = advance.into_parts();
         embedded.push(SegmentContinuationUpdateGroupV2::from_validated(validated)?);
         context = advanced;
@@ -614,8 +719,12 @@ fn decode_segment_continuations_with_limits_v2<B: AsRef<[u8]>>(
     mut context: UpdateEvidenceChainContextV1,
     continuation_cjs: &[B],
     limits: ContinuationLimitsV2,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> Result<ValidatedSegmentContinuationChainAdvanceV2> {
     let bounds = validate_segment_start_v2(run, &context)?;
+    let mut baseline_state = baseline_v4
+        .map(|access| segment_start_baseline_state_v4(access, &context))
+        .transpose()?;
     let continuation_count = u64::try_from(continuation_cjs.len())
         .map_err(|_| error_v2(SegmentContinuationV2ErrorKind::InvalidArithmetic))?;
     if continuation_count == 0 || continuation_count > bounds.checkpoint_segment_updates {
@@ -674,8 +783,18 @@ fn decode_segment_continuations_with_limits_v2<B: AsRef<[u8]>>(
 
     let mut embedded = Vec::with_capacity(raw_groups.len());
     for wire in raw_groups {
-        let advance = validate_embedded_update_group_wire_v1(run, context, wire)
-            .map_err(map_update_group_error_v2)?;
+        let advance =
+            validate_embedded_update_group_wire_v1(run, context, wire, baseline_state.as_ref())
+                .map_err(map_update_group_error_v2)?;
+        if let Some(access) = baseline_v4 {
+            let prior = baseline_state.as_ref().ok_or_else(|| {
+                error_v2(SegmentContinuationV2ErrorKind::BaselineV4(
+                    "native_train_update_group_v1_baseline_v4_boundary_state_missing",
+                ))
+            })?;
+            let successor = advance_segment_baseline_v4(run, advance.group(), prior, access)?;
+            baseline_state = Some(successor);
+        }
         let (validated, advanced) = advance.into_parts();
         embedded.push(SegmentContinuationUpdateGroupV2::from_validated(validated)?);
         context = advanced;
@@ -1380,9 +1499,14 @@ mod tests {
             max_bytes: SEGMENT_CONTINUATION_MAX_BYTES_V2,
             max_logical_rows: max_group_rows,
         };
-        let limited =
-            build_segment_continuations_with_limits_v2(&run, context_at_v2(0), groups, row_limited)
-                .unwrap();
+        let limited = build_segment_continuations_with_limits_v2(
+            &run,
+            context_at_v2(0),
+            groups,
+            row_limited,
+            None,
+        )
+        .unwrap();
         assert!(limited.chain().continuations().len() > 1);
         let limited_bytes = continuation_bytes_v2(limited.chain());
         let limited_roundtrip = decode_segment_continuations_with_limits_v2(
@@ -1390,6 +1514,7 @@ mod tests {
             context_at_v2(0),
             &limited_bytes,
             row_limited,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -1417,6 +1542,7 @@ mod tests {
             context_at_v2(0),
             segment_groups_v2(0),
             byte_limited_limits,
+            None,
         )
         .unwrap();
         assert!(byte_limited.chain().continuations().len() > 1);
@@ -1434,6 +1560,7 @@ mod tests {
             context_at_v2(0),
             &byte_limited_bytes,
             byte_limited_limits,
+            None,
         )
         .unwrap();
     }
@@ -1596,6 +1723,7 @@ mod tests {
                     max_bytes: 0,
                     max_logical_rows: SEGMENT_CONTINUATION_MAX_LOGICAL_ROWS_V2,
                 },
+                None,
             )
             .unwrap_err()
             .kind(),
@@ -1610,6 +1738,7 @@ mod tests {
                     max_bytes: SEGMENT_CONTINUATION_MAX_BYTES_V2,
                     max_logical_rows: 0,
                 },
+                None,
             )
             .unwrap_err()
             .kind(),

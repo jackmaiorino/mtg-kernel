@@ -307,6 +307,13 @@ pub mod native_training_store_bootstrap_v2;
 // exact target, full Store validation, checkpoint-ref boundary loads, runner
 // episodes, and the seat-swapped uniform reward-delta evaluation. It claims
 // no experiment-manifest authority.
+// Cycle-4 arm launcher (round B): the first-class, contract-validated
+// per-interval entry point for the CONTROL-R, STATIC-RB, and TREATMENT-RB
+// arms, replacing the env-var `multirun_pilot_v1` harness. `pub` (not
+// `pub(crate)`) because `src/bin/cycle4_arm_v1.rs`, a separate crate in this
+// package, calls it directly; its public surface names only its own plain
+// types.
+pub mod native_cycle4_arm_v1;
 pub mod native_science_loop_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N

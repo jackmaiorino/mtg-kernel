@@ -37,6 +37,18 @@ name = "mtg-kernel-native"
 path = "src/bin/mtg-kernel-native.rs"
 required-features = ["native-training-store-v2-production"]
 
+# Cycle-4 arm launcher. Gated behind the same two features the production
+# CUDA training lane already requires: the Windows-only production Store
+# admission and the burn/CUDA dense backend the v4 arms train on. Without
+# them this bin could only ever fail closed at runtime, so it is not built.
+[[bin]]
+name = "cycle4_arm_v1"
+path = "src/bin/cycle4_arm_v1.rs"
+required-features = [
+    "native-training-store-v2-production",
+    "experimental-burn-net8-packed-cuda-v1",
+]
+
 [[example]]
 name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]

@@ -49,11 +49,14 @@ use crate::native_training_store_root_v2::{
     ValidatedNativeTrainingStoreRootV2,
 };
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
-use crate::native_training_store_segment_continuation_v2::decode_segment_continuations_v2;
+use crate::native_training_store_segment_continuation_v2::{
+    decode_segment_continuations_baseline_v4_v2, decode_segment_continuations_v2,
+};
 use crate::native_training_store_segment_manifest_v2::{
     decode_genesis_segment_manifest_v2, decode_trained_segment_manifest_v2, SegmentManifestV2,
 };
 use crate::native_training_store_update_group_v1::resume_update_evidence_chain_v1;
+use crate::native_training_store_update_group_v4::BaselineChainAccessV4;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -291,6 +294,7 @@ pub fn publish_prepared_segment_v2(
         parent_checkpoint,
         prepared,
         None,
+        None,
         |_| Ok(()),
     )
     .map(|(receipt, _facts)| receipt)
@@ -321,6 +325,64 @@ pub(crate) fn publish_prepared_segment_with_session_v2(
     NativeTrainingPersistenceReceiptV2,
     NativeTrainingStoreContinuationSessionV2,
 )> {
+    publish_prepared_segment_with_session_dispatch_v2(
+        root,
+        run,
+        parent,
+        parent_checkpoint,
+        prepared,
+        parent_tip_proof,
+        windows_since_full_walk,
+        None,
+    )
+}
+
+/// Round B sibling of [`publish_prepared_segment_with_session_v2`] for a
+/// `trainer_v4_candidate` run: every revalidation this publish performs
+/// (candidate prevalidation, reopen-from-disk, latest reopen, and any full
+/// authority walk) dispatches that run's update-group evidence to the v4
+/// recompute against the baseline replayed from `access`
+/// (`docs/native_cycle4_arm_launcher_v1.md` Sections 2-3).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn publish_prepared_segment_with_session_baseline_v4_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    parent_checkpoint: &CheckpointManifestV3,
+    prepared: &NativeTrainingPreparedSegmentV2<'_>,
+    parent_tip_proof: &NativeTrainingStoreTipProofV2,
+    windows_since_full_walk: u32,
+    access: &dyn BaselineChainAccessV4,
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    NativeTrainingStoreContinuationSessionV2,
+)> {
+    publish_prepared_segment_with_session_dispatch_v2(
+        root,
+        run,
+        parent,
+        parent_checkpoint,
+        prepared,
+        parent_tip_proof,
+        windows_since_full_walk,
+        Some(access),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_prepared_segment_with_session_dispatch_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    parent_checkpoint: &CheckpointManifestV3,
+    prepared: &NativeTrainingPreparedSegmentV2<'_>,
+    parent_tip_proof: &NativeTrainingStoreTipProofV2,
+    windows_since_full_walk: u32,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    NativeTrainingStoreContinuationSessionV2,
+)> {
     let (receipt, facts) = publish_prepared_segment_with_hook_v2(
         root,
         run,
@@ -328,6 +390,7 @@ pub(crate) fn publish_prepared_segment_with_session_v2(
         parent_checkpoint,
         prepared,
         Some(parent_tip_proof),
+        baseline_v4,
         |_| Ok(()),
     )?;
     // A full walk having just run (on either side of this window) resets the
@@ -348,6 +411,7 @@ pub(crate) fn publish_prepared_segment_with_session_v2(
     Ok((receipt, session))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn publish_prepared_segment_with_hook_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
@@ -355,6 +419,7 @@ fn publish_prepared_segment_with_hook_v2(
     parent_checkpoint: &CheckpointManifestV3,
     prepared: &NativeTrainingPreparedSegmentV2<'_>,
     tip_proof: Option<&NativeTrainingStoreTipProofV2>,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
     hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
 ) -> PublisherResult<(
     NativeTrainingPersistenceReceiptV2,
@@ -394,6 +459,7 @@ fn publish_prepared_segment_with_hook_v2(
         },
         &input,
         tip_proof,
+        baseline_v4,
         hook,
     )
 }
@@ -452,8 +518,16 @@ fn publish_genesis_generation_with_hook_v2(
         checkpoint_reference: genesis_reference.canonical_bytes(),
         latest: genesis_latest.canonical_bytes(),
     };
-    publish_generation_v2(root, run, PublisherParentV2::Genesis, &input, None, hook)
-        .map(|(receipt, _facts)| receipt)
+    publish_generation_v2(
+        root,
+        run,
+        PublisherParentV2::Genesis,
+        &input,
+        None,
+        None,
+        hook,
+    )
+    .map(|(receipt, _facts)| receipt)
 }
 
 /// One immutable artifact scheduled in the frozen publication order.
@@ -567,12 +641,14 @@ struct PublishedGenerationSessionFactsV1 {
     authority_shortcut_used: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn publish_generation_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
     parent: PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
     tip_proof: Option<&NativeTrainingStoreTipProofV2>,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
     mut hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
 ) -> PublisherResult<(
     NativeTrainingPersistenceReceiptV2,
@@ -617,9 +693,17 @@ fn publish_generation_v2(
     let inventory =
         validate_publication_inventory_v2(root, &parent, input.generation_index, &scheduled, true)?;
     let authority_shortcut_used = require_current_publication_authority_v2(
-        root, run, &parent, input, &scheduled, &parents, &inventory, tip_proof,
+        root,
+        run,
+        &parent,
+        input,
+        &scheduled,
+        &parents,
+        &inventory,
+        tip_proof,
+        baseline_v4,
     )?;
-    prevalidate_publication_candidate_v2(run, &parent, input)?;
+    prevalidate_publication_candidate_v2(run, &parent, input, baseline_v4)?;
 
     sweep_recognized_stages_v2(root)?;
     hook(PublisherBoundaryV2::AfterStageSweep)?;
@@ -640,7 +724,7 @@ fn publish_generation_v2(
         false,
     )?;
 
-    revalidate_generation_from_disk_v2(root, run, &parent, input)?;
+    revalidate_generation_from_disk_v2(root, run, &parent, input, baseline_v4)?;
     hook(PublisherBoundaryV2::AfterGenerationRevalidation)?;
 
     hook(PublisherBoundaryV2::BeforeLatestReplacement)?;
@@ -657,7 +741,7 @@ fn publish_generation_v2(
     .map_err(|error| map_publication_error_v2(&error))?;
     hook(PublisherBoundaryV2::AfterLatestReplacement)?;
 
-    let observed = revalidate_latest_and_referenced_v2(root, run, &parent, input)?;
+    let observed = revalidate_latest_and_referenced_v2(root, run, &parent, input, baseline_v4)?;
     hook(PublisherBoundaryV2::AfterLatestReopenRevalidation)?;
 
     hook(PublisherBoundaryV2::BeforeReceiptConstruction)?;
@@ -829,8 +913,9 @@ fn walk_current_store_through_parents_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
     parents: &PublicationParentsV2,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<ValidatedNativeTrainingStoreStateV2> {
-    let walked = validate_native_training_store_for_publication_v2(root, run)
+    let walked = validate_native_training_store_for_publication_v2(root, run, baseline_v4)
         .map_err(map_store_validation_error_v2)?;
     verify_final_expectations_v2(parents, walked.final_expectations_v2())?;
     Ok(walked)
@@ -866,6 +951,7 @@ fn require_current_publication_authority_v2(
     parents: &PublicationParentsV2,
     inventory: &PublicationInventoryV2,
     tip_proof: Option<&NativeTrainingStoreTipProofV2>,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<bool> {
     let invalid = publisher_error_v2(NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid);
     match parent {
@@ -899,7 +985,7 @@ fn require_current_publication_authority_v2(
             if !inventory.latest_present {
                 return Ok(false);
             }
-            let walked = walk_current_store_through_parents_v2(root, run, parents)?;
+            let walked = walk_current_store_through_parents_v2(root, run, parents, baseline_v4)?;
             verify_preexisting_candidate_finals_v2(parents, scheduled, inventory)?;
             let current_latest =
                 build_latest_v2(walked.latest_boundary(), walked.latest_reference()).map_err(
@@ -947,7 +1033,7 @@ fn require_current_publication_authority_v2(
                 }
             }
 
-            let walked = walk_current_store_through_parents_v2(root, run, parents)?;
+            let walked = walk_current_store_through_parents_v2(root, run, parents, baseline_v4)?;
             verify_preexisting_candidate_finals_v2(parents, scheduled, inventory)?;
             let current_latest =
                 build_latest_v2(walked.latest_boundary(), walked.latest_reference()).map_err(
@@ -1396,6 +1482,7 @@ fn decode_generation_candidate_v2(
     parent: &PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
     kind: NativeTrainingStorePublisherV2ErrorKind,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<ReopenedGenerationV2> {
     let error = publisher_error_v2(kind);
     let (checkpoint, boundary) = match parent {
@@ -1431,9 +1518,16 @@ fn decode_generation_candidate_v2(
         } => {
             let parent_context = resume_update_evidence_chain_v1(run, parent, parent_checkpoint)
                 .map_err(|_| error)?;
-            let continuations =
-                decode_segment_continuations_v2(run, parent_context, &input.continuations)
-                    .map_err(|_| error)?;
+            let continuations = match baseline_v4 {
+                None => decode_segment_continuations_v2(run, parent_context, &input.continuations),
+                Some(access) => decode_segment_continuations_baseline_v4_v2(
+                    run,
+                    parent_context,
+                    &input.continuations,
+                    access,
+                ),
+            }
+            .map_err(|_| error)?;
             let checkpoint = decode_trained_checkpoint_manifest_v3(
                 input.checkpoint_manifest,
                 input.checkpoint_payload,
@@ -1482,10 +1576,11 @@ fn prevalidate_publication_candidate_v2(
     run: &ValidatedTrainRunV2,
     parent: &PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<()> {
     let kind = NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid;
     let error = publisher_error_v2(kind);
-    let candidate = decode_generation_candidate_v2(run, parent, input, kind)?;
+    let candidate = decode_generation_candidate_v2(run, parent, input, kind, baseline_v4)?;
     decode_latest_v2(input.latest, &candidate.boundary, &candidate.reference)
         .map(|_| ())
         .map_err(|_| error)
@@ -1500,6 +1595,7 @@ fn decode_generation_from_disk_v2(
     parent: &PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
     kind: NativeTrainingStorePublisherV2ErrorKind,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<ReopenedGenerationV2> {
     let error = publisher_error_v2(kind);
     let generation_index = input.generation_index;
@@ -1569,7 +1665,7 @@ fn decode_generation_from_disk_v2(
         checkpoint_reference: &reference_bytes,
         latest: input.latest,
     };
-    decode_generation_candidate_v2(run, parent, &reopened_input, kind)
+    decode_generation_candidate_v2(run, parent, &reopened_input, kind, baseline_v4)
 }
 
 fn revalidate_generation_from_disk_v2(
@@ -1577,6 +1673,7 @@ fn revalidate_generation_from_disk_v2(
     run: &ValidatedTrainRunV2,
     parent: &PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<()> {
     decode_generation_from_disk_v2(
         root,
@@ -1584,6 +1681,7 @@ fn revalidate_generation_from_disk_v2(
         parent,
         input,
         NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid,
+        baseline_v4,
     )
     .map(|_| ())
 }
@@ -1596,10 +1694,11 @@ fn revalidate_latest_and_referenced_v2(
     run: &ValidatedTrainRunV2,
     parent: &PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
 ) -> PublisherResult<ReopenedGenerationV2> {
     let kind = NativeTrainingStorePublisherV2ErrorKind::LatestInvalid;
     let error = publisher_error_v2(kind);
-    let reopened = decode_generation_from_disk_v2(root, run, parent, input, kind)?;
+    let reopened = decode_generation_from_disk_v2(root, run, parent, input, kind, baseline_v4)?;
     let latest_bytes = read_exact_final_v2(
         root,
         NativeTrainingStoreFinalNameV2::Latest,
@@ -2219,6 +2318,7 @@ mod windows_publisher_tests {
             },
             &input,
             None,
+            None,
             |_| Ok(()),
         )
         .unwrap_err();
@@ -2245,7 +2345,7 @@ mod windows_publisher_tests {
         root.recapture_v2().unwrap();
         let _lock = root.lock_exclusive_v2().unwrap();
         let parents = PublicationParentsV2::capture_v2(&root).unwrap();
-        let walked = validate_native_training_store_for_publication_v2(&root, &run).unwrap();
+        let walked = validate_native_training_store_for_publication_v2(&root, &run, None).unwrap();
         let payload_path = final_path_v2(
             &root,
             NativeTrainingStoreFinalNameV2::StatePayload {
@@ -2581,6 +2681,7 @@ mod windows_publisher_tests {
                 &genesis.checkpoint,
                 &prepared,
                 None,
+                None,
                 |reached| {
                     if reached == boundary {
                         Err(injected)
@@ -2707,6 +2808,7 @@ mod windows_publisher_tests {
             &genesis.boundary,
             &genesis.checkpoint,
             &prepared,
+            None,
             None,
             |reached| {
                 if reached == PublisherBoundaryV2::BeforeLatestReplacement {
@@ -2977,7 +3079,7 @@ mod native_training_store_v2_publication_walk_timing_harness_v1 {
                 )
             });
             let started = Instant::now();
-            let state = validate_native_training_store_for_publication_v2(&root, &run)
+            let state = validate_native_training_store_for_publication_v2(&root, &run, None)
                 .unwrap_or_else(|error| {
                     panic!(
                         "harness_error=validate_native_training_store_for_publication_v2 code={} error={error}",

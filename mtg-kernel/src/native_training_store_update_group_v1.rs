@@ -41,8 +41,10 @@ use crate::native_training_store_run_v2::{
     NativeRunEnvironmentTrajectoryContractV1, TrainerLossIdentityV2, ValidatedTrainRunV2,
 };
 use crate::native_training_store_update_group_v4::{
-    decode_update_baseline_record_v4, validate_update_baseline_v4, BaselineSidecarSourceV4,
-    UpdateBaselineEpisodeViewV4, UpdateBaselineTermViewV4, UpdateBaselineV4ErrorKind,
+    build_update_baseline_record_from_episodes_v4, decode_update_baseline_record_v4,
+    validate_update_baseline_v4, BaselineChainAccessV4, BaselineSidecarSourceV4,
+    UpdateBaselineEpisodeViewV4, UpdateBaselineRecordV4, UpdateBaselineTermViewV4,
+    UpdateBaselineV4ErrorKind,
 };
 use crate::rl::{PlayerSeatV1, TerminalOutcomeV1};
 use serde::{Deserialize, Serialize};
@@ -1106,10 +1108,17 @@ fn preflight_receipt_environment_diagonal_v1(
     Ok(())
 }
 
+/// `baseline_v4` is round B's per-update prior committed baseline state
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 3): `None` is the frozen
+/// v3 producer path, byte for byte; `Some(prior_state)` is the only shape a
+/// run declaring `trainer_v4_candidate` can build under, because
+/// `validate_group_bindings_v1` requires the mode and the run's declared
+/// trainer identity to agree.
 pub(crate) fn build_compact_update_group_v2(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     transition: NativeTrainingPreparedTransitionV2,
+    baseline_v4: Option<&NativeBaselineStateV4>,
 ) -> Result<(
     ValidatedUpdateGroupAdvanceV1,
     NativeTrainingIntrinsicCheckpointFactsV2,
@@ -1125,22 +1134,55 @@ pub(crate) fn build_compact_update_group_v2(
     let (predecessor, successor, observation, final_checkpoint) = transition.into_parts_v2();
     let predecessor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&predecessor);
     let successor_view = UpdateCheckpointFactsV1::from_intrinsic_v2(&successor);
-    let advance = build_update_group_from_parts_v1(
+    let advance = build_update_group_from_parts_mode_v1(
         run,
         context,
         &predecessor_view,
         &observation,
         &successor_view,
+        baseline_mode_v1(baseline_v4),
     )?;
     Ok((advance, successor, final_checkpoint))
 }
 
+/// Frozen v3 producer shape: always `Plain`. A run declaring
+/// `trainer_v4_candidate` fails closed inside `validate_group_bindings_v1`.
 fn build_update_group_from_parts_v1(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     predecessor: &UpdateCheckpointFactsV1,
     observation: &NativeTrainingUpdateObservationV2,
     successor: &UpdateCheckpointFactsV1,
+) -> Result<ValidatedUpdateGroupAdvanceV1> {
+    build_update_group_from_parts_mode_v1(
+        run,
+        context,
+        predecessor,
+        observation,
+        successor,
+        UpdateGroupValidationModeV1::Plain,
+    )
+}
+
+/// Round B: maps the launcher's optional prior baseline state onto the
+/// private validation mode, so exactly one place in this module decides what
+/// `Some`/`None` mean.
+const fn baseline_mode_v1(
+    baseline_v4: Option<&NativeBaselineStateV4>,
+) -> UpdateGroupValidationModeV1<'_> {
+    match baseline_v4 {
+        None => UpdateGroupValidationModeV1::Plain,
+        Some(prior_state) => UpdateGroupValidationModeV1::V4Baseline(prior_state),
+    }
+}
+
+fn build_update_group_from_parts_mode_v1(
+    run: &ValidatedTrainRunV2,
+    context: UpdateEvidenceChainContextV1,
+    predecessor: &UpdateCheckpointFactsV1,
+    observation: &NativeTrainingUpdateObservationV2,
+    successor: &UpdateCheckpointFactsV1,
+    mode: UpdateGroupValidationModeV1<'_>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_predecessor_checkpoint_v1(run, &context, predecessor)?;
     validate_observation_checkpoint_v1(run, &context, observation, successor)?;
@@ -1168,13 +1210,7 @@ fn build_update_group_from_parts_v1(
     if canonical_bytes.len() > CONSERVATIVE_STANDALONE_GROUP_CJ_CEILING_V1 {
         return Err(error_v1(UpdateGroupV1ErrorKind::RecordTooLarge));
     }
-    validate_and_advance_wire_v1(
-        run,
-        context,
-        wire,
-        canonical_bytes,
-        UpdateGroupValidationModeV1::Plain,
-    )
+    validate_and_advance_wire_v1(run, context, wire, canonical_bytes, mode)
 }
 
 pub(crate) fn validate_prepared_execution_config_v1(
@@ -1319,10 +1355,16 @@ fn decode_update_group_core_v1(
     validate_and_advance_wire_v1(run, context, wire, reencoded, mode)
 }
 
+/// `baseline_v4` is round B's per-update prior committed baseline state:
+/// `None` reproduces the frozen v3 embedded-group validation byte for byte;
+/// `Some(prior_state)` is the only shape a `trainer_v4_candidate` run can
+/// validate under. The caller folds the successor state forward across the
+/// segment's groups (see `native_training_store_segment_continuation_v2`).
 pub(crate) fn validate_embedded_update_group_wire_v1(
     run: &ValidatedTrainRunV2,
     context: UpdateEvidenceChainContextV1,
     wire: UpdateGroupWireV1,
+    baseline_v4: Option<&NativeBaselineStateV4>,
 ) -> Result<ValidatedUpdateGroupAdvanceV1> {
     validate_context_run_v1(run, &context)?;
     let canonical_bytes = to_canonical_json_bytes_v1(&wire, GROUP_NULL_POLICY_V1)?;
@@ -1334,7 +1376,7 @@ pub(crate) fn validate_embedded_update_group_wire_v1(
         context,
         wire,
         canonical_bytes,
-        UpdateGroupValidationModeV1::Plain,
+        baseline_mode_v1(baseline_v4),
     )
 }
 
@@ -2584,12 +2626,11 @@ fn build_baseline_episode_views_v4<'a>(
 ///
 /// Returns the freshly recomputed successor baseline state on success,
 /// never a value that merely rode through on a declared-consistent sidecar.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn validate_update_group_baseline_v4_v1(
     run: &ValidatedTrainRunV2,
     group: &ValidatedUpdateGroupV1,
     prior_state: &NativeBaselineStateV4,
-    sidecar_source: &impl BaselineSidecarSourceV4,
+    sidecar_source: &dyn BaselineSidecarSourceV4,
 ) -> DispatchResult<NativeBaselineStateV4> {
     if !matches!(
         run.record().contracts().trainer_loss_identity_v2(),
@@ -2690,7 +2731,7 @@ pub(crate) fn decode_update_group_with_baseline_v4_v1(
     context: UpdateEvidenceChainContextV1,
     canonical_group_bytes: &[u8],
     prior_state: &NativeBaselineStateV4,
-    sidecar_source: &impl BaselineSidecarSourceV4,
+    sidecar_source: &dyn BaselineSidecarSourceV4,
 ) -> std::result::Result<
     (ValidatedUpdateGroupAdvanceV1, NativeBaselineStateV4),
     DecodeUpdateGroupBaselineV4ErrorKind,
@@ -2706,6 +2747,77 @@ pub(crate) fn decode_update_group_with_baseline_v4_v1(
         validate_update_group_baseline_v4_v1(run, advance.group(), prior_state, sidecar_source)
             .map_err(DecodeUpdateGroupBaselineV4ErrorKind::Baseline)?;
     Ok((advance, successor))
+}
+
+/// Round B validator-side step for one already-structurally-validated group:
+/// reads that update's sidecar from the launcher's chain directory through
+/// `access` and returns the recomputed successor baseline state. This is the
+/// single entry point every Store walk (resume, publish revalidation, full
+/// validation) uses to fold the baseline forward across a segment.
+pub(crate) fn advance_baseline_v4_for_group_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+    access: &dyn BaselineChainAccessV4,
+) -> DispatchResult<NativeBaselineStateV4> {
+    let source = |update_index: u64| access.sidecar_record_bytes_v4(update_index);
+    validate_update_group_baseline_v4_v1(run, group, prior_state, &source)
+}
+
+/// Round B producer-side step: mints the `baseline_v4` sidecar for one
+/// just-built update group from that group's own persisted evidence, hands
+/// it to `access` for atomic publication into the chain directory, and then
+/// re-reads and revalidates it through exactly the validator path a later
+/// resume will take. Publication therefore always happens before the next
+/// update begins, and a sidecar that the validator would reject can never be
+/// left behind as the committed record for that update
+/// (`docs/native_cycle4_arm_launcher_v1.md` Section 2).
+///
+/// Returns the recomputed successor state, which the caller installs as the
+/// next update's `c_t`.
+pub(crate) fn publish_and_validate_group_baseline_v4_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+    access: &dyn BaselineChainAccessV4,
+) -> DispatchResult<NativeBaselineStateV4> {
+    let record = mint_update_group_baseline_sidecar_v4_v1(run, group, prior_state)?;
+    // Published under the evidence's own update index, which is the index
+    // the validator below reads back; a validated group binds the two
+    // together, so this can never diverge on a real Store group.
+    if !access.publish_sidecar_record_v4(record.update_index(), record.canonical_bytes()) {
+        return Err(UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing);
+    }
+    advance_baseline_v4_for_group_v1(run, group, prior_state, access)
+}
+
+/// Builds (but does not publish) the `baseline_v4` sidecar record for one
+/// validated group, from the group's own evidence and the committed prior
+/// state. Split out so the producer's minting arithmetic can be exercised
+/// without any filesystem.
+pub(crate) fn mint_update_group_baseline_sidecar_v4_v1(
+    run: &ValidatedTrainRunV2,
+    group: &ValidatedUpdateGroupV1,
+    prior_state: &NativeBaselineStateV4,
+) -> DispatchResult<UpdateBaselineRecordV4> {
+    if !matches!(
+        run.record().contracts().trainer_loss_identity_v2(),
+        TrainerLossIdentityV2::V4Candidate
+    ) {
+        return Err(UpdateGroupBaselineV4ErrorKind::TrainerIdentityMismatch);
+    }
+    let evidence = &group.wire.evidence;
+    let terms = build_baseline_terms_v4(evidence)?;
+    let episodes = build_baseline_episode_views_v4(evidence, &terms)?;
+    let declared_policy = parse_f32_hex_dispatch_v4(&evidence.loss.policy_sum_f32_bits)?;
+    build_update_baseline_record_from_episodes_v4(
+        &episodes,
+        prior_state,
+        evidence.update_index,
+        group.update_evidence_sha256(),
+        declared_policy.to_bits(),
+    )
+    .map_err(|error| UpdateGroupBaselineV4ErrorKind::BaselineV4(error.kind()))
 }
 
 /// Per-term committed baseline value `c_t`
@@ -3487,7 +3599,7 @@ mod tests {
         let mut candidate = compact_executor.begin_segment_candidate_v2().unwrap();
         let transition = candidate.prepare_transition_v2(predecessor, true).unwrap();
         let (compact, successor, compact_checkpoint) =
-            build_compact_update_group_v2(&run, compact_context, transition).unwrap();
+            build_compact_update_group_v2(&run, compact_context, transition, None).unwrap();
         let compact_checkpoint = compact_checkpoint.unwrap();
         assert_eq!(compact_checkpoint, full_checkpoint);
         assert_eq!(
@@ -3684,6 +3796,7 @@ mod tests {
                 &run,
                 begin_update_evidence_chain_v1(&run, &genesis).unwrap(),
                 transition,
+                None,
             )
             .unwrap_err()
             .kind(),
@@ -5806,7 +5919,7 @@ mod tests {
                     }
                     let scope = store_evidence_count_scope_v2();
                     let outcome =
-                        build_compact_update_group_v2(&authorities.run, context, transition);
+                        build_compact_update_group_v2(&authorities.run, context, transition, None);
                     match (run_is_v2, transition_is_v2, receipts_are_v2) {
                         (false, false, false) | (true, true, true) => {
                             let (advance, _successor, checkpoint) =
@@ -5850,7 +5963,7 @@ mod tests {
         mixed.swap_observation_receipt_for_test_v2(1, legacy_receipts[1]);
         let scope = store_evidence_count_scope_v2();
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, mixed)
+            build_compact_update_group_v2(&v2.run, context, mixed, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -5868,7 +5981,7 @@ mod tests {
         crossed.swap_observation_receipt_for_test_v2(0, second);
         crossed.swap_observation_receipt_for_test_v2(1, first);
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, crossed)
+            build_compact_update_group_v2(&v2.run, context, crossed, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -5904,7 +6017,7 @@ mod tests {
             })
             .collect();
         let (advance, _successor, _checkpoint) =
-            build_compact_update_group_v2(&v2.run, context, transition).unwrap();
+            build_compact_update_group_v2(&v2.run, context, transition, None).unwrap();
         let (group, _advanced) = advance.into_parts();
 
         let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
@@ -6108,7 +6221,8 @@ mod tests {
         let compact_context = begin_update_evidence_chain_v1(&v2.run, &v2.genesis).unwrap();
         let compact_transition = sealed_transition_v1(&v2, true);
         let (compact_advance, _successor, _checkpoint) =
-            build_compact_update_group_v2(&v2.run, compact_context, compact_transition).unwrap();
+            build_compact_update_group_v2(&v2.run, compact_context, compact_transition, None)
+                .unwrap();
         let (compact_group, _compact_advanced) = compact_advance.into_parts();
         assert_eq!(
             guard_group.canonical_bytes(),
@@ -6197,7 +6311,7 @@ mod tests {
             corrupted.mutate_environment_fact_for_test_v2(mutation);
             transition.swap_observation_receipt_for_test_v2(0, corrupted);
             assert_eq!(
-                build_compact_update_group_v2(&v2.run, context, transition)
+                build_compact_update_group_v2(&v2.run, context, transition, None)
                     .map(|_| ())
                     .unwrap_err()
                     .kind(),
@@ -6219,7 +6333,7 @@ mod tests {
         let mut scalar = sealed_transition_v1(&v2, true);
         scalar.mutate_observation_episode_index_for_test_v2(0);
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, scalar)
+            build_compact_update_group_v2(&v2.run, context, scalar, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -6232,7 +6346,7 @@ mod tests {
         let mut swapped = sealed_transition_v1(&v2, true);
         swapped.swap_observation_episodes_for_test_v2(0, 1);
         assert_eq!(
-            build_compact_update_group_v2(&v2.run, context, swapped)
+            build_compact_update_group_v2(&v2.run, context, swapped, None)
                 .map(|_| ())
                 .unwrap_err()
                 .kind(),
@@ -6500,6 +6614,121 @@ mod tests {
         assert_eq!(successor.cell_count_v4(), 2);
     }
 
+    /// Round B producer path: an in-memory chain-directory stand-in. The
+    /// launcher's own implementation adds atomic file publication; the
+    /// contract this exercises is that minting, publishing, and validating
+    /// agree bit for bit.
+    struct RecordingBaselineAccessV1 {
+        published: std::cell::RefCell<std::collections::BTreeMap<u64, Vec<u8>>>,
+    }
+
+    impl RecordingBaselineAccessV1 {
+        fn new_v1() -> Self {
+            Self {
+                published: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            }
+        }
+    }
+
+    impl BaselineSidecarSourceV4 for RecordingBaselineAccessV1 {
+        fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>> {
+            self.published.borrow().get(&update_index).cloned()
+        }
+    }
+
+    impl BaselineChainAccessV4 for RecordingBaselineAccessV1 {
+        fn committed_state_for_generation_v4(
+            &self,
+            _generation_index: u64,
+        ) -> Option<NativeBaselineStateV4> {
+            None
+        }
+
+        fn publish_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
+            self.published
+                .borrow_mut()
+                .insert(update_index, record_bytes.to_vec());
+            true
+        }
+    }
+
+    #[test]
+    fn baseline_v4_producer_mints_exactly_the_sidecar_the_validator_recomputes() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let minted =
+            mint_update_group_baseline_sidecar_v4_v1(&fixture.run, &group, &fixture.prior_state)
+                .expect("the producer must mint the sidecar from the group's own evidence");
+        let expected = sidecar_bytes_from_parts_v1(&fixture.sidecar_parts);
+        assert_eq!(
+            minted.canonical_bytes(),
+            expected.as_slice(),
+            "the minted sidecar must be byte-identical to the hand-derived one"
+        );
+    }
+
+    #[test]
+    fn baseline_v4_producer_publishes_before_validating_and_returns_the_successor() {
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let access = RecordingBaselineAccessV1::new_v1();
+        let successor = publish_and_validate_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &access,
+        )
+        .expect("mint, publish, then validate through the resume path");
+        assert_eq!(successor.cell_count_v4(), 2);
+        let published = access
+            .sidecar_record_bytes_v4(fixture.sidecar_parts.update_index)
+            .expect("the sidecar must be published before validation returns");
+        assert_eq!(
+            published,
+            sidecar_bytes_from_parts_v1(&fixture.sidecar_parts)
+        );
+        // The successor the producer returns is exactly what a later resume
+        // recomputes from the published bytes alone.
+        let resumed =
+            advance_baseline_v4_for_group_v1(&fixture.run, &group, &fixture.prior_state, &access)
+                .expect("resume must accept the published sidecar");
+        assert_eq!(resumed, successor);
+    }
+
+    #[test]
+    fn baseline_v4_producer_fails_closed_when_publication_fails() {
+        struct RefusingAccessV1;
+        impl BaselineSidecarSourceV4 for RefusingAccessV1 {
+            fn sidecar_record_bytes_v4(&self, _update_index: u64) -> Option<Vec<u8>> {
+                None
+            }
+        }
+        impl BaselineChainAccessV4 for RefusingAccessV1 {
+            fn committed_state_for_generation_v4(
+                &self,
+                _generation_index: u64,
+            ) -> Option<NativeBaselineStateV4> {
+                None
+            }
+            fn publish_sidecar_record_v4(&self, _update_index: u64, _bytes: &[u8]) -> bool {
+                false
+            }
+        }
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let error = publish_and_validate_group_baseline_v4_v1(
+            &fixture.run,
+            &group,
+            &fixture.prior_state,
+            &RefusingAccessV1,
+        )
+        .expect_err("a refused publication must fail the update closed");
+        assert_eq!(
+            error,
+            UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing
+        );
+    }
+
     #[test]
     fn baseline_v4_dispatch_missing_sidecar_fails_closed() {
         let fixture = baseline_dispatch_fixture_v1();
@@ -6643,7 +6872,7 @@ mod tests {
     fn v4_candidate_run_rejects_the_plain_embedded_wire_path() {
         let (run, context) = v4_genesis_context_v1();
         let wire: UpdateGroupWireV1 = serde_json::from_slice(&fixture_v1().group_bytes).unwrap();
-        let error = validate_embedded_update_group_wire_v1(&run, context, wire)
+        let error = validate_embedded_update_group_wire_v1(&run, context, wire, None)
             .expect_err("a v4-candidate run must reject the plain embedded-wire path");
         assert_eq!(
             error.kind(),
