@@ -314,6 +314,13 @@ pub mod native_training_store_bootstrap_v2;
 // package, calls it directly; its public surface names only its own plain
 // types.
 pub mod native_cycle4_arm_v1;
+// Cycle-4 arm run-record builder (round E): assembles one arm's `run.json`
+// from the arm kind, the pinned parent Store, and the compiled cycle-4
+// literals, then proves it against both the V2 record validator and the arm
+// launcher's own record-level check before returning its bytes. `pub` for
+// the same reason as the module above: `src/bin/cycle4_run_record_v1.rs`
+// calls it directly.
+pub mod native_cycle4_run_record_v1;
 pub mod native_science_loop_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N

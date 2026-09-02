@@ -49,6 +49,18 @@ required-features = [
     "experimental-burn-net8-packed-cuda-v1",
 ]
 
+# Cycle-4 arm run-record builder. Gated behind exactly the same two features
+# as the arm bin above: it validates its output through the arm launcher's
+# own record-level check, so a record it accepted under a different feature
+# set would be one the arm bin might still refuse.
+[[bin]]
+name = "cycle4_run_record_v1"
+path = "src/bin/cycle4_run_record_v1.rs"
+required-features = [
+    "native-training-store-v2-production",
+    "experimental-burn-net8-packed-cuda-v1",
+]
+
 [[example]]
 name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]
