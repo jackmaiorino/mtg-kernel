@@ -316,6 +316,15 @@ try {
     Assert-True ($provenanceJson.shard_count_requested -eq $defaultShardCount) 'provenance.json records the requested shard count'
     Assert-True ($provenanceJson.shard_assignment_rule -ceq $script:TtsS1ShardAssignmentRule) 'provenance.json records the shard assignment rule'
     Assert-True ($provenanceJson.shard_count_rule -like '*min-of-requested-and-planned-contributing-episodes*') 'provenance.json states the clamp rule'
+    # Every shard's invocation as its own record, each naming the bin and
+    # its hash, so the provenance alone says which binary each of the K
+    # processes was to be.
+    $plannedShards = @($provenanceJson.planned_tier_shards)
+    Assert-True ($plannedShards.Count -eq 4 * $defaultShardCount) 'provenance.json records one invocation record per shard'
+    Assert-True (@($plannedShards | Where-Object { $_.tier -ceq 't512' }).Count -eq $defaultShardCount) 'every tier gets its own shard records'
+    Assert-True (@($plannedShards | Where-Object { $_.executable_sha256 -cne $provenanceJson.replay_executable.sha256 }).Count -eq 0) 'every shard record names the hashed replay bin'
+    Assert-True (@($plannedShards | Where-Object { $_.shard_count -ne $defaultShardCount }).Count -eq 0) 'every shard record carries the fan-out it belongs to'
+    Assert-True ((@($plannedShards | Where-Object { $_.tier -ceq 't512' } | ForEach-Object { $_.shard_index }) -join ',') -ceq ((0..($defaultShardCount - 1)) -join ',')) 'a tier shard records run 0 through K-1 once each'
 
     # The provenance record states the whole pinned contract, so a dry run
     # already says which rules a real launch would accept.

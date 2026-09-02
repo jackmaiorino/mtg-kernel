@@ -451,6 +451,11 @@ if (-not $SkipHostAssertions) {
     $toolchainRecord = Get-TtsS1ToolchainRecord
 }
 
+# Hashed ONCE and reused by every shard record below, so the K shard
+# invocations provably name the same binary rather than K separately hashed
+# ones that a reader would have to compare by eye.
+$replayExecutableRecord = Get-TtsS1FileRecord -Path $ReplayExecutable
+
 $provenance = [ordered]@{
     schema = 'mtg-kernel-tts-s1-launch-provenance/v1'
     stage = 'S1'
@@ -462,7 +467,7 @@ $provenance = [ordered]@{
     git = $gitRecord
     toolchain = $toolchainRecord
     corpus_executable = Get-TtsS1FileRecord -Path $CorpusExecutable
-    replay_executable = Get-TtsS1FileRecord -Path $ReplayExecutable
+    replay_executable = $replayExecutableRecord
     store_kind = $StoreKind
     store_root = $StoreRoot
     generation = $Generation
@@ -487,6 +492,25 @@ $provenance = [ordered]@{
     planned_corpus_command = Format-TtsS1CommandLine -FilePath $CorpusExecutable -Arguments $corpusArgs
     planned_tier_shard_commands = @($plannedTierPlans | ForEach-Object { $_.shards } | ForEach-Object { $_.command_line })
     planned_tier_merge_commands = @($plannedTierPlans | ForEach-Object { $_.merge_command_line })
+    # Every shard's invocation as a record of its own, each naming the bin
+    # it runs and that bin's hash, so a reviewer reading the provenance
+    # alone can see exactly which binary each of the K processes was to be,
+    # rather than inferring it from a flat list of command lines.
+    planned_tier_shards = @($plannedTierPlans | ForEach-Object {
+        $tierPlan = $_
+        $tierPlan.shards | ForEach-Object {
+            [ordered]@{
+                tier = $tierPlan.tier
+                shard_index = $_.index
+                shard_count = $tierPlan.shard_count
+                executable = $replayExecutableRecord.path
+                executable_sha256 = $replayExecutableRecord.sha256
+                command_line = $_.command_line
+                report_path = $_.report_path
+                diagnostics_dir = $_.diagnostics_dir
+            }
+        }
+    })
 }
 Write-TtsS1JsonFile -Value $provenance -Path (Join-Path $attemptRoot 'provenance.json')
 
