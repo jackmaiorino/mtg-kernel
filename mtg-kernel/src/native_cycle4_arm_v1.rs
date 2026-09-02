@@ -803,6 +803,28 @@ fn classify_staged_entry_v1(name: &str) -> Option<Cycle4StagedEntryV1> {
     Some(Cycle4StagedEntryV1::Foreign)
 }
 
+/// Whether `path` is a REGULAR file, never following a final symlink.
+///
+/// `Path::is_file` follows, so a reserved name that is a symlink would read
+/// bytes from outside the chain directory (review finding P2). Every staging
+/// path decision goes through this instead.
+fn is_regular_file_v1(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
+/// One staged record, together with every copy of it that must drain when it
+/// is promoted.
+///
+/// Two layouts can hold the same update: the current reserved suffix in the
+/// chain directory, and the previous `baseline-staged/` directory. Both are
+/// read, and a disagreement between them is a hard stop rather than a silent
+/// preference for either (review finding P2).
+#[derive(Debug)]
+struct Cycle4StagedRecordV1 {
+    bytes: Vec<u8>,
+    copies: Vec<PathBuf>,
+}
+
 fn is_sidecar_or_staged_sidecar_name_v1(name: &str) -> bool {
     let base = name
         .strip_suffix(CYCLE4_STAGED_SIDECAR_SUFFIX_V1)
@@ -887,14 +909,62 @@ impl Cycle4BaselineChainAccessV1 {
             .map(|name| self.legacy_staged_dir_v1().join(name))
     }
 
-    /// The staged record for one update, wherever it currently lives.
-    fn any_staged_sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
-        self.staged_sidecar_path_v1(update_index)
-            .filter(|path| path.is_file())
-            .or_else(|| {
-                self.legacy_staged_sidecar_path_v1(update_index)
-                    .filter(|path| path.is_file())
-            })
+    /// Every regular-file copy of one update's staged record, current layout
+    /// first. No-follow throughout, so a symlink under a reserved name is
+    /// never a copy.
+    fn staged_sidecar_copies_v1(&self, update_index: u64) -> Vec<PathBuf> {
+        [
+            self.staged_sidecar_path_v1(update_index),
+            self.legacy_staged_sidecar_path_v1(update_index),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|path| is_regular_file_v1(path))
+        .collect()
+    }
+
+    /// The staged record for one update, read from every layout that holds
+    /// it.
+    ///
+    /// Deduplicating the two layouts by update index used to hide a
+    /// disagreement between them: the current copy was promoted, the legacy
+    /// copy was left unread and unremoved, and conflicting bytes could
+    /// therefore advance the chain once before a later commit tripped over
+    /// the leftover. Both copies are now read; identical bytes promote once
+    /// and drain both, and different bytes fail closed here, before any
+    /// promotion (review finding P2).
+    fn resolve_staged_record_v1(&self, update_index: u64) -> Result<Option<Cycle4StagedRecordV1>> {
+        let copies = self.staged_sidecar_copies_v1(update_index);
+        if copies.is_empty() {
+            return Ok(None);
+        }
+        let mut bytes: Option<Vec<u8>> = None;
+        for path in &copies {
+            let read = std::fs::read(path).map_err(|error| {
+                Cycle4ArmErrorV1::runtime(
+                    "cycle4_arm_v1_baseline_sidecar_staging",
+                    format!("{}: {error}", path.display()),
+                )
+            })?;
+            match &bytes {
+                None => bytes = Some(read),
+                Some(first) if *first == read => {}
+                Some(_) => {
+                    return Err(Cycle4ArmErrorV1::contract(
+                        "cycle4_arm_v1_baseline_sidecar_layout_conflict",
+                        format!(
+                            "update {update_index} is staged under two layouts with different bytes: {}",
+                            copies
+                                .iter()
+                                .map(|path| path.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    ))
+                }
+            }
+        }
+        Ok(bytes.map(|bytes| Cycle4StagedRecordV1 { bytes, copies }))
     }
 
     /// Scans one directory for staging-grammar entries.
@@ -922,13 +992,6 @@ impl Cycle4BaselineChainAccessV1 {
         for entry in entries {
             let entry =
                 entry.map_err(|error| staging_error(format!("{}: {error}", dir.display())))?;
-            if !entry
-                .file_type()
-                .map_err(|error| staging_error(format!("{}: {error}", dir.display())))?
-                .is_file()
-            {
-                continue;
-            }
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
                 if exclusive {
@@ -948,6 +1011,24 @@ impl Cycle4BaselineChainAccessV1 {
             } else {
                 classify_staged_entry_v1(name)
             };
+            // Classified BEFORE the file-type gate, and the gate is
+            // no-follow (review finding P2): a reserved name that is a
+            // symlink, a directory, or any other non-regular entry used to be
+            // skipped here and then followed by the lookup, which would let a
+            // resumed Store validate and publish its chain from bytes outside
+            // the chain directory. It is now a hard stop under its own code,
+            // whatever it points at.
+            if !matches!(classified, None | Some(Cycle4StagedEntryV1::Foreign))
+                && !is_regular_file_v1(&entry.path())
+            {
+                return Err(Cycle4ArmErrorV1::contract(
+                    "cycle4_arm_v1_baseline_sidecar_irregular",
+                    format!(
+                        "{} carries a reserved sidecar name but is not a regular file",
+                        entry.path().display()
+                    ),
+                ));
+            }
             match classified {
                 Some(Cycle4StagedEntryV1::Record(index)) => records.push(index),
                 Some(Cycle4StagedEntryV1::Debris) => debris.push(entry.path()),
@@ -1022,18 +1103,23 @@ impl Cycle4BaselineChainAccessV1 {
         // and a scan that tripped over it would abort the whole reconcile.
         self.sweep_staging_debris_v1()?;
         for update_index in self.staged_update_indexes_v1()? {
+            // Resolved for EVERY staged update, committed or not: this is
+            // what turns a disagreement between the two staging layouts into
+            // a named failure before anything is promoted.
+            let Some(record) = self.resolve_staged_record_v1(update_index)? else {
+                continue;
+            };
             if update_index <= tip_update {
                 continue;
             }
-            let Some(path) = self.any_staged_sidecar_path_v1(update_index) else {
-                continue;
-            };
-            std::fs::remove_file(&path).map_err(|error| {
-                Cycle4ArmErrorV1::runtime(
-                    "cycle4_arm_v1_baseline_sidecar_staging",
-                    format!("discarding {}: {error}", path.display()),
-                )
-            })?;
+            for path in record.copies {
+                std::fs::remove_file(&path).map_err(|error| {
+                    Cycle4ArmErrorV1::runtime(
+                        "cycle4_arm_v1_baseline_sidecar_staging",
+                        format!("discarding {}: {error}", path.display()),
+                    )
+                })?;
+            }
         }
         self.reconstructable_tip_update.set(Some(tip_update));
         Ok(())
@@ -1157,10 +1243,21 @@ impl BaselineSidecarSourceV4 for Cycle4BaselineChainAccessV1 {
         // update's record until it is promoted. Both are on disk, so a
         // process that dies mid-segment leaves the staged copy for the next
         // open to reconcile rather than losing it with the process.
-        if let Ok(bytes) = std::fs::read(self.sidecar_path_v1(update_index)?) {
-            return Some(bytes);
+        // No-follow at every step: a reserved name that is a symlink is not
+        // this update's record, whatever it points at.
+        let promoted = self.sidecar_path_v1(update_index)?;
+        if is_regular_file_v1(&promoted) {
+            if let Ok(bytes) = std::fs::read(&promoted) {
+                return Some(bytes);
+            }
         }
-        std::fs::read(self.any_staged_sidecar_path_v1(update_index)?).ok()
+        // A disagreement between the two staging layouts is reported as
+        // absent here; `reconcile_staged_sidecars_v1` surfaces it under its
+        // own code before any walk reaches this point.
+        self.resolve_staged_record_v1(update_index)
+            .ok()
+            .flatten()
+            .map(|record| record.bytes)
     }
 }
 
@@ -1189,14 +1286,19 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         };
         // Crash replay: an already-promoted sidecar with identical bytes is
         // the same record, so accept it and stage nothing; different bytes
-        // are a genuine conflict and fail closed.
-        if let Ok(existing) = std::fs::read(&promoted) {
-            return existing == record_bytes;
+        // are a genuine conflict and fail closed. No-follow: a reserved name
+        // that is not a regular file is never this update's record and is
+        // never overwritten.
+        if promoted.symlink_metadata().is_ok() {
+            return is_regular_file_v1(&promoted)
+                && std::fs::read(&promoted).is_ok_and(|existing| existing == record_bytes);
         }
-        if let Some(staged) = self.any_staged_sidecar_path_v1(update_index) {
-            if let Ok(existing) = std::fs::read(&staged) {
-                return existing == record_bytes;
-            }
+        match self.resolve_staged_record_v1(update_index) {
+            // Already staged: identical bytes are the same record, a
+            // disagreement between the two layouts fails closed.
+            Ok(Some(record)) => return record.bytes == record_bytes,
+            Ok(None) => {}
+            Err(_) => return false,
         }
         // Durable BEFORE the Store publishes the update this record explains
         // (review finding P1): the Store must never hold v4 evidence whose
@@ -1230,33 +1332,48 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         // of this segment promoted and the rest staged -- a shape the next
         // open's reconcile resolves exactly as it resolves any other.
         for update_index in staged {
-            let (Some(promoted), Some(staged_path), Ok(final_name)) = (
+            let (Some(promoted), Ok(final_name)) = (
                 self.sidecar_path_v1(update_index),
-                self.any_staged_sidecar_path_v1(update_index),
                 sidecar_record_name_v4(update_index),
             ) else {
                 return false;
             };
-            let Ok(bytes) = std::fs::read(&staged_path) else {
+            // Both layouts, compared: a conflict fails the commit closed
+            // rather than promoting one copy and leaving the other behind.
+            let Ok(Some(record)) = self.resolve_staged_record_v1(update_index) else {
                 return false;
             };
-            match std::fs::read(&promoted) {
+            let promoted_existing = if is_regular_file_v1(&promoted) {
+                std::fs::read(&promoted).ok()
+            } else if promoted.symlink_metadata().is_ok() {
+                // A reserved promoted name that is not a regular file is
+                // never overwritten and never trusted.
+                return false;
+            } else {
+                None
+            };
+            match promoted_existing {
                 // Already promoted with identical bytes: drop the staged
-                // copy and carry on, so a replayed promotion converges.
-                Ok(existing) if existing == bytes => {}
-                Ok(_) => return false,
-                Err(_) => {
+                // copies and carry on, so a replayed promotion converges.
+                Some(existing) if existing == record.bytes => {}
+                Some(_) => return false,
+                None => {
                     // Republished through the same durable primitive rather
                     // than renamed across directories: the promoted name must
                     // be as reboot-durable as the staged one it supersedes.
-                    if Self::publish_sidecar_bytes_v1(&self.chain_dir, &final_name, &bytes).is_err()
+                    if Self::publish_sidecar_bytes_v1(&self.chain_dir, &final_name, &record.bytes)
+                        .is_err()
                     {
                         return false;
                     }
                 }
             }
-            if std::fs::remove_file(&staged_path).is_err() {
-                return false;
+            // EVERY copy drains, so a legacy leftover cannot outlive the
+            // promotion that consumed it.
+            for path in record.copies {
+                if std::fs::remove_file(&path).is_err() {
+                    return false;
+                }
             }
         }
         // A drained legacy staging directory is removed; `remove_dir` refuses
@@ -4622,6 +4739,191 @@ mod tests {
             !legacy.exists(),
             "a drained legacy staging directory is removed"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Writes `bytes` as this update's staged record under BOTH layouts.
+    fn stage_under_both_layouts_v1(
+        access: &Cycle4BaselineChainAccessV1,
+        dir: &Path,
+        update_index: u64,
+        current: &[u8],
+        legacy: &[u8],
+    ) {
+        let record = sidecar_record_name_v4(update_index).expect("name");
+        std::fs::create_dir_all(dir).expect("create chain dir");
+        std::fs::write(dir.join(cycle4_staged_sidecar_name_v1(&record)), current)
+            .expect("write current-layout staged record");
+        let legacy_dir = access.legacy_staged_dir_v1();
+        std::fs::create_dir_all(&legacy_dir).expect("create legacy dir");
+        std::fs::write(legacy_dir.join(&record), legacy).expect("write legacy staged record");
+    }
+
+    #[test]
+    fn the_same_update_staged_under_both_layouts_must_agree_v1() {
+        // Review finding P2: deduplicating the two layouts by update index
+        // hid a disagreement between them. The current copy was promoted and
+        // the legacy copy left unread, so conflicting bytes could advance the
+        // chain once before a later commit tripped over the leftover.
+        let dir = fresh_temp_dir_v1("layout-conflict");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let prior = NativeBaselineStateV4::empty_v4();
+        let bytes = synthetic_sidecar_v1(&prior, 1, 13);
+        let other = synthetic_sidecar_v1(&prior, 1, 14);
+        assert_ne!(bytes, other);
+        stage_under_both_layouts_v1(&access, &dir, 1, &bytes, &other);
+
+        // Resolution names the conflict, and so does the reconcile that runs
+        // before anything is promoted.
+        let error = access
+            .resolve_staged_record_v1(1)
+            .expect_err("two layouts, two different records");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(
+            error.code_v1(),
+            "cycle4_arm_v1_baseline_sidecar_layout_conflict"
+        );
+        let error = access
+            .reconcile_staged_sidecars_v1(1)
+            .expect_err("a conflict fails closed before promotion");
+        assert_eq!(
+            error.code_v1(),
+            "cycle4_arm_v1_baseline_sidecar_layout_conflict"
+        );
+        // Nothing was promoted, and neither copy was consumed.
+        assert!(!access.commit_staged_sidecar_records_v4());
+        assert!(!dir.join(sidecar_record_name_v4(1).expect("name")).exists());
+        assert!(access
+            .legacy_staged_dir_v1()
+            .join(sidecar_record_name_v4(1).expect("name"))
+            .is_file());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_same_update_staged_identically_under_both_layouts_drains_both_v1() {
+        // The agreeing branch: one promotion, and BOTH copies drain, so a
+        // legacy leftover cannot outlive the promotion that consumed it.
+        let dir = fresh_temp_dir_v1("layout-agree");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let prior = NativeBaselineStateV4::empty_v4();
+        let bytes = synthetic_sidecar_v1(&prior, 1, 13);
+        stage_under_both_layouts_v1(&access, &dir, 1, &bytes, &bytes);
+
+        let record = access
+            .resolve_staged_record_v1(1)
+            .expect("agreeing copies resolve")
+            .expect("a staged record");
+        assert_eq!(record.bytes, bytes);
+        assert_eq!(record.copies.len(), 2, "both copies are tracked");
+        assert_eq!(access.sidecar_record_bytes_v4(1).expect("staged"), bytes);
+        assert_eq!(access.staged_update_indexes_v1().expect("staged"), vec![1]);
+
+        access.reconcile_staged_sidecars_v1(1).expect("committed");
+        assert!(access.commit_staged_sidecar_records_v4());
+        let promoted = dir.join(sidecar_record_name_v4(1).expect("name"));
+        assert!(promoted.is_file());
+        assert_eq!(std::fs::read(&promoted).expect("read"), bytes);
+        assert!(
+            !access.legacy_staged_dir_v1().exists(),
+            "the drained legacy copy and its directory are gone"
+        );
+        assert!(access
+            .staged_update_indexes_v1()
+            .expect("staged")
+            .is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Creates a symlink at `link` pointing at `target`, or returns the
+    /// reason it could not (unprivileged Windows hosts refuse).
+    fn try_symlink_v1(target: &Path, link: &Path) -> std::result::Result<(), String> {
+        #[cfg(windows)]
+        let outcome = std::os::windows::fs::symlink_file(target, link);
+        #[cfg(unix)]
+        let outcome = std::os::unix::fs::symlink(target, link);
+        outcome.map_err(|error| format!("{error}"))
+    }
+
+    #[test]
+    fn a_reserved_name_that_is_not_a_regular_file_fails_closed_v1() {
+        // Review finding P2: the scan skipped a non-regular entry while the
+        // lookup followed it, so a resumed Store could validate and publish
+        // its chain from bytes OUTSIDE the chain directory while the commit
+        // reported success without ever creating the promoted sidecar.
+        let dir = fresh_temp_dir_v1("irregular-staged");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let prior = NativeBaselineStateV4::empty_v4();
+        let bytes = synthetic_sidecar_v1(&prior, 1, 15);
+        let outside = dir.join("outside-the-chain.json");
+        std::fs::write(&outside, &bytes).expect("write the symlink target");
+        let record = sidecar_record_name_v4(1).expect("name");
+        let staged_name = dir.join(cycle4_staged_sidecar_name_v1(&record));
+
+        let placeholder = match try_symlink_v1(&outside, &staged_name) {
+            Ok(()) => "symlink",
+            Err(reason) => {
+                // Unprivileged Windows hosts refuse symlink creation; a
+                // directory is the same class of non-regular entry and
+                // exercises the same gate.
+                eprintln!("symlink unavailable ({reason}); using a directory placeholder");
+                std::fs::create_dir(&staged_name).expect("create directory placeholder");
+                "directory"
+            }
+        };
+
+        // The scan no longer skips it.
+        let error = access
+            .staged_update_indexes_v1()
+            .expect_err("a reserved name that is not a regular file fails closed");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(
+            error.code_v1(),
+            "cycle4_arm_v1_baseline_sidecar_irregular",
+            "placeholder kind: {placeholder}"
+        );
+        // And the lookup no longer follows it, so the bytes on the other
+        // side are never this update's record.
+        assert!(
+            access.sidecar_record_bytes_v4(1).is_none(),
+            "a {placeholder} under a reserved name is never read through"
+        );
+        // Reconcile and commit both refuse rather than reporting success.
+        assert_eq!(
+            access
+                .reconcile_staged_sidecars_v1(1)
+                .expect_err("reconcile refuses")
+                .code_v1(),
+            "cycle4_arm_v1_baseline_sidecar_irregular"
+        );
+        assert!(!access.commit_staged_sidecar_records_v4());
+        assert!(!dir.join(&record).exists(), "nothing was promoted");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_promoted_name_that_is_not_a_regular_file_is_never_trusted_v1() {
+        // The same no-follow rule on the PROMOTED name: a symlink there must
+        // not be read as the committed record, nor overwritten.
+        let dir = fresh_temp_dir_v1("irregular-promoted");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let prior = NativeBaselineStateV4::empty_v4();
+        let bytes = synthetic_sidecar_v1(&prior, 1, 17);
+        let outside = dir.join("outside-the-chain.json");
+        std::fs::write(&outside, &bytes).expect("write the symlink target");
+        let record = sidecar_record_name_v4(1).expect("name");
+        let promoted = dir.join(&record);
+        if let Err(reason) = try_symlink_v1(&outside, &promoted) {
+            eprintln!("symlink unavailable ({reason}); using a directory placeholder");
+            std::fs::create_dir(&promoted).expect("create directory placeholder");
+        }
+        assert!(
+            access.sidecar_record_bytes_v4(1).is_none(),
+            "a promoted name that is not a regular file is never read through"
+        );
+        // Staging refuses rather than treating the target's bytes as an
+        // already-promoted record.
+        assert!(!access.stage_sidecar_record_v4(1, &bytes));
         std::fs::remove_dir_all(&dir).ok();
     }
 
