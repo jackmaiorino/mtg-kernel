@@ -21,7 +21,7 @@ What it proves:
     the child;
   * a full-ladder whole-corpus run plans as FORMAL and a partial one plans
     as a SMOKE;
-  * -LimitDecisions appears only when it is set;
+  * -LimitEpisodes appears only when it is set;
   * the input rejections all fire: equal seed blocks, a reordered ladder, a
     duplicated tier, a missing -Generation, a -Generation on the portable
     authority, a missing executable, and -SkipHostAssertions without
@@ -165,30 +165,31 @@ try {
         Assert-True ($line -like "*--tier $($ladder[$index])*") "tier $($ladder[$index]) is planned in ladder position $index"
         Assert-True ($line -like '*--seed-block 1*') "tier $($ladder[$index]) uses the replay seed block"
         Assert-True ($line -like '*--corpus*') "tier $($ladder[$index]) consumes the corpus"
-        Assert-True (-not ($line -like '*--limit-decisions*')) "tier $($ladder[$index]) has no smoke bound by default"
+        Assert-True (-not ($line -like '*--limit-episodes*')) "tier $($ladder[$index]) has no smoke bound by default"
+        Assert-True ($line -like '*--max-episodes 64*') "tier $($ladder[$index]) carries the corpus episode count as its guard"
         Assert-True ($line -like "*--diagnostics-dir*tier-$($ladder[$index]).diagnostics*") "tier $($ladder[$index]) gets its own diagnostics directory"
     }
 
-    # --- 2. -LimitDecisions is threaded to every tier when set.
+    # --- 2. -LimitEpisodes is threaded to every tier when set.
     $evidence = Join-Path $sandbox 'evidence-limit'
     $parameters = $base.Clone()
     $parameters['EvidenceRoot'] = $evidence
-    $parameters['LimitDecisions'] = [uint64]8
+    $parameters['LimitEpisodes'] = [uint64]8
     $parameters['Tiers'] = @('t512')
     $result = Invoke-Wrapper -Parameters $parameters
     Assert-True ($null -eq $result.Failure) "a single-tier dry run succeeds ($($result.Failure))"
     $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.planned_tier_commands.Count -eq 1) 'a tier subset plans only those tiers'
-    Assert-True ($provenanceJson.planned_tier_commands[0] -like '*--limit-decisions 8*') 'the smoke bound reaches the tier command'
+    Assert-True ($provenanceJson.planned_tier_commands[0] -like '*--limit-episodes 8*') 'the smoke bound reaches the tier command'
     Assert-True ($provenanceJson.formal_ladder -eq $false) 'a bounded single-tier run plans as a SMOKE'
 
-    # --- 2b. A full ladder with -LimitDecisions is still a smoke, and so
+    # --- 2b. A full ladder with -LimitEpisodes is still a smoke, and so
     #         is a whole-corpus run over a tier subset.
     $evidence = Join-Path $sandbox 'evidence-smoke-limit'
     $parameters = $base.Clone()
     $parameters['EvidenceRoot'] = $evidence
-    $parameters['LimitDecisions'] = [uint64]4
+    $parameters['LimitEpisodes'] = [uint64]4
     $result = Invoke-Wrapper -Parameters $parameters
     Assert-True ($null -eq $result.Failure) "a bounded full-ladder dry run succeeds ($($result.Failure))"
     $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence

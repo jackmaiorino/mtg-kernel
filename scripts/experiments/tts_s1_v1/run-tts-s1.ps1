@@ -34,8 +34,16 @@ exact command line of every child it would run, and launches nothing.
 is accepted ONLY together with -DryRun, so a real launch can never quietly
 skip them.
 
+Each tier replays WHOLE EPISODES: every episode that contributes a corpus
+target is reconstructed from its start and every decision in it is searched,
+because the production diagnostics writer republishes the episode file after
+every decision and a late decision's publication cost therefore depends on
+the whole history behind it. A tier is consequently far more work than the
+512-decision corpus suggests, which is why --max-episodes is passed as a
+fail-closed guard.
+
 FORMAL versus SMOKE. A run is FORMAL only when it replays the WHOLE frozen
-corpus (no -LimitDecisions) across the WHOLE pre-registered four-tier ladder,
+corpus (no -LimitEpisodes) across the WHOLE pre-registered four-tier ladder,
 and every tier's own report agrees that it replayed the whole corpus. Only a
 formal run writes the TTS_S1_COMPLETE marker, and only a formal run may
 close the ladder as a negative result when no tier is feasible. Anything
@@ -74,9 +82,13 @@ param(
     # (sketch Section 4); a subset is admissible for a smoke, and the summary
     # records exactly which tiers ran.
     [ValidateSet('t512', 't2048', 't8192', 't32768')][string[]]$Tiers = @('t512', 't2048', 't8192', 't32768'),
-    # Smoke bound passed through to every tier. 0 means "the whole corpus",
-    # which is the only configuration whose verdict a panel may rely on.
-    [uint64]$LimitDecisions = 0,
+    # Smoke bound passed through to every tier, in EPISODES. 0 means "every
+    # contributing episode", which is the only configuration whose verdict a
+    # panel may rely on. It is episodes rather than decisions because the
+    # replay runs whole episodes: a decision bound would cut an episode in
+    # half and leave its later decisions with a publication history no panel
+    # would ever produce.
+    [uint64]$LimitEpisodes = 0,
     [string]$RepoRoot,
     [switch]$DryRun,
     [switch]$SkipHostAssertions
@@ -424,10 +436,16 @@ foreach ($tier in $Tiers) {
         '--tier', $tier,
         '--seed-block', [string]$ReplaySeedBlock,
         '--diagnostics-dir', $diagnosticsDir,
+        # The guard is the corpus's own episode count, which this launcher
+        # is the one that chose. Contributing episodes can only be a subset
+        # of the episodes played, so this is a true upper bound, and a
+        # corpus built by someone else with more episodes is refused rather
+        # than run for days.
+        '--max-episodes', [string]$Episodes,
         '--output', $reportPath
     )
-    if ($LimitDecisions -gt 0) {
-        $replayArgs += @('--limit-decisions', [string]$LimitDecisions)
+    if ($LimitEpisodes -gt 0) {
+        $replayArgs += @('--limit-episodes', [string]$LimitEpisodes)
     }
     $tierPlans += [pscustomobject]@{
         tier = $tier
@@ -442,7 +460,7 @@ foreach ($tier in $Tiers) {
 # formal run is the whole corpus across the whole pre-registered ladder;
 # every tier's own report must additionally agree that it replayed the whole
 # corpus, which is checked per tier below.
-$isFormalLadder = ($LimitDecisions -eq 0) -and ($Tiers.Count -eq $script:TtsS1Ladder.Count)
+$isFormalLadder = ($LimitEpisodes -eq 0) -and ($Tiers.Count -eq $script:TtsS1Ladder.Count)
 
 $gitRecord = $null
 $toolchainRecord = $null
@@ -470,7 +488,8 @@ $provenance = [ordered]@{
     replay_seed_block = $ReplaySeedBlock
     episodes = $Episodes
     tiers = $Tiers
-    limit_decisions = $LimitDecisions
+    limit_episodes = $LimitEpisodes
+    max_episodes = $Episodes
     formal_ladder = $isFormalLadder
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
@@ -507,7 +526,7 @@ try {
     }
     $corpus = Read-TtsS1Json -Path $corpusPath
     $corpusRecord = Get-TtsS1FileRecord -Path $corpusPath
-    Write-Output "TTS_S1_CORPUS corpus_sha256=$($corpus.corpus_sha256) decisions=$($corpus.body.decisions.Count)"
+    Write-Output "TTS_S1_CORPUS corpus_sha256=$($corpus.corpus_sha256) decisions=$(@($corpus.body.decisions).Count) contributing_episodes=$(@($corpus.body.episodes).Count) natural_episodes=$($corpus.body.natural_terminal_episode_count) truncated_episodes=$($corpus.body.truncated_episode_count)"
 }
 catch {
     Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step 'corpus' -Detail $_.Exception.Message
@@ -547,26 +566,34 @@ foreach ($plan in $tierPlans) {
             report = Get-TtsS1FileRecord -Path $plan.report_path
             report_sha256_self = $report.report_sha256
             diagnostics_dir = $plan.diagnostics_dir
-            decisions_replayed = $report.body.decisions_replayed
+            episodes_replayed = $report.body.episodes_replayed
+            searched_decisions = $report.body.searched_decisions
+            corpus_targets_replayed = $report.body.corpus_targets_replayed
             replayed_whole_corpus = $report.body.replayed_whole_corpus
-            search_p50_micros = $report.body.search_wall_time.p50_micros
-            search_p99_micros = $report.body.search_wall_time.p99_micros
-            search_max_micros = $report.body.search_wall_time.max_micros
-            decision_p50_micros = $report.body.decision_wall_time.p50_micros
-            decision_p99_micros = $report.body.decision_wall_time.p99_micros
-            decision_max_micros = $report.body.decision_wall_time.max_micros
-            protocol_p50_micros = $report.body.protocol_wall_time.p50_micros
-            protocol_p99_micros = $report.body.protocol_wall_time.p99_micros
-            protocol_max_micros = $report.body.protocol_wall_time.max_micros
-            decisions_per_second_milli = $report.body.decisions_per_second_milli
+            # The verdict basis: every decision searched.
+            protocol_p50_micros = $report.body.whole_episode_view.protocol_wall_time.p50_micros
+            protocol_p99_micros = $report.body.whole_episode_view.protocol_wall_time.p99_micros
+            protocol_max_micros = $report.body.whole_episode_view.protocol_wall_time.max_micros
+            mean_protocol_micros = $report.body.whole_episode_view.mean_protocol_micros
+            search_p50_micros = $report.body.whole_episode_view.search_wall_time.p50_micros
+            search_p99_micros = $report.body.whole_episode_view.search_wall_time.p99_micros
+            search_max_micros = $report.body.whole_episode_view.search_wall_time.max_micros
+            decisions_per_second_milli = $report.body.whole_episode_view.decisions_per_second_milli
+            # The stratified targets alone, for the strata diagnostics.
+            target_protocol_p50_micros = $report.body.corpus_target_view.protocol_wall_time.p50_micros
+            target_protocol_p99_micros = $report.body.corpus_target_view.protocol_wall_time.p99_micros
+            target_protocol_max_micros = $report.body.corpus_target_view.protocol_wall_time.max_micros
             projected_s2_worker_hours_milli = $report.body.compute_cap.projected_worker_hours_milli
+            projected_elapsed_hours_at_workers_milli = $report.body.compute_cap.projected_elapsed_hours_at_workers_milli
             compute_cap_worker_hours_milli = $report.body.compute_cap.cap_worker_hours_milli
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        Write-Output ("TTS_S1_TIER tier={0} verdict={1} protocol_p99_micros={2} protocol_max_micros={3} decisions_per_second_milli={4} projected_s2_worker_hours_milli={5} within_compute_cap={6}" -f `
-            $plan.tier, $observedVerdict, $report.body.protocol_wall_time.p99_micros, `
-            $report.body.protocol_wall_time.max_micros, $report.body.decisions_per_second_milli, `
+        Write-Output ("TTS_S1_TIER tier={0} verdict={1} episodes={2} searched_decisions={3} protocol_p99_micros={4} protocol_max_micros={5} decisions_per_second_milli={6} projected_s2_worker_hours_milli={7} within_compute_cap={8}" -f `
+            $plan.tier, $observedVerdict, $report.body.episodes_replayed, $report.body.searched_decisions, `
+            $report.body.whole_episode_view.protocol_wall_time.p99_micros, `
+            $report.body.whole_episode_view.protocol_wall_time.max_micros, `
+            $report.body.whole_episode_view.decisions_per_second_milli, `
             $report.body.compute_cap.projected_worker_hours_milli, $report.body.compute_cap.within_cap)
     }
     catch {
@@ -600,12 +627,15 @@ $summary = [ordered]@{
     replay_executable = $provenance.replay_executable
     corpus = $corpusRecord
     corpus_sha256_self = $corpus.corpus_sha256
-    corpus_decision_count = $corpus.body.decisions.Count
+    corpus_decision_count = @($corpus.body.decisions).Count
     corpus_candidate_count = $corpus.body.candidate_count
     corpus_seed_block = $CorpusSeedBlock
     replay_seed_block = $ReplaySeedBlock
     episodes = $Episodes
-    limit_decisions = $LimitDecisions
+    limit_episodes = $LimitEpisodes
+    max_episodes = $Episodes
+    corpus_episode_count = @($corpus.body.episodes).Count
+    corpus_all_episode_mean_decisions_milli = $corpus.body.all_episode_decisions.mean_decisions_milli
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
     ladder = $script:TtsS1Ladder
