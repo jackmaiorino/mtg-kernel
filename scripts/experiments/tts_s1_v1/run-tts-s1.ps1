@@ -34,11 +34,22 @@ exact command line of every child it would run, and launches nothing.
 is accepted ONLY together with -DryRun, so a real launch can never quietly
 skip them.
 
-Terminal state: an empty TTS_S1_COMPLETE marker in the attempt root on
-success, and a plain-text RUN_FAILED naming the failing step on any error. A
-DRY RUN writes neither marker; it writes result.json with status
-DRY_RUN_PLANNED, because a run that measured nothing may not leave behind
-the file an operator reads as "this preflight finished".
+FORMAL versus SMOKE. A run is FORMAL only when it replays the WHOLE frozen
+corpus (no -LimitDecisions) across the WHOLE pre-registered four-tier ladder,
+and every tier's own report agrees that it replayed the whole corpus. Only a
+formal run writes the TTS_S1_COMPLETE marker, and only a formal run may
+close the ladder as a negative result when no tier is feasible. Anything
+else is a SMOKE: it still runs, still publishes every report, and still
+writes a summary, but its status is TTS_S1_SMOKE, it writes no marker, and
+it says in as many words that it carries no feasibility standing. A smoke
+that could leave behind the same marker a formal run does is how a partial
+measurement gets read later as a finished one.
+
+Terminal state: an empty TTS_S1_COMPLETE marker in the attempt root on a
+successful FORMAL run, and a plain-text RUN_FAILED naming the failing step
+on any error. A DRY RUN writes neither marker; it writes result.json with
+status DRY_RUN_PLANNED, because a run that measured nothing may not leave
+behind the file an operator reads as "this preflight finished".
 
 PowerShell 5.1 compatible throughout: no `&&`, no ternary, no
 null-coalescing, and no reliance on the host providing Get-FileHash.
@@ -73,6 +84,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Reused verbatim for Get-ToolchainRecord (rustc, cargo, and the MSVC
+# linker identity), which AGENTS.md process rule 1 requires in the run
+# manifest. Dot-sourcing it defines functions and sets variables only; it
+# launches nothing. The Get-FileHash shadow below is defined AFTER this, so
+# every call in the whole stack resolves to the self-contained one.
+. (Join-Path $PSScriptRoot '..\regularized_continuation_retest_v1\common.ps1')
 
 $script:TtsS1Ladder = @('t512', 't2048', 't8192', 't32768')
 $script:TtsS1SloSeconds = 4.0
@@ -198,20 +216,68 @@ function Get-TtsS1GitRecord {
 }
 
 function Get-TtsS1ToolchainRecord {
-    # rustc and cargo only. S1 is a CPU-only preflight that links nothing at
-    # launch time, so the cycle-4 stack's MSVC-linker and CUDA records are
-    # deliberately not required here: demanding vswhere.exe on a panel host
-    # that only has to RUN two already-built executables would fail a launch
-    # for a reason that has nothing to do with the measurement. The bin
-    # hashes below are what actually pin what ran.
-    $rustcLines = @(& rustc -Vv 2>&1 | ForEach-Object { $_.ToString() })
-    Assert-TtsS1LastExitCode $LASTEXITCODE 'rustc -Vv'
-    $cargoLines = @(& cargo -Vv 2>&1 | ForEach-Object { $_.ToString() })
-    Assert-TtsS1LastExitCode $LASTEXITCODE 'cargo -Vv'
-    return [ordered]@{
-        rustc_vv = ($rustcLines -join "`n")
-        cargo_vv = ($cargoLines -join "`n")
+    # AGENTS.md process rule 1: the run manifest records the toolchain
+    # versions, the LINKER included. This REUSES the existing
+    # Get-ToolchainRecord from the regularized_continuation_retest_v1 stack
+    # (dot-sourced above, and what the cycle-4 launcher uses) rather than
+    # recording a narrower subset of its own: rustc -Vv, cargo -Vv, and the
+    # MSVC link.exe path, file version, banner and SHA-256.
+    #
+    # It fails closed. If vswhere.exe is absent or the linker cannot be
+    # resolved, that helper throws, and this wrapper turns it into a
+    # message that says which requirement was not met rather than letting a
+    # launch proceed with an unpinned toolchain.
+    try {
+        return Get-ToolchainRecord
     }
+    catch {
+        throw ("an S1 launch must record the toolchain identity including the linker, and it could not be captured: " + $_.Exception.Message + ". Re-run with -DryRun -SkipHostAssertions to plan without it, or install the MSVC build tools so vswhere.exe can resolve link.exe.")
+    }
+}
+
+function ConvertTo-TtsS1WindowsArgument {
+    # Quotes ONE argument for the Windows command-line parser
+    # (CommandLineToArgvW), which is what a Rust `std::env::args_os` reads.
+    #
+    # PowerShell 5.1 runs on .NET Framework, where ProcessStartInfo has no
+    # ArgumentList: the only channel to a child is a single command-line
+    # STRING, and Start-Process joins an array into one with plain spaces
+    # and no quoting at all. A store root or evidence root containing a
+    # space therefore reaches the child as two arguments, and the bin's
+    # strict pair parser rejects the launch (or, worse, pairs the wrong
+    # flag with the wrong value). So the quoting is done here, once, and
+    # both the PLANNED command line and the executed one go through it, so
+    # what a dry run prints is what a real launch runs.
+    #
+    # The rule is the documented MSVC one: backslashes are literal except
+    # when they immediately precede a quote, where each must be doubled,
+    # and a run of backslashes at the end of a quoted argument must be
+    # doubled so it does not escape the closing quote.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($char in $Value.ToCharArray()) {
+        if ($char -ceq '\') {
+            $backslashes++
+            continue
+        }
+        if ($char -ceq '"') {
+            [void]$builder.Append('\' * (2 * $backslashes + 1))
+            [void]$builder.Append('"')
+            $backslashes = 0
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append('\' * $backslashes)
+            $backslashes = 0
+        }
+        [void]$builder.Append($char)
+    }
+    if ($backslashes -gt 0) { [void]$builder.Append('\' * (2 * $backslashes)) }
+    [void]$builder.Append('"')
+    return $builder.ToString()
 }
 
 function Format-TtsS1CommandLine {
@@ -219,10 +285,15 @@ function Format-TtsS1CommandLine {
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments
     )
-    $quoted = @($Arguments | ForEach-Object {
-        if ($_ -match '\s') { '"' + $_ + '"' } else { $_ }
-    })
-    return (@("`"$FilePath`"") + $quoted) -join ' '
+    $quoted = @($Arguments | ForEach-Object { ConvertTo-TtsS1WindowsArgument -Value $_ })
+    return (@(ConvertTo-TtsS1WindowsArgument -Value $FilePath) + $quoted) -join ' '
+}
+
+function Format-TtsS1ArgumentString {
+    # The child's argument string alone, without the executable, which is
+    # what Start-Process wants in -ArgumentList.
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments)
+    return (@($Arguments | ForEach-Object { ConvertTo-TtsS1WindowsArgument -Value $_ }) -join ' ')
 }
 
 function Invoke-TtsS1Process {
@@ -239,7 +310,10 @@ function Invoke-TtsS1Process {
         }
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
     }
-    $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -NoNewWindow -PassThru `
+    # ONE already-quoted string, not an array: Start-Process joins an array
+    # with unquoted spaces. See ConvertTo-TtsS1WindowsArgument.
+    $argumentString = Format-TtsS1ArgumentString -Arguments $Arguments
+    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentString -NoNewWindow -PassThru `
         -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
     # WaitForExit() then Refresh(), following the cycle-4 launcher: the
     # parameterless overload alone can return before ExitCode is populated.
@@ -339,10 +413,17 @@ $corpusArgs = $authorityArgs + @(
 $tierPlans = @()
 foreach ($tier in $Tiers) {
     $reportPath = Join-Path $attemptRoot ("tier-{0}.report.json" -f $tier)
+    # One diagnostics directory per tier. The production model-guided
+    # diagnostics writer publishes this tier's V4 episode files there, and
+    # the replay reads the protocol latency the SLO is classified on back
+    # out of them; sharing one directory across tiers would mix two tiers'
+    # episode files under the same names.
+    $diagnosticsDir = Join-Path $attemptRoot ("tier-{0}.diagnostics" -f $tier)
     $replayArgs = $authorityArgs + @(
         '--corpus', $corpusPath,
         '--tier', $tier,
         '--seed-block', [string]$ReplaySeedBlock,
+        '--diagnostics-dir', $diagnosticsDir,
         '--output', $reportPath
     )
     if ($LimitDecisions -gt 0) {
@@ -351,10 +432,17 @@ foreach ($tier in $Tiers) {
     $tierPlans += [pscustomobject]@{
         tier = $tier
         report_path = $reportPath
+        diagnostics_dir = $diagnosticsDir
         arguments = $replayArgs
         command_line = Format-TtsS1CommandLine -FilePath $ReplayExecutable -Arguments $replayArgs
     }
 }
+
+# FORMAL versus SMOKE, decided from the inputs before anything runs. A
+# formal run is the whole corpus across the whole pre-registered ladder;
+# every tier's own report must additionally agree that it replayed the whole
+# corpus, which is checked per tier below.
+$isFormalLadder = ($LimitDecisions -eq 0) -and ($Tiers.Count -eq $script:TtsS1Ladder.Count)
 
 $gitRecord = $null
 $toolchainRecord = $null
@@ -383,6 +471,7 @@ $provenance = [ordered]@{
     episodes = $Episodes
     tiers = $Tiers
     limit_decisions = $LimitDecisions
+    formal_ladder = $isFormalLadder
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
     planned_corpus_command = Format-TtsS1CommandLine -FilePath $CorpusExecutable -Arguments $corpusArgs
@@ -457,6 +546,7 @@ foreach ($plan in $tierPlans) {
             exit_code = $exitCode
             report = Get-TtsS1FileRecord -Path $plan.report_path
             report_sha256_self = $report.report_sha256
+            diagnostics_dir = $plan.diagnostics_dir
             decisions_replayed = $report.body.decisions_replayed
             replayed_whole_corpus = $report.body.replayed_whole_corpus
             search_p50_micros = $report.body.search_wall_time.p50_micros
@@ -465,12 +555,19 @@ foreach ($plan in $tierPlans) {
             decision_p50_micros = $report.body.decision_wall_time.p50_micros
             decision_p99_micros = $report.body.decision_wall_time.p99_micros
             decision_max_micros = $report.body.decision_wall_time.max_micros
+            protocol_p50_micros = $report.body.protocol_wall_time.p50_micros
+            protocol_p99_micros = $report.body.protocol_wall_time.p99_micros
+            protocol_max_micros = $report.body.protocol_wall_time.max_micros
             decisions_per_second_milli = $report.body.decisions_per_second_milli
+            projected_s2_worker_hours_milli = $report.body.compute_cap.projected_worker_hours_milli
+            compute_cap_worker_hours_milli = $report.body.compute_cap.cap_worker_hours_milli
+            within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        Write-Output ("TTS_S1_TIER tier={0} verdict={1} decision_p99_micros={2} decision_max_micros={3} decisions_per_second_milli={4}" -f `
-            $plan.tier, $observedVerdict, $report.body.decision_wall_time.p99_micros, `
-            $report.body.decision_wall_time.max_micros, $report.body.decisions_per_second_milli)
+        Write-Output ("TTS_S1_TIER tier={0} verdict={1} protocol_p99_micros={2} protocol_max_micros={3} decisions_per_second_milli={4} projected_s2_worker_hours_milli={5} within_compute_cap={6}" -f `
+            $plan.tier, $observedVerdict, $report.body.protocol_wall_time.p99_micros, `
+            $report.body.protocol_wall_time.max_micros, $report.body.decisions_per_second_milli, `
+            $report.body.compute_cap.projected_worker_hours_milli, $report.body.compute_cap.within_cap)
     }
     catch {
         Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step "tier-$($plan.tier)" -Detail $_.Exception.Message
@@ -480,9 +577,20 @@ foreach ($plan in $tierPlans) {
 }
 
 $feasible = @($tierResults | Where-Object { $_.verdict -ceq 'FEASIBLE' } | ForEach-Object { $_.tier })
+# The reports get the last word on whether this was a whole-corpus run: a
+# tier that replayed less than the whole corpus makes the run a smoke even
+# if the flags said otherwise.
+$everyTierWholeCorpus = $true
+foreach ($result in $tierResults) {
+    if (-not $result.replayed_whole_corpus) { $everyTierWholeCorpus = $false }
+}
+$isFormal = $isFormalLadder -and $everyTierWholeCorpus
+$status = 'TTS_S1_SMOKE'
+if ($isFormal) { $status = 'TTS_S1_COMPLETE' }
 $summary = [ordered]@{
     schema = 'mtg-kernel-tts-s1-summary/v1'
-    status = 'TTS_S1_COMPLETE'
+    status = $status
+    formal_ladder = $isFormal
     stage = 'S1'
     attempt_root = $attemptRoot
     utc = $stamp
@@ -500,19 +608,29 @@ $summary = [ordered]@{
     limit_decisions = $LimitDecisions
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
+    ladder = $script:TtsS1Ladder
     tiers = @($tierResults)
     feasible_tiers = $feasible
     feasible_tier_count = $feasible.Count
 }
 Write-TtsS1JsonFile -Value $summary -Path (Join-Path $attemptRoot 'summary.json')
-Write-TtsS1Marker -AttemptRoot $attemptRoot -Name 'TTS_S1_COMPLETE'
+# ONLY a formal run leaves the marker an operator reads as "this preflight
+# finished". A smoke that could leave the same marker is how a partial
+# measurement gets read later as a finished one.
+if ($isFormal) {
+    Write-TtsS1Marker -AttemptRoot $attemptRoot -Name 'TTS_S1_COMPLETE'
+}
 
-Write-Output "TTS_S1_SUMMARY attempt_root=$attemptRoot feasible_tier_count=$($feasible.Count) feasible_tiers=$($feasible -join ',')"
-if ($feasible.Count -eq 0) {
-    # A legitimate negative S1 result, loudly stated. Not an error: the
-    # sketch's own rule is that a tier failing the SLO is dropped, and every
-    # tier being dropped closes the ladder as a negative, which is a
-    # finding, not a crash.
-    Write-Output 'TTS_S1_RESULT no tier is feasible under the pre-registered SLO; the ladder closes as a negative S1 result'
+Write-Output "TTS_S1_SUMMARY attempt_root=$attemptRoot status=$status formal_ladder=$isFormal feasible_tier_count=$($feasible.Count) feasible_tiers=$($feasible -join ',')"
+if (-not $isFormal) {
+    Write-Output 'TTS_S1_RESULT this run is a SMOKE (a partial corpus or a partial ladder); it carries no feasibility standing, no TTS_S1_COMPLETE marker was written, and it may not be read as closing the ladder either way'
+}
+elseif ($feasible.Count -eq 0) {
+    # A legitimate negative S1 result, loudly stated, and only reachable
+    # from a formal run. Not an error: the sketch's own rule is that a tier
+    # failing the SLO or the compute cap is dropped, and every tier being
+    # dropped closes the ladder as a negative, which is a finding, not a
+    # crash.
+    Write-Output 'TTS_S1_RESULT no tier is feasible under the pre-registered SLO and compute cap; the ladder closes as a negative S1 result'
 }
 exit 0

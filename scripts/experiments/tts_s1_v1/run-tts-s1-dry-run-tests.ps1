@@ -14,7 +14,13 @@ What it proves:
     DRY_RUN_PLANNED, and writes NEITHER terminal marker;
   * a dry run produces no corpus and no tier report;
   * the planned command lines carry exactly the flags the two bins declare,
-    including the authority shape for each -StoreKind;
+    including the authority shape for each -StoreKind and the per-tier
+    diagnostics directory the production writer publishes into;
+  * every argument is quoted for the Windows command-line parser, so a
+    store root or an evidence root containing a space survives the trip to
+    the child;
+  * a full-ladder whole-corpus run plans as FORMAL and a partial one plans
+    as a SMOKE;
   * -LimitDecisions appears only when it is set;
   * the input rejections all fire: equal seed blocks, a reordered ladder, a
     duplicated tier, a missing -Generation, a -Generation on the portable
@@ -133,6 +139,8 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $attempt 'summary.json'))) 'the dry run writes no summary'
     $reports = @(Get-ChildItem -LiteralPath $attempt -Filter 'tier-*.report.json' -ErrorAction SilentlyContinue)
     Assert-True ($reports.Count -eq 0) 'the dry run writes no tier report'
+    $diagnostics = @(Get-ChildItem -LiteralPath $attempt -Filter 'tier-*.diagnostics' -ErrorAction SilentlyContinue)
+    Assert-True ($diagnostics.Count -eq 0) 'the dry run creates no diagnostics directory'
 
     $resultJson = Get-Content -LiteralPath (Join-Path $attempt 'result.json') -Raw | ConvertFrom-Json
     Assert-True ($resultJson.status -ceq 'DRY_RUN_PLANNED') 'result.json says DRY_RUN_PLANNED'
@@ -140,6 +148,7 @@ try {
 
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.dry_run -eq $true) 'provenance.json records the dry run'
+    Assert-True ($provenanceJson.formal_ladder -eq $true) 'a whole-corpus full-ladder run plans as FORMAL'
     Assert-True ($provenanceJson.corpus_executable.sha256.Length -eq 64) 'the corpus bin is hashed'
     Assert-True ($provenanceJson.replay_executable.sha256.Length -eq 64) 'the replay bin is hashed'
     Assert-True ($null -eq $provenanceJson.git) 'the git record is skipped under -SkipHostAssertions'
@@ -157,6 +166,7 @@ try {
         Assert-True ($line -like '*--seed-block 1*') "tier $($ladder[$index]) uses the replay seed block"
         Assert-True ($line -like '*--corpus*') "tier $($ladder[$index]) consumes the corpus"
         Assert-True (-not ($line -like '*--limit-decisions*')) "tier $($ladder[$index]) has no smoke bound by default"
+        Assert-True ($line -like "*--diagnostics-dir*tier-$($ladder[$index]).diagnostics*") "tier $($ladder[$index]) gets its own diagnostics directory"
     }
 
     # --- 2. -LimitDecisions is threaded to every tier when set.
@@ -171,6 +181,55 @@ try {
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.planned_tier_commands.Count -eq 1) 'a tier subset plans only those tiers'
     Assert-True ($provenanceJson.planned_tier_commands[0] -like '*--limit-decisions 8*') 'the smoke bound reaches the tier command'
+    Assert-True ($provenanceJson.formal_ladder -eq $false) 'a bounded single-tier run plans as a SMOKE'
+
+    # --- 2b. A full ladder with -LimitDecisions is still a smoke, and so
+    #         is a whole-corpus run over a tier subset.
+    $evidence = Join-Path $sandbox 'evidence-smoke-limit'
+    $parameters = $base.Clone()
+    $parameters['EvidenceRoot'] = $evidence
+    $parameters['LimitDecisions'] = [uint64]4
+    $result = Invoke-Wrapper -Parameters $parameters
+    Assert-True ($null -eq $result.Failure) "a bounded full-ladder dry run succeeds ($($result.Failure))"
+    $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
+    $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
+    Assert-True ($provenanceJson.formal_ladder -eq $false) 'a bounded full ladder is a SMOKE'
+
+    $evidence = Join-Path $sandbox 'evidence-smoke-subset'
+    $parameters = $base.Clone()
+    $parameters['EvidenceRoot'] = $evidence
+    $parameters['Tiers'] = @('t512', 't2048')
+    $result = Invoke-Wrapper -Parameters $parameters
+    Assert-True ($null -eq $result.Failure) "a tier-subset dry run succeeds ($($result.Failure))"
+    $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
+    $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
+    Assert-True ($provenanceJson.formal_ladder -eq $false) 'a whole-corpus tier SUBSET is a SMOKE'
+
+    # --- 2c. Windows argument quoting: a path with a space must reach the
+    #         child as ONE argument, which means it is quoted in the
+    #         planned command line the wrapper also executes.
+    $spacedStore = Join-Path $sandbox 'store with space'
+    New-Item -ItemType Directory -Force -Path $spacedStore | Out-Null
+    $spacedExe = New-TtsS1StandIn -Path (Join-Path $sandbox 'tts s1 corpus.exe')
+    $evidence = Join-Path $sandbox 'evidence with space'
+    $parameters = $base.Clone()
+    $parameters['EvidenceRoot'] = $evidence
+    $parameters['StoreRoot'] = $spacedStore
+    $parameters['CorpusExecutable'] = $spacedExe
+    $parameters['Tiers'] = @('t512')
+    $result = Invoke-Wrapper -Parameters $parameters
+    Assert-True ($null -eq $result.Failure) "a dry run with spaces in every path succeeds ($($result.Failure))"
+    $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
+    $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
+    $corpusCommand = $provenanceJson.planned_corpus_command
+    Assert-True ($corpusCommand -like "*`"$spacedStore`"*") 'a store root with a space is quoted in the corpus command'
+    Assert-True ($corpusCommand -like "*`"$spacedExe`"*") 'an executable path with a space is quoted'
+    Assert-True ($corpusCommand -like '*"*corpus.json"*') 'an output path under a spaced evidence root is quoted'
+    $tierCommand = $provenanceJson.planned_tier_commands[0]
+    Assert-True ($tierCommand -like '*"*tier-t512.diagnostics"*') 'a diagnostics path under a spaced evidence root is quoted'
+    # A flag with no space is NOT quoted: the quoter only quotes what needs
+    # it, so a reviewer reading a command line sees the flags plainly.
+    Assert-True ($corpusCommand -like '*--seed-block 0*') 'flags and simple values stay unquoted'
 
     # --- 3. The original and portable authority shapes.
     $evidence = Join-Path $sandbox 'evidence-original'
@@ -209,6 +268,8 @@ try {
         @{ Name = 'a missing store root'; Mutate = { param($p) $p['StoreRoot'] = (Join-Path $sandbox 'absent-store') } },
         @{ Name = '-SkipHostAssertions without -DryRun'; Mutate = { param($p) $p['DryRun'] = $false } }
     )
+    # Every rejection below must also hold when paths contain spaces, so a
+    # quoting bug cannot turn a rejection into a silent acceptance.
     $index = 0
     foreach ($rejection in $rejections) {
         $parameters = $base.Clone()
