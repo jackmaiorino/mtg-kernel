@@ -3890,6 +3890,7 @@ fn build_baseline_observations_v4(
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn train_grouped_candidate_v1(
     candidate: &mut NativePolicyValueTrainStateV1,
     grouped: &NativePolicyGroupedTrajectoryV1,

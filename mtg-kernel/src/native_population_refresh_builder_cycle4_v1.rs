@@ -532,6 +532,8 @@ pub fn build_cycle4_next_refresh_v1(
 
 #[cfg(test)]
 mod tests {
+    /// One test override for a single matchup: ((row_slot, col_slot), (row_wins, col_wins, draws)).
+    type MatchupOverrideV1 = ((usize, usize), (i64, i64, i64));
     use super::*;
     use crate::native_population_refresh_manifest_cycle4_v1::{
         FrozenOccupantIdentityCycle4V1, CYCLE4_ANCHOR_0_V1, CYCLE4_ANCHOR_1_V1,
@@ -686,7 +688,7 @@ mod tests {
     /// so a test's declared rank sums and its matchup ledger are always
     /// constructed in agreement.
     fn matchup_ledger_v1(
-        overrides: &[((usize, usize), (i64, i64, i64))],
+        overrides: &[MatchupOverrideV1],
     ) -> (Vec<serde_json::Value>, [i64; CYCLE4_SLOT_COUNT_V1]) {
         let games = i64::try_from(CYCLE4_PANEL_GAMES_PER_MATCHUP_V1).expect("256 fits i64");
         let mut rows = Vec::with_capacity(CYCLE4_MATCHUP_COUNT_V1);
@@ -711,7 +713,7 @@ mod tests {
     /// test deliberately tampers with one afterward.
     fn panel_json_v1(
         manifest_sha256: &str,
-        overrides: &[((usize, usize), (i64, i64, i64))],
+        overrides: &[MatchupOverrideV1],
     ) -> (Vec<u8>, [i64; CYCLE4_SLOT_COUNT_V1]) {
         let (matchups, rank_sums) = matchup_ledger_v1(overrides);
         let doc = serde_json::json!({

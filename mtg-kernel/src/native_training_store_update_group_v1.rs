@@ -2736,7 +2736,7 @@ fn baseline_c_t_by_term_v1(
         let c_t = prior_state.c_for_cell_v4(&key);
         let count = usize::try_from(episode.learner_physical_decision_count)
             .map_err(|_| error_v1(UpdateGroupV1ErrorKind::InvalidArithmetic))?;
-        values.extend(std::iter::repeat(c_t).take(count));
+        values.extend(std::iter::repeat_n(c_t, count));
     }
     if values.len() != evidence.physical_terms.len() {
         return Err(error_v1(UpdateGroupV1ErrorKind::PhysicalLattice));
