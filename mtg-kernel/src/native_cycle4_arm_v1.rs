@@ -90,6 +90,7 @@ use crate::native_training_store_checkpoint_v4::{
     checkpoint_manifest_parts_v4_from_v3, decode_checkpoint_manifest_v4,
 };
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
+use crate::native_training_store_layout_v2::NativeTrainingStoreFinalNameV2;
 use crate::native_training_store_prepared_segment_v2::{
     prepare_segment_baseline_v4_v2, prepare_segment_v2,
 };
@@ -1505,6 +1506,120 @@ struct Cycle4ArmContractV1 {
     trainee_local_generation: u64,
 }
 
+/// Whether a Store root already carries a published `latest` pointer, read
+/// without creating or touching anything.
+///
+/// The bootstrap engine answers the same question authoritatively, but only
+/// as a side effect of creating the root, so it cannot be used to decide
+/// whether an invocation should proceed at all. This looks at the one final
+/// name that answers it.
+fn store_holds_published_genesis_v1(store_root: &Path) -> Result<bool> {
+    let leaf = NativeTrainingStoreFinalNameV2::Latest
+        .final_basename()
+        .map_err(|error| {
+            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_store_layout", error.to_string())
+        })?;
+    Ok(store_root.join(leaf).is_file())
+}
+
+// ---------------------------------------------------------------------
+// Build provenance (round-E review round 3)
+//
+// A run record declares the build that publishes the Store. Nothing made
+// the ARM prove that claim was about ITSELF: a record built by one build's
+// cycle4_run_record_v1 and an arm binary from another build produced a
+// Store whose record attributes it to the wrong source tree, and every
+// validator passed. The arm now captures its own embedded build metadata
+// and its own executable at every launch and requires exact equality.
+// ---------------------------------------------------------------------
+
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+fn require_run_record_is_this_build_v1(run: &ValidatedTrainRunV2) -> Result<()> {
+    // Fully-qualified rather than imported at module scope: these two are
+    // used only here, and a module-scope import would be unused in a build
+    // without production capture.
+    crate::native_store_production_capture_v2::require_run_record_matches_current_launcher_build_v2(
+        run,
+        crate::native_training_store_run_v2::CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
+        crate::native_training_store_run_v2::CUDA_RUNTIME_TUPLE_IDENTITY_V2,
+        crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
+    )
+    .map_err(|error| {
+        Cycle4ArmErrorV1::contract("cycle4_arm_v1_build_provenance_mismatch", error.to_string())
+    })
+}
+
+#[cfg(not(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+)))]
+fn require_run_record_is_this_build_v1(_run: &ValidatedTrainRunV2) -> Result<()> {
+    // Fail closed rather than skip: a build that cannot capture production
+    // provenance cannot prove a run record describes it, and an arm that
+    // cannot prove that must not publish a Store.
+    Err(Cycle4ArmErrorV1::contract(
+        "cycle4_arm_v1_build_provenance_mismatch",
+        "this build cannot capture production provenance, so it cannot prove the run record describes it",
+    ))
+}
+
+/// This binary's own embedded build identity as canonical JSON.
+///
+/// `cycle4_arm_v1 --print-build-identity` writes exactly these bytes, and
+/// `cycle4_run_record_v1` compares them against its own before it will build
+/// a record naming this launcher: two binaries from different builds must not
+/// be able to co-author one Store's provenance.
+///
+/// # Errors
+///
+/// Returns a classified [`Cycle4ArmErrorV1`] if this build cannot report an
+/// identity at all.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+pub fn cycle4_arm_build_identity_json_v1() -> Result<String> {
+    crate::native_store_production_capture_v2::current_launcher_build_identity_json_v2().map_err(
+        |error| {
+            Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_build_identity_unavailable",
+                error.to_string(),
+            )
+        },
+    )
+}
+
+/// See the production sibling above.
+///
+/// # Errors
+///
+/// Always: a build without production capture has no identity to report.
+#[cfg(not(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+)))]
+pub fn cycle4_arm_build_identity_json_v1() -> Result<String> {
+    Err(Cycle4ArmErrorV1::contract(
+        "cycle4_arm_v1_build_identity_unavailable",
+        "this build embeds no production build-capture tuple",
+    ))
+}
+
 /// The record-level cycle-4 arm check, exposed for the run-record BUILDER
 /// (`native_cycle4_run_record_v1`) so a record is proven acceptable to this
 /// launcher before it is ever written, rather than only when the first
@@ -2037,14 +2152,39 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
     // run had no business leaving behind. An unseeded prefix has to come out
     // of a rejected interval exactly as it went in, still bootstrap-eligible.
     verify_store_mode_marker_v1(&parent_dir, request.arm, &run, mode)?;
-    let bootstrapped =
-        bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
-            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
-        })?;
+
     // Genesis is its own mode now. An interval invocation never authors one:
     // the genesis refresh manifest this invocation was handed can only have
     // been built AFTER the Store's genesis existed, so an unseeded Store here
     // means the two are out of order.
+    //
+    // Probed READ-ONLY, before anything is created.
+    // `bootstrap_native_training_store_v2` is a mutating call -- it creates
+    // the root, its lock and its directory skeleton, and clears a stale
+    // run-record staging file -- so running it before the checks below would
+    // let a rejected invocation leave recovery state behind. The bootstrap's
+    // own inventory still has the final say further down; this is the
+    // pre-filter that keeps the rejection side-effect-free.
+    if !store_holds_published_genesis_v1(&request.store_root)? {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_genesis_not_bootstrapped",
+            format!(
+                "{} holds no genesis; run --bootstrap-genesis before the first interval",
+                request.store_root.display()
+            ),
+        ));
+    }
+    // The last gate before ANY mutation: the run record must describe THIS
+    // build. Everything above it is a pure read, so a provenance mismatch
+    // leaves the Store root exactly as it found it.
+    require_run_record_is_this_build_v1(&run)?;
+
+    let bootstrapped =
+        bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
+            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
+        })?;
+    // The authority, re-derived from the bootstrap's own inventory rather
+    // than from the probe above.
     if !bootstrapped.latest_final_present() {
         return Err(Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_genesis_not_bootstrapped",
@@ -2550,7 +2690,10 @@ pub fn run_native_cycle4_arm_bootstrap_genesis_v1(
     })?;
     let locator = decode_slot_locator_v1(&locator_bytes)?;
 
-    // 3. Claim the prefix as bootstrapped, then open it.
+    // 3. Claim the prefix as bootstrapped, then open it. The build-provenance
+    //    gate runs first: a Store must never be seeded by a build the run
+    //    record does not describe.
+    require_run_record_is_this_build_v1(&run)?;
     let (parent_dir, root_basename) = store_root_parts_v1(&request.store_root)?;
     claim_store_mode_marker_v1(
         &parent_dir,
@@ -4318,6 +4461,105 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A rejected interval leaves the Store root exactly as it found it.
+    ///
+    /// `bootstrap_native_training_store_v2` creates the root, its lock and
+    /// its directory skeleton, and clears a stale run-record staging file,
+    /// so every check that can reject an invocation has to run BEFORE it.
+    /// This drives the two that now do: the read-only genesis probe against
+    /// an unseeded root, and the build-provenance gate against a root that
+    /// looks seeded. In a unit test the running binary is never
+    /// `cycle4_arm_v1.exe`, so the provenance gate always rejects, which is
+    /// exactly the mismatched-launcher case.
+    #[test]
+    fn a_rejected_interval_never_creates_or_touches_the_store_root_v1() {
+        let arm = Cycle4ArmKindV1::ControlR;
+        let root = fresh_temp_dir_v1("rejected-interval-no-side-effect");
+        let base_seed = arm.formal_base_seed_v1();
+        let run_record = root.join("run.json");
+        let bytes = test_fixture_bytes_population_program_v2_cycle4_seeded_v1(arm.wire_v1());
+        std::fs::write(&run_record, &bytes).expect("write run record");
+        let run = decode_train_run_v2(&bytes).expect("fixture decodes");
+        let refresh_dir = root.join("refresh");
+        std::fs::create_dir_all(&refresh_dir).expect("create refresh dir");
+        let genesis = genesis_manifest_for_v1(run.run_sha256(), base_seed);
+        let manifest_path = write_chain_v1(&refresh_dir, &genesis);
+        let locator_path = root.join("slot-locator.json");
+        std::fs::write(
+            &locator_path,
+            serde_json::to_vec(&locator_for_v1(&genesis)).expect("encode locator"),
+        )
+        .expect("write locator");
+
+        let prefix = root.join("prefix");
+        std::fs::create_dir_all(&prefix).expect("create prefix");
+        let store_root = prefix.join("store");
+        let request = Cycle4ArmRequestV1 {
+            arm,
+            store_root: store_root.clone(),
+            run_record,
+            chain_dir: root.join("chain"),
+            refresh_manifest: manifest_path,
+            payoff_panel: None,
+            slot_locator: locator_path,
+            stop_generation: CYCLE4_REFRESH_INTERVAL_V1,
+            preflight_updates: None,
+        };
+
+        // 1. An UNSEEDED root: the read-only genesis probe rejects, and the
+        //    root is never created.
+        let error = run_native_cycle4_arm_v1(&request).expect_err("an unseeded root is refused");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert!(
+            !store_root.exists(),
+            "a rejected interval must not create the Store root"
+        );
+        assert_eq!(
+            std::fs::read_dir(&prefix).expect("list prefix").count(),
+            0,
+            "a rejected interval must leave the prefix empty"
+        );
+
+        // 2. A root that LOOKS seeded, so the probe passes and the
+        //    build-provenance gate is what rejects. The root keeps exactly
+        //    the one file planted in it: no lock, no skeleton, nothing.
+        std::fs::create_dir_all(&store_root).expect("create store root");
+        let latest = store_root.join(
+            NativeTrainingStoreFinalNameV2::Latest
+                .final_basename()
+                .expect("latest leaf"),
+        );
+        std::fs::write(&latest, b"{}").expect("plant a latest pointer");
+        let before = std::fs::read(&latest).expect("read planted latest");
+
+        let error =
+            run_native_cycle4_arm_v1(&request).expect_err("a mismatched launcher is refused");
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_build_provenance_mismatch");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(error.exit_code_v1(), 3);
+        let entries: Vec<_> = std::fs::read_dir(&store_root)
+            .expect("list store root")
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "a provenance rejection must not add anything to the root, saw {entries:?}"
+        );
+        assert_eq!(
+            std::fs::read(&latest).expect("re-read latest"),
+            before,
+            "a provenance rejection must not rewrite what is already there"
+        );
+        assert!(
+            !prefix.join(CYCLE4_ARM_MODE_MARKER_FILENAME_V1).exists(),
+            "a provenance rejection must not claim the prefix"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]

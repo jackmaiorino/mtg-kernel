@@ -43,6 +43,14 @@ per-update baseline sidecar. A run.json must declare the trainer that ran.
   a `static_pool: true` flag: manifests never advance past genesis.
 - Arm-kind consistency: `treatment-rb` and `static-rb` require
   `trainer_v4_candidate`; `control-r` forbids it.
+- Launcher cross-binding (round-E review round 3): `validate_source_v2`
+  admits the two production launcher names as a shape gate, and
+  `validate_cross_bindings_v2` decides which one a given record may carry.
+  A record declaring `population_program_v2_cycle4` must name
+  `cycle4_arm_v1.exe` exactly; a record without that section must name
+  `mtg-kernel-native.exe` exactly. Admitting either name for every record
+  would let a cycle-4 record claim the legacy publisher, which is the
+  wrong-attribution case the widening exists to avoid.
 
 ## 2. Evidence validation dispatch
 
@@ -95,6 +103,20 @@ process only; there is no library device parameter to inherit). Exit codes:
 0 complete, 2 usage, 3 contract rejection, 1 runtime failure. Gated behind
 the CUDA feature and the production feature like the existing bins.
 
+Round-E review round 3 adds two things. `--print-build-identity` is a
+whole-command-line mode that writes this binary's embedded build tuple
+(package, toolchain, source tree, features) as canonical JSON and exits 0,
+having read nothing and touched no device; section 4a's builder uses it. And
+at EVERY launch, bootstrap and interval alike, the arm captures its own
+embedded build metadata plus a no-follow double read of its own executable
+(`std::env::current_exe`) and requires the run record's `package`,
+`toolchain`, `source` and `runtime` to equal it exactly, failing closed with
+`cycle4_arm_v1_build_provenance_mismatch`. The gate sits immediately before
+the Store prefix is claimed: strictly before any side effect, and after the
+pure input-state rejections so those stay diagnosable. Without that a record built by
+one build and an arm binary from another produced a Store whose record
+attributed it to the wrong source tree, with every validator passing.
+
 ## 4a. Bin `src/bin/cycle4_run_record_v1.rs` (round E)
 
 Section 1 says what a cycle-4 `run.json` must declare but nothing produced
@@ -141,6 +163,14 @@ builder refuses to replace a differing record, so that shows up as a refused
 launch rather than a campaign that silently changed executables mid-run.
 Determinism is unchanged for a fixed executable: two invocations against one
 parent and one launcher still produce byte-identical output.
+
+Capturing the arm launcher's executable hash is not on its own evidence
+that the two binaries belong to one build: a hash is just a hash. So before
+capturing, the builder runs `--arm-executable --print-build-identity` and
+requires the reported tuple to equal its own byte for byte, refusing
+otherwise. The arm then re-proves the same relationship from its own side at
+every launch (section 4), so the record, the builder and the publisher are
+pinned to one build from both ends.
 
 Output passes `validate_train_run_record_v2` and the arm launcher's own
 record-level check before any bytes are written. `--output` is published

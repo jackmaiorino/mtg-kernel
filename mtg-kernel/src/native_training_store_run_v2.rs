@@ -1942,6 +1942,17 @@ impl TrainRunTopologyV2 {
 /// validation of its own: the caller still passes the result through
 /// [`validate_train_run_record_v2`], which is what actually authorizes the
 /// record.
+///
+/// Gated exactly like its only caller, `native_cycle4_run_record_v1`: a build
+/// that cannot compile the record builder has nothing to refresh, and an
+/// ungated helper would be dead code in the default workspace lint gate.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub(crate) fn refresh_derived_fields_v2(record: &mut TrainRunV2) -> Result<()> {
     let requested_episode_count = checked_u63_mul(
         record.schedule.batch_episodes,
@@ -2515,13 +2526,13 @@ fn validate_source_v2(source: &TrainRunSourceV2) -> Result<()> {
         || !source.worktree_clean
         || source.git_status_sha256 != EMPTY_SHA256
         || source.executable_capture_identity != "windows-current-module-path-file-v2"
-        // The production launcher binary set. `mtg-kernel-native.exe` is the
-        // original and every pre-cycle-4 record names it, so their validation
-        // is unchanged. `cycle4_arm_v1.exe` is the cycle-4 arm launcher
-        // (`docs/native_cycle4_arm_launcher_v1.md` section 4), which is the
-        // binary that actually publishes a cycle-4 arm's Store; a record it
-        // produces has to be able to name it honestly rather than borrowing
-        // the other launcher's name.
+        // The production launcher binary SET. Which of the two a given
+        // record may name is not a free choice: `validate_cross_bindings_v2`
+        // pins it to the record's own program, so this is only the shape
+        // gate. `mtg-kernel-native.exe` is the original and every
+        // pre-cycle-4 record names it; `cycle4_arm_v1.exe` is the cycle-4
+        // arm launcher (`docs/native_cycle4_arm_launcher_v1.md` section 4),
+        // the binary that actually publishes a cycle-4 arm's Store.
         || !matches!(
             source.binary_name.as_str(),
             LEGACY_LAUNCHER_BINARY_NAME_V2 | CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
@@ -3573,6 +3584,19 @@ fn validate_nonclaims_v2(nonclaims: &[String; 8]) -> Result<()> {
 fn validate_cross_bindings_v2(record: &TrainRunV2) -> Result<()> {
     let contracts = &record.contracts;
     let snapshot = &record.model_snapshot;
+    // The launcher a record names is decided by the program it declares, in
+    // both directions. Admitting either name for every record would let a
+    // cycle-4 record claim the legacy publisher (and a legacy record claim
+    // the cycle-4 one), which is exactly the wrong-publisher attribution the
+    // two-name widening was introduced to avoid.
+    let expected_binary_name = if contracts.population_program_v2_cycle4.is_some() {
+        CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
+    } else {
+        LEGACY_LAUNCHER_BINARY_NAME_V2
+    };
+    if record.source.binary_name != expected_binary_name {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding));
+    }
     if record.runtime.numerical_backend_identity != contracts.train_step.numerical_backend_identity
         || snapshot.feature_contract_digest != contracts.tensorizer.feature_contract_digest
         || snapshot.feature_encoding_digest != contracts.tensorizer.feature_encoding_digest
@@ -4367,14 +4391,28 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_
 /// The frozen ladder pool every ladder-identity fixture uses, exposed so
 /// sibling modules' tests can compose a ladder-tuple parent record without
 /// restating the pool's pinned weights and identities.
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub(crate) fn test_fixture_ladder_pool_v2() -> OpponentLadderPoolContractV1 {
     tests::valid_ladder_pool_fixture()
 }
 
 /// A shape-valid `opponent_ladder_initialization` section, exposed for the
 /// same reason as [`test_fixture_ladder_pool_v2`].
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub(crate) fn test_fixture_ladder_initialization_v1() -> OpponentLadderInitializationContractV1 {
     tests::population_parent_initialization_fixture()
 }
@@ -9849,6 +9887,8 @@ mod tests {
             crate::native_cycle4_arm_v1::Cycle4ArmKindV1::from_wire_v1(arm_kind)
                 .expect("the cycle-4 fixture is built for a real arm kind")
                 .formal_base_seed_v1();
+        // ... and the launcher a cycle-4 record is cross-bound to name.
+        record.source.binary_name = CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1.to_owned();
         refresh_derived(&mut record);
         record
     }
@@ -10170,6 +10210,43 @@ mod tests {
             decode_train_run_v2(&tampered).unwrap_err().kind(),
             TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization)
         );
+    }
+
+    /// The launcher a record names is decided by the program it declares,
+    /// in BOTH directions. Admitting either name for every record would let
+    /// a cycle-4 record claim the legacy publisher, which is the
+    /// wrong-attribution case the two-name widening had to avoid.
+    #[test]
+    fn the_launcher_binary_name_is_cross_bound_to_the_program() {
+        // A cycle-4 record must name the cycle-4 launcher.
+        for arm_kind in [
+            CYCLE4_ARM_KIND_CONTROL_R_V1,
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let mut record = population_program_v2_cycle4_record(arm_kind);
+            record.source.binary_name = CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1.to_owned();
+            refresh_derived(&mut record);
+            validate_train_run_record_v2(record)
+                .expect("a cycle-4 record naming the cycle-4 launcher validates");
+
+            let mut record = population_program_v2_cycle4_record(arm_kind);
+            record.source.binary_name = LEGACY_LAUNCHER_BINARY_NAME_V2.to_owned();
+            refresh_derived(&mut record);
+            assert_record_error(record, TrainRunV2ErrorKind::CrossBinding);
+        }
+
+        // A record with no cycle-4 section must name the legacy launcher.
+        let mut record = coherent_v2_record();
+        record.source.binary_name = LEGACY_LAUNCHER_BINARY_NAME_V2.to_owned();
+        refresh_derived(&mut record);
+        validate_train_run_record_v2(record)
+            .expect("a pre-cycle-4 record naming the legacy launcher validates");
+
+        let mut record = coherent_v2_record();
+        record.source.binary_name = CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1.to_owned();
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::CrossBinding);
     }
 
     #[test]
