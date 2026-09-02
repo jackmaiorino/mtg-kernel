@@ -2204,6 +2204,26 @@ struct ExpectedKernelClockV2 {
     active_player: PlayerSeatV1,
 }
 
+/// Field *presence*, not field value, is what arms the rendezvous guard, so
+/// the two must not collapse into the same `None`. A bare
+/// `Option<ExpectedKernelClockV2>` cannot tell "the caller omitted the guard"
+/// from "the caller sent `expected_clock: null`", and the second is exactly
+/// what a nullable serializer emits for an unset field: taking it as absence
+/// would silently disarm the check on the V2 path and silently accept a field
+/// V1 has always rejected as unknown. `#[serde(default)]` still supplies
+/// `None` when the key is absent, and this function is not called then; when
+/// the key is present this runs, a null fails to deserialize into the struct,
+/// and the whole request is rejected as `malformed_request` before any
+/// handler can act on it.
+fn deserialize_present_expected_clock_v2<'de, D>(
+    deserializer: D,
+) -> Result<Option<ExpectedKernelClockV2>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    ExpectedKernelClockV2::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "request_type", rename_all = "snake_case", deny_unknown_fields)]
 enum ShadowScorerRequestV1 {
@@ -2224,7 +2244,9 @@ enum ShadowScorerRequestV1 {
         selected_index: u32,
         /// V2 only. A V1-mode service rejects any request carrying this field
         /// as `malformed_request`, exactly as it did before the field existed.
-        #[serde(default)]
+        /// An explicit `null` counts as carrying it and is rejected under both
+        /// versions; see `deserialize_present_expected_clock_v2`.
+        #[serde(default, deserialize_with = "deserialize_present_expected_clock_v2")]
         expected_clock: Option<ExpectedKernelClockV2>,
     },
 }
@@ -4676,6 +4698,16 @@ mod tests {
         )
     }
 
+    fn step_line_with_null_clock_v2(request_id: &str, selected_index: u64) -> String {
+        format!(
+            concat!(
+                "{{\"request_type\":\"step\",\"request_id\":\"{}\",\"episode_id\":2,",
+                "\"expected_step\":0,\"selected_index\":{},\"expected_clock\":null}}"
+            ),
+            request_id, selected_index,
+        )
+    }
+
     fn score_current_line_v1(request_id: &str) -> String {
         format!(
             "{{\"request_type\":\"score_current\",\"request_id\":\"{request_id}\",\"episode_id\":2,\"expected_step\":0}}"
@@ -4705,6 +4737,15 @@ mod tests {
             &service.handle_line_v1(&step_line_with_clock_v2("v1-clock", 0, selected, &clock)),
         );
         assert_eq!(refused["error_code"], "malformed_request");
+
+        // An explicit null is *carrying* the field, not omitting it. Before V2
+        // existed, deny_unknown_fields rejected this exact line; taking it as
+        // absence would quietly change V1's answer to a request it has always
+        // refused.
+        let refused_null =
+            value_v1(&service.handle_line_v1(&step_line_with_null_clock_v2("v1-null", selected)));
+        assert_eq!(refused_null["error_code"], "malformed_request");
+
         let after = value_v1(&service.handle_line_v1(&score_current_line_v1("v1-after")));
         assert_eq!(
             decision_projection_v1(&scored),
@@ -4788,6 +4829,20 @@ mod tests {
                 "a rejected {label} must not advance the session"
             );
         }
+
+        // A nullable serializer emitting `"expected_clock": null` for an unset
+        // guard must not be read as "no guard": that would fail open on the
+        // exact path this protocol version exists to close.
+        let refused_null = value_v1(
+            &service.handle_line_v1(&step_line_with_null_clock_v2("guard-null", selected)),
+        );
+        assert_eq!(refused_null["error_code"], "malformed_request");
+        let after_null = value_v1(&service.handle_line_v1(&score_current_line_v1("guard-after")));
+        assert_eq!(
+            decision_projection_v1(&before),
+            decision_projection_v1(&after_null),
+            "an explicit null must not advance the session"
+        );
 
         // An unknown field inside the clock is a schema violation, never a
         // silently ignored hint.

@@ -47,9 +47,9 @@ unchanged, terminal bodies are unchanged, and no existing field is renamed,
 reordered or removed.
 
 Under v1 the `kernel_clock` field is omitted entirely (not emitted as `null`),
-and a `step` carrying `expected_clock` is rejected with the pre-existing
-`malformed_request` error code, which is exactly what a v1 service returned for
-that request before the field existed.
+and a `step` carrying `expected_clock` in any form, object or `null`, is
+rejected with the pre-existing `malformed_request` error code, which is exactly
+what a v1 service returned for that request before the field existed.
 
 ## `kernel_clock` (response, v2 only)
 
@@ -106,13 +106,21 @@ send `priority_player` or `stack_depth` here: they are deliberately not part of
 the assertion, because the caller can legitimately be uncertain about the stack
 depth at the moment it answers.
 
+**Omit the key entirely to skip the guard. Do not send `"expected_clock": null`.**
+Presence is what arms the check, so an explicit null is treated as carrying the
+field with an unusable value and is rejected under both versions. If your JSON
+writer emits nulls for unset fields (Jackson's and Gson's defaults do), configure
+it to omit them instead: a null that was read as absence would silently disarm
+the very check this version exists to provide, and v1 has always rejected the key.
+
 Outcomes:
 
 | Case | Result |
 | --- | --- |
-| absent | Step proceeds exactly as in v1. |
+| key absent | Step proceeds exactly as in v1. |
 | present and agrees | Step proceeds. |
 | present and disagrees | Response `error_code: "clock_mismatch"`, message `expected_clock does not match the kernel clock of the current decision`. **The session does not advance**: the same decision is still pending and can be re-read with `score_current`. |
+| present as `null` | `malformed_request` under both v1 and v2, session unchanged. |
 | present under `--protocol v1` | `malformed_request`, session unchanged. |
 | present with an unknown inner field | `malformed_request`, session unchanged. |
 
@@ -131,6 +139,10 @@ priority action or pass, send `expected_clock` built from XMage's own
 `game.getTurnNum()`-derived round, `game.getTurnStepType()` and active player.
 A `clock_mismatch` then names the first divergence instead of letting the
 rendezvous slide silently until an unmappable action voids the pair.
+
+When you do not want the guard on a particular step, leave the key out of the
+JSON object rather than writing a null. `XMageRallyBridgeJsonCodec` builds
+request lines explicitly, so this is a matter of not adding the property.
 
 Note that `XMageRallyBridgeJsonCodec` rejects unknown response fields, so the
 Java client must learn `kernel_clock` before any scorer is launched with
