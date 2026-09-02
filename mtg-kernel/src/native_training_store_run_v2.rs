@@ -950,6 +950,24 @@ pub struct TrainRunContractsV2 {
     /// struct only, no `validate_population_program_v2_cycle2` port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) population_program_v2_cycle2: Option<PopulationProgramContractV2Cycle2>,
+    /// Population-v2 cycle-3 successor authority (searcher-in-pool
+    /// campaign). Additive: absent for every pre-cycle-3 record, so
+    /// canonical bytes of all prior records are unchanged. Ported from
+    /// `fable/cp7-parity-scorer-v1`'s own
+    /// `population_program_v2_cycle3` section, DECODE-ONLY, following the
+    /// `population_program_v2_cycle2` precedent immediately above rather
+    /// than that branch's own authority wiring: the parent-lineage
+    /// validator, its six frozen `POPULATION_CYCLE3_PARENT_*` literals,
+    /// `PopulationProgramV2Cycle3ValidationErrorV1`, and the
+    /// `validate_decoded_train_run_v2` call site are all deliberately not
+    /// ported. The reason this build wants the section at all is narrow and
+    /// stated in `LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5 (S0):
+    /// "decode-only support for the cycle-3 `population_program_v2_cycle3`
+    /// contract so one scorer build reads cycle-3 and cycle-4 Stores." The
+    /// section therefore decodes and is available for read-only
+    /// audit/extraction; its content claims are not authenticated here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle3: Option<PopulationProgramContractV2Cycle3>,
     /// Cycle-4 v4-candidate trainer authority
     /// (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
     /// `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`).
@@ -1079,6 +1097,45 @@ pub struct PopulationProgramContractV2Cycle2 {
     pub(crate) parent_lineage: PopulationSourceLineageV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) source_lineage_v2: Option<PopulationSourceLineageV1>,
+}
+
+/// Population-v2 cycle-3 successor authority, ported field-for-field from
+/// `fable/cp7-parity-scorer-v1`'s own `PopulationProgramContractV2Cycle3`.
+/// It is exactly [`PopulationProgramContractV2Cycle2`] above minus that
+/// type's trailing optional `source_lineage_v2`, and reuses the identical,
+/// unchanged [`PopulationSourceLineageV1`] for `parent_lineage`; no new
+/// nested type, constant, or error variant accompanies it.
+///
+/// DECODE-ONLY, exactly as `population_program_v2_cycle2` is decode-only on
+/// this lineage. The source branch DOES authenticate this section (a
+/// six-field parent-lineage validator against frozen literals, wired into
+/// `validate_decoded_train_run_v2`), and its own doc says it did so
+/// because cycle-2's decode-only precedent gave it nothing to mirror. That
+/// argument does not transfer here: this build's need is the S0 scorer's
+/// need to READ a cycle-3 Store, not to launch or authorize a cycle-3 run,
+/// and importing frozen parent-lineage literals for a campaign this build
+/// never launches would assert an authority this diff has no standing to
+/// grant. The one place cycle-3 is named outside its own decode is
+/// `validate_population_program_v2_cycle4`'s mutual-exclusivity block,
+/// which already names cycle-2 for the identical reason.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle3 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) retest_manifest_sha256: String,
+    pub(crate) global_generation_offset: u64,
+    pub(crate) local_updates_total: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) slot_count: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) refresh_manifest_identity: String,
+    pub(crate) retest_beta_f32_bits: String,
+    pub(crate) expected_base_seed: u64,
+    pub(crate) pool_identity: String,
+    pub(crate) parent_store_local_generation: u64,
+    pub(crate) parent_lineage: PopulationSourceLineageV1,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -2873,7 +2930,12 @@ fn validate_trainer_v4_candidate_v1(contracts: &TrainRunContractsV2) -> Result<(
 /// `population_program_v2_cycle2` (review finding P2-5: a cycle-4 arm runs
 /// the population engine only, and `population_program_v2_cycle2` is a
 /// distinct, unrelated population-program successor -- see that field's own
-/// doc comment).
+/// doc comment), and, on the identical reasoning, with the decode-only
+/// `population_program_v2_cycle3` section: one Store record never belongs
+/// to two population-program cycles at once, and a cycle-3 section is no
+/// more compatible with a cycle-4 arm than a cycle-2 one is. This
+/// exclusivity is the ONLY place cycle-3 is named outside its own decode;
+/// it adds no authentication of cycle-3's own content.
 fn validate_population_program_v2_cycle4(contracts: &TrainRunContractsV2) -> Result<()> {
     let Some(program) = contracts.population_program_v2_cycle4.as_ref() else {
         return Ok(());
@@ -2886,6 +2948,7 @@ fn validate_population_program_v2_cycle4(contracts: &TrainRunContractsV2) -> Res
         || contracts.population_program_v1.is_some()
         || contracts.response_exploiter_v1.is_some()
         || contracts.population_program_v2_cycle2.is_some()
+        || contracts.population_program_v2_cycle3.is_some()
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
@@ -9802,6 +9865,119 @@ mod tests {
         });
         refresh_derived(&mut record);
         assert!(validate_train_run_record_v2(record).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Cycle-3 run-contract widening, decode-only
+    // (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5, S0: "one
+    // scorer build reads cycle-3 and cycle-4 Stores")
+    // ------------------------------------------------------------------
+
+    /// A structurally well-formed cycle-3 section. The hashes are
+    /// placeholders, deliberately: this lineage ports the section
+    /// DECODE-ONLY, so no frozen parent-lineage literal is imported and no
+    /// value here is asserted against one. The non-hash fields reuse the
+    /// shared population constants so the fixture reads like a real record.
+    fn population_program_v2_cycle3_fixture_v1() -> PopulationProgramContractV2Cycle3 {
+        PopulationProgramContractV2Cycle3 {
+            identity: "population-program-v2-cycle3".to_owned(),
+            package_commit: POPULATION_PACKAGE_COMMIT_V1.to_owned(),
+            program_document_sha256: "a".repeat(64),
+            retest_manifest_sha256: POPULATION_RETEST_MANIFEST_SHA256_V1.to_owned(),
+            global_generation_offset: 2_048,
+            local_updates_total: 1_024,
+            refresh_interval: POPULATION_REFRESH_INTERVAL_V1,
+            slot_count: POPULATION_SLOT_COUNT_V1,
+            reward_identity: POPULATION_REWARD_IDENTITY_V1.to_owned(),
+            refresh_manifest_identity: POPULATION_REFRESH_MANIFEST_IDENTITY_V1.to_owned(),
+            retest_beta_f32_bits: POPULATION_RETEST_BETA_F32_BITS_V1.to_owned(),
+            expected_base_seed: 972_002,
+            pool_identity: POPULATION_POOL_IDENTITY_V1.to_owned(),
+            parent_store_local_generation: 2_048,
+            parent_lineage: PopulationSourceLineageV1 {
+                base_seed: 972_002,
+                store_tree_sha256: "b".repeat(64),
+                run_sha256: "c".repeat(64),
+                checkpoint_sha256: "d".repeat(64),
+                sidecar_sha256: "e".repeat(64),
+                state_sha256: "f".repeat(64),
+                model_parameter_sha256: "0".repeat(64),
+            },
+        }
+    }
+
+    /// The S0 requirement itself: a cycle-3-shaped run record decodes on
+    /// this build, byte-identically, and the decoded section round-trips
+    /// field for field. No validator runs against it (decode-only), which
+    /// is exactly why this test asserts decode success and not literal
+    /// conformance.
+    #[test]
+    fn population_program_v2_cycle3_shaped_record_decodes_and_round_trips() {
+        let mut record = coherent_v2_record();
+        let section = population_program_v2_cycle3_fixture_v1();
+        record.contracts.population_program_v2_cycle3 = Some(section.clone());
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let decoded = decode_train_run_v2(&bytes).expect("a cycle-3-shaped record decodes");
+        assert_eq!(decoded.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            decoded
+                .record()
+                .contracts
+                .population_program_v2_cycle3
+                .as_ref(),
+            Some(&section)
+        );
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("\"population_program_v2_cycle3\":{"));
+    }
+
+    /// Additivity: a record without the section still serializes without
+    /// the key at all, so every pre-cycle-3 record's canonical bytes are
+    /// unchanged by this widening.
+    #[test]
+    fn population_program_v2_cycle3_absent_round_trips_without_the_key() {
+        let bytes = coherent_v2_bytes();
+        decode_train_run_v2(&bytes).expect("the unwidened record still decodes");
+        assert!(!String::from_utf8(bytes)
+            .unwrap()
+            .contains("population_program_v2_cycle3"));
+    }
+
+    /// Co-presence rejection: a cycle-4 arm record carrying a cycle-3
+    /// section is rejected, the exact analogue of
+    /// `population_program_v2_cycle4_mutually_exclusive_with_cycle2`. The
+    /// stricter `assert_record_error` form pins the failure to the
+    /// exclusivity rule's own `InvalidLiteral` kind rather than accepting
+    /// any error.
+    #[test]
+    fn population_program_v2_cycle4_mutually_exclusive_with_cycle3() {
+        let mut record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        record.contracts.population_program_v2_cycle3 =
+            Some(population_program_v2_cycle3_fixture_v1());
+        refresh_derived(&mut record);
+        assert_record_error(record, TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    /// The widening did not loosen `deny_unknown_fields` inside the new
+    /// section: an unknown key nested in `population_program_v2_cycle3`
+    /// still fails closed at deserialization.
+    #[test]
+    fn unknown_key_inside_population_program_v2_cycle3_fails_closed() {
+        let mut record = coherent_v2_record();
+        record.contracts.population_program_v2_cycle3 =
+            Some(population_program_v2_cycle3_fixture_v1());
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let mut raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        raw["contracts"]["population_program_v2_cycle3"]["totally_unknown_field_v99"] =
+            serde_json::Value::from(1u64);
+        let tampered = to_canonical_json_bytes_v1(&raw, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&tampered).unwrap_err().kind(),
+            TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization)
+        );
     }
 
     #[test]
