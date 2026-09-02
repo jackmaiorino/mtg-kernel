@@ -503,6 +503,7 @@ function New-TtsS1TierPlan {
         shard_root = $shardRoot
         barrier_path = $barrierPath
         barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
+        ready_timeout_seconds = $script:TtsS1ShardReadyTimeoutSeconds
         diagnostics_root = $diagnosticsRoot
         shards = $shards
         merge_arguments = $mergeArgs
@@ -561,6 +562,7 @@ $provenance = [ordered]@{
     formal_shard_count = $script:TtsS1FormalShardCount
     formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
     formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
+    shard_ready_timeout_seconds = $script:TtsS1ShardReadyTimeoutSeconds
     start_barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
     host_logical_cpus = $hostLogicalCpus
     formal_topology_admissible = $formalTopology.admissible
@@ -770,17 +772,34 @@ foreach ($plan in $tierPlans) {
                 stderr_path = $_.stderr_path
             }
         }) -AfterStart {
-            # EVERY SHARD IS UP. Only now may the token appear: published
-            # any earlier and the shards would be released into a fan-out
-            # that did not yet exist, which is the whole thing the barrier
-            # is here to prevent.
+            # EVERY SHARD IS STARTED, which is not the same as every shard
+            # being READY. Process creation is nearly instant; loading a
+            # checkpoint is not, and it does not take the same time in every
+            # shard. Publishing the token here would release a fast shard to
+            # search while a slow sibling was still reading weights, and
+            # those head decisions are exactly the cheap ones a p99 would
+            # thank you for.
+            #
+            # So the token waits for every shard's own announcement. This
+            # runs inside the fan-out's try, so a shard that never announces
+            # raises here, every started child is reaped, and the tier catch
+            # writes RUN_FAILED naming both the silent shards and what it
+            # killed.
+            $readiness = Wait-TtsS1ShardReadiness -Directory $plan.shard_root `
+                -ShardCount $plan.shard_count -TimeoutSeconds $plan.ready_timeout_seconds
+            $script:TtsS1LastShardReadiness = @($readiness.ready)
+            Write-Output ("TTS_S1_SHARDS_READY tier={0} shards={1} waited_seconds={2}" -f `
+                $plan.tier, $readiness.ready.Count, [math]::Round($readiness.waited_seconds, 2))
+            # ONLY NOW.
             $script:TtsS1BarrierReleasedMicros = Write-TtsS1StartBarrier -Path $plan.barrier_path
         }
         if (Test-Path -LiteralPath $plan.barrier_path) {
             $barrierReleasedMicros = $script:TtsS1BarrierReleasedMicros
         }
-        Write-Output ("TTS_S1_BARRIER tier={0} token={1} released_unix_micros={2} timeout_seconds={3}" -f `
-            $plan.tier, $plan.barrier_path, $barrierReleasedMicros, $plan.barrier_timeout_seconds)
+        Write-Output ("TTS_S1_BARRIER tier={0} token={1} released_unix_micros={2} ready_shards={3} ready_timeout_seconds={4} shard_timeout_seconds={5}" -f `
+            $plan.tier, $plan.barrier_path, $barrierReleasedMicros, `
+            @($script:TtsS1LastShardReadiness).Count, $plan.ready_timeout_seconds, `
+            $plan.barrier_timeout_seconds)
         # EVERY SHARD IS WAITED ON BEFORE ANY FAILURE IS RAISED, so a
         # failing shard never leaves its siblings running unattended behind
         # a thrown launcher.
@@ -866,6 +885,9 @@ foreach ($plan in $tierPlans) {
             # run together from eight run one after another.
             barrier_path = $plan.barrier_path
             barrier_released_unix_micros = $report.body.shard_topology.start_barrier_released_unix_micros
+            shard_readiness = @($report.body.shard_topology.shard_readiness)
+            latest_ready_unix_micros = $report.body.shard_topology.latest_ready_unix_micros
+            released_after_every_shard_ready = $report.body.shard_topology.released_after_every_shard_ready
             every_shard_waited_on_the_barrier = $report.body.shard_topology.every_shard_waited_on_the_barrier
             every_first_decision_after_the_barrier = $report.body.shard_topology.every_first_decision_after_the_barrier
             censused_decisions = $report.body.shard_topology.censused_decisions
@@ -913,14 +935,15 @@ foreach ($plan in $tierPlans) {
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        Write-Output ("TTS_S1_TIER_TOPOLOGY tier={0} shard_count={1} barrier={2} first_decision_after_barrier={3} fully_concurrent_permille={4} of={5} required={6} formal={7}" -f `
+        Write-Output ("TTS_S1_TIER_TOPOLOGY tier={0} shard_count={1} barrier={2} released_after_every_shard_ready={8} first_decision_after_barrier={3} fully_concurrent_permille={4} of={5} required={6} formal={7}" -f `
             $plan.tier, $report.body.shard_topology.shard_count, `
             $report.body.shard_topology.every_shard_waited_on_the_barrier, `
             $report.body.shard_topology.every_first_decision_after_the_barrier, `
             $report.body.shard_topology.fully_concurrent_permille, `
             $report.body.shard_topology.censused_decisions, `
             $report.body.shard_topology.min_fully_concurrent_permille, `
-            $report.body.shard_topology.meets_formal_topology)
+            $report.body.shard_topology.meets_formal_topology, `
+            $report.body.shard_topology.released_after_every_shard_ready)
         Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} shard_count={5} target_protocol_p99_micros={6} target_protocol_max_micros={7} whole_episode_protocol_p99_micros={8} projected_s2_worker_hours_milli={9} extrapolated_ordinals={10} within_compute_cap={11}" -f `
             $plan.tier, $observedVerdict, $report.body.verdict_view, `
             $report.body.episodes_replayed, $report.body.searched_decisions, $plan.shard_count, `
@@ -989,6 +1012,7 @@ $summary = [ordered]@{
     formal_shard_count = $script:TtsS1FormalShardCount
     formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
     formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
+    shard_ready_timeout_seconds = $script:TtsS1ShardReadyTimeoutSeconds
     start_barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
     host_logical_cpus = $hostLogicalCpus
     formal_topology = $isFormalTopology

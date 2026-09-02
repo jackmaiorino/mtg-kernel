@@ -95,20 +95,32 @@ $script:TtsS1FormalLogicalCpusPerShard = 2
 # contending while the others finish.
 $script:TtsS1FormalMinFullConcurrencyPermille = 950
 
-# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V2
+# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V3
 $script:TtsS1ShardTopologyRule = 'formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes' +
     '-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under' +
     '-on-a-host-with-at-least-2-logical-cpus-per-shard' +
-    '-every-shard-released-by-one-start-barrier-before-its-first-decision' +
+    '-every-shard-announcing-itself-ready-after-loading-its-checkpoint' +
+    '-one-start-barrier-released-only-after-every-such-announcement' +
+    '-no-shard-searching-before-that-release' +
     '-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard' +
-    '-any-other-shard-count-or-a-smaller-host-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result' +
-    '/v2'
+    '-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result' +
+    '/v3'
 
-# How long a shard may wait at the start barrier before failing closed.
-# The wait covers every OTHER shard's process start and checkpoint load, so
-# it is generous; what matters is that it is bounded, because a shard that
-# gave up and went ahead alone would measure an idle machine.
-$script:TtsS1StartBarrierTimeoutSeconds = 900
+# How long the LAUNCHER waits for every shard to announce itself ready.
+#
+# It covers K checkpoint loads running at once, so it is generous; what
+# matters is that it is bounded, because a launcher that waited forever for
+# a shard that had already died would hang the whole ladder.
+$script:TtsS1ShardReadyTimeoutSeconds = 900
+
+# How long a SHARD may wait at the start barrier before failing closed.
+#
+# Strictly longer than the launcher's own wait, and that ordering is the
+# point: the token cannot go out until the launcher has every announcement,
+# so a shard whose deadline expired first would fail while the launcher was
+# still legitimately waiting for a slower sibling. A shard that gave up and
+# went ahead alone would measure an idle machine.
+$script:TtsS1StartBarrierTimeoutSeconds = $script:TtsS1ShardReadyTimeoutSeconds + 300
 
 function Get-TtsS1PinnedContract {
     # The whole pinned contract, for the provenance and summary records.
@@ -120,6 +132,8 @@ function Get-TtsS1PinnedContract {
         formal_shard_count = $script:TtsS1FormalShardCount
         formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
         formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
+        shard_ready_timeout_seconds = $script:TtsS1ShardReadyTimeoutSeconds
+        start_barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
     }
 }
 
@@ -254,6 +268,10 @@ function Assert-TtsS1TierReportContract {
         # THE MEASURED OVERLAP, not the declared count: eight processes run
         # one after another declare the same eight as eight run together.
         $checks += @{ Path = 'body.shard_topology.every_shard_waited_on_the_barrier'; Expected = $true; What = 'start barrier' }
+        # RELEASED ONLY AFTER EVERY ANNOUNCEMENT: a token released when the
+        # last process was CREATED is not one released when the last
+        # process was READY.
+        $checks += @{ Path = 'body.shard_topology.released_after_every_shard_ready'; Expected = $true; What = 'readiness handshake' }
         $checks += @{ Path = 'body.shard_topology.every_first_decision_after_the_barrier'; Expected = $true; What = 'first decision after the barrier' }
         $checks += @{ Path = 'body.shard_topology.meets_formal_topology'; Expected = $true; What = 'formal topology' }
     }
@@ -401,6 +419,11 @@ function Wait-TtsS1Process {
 # not have taken.
 $script:TtsS1BarrierReleasedMicros = 0
 
+# The readiness announcements the last fan-out waited for, for the same
+# strict-mode reason: the launcher reports the count on a path the
+# after-start hook may not have reached.
+$script:TtsS1LastShardReadiness = @()
+
 # What the last Invoke-TtsS1ProcessFanOut had to stop, as records carrying a
 # label and a process id.
 #
@@ -506,6 +529,85 @@ function Invoke-TtsS1Process {
             stderr_path = $StderrPath
         })
     return $fanOut.results[0].exit_code
+}
+
+function Get-TtsS1ShardReadyFileName {
+    # native_tts_s1_replay_v1::tts_s1_shard_ready_file_name_v1, restated so
+    # the launcher can name every file it is waiting for while knowing only
+    # how many shards it started.
+    param([Parameter(Mandatory = $true)][int]$ShardIndex)
+    return ("shard-ready-{0:0000}.token" -f $ShardIndex)
+}
+
+function Wait-TtsS1ShardReadiness {
+    <#
+    Waits until every shard has announced that it is LOADED, not merely
+    started.
+
+    THE HOLE THIS CLOSES: Start-Process returns when a process has been
+    created, which is nearly instant. Loading a checkpoint is not, and it
+    does not take the same time in every shard. A token released on process
+    creation lets a fast shard search while a slow sibling is still reading
+    weights, and those head decisions are exactly the cheap ones a p99 would
+    thank you for. So each shard publishes a ready file after its load and
+    before it waits, and the token may only go out once every one of them is
+    on disk.
+
+    BOUNDED, and fail-closed on the deadline: the caller is inside the
+    fan-out's try, so a throw here reaps every started child, and the
+    message names the shards that never announced.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][int]$ShardCount,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [int]$PollMilliseconds = 100
+    )
+    $expected = @(0..($ShardCount - 1) | ForEach-Object {
+        [pscustomobject]@{
+            shard_index = $_
+            path = Join-Path $Directory (Get-TtsS1ShardReadyFileName -ShardIndex $_)
+        }
+    })
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $ready = @()
+        $missing = @()
+        foreach ($shard in $expected) {
+            $announcement = $null
+            if (Test-Path -LiteralPath $shard.path -PathType Leaf) {
+                # Parsed, not merely counted: a file that is present but
+                # unreadable is a shard that has not finished announcing.
+                # The shard publishes by rename so this should not be
+                # observable, and costs nothing if it ever is.
+                try {
+                    $fields = ([System.IO.File]::ReadAllText($shard.path)).Trim() -split '\s+'
+                    if ($fields.Count -eq 2) {
+                        $announcement = [pscustomobject]@{
+                            shard_index = $shard.shard_index
+                            process_id = [uint64]$fields[0]
+                            ready_unix_micros = [uint64]$fields[1]
+                        }
+                    }
+                }
+                catch { $announcement = $null }
+            }
+            if ($null -eq $announcement) { $missing += $shard.shard_index } else { $ready += $announcement }
+        }
+        if ($missing.Count -eq 0) {
+            $watch.Stop()
+            return [pscustomobject]@{
+                ready = @($ready)
+                waited_seconds = $watch.Elapsed.TotalSeconds
+            }
+        }
+        if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $watch.Stop()
+            throw ("shards {0} never announced themselves ready within {1} s; the start barrier was not released and no shard searched" -f `
+                ($missing -join ','), $TimeoutSeconds)
+        }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
 }
 
 function Write-TtsS1StartBarrier {

@@ -176,6 +176,7 @@ function New-TtsS1TestReport {
         [int]$PinnedMinPermille = $script:TtsS1FormalMinFullConcurrencyPermille,
         [bool]$MeetsFormalTopology = $true,
         [bool]$EveryShardWaitedOnTheBarrier = $true,
+        [bool]$ReleasedAfterEveryShardReady = $true,
         [bool]$EveryFirstDecisionAfterTheBarrier = $true,
         [int]$FullyConcurrentPermille = 1000,
         [switch]$OmitLatencyCurve,
@@ -199,6 +200,11 @@ function New-TtsS1TestReport {
             host_total_memory_bytes = 137438953472
             start_barrier_released_unix_micros = 1700000000000000
             every_shard_waited_on_the_barrier = $EveryShardWaitedOnTheBarrier
+            shard_readiness = @(0..7 | ForEach-Object {
+                [pscustomobject]@{ shard_index = $_; process_id = (4000 + $_); ready_unix_micros = 1699999999999000 }
+            })
+            latest_ready_unix_micros = 1699999999999000
+            released_after_every_shard_ready = $ReleasedAfterEveryShardReady
             every_first_decision_after_the_barrier = $EveryFirstDecisionAfterTheBarrier
             censused_decisions = 1000
             fully_concurrent_decisions = $FullyConcurrentPermille
@@ -272,7 +278,14 @@ Assert-True ($script:TtsS1FormalShardCount -eq 8) 'the pinned formal shard count
 Assert-True ($script:TtsS1FormalLogicalCpusPerShard -eq 2) 'the pin requires two logical CPUs per shard'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*exactly-8-concurrent-replay-processes*') 'the topology rule names the pinned concurrency'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*at-least-2-logical-cpus-per-shard*') 'the topology rule names the host requirement'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*/v2') 'the pinned topology rule is the V2 one'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*/v3') 'the pinned topology rule is the V3 one'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*announcing-itself-ready*') 'the topology rule names the readiness announcement'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*released-only-after-every-such-announcement*') 'the topology rule names what gates the release'
+# The two deadlines are ordered: the token cannot go out until the launcher
+# has every announcement, so a shard whose own deadline expired first would
+# fail while the launcher was still legitimately waiting for a sibling.
+Assert-True ($script:TtsS1ShardReadyTimeoutSeconds -gt 0) 'the launcher states a bounded readiness deadline'
+Assert-True ($script:TtsS1StartBarrierTimeoutSeconds -gt $script:TtsS1ShardReadyTimeoutSeconds) 'a shard outwaits the launcher own readiness deadline'
 # THE OVERLAP CLAUSES, which are what V2 added: a declared count of eight is
 # satisfied just as well by eight processes run one after another.
 Assert-True ($script:TtsS1FormalMinFullConcurrencyPermille -eq 950) 'the pinned full-concurrency tolerance is 950 permille'
@@ -322,13 +335,20 @@ Assert-True ($null -eq (Get-TtsS1ContractRejection -Report (New-TtsS1TestReport)
 foreach ($case in @(
     @{ Name = 'a run whose shards never waited on a barrier'; Report = (New-TtsS1TestReport -EveryShardWaitedOnTheBarrier $false -MeetsFormalTopology $false); Fragment = 'start barrier' },
     @{ Name = 'a run whose shard searched before the barrier'; Report = (New-TtsS1TestReport -EveryFirstDecisionAfterTheBarrier $false -MeetsFormalTopology $false); Fragment = 'first decision after the barrier' },
-    @{ Name = 'a run that never overlapped'; Report = (New-TtsS1TestReport -FullyConcurrentPermille 0 -MeetsFormalTopology $false); Fragment = 'formal topology' }
+    @{ Name = 'a run that never overlapped'; Report = (New-TtsS1TestReport -FullyConcurrentPermille 0 -MeetsFormalTopology $false); Fragment = 'formal topology' },
+    @{ Name = 'a token released before every shard was ready'; Report = (New-TtsS1TestReport -ReleasedAfterEveryShardReady $false -MeetsFormalTopology $false); Fragment = 'readiness handshake' }
 )) {
     Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $case.Report)) "$($case.Name) is still readable as a smoke"
     $message = Get-TtsS1ContractRejection -Report $case.Report -RequireFormalShardTopology
     Assert-True ($null -ne $message) "a run claiming formal standing refuses $($case.Name)"
     Assert-True ($message -like "*$($case.Fragment)*") "the refusal of $($case.Name) names $($case.Fragment)"
 }
+
+# The ready-file name is derived from the shard index alone, and by the same
+# rule on both sides: native_tts_s1_replay_v1::tts_s1_shard_ready_file_name_v1.
+Assert-True ((Get-TtsS1ShardReadyFileName -ShardIndex 0) -ceq 'shard-ready-0000.token') 'the ready file name is zero-padded from the shard index'
+Assert-True ((Get-TtsS1ShardReadyFileName -ShardIndex 5) -ceq 'shard-ready-0005.token') 'the ready file name matches the Rust helper'
+Assert-True ((Get-TtsS1ShardReadyFileName -ShardIndex 63) -ceq 'shard-ready-0063.token') 'the ready file name pads the largest legal index'
 
 # THE RULE ITSELF, as a pure function, evaluated at CPU counts this host
 # may not have. Both branches are covered without depending on the machine
@@ -891,6 +911,106 @@ try {
         catch { $unknownExit = $_.Exception.Message }
         Assert-True ($null -ne $unknownExit) 'an unreadable exit code is refused rather than cast to a success'
         Assert-True ($unknownExit -like '*never a success*') 'the refusal says why an unknown exit is not a pass'
+
+        # THE READINESS HANDSHAKE, with real children and deliberately
+        # UNEQUAL startup. Start-Process returns when a process has been
+        # CREATED, which is nearly instant; a shard is not ready until its
+        # checkpoint is loaded, which is neither instant nor equal across
+        # shards. Two children announce at once and a third only after a
+        # ping delay, standing in for the slow load. The token must not go
+        # out until the third is in.
+        $readyRoot = Join-Path $processSandbox 'ready'
+        New-Item -ItemType Directory -Force -Path $readyRoot | Out-Null
+        # The announcement's content is a pid and a ready instant, exactly
+        # as the shard writes it; the children copy a prepared file so the
+        # publication is one filesystem operation rather than an echo cmd
+        # would have to quote.
+        $announceSource = Join-Path $processSandbox 'announcement.txt'
+        [System.IO.File]::WriteAllText($announceSource, "4242 1700000000000000`n", [System.Text.UTF8Encoding]::new($false))
+        $announceJobs = @(0, 1, 2 | ForEach-Object {
+            $target = Join-Path $readyRoot (Get-TtsS1ShardReadyFileName -ShardIndex $_)
+            $arguments = @('/c', 'copy', '/y', $announceSource, $target, '>nul')
+            if ($_ -eq 2) {
+                # THE SLOW SHARD.
+                $arguments = @('/c', 'ping', '-n', '4', '127.0.0.1', '>nul', '&', 'copy', '/y', $announceSource, $target, '>nul')
+            }
+            [pscustomobject]@{
+                label = "ready-$_"
+                file_path = $comspec
+                arguments = $arguments
+                stdout_path = (Join-Path $processSandbox "ready-$_.out")
+                stderr_path = (Join-Path $processSandbox "ready-$_.err")
+            }
+        })
+        $releaseMicros = 0
+        $readySeen = $null
+        $readyWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $readyFanOut = Invoke-TtsS1ProcessFanOut -Jobs $announceJobs -AfterStart {
+            # Every child is STARTED here, and the slow one has certainly
+            # not announced: this is precisely the moment a release on
+            # process creation would have fired.
+            $script:TtsS1ReadyTestEarly = @(0, 1, 2 | Where-Object {
+                Test-Path -LiteralPath (Join-Path $readyRoot (Get-TtsS1ShardReadyFileName -ShardIndex $_)) -PathType Leaf
+            })
+            $script:TtsS1ReadyTestSeen = Wait-TtsS1ShardReadiness -Directory $readyRoot -ShardCount 3 -TimeoutSeconds 30
+            $script:TtsS1ReadyTestRelease = Write-TtsS1StartBarrier -Path (Join-Path $readyRoot 'start-barrier.token')
+        }
+        $readyWatch.Stop()
+        $readySeen = $script:TtsS1ReadyTestSeen
+        $releaseMicros = $script:TtsS1ReadyTestRelease
+        Assert-True (@($script:TtsS1ReadyTestEarly).Count -lt 3) 'the slow shard had not announced when every child had merely started'
+        Assert-True (@($readySeen.ready).Count -eq 3) 'the wait returns only once every shard has announced'
+        Assert-True ($readyWatch.Elapsed.TotalSeconds -ge 2.0) "the token waited for the slow shard ($([math]::Round($readyWatch.Elapsed.TotalSeconds, 2)) s)"
+        Assert-True (Test-Path -LiteralPath (Join-Path $readyRoot 'start-barrier.token') -PathType Leaf) 'the token is published once every shard is ready'
+        Assert-True ($releaseMicros -gt 0) 'the token carries its own release instant'
+        foreach ($announcement in $readySeen.ready) {
+            Assert-True ($announcement.process_id -eq 4242) "shard $($announcement.shard_index) announcement carries its pid"
+            Assert-True ($announcement.ready_unix_micros -eq 1700000000000000) "shard $($announcement.shard_index) announcement carries its ready instant"
+        }
+        Assert-True (@($readyFanOut.results | Where-Object { $_.exit_code -ne 0 }).Count -eq 0) 'every announcing child exited cleanly'
+        Assert-True (@($script:TtsS1LastFanOutStopped).Count -eq 0) 'the readiness fan-out left nothing to reap'
+
+        # THE TIMEOUT PATH. A shard that never announces is not a shard the
+        # token may be released for: the wait fails closed, names the
+        # missing shards, and the token is never written.
+        $timeoutRoot = Join-Path $processSandbox 'ready-timeout'
+        New-Item -ItemType Directory -Force -Path $timeoutRoot | Out-Null
+        Copy-Item -LiteralPath $announceSource -Destination (Join-Path $timeoutRoot (Get-TtsS1ShardReadyFileName -ShardIndex 0)) -Force
+        $timeoutMessage = $null
+        $timeoutWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try { [void](Wait-TtsS1ShardReadiness -Directory $timeoutRoot -ShardCount 3 -TimeoutSeconds 1) }
+        catch { $timeoutMessage = $_.Exception.Message }
+        $timeoutWatch.Stop()
+        Assert-True ($null -ne $timeoutMessage) 'a shard that never announces fails the readiness wait closed'
+        Assert-True ($timeoutMessage -like '*shards 1,2*') 'the readiness timeout names the shards that never announced'
+        Assert-True ($timeoutMessage -like '*no shard searched*') 'the readiness timeout says the barrier was never released'
+        Assert-True ($timeoutWatch.Elapsed.TotalSeconds -ge 1.0) 'the readiness wait ran its full deadline'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $timeoutRoot 'start-barrier.token'))) 'no token is published when a shard never announces'
+
+        # AND THE TIMEOUT REAPS: the wait runs inside the fan-out try, so a
+        # shard that never announces kills the ones that did rather than
+        # leaving them waiting on a token that will never come.
+        $reapRoot = Join-Path $processSandbox 'ready-reap'
+        New-Item -ItemType Directory -Force -Path $reapRoot | Out-Null
+        $reapFailure = $null
+        try {
+            [void](Invoke-TtsS1ProcessFanOut -Jobs @(
+                    [pscustomobject]@{ label = 'silent-0'; file_path = $comspec; arguments = @('/c', 'ping', '-n', '30', '127.0.0.1', '>nul'); stdout_path = (Join-Path $processSandbox 'reap-0.out'); stderr_path = (Join-Path $processSandbox 'reap-0.err') },
+                    [pscustomobject]@{ label = 'silent-1'; file_path = $comspec; arguments = @('/c', 'ping', '-n', '30', '127.0.0.1', '>nul'); stdout_path = (Join-Path $processSandbox 'reap-1.out'); stderr_path = (Join-Path $processSandbox 'reap-1.err') }
+                ) -AfterStart {
+                    [void](Wait-TtsS1ShardReadiness -Directory $reapRoot -ShardCount 2 -TimeoutSeconds 1)
+                })
+        }
+        catch { $reapFailure = $_.Exception.Message }
+        Assert-True ($null -ne $reapFailure) 'a readiness timeout raises out of the fan-out'
+        Assert-True ($reapFailure -like '*never announced themselves ready*') 'the raised failure is the readiness one'
+        $reaped = @($script:TtsS1LastFanOutStopped)
+        Assert-True ($reaped.Count -eq 2) 'a readiness timeout reaps every child it started'
+        foreach ($entry in $reaped) {
+            $stillAlive = $null
+            try { $stillAlive = Get-Process -Id $entry.process_id -ErrorAction Stop } catch { $stillAlive = $null }
+            Assert-True ($null -eq $stillAlive) "the reaped child $($entry.label) is gone after a readiness timeout"
+        }
 
         # THE ORPHAN CASE, which is why the fan-out reaps in a finally.
         # Starting K children is K chances to throw, and a throw on the
