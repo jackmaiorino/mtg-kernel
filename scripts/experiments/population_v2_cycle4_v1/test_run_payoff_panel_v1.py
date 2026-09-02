@@ -13,6 +13,8 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,8 +31,12 @@ from run_payoff_panel_v1 import (
     canonical_bytes,
     commit_staged_file,
     load_manifest,
+    ARM_KINDS,
+    SlotLocation,
     load_slot_locator,
     matchup_environment,
+    parse_slot_location,
+    validate_slot_chain_dirs,
     panel_filename,
     parse_args,
     remove_stray,
@@ -81,6 +87,13 @@ def synthetic_slot(index: int) -> dict:
 
 def synthetic_slots() -> list[dict]:
     return [synthetic_slot(index) for index in range(SLOT_COUNT)]
+
+
+def plain_locator(prefix: str = "/stores/slot-") -> dict[int, SlotLocation]:
+    """Every slot a bare store root, the control-r shape."""
+    return {
+        index: SlotLocation(Path(f"{prefix}{index}"), None) for index in range(SLOT_COUNT)
+    }
 
 
 def synthetic_manifest_document() -> dict:
@@ -346,7 +359,7 @@ class DryRunDeterminismTests(unittest.TestCase):
     def test_repeated_rendering_is_byte_identical(self):
         slots = synthetic_slots()
         specs = build_matchup_specs(base_seed=7, games_per_matchup=16)
-        locator = {index: Path(f"/stores/slot-{index}") for index in range(SLOT_COUNT)}
+        locator = plain_locator()
         executable = Path("/build/mtg_kernel-abc123.exe")
         output_dir = Path("/evidence/panel-run")
         first = render_dry_run_lines(specs, slots, locator, executable, output_dir)
@@ -362,7 +375,7 @@ class DryRunDeterminismTests(unittest.TestCase):
 
     def test_different_base_seed_changes_the_rendering(self):
         slots = synthetic_slots()
-        locator = {index: Path(f"/stores/slot-{index}") for index in range(SLOT_COUNT)}
+        locator = plain_locator()
         executable = Path("/build/mtg_kernel-abc123.exe")
         output_dir = Path("/evidence/panel-run")
         first = render_dry_run_lines(
@@ -425,7 +438,7 @@ class StoreGenerationTranslationTests(unittest.TestCase):
         slots = synthetic_slots()
         slots[5] = self.own_run_slot(896 + 128)
         slots[5]["store_generation"] = store_generation_for_slot(slots[5], self.TRAINEE_RUN)
-        locator = {index: Path(f"D:/cycle4/slot-{index}") for index in range(SLOT_COUNT)}
+        locator = plain_locator("D:/cycle4/slot-")
         # Pick the matchup that actually names slot 5.
         spec = next(
             candidate
@@ -528,7 +541,8 @@ class ManifestAndSlotLocatorLoadingTests(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             locator = load_slot_locator(path)
             self.assertEqual(len(locator), SLOT_COUNT)
-            self.assertEqual(locator[0], base / "slot-0")
+            self.assertEqual(locator[0].store_root, base / "slot-0")
+            self.assertIsNone(locator[0].baseline_chain_dir)
 
     def test_load_slot_locator_rejects_relative_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -561,10 +575,226 @@ class PanelFilenameTests(unittest.TestCase):
         self.assertEqual(panel_filename(16), "refresh-16.panel.json")
 
 
+# Absolute in the PLATFORM's sense: a POSIX-rooted path is not absolute
+# on Windows, where these tests also run, and the locator demands
+# absolute paths.
+ABS_SLOT_0 = str(Path(tempfile.gettempdir()).resolve() / "cycle4-slot-0")
+ABS_SLOT_5 = str(Path(tempfile.gettempdir()).resolve() / "cycle4-slot-5")
+ABS_CHAIN = str(Path(tempfile.gettempdir()).resolve() / "cycle4-chain")
+
+
+class SlotLocatorChainDirTests(unittest.TestCase):
+    """The additive per-slot `baseline_chain_dir`, and the arm-kind rule that
+    decides which slots must carry it (review finding P1)."""
+
+    TRAINEE_RUN = hash_tag(2)
+
+    def test_bare_string_entry_stays_a_chainless_store_root(self):
+        location = parse_slot_location(0, ABS_SLOT_0)
+        self.assertEqual(location.store_root, Path(ABS_SLOT_0))
+        self.assertIsNone(location.baseline_chain_dir)
+
+    def test_object_entry_carries_both_absolute_paths(self):
+        location = parse_slot_location(
+            5,
+            {"store_root": ABS_SLOT_5, "baseline_chain_dir": ABS_CHAIN},
+        )
+        self.assertEqual(location.store_root, Path(ABS_SLOT_5))
+        self.assertEqual(location.baseline_chain_dir, Path(ABS_CHAIN))
+
+    def test_object_entry_rejects_unknown_keys(self):
+        with self.assertRaises(PanelRunnerError):
+            parse_slot_location(
+                5,
+                {
+                    "store_root": ABS_SLOT_5,
+                    "baseline_chain_dir": ABS_CHAIN,
+                    "chain_dir": "/chains/typo",
+                },
+            )
+
+    def test_object_entry_requires_baseline_chain_dir(self):
+        # The wrapper writes the object form only for a slot that needs the
+        # directory, so an object without one is a wrapper bug.
+        with self.assertRaises(PanelRunnerError):
+            parse_slot_location(5, {"store_root": ABS_SLOT_5})
+
+    def test_entry_rejects_relative_and_malformed_paths(self):
+        for value in (
+            "stores/slot-5",
+            {"store_root": "stores/slot-5", "baseline_chain_dir": ABS_CHAIN},
+            {"store_root": ABS_SLOT_5, "baseline_chain_dir": "chains/arm-a"},
+            {"store_root": ABS_SLOT_5, "baseline_chain_dir": ""},
+            {"store_root": 5, "baseline_chain_dir": ABS_CHAIN},
+            5,
+            None,
+            [],
+        ):
+            with self.assertRaises(PanelRunnerError):
+                parse_slot_location(5, value)
+
+    def test_load_slot_locator_accepts_a_mixed_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            path = base / "locator.json"
+            stores: dict[str, object] = {
+                str(index): str(base / f"slot-{index}") for index in range(SLOT_COUNT)
+            }
+            stores["5"] = {
+                "store_root": str(base / "slot-5"),
+                "baseline_chain_dir": str(base / "chain"),
+            }
+            path.write_text(
+                json.dumps({"schema": SLOT_LOCATOR_SCHEMA, "stores": stores}),
+                encoding="utf-8",
+            )
+            locator = load_slot_locator(path)
+            self.assertIsNone(locator[0].baseline_chain_dir)
+            self.assertEqual(locator[5].store_root, base / "slot-5")
+            self.assertEqual(locator[5].baseline_chain_dir, base / "chain")
+
+    def own_run_slots(self) -> list[dict]:
+        slots = synthetic_slots()
+        slots[5]["source_run_sha256"] = self.TRAINEE_RUN
+        return slots
+
+    def v4_locator(self) -> dict[int, SlotLocation]:
+        locator = plain_locator()
+        locator[5] = SlotLocation(Path(ABS_SLOT_5), Path(ABS_CHAIN))
+        return locator
+
+    def test_v4_arms_require_a_chain_dir_on_every_own_run_slot(self):
+        slots = self.own_run_slots()
+        for arm in ("static-rb", "treatment-rb"):
+            validate_slot_chain_dirs(arm, slots, self.v4_locator(), self.TRAINEE_RUN)
+            # Missing on the own-run slot: the probe would take the plain
+            # walk and panic on trained v4 evidence, so reject it here.
+            with self.assertRaises(PanelRunnerError):
+                validate_slot_chain_dirs(arm, slots, plain_locator(), self.TRAINEE_RUN)
+
+    def test_control_r_and_other_run_slots_must_not_carry_a_chain_dir(self):
+        slots = self.own_run_slots()
+        # control-r is a v3 arm: even its own-run slot takes the plain walk.
+        validate_slot_chain_dirs("control-r", slots, plain_locator(), self.TRAINEE_RUN)
+        with self.assertRaises(PanelRunnerError):
+            validate_slot_chain_dirs("control-r", slots, self.v4_locator(), self.TRAINEE_RUN)
+        # An other-run slot never carries one, whatever the arm.
+        stray = plain_locator()
+        stray[0] = SlotLocation(Path(ABS_SLOT_0), Path(ABS_CHAIN))
+        for arm in ARM_KINDS:
+            with self.assertRaises(PanelRunnerError):
+                validate_slot_chain_dirs(arm, slots, stray, self.TRAINEE_RUN)
+
+    def test_unknown_arm_kind_is_rejected(self):
+        with self.assertRaises(PanelRunnerError):
+            validate_slot_chain_dirs(
+                "treatment", self.own_run_slots(), plain_locator(), self.TRAINEE_RUN
+            )
+
+    def test_matchup_environment_passes_each_side_its_own_chain_dir(self):
+        slots = self.own_run_slots()
+        slots[5]["store_generation"] = 128
+        locator = self.v4_locator()
+        spec = next(
+            candidate
+            for candidate in build_matchup_specs(1000, 4)
+            if candidate.higher_slot == 5
+        )
+        environment = matchup_environment(slots, locator, spec, Path("D:/out/outcome.json"))
+        self.assertEqual(environment["H2H_OPPONENT_CHAIN_DIR"], str(Path(ABS_CHAIN)))
+        self.assertNotIn("H2H_CANDIDATE_CHAIN_DIR", environment)
+        # And the reverse seat when the own-run slot is the lower one.
+        spec = next(
+            candidate
+            for candidate in build_matchup_specs(1000, 4)
+            if candidate.lower_slot == 5
+        )
+        environment = matchup_environment(slots, locator, spec, Path("D:/out/outcome.json"))
+        self.assertEqual(environment["H2H_CANDIDATE_CHAIN_DIR"], str(Path(ABS_CHAIN)))
+        self.assertNotIn("H2H_OPPONENT_CHAIN_DIR", environment)
+
+
+class WrapperEmittedLocatorTests(unittest.TestCase):
+    """The reader against a locator the WRAPPER actually wrote, not one this
+    file hand-builds.
+
+    The two sides agree on the additive object form only if they are checked
+    against each other: the wrapper's own dry-run suite builds a synthetic
+    treatment-rb campaign and emits `panel-slot-locator.json` from its real
+    writer, and this loads that file through the real reader. A hand-built
+    fixture would keep passing after either side drifted."""
+
+    @staticmethod
+    def _powershell() -> str | None:
+        return shutil.which("powershell.exe") or shutil.which("pwsh")
+
+    def test_the_reader_accepts_the_wrappers_own_treatment_rb_locator(self):
+        powershell = self._powershell()
+        if powershell is None:
+            self.skipTest("powershell.exe is unavailable on this host")
+        suite = (
+            Path(__file__).resolve().parent / "run-cycle4-arm-tests.ps1"
+        )
+        if not suite.is_file():
+            self.skipTest(f"{suite.name} is not present")
+        with tempfile.TemporaryDirectory() as tmp:
+            work_root = Path(tmp).resolve()
+            completed = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(suite),
+                    "-WorkRoot",
+                    str(work_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            locators = sorted(work_root.rglob("panel-slot-locator.json"))
+            if not locators:
+                self.skipTest(
+                    "the wrapper dry-run suite emitted no panel locator "
+                    f"(exit {completed.returncode}): {completed.stdout[-2000:]}"
+                )
+            # Every emitted locator must load, and at least one must carry the
+            # object form on the treatment-rb arm's own-run slot.
+            with_chain_dir = []
+            for path in locators:
+                locator = load_slot_locator(path)
+                self.assertEqual(len(locator), SLOT_COUNT)
+                for index in range(SLOT_COUNT):
+                    self.assertTrue(locator[index].store_root.is_absolute())
+                carried = [
+                    index
+                    for index in range(SLOT_COUNT)
+                    if locator[index].baseline_chain_dir is not None
+                ]
+                if carried:
+                    with_chain_dir.append((path, locator, carried))
+            self.assertTrue(
+                with_chain_dir,
+                "the wrapper must write baseline_chain_dir on a treatment-rb "
+                f"own-run slot; loaded {len(locators)} locator(s) without one",
+            )
+            for path, locator, carried in with_chain_dir:
+                for index in carried:
+                    chain_dir = locator[index].baseline_chain_dir
+                    self.assertIsNotNone(chain_dir)
+                    self.assertTrue(
+                        chain_dir.is_absolute(),
+                        f"{path}: slot {index} baseline_chain_dir must be absolute",
+                    )
+
+
 def _base_cli_args(tmp: str, **overrides: str) -> list[str]:
     values = {
         "--manifest": str(Path(tmp) / "manifest.json"),
         "--slot-locator": str(Path(tmp) / "locator.json"),
+        "--arm": "control-r",
         "--base-seed": "1",
         "--output-dir": str(Path(tmp) / "out"),
         "--executable": str(Path(tmp) / "fake-exe"),
@@ -659,6 +889,8 @@ class OutputDirResolutionTests(unittest.TestCase):
                         "manifest.json",
                         "--slot-locator",
                         "locator.json",
+                        "--arm",
+                        "control-r",
                         "--base-seed",
                         "1",
                         "--output-dir",

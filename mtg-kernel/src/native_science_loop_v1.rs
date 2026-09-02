@@ -2481,8 +2481,23 @@ mod windows_science_loop_tests {
     /// of a pair is structurally rare, and that metric misrepresents parity
     /// as collapse").
     ///
+    /// H2H_CANDIDATE_CHAIN_DIR / H2H_OPPONENT_CHAIN_DIR (cycle-4, review
+    /// finding P1): that side's arm baseline chain directory. A
+    /// `trainer_v4_candidate` Store that has trained past genesis carries v4
+    /// update evidence, and the plain `load_native_training_boundary_v2`
+    /// walk rejects it, so a cycle-4 treatment-rb or static-rb slot can only
+    /// be loaded through the baseline-aware walk against its own chain
+    /// directory. Supplying the knob switches that side to
+    /// `load_native_training_boundary_baseline_v4_v2`; omitting it on a v4
+    /// run is refused rather than left to panic mid-panel, and supplying it
+    /// on a v3 run is refused rather than silently ignored
+    /// (`cycle4_h2h_boundary_mode_v1` owns both rules). This probe is
+    /// eval-only and never reconciles a staging area, so a missing sidecar
+    /// stays a hard failure on this path.
+    ///
     /// Env: H2H_CANDIDATE_STORE_ROOT, H2H_CANDIDATE_GEN,
     /// H2H_CANDIDATE_BASE_SEED, H2H_CANDIDATE_POOL_JSON,
+    /// H2H_CANDIDATE_CHAIN_DIR, H2H_OPPONENT_CHAIN_DIR,
     /// H2H_OPPONENT_STORE_ROOT, H2H_ENVIRONMENT_RANDOMIZATION_V2, H2H_PAIRS
     /// (default 1_024), H2H_EVAL_SEED (default 7_777). Prints
     /// `H2H candidate_gen=<g> W/L/D x/y/z of N` plus
@@ -2512,8 +2527,12 @@ mod windows_science_loop_tests {
             run_native_checkpoint_wide_with_ladder_opponent_eval_v1,
             run_native_checkpoint_with_ladder_opponent_eval_v1,
         };
+        use crate::native_cycle4_arm_v1::{
+            cycle4_h2h_boundary_mode_v1, Cycle4BaselineChainAccessV1, Cycle4H2hBoundaryModeV1,
+        };
         use crate::native_ladder_promotion_v1::promotion_gate_win_rate_passes_v1;
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+        use crate::native_training_store_resume_v2::load_native_training_boundary_baseline_v4_v2;
         use crate::native_training_store_run_v2::{
             test_fixture_bytes_with_schedule_and_base_seed_ladder_v2,
             test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2,
@@ -2709,9 +2728,34 @@ mod windows_science_loop_tests {
             decode_train_run_v2(&candidate_run_bytes).expect("candidate run record");
         let candidate_root =
             ValidatedNativeTrainingStoreRootV2::open_v2(&candidate_store_root).unwrap();
-        let candidate_boundary =
-            load_native_training_boundary_v2(&candidate_root, &candidate_run, candidate_gen)
-                .unwrap();
+        let candidate_chain_dir = std::env::var("H2H_CANDIDATE_CHAIN_DIR").ok();
+        let candidate_mode = cycle4_h2h_boundary_mode_v1(
+            candidate_run
+                .record()
+                .contracts()
+                .trainer_v4_candidate
+                .is_some(),
+            candidate_chain_dir.as_deref(),
+        )
+        .unwrap_or_else(|code| panic!("H2H candidate boundary mode rejected: {code}"));
+        let candidate_access = candidate_chain_dir.as_ref().map(|dir| {
+            Cycle4BaselineChainAccessV1::new_v1(
+                PathBuf::from(dir),
+                candidate_run.checkpoint_segment_updates(),
+            )
+        });
+        let candidate_boundary = match (candidate_mode, candidate_access.as_ref()) {
+            (Cycle4H2hBoundaryModeV1::BaselineV4, Some(access)) => {
+                load_native_training_boundary_baseline_v4_v2(
+                    &candidate_root,
+                    &candidate_run,
+                    candidate_gen,
+                    access,
+                )
+            }
+            _ => load_native_training_boundary_v2(&candidate_root, &candidate_run, candidate_gen),
+        }
+        .unwrap();
 
         // Opponent: loaded DIRECTLY from a full Store root (digest
         // re-validation optional, eval-only tooling -- see docs above).
@@ -2733,23 +2777,60 @@ mod windows_science_loop_tests {
         let opponent_run = decode_train_run_v2(&opponent_run_bytes).expect("opponent run record");
         let opponent_root =
             ValidatedNativeTrainingStoreRootV2::open_v2(&opponent_store_root).unwrap();
-        let opponent_state =
-            validate_native_training_store_v2(&opponent_root, &opponent_run).unwrap();
+        let opponent_chain_dir = std::env::var("H2H_OPPONENT_CHAIN_DIR").ok();
+        let opponent_mode = cycle4_h2h_boundary_mode_v1(
+            opponent_run
+                .record()
+                .contracts()
+                .trainer_v4_candidate
+                .is_some(),
+            opponent_chain_dir.as_deref(),
+        )
+        .unwrap_or_else(|code| panic!("H2H opponent boundary mode rejected: {code}"));
+        let opponent_access = opponent_chain_dir.as_ref().map(|dir| {
+            Cycle4BaselineChainAccessV1::new_v1(
+                PathBuf::from(dir),
+                opponent_run.checkpoint_segment_updates(),
+            )
+        });
         let opponent_gen_knob: Option<u64> = std::env::var("H2H_OPPONENT_GEN")
             .ok()
             .map(|value| value.parse().expect("H2H_OPPONENT_GEN u64"));
         let opponent_boundary;
+        // The whole-store validate is the v3 walk and is only reachable on
+        // the unpinned path; a v4 store would be rejected by it, which is
+        // exactly why it is no longer computed eagerly.
+        let opponent_state;
         let (opponent_checkpoint, opponent_payload) = match opponent_gen_knob {
             Some(generation) => {
-                opponent_boundary =
-                    load_native_training_boundary_v2(&opponent_root, &opponent_run, generation)
-                        .unwrap();
+                opponent_boundary = match (opponent_mode, opponent_access.as_ref()) {
+                    (Cycle4H2hBoundaryModeV1::BaselineV4, Some(access)) => {
+                        load_native_training_boundary_baseline_v4_v2(
+                            &opponent_root,
+                            &opponent_run,
+                            generation,
+                            access,
+                        )
+                    }
+                    _ => {
+                        load_native_training_boundary_v2(&opponent_root, &opponent_run, generation)
+                    }
+                }
+                .unwrap();
                 (opponent_boundary.checkpoint(), opponent_boundary.payload())
             }
-            None => (
-                opponent_state.latest_checkpoint(),
-                opponent_state.latest_payload(),
-            ),
+            None => {
+                assert!(
+                    matches!(opponent_mode, Cycle4H2hBoundaryModeV1::Plain),
+                    "H2H_OPPONENT_GEN must pin the generation for a v4 opponent store"
+                );
+                opponent_state =
+                    validate_native_training_store_v2(&opponent_root, &opponent_run).unwrap();
+                (
+                    opponent_state.latest_checkpoint(),
+                    opponent_state.latest_payload(),
+                )
+            }
         };
         println!(
             "H2H opponent_resolved_gen={} pinned={}",

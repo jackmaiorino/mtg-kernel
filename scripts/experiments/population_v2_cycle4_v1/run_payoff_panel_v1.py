@@ -45,6 +45,20 @@ both because cycle-4's Store and manifest schema are newer than v1's:
      naming other runs keep their labels verbatim, since those runs number
      their own Stores.
 
+  1c. Per-side baseline chain directories: a treatment-rb or static-rb arm's
+     own Store is a `trainer_v4_candidate` Store, and once it has trained
+     past genesis its update evidence only validates through the v4
+     recompute. The probe's plain boundary walk rejects it, so every slot
+     bound to such an arm's own run must be loaded through that arm's
+     baseline chain directory. The index-keyed slot locator carries it: a
+     slot entry is either a bare store-root string (as before) or an object
+     `{"store_root": "<abs>", "baseline_chain_dir": "<abs>"}`, and the object
+     form is passed to the probe as `H2H_CANDIDATE_CHAIN_DIR` /
+     `H2H_OPPONENT_CHAIN_DIR`. `--arm` says which rule applies: a v4 arm
+     REQUIRES the object form on its own-run slots, and every other slot
+     (and every control-r slot) must be the bare string, so a wrapper that
+     forgets the directory is rejected here rather than panicking mid-panel.
+
   2. No concurrency screen: v1 first measured whether N parallel replicas of
      one arm were bit-identical and fast enough before committing to
      parallel execution across the full matrix. Cycle-4's round-C contract
@@ -133,6 +147,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 TEST_NAME = (
     "native_science_loop_v1::windows_science_loop_tests::"
@@ -208,6 +223,12 @@ EXPECTED_ROLES = (
     "exploiter-1",
 )
 
+
+# Arm kinds, matching the launcher's own wire values. The two rb arms train
+# through the v4 trainer, so their own Store needs a baseline chain directory
+# to be read back at all.
+ARM_KINDS = ("control-r", "static-rb", "treatment-rb")
+BASELINE_V4_ARM_KINDS = ("static-rb", "treatment-rb")
 
 # The contract's trainee-local start generation. An own-run slot's manifest
 # label is this many generations above the arm Store's own numbering; see the
@@ -405,11 +426,72 @@ def load_manifest(path: Path) -> tuple[bytes, str, int, list[dict]]:
     return raw, manifest_sha256, refresh_index, ordered
 
 
-def load_slot_locator(path: Path) -> dict[int, Path]:
-    """Machine-local slot index -> store root mapping. Absolute paths only
+class SlotLocation(NamedTuple):
+    """One slot's machine-local location: its Store root, and for a slot
+    bound to a v4 arm's own run, that arm's baseline chain directory."""
+
+    store_root: Path
+    baseline_chain_dir: Path | None
+
+
+def _absolute_path_or_reject(value: object, what: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise PanelRunnerError(f"{what} must be a non-empty string")
+    resolved = Path(value)
+    if not resolved.is_absolute():
+        raise PanelRunnerError(f"{what} must be an absolute path: {value!r}")
+    return resolved
+
+
+def parse_slot_location(index: int, value: object) -> SlotLocation:
+    """One `stores` entry, in either admissible form.
+
+    A bare string is a Store root with no chain directory, exactly as before.
+    An object is `{"store_root", "baseline_chain_dir"}` and must carry both:
+    the wrapper writes the object form only for a slot that NEEDS the chain
+    directory, so an object without one is a wrapper bug, not a slot that
+    happens to lack it. Unknown keys inside the object are rejected."""
+    if isinstance(value, str):
+        return SlotLocation(
+            _absolute_path_or_reject(value, f"slot locator store root for slot {index}"),
+            None,
+        )
+    if not isinstance(value, dict):
+        raise PanelRunnerError(
+            f"slot locator value for slot {index} must be a string or an object: {value!r}"
+        )
+    unknown = set(value) - {"store_root", "baseline_chain_dir"}
+    if unknown:
+        raise PanelRunnerError(
+            f"slot locator entry for slot {index} has unknown keys: {sorted(unknown)}"
+        )
+    missing = {"store_root", "baseline_chain_dir"} - set(value)
+    if missing:
+        raise PanelRunnerError(
+            f"slot locator entry for slot {index} is missing {sorted(missing)}; "
+            "the object form carries both"
+        )
+    return SlotLocation(
+        _absolute_path_or_reject(
+            value["store_root"], f"slot locator store root for slot {index}"
+        ),
+        _absolute_path_or_reject(
+            value["baseline_chain_dir"],
+            f"slot locator baseline_chain_dir for slot {index}",
+        ),
+    )
+
+
+def load_slot_locator(path: Path) -> dict[int, SlotLocation]:
+    """Machine-local slot index -> location mapping. Absolute paths only
     (the manifest's own "no absolute paths in hashed contracts" rule extends
     here: this file is never read by the Rust builder and its bytes never
-    enter any hashed artifact)."""
+    enter any hashed artifact).
+
+    Each `stores` entry is either a bare store-root string or the additive
+    object form `{"store_root", "baseline_chain_dir"}`; see
+    `parse_slot_location`. Which slots must carry which form is decided
+    against the arm kind and the roster in `validate_slot_chain_dirs`."""
     document = load_json(path)
     if document.get("schema") != SLOT_LOCATOR_SCHEMA:
         raise PanelRunnerError(
@@ -418,7 +500,7 @@ def load_slot_locator(path: Path) -> dict[int, Path]:
     stores = document.get("stores")
     if not isinstance(stores, dict) or len(stores) != SLOT_COUNT:
         raise PanelRunnerError("slot locator must map exactly eight slot indexes")
-    resolved: dict[int, Path] = {}
+    resolved: dict[int, SlotLocation] = {}
     for key, value in stores.items():
         try:
             index = int(key)
@@ -428,19 +510,41 @@ def load_slot_locator(path: Path) -> dict[int, Path]:
             raise PanelRunnerError(
                 f"slot locator has an out-of-range or duplicate index: {key!r}"
             )
-        if not isinstance(value, str) or not value:
-            raise PanelRunnerError(
-                f"slot locator value for slot {index} must be a non-empty string"
-            )
-        root = Path(value)
-        if not root.is_absolute():
-            raise PanelRunnerError(
-                f"slot locator store root for slot {index} must be an absolute path: {value!r}"
-            )
-        resolved[index] = root
+        resolved[index] = parse_slot_location(index, value)
     if set(resolved) != set(range(SLOT_COUNT)):
         raise PanelRunnerError("slot locator must cover slots 0..7 exactly once")
     return resolved
+
+
+def validate_slot_chain_dirs(
+    arm: str,
+    slots: list[dict],
+    locator: dict[int, SlotLocation],
+    trainee_run_sha256: str,
+) -> None:
+    """Every slot bound to a v4 arm's OWN run must carry a baseline chain
+    directory, and no other slot may.
+
+    A missing one would send the probe down the plain boundary walk, which
+    rejects trained v4 evidence outright: the panel would panic partway
+    through instead of failing here. A superfluous one would be silently
+    ignored by the probe, so it is refused rather than accepted as a no-op."""
+    if arm not in ARM_KINDS:
+        raise PanelRunnerError(f"unknown arm kind: {arm!r}")
+    for index, slot in enumerate(slots):
+        own_run = slot["source_run_sha256"] == trainee_run_sha256
+        needs_chain_dir = own_run and arm in BASELINE_V4_ARM_KINDS
+        has_chain_dir = locator[index].baseline_chain_dir is not None
+        if needs_chain_dir and not has_chain_dir:
+            raise PanelRunnerError(
+                f"slot {index} ({slot['role']}) is bound to the {arm} arm's own run, so its "
+                "locator entry must carry baseline_chain_dir"
+            )
+        if has_chain_dir and not needs_chain_dir:
+            raise PanelRunnerError(
+                f"slot {index} ({slot['role']}) carries baseline_chain_dir but is not an "
+                f"own-run slot of a v4 arm ({arm})"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -478,20 +582,29 @@ def matchup_environment(
 ) -> dict[str, str]:
     candidate = slots[spec.lower_slot]
     opponent = slots[spec.higher_slot]
-    return {
-        "H2H_CANDIDATE_STORE_ROOT": str(locator[spec.lower_slot]),
+    candidate_location = locator[spec.lower_slot]
+    opponent_location = locator[spec.higher_slot]
+    environment = {
+        "H2H_CANDIDATE_STORE_ROOT": str(candidate_location.store_root),
         # STORE generations, translated by `store_generation_for_slot`: an
         # own-run slot's trainee-local label does not exist in the arm's own
         # Store, which restarted at generation 0.
         "H2H_CANDIDATE_GEN": str(candidate["store_generation"]),
         "H2H_CANDIDATE_USE_STORE_RUN": "1",
-        "H2H_OPPONENT_STORE_ROOT": str(locator[spec.higher_slot]),
+        "H2H_OPPONENT_STORE_ROOT": str(opponent_location.store_root),
         "H2H_OPPONENT_GEN": str(opponent["store_generation"]),
         "H2H_PAIRS": str(spec.pair_count),
         "H2H_EVAL_SEED": str(spec.evaluation_seed),
         "H2H_ENVIRONMENT_RANDOMIZATION_V2": "1",
         "H2H_OUTCOME_JSON": str(outcome_path),
     }
+    # Only a side whose Store is a v4 arm's own carries one; the probe
+    # rejects the pairing either way round, so this is never a hint.
+    if candidate_location.baseline_chain_dir is not None:
+        environment["H2H_CANDIDATE_CHAIN_DIR"] = str(candidate_location.baseline_chain_dir)
+    if opponent_location.baseline_chain_dir is not None:
+        environment["H2H_OPPONENT_CHAIN_DIR"] = str(opponent_location.baseline_chain_dir)
+    return environment
 
 
 def matchup_command(executable: Path) -> list[str]:
@@ -756,6 +869,9 @@ def run(args: argparse.Namespace) -> Path | None:
     manifest_bytes, manifest_sha256, refresh_index, slots = load_manifest(args.manifest)
     del manifest_bytes  # only its hash (and refresh_index) is needed once loaded
     locator = load_slot_locator(args.slot_locator)
+    validate_slot_chain_dirs(
+        args.arm, slots, locator, load_json(args.manifest)["trainee_run_sha256"]
+    )
     next_refresh_index = refresh_index + 1
     if next_refresh_index > MAX_REFRESH_INDEX:
         raise PanelRunnerError(
@@ -843,6 +959,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--slot-locator", required=True, type=Path)
+    # Which locator shape each slot must carry is a function of the arm kind,
+    # and the manifest does not carry one (it is the same roster for all
+    # three arms), so the caller states it.
+    parser.add_argument("--arm", required=True, choices=list(ARM_KINDS))
     parser.add_argument(
         "--games-per-matchup", type=int, default=DEFAULT_GAMES_PER_MATCHUP
     )

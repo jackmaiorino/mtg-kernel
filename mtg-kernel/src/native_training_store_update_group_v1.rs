@@ -2760,6 +2760,25 @@ pub(crate) fn advance_baseline_v4_for_group_v1(
     prior_state: &NativeBaselineStateV4,
     access: &dyn BaselineChainAccessV4,
 ) -> DispatchResult<NativeBaselineStateV4> {
+    // Review finding P1, third reconcile case: a committed update whose
+    // sidecar is absent from both the staged and the promoted namespace is
+    // re-derivable from its OWN committed evidence, by exactly the mint the
+    // producer ran. `access` decides whether that is admissible (it is only
+    // ever the Store's tip update); the reconstructed record is staged, so
+    // it is promoted with the rest once the walk has accepted the Store, and
+    // it is then read back and validated below like any other, so a record
+    // that disagrees with the committed evidence still fails closed.
+    let update_index = group.wire.evidence.update_index;
+    if access.sidecar_record_bytes_v4(update_index).is_none()
+        && access.may_reconstruct_sidecar_v4(update_index)
+    {
+        let record = mint_update_group_baseline_sidecar_v4_v1(run, group, prior_state)?;
+        if record.update_index() != update_index
+            || !access.stage_sidecar_record_v4(update_index, record.canonical_bytes())
+        {
+            return Err(UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing);
+        }
+    }
     let source = |update_index: u64| access.sidecar_record_bytes_v4(update_index);
     validate_update_group_baseline_v4_v1(run, group, prior_state, &source)
 }
@@ -6626,12 +6645,23 @@ mod tests {
     /// agree bit for bit.
     struct RecordingBaselineAccessV1 {
         published: std::cell::RefCell<std::collections::BTreeMap<u64, Vec<u8>>>,
+        /// The one update index this double will let the walk reconstruct,
+        /// standing in for the launcher's "only the Store's tip" rule.
+        reconstructable: Option<u64>,
     }
 
     impl RecordingBaselineAccessV1 {
         fn new_v1() -> Self {
             Self {
                 published: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+                reconstructable: None,
+            }
+        }
+
+        fn reconstructing_v1(update_index: u64) -> Self {
+            Self {
+                published: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+                reconstructable: Some(update_index),
             }
         }
     }
@@ -6655,6 +6685,10 @@ mod tests {
                 .borrow_mut()
                 .insert(update_index, record_bytes.to_vec());
             true
+        }
+
+        fn may_reconstruct_sidecar_v4(&self, update_index: u64) -> bool {
+            self.reconstructable == Some(update_index)
         }
     }
 
@@ -6696,6 +6730,66 @@ mod tests {
             advance_baseline_v4_for_group_v1(&fixture.run, &group, &fixture.prior_state, &access)
                 .expect("resume must accept the staged sidecar");
         assert_eq!(resumed, successor);
+    }
+
+    #[test]
+    fn baseline_v4_walk_reconstructs_an_authorized_missing_sidecar() {
+        // Review finding P1, reconcile case three: a committed update whose
+        // sidecar is gone is re-derivable from its OWN committed evidence,
+        // by exactly the mint the producer ran. The walk does that only for
+        // the update the access authorizes, stages the result so it is
+        // promoted with the rest, and validates it like any other record.
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let update_index = fixture.sidecar_parts.update_index;
+        let access = RecordingBaselineAccessV1::reconstructing_v1(update_index);
+        assert!(
+            access.sidecar_record_bytes_v4(update_index).is_none(),
+            "the record starts missing"
+        );
+        let successor =
+            advance_baseline_v4_for_group_v1(&fixture.run, &group, &fixture.prior_state, &access)
+                .expect("the tip update's sidecar is reconstructed from its evidence");
+        assert_eq!(successor.cell_count_v4(), 2);
+        // What it reconstructed is byte-identical to what the producer mints.
+        assert_eq!(
+            access
+                .sidecar_record_bytes_v4(update_index)
+                .expect("reconstructed and staged"),
+            sidecar_bytes_from_parts_v1(&fixture.sidecar_parts)
+        );
+    }
+
+    #[test]
+    fn baseline_v4_walk_fails_closed_on_an_unauthorized_missing_sidecar() {
+        // Any update the access does not authorize keeps the fail-closed
+        // behavior: unrecoverable evidence is never invented.
+        let fixture = baseline_dispatch_fixture_v1();
+        let group = wrap_group_v1(fixture.wire.clone(), fixture.update_evidence_sha256);
+        let other = fixture
+            .sidecar_parts
+            .update_index
+            .checked_add(1)
+            .expect("index");
+        for access in [
+            RecordingBaselineAccessV1::new_v1(),
+            RecordingBaselineAccessV1::reconstructing_v1(other),
+        ] {
+            let error = advance_baseline_v4_for_group_v1(
+                &fixture.run,
+                &group,
+                &fixture.prior_state,
+                &access,
+            )
+            .expect_err("an unauthorized missing sidecar fails the walk closed");
+            assert_eq!(
+                error,
+                UpdateGroupBaselineV4ErrorKind::BaselineSidecarMissing
+            );
+            assert!(access
+                .sidecar_record_bytes_v4(fixture.sidecar_parts.update_index)
+                .is_none());
+        }
     }
 
     #[test]

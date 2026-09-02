@@ -48,9 +48,9 @@ use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
 };
 use crate::native_baseline_checkpoint_chain_v4::{
-    manifest_final_name_v4, publish_baseline_record_v4, record_final_name_v4,
-    resume_baseline_chain_v4, sidecar_record_name_v4, BaselineChainRecordPartsV4,
-    BaselineChainResumeVerdictV4,
+    manifest_final_name_v4, parse_sidecar_record_name_v4, publish_baseline_record_v4,
+    record_final_name_v4, resume_baseline_chain_v4, sidecar_record_name_v4,
+    BaselineChainRecordPartsV4, BaselineChainResumeVerdictV4,
 };
 use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
 use crate::native_ladder_pool_resolution_v1::{
@@ -90,6 +90,7 @@ use crate::native_training_store_reference_latest_v2::{
 };
 use crate::native_training_store_resume_v2::{
     load_native_training_boundary_baseline_v4_v2, load_native_training_boundary_v2,
+    peek_latest_generation_index_from_store_v2,
 };
 use crate::native_training_store_resume_v2::{
     resume_native_training_store_with_session_baseline_v4_v2,
@@ -110,7 +111,7 @@ use crate::native_training_store_v2::{
     publish_prepared_segment_with_session_v2,
 };
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::io::Write;
@@ -617,6 +618,50 @@ fn resolve_population_opponent_cycle4_v1(
 }
 
 // ---------------------------------------------------------------------
+// Head-to-head boundary mode (payoff panel probe)
+// ---------------------------------------------------------------------
+
+/// How one side of a head-to-head evaluation loads its checkpoint boundary.
+///
+/// Test-only because its one consumer, the payoff panel's own
+/// `ladder_head_to_head_eval_v1` probe, is an ignored test the panel runner
+/// drives as a subprocess; nothing in the shipped library loads a
+/// head-to-head side.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Cycle4H2hBoundaryModeV1 {
+    /// `load_native_training_boundary_v2`: the frozen v3 walk.
+    Plain,
+    /// `load_native_training_boundary_baseline_v4_v2` against the side's own
+    /// chain directory.
+    BaselineV4,
+}
+
+/// Decides how one head-to-head side must load its boundary, from whether
+/// its run declares the v4 trainer and whether a chain directory was
+/// supplied for it (review finding P1).
+///
+/// A `trainer_v4_candidate` Store that has trained past genesis carries v4
+/// update evidence, which the plain v3 walk rejects outright: without a
+/// chain directory such a side cannot be loaded at all, so requiring one is
+/// the difference between a clear rejection and a panic mid-panel. The
+/// converse is equally load-bearing: a chain directory handed to a v3 run
+/// would be silently ignored, so it is refused rather than accepted as a
+/// no-op.
+#[cfg(test)]
+pub(crate) fn cycle4_h2h_boundary_mode_v1(
+    declares_trainer_v4: bool,
+    chain_dir: Option<&str>,
+) -> std::result::Result<Cycle4H2hBoundaryModeV1, &'static str> {
+    match (declares_trainer_v4, chain_dir) {
+        (true, Some(_)) => Ok(Cycle4H2hBoundaryModeV1::BaselineV4),
+        (false, None) => Ok(Cycle4H2hBoundaryModeV1::Plain),
+        (true, None) => Err("cycle4_h2h_v4_run_requires_chain_dir"),
+        (false, Some(_)) => Err("cycle4_h2h_chain_dir_requires_v4_run"),
+    }
+}
+
+// ---------------------------------------------------------------------
 // Baseline chain directory access
 // ---------------------------------------------------------------------
 
@@ -633,7 +678,7 @@ fn resolve_population_opponent_cycle4_v1(
 /// sidecars, which is exactly the crash window the chain's
 /// `StoreAheadByOneBoundary` verdict admits. Anything further ahead fails
 /// closed.
-struct Cycle4BaselineChainAccessV1 {
+pub(crate) struct Cycle4BaselineChainAccessV1 {
     chain_dir: PathBuf,
     checkpoint_segment_updates: u64,
     /// Store core train-state hashes observed from validated checkpoints,
@@ -644,27 +689,120 @@ struct Cycle4BaselineChainAccessV1 {
     /// it only stops the publisher's repeated revalidation passes from
     /// re-reading the same records.
     boundary_states: RefCell<BTreeMap<u64, NativeBaselineStateV4>>,
-    /// Sidecars staged by the producer for updates whose Store evidence has
-    /// not committed yet, keyed by update index. Held in memory rather than
-    /// under a `.pending` on-disk name deliberately: a process that dies
-    /// between preparing a segment and committing it then leaves NOTHING to
-    /// reconcile, so its retry never has to reproduce or clean up orphaned
-    /// sidecar bytes for updates the Store does not contain. Staged bytes
-    /// are visible to `sidecar_record_bytes_v4` (the producer revalidates
-    /// each one through the resume path immediately) and reach their
-    /// immutable names only in `commit_staged_sidecar_records_v4`.
-    staged_sidecars: RefCell<BTreeMap<u64, Vec<u8>>>,
+    /// The update index whose sidecar this open is allowed to reconstruct
+    /// from its own committed evidence, set by `reconcile_staged_sidecars_v1`
+    /// to the Store's tip update. `None` forbids reconstruction entirely,
+    /// which is the state every path that has not reconciled is left in.
+    reconstructable_tip_update: Cell<Option<u64>>,
 }
 
+/// Subdirectory of the chain directory holding sidecars that are staged but
+/// not yet promoted. A third namespace beside the chain's own boundary
+/// records and the promoted per-update sidecars, and a DIRECTORY rather than
+/// a name prefix so the chain's record listing (which skips non-files) can
+/// never mistake a staged record for a boundary record.
+const CYCLE4_STAGED_SIDECAR_DIRNAME_V1: &str = "baseline-staged";
+
 impl Cycle4BaselineChainAccessV1 {
-    fn new_v1(chain_dir: PathBuf, checkpoint_segment_updates: u64) -> Self {
+    /// Also the payoff panel probe's constructor: an evaluator opens a slot
+    /// Store read-only, so it never reconciles and therefore never
+    /// reconstructs (`may_reconstruct_sidecar_v4` stays false), which keeps
+    /// a missing sidecar a hard failure on that path.
+    pub(crate) fn new_v1(chain_dir: PathBuf, checkpoint_segment_updates: u64) -> Self {
         Self {
             chain_dir,
             checkpoint_segment_updates,
             observed_core_hashes: RefCell::new(BTreeMap::new()),
             boundary_states: RefCell::new(BTreeMap::new()),
-            staged_sidecars: RefCell::new(BTreeMap::new()),
+            reconstructable_tip_update: Cell::new(None),
         }
+    }
+
+    fn staged_dir_v1(&self) -> PathBuf {
+        self.chain_dir.join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
+    }
+
+    fn staged_sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
+        sidecar_record_name_v4(update_index)
+            .ok()
+            .map(|name| self.staged_dir_v1().join(name))
+    }
+
+    /// Every update index currently staged, ascending. A staged directory
+    /// that does not exist is an empty staging area, not an error.
+    fn staged_update_indexes_v1(&self) -> Result<Vec<u64>> {
+        let dir = self.staged_dir_v1();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(Cycle4ArmErrorV1::runtime(
+                    "cycle4_arm_v1_baseline_sidecar_staging",
+                    format!("{}: {error}", dir.display()),
+                ))
+            }
+        };
+        let mut indexes = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                Cycle4ArmErrorV1::runtime(
+                    "cycle4_arm_v1_baseline_sidecar_staging",
+                    format!("{}: {error}", dir.display()),
+                )
+            })?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            // A staged directory carries exactly the sidecar namespace and
+            // this process's own atomic temporaries; anything else is
+            // someone else's file and fails closed rather than being swept
+            // up or silently ignored.
+            if name.contains(".tmp-") {
+                continue;
+            }
+            let index = parse_sidecar_record_name_v4(name).ok_or_else(|| {
+                Cycle4ArmErrorV1::contract(
+                    "cycle4_arm_v1_baseline_sidecar_staging",
+                    format!("{name} is not a staged sidecar record name"),
+                )
+            })?;
+            indexes.push(index);
+        }
+        indexes.sort_unstable();
+        Ok(indexes)
+    }
+
+    /// Reconciles the staged area against the Store's committed tip, BEFORE
+    /// the baseline-aware walk runs (review finding P1).
+    ///
+    /// A staged record whose update index is at or below `tip_update` belongs
+    /// to an update the Store durably committed: it is left in place, served
+    /// to the walk by `sidecar_record_bytes_v4`, revalidated there against
+    /// that update's own committed evidence, and promoted only once the walk
+    /// has accepted the whole Store. A staged record above the tip belongs to
+    /// an update the Store never committed (the producer stages before
+    /// publishing, so this is exactly the crash window between the two) and
+    /// is discarded. A committed update with no sidecar at all is
+    /// reconstructible only at the tip, which `may_reconstruct_sidecar_v4`
+    /// authorizes from here.
+    fn reconcile_staged_sidecars_v1(&self, tip_update: u64) -> Result<()> {
+        for update_index in self.staged_update_indexes_v1()? {
+            if update_index <= tip_update {
+                continue;
+            }
+            let Some(path) = self.staged_sidecar_path_v1(update_index) else {
+                continue;
+            };
+            std::fs::remove_file(&path).map_err(|error| {
+                Cycle4ArmErrorV1::runtime(
+                    "cycle4_arm_v1_baseline_sidecar_staging",
+                    format!("discarding {}: {error}", path.display()),
+                )
+            })?;
+        }
+        self.reconstructable_tip_update.set(Some(tip_update));
+        Ok(())
     }
 
     fn sidecar_path_v1(&self, update_index: u64) -> Option<PathBuf> {
@@ -781,12 +919,14 @@ impl Cycle4BaselineChainAccessV1 {
 
 impl BaselineSidecarSourceV4 for Cycle4BaselineChainAccessV1 {
     fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>> {
-        // A staged sidecar is this update's record for every reader inside
-        // the producing process; on disk it exists only after the commit.
-        if let Some(bytes) = self.staged_sidecars.borrow().get(&update_index) {
-            return Some(bytes.clone());
+        // The promoted record is authoritative; a staged one is this
+        // update's record until it is promoted. Both are on disk, so a
+        // process that dies mid-segment leaves the staged copy for the next
+        // open to reconcile rather than losing it with the process.
+        if let Ok(bytes) = std::fs::read(self.sidecar_path_v1(update_index)?) {
+            return Some(bytes);
         }
-        std::fs::read(self.sidecar_path_v1(update_index)?).ok()
+        std::fs::read(self.staged_sidecar_path_v1(update_index)?).ok()
     }
 }
 
@@ -802,60 +942,76 @@ impl BaselineChainAccessV4 for Cycle4BaselineChainAccessV1 {
         self.observe_v1(generation_index, core_state_sha256);
     }
 
+    fn may_reconstruct_sidecar_v4(&self, update_index: u64) -> bool {
+        // Only the Store's own tip update, and only after a reconcile said
+        // so. Every earlier committed update whose sidecar is gone is
+        // unrecoverable evidence and must fail the walk closed.
+        update_index != 0 && self.reconstructable_tip_update.get() == Some(update_index)
+    }
+
     fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool {
-        let Some(path) = self.sidecar_path_v1(update_index) else {
+        let (Some(promoted), Some(staged)) = (
+            self.sidecar_path_v1(update_index),
+            self.staged_sidecar_path_v1(update_index),
+        ) else {
             return false;
         };
-        // Crash replay: an already-committed sidecar with identical bytes is
+        // Crash replay: an already-promoted sidecar with identical bytes is
         // the same record, so accept it and stage nothing; different bytes
         // are a genuine conflict and fail closed.
-        if let Ok(existing) = std::fs::read(&path) {
+        if let Ok(existing) = std::fs::read(&promoted) {
             return existing == record_bytes;
         }
-        match self.staged_sidecars.borrow_mut().entry(update_index) {
-            std::collections::btree_map::Entry::Occupied(entry) => {
-                entry.get().as_slice() == record_bytes
-            }
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(record_bytes.to_vec());
-                true
-            }
+        if let Ok(existing) = std::fs::read(&staged) {
+            return existing == record_bytes;
         }
+        // Durable BEFORE the Store publishes the update this record explains
+        // (review finding P1): the Store must never hold v4 evidence whose
+        // sidecar exists only in the producing process's memory.
+        if std::fs::create_dir_all(self.staged_dir_v1()).is_err() {
+            return false;
+        }
+        write_file_atomically_v1(&staged, record_bytes).is_ok()
     }
 
     fn commit_staged_sidecar_records_v4(&self) -> bool {
-        let staged: Vec<(u64, Vec<u8>)> = self
-            .staged_sidecars
-            .borrow()
-            .iter()
-            .map(|(index, bytes)| (*index, bytes.clone()))
-            .collect();
+        let Ok(staged) = self.staged_update_indexes_v1() else {
+            return false;
+        };
         if staged.is_empty() {
             return true;
         }
         if std::fs::create_dir_all(&self.chain_dir).is_err() {
             return false;
         }
-        // Ascending update order (the map is a BTreeMap), so a crash
-        // mid-commit leaves a prefix of this segment's sidecars -- exactly
-        // the shape the boundary replay and the chain's
-        // `StoreAheadByOneBoundary` repair already admit. Each entry leaves
-        // the staged set only once it is durable, so a failed commit keeps
-        // the remainder staged rather than silently dropping it.
-        for (update_index, bytes) in staged {
-            let Some(path) = self.sidecar_path_v1(update_index) else {
+        // Ascending update order, so a crash mid-promotion leaves a prefix
+        // of this segment promoted and the rest staged -- a shape the next
+        // open's reconcile resolves exactly as it resolves any other.
+        for update_index in staged {
+            let (Some(promoted), Some(staged_path)) = (
+                self.sidecar_path_v1(update_index),
+                self.staged_sidecar_path_v1(update_index),
+            ) else {
                 return false;
             };
-            match std::fs::read(&path) {
+            let Ok(bytes) = std::fs::read(&staged_path) else {
+                return false;
+            };
+            match std::fs::read(&promoted) {
+                // Already promoted with identical bytes: drop the staged
+                // copy and carry on, so a replayed promotion converges.
                 Ok(existing) if existing == bytes => {}
                 Ok(_) => return false,
                 Err(_) => {
-                    if write_file_atomically_v1(&path, &bytes).is_err() {
+                    if std::fs::rename(&staged_path, &promoted).is_err() {
                         return false;
                     }
+                    continue;
                 }
             }
-            self.staged_sidecars.borrow_mut().remove(&update_index);
+            if std::fs::remove_file(&staged_path).is_err() {
+                return false;
+            }
         }
         true
     }
@@ -2278,6 +2434,19 @@ fn prepare_baseline_chain_v1(
     run: &ValidatedTrainRunV2,
     access: &Cycle4BaselineChainAccessV1,
 ) -> Result<u64> {
+    // Review finding P1: reconcile the staged sidecar area against the
+    // Store's committed tip BEFORE the walk. Staged records for committed
+    // updates stay (the walk revalidates them against that update's own
+    // evidence, and they are promoted below once it accepts the whole
+    // Store); staged records for updates the Store never committed are
+    // discarded; a committed tip update with no sidecar at all is
+    // reconstructed inside the walk from its own evidence. The tip is read
+    // straight off `latest.json`, because the walk that would otherwise
+    // report it is the very thing this unblocks.
+    let tip_update = peek_latest_generation_index_from_store_v2(root).map_err(|error| {
+        Cycle4ArmErrorV1::runtime("cycle4_arm_v1_validate_failed", error.to_string())
+    })?;
+    access.reconcile_staged_sidecars_v1(tip_update)?;
     // The full v4 walk both proves every persisted update's evidence against
     // the chain and hands back the Store's own core train-state hash per
     // boundary, which is the only admissible input to a chain manifest
@@ -2286,6 +2455,14 @@ fn prepare_baseline_chain_v1(
         validate_native_training_store_baseline_v4_v2(root, run, access).map_err(|error| {
             Cycle4ArmErrorV1::runtime("cycle4_arm_v1_validate_failed", error.to_string())
         })?;
+    // Every staged record the walk just accepted is now durable evidence of
+    // a committed update, so it takes its immutable name.
+    if !access.commit_staged_sidecar_records_v4() {
+        return Err(Cycle4ArmErrorV1::runtime(
+            "cycle4_arm_v1_baseline_sidecar_commit",
+            "the reconciled baseline sidecars could not be promoted",
+        ));
+    }
     let store_checkpoints = state.checkpoint_core_state_sha256_v4().to_vec();
     if store_checkpoints.is_empty() {
         return Err(Cycle4ArmErrorV1::runtime(
@@ -3786,6 +3963,49 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Head-to-head boundary mode
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn the_h2h_boundary_mode_gate_pairs_v4_runs_with_chain_dirs_v1() {
+        // Review finding P1: after the first interval a treatment-rb or
+        // static-rb slot names a TRAINED v4 boundary, which the plain walk
+        // rejects. The gate makes that a decision, not a panic.
+        assert_eq!(
+            cycle4_h2h_boundary_mode_v1(true, Some("D:/cycle4/arm-a/chain")),
+            Ok(Cycle4H2hBoundaryModeV1::BaselineV4)
+        );
+        assert_eq!(
+            cycle4_h2h_boundary_mode_v1(false, None),
+            Ok(Cycle4H2hBoundaryModeV1::Plain)
+        );
+        assert_eq!(
+            cycle4_h2h_boundary_mode_v1(true, None),
+            Err("cycle4_h2h_v4_run_requires_chain_dir"),
+            "a v4 run without a chain directory cannot be loaded at all"
+        );
+        assert_eq!(
+            cycle4_h2h_boundary_mode_v1(false, Some("D:/cycle4/arm-a/chain")),
+            Err("cycle4_h2h_chain_dir_requires_v4_run"),
+            "a chain directory on a v3 run would be silently ignored"
+        );
+    }
+
+    #[test]
+    fn a_probe_access_never_reconstructs_a_missing_sidecar_v1() {
+        // The panel probe opens slot Stores read-only. It never reconciles,
+        // so nothing authorizes reconstruction and a missing sidecar stays a
+        // hard failure rather than being invented during an evaluation.
+        let dir = fresh_temp_dir_v1("probe-access");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        for update_index in 0_u64..=8 {
+            assert!(!access.may_reconstruct_sidecar_v4(update_index));
+        }
+        assert!(access.sidecar_record_bytes_v4(1).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ------------------------------------------------------------------
     // Baseline chain directory access
     // ------------------------------------------------------------------
 
@@ -3834,86 +4054,175 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_publication_is_atomic_and_idempotent_v1() {
+    fn sidecar_publication_is_durable_before_the_store_and_idempotent_v1() {
         let dir = fresh_temp_dir_v1("sidecar-publish");
         let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 3);
-        let path = dir.join("baseline-update-00000001.record.json");
+        let promoted = dir.join("baseline-update-00000001.record.json");
+        let staged = dir
+            .join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
+            .join("baseline-update-00000001.record.json");
         assert!(access.stage_sidecar_record_v4(1, &bytes));
-        // Review finding P1: staging writes nothing. A process that dies
-        // before the Store commits this update leaves no sidecar for an
-        // update the Store does not contain.
+        // Review finding P1: staging is DURABLE and happens before the Store
+        // publishes this update, so the Store can never hold v4 evidence
+        // whose sidecar exists only in the producing process's memory.
+        assert!(staged.is_file(), "a staged sidecar must be on disk at once");
+        assert_eq!(std::fs::read(&staged).expect("read"), bytes);
+        // It is not yet at its immutable name: that is what says the Store
+        // committed the update it explains.
         assert!(
-            !path.exists(),
-            "a staged sidecar must not exist at its immutable name yet"
+            !promoted.exists(),
+            "a staged sidecar must not hold its immutable name yet"
         );
-        // It is nevertheless this update's record for every reader inside
-        // the producing process, which is what lets the producer revalidate
-        // it through the resume path before training the next update.
         assert_eq!(access.sidecar_record_bytes_v4(1).expect("staged"), bytes);
         assert!(access.commit_staged_sidecar_records_v4());
-        assert!(path.is_file(), "sidecar must use the contract's exact name");
-        assert_eq!(std::fs::read(&path).expect("read"), bytes);
-        // Committing again is a no-op: the staged set is empty.
+        assert!(
+            promoted.is_file(),
+            "sidecar must use the contract's exact name"
+        );
+        assert_eq!(std::fs::read(&promoted).expect("read"), bytes);
+        assert!(!staged.exists(), "promotion consumes the staged copy");
+        // Committing again is a no-op: the staged area is empty.
         assert!(access.commit_staged_sidecar_records_v4());
         // Crash replay of the identical record is accepted; different bytes
         // for the same update are not.
         assert!(access.stage_sidecar_record_v4(1, &bytes));
         assert!(!access.stage_sidecar_record_v4(1, b"different"));
-        assert!(
-            !dir.read_dir()
-                .expect("read dir")
-                .filter_map(std::result::Result::ok)
-                .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-")),
-            "no temporary file may survive a publication"
-        );
+        for directory in [dir.clone(), dir.join(CYCLE4_STAGED_SIDECAR_DIRNAME_V1)] {
+            assert!(
+                !directory
+                    .read_dir()
+                    .expect("read dir")
+                    .filter_map(std::result::Result::ok)
+                    .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-")),
+                "no temporary file may survive a publication"
+            );
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn an_uncommitted_segment_leaves_no_sidecar_behind_v1() {
-        // Review finding P1: the producer stages every update's sidecar
-        // while preparing a segment. If that segment never reaches the
-        // Store, the chain directory must be exactly as it was, so the
-        // retry has nothing orphaned to reproduce or clean up.
-        let dir = fresh_temp_dir_v1("sidecar-abandoned");
+    /// Stages `1..=count` under `access`, folding the baseline forward the
+    /// way a real segment does, and returns the resulting state.
+    fn stage_segment_v1(access: &Cycle4BaselineChainAccessV1, count: u64) -> NativeBaselineStateV4 {
         let mut state = NativeBaselineStateV4::empty_v4();
-        {
-            let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
-            for update_index in 1_u64..=4 {
-                let bytes = synthetic_sidecar_v1(&state, update_index, update_index as u8);
-                assert!(access.stage_sidecar_record_v4(update_index, &bytes));
-                state = access
-                    .replay_sidecar_v1(&state, update_index)
-                    .expect("staged bytes replay inside the producing process");
-            }
-            // The segment is abandoned here: no commit.
-        }
-        assert_eq!(
-            dir.read_dir()
-                .expect("read dir")
-                .filter_map(std::result::Result::ok)
-                .count(),
-            0,
-            "an abandoned segment must leave the chain directory untouched"
-        );
-        // The retry stages and commits the same updates cleanly.
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
-        let mut retry = NativeBaselineStateV4::empty_v4();
-        for update_index in 1_u64..=4 {
-            let bytes = synthetic_sidecar_v1(&retry, update_index, update_index as u8);
+        for update_index in 1..=count {
+            let bytes = synthetic_sidecar_v1(&state, update_index, update_index as u8);
             assert!(access.stage_sidecar_record_v4(update_index, &bytes));
-            retry = access
-                .replay_sidecar_v1(&retry, update_index)
-                .expect("replay");
+            state = access
+                .replay_sidecar_v1(&state, update_index)
+                .expect("staged bytes replay before promotion");
         }
+        state
+    }
+
+    #[test]
+    fn reconcile_promotes_staged_records_for_committed_updates_v1() {
+        // Reconcile case one: the Store committed these updates (its tip is
+        // 4), so their staged sidecars survive the reconcile, are served to
+        // the walk that revalidates them against that committed evidence,
+        // and take their immutable names once the walk accepts the Store.
+        let dir = fresh_temp_dir_v1("reconcile-promote");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        stage_segment_v1(&access, 4);
+        access
+            .reconcile_staged_sidecars_v1(4)
+            .expect("every staged update is committed");
+        assert_eq!(
+            access.staged_update_indexes_v1().expect("staged"),
+            vec![1, 2, 3, 4],
+            "a committed update's staged record is kept for the walk"
+        );
         assert!(access.commit_staged_sidecar_records_v4());
         for update_index in 1_u64..=4 {
             assert!(dir
                 .join(sidecar_record_name_v4(update_index).expect("name"))
                 .is_file());
         }
+        assert!(access
+            .staged_update_indexes_v1()
+            .expect("staged")
+            .is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reconcile_discards_staged_records_for_uncommitted_updates_v1() {
+        // Reconcile case two: the producer stages before the Store publishes,
+        // so a segment abandoned in that window leaves staged records for
+        // updates the Store never committed. The next open discards exactly
+        // those, and the retry stages the same updates cleanly.
+        let dir = fresh_temp_dir_v1("reconcile-discard");
+        {
+            let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+            stage_segment_v1(&access, 4);
+            // The segment is abandoned here: no Store publish, no promotion.
+        }
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        assert_eq!(
+            access.staged_update_indexes_v1().expect("staged"),
+            vec![1, 2, 3, 4],
+            "the staged records outlive the process that wrote them"
+        );
+        // The Store is still at generation 0, so none of them is committed.
+        access
+            .reconcile_staged_sidecars_v1(0)
+            .expect("nothing committed");
+        assert!(
+            access
+                .staged_update_indexes_v1()
+                .expect("staged")
+                .is_empty(),
+            "a staged record for an uncommitted update is discarded"
+        );
+        assert!(access.sidecar_record_bytes_v4(1).is_none());
+        assert_eq!(
+            dir.read_dir()
+                .expect("read dir")
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| entry.file_name() != CYCLE4_STAGED_SIDECAR_DIRNAME_V1)
+                .count(),
+            0,
+            "nothing was promoted"
+        );
+        // A partially committed segment keeps exactly its committed prefix.
+        let retry = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        stage_segment_v1(&retry, 4);
+        retry
+            .reconcile_staged_sidecars_v1(2)
+            .expect("two updates committed");
+        assert_eq!(
+            retry.staged_update_indexes_v1().expect("staged"),
+            vec![1, 2],
+            "only the committed prefix survives"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn only_the_committed_tip_update_may_be_reconstructed_v1() {
+        // Reconcile case three: a committed update with neither a staged nor
+        // a promoted sidecar is re-derivable from its own committed evidence
+        // ONLY at the Store's tip, where the producer's mint is exact. Every
+        // earlier update whose sidecar is gone is unrecoverable and must
+        // fail the walk closed.
+        let dir = fresh_temp_dir_v1("reconcile-reconstruct");
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        // Before any reconcile, nothing may be reconstructed.
+        for update_index in 0_u64..=8 {
+            assert!(!access.may_reconstruct_sidecar_v4(update_index));
+        }
+        access.reconcile_staged_sidecars_v1(4).expect("reconcile");
+        assert!(access.may_reconstruct_sidecar_v4(4), "the tip update");
+        for update_index in [0_u64, 1, 2, 3, 5, 8] {
+            assert!(
+                !access.may_reconstruct_sidecar_v4(update_index),
+                "only the tip update is reconstructible, not {update_index}"
+            );
+        }
+        // Generation 0 is the pre-training genesis and has no update at all.
+        access.reconcile_staged_sidecars_v1(0).expect("reconcile");
+        assert!(!access.may_reconstruct_sidecar_v4(0));
         std::fs::remove_dir_all(&dir).ok();
     }
 

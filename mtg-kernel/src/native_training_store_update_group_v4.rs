@@ -503,6 +503,20 @@ pub(crate) trait BaselineChainAccessV4: BaselineSidecarSourceV4 {
     /// to reproduce.
     fn stage_sidecar_record_v4(&self, update_index: u64, record_bytes: &[u8]) -> bool;
 
+    /// Whether the sidecar for `update_index` may be RECONSTRUCTED from that
+    /// update's own committed evidence when no staged or promoted record for
+    /// it exists. Default: never, so every validation path stays fail-closed
+    /// on missing evidence.
+    ///
+    /// An implementation grants this only for a Store's own tip update, and
+    /// only after it has reconciled its staging area against that Store: the
+    /// producer mints each sidecar from the update's persisted evidence, so
+    /// the tip's record is exactly re-derivable, while an earlier update
+    /// whose sidecar is gone is unrecoverable and must fail the walk closed.
+    fn may_reconstruct_sidecar_v4(&self, _update_index: u64) -> bool {
+        false
+    }
+
     /// Publishes every sidecar staged since the last commit at its immutable
     /// name, in ascending update order. Called only after the Store durably
     /// committed the evidence for those updates. Returns `false` on any

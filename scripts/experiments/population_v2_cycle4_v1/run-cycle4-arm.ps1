@@ -812,6 +812,10 @@ try {
                 (Join-Path $PSScriptRoot 'run_payoff_panel_v1.py'),
                 '--manifest', $manifestPath,
                 '--slot-locator', $panelLocator,
+                # Which slots must carry baseline_chain_dir is a function of
+                # the arm kind, and the manifest carries none (the roster is
+                # the same for all three arms), so the runner is told.
+                '--arm', $Arm,
                 '--games-per-matchup', [string]$script:Cycle4PanelGamesPerMatchup,
                 '--base-seed', [string]$panelSeed,
                 '--output-dir', $panelOutputDir,

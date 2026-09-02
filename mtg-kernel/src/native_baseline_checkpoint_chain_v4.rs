@@ -302,6 +302,18 @@ pub(crate) fn sidecar_record_name_v4(update_index: u64) -> Result<String> {
     ))
 }
 
+/// Inverse of [`sidecar_record_name_v4`]: the update index a per-update
+/// sidecar file name carries, or `None` for any name outside that exact
+/// namespace. Owned here beside the builder so the launcher's staging area
+/// cannot invent its own reading of the same grammar.
+pub(crate) fn parse_sidecar_record_name_v4(name: &str) -> Option<u64> {
+    let digits = name
+        .strip_prefix(RECORD_NAME_PREFIX_V4)?
+        .strip_prefix(SIDECAR_NAME_INFIX_V4)?
+        .strip_suffix(RECORD_NAME_SUFFIX_V4)?;
+    parse_fixed_generation_v4(digits)
+}
+
 pub(crate) fn record_final_name_v4(generation: u64) -> Result<String> {
     Ok(format!(
         "{RECORD_NAME_PREFIX_V4}{}{RECORD_NAME_SUFFIX_V4}",

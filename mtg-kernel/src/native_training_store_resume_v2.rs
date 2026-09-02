@@ -397,6 +397,30 @@ pub(crate) fn validate_native_training_store_baseline_v4_v2(
     validate_native_training_store_dispatch_v2(root, run, Some(access))
 }
 
+/// The generation `latest.json` names, read WITHOUT walking the Store.
+///
+/// The cycle-4 launcher needs the committed tip before its baseline-aware
+/// walk can run, because reconciling the staged sidecar area is a
+/// precondition of that walk rather than a result of it (the walk itself
+/// fails closed on a sidecar the reconcile would have supplied). This proves
+/// nothing about the pointer beyond its own shape; the walk that follows is
+/// still the authority.
+pub(crate) fn peek_latest_generation_index_from_store_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+) -> Result<u64> {
+    root.recapture_v2()
+        .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
+    let _shared = root.lock_shared_v2().map_err(map_lock_error_v2)?;
+    let latest_bytes = read_bounded_final_v2(
+        root,
+        NativeTrainingStoreFinalNameV2::Latest,
+        LATEST_RECORD_MAX_BYTES_V2,
+        NativeTrainingStoreResumeV2ErrorKind::LatestInvalid,
+    )?;
+    peek_latest_generation_index_v2(&latest_bytes)
+        .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::LatestInvalid))
+}
+
 fn validate_native_training_store_dispatch_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
