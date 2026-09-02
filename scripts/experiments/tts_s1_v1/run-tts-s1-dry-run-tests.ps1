@@ -169,18 +169,35 @@ function New-TtsS1TestReport {
         [string]$VerdictView = $script:TtsS1VerdictView,
         [string]$ProjectionRule = $script:TtsS1ProjectionRule,
         [string]$CurveRule = $script:TtsS1LatencyCurveRule,
-        [switch]$OmitLatencyCurve
+        [string]$TopologyRule = $script:TtsS1ShardTopologyRule,
+        [int]$MeasuredShardCount = $script:TtsS1FormalShardCount,
+        [int]$PinnedShardCount = $script:TtsS1FormalShardCount,
+        [int]$PinnedCpusPerShard = $script:TtsS1FormalLogicalCpusPerShard,
+        [bool]$MeetsFormalTopology = $true,
+        [switch]$OmitLatencyCurve,
+        [switch]$OmitShardTopology
     )
     $computeCap = [pscustomobject]@{ rule = $ProjectionRule }
     if (-not $OmitLatencyCurve) {
         $computeCap | Add-Member -NotePropertyName latency_curve -NotePropertyValue ([pscustomobject]@{ rule = $CurveRule })
     }
-    return [pscustomobject]@{
-        body = [pscustomobject]@{
-            verdict_view = $VerdictView
-            compute_cap = $computeCap
-        }
+    $body = [pscustomobject]@{
+        verdict_view = $VerdictView
+        compute_cap = $computeCap
     }
+    if (-not $OmitShardTopology) {
+        $body | Add-Member -NotePropertyName shard_topology -NotePropertyValue ([pscustomobject]@{
+            rule = $TopologyRule
+            shard_count = $MeasuredShardCount
+            formal_shard_count = $PinnedShardCount
+            formal_logical_cpus_per_shard = $PinnedCpusPerShard
+            host_logical_cpus = 32
+            host_total_memory_bytes = 137438953472
+            meets_formal_topology = $MeetsFormalTopology
+            formal_topology_reason = 'synthetic'
+        })
+    }
+    return [pscustomobject]@{ body = $body }
 }
 
 function Get-TtsS1ContractRejection {
@@ -188,9 +205,13 @@ function Get-TtsS1ContractRejection {
     # $null if it was accepted. It asserts nothing itself: an Assert-True
     # inside here would put its own output on this function's output stream
     # and the caller would receive an array instead of the message.
-    param([Parameter(Mandatory = $true)]$Report)
+    param(
+        [Parameter(Mandatory = $true)]$Report,
+        [switch]$RequireFormalShardTopology
+    )
     try {
-        Assert-TtsS1TierReportContract -Tier 't512' -Report $Report
+        Assert-TtsS1TierReportContract -Tier 't512' -Report $Report `
+            -RequireFormalShardTopology:$RequireFormalShardTopology
     }
     catch {
         return $_.Exception.Message
@@ -227,6 +248,80 @@ Assert-True ($message -like '*gating view*') 'the rejection names the gating vie
 $message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport -OmitLatencyCurve)
 Assert-True ($null -ne $message) 'the contract check rejects a report with no latency curve at all'
 Assert-True ($message -like '*missing*latency_curve*') 'the rejection names the missing nested block'
+
+# --- 0b. THE PINNED SHARD TOPOLOGY.
+#
+# Every latency in a tier report is a wall-time sample taken while K replay
+# processes contended for the host, so the concurrency is part of what the
+# numbers mean and -ShardCount would otherwise be a knob that can flip a
+# verdict. The pin is checked on every report; the MEASURED count is checked
+# only when the run could still be formal, because a smoke at another
+# fan-out still publishes a readable report.
+Assert-True ($script:TtsS1FormalShardCount -eq 8) 'the pinned formal shard count is eight'
+Assert-True ($script:TtsS1FormalLogicalCpusPerShard -eq 2) 'the pin requires two logical CPUs per shard'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*exactly-8-concurrent-replay-processes*') 'the topology rule names the pinned concurrency'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*at-least-2-logical-cpus-per-shard*') 'the topology rule names the host requirement'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*/v1') 'the pinned topology rule is the V1 one'
+
+# The RULE and the PIN are checked on every report, formal or not: a report
+# whose idea of the formal count is not this one's came from a differently
+# pinned binary, and its meets_formal_topology would mean something else.
+foreach ($case in @(
+    @{ Name = 'a stale shard-topology rule'; Report = (New-TtsS1TestReport -TopologyRule 'pooled-whatever/v0'); Fragment = 'shard-topology rule' },
+    @{ Name = 'a differently pinned formal shard count'; Report = (New-TtsS1TestReport -PinnedShardCount 4); Fragment = 'pinned formal shard count' },
+    @{ Name = 'a differently pinned CPUs-per-shard'; Report = (New-TtsS1TestReport -PinnedCpusPerShard 1); Fragment = 'pinned logical CPUs per shard' },
+    @{ Name = 'a report with no shard topology at all'; Report = (New-TtsS1TestReport -OmitShardTopology); Fragment = 'missing' }
+)) {
+    foreach ($formal in @($true, $false)) {
+        $message = Get-TtsS1ContractRejection -Report $case.Report -RequireFormalShardTopology:$formal
+        Assert-True ($null -ne $message) "the contract check rejects $($case.Name) (formal=$formal)"
+        Assert-True ($message -like "*$($case.Fragment)*") "the rejection of $($case.Name) names $($case.Fragment)"
+    }
+}
+
+# THE SMOKE DEMOTION, not a hard rejection: a run at another fan-out is
+# readable, and only a run still claiming formal standing is refused.
+$offTopology = New-TtsS1TestReport -MeasuredShardCount 4 -MeetsFormalTopology $false
+Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $offTopology)) 'a report measured at another fan-out is readable as a smoke'
+$message = Get-TtsS1ContractRejection -Report $offTopology -RequireFormalShardTopology
+Assert-True ($null -ne $message) 'a run claiming formal standing refuses a report measured at another fan-out'
+Assert-True ($message -like '*measured shard count*') 'the refusal names the measured shard count'
+
+# The pinned count measured on a host too small for it: the count matches,
+# so only the report's own meets_formal_topology can catch it.
+$cramped = New-TtsS1TestReport -MeetsFormalTopology $false
+Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $cramped)) 'a cramped-host report is still readable as a smoke'
+$message = Get-TtsS1ContractRejection -Report $cramped -RequireFormalShardTopology
+Assert-True ($null -ne $message) 'a run claiming formal standing refuses a report the measuring processes said was not formal'
+Assert-True ($message -like '*formal topology*') 'the refusal names the formal topology'
+
+# And the pinned topology, measured, is accepted with the switch on.
+Assert-True ($null -eq (Get-TtsS1ContractRejection -Report (New-TtsS1TestReport) -RequireFormalShardTopology)) 'a report measured at the pinned topology carries formal standing'
+
+# THE RULE ITSELF, as a pure function, evaluated at CPU counts this host
+# may not have. Both branches are covered without depending on the machine
+# the suite happens to run on.
+foreach ($case in @(
+    @{ Shards = 8; Cpus = 16; Admissible = $true },
+    @{ Shards = 8; Cpus = 24; Admissible = $true },
+    @{ Shards = 8; Cpus = 15; Admissible = $false },
+    @{ Shards = 8; Cpus = 1;  Admissible = $false },
+    @{ Shards = 1; Cpus = 256; Admissible = $false },
+    @{ Shards = 4; Cpus = 256; Admissible = $false },
+    @{ Shards = 16; Cpus = 256; Admissible = $false }
+)) {
+    $verdict = Test-TtsS1FormalShardTopology -ShardCount $case.Shards -HostLogicalCpus $case.Cpus
+    Assert-True ($verdict.admissible -eq $case.Admissible) "a $($case.Shards)-shard run on $($case.Cpus) logical CPUs is admissible=$($case.Admissible)"
+    Assert-True ($verdict.required_logical_cpus -eq (2 * $case.Shards)) "the requirement for $($case.Shards) shards is $(2 * $case.Shards) logical CPUs"
+}
+$verdict = Test-TtsS1FormalShardTopology -ShardCount 4 -HostLogicalCpus 256
+Assert-True ($verdict.reason -like '*not the pinned 8*') 'a non-pinned count is refused by name'
+$verdict = Test-TtsS1FormalShardTopology -ShardCount 8 -HostLogicalCpus 15
+Assert-True ($verdict.reason -like '*15 logical CPUs*') 'a cramped host is refused by its own CPU count'
+Assert-True ($verdict.reason -like '*below the 16*') 'the cramped-host refusal names the requirement'
+$verdict = Test-TtsS1FormalShardTopology -ShardCount 4 -HostLogicalCpus 2
+Assert-True ($verdict.reason -like '*not the pinned 8*') 'both failing clauses are named, the count'
+Assert-True ($verdict.reason -like '*2 logical CPUs*') 'both failing clauses are named, the host'
 
 # THE LAUNCHER PATH. The wrapper obtains every tier report through
 # Read-TtsS1TierReport, which validates before returning, so a report
@@ -378,6 +473,49 @@ try {
         foreach ($forbidden in @('--tier', '--corpus', '--seed-block', '--max-episodes', '--diagnostics-dir', '--shard-index', '--population-store-root')) {
             Assert-True (-not ($merge -like "*$forbidden*")) "tier $tier merge carries no $forbidden"
         }
+    }
+
+    # --- 1a2. THE FORMAL TOPOLOGY, end to end through the launcher. The
+    #          provenance records the pin, the host it read, and whether a
+    #          formal run is admissible here, and that verdict agrees with
+    #          the shared rule evaluated on the same host.
+    $observedCpus = [System.Environment]::ProcessorCount
+    $expectedFormal = Test-TtsS1FormalShardTopology -ShardCount $defaultShardCount -HostLogicalCpus $observedCpus
+    Assert-True ($provenanceJson.formal_shard_count -eq $script:TtsS1FormalShardCount) 'provenance.json records the pinned formal shard count'
+    Assert-True ($provenanceJson.formal_logical_cpus_per_shard -eq $script:TtsS1FormalLogicalCpusPerShard) 'provenance.json records the pinned CPUs per shard'
+    Assert-True ($provenanceJson.host_logical_cpus -eq $observedCpus) 'provenance.json records the host logical CPU count it read'
+    Assert-True ($provenanceJson.formal_topology_admissible -eq $expectedFormal.admissible) 'provenance.json applies the shared formal-topology rule to this host'
+    Assert-True ($provenanceJson.formal_topology_required_logical_cpus -eq (2 * $defaultShardCount)) 'provenance.json states the CPU requirement it checked against'
+    Assert-True ($provenanceJson.pinned_contract.shard_topology_rule -ceq $script:TtsS1ShardTopologyRule) 'the pinned contract carries the shard-topology rule'
+    Assert-True ($provenanceJson.pinned_contract.formal_shard_count -eq 8) 'the pinned contract carries the formal shard count'
+    # A full-ladder whole-corpus run at the pinned count plans as FORMAL
+    # exactly when this host can host the topology.
+    Assert-True ($provenanceJson.formal_ladder -eq $true) 'a whole-corpus full-ladder run at the pinned count plans as FORMAL'
+    # A REAL launch on a host too small is refused rather than demoted; a
+    # dry run measures nothing, so it plans and says what would be refused.
+    Assert-True ($wrapperText -like '*a formal S1 run is refused on this host*') 'the launcher refuses a formal run the host cannot host'
+    Assert-True ($wrapperText -like '*TTS_S1_FORMAL_TOPOLOGY_REFUSED*') 'a dry run reports the refusal instead of throwing'
+    Assert-True ($wrapperText -like '*else {*') 'the refusal has a real-launch branch'
+    Assert-True ($wrapperText -like '*$isFormalLadder = ($LimitEpisodes -eq 0)*') 'the formal ladder is still decided from the corpus and the tiers'
+    Assert-True ($wrapperText -like '*-and ($ShardCount -eq $script:TtsS1FormalShardCount)*') 'the shard count is part of what makes a ladder formal'
+    Assert-True ($wrapperText -like '*-RequireFormalShardTopology:$isFormalTopology*') 'the launcher demands the formal topology of a report only when the run still claims it'
+    Assert-True ($wrapperText -like '*$everyTierFormalTopology*') 'the tier reports get the last word on the topology'
+
+    # --- 1a3. THE SMOKE DEMOTION. Any other -ShardCount is a smoke, and
+    #          says so before anything runs.
+    foreach ($count in @(1, 4, 16)) {
+        $evidence = Join-Path $sandbox ("evidence-smoke-shards-{0}" -f $count)
+        $parameters = $base.Clone()
+        $parameters['EvidenceRoot'] = $evidence
+        $parameters['ShardCount'] = $count
+        $result = Invoke-Wrapper -Parameters $parameters
+        Assert-True ($null -eq $result.Failure) "a full-ladder dry run at -ShardCount $count succeeds ($($result.Failure))"
+        $attemptShards = Get-OnlyAttemptRoot -EvidenceRoot $evidence
+        $shardProvenance = Get-Content -LiteralPath (Join-Path $attemptShards 'provenance.json') -Raw | ConvertFrom-Json
+        Assert-True ($shardProvenance.formal_ladder -eq $false) "a whole-corpus full ladder at -ShardCount $count is a SMOKE"
+        Assert-True ($shardProvenance.formal_topology_admissible -eq $false) "-ShardCount $count is never an admissible formal topology"
+        Assert-True ($shardProvenance.formal_topology_reason -like '*not the pinned 8*') "-ShardCount $count is refused formal standing by name"
+        Assert-True ($shardProvenance.shard_count_requested -eq $count) "provenance records the requested -ShardCount $count"
     }
 
     # --- 1b. The shard fan-out is a knob, and the whole ladder of legal
@@ -537,14 +675,24 @@ try {
     #         Every shard is started in one loop and waited on in a SECOND
     #         loop. Starting and waiting inside one loop is the old serial
     #         run with more processes, and it is the single most likely way
-    #         to lose the parallelism without losing anything else.
-    $startIndex = $wrapperText.IndexOf('process = Start-TtsS1Process -FilePath $ReplayExecutable -Arguments $shard.arguments')
-    $waitIndex = $wrapperText.IndexOf('$shardExit = Wait-TtsS1Process -Process $entry.process')
-    Assert-True ($startIndex -gt 0) 'the wrapper starts every shard through the non-blocking start'
-    Assert-True ($waitIndex -gt $startIndex) 'the wrapper waits on the shards only after starting them all'
-    Assert-True ($wrapperText -like '*foreach ($entry in $running)*') 'the shard wait is its own loop over the started processes'
+    #         to lose the parallelism without losing anything else. That
+    #         ordering now lives in the shared fan-out, so it is asserted
+    #         there and exercised for real in 4c.
+    $commonText = [System.IO.File]::ReadAllText($script:TtsS1CommonPath)
+    $startIndex = $commonText.IndexOf('process = Start-TtsS1Process -FilePath $job.file_path')
+    $waitIndex = $commonText.IndexOf('exit_code = Wait-TtsS1Process -Process $entry.process')
+    Assert-True ($startIndex -gt 0) 'the fan-out starts every job through the non-blocking start'
+    Assert-True ($waitIndex -gt $startIndex) 'the fan-out waits on the jobs only after starting them all'
+    Assert-True ($commonText -like '*foreach ($entry in $running)*') 'the fan-out wait is its own loop over the started processes'
+    Assert-True ($commonText -like '*finally {*') 'the fan-out reaps in a finally, so an unwinding start leaves nothing running'
+    Assert-True ($commonText -like '*Stop-Process -Id $id -Force*') 'the fan-out stops anything still alive'
     Assert-True ($wrapperText -like '*if ($shardFailures.Count -ne 0)*') 'the wrapper raises a shard failure only after every shard has been waited on'
-    Assert-True ($wrapperText -like '*shard $($entry.shard.index) exited with $shardExit*') 'the wrapper fails closed on a non-zero shard exit'
+    Assert-True ($wrapperText -like '*shard $($shard.index) exited with $shardExit*') 'the wrapper fails closed on a non-zero shard exit'
+    # And nothing it started outlives it: the fan-out reaps in a finally and
+    # the catch names what it killed in the attempt RUN_FAILED text.
+    Assert-True ($wrapperText -like '*Invoke-TtsS1ProcessFanOut -Jobs*') 'the wrapper starts its shards through the reaping fan-out'
+    Assert-True ($wrapperText -like '*Format-TtsS1StoppedChildren -Stopped @($script:TtsS1LastFanOutStopped)*') 'the wrapper records the reaped children in RUN_FAILED'
+    Assert-True (-not ($wrapperText -like '*process = Start-TtsS1Process -FilePath $ReplayExecutable*')) 'the wrapper no longer starts shards outside the reaping fan-out'
     Assert-True ($wrapperText -like '*Invoke-TtsS1Process -FilePath $ReplayExecutable -Arguments $plan.merge_arguments*') 'the wrapper runs the merge through the same child runner'
     Assert-True ($wrapperText -like '*--merge-shards*') 'the wrapper plans the merge flag the bin declares'
     # And the merged report goes through the SAME validating reader the
@@ -611,6 +759,57 @@ try {
         catch { $unknownExit = $_.Exception.Message }
         Assert-True ($null -ne $unknownExit) 'an unreadable exit code is refused rather than cast to a success'
         Assert-True ($unknownExit -like '*never a success*') 'the refusal says why an unknown exit is not a pass'
+
+        # THE ORPHAN CASE, which is why the fan-out reaps in a finally.
+        # Starting K children is K chances to throw, and a throw on the
+        # third start leaves the first two running: if the launcher then
+        # exits, they outlive the run that owns them, still searching and
+        # still writing into the attempt's directories. Shard 2 of 3 is
+        # given an executable that does not exist, and shards 0 and 1 are
+        # long-lived cmd.exe children that would otherwise sit there for
+        # half a minute after the launcher was gone.
+        $longLived = @('/c', 'ping', '-n', '30', '127.0.0.1', '>nul')
+        $absent = Join-Path $processSandbox 'no-such-binary-for-shard-2.exe'
+        Assert-True (-not (Test-Path -LiteralPath $absent)) 'the failing shard names an executable that really is absent'
+        $fanJobs = @(
+            [pscustomobject]@{ label = 'shard-0'; file_path = $comspec; arguments = $longLived; stdout_path = (Join-Path $processSandbox 'fan-0.out'); stderr_path = (Join-Path $processSandbox 'fan-0.err') },
+            [pscustomobject]@{ label = 'shard-1'; file_path = $comspec; arguments = $longLived; stdout_path = (Join-Path $processSandbox 'fan-1.out'); stderr_path = (Join-Path $processSandbox 'fan-1.err') },
+            [pscustomobject]@{ label = 'shard-2'; file_path = $absent; arguments = @('/c'); stdout_path = (Join-Path $processSandbox 'fan-2.out'); stderr_path = (Join-Path $processSandbox 'fan-2.err') }
+        )
+        $fanFailure = $null
+        $fanWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try { [void](Invoke-TtsS1ProcessFanOut -Jobs $fanJobs) }
+        catch { $fanFailure = $_.Exception.Message }
+        $fanWatch.Stop()
+        Assert-True ($null -ne $fanFailure) 'a shard that cannot be started raises'
+        $reaped = @($script:TtsS1LastFanOutStopped)
+        Assert-True ($reaped.Count -eq 2) 'both already-started shards are reaped when a later start fails'
+        Assert-True ((@($reaped | ForEach-Object { $_.label }) -join ',') -ceq 'shard-0,shard-1') 'shards 0 and 1 are the ones stopped'
+        # Stopped for real, not merely recorded: neither pid is alive, and
+        # the reap did not wait out the thirty-second ping.
+        foreach ($entry in $reaped) {
+            $stillAlive = $null
+            try { $stillAlive = Get-Process -Id $entry.process_id -ErrorAction Stop } catch { $stillAlive = $null }
+            Assert-True ($null -eq $stillAlive) "the reaped child $($entry.label) (pid $($entry.process_id)) is gone"
+        }
+        Assert-True ($fanWatch.Elapsed.TotalSeconds -lt 20.0) "the reap killed the children rather than waiting them out ($([math]::Round($fanWatch.Elapsed.TotalSeconds, 2)) s)"
+        # The launcher turns that list into the RUN_FAILED text, so an
+        # operator reading it knows nothing was left behind.
+        $stoppedClause = Format-TtsS1StoppedChildren -Stopped $reaped
+        Assert-True ($stoppedClause -like '*stopped still-running children*') 'the reaped children are named for the RUN_FAILED text'
+        Assert-True ($stoppedClause -like '*shard-0*' -and $stoppedClause -like '*shard-1*') 'the RUN_FAILED clause names each reaped shard'
+        Assert-True ((Format-TtsS1StoppedChildren -Stopped @()) -ceq '') 'a clean fan-out contributes no clause'
+
+        # A fan-out that finishes normally reaps nothing, so the list is not
+        # a leftover from the failure above.
+        $clean = Invoke-TtsS1ProcessFanOut -Jobs @(
+            [pscustomobject]@{ label = 'ok-0'; file_path = $comspec; arguments = @('/c', 'exit', '0'); stdout_path = (Join-Path $processSandbox 'clean-0.out'); stderr_path = (Join-Path $processSandbox 'clean-0.err') },
+            [pscustomobject]@{ label = 'ok-1'; file_path = $comspec; arguments = @('/c', 'exit', '5'); stdout_path = (Join-Path $processSandbox 'clean-1.out'); stderr_path = (Join-Path $processSandbox 'clean-1.err') }
+        )
+        Assert-True (@($script:TtsS1LastFanOutStopped).Count -eq 0) 'a fan-out that ran to completion reaped nothing'
+        Assert-True ($clean.results.Count -eq 2) 'a completed fan-out returns one result per job'
+        Assert-True ($clean.results[0].exit_code -eq 0 -and $clean.results[1].exit_code -eq 5) 'a completed fan-out returns each job own exit code'
+        Assert-True (($clean.results[0].label -ceq 'ok-0') -and ($clean.results[1].label -ceq 'ok-1')) 'a completed fan-out returns results in job order'
         # The quoter is what carries a spaced path through to the child, so
         # it is checked against the parser it is written for.
         $echoOut = Join-Path $processSandbox 'echo.stdout.txt'

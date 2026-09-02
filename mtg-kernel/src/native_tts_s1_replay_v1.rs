@@ -117,11 +117,50 @@ pub const TTS_S1_REPLAY_SHARD_REPORT_SCHEMA_V1: &str = "mtg-kernel-tts-s1-replay
 /// The largest shard count a tier may be split into.
 ///
 /// A bound, not a tuning knob. Sharding is a pure execution split (see
-/// [`TtsS1ShardSelectorV1`]), so a larger count changes nothing about the
-/// published statistics; but every shard is a whole process holding a
+/// [`TtsS1ShardSelectorV1`]), so a larger count changes nothing about WHICH
+/// decisions are measured; but every shard is a whole process holding a
 /// loaded checkpoint, and a mis-typed count must fail closed at
 /// configuration time rather than fork a thousand of them.
 pub const TTS_S1_MAX_SHARD_COUNT_V1: u64 = 64;
+
+/// THE PINNED FORMAL CONCURRENCY.
+///
+/// Sharding does not change which decisions are measured, but it does
+/// change the machine those measurements were taken on: eight replay
+/// processes contend for cores, memory bandwidth and the disk the
+/// production diagnostics writer republishes an episode file to after every
+/// decision. The p99 protocol latency, the hard-timeout clause and the
+/// isotonic curve the compute-cap projection is fitted to are all wall-time
+/// samples, so a run at a different concurrency is a measurement of a
+/// different machine, and `-ShardCount` would otherwise be a knob that can
+/// flip a tier's verdict.
+///
+/// So the formal topology is pinned rather than chosen: eight, because the
+/// CP7 panel host runs the wrapped agent under eight concurrent games, and
+/// a formal S1 latency claim has to be measured at the concurrency the
+/// product is actually served at. A run at any other count is a SMOKE: it
+/// still replays, still publishes every report and still carries a verdict
+/// in its own report, and it may never be read as a feasibility result.
+pub const TTS_S1_FORMAL_SHARD_COUNT_V1: u64 = 8;
+
+/// Logical CPUs a formal run requires PER SHARD.
+///
+/// Two, so eight concurrent replay processes have sixteen logical CPUs
+/// between them. Below that the shards are time-slicing rather than
+/// running, and every latency measured is a measurement of the contention
+/// and not of the tier.
+pub const TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1: u64 = 2;
+
+/// The topology rule, spelled out on the wire so a reader never has to
+/// infer which concurrency a tier's timings were taken under, or what would
+/// have made them formal.
+pub const TTS_S1_SHARD_TOPOLOGY_RULE_V1: &str = concat!(
+    "formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes",
+    "-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under",
+    "-on-a-host-with-at-least-2-logical-cpus-per-shard",
+    "-any-other-shard-count-or-a-smaller-host-is-a-smoke-and-never-a-feasibility-result",
+    "/v1"
+);
 
 /// How a shard's episode subset is defined, stated on the wire so nobody
 /// has to reconstruct it from the episode list.
@@ -855,6 +894,172 @@ pub fn latency_view_v1(records: &[&TtsS1ReplayDecisionRecordV1]) -> Option<TtsS1
     })
 }
 
+/// What the measuring process observed about the host it ran on.
+///
+/// Read ONCE, at launch, before anything is measured, and read-only: this
+/// module never sizes anything from it and never branches on it. It exists
+/// so the topology a tier's timings were taken under is auditable from the
+/// report alone, and so the formal-run rule
+/// ([`TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1`]) is checkable against a
+/// recorded fact instead of against a claim about the host.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TtsS1HostFactsV1 {
+    pub logical_cpus: u64,
+    /// Total physical memory in bytes, or 0 where the platform did not
+    /// answer. Zero is published as zero rather than omitted: a reader has
+    /// to be able to tell "the host had none to report" from "nobody
+    /// asked", and a missing field cannot.
+    pub total_memory_bytes: u64,
+}
+
+impl TtsS1HostFactsV1 {
+    /// Reads the host's logical CPU count and total physical memory.
+    pub fn read_v1() -> Self {
+        Self {
+            logical_cpus: std::thread::available_parallelism()
+                .map(|count| count.get() as u64)
+                .unwrap_or(0),
+            total_memory_bytes: host_total_memory_v1::total_memory_bytes_v1().unwrap_or(0),
+        }
+    }
+}
+
+#[cfg(windows)]
+mod host_total_memory_v1 {
+    /// `MEMORYSTATUSEX`, field for field and in order.
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct MemoryStatusExV1 {
+        dwLength: u32,
+        dwMemoryLoad: u32,
+        ullTotalPhys: u64,
+        ullAvailPhys: u64,
+        ullTotalPageFile: u64,
+        ullAvailPageFile: u64,
+        ullTotalVirtual: u64,
+        ullAvailVirtual: u64,
+        ullAvailExtendedVirtual: u64,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusExV1) -> i32;
+    }
+
+    pub(super) fn total_memory_bytes_v1() -> Option<u64> {
+        let mut status = MemoryStatusExV1 {
+            dwLength: u32::try_from(std::mem::size_of::<MemoryStatusExV1>()).ok()?,
+            dwMemoryLoad: 0,
+            ullTotalPhys: 0,
+            ullAvailPhys: 0,
+            ullTotalPageFile: 0,
+            ullAvailPageFile: 0,
+            ullTotalVirtual: 0,
+            ullAvailVirtual: 0,
+            ullAvailExtendedVirtual: 0,
+        };
+        // SAFETY: `status` is a plain-old-data `#[repr(C)]` struct whose
+        // `dwLength` is set to its own size before the call, which is the
+        // whole of the Win32 contract for `MEMORYSTATUSEX`. The call reads
+        // and writes only that struct.
+        let succeeded = unsafe { GlobalMemoryStatusEx(&mut status) != 0 };
+        succeeded.then_some(status.ullTotalPhys)
+    }
+}
+
+#[cfg(all(unix, not(windows)))]
+mod host_total_memory_v1 {
+    pub(super) fn total_memory_bytes_v1() -> Option<u64> {
+        // `MemTotal:` in kibibytes, which is the only line needed and the
+        // only one parsed.
+        let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let kibibytes: u64 = text
+            .lines()
+            .find_map(|line| line.strip_prefix("MemTotal:"))?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()?;
+        kibibytes.checked_mul(1_024)
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+mod host_total_memory_v1 {
+    pub(super) fn total_memory_bytes_v1() -> Option<u64> {
+        None
+    }
+}
+
+/// The concurrency a tier's timings were measured under, and whether that
+/// topology may carry formal standing.
+///
+/// Recorded, never acted on here: nothing in this module reads
+/// `meets_formal_topology` to decide anything, exactly as nothing reads a
+/// duration. The launcher is what refuses to mark a run complete, and it
+/// reads this field rather than its own flags, so a report is the authority
+/// on the topology it was produced under.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ShardTopologyV1 {
+    pub rule: String,
+    /// Replay processes that produced these timings. One for an unsharded
+    /// run.
+    pub shard_count: u64,
+    /// [`TTS_S1_FORMAL_SHARD_COUNT_V1`], on the wire so a reader sees the
+    /// pin beside the count rather than having to know it.
+    pub formal_shard_count: u64,
+    pub formal_logical_cpus_per_shard: u64,
+    /// Logical CPUs the measuring processes observed.
+    pub host_logical_cpus: u64,
+    /// Total physical memory the measuring processes observed, in bytes.
+    /// Zero means the platform did not answer.
+    pub host_total_memory_bytes: u64,
+    /// Whether this run's topology is the pinned formal one on a host large
+    /// enough for it.
+    pub meets_formal_topology: bool,
+    /// Every failing clause, or the sentence that says none failed.
+    pub formal_topology_reason: String,
+}
+
+impl TtsS1ShardTopologyV1 {
+    /// Builds the block from the observed host and the concurrency used.
+    pub fn evaluate_v1(shard_count: u64, host: TtsS1HostFactsV1) -> Self {
+        let required_cpus = TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1.saturating_mul(shard_count);
+        let mut failures: Vec<String> = Vec::new();
+        if shard_count != TTS_S1_FORMAL_SHARD_COUNT_V1 {
+            failures.push(format!(
+                "the timings were measured at {shard_count} concurrent replay processes, not the pinned {TTS_S1_FORMAL_SHARD_COUNT_V1}"
+            ));
+        }
+        if host.logical_cpus < required_cpus {
+            failures.push(format!(
+                "the host reported {} logical CPUs, below the {required_cpus} a {shard_count}-shard run requires at {TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1} per shard",
+                host.logical_cpus
+            ));
+        }
+        let meets_formal_topology = failures.is_empty();
+        let formal_topology_reason = if meets_formal_topology {
+            format!(
+                "the timings were measured at the pinned {TTS_S1_FORMAL_SHARD_COUNT_V1} concurrent replay processes on a host reporting {} logical CPUs, at or above the {required_cpus} required",
+                host.logical_cpus
+            )
+        } else {
+            failures.join("; ")
+        };
+        Self {
+            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V1.to_owned(),
+            shard_count,
+            formal_shard_count: TTS_S1_FORMAL_SHARD_COUNT_V1,
+            formal_logical_cpus_per_shard: TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1,
+            host_logical_cpus: host.logical_cpus,
+            host_total_memory_bytes: host.total_memory_bytes,
+            meets_formal_topology,
+            formal_topology_reason,
+        }
+    }
+}
+
 /// Everything about a tier replay that is the SAME in every shard of it.
 ///
 /// It exists so the two paths cannot drift. The unsharded replay builds one
@@ -890,6 +1095,15 @@ pub struct TtsS1ReplayIdentityV1 {
     pub slo_micros: u64,
     pub hard_timeout_micros: u64,
     pub chain_genesis_sha256: String,
+    /// Logical CPUs the measuring process observed at launch. In the
+    /// identity, not beside the shard count, precisely so the merge's
+    /// existing equality check proves every shard saw the SAME host: K
+    /// shards spread across two machines would be K measurements of two
+    /// different topologies presented as one.
+    pub host_logical_cpus: u64,
+    /// Total physical memory the measuring process observed at launch, in
+    /// bytes. Zero where the platform did not answer.
+    pub host_total_memory_bytes: u64,
     /// The corpus's whole harvested population, which the compute-cap
     /// projection costs episode by episode. Carried here because the merge
     /// reads shard reports and nothing else: it recomputes the projection
@@ -971,6 +1185,11 @@ pub struct TtsS1ReplayReportBodyV1 {
     pub whole_episode_view: TtsS1LatencyViewV1,
     pub slo_micros: u64,
     pub hard_timeout_micros: u64,
+    /// THE MACHINE THESE TIMINGS WERE TAKEN ON: the concurrency the replay
+    /// ran at, the pinned formal one, and the host it ran on. Every latency
+    /// in this report is a wall-time sample, so the topology is part of
+    /// what the numbers mean and not metadata beside them.
+    pub shard_topology: TtsS1ShardTopologyV1,
     /// The published V4 diagnostics episode files the protocol latencies
     /// were read from.
     pub diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1>,
@@ -1098,6 +1317,12 @@ pub fn strip_timing_fields_v1(bytes: &[u8]) -> Result<serde_json::Value, TtsS1Re
         "verdict",
         "verdict_reason",
         "final_record_sha256",
+        // The topology belongs with the timings, not with the substantive
+        // claim: it records the machine and the concurrency the wall-time
+        // samples were taken under, and it is exactly what changes when the
+        // same corpus is replayed by eight processes instead of one. What
+        // must NOT change is everything below.
+        "shard_topology",
     ] {
         body.remove(key);
     }
@@ -1454,6 +1679,11 @@ pub(crate) fn replay_corpus_pass_v1(
     shard: Option<TtsS1ShardSelectorV1>,
     diagnostics_directory: &Path,
 ) -> Result<TtsS1ReplayPassV1, TtsS1ReplayErrorV1> {
+    // Read AT LAUNCH, before a single decision is searched, so the recorded
+    // topology is the one the measurements were taken under and not one
+    // sampled after the run has already loaded the machine.
+    let host = TtsS1HostFactsV1::read_v1();
+
     // The corpus names the checkpoint it was drawn from; measuring a
     // different one would produce a real report about a population that
     // does not exist.
@@ -1831,6 +2061,8 @@ pub(crate) fn replay_corpus_pass_v1(
             slo_micros: slo_micros_v1(),
             hard_timeout_micros: hard_timeout_micros_v1(),
             chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
+            host_logical_cpus: host.logical_cpus,
+            host_total_memory_bytes: host.total_memory_bytes,
             all_episode_decisions: corpus.body.all_episode_decisions.clone(),
         },
         records,
@@ -1870,6 +2102,7 @@ pub(crate) fn finalize_tts_s1_replay_body_v1(
     mut records: Vec<TtsS1ReplayDecisionRecordV1>,
     diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1>,
     corpus_targets_replayed: u64,
+    shard_count: u64,
 ) -> Result<TtsS1ReplayReportBodyV1, TtsS1ReplayErrorV1> {
     let searched_decisions = records.len() as u64;
     if searched_decisions == 0 {
@@ -1942,6 +2175,13 @@ pub(crate) fn finalize_tts_s1_replay_body_v1(
         whole_episode_view,
         slo_micros: slo_micros_v1(),
         hard_timeout_micros: hard_timeout_micros_v1(),
+        shard_topology: TtsS1ShardTopologyV1::evaluate_v1(
+            shard_count,
+            TtsS1HostFactsV1 {
+                logical_cpus: identity.host_logical_cpus,
+                total_memory_bytes: identity.host_total_memory_bytes,
+            },
+        ),
         diagnostics_episode_files,
         compute_cap,
         verdict,
@@ -1988,6 +2228,9 @@ pub(crate) fn replay_corpus_body_v1(
         pass.records,
         pass.diagnostics_episode_files,
         pass.corpus_targets_replayed,
+        // ONE process did all of it, which is the topology this report is
+        // entitled to claim and, being one and not eight, is never formal.
+        1,
     )
 }
 
@@ -2977,6 +3220,7 @@ pub fn merge_tts_s1_replay_shards_v1(
         records,
         diagnostics_episode_files,
         corpus_targets_replayed,
+        shard_count,
     )?;
     TtsS1ReplayReportV1::seal_v1(body)
 }
@@ -4226,6 +4470,13 @@ mod tests {
             whole_episode_view: view,
             slo_micros: slo_micros_v1(),
             hard_timeout_micros: hard_timeout_micros_v1(),
+            shard_topology: TtsS1ShardTopologyV1::evaluate_v1(
+                TTS_S1_FORMAL_SHARD_COUNT_V1,
+                TtsS1HostFactsV1 {
+                    logical_cpus: 32,
+                    total_memory_bytes: 137_438_953_472,
+                },
+            ),
             diagnostics_episode_files: vec![TtsS1DiagnosticsEpisodeFileV1 {
                 episode_id: 0,
                 file_name: "episode-synthetic.jsonl".to_owned(),
@@ -4444,6 +4695,11 @@ mod tests {
             slo_micros: slo_micros_v1(),
             hard_timeout_micros: hard_timeout_micros_v1(),
             chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
+            // A host large enough for the pinned formal topology, so the
+            // fixture can exercise both the formal and the non-formal
+            // outcome from the shard count alone.
+            host_logical_cpus: 32,
+            host_total_memory_bytes: 137_438_953_472,
             all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1::summarize_v1(
                 decision_counts,
                 decision_counts.len() as u64,
@@ -4546,7 +4802,10 @@ mod tests {
         }
     }
 
-    fn synthetic_unsharded_bytes_v1(decision_counts: &[u64]) -> Vec<u8> {
+    /// What ONE process finalizing these records under `shard_count`
+    /// concurrency publishes. The merge of that many shards has to
+    /// reproduce it byte for byte.
+    fn synthetic_finalized_bytes_v1(decision_counts: &[u64], shard_count: u64) -> Vec<u8> {
         let records = synthetic_run_records_v1(decision_counts);
         let targets = records
             .iter()
@@ -4558,6 +4817,7 @@ mod tests {
             records,
             synthetic_diagnostics_files_v1(decision_counts),
             targets,
+            shard_count,
         )
         .expect("the synthetic body finalizes");
         TtsS1ReplayReportV1::seal_v1(body)
@@ -4572,20 +4832,27 @@ mod tests {
     ///
     /// The same records, the same episodes, the same diagnostics files: the
     /// merge of K shard reports is byte for byte the report one process
-    /// would have published, for every K from one to the episode count.
-    /// That covers the chain (re-assigned over the union in position
-    /// order), both views, the pooled isotonic fit, every per-episode cost
-    /// estimate, the projection and the verdict at once, because all of
-    /// them are inside those bytes.
+    /// finalizing those records would have published, for every K from one
+    /// to the episode count. That covers the chain (re-assigned over the
+    /// union in position order), both views, the pooled isotonic fit, every
+    /// per-episode cost estimate, the projection and the verdict at once,
+    /// because all of them are inside those bytes.
+    ///
+    /// The ONE thing that legitimately differs between a one-process run
+    /// and a K-process one is the recorded topology, which says how many
+    /// processes were contending for the machine while these wall times
+    /// were taken. That is asserted separately, and asserted to be the only
+    /// difference.
     #[test]
     fn a_merged_report_is_byte_identical_to_the_unsharded_one_v1() {
         let counts = [7u64, 5, 9, 4, 6];
-        let unsharded = synthetic_unsharded_bytes_v1(&counts);
+        let unsharded = synthetic_finalized_bytes_v1(&counts, 1);
         // The fixture is not degenerate: the report really carries the
         // records, the curve and a verdict.
         let decoded = decode_tts_s1_replay_report_v1(&unsharded).expect("the fixture re-proves");
         assert_eq!(decoded.body.searched_decisions, counts.iter().sum::<u64>());
         assert!(decoded.body.compute_cap.latency_curve.knots.len() > 1);
+        let unsharded_stripped = strip_timing_fields_v1(&unsharded).unwrap();
 
         for shard_count in [1u64, 2, 3, 5] {
             let directory = scratch_diagnostics_dir_v1(&format!("merge-{shard_count}"));
@@ -4601,16 +4868,129 @@ mod tests {
                 counts.iter().sum::<u64>()
             );
             write_shard_reports_v1(&directory, &bodies);
-            let merged = merge_tts_s1_replay_shards_v1(&directory, shard_count)
-                .expect("the shards merge")
+            let merged =
+                merge_tts_s1_replay_shards_v1(&directory, shard_count).expect("the shards merge");
+            let merged_bytes = merged
                 .canonical_bytes_v1()
                 .expect("the merged report encodes");
             assert_eq!(
-                merged, unsharded,
-                "the merge of {shard_count} shards must be the unsharded report, byte for byte"
+                merged_bytes,
+                synthetic_finalized_bytes_v1(&counts, shard_count),
+                "the merge of {shard_count} shards must be what one process finalizing the same \
+                 records at the same concurrency publishes, byte for byte"
+            );
+            // The topology is the ONLY thing a different fan-out changes:
+            // strip the fields a re-run may change and the merged report is
+            // the one-process report exactly.
+            assert_eq!(merged.body.shard_topology.shard_count, shard_count);
+            assert_eq!(
+                merged.body.shard_topology.formal_shard_count,
+                TTS_S1_FORMAL_SHARD_COUNT_V1
+            );
+            assert_eq!(
+                strip_timing_fields_v1(&merged_bytes).unwrap(),
+                unsharded_stripped,
+                "past the topology and the timings, {shard_count} shards and one process must \
+                 publish the same report"
             );
             let _ = std::fs::remove_dir_all(&directory);
         }
+    }
+
+    /// THE PINNED FORMAL TOPOLOGY. Every wall time in the report is a
+    /// sample from a loaded machine, so the concurrency is part of what the
+    /// numbers mean; the report says which one it ran at, whether that is
+    /// the pinned one, and why not when it is not.
+    #[test]
+    fn only_the_pinned_topology_on_a_large_enough_host_is_formal_v1() {
+        // Eight shards on a host with two logical CPUs per shard: formal.
+        let formal = TtsS1ShardTopologyV1::evaluate_v1(
+            TTS_S1_FORMAL_SHARD_COUNT_V1,
+            TtsS1HostFactsV1 {
+                logical_cpus: 16,
+                total_memory_bytes: 68_719_476_736,
+            },
+        );
+        assert!(formal.meets_formal_topology);
+        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V1);
+        assert_eq!(formal.shard_count, 8);
+        assert_eq!(formal.formal_shard_count, 8);
+        assert_eq!(formal.formal_logical_cpus_per_shard, 2);
+        assert_eq!(formal.host_logical_cpus, 16);
+        assert_eq!(formal.host_total_memory_bytes, 68_719_476_736);
+        assert!(formal.formal_topology_reason.contains("16 logical CPUs"));
+
+        // ANY other count, above or below, and the unsharded run itself.
+        for shard_count in [1u64, 2, 4, 7, 9, 16] {
+            let topology = TtsS1ShardTopologyV1::evaluate_v1(
+                shard_count,
+                TtsS1HostFactsV1 {
+                    logical_cpus: 128,
+                    total_memory_bytes: 1,
+                },
+            );
+            assert!(
+                !topology.meets_formal_topology,
+                "{shard_count} concurrent processes is not the pinned topology"
+            );
+            assert!(topology.formal_topology_reason.contains("not the pinned 8"));
+        }
+
+        // The pinned count on a host too small for it: not formal, and the
+        // reason names the host rather than the count.
+        let cramped = TtsS1ShardTopologyV1::evaluate_v1(
+            TTS_S1_FORMAL_SHARD_COUNT_V1,
+            TtsS1HostFactsV1 {
+                logical_cpus: 15,
+                total_memory_bytes: 0,
+            },
+        );
+        assert!(!cramped.meets_formal_topology);
+        assert!(cramped.formal_topology_reason.contains("15 logical CPUs"));
+        assert!(cramped.formal_topology_reason.contains("below the 16"));
+        assert!(!cramped.formal_topology_reason.contains("not the pinned 8"));
+        // Exactly at the boundary is admissible; one below is not.
+        assert!(
+            TtsS1ShardTopologyV1::evaluate_v1(
+                TTS_S1_FORMAL_SHARD_COUNT_V1,
+                TtsS1HostFactsV1 {
+                    logical_cpus: 16,
+                    total_memory_bytes: 0,
+                },
+            )
+            .meets_formal_topology
+        );
+
+        // BOTH clauses are named when both fail, as the verdict does.
+        let neither = TtsS1ShardTopologyV1::evaluate_v1(
+            4,
+            TtsS1HostFactsV1 {
+                logical_cpus: 2,
+                total_memory_bytes: 0,
+            },
+        );
+        assert!(neither.formal_topology_reason.contains("not the pinned 8"));
+        assert!(neither.formal_topology_reason.contains("2 logical CPUs"));
+    }
+
+    /// The host facts are really read, not defaulted: a process running
+    /// this test has at least one logical CPU.
+    #[test]
+    fn the_host_facts_are_read_from_the_host_v1() {
+        let host = TtsS1HostFactsV1::read_v1();
+        assert!(
+            host.logical_cpus >= 1,
+            "a running process has at least one logical CPU"
+        );
+        // Total memory is 0 only where the platform declined to answer;
+        // on every platform this crate builds for it does answer.
+        #[cfg(any(windows, unix))]
+        assert!(
+            host.total_memory_bytes > 0,
+            "the host must report its physical memory"
+        );
+        // Read twice, same answer: nothing here samples a moving quantity.
+        assert_eq!(host, TtsS1HostFactsV1::read_v1());
     }
 
     /// Every way the K reports could fail to be one run is refused. None of
@@ -4733,7 +5113,7 @@ mod tests {
             // A shard report is not a tier report and vice versa.
             assert!(decode_tts_s1_replay_report_v1(&bytes).is_err());
         }
-        let tier_bytes = synthetic_unsharded_bytes_v1(&counts);
+        let tier_bytes = synthetic_finalized_bytes_v1(&counts, 2);
         assert!(decode_tts_s1_replay_shard_report_v1(&tier_bytes).is_err());
 
         // A tampered digest is refused, exactly as the tier report's is.
