@@ -22,9 +22,11 @@ Every path below is machine-local and never enters a hashed artifact.
 | Input | Wrapper parameter | Notes |
 | --- | --- | --- |
 | Parent (cycle-3 lineage) Store root | `-GenesisParentStoreRoot` | The arm's genesis weights are copied from it. |
-| Parent generation | `-GenesisParentGeneration` | `2048` for the cycle-3 lineage tip. The wrapper hashes `update-<gen>.{checkpoint.json,sidecar.json,state.f32le}` and `run.json` under it into the genesis authority record. |
-| Eight slot store roots | `-SlotStoreRoots` | Absolute, in slot order 0..7 (`anchor-0`, `anchor-1`, `historical-0`, `historical-1`, `current-0`, `current-1`, `exploiter-0`, `exploiter-1`). No two may name the same root. Whichever slots the manifest binds to the arm's own run (`current-1` always, `historical-0` from refresh 4) are overridden with `-StoreRoot`, so their table entries are placeholders. |
-| The arm's `run.json` | `-RunRecord` | Must declare `population_program_v2_cycle4`, and `trainer_v4_candidate` for the two rb arms. |
+| Parent generation | `-GenesisParentGeneration` | `896`: the cycle-3 focal run's store generation 896, which is trainee-local 896 and the pre-registered start. NOT the lineage tip 2048. The wrapper hashes `update-<gen>.{checkpoint.json,sidecar.json,state.f32le}` and `run.json` under it into the genesis authority record, and cross-checks all four against the run record's own `contracts.opponent_ladder_initialization`, so a wrong generation fails at phase=inputs rather than binding the wrong parent. |
+| Eight slot store roots | `-SlotStoreRoots` | Absolute, in slot order 0..7 (`anchor-0`, `anchor-1`, `historical-0`, `historical-1`, `current-0`, `current-1`, `exploiter-0`, `exploiter-1`). Two slots MAY name the same root when their pinned generations differ (anchor-1 is 970002 at 1536 and historical-1's middle rotation phase is 970002 at 1024, one Store as two occupants); the same root at the same generation in two slots is still rejected. Whichever slots the manifest binds to the arm's own run (`current-1` always, `historical-0` from refresh 4) are overridden with `-StoreRoot`, so their table entries are placeholders. |
+| The three `historical-1` rotation roots | `-HistoricalOneStoreRoots` | Absolute, in rotation order: the Stores for program-v1 seeds 970001, 970002 and 970003, each pinned at generation 1024. Slot 3 takes `roots[refresh_index mod 3]` at every boundary. Omit it only if you intend the campaign to stop at refresh 1: the wrapper verifies the chosen root's four content hashes against that boundary's slot-3 identity and fails closed. |
+| The arm's `run.json` | `-RunRecord` | Where the wrapper WRITES the derived run record (and re-derives it on every later launch). Not an operator input unless `-UseExistingRunRecord` is given. |
+| `cycle4_run_record_v1.exe` | `-RunRecordExecutable` | The run-record builder. Required unless `-UseExistingRunRecord`. |
 | The arm's Store root | `-StoreRoot` | Formal mode only. Its PARENT directory is the Store prefix the mode marker claims. |
 | The arm's baseline chain directory | `-ChainDir` | Formal mode only. Per-update sidecars, boundary records, and `arm-origin.record.json` land here. |
 | The refresh chain directory | `-RefreshChainDir` | Holds `refresh-NN.manifest.json` and `refresh-NN.panel.json`. One per arm. The wrapper builds every manifest in it, genesis included. |
@@ -36,11 +38,11 @@ Every path below is machine-local and never enters a hashed artifact.
 | Panel base seed | `-PanelBaseSeed` | One literal per arm. The wrapper strides 32,000,000 per refresh so no pair seed is reused anywhere in the campaign. |
 | Device | `-Device` | `0` or `1`; defaults to `1`. Sets `CUDA_VISIBLE_DEVICES` for each child. |
 
-Build the two bins and the panel test executable once:
+Build the three bins and the panel test executable once:
 
 ```
 $env:CARGO_TARGET_DIR = 'D:\cargo-target-cycle4'
-cargo build -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1,native-training-store-v2-production --bin cycle4_arm_v1 --bin cycle4_refresh_build_v1
+cargo build -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1,native-training-store-v2-production --bin cycle4_arm_v1 --bin cycle4_refresh_build_v1 --bin cycle4_run_record_v1
 cargo test  -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1 --lib --no-run --message-format=json
 ```
 
@@ -51,15 +53,24 @@ The panel executable is the `executable` field of the last
 ### The one input the wrapper cannot produce
 
 **The frozen half of each `refresh-NN.slot-identities.json`, for NN = 0..16.**
-Six slots (both anchors, `historical-1`, `current-0`, both exploiters) and,
-before refresh 4, `historical-0` are compiled Rust constants that the manifest
-validator matches exactly. The wrapper stages the operator's roster and
-overwrites only the slots the ARM itself occupies (`current-1` at every
-refresh including genesis, `historical-0` from refresh 4), read from the arm's
-own Store head.
+Five slots (both anchors, `current-0`, both exploiters) plus `historical-1`'s
+three rotation phases are compiled Rust constants that the manifest validator
+matches on all seven fields. `historical-0` before refresh 4 is NOT a compiled
+constant: the validator pins only its `source_run_sha256`, `source_base_seed`
+and lagged `source_generation` (the cycle-3 lineage at trainee-local minus
+512), and reads its four content hashes from this roster. Those four are
+therefore proven the only way they can be, against the cycle-3 Store itself:
+the wrapper recomputes them at that generation before writing the interval's
+locators, and does the same for `historical-1`'s rotation root, so a roster
+entry that does not match the Store on disk stops the interval.
+
+The wrapper stages the operator's roster and overwrites only the slots the ARM
+itself occupies (`current-1` at every refresh including genesis, `historical-0`
+from refresh 4), read from the arm's own Store head.
 
 Nothing else is an operator input. In particular `refresh-00.manifest.json` is
-NOT: see the genesis sequence below.
+NOT (see the genesis sequence below) and neither is the arm's `run.json`
+(`cycle4_run_record_v1` derives it, and re-derives it on every later launch).
 
 ### The genesis sequence
 
@@ -97,9 +108,11 @@ powershell -NoProfile -File scripts\experiments\population_v2_cycle4_v1\run-cycl
   -RefreshChainDir E:\mtg-kernel-cycle4\control-r\refresh-chain `
   -SlotIdentitiesRosterDir E:\mtg-kernel-cycle4\control-r\slot-identities `
   -SlotStoreRoots @('E:\...\slot-0','E:\...\slot-1','E:\...\slot-2','E:\...\slot-3','E:\...\slot-4','E:\...\slot-5','E:\...\slot-6','E:\...\slot-7') `
-  -GenesisParentStoreRoot E:\mtg-kernel-population-v2-cycle3\lineage\run-0\store `
-  -GenesisParentGeneration 2048 `
+  -HistoricalOneStoreRoots @('D:\...\wave-00-seed-970001-gpu0\run-0\store','D:\...\wave-00-seed-970002-gpu1\run-0\store','D:\...\wave-01-seed-970003-gpu1\run-0\store') `
+  -GenesisParentStoreRoot E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store `
+  -GenesisParentGeneration 896 `
   -ArmExecutable D:\cargo-target-cycle4\release\cycle4_arm_v1.exe `
+  -RunRecordExecutable D:\cargo-target-cycle4\release\cycle4_run_record_v1.exe `
   -RefreshBuilderExecutable D:\cargo-target-cycle4\release\cycle4_refresh_build_v1.exe `
   -PanelExecutable D:\cargo-target-cycle4\release\deps\mtg_kernel-<hash>.exe `
   -PythonExecutable D:\mtg-kernel-cycle4\venv\Scripts\python.exe `
@@ -181,7 +194,11 @@ genesis exists).
 
 Add `-DryRun` to validate every input, write the provenance records and both
 locator files, and print the exact command line of every child without
-launching one. `-SkipHostAssertions` additionally skips the git, toolchain,
+launching one. A dry run publishes NO terminal marker: its `result.json`
+carries `status: "DRY_RUN_PLANNED"`, so a planned campaign can never be
+mistaken for a finished one. A dry run over a campaign whose run record does
+not exist yet prints the `cycle4_run_record_v1` command and stops there
+(`dry_run_stopped_after: "run-record"`). `-SkipHostAssertions` additionally skips the git, toolchain,
 and GPU assertions and is accepted ONLY with `-DryRun`.
 
 On a campaign that has not been bootstrapped yet, a dry run prints the two

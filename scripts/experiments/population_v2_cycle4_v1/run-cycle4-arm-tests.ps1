@@ -113,6 +113,41 @@ $roles = @('anchor-0', 'anchor-1', 'historical-0', 'historical-1', 'current-0', 
 $traineeRunSha256 = New-SyntheticHash -Tag 0xaa
 $traineeBaseSeed = 977102
 
+# The two slots the wrapper verifies against the Store itself (historical-1's
+# rotation phase, and historical-0 while it is still the cycle-3 lineage) need
+# real checkpoint records to verify, so the synthetic stores carry them and the
+# synthetic manifests take those slots' four content hashes from them.
+$script:Slot2Identity = $null
+$script:HistoricalOneIdentities = @()
+
+function New-SyntheticStoreCheckpoint {
+    # One checkpoint record in the exact shape Get-Cycle4CheckpointIdentity
+    # reads: generation_index, payload.sha256, and the two train_state hashes.
+    # checkpoint_manifest_sha256 is the SHA-256 of the written bytes, so it can
+    # only be computed after the file exists.
+    param(
+        [Parameter(Mandatory = $true)][string]$StoreRoot,
+        [Parameter(Mandatory = $true)][uint64]$Generation,
+        [Parameter(Mandatory = $true)][int]$Tag
+    )
+    $payload = New-SyntheticHash -Tag $Tag
+    $model = New-SyntheticHash -Tag ($Tag + 1)
+    $state = New-SyntheticHash -Tag ($Tag + 2)
+    $path = Join-Path (Join-Path $StoreRoot 'checkpoints') ('update-{0:d8}.checkpoint.json' -f $Generation)
+    Write-SyntheticJson -Value ([ordered]@{
+        schema = 'mtg-kernel-native-checkpoint/v3'
+        generation_index = $Generation
+        train_state = [ordered]@{ model_parameter_sha256 = $model; state_sha256 = $state }
+        payload = [ordered]@{ sha256 = $payload }
+    }) -Path $path
+    return [ordered]@{
+        checkpoint_manifest_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+        checkpoint_payload_sha256 = $payload
+        model_parameter_sha256 = $model
+        train_state_sha256 = $state
+    }
+}
+
 function Write-SyntheticJson {
     param(
         [Parameter(Mandatory = $true)]$Value,
@@ -143,6 +178,24 @@ function New-SyntheticManifest {
     $slots[5].source_run_sha256 = $traineeRunSha256
     $slots[5].source_base_seed = $traineeBaseSeed
     $slots[5].source_generation = (896 + ($RefreshIndex * 128))
+    # anchor-1 shares its Store with historical-1's middle rotation phase, at a
+    # DIFFERENT pinned generation: one physical Store, two occupants. That is
+    # the real roster's shape (970002 at 1536 and at 1024) and the case the
+    # locator writer must accept.
+    $slots[1].source_generation = 1536
+    # historical-1 rotates by refresh_index mod 3, so its four content hashes
+    # are that phase's Store's, not one fixed set.
+    if (@($script:HistoricalOneIdentities).Count -eq 3) {
+        $rotation = [int]($RefreshIndex % 3)
+        foreach ($field in @('checkpoint_manifest_sha256', 'checkpoint_payload_sha256', 'model_parameter_sha256', 'train_state_sha256')) {
+            $slots[3].$field = [string]$script:HistoricalOneIdentities[$rotation].$field
+        }
+    }
+    if ($RefreshIndex -le 3 -and $null -ne $script:Slot2Identity) {
+        foreach ($field in @('checkpoint_manifest_sha256', 'checkpoint_payload_sha256', 'model_parameter_sha256', 'train_state_sha256')) {
+            $slots[2].$field = [string]$script:Slot2Identity.$field
+        }
+    }
     if ($RefreshIndex -ge 4) {
         $slots[2].source_run_sha256 = $traineeRunSha256
         $slots[2].source_base_seed = $traineeBaseSeed
@@ -163,6 +216,35 @@ function New-SyntheticManifest {
     Write-SyntheticJson -Value $document -Path $Path
 }
 
+$slotStoreRoots = @(
+    foreach ($index in 0..7) {
+        $path = Join-Path $WorkRoot ("slot-{0}" -f $index)
+        New-Item -ItemType Directory -Force -Path $path | Out-Null
+        (Resolve-Path -LiteralPath $path).Path
+    }
+)
+
+# historical-1's three rotation Stores, in rotation order. The middle one is
+# also anchor-1's Store (slot 1), which is exactly the shared-root case.
+$historicalOneRoots = @(
+    foreach ($phase in 0..2) {
+        $path = Join-Path $WorkRoot ("historical-one-{0}" -f $phase)
+        New-Item -ItemType Directory -Force -Path $path | Out-Null
+        (Resolve-Path -LiteralPath $path).Path
+    }
+)
+$script:HistoricalOneIdentities = @(
+    foreach ($phase in 0..2) {
+        New-SyntheticStoreCheckpoint -StoreRoot $historicalOneRoots[$phase] -Generation ([uint64]384) -Tag (0x60 + ($phase * 8))
+    }
+)
+# anchor-1 is the middle rotation Store at generation 1536, so its own
+# checkpoint lives beside the rotation one in the same Store.
+New-SyntheticStoreCheckpoint -StoreRoot $historicalOneRoots[1] -Generation ([uint64]1536) -Tag 0x90 | Out-Null
+$slotStoreRoots[1] = $historicalOneRoots[1]
+$slotStoreRoots[3] = $historicalOneRoots[0]
+$script:Slot2Identity = New-SyntheticStoreCheckpoint -StoreRoot $slotStoreRoots[2] -Generation ([uint64]384) -Tag 0xa0
+
 $refreshChainDir = Join-Path $WorkRoot 'refresh-chain'
 New-SyntheticManifest -Path (Join-Path $refreshChainDir 'refresh-00.manifest.json') -RefreshIndex ([uint64]0)
 # Manifests 1..16 and their panels, so a dry run can walk the whole campaign
@@ -172,31 +254,55 @@ foreach ($index in 1..16) {
     [System.IO.File]::WriteAllText((Join-Path $refreshChainDir ('refresh-{0:d2}.panel.json' -f $index)), '{}', [System.Text.UTF8Encoding]::new($false))
 }
 
-$runRecord = Join-Path $WorkRoot 'run.json'
-Write-SyntheticJson -Value ([ordered]@{
-    schema = 'mtg-kernel-native-train-run/v2'
-    schedule = [ordered]@{
-        base_seed = $traineeBaseSeed
-        checkpoint_segment_updates = 4
-        batch_episodes = 64
-    }
-}) -Path $runRecord
-
-$slotStoreRoots = @(
-    foreach ($index in 0..7) {
-        $path = Join-Path $WorkRoot ("slot-{0}" -f $index)
-        New-Item -ItemType Directory -Force -Path $path | Out-Null
-        (Resolve-Path -LiteralPath $path).Path
-    }
-)
-
+# The genesis parent is the cycle-3 focal run at STORE generation 896 -- the
+# pre-registered trainee-local start, not the lineage tip 2048.
+$parentGeneration = [uint64]896
 $parentStore = Join-Path $WorkRoot 'cycle3-parent'
 $parentCheckpoints = Join-Path $parentStore 'checkpoints'
 New-Item -ItemType Directory -Force -Path $parentCheckpoints | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $parentStore 'run.json'), '{"schema":"parent"}', [System.Text.UTF8Encoding]::new($false))
+$parentArtifacts = [ordered]@{}
 foreach ($suffix in @('checkpoint.json', 'sidecar.json', 'state.f32le')) {
-    [System.IO.File]::WriteAllText((Join-Path $parentCheckpoints ("update-00002048.$suffix")), "parent-$suffix", [System.Text.UTF8Encoding]::new($false))
+    $artifact = Join-Path $parentCheckpoints ('update-{0:d8}.{1}' -f $parentGeneration, $suffix)
+    [System.IO.File]::WriteAllText($artifact, "parent-$suffix", [System.Text.UTF8Encoding]::new($false))
+    $parentArtifacts[$suffix] = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
 }
+$parentRunSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $parentStore 'run.json')).Hash.ToLowerInvariant()
+
+# The run record a real launch DERIVES with cycle4_run_record_v1. The synthetic
+# copy carries the two things the wrapper reads from it: the schedule, and the
+# pinned genesis origin it cross-checks -GenesisParentGeneration against.
+function Write-SyntheticRunRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][uint64]$Generation,
+        [string]$CheckpointSha256,
+        [string]$RunSha256
+    )
+    if ([string]::IsNullOrWhiteSpace($CheckpointSha256)) { $CheckpointSha256 = $parentArtifacts['checkpoint.json'] }
+    if ([string]::IsNullOrWhiteSpace($RunSha256)) { $RunSha256 = $parentRunSha256 }
+    Write-SyntheticJson -Value ([ordered]@{
+        schema = 'mtg-kernel-native-train-run/v2'
+        schedule = [ordered]@{
+            base_seed = $traineeBaseSeed
+            checkpoint_segment_updates = 4
+            batch_episodes = 64
+        }
+        contracts = [ordered]@{
+            opponent_ladder_initialization = [ordered]@{
+                source_run_sha256 = $RunSha256
+                generation = $Generation
+                checkpoint_sha256 = $CheckpointSha256
+                sidecar_sha256 = $parentArtifacts['sidecar.json']
+                state_sha256 = $parentArtifacts['state.f32le']
+                derived_model_parameter_sha256 = (New-SyntheticHash -Tag 0xd1)
+            }
+        }
+    }) -Path $Path
+}
+
+$runRecord = Join-Path $WorkRoot 'run.json'
+Write-SyntheticRunRecord -Path $runRecord -Generation $parentGeneration
 
 $binRoot = Join-Path $WorkRoot 'bin'
 New-Item -ItemType Directory -Force -Path $binRoot | Out-Null
@@ -204,7 +310,8 @@ $armExecutable = Join-Path $binRoot 'cycle4_arm_v1.exe'
 $builderExecutable = Join-Path $binRoot 'cycle4_refresh_build_v1.exe'
 $panelExecutable = Join-Path $binRoot 'mtg_kernel-tests.exe'
 $pythonExecutable = Join-Path $binRoot 'python.exe'
-foreach ($path in @($armExecutable, $builderExecutable, $panelExecutable, $pythonExecutable)) {
+$runRecordExecutable = Join-Path $binRoot 'cycle4_run_record_v1.exe'
+foreach ($path in @($armExecutable, $builderExecutable, $panelExecutable, $pythonExecutable, $runRecordExecutable)) {
     [System.IO.File]::WriteAllText($path, 'placeholder', [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -247,9 +354,11 @@ function New-WrapperArguments {
         RefreshChainDir = $refreshChainDir
         SlotIdentitiesRosterDir = $rosterDir
         SlotStoreRoots = $slotStoreRoots
+        HistoricalOneStoreRoots = $historicalOneRoots
         GenesisParentStoreRoot = (Resolve-Path -LiteralPath $parentStore).Path
-        GenesisParentGeneration = [uint64]2048
+        GenesisParentGeneration = $parentGeneration
         ArmExecutable = $armExecutable
+        RunRecordExecutable = $runRecordExecutable
         RefreshBuilderExecutable = $builderExecutable
         PanelExecutable = $panelExecutable
         PythonExecutable = $pythonExecutable
@@ -298,10 +407,13 @@ $treatmentArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -E
 & $wrapper @treatmentArguments *>&1 | Out-Null
 $attempt = Get-LatestAttemptRoot -EvidenceRoot $evidence -GateName 'cycle4-treatment-rb-formal'
 
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $attempt 'TRAINING_COMPLETE')) `
-    -Message 'a passing dry run publishes TRAINING_COMPLETE'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $attempt 'TRAINING_COMPLETE'))) `
+    -Message 'a dry run never publishes TRAINING_COMPLETE'
 Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $attempt 'RUN_FAILED'))) `
     -Message 'a passing dry run publishes no RUN_FAILED'
+$treatmentResult = Get-Content -Raw -LiteralPath (Join-Path $attempt 'result.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$treatmentResult.status -ceq 'DRY_RUN_PLANNED') `
+    -Message 'a dry run says plainly that it only planned'
 
 $records = Get-CommandRecords -AttemptRoot $attempt
 $bootstrapCommands = @($records | Where-Object { $_.label -ceq 'bootstrap-genesis' })
@@ -317,6 +429,23 @@ Assert-That -Condition ($panelCommands.Count -eq 16) -Message "16 intervals run 
 Assert-That -Condition ($buildCommands.Count -eq 16) -Message "16 intervals build the next manifest (saw $($buildCommands.Count))"
 Assert-That -Condition (@($records | Where-Object { $_.dry_run -ne $true }).Count -eq 0) `
     -Message 'every dry-run command is marked dry_run'
+
+# ---------------------------------------------------------------------------
+# 1a. The derived run record (round E item 1)
+# ---------------------------------------------------------------------------
+$runRecordCommands = @($records | Where-Object { $_.label -ceq 'run-record' })
+Assert-That -Condition ($runRecordCommands.Count -eq 1) `
+    -Message "the run record is derived exactly once per launch (saw $($runRecordCommands.Count))"
+$runRecordCommand = $runRecordCommands[0].command_line
+Assert-That -Condition ($runRecordCommand -like "*`"--arm`" `"treatment-rb`"*") -Message 'the run-record builder is told which arm it is building'
+Assert-That -Condition ($runRecordCommand -like "*`"--parent-store-root`"*cycle3-parent*") -Message 'the run-record builder is pointed at the pinned parent Store'
+Assert-That -Condition ($runRecordCommand -like "*`"--parent-generation`" `"896`"*") -Message 'the run-record builder is given the trainee-local start 896, not the lineage tip'
+Assert-That -Condition ($runRecordCommand -like "*`"--output`"*run.json*") -Message 'the run-record builder writes the arm run record'
+Assert-That -Condition ($runRecordCommand -notlike '*--force*') -Message 'a launch never forces a run-record overwrite'
+Assert-That -Condition ($runRecordCommand -notlike '*--base-seed*') -Message "the arm's base seed is the builder's own literal, never a wrapper flag"
+$genesisParentBinding = Get-Content -Raw -LiteralPath (Join-Path $attempt 'genesis-parent-binding.json') | ConvertFrom-Json
+Assert-That -Condition ([uint64]$genesisParentBinding.parent_generation -eq 896) `
+    -Message 'the wrapper records the parent generation it proved against the run record'
 
 $bootstrap = $bootstrapCommands[0].command_line
 Assert-That -Condition ($bootstrap -like '*"--bootstrap-genesis"*') -Message 'the bootstrap passes the value-less marker'
@@ -387,14 +516,19 @@ function Get-PanelSlotBaselineChainDir {
     return [string]$Entry.baseline_chain_dir
 }
 
+$genesisManifestSlots = (Get-Content -Raw -LiteralPath (Join-Path $refreshChainDir 'refresh-00.manifest.json') | ConvertFrom-Json).slots
 $agree = $true
 foreach ($index in 0..7) {
     # Slot 5 is the arm's own run in the synthetic roster, so the wrapper
-    # substitutes the arm's own Store for the operator's table entry.
+    # substitutes the arm's own Store for the operator's table entry. Slot 3
+    # comes from the rotation triple, whose phase-0 entry is the fixed table's
+    # slot-3 root, so refresh 0 agrees with the table there too.
     if ($index -eq 5) { $expectedRoot = [string]$treatmentArguments['StoreRoot'] }
     else { $expectedRoot = [string]$slotStoreRoots[$index] }
     if ([string]$armLocator.stores[$index].store_root -cne $expectedRoot) { $agree = $false }
-    if ([string]$armLocator.stores[$index].checkpoint_manifest_sha256 -cne (New-SyntheticHash -Tag (0x20 + $index))) { $agree = $false }
+    # The identity is keyed from the MANIFEST, which for the two verified slots
+    # carries the identity read off their Stores rather than a synthetic tag.
+    if ([string]$armLocator.stores[$index].checkpoint_manifest_sha256 -cne [string]$genesisManifestSlots[$index].checkpoint_manifest_sha256) { $agree = $false }
     if ((Get-PanelSlotStoreRoot -Entry $panelLocator.stores."$index") -cne $expectedRoot) { $agree = $false }
 }
 Assert-That -Condition $agree -Message "both locators name the same store for the same slot, with the arm's own Store substituted into its own slot"
@@ -437,7 +571,10 @@ Assert-That -Condition (@($freshRecords | Where-Object { $_.label -like 'arm-int
 $freshResult = Get-Content -Raw -LiteralPath (Join-Path $freshAttempt 'result.json') | ConvertFrom-Json
 Assert-That -Condition ([string]$freshResult.dry_run_stopped_after -ceq 'genesis-manifest') `
     -Message 'the result says exactly where the dry run stopped'
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $freshAttempt 'TRAINING_COMPLETE')) -Message 'the fresh-campaign dry run still completes'
+Assert-That -Condition ([string]$freshResult.status -ceq 'DRY_RUN_PLANNED') `
+    -Message 'the fresh-campaign dry run reports a plan, not a completion'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $freshAttempt 'TRAINING_COMPLETE'))) `
+    -Message 'the fresh-campaign dry run publishes no TRAINING_COMPLETE either'
 
 $noRoster = Join-Path $WorkRoot 'slot-identities-no-genesis'
 New-Item -ItemType Directory -Force -Path $noRoster | Out-Null
@@ -521,8 +658,10 @@ $controlEvidence = Join-Path $WorkRoot 'evidence-control'
 $controlArguments = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $controlEvidence
 & $wrapper @controlArguments *>&1 | Out-Null
 $controlAttempt = Get-LatestAttemptRoot -EvidenceRoot $controlEvidence -GateName 'cycle4-control-r-formal'
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $controlAttempt 'TRAINING_COMPLETE')) `
-    -Message 'control-r completes its dry run'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $controlAttempt 'TRAINING_COMPLETE'))) `
+    -Message 'control-r plans its dry run without publishing a completion marker'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $controlAttempt 'RUN_FAILED'))) `
+    -Message "control-r's dry run passes"
 Assert-PanelLocatorChainDirs `
     -Locator (Get-PanelLocator -AttemptRoot $controlAttempt -Interval 0) `
     -ExpectedSlots @() `
@@ -552,7 +691,8 @@ $staticArguments['RefreshChainDir'] = $staticChain
 & $wrapper @staticArguments *>&1 | Out-Null
 $staticAttempt = Get-LatestAttemptRoot -EvidenceRoot $staticEvidence -GateName 'cycle4-static-rb-formal'
 
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $staticAttempt 'TRAINING_COMPLETE')) -Message 'static-rb completes its dry run'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $staticAttempt 'RUN_FAILED'))) -Message 'static-rb passes its dry run'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $staticAttempt 'TRAINING_COMPLETE'))) -Message 'static-rb publishes no completion marker on a dry run'
 $staticRecords = Get-CommandRecords -AttemptRoot $staticAttempt
 Assert-That -Condition (@($staticRecords | Where-Object { $_.label -like 'arm-interval-*' }).Count -eq 16) -Message 'static-rb still runs all 16 training intervals'
 Assert-That -Condition (@($staticRecords | Where-Object { $_.label -like 'panel-interval-*' }).Count -eq 16) -Message 'static-rb still runs the panel every interval'
@@ -602,7 +742,10 @@ $preflightArguments = New-WrapperArguments -Mode 'preflight' -Arm 'control-r' -E
 & $wrapper @preflightArguments *>&1 | Out-Null
 $preflightAttempt = Get-LatestAttemptRoot -EvidenceRoot $preflightEvidence -GateName 'cycle4-control-r-preflight'
 
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'PREFLIGHT_COMPLETE')) -Message 'the ladder publishes its own gate-specific marker'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $preflightAttempt 'PREFLIGHT_COMPLETE'))) `
+    -Message 'a dry-run ladder compared nothing, so it publishes no PREFLIGHT_COMPLETE either'
+$preflightResult = Get-Content -Raw -LiteralPath (Join-Path $preflightAttempt 'result.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$preflightResult.status -ceq 'DRY_RUN_PLANNED') -Message 'the ladder dry run reports a plan'
 Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $preflightAttempt 'TRAINING_COMPLETE'))) -Message 'the ladder never publishes TRAINING_COMPLETE'
 $preflightRecords = Get-CommandRecords -AttemptRoot $preflightAttempt
 $preflightBootstraps = @($preflightRecords | Where-Object { $_.label -like 'preflight-bootstrap-*' })
@@ -881,9 +1024,10 @@ $complete = New-InterruptionCampaign -Name 'complete' -ArmKind 'treatment-rb' `
     -ThroughRefreshIndex ([uint64]4) -ChainThroughManifest 4 -ChainThroughPanel 4 `
     -StoreGeneration ([uint64]512) -JournalPhases @{ 0 = 'manifest-complete'; 1 = 'manifest-complete'; 2 = 'manifest-complete'; 3 = 'manifest-complete' }
 $run = Invoke-ResumeCase -Case $complete
-Assert-That -Condition ($run.records.Count -eq 0) -Message 'a finished campaign plans no work at all'
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $run.attempt 'TRAINING_COMPLETE')) `
-    -Message 'a finished campaign publishes TRAINING_COMPLETE'
+Assert-That -Condition (@($run.records | Where-Object { $_.label -cne 'run-record' }).Count -eq 0) `
+    -Message 'a finished campaign plans no work beyond re-deriving its run record'
+Assert-That -Condition ([string]$run.result.status -ceq 'DRY_RUN_PLANNED') `
+    -Message 'a finished campaign still only plans under -DryRun'
 
 # (v) STATIC-RB, whose panel never enters the refresh chain, so only the
 # journal can say whether it ran.
@@ -1069,6 +1213,176 @@ Assert-That -Condition ([string]$stagedDocument.slots[5].source_run_sha256 -ceq 
     -Message "the staged own-run slot carries the arm's run identity"
 Assert-That -Condition ([string]$stagedDocument.slots[0].checkpoint_manifest_sha256 -ceq (New-SyntheticHash -Tag 0x20)) `
     -Message 'every pinned slot passes through the staging unchanged'
+
+# ---------------------------------------------------------------------------
+# 7. Round E: the derived run record, the historical-1 rotation, the shared
+#    store root, the genesis-parent cross-check, and dry-run quietness.
+# ---------------------------------------------------------------------------
+
+# (a) The run record is DERIVED unless the operator explicitly overrides it.
+$existingRecord = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (Join-Path $WorkRoot 'evidence-existing-record')
+$existingRecord.Remove('RunRecordExecutable') | Out-Null
+$existingRecord['UseExistingRunRecord'] = $true
+& $wrapper @existingRecord *>&1 | Out-Null
+$existingAttempt = Get-LatestAttemptRoot -EvidenceRoot $existingRecord['EvidenceRoot'] -GateName 'cycle4-control-r-formal'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $existingAttempt 'RUN_FAILED'))) `
+    -Message '-UseExistingRunRecord runs the campaign from the record as given'
+Assert-That -Condition (@(Get-CommandRecords -AttemptRoot $existingAttempt | Where-Object { $_.label -ceq 'run-record' }).Count -eq 0) `
+    -Message '-UseExistingRunRecord derives nothing'
+
+# (b) Neither flag is a launch: the record has to come from somewhere.
+$noBuilder = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-run-record-builder')
+$noBuilder.Remove('RunRecordExecutable') | Out-Null
+Assert-Throws -Action { & $wrapper @noBuilder *>&1 | Out-Null } `
+    -ExpectedSubstring 'requires -RunRecordExecutable' `
+    -Message 'a launch that can neither derive nor be given a run record is refused'
+
+# (c) Both at once is a contradiction, not a preference.
+$bothRecordFlags = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'both-run-record-flags')
+$bothRecordFlags['UseExistingRunRecord'] = $true
+Assert-Throws -Action { & $wrapper @bothRecordFlags *>&1 | Out-Null } `
+    -ExpectedSubstring 'mutually exclusive' `
+    -Message 'deriving and supplying the run record are mutually exclusive'
+
+# (d) A dry run over a campaign whose run record does not exist yet prints the
+# derivation and stops there, publishing a plan rather than a completion.
+$absentRecordRoot = Join-Path $WorkRoot 'absent-run-record'
+New-Item -ItemType Directory -Force -Path $absentRecordRoot | Out-Null
+$absentRecord = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (Join-Path $WorkRoot 'evidence-absent-record')
+$absentRecord['RunRecord'] = (Join-Path $absentRecordRoot 'run.json')
+& $wrapper @absentRecord *>&1 | Out-Null
+$absentAttempt = Get-LatestAttemptRoot -EvidenceRoot $absentRecord['EvidenceRoot'] -GateName 'cycle4-control-r-formal'
+$absentResult = Get-Content -Raw -LiteralPath (Join-Path $absentAttempt 'result.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$absentResult.dry_run_stopped_after -ceq 'run-record') `
+    -Message 'a dry run with no run record on disk stops after planning its derivation'
+Assert-That -Condition ([string]$absentResult.status -ceq 'DRY_RUN_PLANNED') `
+    -Message 'that dry run publishes a plan, not a completion'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $absentAttempt 'TRAINING_COMPLETE'))) `
+    -Message 'and it leaves no completion marker behind'
+Assert-That -Condition (-not (Test-Path -LiteralPath $absentRecord['RunRecord'])) `
+    -Message 'a dry run writes no run record of its own'
+
+# (e) -GenesisParentGeneration is cross-checked against the run record's pinned
+# origin, so the README's old 2048 can no longer bind the wrong parent.
+$wrongGeneration = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'wrong-parent-generation')
+$wrongGeneration['GenesisParentGeneration'] = [uint64]2048
+Assert-Throws -Action { & $wrapper @wrongGeneration *>&1 | Out-Null } `
+    -ExpectedSubstring 'genesis authority: parent artifact is missing' `
+    -Message 'a parent generation with no artifacts under it is refused'
+
+$mismatchedRecordRoot = Join-Path $WorkRoot 'mismatched-origin'
+New-Item -ItemType Directory -Force -Path $mismatchedRecordRoot | Out-Null
+$mismatchedRecord = Join-Path $mismatchedRecordRoot 'run.json'
+Write-SyntheticRunRecord -Path $mismatchedRecord -Generation ([uint64]1024)
+$wrongPin = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'wrong-origin-generation')
+$wrongPin['RunRecord'] = $mismatchedRecord
+$wrongPin.Remove('RunRecordExecutable') | Out-Null
+$wrongPin['UseExistingRunRecord'] = $true
+Assert-Throws -Action { & $wrapper @wrongPin *>&1 | Out-Null } `
+    -ExpectedSubstring "disagrees with the run record's pinned origin generation" `
+    -Message 'a -GenesisParentGeneration the run record does not pin is refused'
+
+$wrongHashRecord = Join-Path $mismatchedRecordRoot 'run-wrong-hash.json'
+Write-SyntheticRunRecord -Path $wrongHashRecord -Generation $parentGeneration -CheckpointSha256 (New-SyntheticHash -Tag 0xe1)
+$wrongHash = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'wrong-origin-hash')
+$wrongHash['RunRecord'] = $wrongHashRecord
+$wrongHash.Remove('RunRecordExecutable') | Out-Null
+$wrongHash['UseExistingRunRecord'] = $true
+Assert-Throws -Action { & $wrapper @wrongHash *>&1 | Out-Null } `
+    -ExpectedSubstring 'does not reproduce the run record' `
+    -Message 'a parent store whose artifacts do not hash to the pinned origin is refused'
+
+$noContractsRecord = Join-Path $mismatchedRecordRoot 'run-no-contracts.json'
+Write-SyntheticJson -Value ([ordered]@{
+    schema = 'mtg-kernel-native-train-run/v2'
+    schedule = [ordered]@{ base_seed = $traineeBaseSeed; checkpoint_segment_updates = 4; batch_episodes = 64 }
+}) -Path $noContractsRecord
+$noContracts = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-contracts-record')
+$noContracts['RunRecord'] = $noContractsRecord
+$noContracts.Remove('RunRecordExecutable') | Out-Null
+$noContracts['UseExistingRunRecord'] = $true
+Assert-Throws -Action { & $wrapper @noContracts *>&1 | Out-Null } `
+    -ExpectedSubstring 'declares no contracts section' `
+    -Message 'a run record with no contracts section is refused with a readable message, not a strict-mode error'
+
+# (f) historical-1 rotates: slot 3 names a different Store at every phase, and
+# every one of them is proven against that boundary's manifest identity.
+function Get-ArmLocatorSlotRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$AttemptRoot,
+        [Parameter(Mandatory = $true)][int]$Interval,
+        [Parameter(Mandatory = $true)][int]$Slot
+    )
+    $path = Join-Path $AttemptRoot ('interval-{0:d2}\arm-slot-locator.json' -f $Interval)
+    $locator = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+    return [string]$locator.stores[$Slot].store_root
+}
+
+$rotates = $true
+foreach ($interval in 0..5) {
+    $expected = [string]$historicalOneRoots[$interval % 3]
+    if ((Get-ArmLocatorSlotRoot -AttemptRoot $attempt -Interval $interval -Slot 3) -cne $expected) { $rotates = $false }
+}
+Assert-That -Condition $rotates `
+    -Message 'slot 3 takes the rotation root for refresh_index mod 3 at every boundary'
+Assert-That -Condition ((Get-ArmLocatorSlotRoot -AttemptRoot $attempt -Interval 0 -Slot 3) -cne (Get-ArmLocatorSlotRoot -AttemptRoot $attempt -Interval 1 -Slot 3)) `
+    -Message 'consecutive refreshes really do name different historical-1 Stores'
+
+# (g) One physical Store may occupy two slots at DIFFERENT pinned generations:
+# anchor-1 at 1536 and historical-1's middle phase at 1024 are the real
+# roster's shape, and the locator writer must accept it.
+Assert-That -Condition ((Get-ArmLocatorSlotRoot -AttemptRoot $attempt -Interval 1 -Slot 1) -ceq (Get-ArmLocatorSlotRoot -AttemptRoot $attempt -Interval 1 -Slot 3)) `
+    -Message 'anchor-1 and the middle rotation phase share one Store root at refresh 1'
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $attempt 'interval-01\panel-slot-locator.json')) `
+    -Message 'and the interval that shares a root still writes both locators'
+
+# (h) A mis-ordered rotation triple names the wrong Store, and the slot-3
+# content-hash check is what catches it.
+$wrongRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'wrong-rotation-order')
+$wrongRotation['HistoricalOneStoreRoots'] = @($historicalOneRoots[1], $historicalOneRoots[0], $historicalOneRoots[2])
+Assert-Throws -Action { & $wrapper @wrongRotation *>&1 | Out-Null } `
+    -ExpectedSubstring 'does not match the manifest identity' `
+    -Message 'a rotation triple in the wrong order is refused at the first boundary it is wrong for'
+
+# (i) Omitting the triple entirely leaves slot 3 pinned to one Store, which is
+# right at refresh 0 and wrong from refresh 1 -- and fails closed there.
+$noRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-rotation-triple')
+$noRotation.Remove('HistoricalOneStoreRoots') | Out-Null
+Assert-Throws -Action { & $wrapper @noRotation *>&1 | Out-Null } `
+    -ExpectedSubstring 'does not match the manifest identity' `
+    -Message 'a single fixed slot-3 root cannot express the rotation and is caught, not silently trained against'
+
+$shortRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'short-rotation-triple')
+$shortRotation['HistoricalOneStoreRoots'] = @($historicalOneRoots[0], $historicalOneRoots[1])
+Assert-Throws -Action { & $wrapper @shortRotation *>&1 | Out-Null } `
+    -ExpectedSubstring '-HistoricalOneStoreRoots must name exactly 3 store roots' `
+    -Message 'a rotation triple that is not a triple is refused'
+
+# (j) historical-0's four content hashes are proven against the cycle-3 Store
+# before refresh 4, which is the only place they are checked at all.
+$badSlotTwoChain = Join-Path $WorkRoot 'refresh-chain-bad-slot-2'
+New-SyntheticManifest -Path (Join-Path $badSlotTwoChain 'refresh-00.manifest.json') -RefreshIndex ([uint64]0)
+$badSlotTwoDocument = Get-Content -Raw -LiteralPath (Join-Path $badSlotTwoChain 'refresh-00.manifest.json') | ConvertFrom-Json
+$badSlotTwoDocument.slots[2].train_state_sha256 = New-SyntheticHash -Tag 0xe2
+Write-SyntheticJson -Value $badSlotTwoDocument -Path (Join-Path $badSlotTwoChain 'refresh-00.manifest.json')
+$badSlotTwo = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'bad-slot-2-identity')
+$badSlotTwo['RefreshChainDir'] = $badSlotTwoChain
+Assert-Throws -Action { & $wrapper @badSlotTwo *>&1 | Out-Null } `
+    -ExpectedSubstring 'train_state_sha256' `
+    -Message "historical-0's content hashes are proven against the cycle-3 Store, not taken on trust"
+
+# (k) A fresh static-rb campaign plans quietly: manifestDone is a constant for
+# an arm that never builds, and must not be read as "an output is present".
+$quietChain = Join-Path $WorkRoot 'refresh-chain-static-quiet'
+New-Item -ItemType Directory -Force -Path $quietChain | Out-Null
+Copy-Item -LiteralPath (Join-Path $refreshChainDir 'refresh-00.manifest.json') -Destination (Join-Path $quietChain 'refresh-00.manifest.json')
+$quietArguments = New-WrapperArguments -Mode 'formal' -Arm 'static-rb' -EvidenceRoot (Join-Path $WorkRoot 'evidence-static-quiet')
+$quietArguments['RefreshChainDir'] = $quietChain
+$quietOutput = (& $wrapper @quietArguments *>&1 | Out-String)
+Assert-That -Condition ($quietOutput -notlike '*outputs are present*') `
+    -Message 'a fresh static-rb campaign prints no outputs-present inconsistency for any interval'
+Assert-That -Condition ($quietOutput -like '*DRY RUN PLANNED*') `
+    -Message 'and it still reports the plan it made'
 
 # ---------------------------------------------------------------------------
 

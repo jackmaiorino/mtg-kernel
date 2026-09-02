@@ -95,6 +95,39 @@ process only; there is no library device parameter to inherit). Exit codes:
 0 complete, 2 usage, 3 contract rejection, 1 runtime failure. Gated behind
 the CUDA feature and the production feature like the existing bins.
 
+## 4a. Bin `src/bin/cycle4_run_record_v1.rs` (round E)
+
+Section 1 says what a cycle-4 `run.json` must declare but nothing produced
+one, so every arm was blocked on an input no operator could write. This bin
+derives it: `--arm`, `--parent-store-root`, `--parent-generation`,
+`--output`, plus the value-less `--force`. Same strict parsing, same exit
+codes (0/2/3), same feature gating as section 4.
+
+The record is assembled from three sources and nothing else: the arm kind
+(which decides `arm_kind`, `static_pool`, the presence of
+`trainer_v4_candidate`, the loss identity, and the arm's own base seed), the
+pinned parent Store (device contract, train step, model architecture,
+schedule shape, environment, toolchain and runtime tuple, plus the six
+digests of `opponent_ladder_initialization`, resolved through the same
+`stage_ladder_checkpoint_initialization_v1` the genesis bootstrap
+re-derives), and the compiled cycle-4 literals. No clock, no environment
+variable, no operator-chosen field, so two invocations against one parent
+produce byte-identical output. Every predecessor program section is dropped.
+
+The three formal training base seeds live in this module and nowhere else,
+with the disjoint-domain policy the pre-registration's section 8 requires:
+one reserved band per arm, and the whole training band disjoint from the
+payoff-panel band. Output passes `validate_train_run_record_v2` and the arm
+launcher's own record-level check before any bytes are written; `--output`
+is atomic and an existing DIFFERENT record is refused without `--force`,
+since a run record is a campaign identity.
+
+Reading the cycle-3 parent at all required widening the run contract with a
+struct-only `population_program_v2_cycle3` section, on the terms
+`population_program_v2_cycle2` was widened on: the real cycle-3 record
+carries it, `deny_unknown_fields` otherwise makes that record undecodable,
+and the genesis bootstrap decodes it too.
+
 ## 5. Payoff panel runner (`scripts/experiments/population_v2_cycle4_v1/`)
 
 Ports `scaled_selfplay_population_v1/run_payoff_evaluation.py`'s 28-matchup
@@ -119,6 +152,21 @@ per interval: assert resume position matches the Store, run the bin, run
 the panel, build the next manifest, repeat through refresh 16. Terminal
 markers follow the g896 family: gate-specific empty markers
 (`PREFLIGHT_COMPLETE`, `TRAINING_COMPLETE`) plus a plain-text `RUN_FAILED`.
+
+Round E corrections: the run record is derived by section 4a's bin on every
+launch rather than supplied (`-UseExistingRunRecord` is the explicit
+override); the slot table is rebuilt per boundary because `historical-1`
+rotates by `refresh_index mod 3` (`-HistoricalOneStoreRoots`), and the
+chosen root plus, before refresh 4, `historical-0`'s root are verified
+against that boundary's manifest identity; two slots may name one Store at
+different pinned generations (anchor-1 and the middle rotation phase share
+970002), since identity rather than path is what must be distinct;
+`-GenesisParentGeneration` is cross-checked against the run record's own
+pinned origin, and its value is the cycle-3 focal run's store generation
+896; and a DRY RUN publishes neither terminal marker, writing `result.json`
+with status `DRY_RUN_PLANNED` instead, because a run that trained and
+compared nothing may not leave behind the file an operator reads as
+"finished".
 
 ## 7. Delivery order
 

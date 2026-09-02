@@ -452,36 +452,37 @@ const POPULATION_SOURCE_LINEAGES_V1: [(u64, &str, &str, &str, &str, &str, &str);
 // constants in `native_policy_baseline_state_v4` rather than restated as
 // independent literals, since that module IS the baseline-state authority
 // this section pins.
-const CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1: &str = "terminal_reinforce_value/v4-candidate";
+pub(crate) const CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1: &str = "terminal_reinforce_value/v4-candidate";
 // 0.05f32 (`NATIVE_BASELINE_BETA_V4`) big-endian bit pattern, lowercase hex.
-const CYCLE4_TRAINER_V4_BETA_F32_BITS_V1: &str = "3d4ccccd";
-const CYCLE4_TRAINER_V4_CELL_CAP_V1: u64 = NATIVE_BASELINE_MAX_CELLS_V4 as u64;
-const CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1: &str = "cuda-burn-dense";
+pub(crate) const CYCLE4_TRAINER_V4_BETA_F32_BITS_V1: &str = "3d4ccccd";
+pub(crate) const CYCLE4_TRAINER_V4_CELL_CAP_V1: u64 = NATIVE_BASELINE_MAX_CELLS_V4 as u64;
+pub(crate) const CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1: &str = "cuda-burn-dense";
 /// SHA-256 of `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
 /// (review finding P2-4): pins the section to that specific document rather
 /// than accepting any well-formed hex string.
-const CYCLE4_TRAINER_V4_CONTRACT_DOCUMENT_SHA256_V1: &str =
+pub(crate) const CYCLE4_TRAINER_V4_CONTRACT_DOCUMENT_SHA256_V1: &str =
     "339bbe15bb19f21971ae68b2059263f6e940324c04ec773111cb4171893b8a79";
 
 // Cycle-4 population-program successor authority
 // (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
 // `docs/native_population_refresh_manifest_cycle4_v1.md`), ratified under
 // `OX_CYCLE4_PREREG_SKETCH_V2.md` (SHA `c49bffd6`).
-const CYCLE4_PREREG_SHA256_V1: &str =
+pub(crate) const CYCLE4_PREREG_SHA256_V1: &str =
     "c49bffd62084285328a24b11531d80d148cba0f5bad8083349b7d24856326481";
-const CYCLE4_REFRESH_MANIFEST_SCHEMA_V1: &str = "mtg-kernel-population-refresh-manifest-cycle4/v1";
-const CYCLE4_TRAINEE_START_GENERATION_V1: u64 = 896;
-const CYCLE4_TRAINEE_STOP_GENERATION_V1: u64 = 2_944;
-const CYCLE4_REFRESH_INTERVAL_V1: u64 = 128;
+pub(crate) const CYCLE4_REFRESH_MANIFEST_SCHEMA_V1: &str =
+    "mtg-kernel-population-refresh-manifest-cycle4/v1";
+pub(crate) const CYCLE4_TRAINEE_START_GENERATION_V1: u64 = 896;
+pub(crate) const CYCLE4_TRAINEE_STOP_GENERATION_V1: u64 = 2_944;
+pub(crate) const CYCLE4_REFRESH_INTERVAL_V1: u64 = 128;
 /// The whole cycle-4 program in successful updates: the trainee-local span
 /// 896..=2944, which is also the arm Store's own 0..=2048 (review finding
 /// P2). The run schedule must request exactly this many updates, so an arm
 /// whose schedule stops short can never report a completed program.
-const CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1: u64 =
+pub(crate) const CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1: u64 =
     CYCLE4_TRAINEE_STOP_GENERATION_V1 - CYCLE4_TRAINEE_START_GENERATION_V1;
-const CYCLE4_ARM_KIND_CONTROL_R_V1: &str = "control-r";
-const CYCLE4_ARM_KIND_STATIC_RB_V1: &str = "static-rb";
-const CYCLE4_ARM_KIND_TREATMENT_RB_V1: &str = "treatment-rb";
+pub(crate) const CYCLE4_ARM_KIND_CONTROL_R_V1: &str = "control-r";
+pub(crate) const CYCLE4_ARM_KIND_STATIC_RB_V1: &str = "static-rb";
+pub(crate) const CYCLE4_ARM_KIND_TREATMENT_RB_V1: &str = "treatment-rb";
 
 const RESPONSE_EXPLOITER_IDENTITY_V1: &str =
     "mtg-kernel-native-scaled-selfplay-response-exploiter/v1";
@@ -956,6 +957,22 @@ pub struct TrainRunContractsV2 {
     /// struct only, no `validate_population_program_v2_cycle2` port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) population_program_v2_cycle2: Option<PopulationProgramContractV2Cycle2>,
+    /// Population-v2 cycle-3 successor authority, the section the REAL
+    /// cycle-3 lineage store's `run.json` carries. Widened for exactly the
+    /// same reason, and on exactly the same terms, as
+    /// `population_program_v2_cycle2` above: without it `deny_unknown_fields`
+    /// makes the cycle-3 parent record undecodable, and that record is the
+    /// genesis parent every cycle-4 arm seeds from -- both
+    /// `cycle4_run_record_v1` (which reads it to build the arm record) and
+    /// the arm bin's own genesis bootstrap (which resolves it through
+    /// `resolve_ladder_checkpoint_authority_v1`) decode it. Struct only: no
+    /// `validate_population_program_v2_cycle3` and no frozen
+    /// `POPULATION_*_V2_CYCLE3` literals, so the section decodes and is
+    /// available for read-only audit but its content claims are not
+    /// authenticated here. Additive and omitted from canonical bytes when
+    /// absent, so every pre-cycle-3 record is byte-for-byte unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle3: Option<PopulationProgramContractV2Cycle3>,
     /// Cycle-4 v4-candidate trainer authority
     /// (`docs/native_cycle4_arm_launcher_v1.md` Section 1;
     /// `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`).
@@ -1068,6 +1085,38 @@ pub struct PopulationSourceLineageV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PopulationProgramContractV2Cycle2 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) retest_manifest_sha256: String,
+    pub(crate) global_generation_offset: u64,
+    pub(crate) local_updates_total: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) slot_count: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) refresh_manifest_identity: String,
+    pub(crate) retest_beta_f32_bits: String,
+    pub(crate) expected_base_seed: u64,
+    pub(crate) pool_identity: String,
+    pub(crate) parent_store_local_generation: u64,
+    pub(crate) parent_lineage: PopulationSourceLineageV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_lineage_v2: Option<PopulationSourceLineageV1>,
+}
+
+/// Population-v2 cycle-3 successor authority. Field-for-field the shape the
+/// real cycle-3 lineage store's `run.json` carries
+/// (`E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store`,
+/// run SHA `f25a63d0`), which is the cycle-2 field set with `parent_lineage`
+/// reusing [`PopulationSourceLineageV1`] unchanged. Struct only, on the
+/// cycle-2 precedent above: this section decodes so the cycle-3 parent
+/// record can be read at all, but no `validate_population_program_v2_cycle3`
+/// authenticates its content claims here. `source_lineage_v2` stays optional
+/// for the same reason it is optional on cycle 2 -- the real cycle-3 record
+/// omits it, so it is absent from that record's canonical bytes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle3 {
     pub(crate) identity: String,
     pub(crate) package_commit: String,
     pub(crate) program_document_sha256: String,
@@ -1868,6 +1917,32 @@ impl TrainRunTopologyV2 {
     pub fn broker_batch_target(&self) -> u64 {
         self.broker_batch_target
     }
+}
+
+/// Recomputes the two derived digests a freshly ASSEMBLED record carries, in
+/// the one order that is admissible: the standalone-semantics core and its
+/// digest first, then the identity bundle, which hashes that digest.
+///
+/// This is the crate-internal seam a record BUILDER needs (today
+/// `native_cycle4_run_record_v1`), and it is deliberately the same
+/// computation `validate_decoded_train_run_v2` re-derives and compares
+/// against -- both call `reconstruct_standalone_semantics_core_v2`,
+/// `standalone_semantics_sha256_v2` and `identity_bundle_sha256_v2`, so a
+/// builder cannot mint a record whose derived fields the validator would
+/// then reject for a reason the builder itself introduced. It performs no
+/// validation of its own: the caller still passes the result through
+/// [`validate_train_run_record_v2`], which is what actually authorizes the
+/// record.
+pub(crate) fn refresh_derived_fields_v2(record: &mut TrainRunV2) -> Result<()> {
+    let requested_episode_count = checked_u63_mul(
+        record.schedule.batch_episodes,
+        record.schedule.requested_successful_updates,
+    )?;
+    let core = reconstruct_standalone_semantics_core_v2(record, requested_episode_count)?;
+    record.contracts.standalone_semantics.sha256 = standalone_semantics_sha256_v2(&core)?;
+    record.contracts.standalone_semantics.core = core;
+    record.contracts.identity_bundle_sha256 = identity_bundle_sha256_v2(record)?;
+    Ok(())
 }
 
 /// Decode and validate exact canonical `run.json` bytes.
@@ -2893,6 +2968,11 @@ fn validate_population_program_v2_cycle4(record: &TrainRunV2) -> Result<()> {
         || contracts.population_program_v1.is_some()
         || contracts.response_exploiter_v1.is_some()
         || contracts.population_program_v2_cycle2.is_some()
+        // Cycle 3 is excluded on exactly the cycle-2 grounds: it is a
+        // distinct, unrelated population-program successor, and a cycle-4
+        // arm record that carried its PARENT's cycle-3 section would be
+        // claiming to run two programs at once.
+        || contracts.population_program_v2_cycle3.is_some()
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
@@ -4265,6 +4345,21 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_
 /// structurally bound to the frozen common model snapshot, see
 /// `native_training_store_checkpoint_v3::tests::genesis_authoring_rejects_a_real_trained_payload_structurally`).
 /// Retained ready for whenever that store-contract question is resolved.
+/// The frozen ladder pool every ladder-identity fixture uses, exposed so
+/// sibling modules' tests can compose a ladder-tuple parent record without
+/// restating the pool's pinned weights and identities.
+#[cfg(test)]
+pub(crate) fn test_fixture_ladder_pool_v2() -> OpponentLadderPoolContractV1 {
+    tests::valid_ladder_pool_fixture()
+}
+
+/// A shape-valid `opponent_ladder_initialization` section, exposed for the
+/// same reason as [`test_fixture_ladder_pool_v2`].
+#[cfg(test)]
+pub(crate) fn test_fixture_ladder_initialization_v1() -> OpponentLadderInitializationContractV1 {
+    tests::population_parent_initialization_fixture()
+}
+
 #[cfg(test)]
 #[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2(
@@ -6960,7 +7055,7 @@ mod tests {
         }
     }
 
-    fn valid_ladder_pool_fixture() -> OpponentLadderPoolContractV1 {
+    pub(super) fn valid_ladder_pool_fixture() -> OpponentLadderPoolContractV1 {
         OpponentLadderPoolContractV1 {
             identity: FROZEN_LADDER_POOL_IDENTITY_V2.to_owned(),
             size: FROZEN_LADDER_POOL_SIZE_V2,
@@ -7052,7 +7147,8 @@ mod tests {
         population_program_fixture_for_seed(970_001)
     }
 
-    fn population_parent_initialization_fixture() -> OpponentLadderInitializationContractV1 {
+    pub(super) fn population_parent_initialization_fixture(
+    ) -> OpponentLadderInitializationContractV1 {
         OpponentLadderInitializationContractV1 {
             source_run_sha256: POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned(),
             generation: POPULATION_PARENT_GENERATION_V1,

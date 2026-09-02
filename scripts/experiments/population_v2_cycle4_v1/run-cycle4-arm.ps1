@@ -8,8 +8,20 @@ pass before any arm launches. Nothing here trains: every unit of work is a
 child process (the arm bin, the payoff panel runner, the refresh builder bin)
 whose exit code this wrapper captures and whose inputs it proves first.
 
+The arm's run record is DERIVED, not supplied: cycle4_run_record_v1 builds it
+from the arm kind, the pinned parent Store, and the compiled cycle-4 literals,
+and refuses to replace a DIFFERENT record already at -RunRecord. Running it on
+every launch therefore both produces the record the first time and re-proves an
+existing one on every later attempt. -UseExistingRunRecord is the explicit
+override that takes -RunRecord exactly as given and derives nothing.
+
+historical-1 (slot 3) rotates over three Stores by refresh_index mod 3, so the
+locator table is rebuilt per boundary from -HistoricalOneStoreRoots and the
+chosen root's four content hashes are proven against that boundary's manifest.
+
 Formal mode:
 
+  0a. derive (or re-prove) the run record with cycle4_run_record_v1
   0. if the Store holds no genesis, run cycle4_arm_v1 --bootstrap-genesis,
      which seeds it from the pinned parent and trains nothing
   0b. if refresh-00.manifest.json does not exist, build it with
@@ -55,7 +67,10 @@ never quietly skip them.
 
 Terminal state, following the g896 formal wrapper family: an empty
 PREFLIGHT_COMPLETE or TRAINING_COMPLETE marker in the attempt root on success,
-and a plain-text RUN_FAILED naming the failing step on any error.
+and a plain-text RUN_FAILED naming the failing step on any error. A DRY RUN
+publishes neither marker: it writes result.json with status DRY_RUN_PLANNED,
+because a run that trained and compared nothing may not leave behind the file
+an operator reads as "this arm finished".
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('formal', 'preflight')][string]$Mode,
@@ -65,9 +80,22 @@ param(
     [Parameter(Mandatory = $true)][string]$RefreshChainDir,
     [Parameter(Mandatory = $true)][string]$SlotIdentitiesRosterDir,
     [Parameter(Mandatory = $true)][string[]]$SlotStoreRoots,
+    # historical-1 (slot 3) rotates over three Stores by refresh_index mod 3.
+    # Supply them in rotation order; the entry -SlotStoreRoots carries at index
+    # 3 is then only a fallback, and the locator writer proves the chosen root
+    # against the manifest's slot-3 identity at every refresh either way.
+    [string[]]$HistoricalOneStoreRoots,
     [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot,
     [Parameter(Mandatory = $true)][uint64]$GenesisParentGeneration,
     [Parameter(Mandatory = $true)][string]$ArmExecutable,
+    # The run-record builder. Required unless -UseExistingRunRecord says the
+    # operator is supplying a pre-existing record instead.
+    [string]$RunRecordExecutable,
+    # Take -RunRecord as given and never generate or re-derive it. The explicit
+    # override for a record built elsewhere; without it every launch re-derives
+    # the record from the pinned parent and fails closed if what is on disk
+    # differs.
+    [switch]$UseExistingRunRecord,
     [Parameter(Mandatory = $true)][string]$RefreshBuilderExecutable,
     [Parameter(Mandatory = $true)][string]$PanelExecutable,
     [Parameter(Mandatory = $true)][string]$PythonExecutable,
@@ -123,6 +151,15 @@ else {
 if (@($SlotStoreRoots).Count -ne $script:Cycle4SlotCount) {
     throw "-SlotStoreRoots must name exactly $($script:Cycle4SlotCount) store roots in slot order 0..7, got $(@($SlotStoreRoots).Count)"
 }
+if ($null -ne $HistoricalOneStoreRoots -and @($HistoricalOneStoreRoots).Count -ne 0 -and @($HistoricalOneStoreRoots).Count -ne [int]$script:Cycle4HistoricalRotationPeriod) {
+    throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)), got $(@($HistoricalOneStoreRoots).Count)"
+}
+if ($UseExistingRunRecord -and -not [string]::IsNullOrWhiteSpace($RunRecordExecutable)) {
+    throw '-UseExistingRunRecord and -RunRecordExecutable are mutually exclusive: either the wrapper derives the run record or the operator supplies it, never both'
+}
+if (-not $UseExistingRunRecord -and [string]::IsNullOrWhiteSpace($RunRecordExecutable)) {
+    throw 'a cycle-4 launch requires -RunRecordExecutable (cycle4_run_record_v1.exe), or -UseExistingRunRecord to take -RunRecord exactly as given'
+}
 
 $gateName = "cycle4-$Arm-$Mode"
 $gateRoot = Join-Path $EvidenceRoot $gateName
@@ -154,6 +191,67 @@ try {
         throw "the genesis slot-identities roster is missing: $genesisRosterPath"
     }
 
+    # -------------------------------------------------------------------
+    # The run record is DERIVED, not supplied. cycle4_run_record_v1 builds
+    # it from the arm kind, the pinned parent Store, and the compiled
+    # cycle-4 literals, and refuses to replace a different record already at
+    # -RunRecord, so running it on every launch both produces the record the
+    # first time and re-proves an existing one on every later attempt. The
+    # only way past that is -UseExistingRunRecord, which is the explicit
+    # operator override for a record built elsewhere.
+    # -------------------------------------------------------------------
+    $runRecordDirectory = Split-Path -Parent $RunRecord
+    if (-not [string]::IsNullOrWhiteSpace($runRecordDirectory)) {
+        New-Item -ItemType Directory -Force -Path $runRecordDirectory | Out-Null
+    }
+    if ($UseExistingRunRecord) {
+        if (-not (Test-Path -LiteralPath $RunRecord -PathType Leaf)) {
+            throw "-UseExistingRunRecord was given but $RunRecord does not exist"
+        }
+        Write-Host "inputs: -UseExistingRunRecord; taking $RunRecord as given and deriving nothing"
+    }
+    else {
+        $result = Invoke-Cycle4Process `
+            -FilePath $RunRecordExecutable `
+            -Arguments @(
+                '--arm', $Arm,
+                '--parent-store-root', $GenesisParentStoreRoot,
+                '--parent-generation', [string]$GenesisParentGeneration,
+                '--output', $RunRecord
+            ) `
+            -WorkingDirectory $RepoRoot `
+            -StdoutPath (Join-Path $root 'run-record.stdout.log') `
+            -StderrPath (Join-Path $root 'run-record.stderr.log') `
+            -Label 'run-record' `
+            -DryRun:$DryRun
+        Add-Cycle4CommandRecord -Result $result | Out-Null
+        Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $RunRecord -PathType Leaf)) {
+        if (-not $DryRun) {
+            throw "the run record was not produced: $RunRecord"
+        }
+        # A dry run over a campaign whose run record does not exist yet can
+        # plan the derivation above and nothing further: every later step
+        # reads the record's own schedule.
+        Write-Host "DRY-RUN inputs: the plan needs the run record the command above would have produced; stopping here"
+        Write-Cycle4JsonFile -Value ([ordered]@{
+            schema = 'mtg-kernel-cycle4-arm-training-result/v1'
+            status = 'DRY_RUN_PLANNED'
+            completed_utc = [DateTimeOffset]::UtcNow.ToString('O')
+            arm = $Arm
+            mode = $Mode
+            dry_run = $true
+            dry_run_stopped_after = 'run-record'
+            run_record = $RunRecord
+            command_log = $commandLog
+            nonclaim = 'A dry run plans work; it never performs it, and it never publishes a completion marker.'
+        }) -Path (Join-Path $root 'result.json')
+        Write-Host "CYCLE4 DRY RUN PLANNED arm=$Arm stopped_after=run-record evidence=$root"
+        return
+    }
+
     $runRecordDocument = Read-Cycle4Json -Path $RunRecord
     $checkpointSegmentUpdates = [uint64]$runRecordDocument.schedule.checkpoint_segment_updates
     if ($checkpointSegmentUpdates -eq [uint64]0) {
@@ -164,6 +262,7 @@ try {
         run_record = Get-Cycle4FileRecord -Path $RunRecord
         genesis_slot_identities_roster = Get-Cycle4FileRecord -Path $genesisRosterPath
         arm_executable = Get-Cycle4FileRecord -Path $ArmExecutable
+        run_record_executable = $(if ($UseExistingRunRecord) { $null } else { Get-Cycle4FileRecord -Path $RunRecordExecutable })
         refresh_builder_executable = Get-Cycle4FileRecord -Path $RefreshBuilderExecutable
         panel_executable = Get-Cycle4FileRecord -Path $PanelExecutable
         python_executable = Get-Cycle4FileRecord -Path $PythonExecutable
@@ -203,6 +302,10 @@ try {
         checkpoint_segment_updates = $checkpointSegmentUpdates
         panel_base_seed = $PanelBaseSeed
         slot_store_roots = @($SlotStoreRoots)
+        historical_one_store_roots = @($HistoricalOneStoreRoots)
+        run_record_derived = (-not [bool]$UseExistingRunRecord)
+        genesis_parent_store_root = $GenesisParentStoreRoot
+        genesis_parent_generation = $GenesisParentGeneration
         refresh_chain_dir = $RefreshChainDir
         slot_identities_roster_dir = $SlotIdentitiesRosterDir
         store_root = $StoreRoot
@@ -230,11 +333,24 @@ try {
     $genesisAuthorityRecord = Assert-OrCreateCycle4GenesisAuthority -Path $genesisAuthorityPath -Record $genesisAuthority
     Write-Cycle4JsonFile -Value $genesisAuthorityRecord -Path (Join-Path $root 'genesis-authority-binding.json')
 
-    $slotTable = @(
-        foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
-            [ordered]@{ slot_index = $index; store_root = [string]@($SlotStoreRoots)[$index] }
-        }
-    )
+    # WHICH parent this arm is seeded from is the run record's claim, not the
+    # command line's. Cross-checking them here means a -GenesisParentGeneration
+    # that names the wrong generation (the README's old 2048 rather than the
+    # cycle-3 focal run's 896) stops the launch before a Store prefix is
+    # claimed, instead of binding the wrong parent.
+    $genesisParentBinding = Assert-Cycle4GenesisParentBinding `
+        -RunRecordDocument $runRecordDocument `
+        -GenesisAuthority $genesisAuthority `
+        -ParentGeneration $GenesisParentGeneration `
+        -RunRecordPath $RunRecord
+    Write-Cycle4JsonFile -Value $genesisParentBinding -Path (Join-Path $root 'genesis-parent-binding.json')
+
+    # The genesis boundary's table. Every later boundary rebuilds it for its
+    # own refresh index, because slot 3 rotates.
+    $slotTable = Get-Cycle4SlotTableForRefresh `
+        -SlotStoreRoots $SlotStoreRoots `
+        -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
+        -RefreshIndex ([uint64]0)
 
     # ---------------------------------------------------------------------
     # Genesis: seed the Store, then build the manifest that binds it.
@@ -509,10 +625,13 @@ try {
         }
 
         $phase = 'preflight-publication'
+        # Same rule as the formal branch's terminal marker: a dry run compared
+        # nothing, so it claims nothing.
         $result = [ordered]@{
             schema = 'mtg-kernel-cycle4-preflight-ladder-result/v1'
-            status = 'PREFLIGHT_COMPLETE'
+            status = $(if ($DryRun) { 'DRY_RUN_PLANNED' } else { 'PREFLIGHT_COMPLETE' })
             completed_utc = [DateTimeOffset]::UtcNow.ToString('O')
+            dry_run = [bool]$DryRun
             arm = $Arm
             window_updates = $window
             checkpoint_segment_updates = $checkpointSegmentUpdates
@@ -522,8 +641,13 @@ try {
             nonclaim = 'A passed preflight ladder is launcher determinism evidence only; it is not training and not a playing-strength claim.'
         }
         Write-Cycle4JsonFile -Value $result -Path (Join-Path $root 'result.json')
-        Write-Cycle4Marker -Root $root -Name 'PREFLIGHT_COMPLETE' | Out-Null
-        Write-Host "CYCLE4 CONTROL PREFLIGHT COMPLETE evidence=$root"
+        if ($DryRun) {
+            Write-Host "CYCLE4 CONTROL PREFLIGHT DRY RUN PLANNED evidence=$root"
+        }
+        else {
+            Write-Cycle4Marker -Root $root -Name 'PREFLIGHT_COMPLETE' | Out-Null
+            Write-Host "CYCLE4 CONTROL PREFLIGHT COMPLETE evidence=$root"
+        }
     }
     else {
         # -------------------------------------------------------------------
@@ -616,6 +740,14 @@ try {
             $candidateStop = ($candidate + [uint64]1) * $script:Cycle4RefreshInterval
             $recorded = Get-Cycle4IntervalPhase -Journals $journals -IntervalIndex $candidate
             $trainingDone = $storeGeneration -ge $candidateStop
+            # Whether a manifest EXISTS for this interval's successor, as
+            # opposed to whether one is owed. For static-rb none is ever owed
+            # and none may ever exist, so `manifestDone` is a constant true
+            # while `manifestPresent` stays false -- without that distinction
+            # the campaign-integrity check below reads the constant as "an
+            # output is present" and prints an inconsistency warning at every
+            # interval of a perfectly fresh static-rb campaign.
+            $manifestPresent = $false
             if ($Arm -ceq 'static-rb') {
                 $panelDone = $trainingDone -and (@('panel-complete', 'manifest-complete') -contains $recorded)
                 $manifestDone = $true
@@ -623,6 +755,7 @@ try {
             else {
                 $panelDone = Test-Path -LiteralPath (Join-Path $RefreshChainDir (Get-Cycle4ChainPanelName -RefreshIndex ($candidate + [uint64]1))) -PathType Leaf
                 $manifestDone = Test-Path -LiteralPath (Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex ($candidate + [uint64]1))) -PathType Leaf
+                $manifestPresent = $manifestDone
                 if ((@('panel-complete', 'manifest-complete') -contains $recorded) -and -not $panelDone) {
                     throw "interval $candidate journalled '$recorded', but refresh $($candidate + 1)'s panel is missing from $RefreshChainDir; refusing to silently re-run a 28-matchup panel over a chain that lost one"
                 }
@@ -637,7 +770,7 @@ try {
             # says so and plans the interval in full anyway, because its job is
             # to show a plan over whatever directories it was pointed at; a
             # real run stops.
-            if (($panelDone -or $manifestDone) -and -not $trainingDone) {
+            if (($panelDone -or $manifestPresent) -and -not $trainingDone) {
                 $detail = "interval $candidate's outputs are present in $RefreshChainDir but the Store has not trained through generation $candidateStop"
                 if (-not $DryRun) {
                     throw "$detail; the Store and the refresh chain are not from the same campaign"
@@ -726,8 +859,17 @@ try {
             New-Item -ItemType Directory -Force -Path $intervalRoot | Out-Null
             $armLocator = Join-Path $intervalRoot 'arm-slot-locator.json'
             $panelLocator = Join-Path $intervalRoot 'panel-slot-locator.json'
+            # Rebuilt per boundary: historical-1 rotates by refresh index, so
+            # the table this interval writes its locators from is not the one
+            # the previous interval used. static-rb always reuses the genesis
+            # manifest, so its refresh index -- and its rotation phase -- stay
+            # 0 for the whole campaign, which is what a static pool means.
+            $intervalSlotTable = Get-Cycle4SlotTableForRefresh `
+                -SlotStoreRoots $SlotStoreRoots `
+                -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
+                -RefreshIndex ([uint64]$manifest.refresh_index)
             New-Cycle4SlotLocatorPair `
-                -SlotTable $slotTable `
+                -SlotTable $intervalSlotTable `
                 -Manifest $manifest `
                 -ArmLocatorPath $armLocator `
                 -PanelLocatorPath $panelLocator `
@@ -1007,9 +1149,14 @@ try {
             Assert-Gpu1Idle | Out-Null
             Assert-NoForeignGpu1ComputeProcesses
         }
+        # A dry run trained nothing, so it may claim nothing: no
+        # TRAINING_COMPLETE status and no TRAINING_COMPLETE marker. The marker
+        # in particular is read by operators and by later tooling as "this arm
+        # finished"; a dry run that left one behind would make a campaign that
+        # never ran look complete.
         $trainingResult = [ordered]@{
             schema = 'mtg-kernel-cycle4-arm-training-result/v1'
-            status = 'TRAINING_COMPLETE'
+            status = $(if ($DryRun) { 'DRY_RUN_PLANNED' } else { 'TRAINING_COMPLETE' })
             completed_utc = [DateTimeOffset]::UtcNow.ToString('O')
             arm = $Arm
             dry_run = [bool]$DryRun
@@ -1028,8 +1175,13 @@ try {
             nonclaim = 'Training completion is not playing-strength evidence; the derived metric is the payoff panel and its BT ratings.'
         }
         Write-Cycle4JsonFile -Value $trainingResult -Path (Join-Path $root 'result.json')
-        Write-Cycle4Marker -Root $root -Name 'TRAINING_COMPLETE' | Out-Null
-        Write-Host "CYCLE4 ARM TRAINING COMPLETE arm=$Arm evidence=$root"
+        if ($DryRun) {
+            Write-Host "CYCLE4 DRY RUN PLANNED arm=$Arm evidence=$root"
+        }
+        else {
+            Write-Cycle4Marker -Root $root -Name 'TRAINING_COMPLETE' | Out-Null
+            Write-Host "CYCLE4 ARM TRAINING COMPLETE arm=$Arm evidence=$root"
+        }
     }
 }
 catch {
