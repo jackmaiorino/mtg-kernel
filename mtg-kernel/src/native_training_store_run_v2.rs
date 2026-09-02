@@ -3892,6 +3892,20 @@ pub(crate) fn test_fixture_bytes_trainer_v4_candidate_v1() -> Vec<u8> {
     .unwrap()
 }
 
+/// A coherent record widened with `population_program_v2_cycle4` for one
+/// arm kind, with the paired `trainer_v4_candidate` presence/absence and
+/// `static_pool` flag the arm-kind consistency rule requires. Test-only:
+/// lets the cycle-4 arm launcher's own suite decode a validated run for each
+/// arm without duplicating this module's fixture machinery.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_v1(arm_kind: &str) -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::population_program_v2_cycle4_record(arm_kind),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
+}
+
 /// Backend-parametrized fixture: the matched runtime tuple and train-step
 /// backend identity pair for the requested store-admitted backend.
 #[cfg(test)]
@@ -9664,7 +9678,7 @@ mod tests {
     /// CONTROL-R carries neither `trainer_v4_candidate` nor `static_pool`;
     /// STATIC-RB and TREATMENT-RB both carry `trainer_v4_candidate`, and
     /// only STATIC-RB sets `static_pool`.
-    fn population_program_v2_cycle4_record(arm_kind: &str) -> TrainRunV2 {
+    pub(super) fn population_program_v2_cycle4_record(arm_kind: &str) -> TrainRunV2 {
         let mut record = if arm_kind == CYCLE4_ARM_KIND_CONTROL_R_V1 {
             coherent_v2_record()
         } else {

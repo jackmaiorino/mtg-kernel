@@ -17,6 +17,7 @@ use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
 pub use crate::native_full_episode_trajectory_v1::NativeFullEpisodeTrajectoryReceiptV1 as NativeTrainingTrajectoryReceiptV1;
 pub use crate::native_full_episode_trajectory_v2::NativeTrainingTrajectoryReceiptV2;
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
+use crate::native_policy_baseline_state_v4::NativeBaselineStateV4;
 pub use crate::native_policy_train_step_v1::{
     NativeGaugeSubstepBoundV1 as NativeTrainingGaugeSubstepObservationV1,
     NativeScorerBiasGaugeRecordV1 as NativeTrainingScorerBiasGaugeObservationV1,
@@ -1366,6 +1367,15 @@ impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
         })
     }
 
+    /// Round B: advances the isolated candidate's committed baseline between
+    /// the updates of one segment, so update `t + 1` trains against exactly
+    /// the `c_{t+1}` update `t`'s published sidecar proves (strict lag,
+    /// `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// Section 3). The live executor is untouched until `commit_v2`.
+    pub(crate) fn set_baseline_state_v4(&mut self, baseline_state: Option<NativeBaselineStateV4>) {
+        self.candidate_trainer.set_baseline_state_v4(baseline_state);
+    }
+
     fn into_single_update_v2(
         self,
         transition: NativeTrainingPreparedTransitionV2,
@@ -1704,6 +1714,16 @@ impl NativeTrainingExecutorV1 {
         population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ) {
         self.trainer.set_population_opponent_v1(population_opponent);
+    }
+
+    /// Round B passthrough for the cycle-4 arm launcher
+    /// (`docs/native_cycle4_arm_launcher_v1.md` Section 3): installs the
+    /// committed cell-centered baseline `c_t` the next update must train
+    /// against. `None` (every caller outside a `trainer_v4_candidate` run)
+    /// reproduces v3 exactly. The state is process-lifetime only; the
+    /// launcher-level chain, not this executor, is its durable authority.
+    pub(crate) fn set_baseline_state_v4(&mut self, baseline_state: Option<NativeBaselineStateV4>) {
+        self.trainer.set_baseline_state_v4(baseline_state);
     }
 
     #[cfg(test)]
