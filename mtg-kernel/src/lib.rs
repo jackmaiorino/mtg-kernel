@@ -348,6 +348,12 @@ pub mod native_cycle4_arm_v1;
     not(debug_assertions)
 ))]
 pub mod native_cycle4_run_record_v1;
+// Cycle-4 M3 centering audit (section-6 amendment V2, section A): the
+// per-cell centered-residual statistics over one v4 arm's final 512 updates
+// and the eligibility gate over them. `pub` for the same reason as the two
+// modules above: `src/bin/cycle4_m3_audit_v1.rs` calls it directly. Read
+// only: it opens no Store handle, takes no lock, and writes nothing.
+pub mod native_cycle4_m3_audit_v1;
 pub mod native_science_loop_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
