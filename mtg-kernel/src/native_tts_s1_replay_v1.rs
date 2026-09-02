@@ -6004,7 +6004,7 @@ mod tests {
         assert_eq!(tts_s1_shard_ready_file_name_v1(5), "shard-ready-0005.token");
         assert!(published.exists());
         let text = std::fs::read_to_string(&published).expect("the announcement reads");
-        let fields: Vec<&str> = text.trim().split_whitespace().collect();
+        let fields: Vec<&str> = text.split_whitespace().collect();
         assert_eq!(fields.len(), 2, "the announcement is a pid and an instant");
         assert_eq!(fields[0].parse::<u64>().unwrap(), process_id);
         assert_eq!(fields[1].parse::<u64>().unwrap(), ready_unix_micros);
