@@ -499,6 +499,100 @@ fn slot_store_roots_for_manifest_v1(
 }
 
 // ---------------------------------------------------------------------
+// Read-only slot-locator decode check (`--check-slot-locator`)
+// ---------------------------------------------------------------------
+
+/// What one `--check-slot-locator` pass proved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Cycle4SlotLocatorCheckOutcomeV1 {
+    /// How many `run.json` records decoded: the locator's eight slot Stores,
+    /// plus the genesis parent when the locator names one.
+    pub decoded_run_record_count: usize,
+    /// Whether the locator carried a `genesis_parent_store_root` and it was
+    /// therefore decoded too.
+    pub genesis_parent_checked: bool,
+}
+
+/// Decodes every `run.json` a slot locator points at, and the genesis
+/// parent's, and nothing else.
+///
+/// Cycle-4 round F, item 3. The CONTROL preflight ladder's first attempt
+/// spent two full five-minute genesis bootstraps before either arm rung
+/// reached the point of resolving its opponent slots and refused there, on
+/// a record that could not decode. Every input that refusal depended on was
+/// readable before the first bootstrap started. This mode reads them, in
+/// exactly the way the slot resolver later will
+/// (`decode_train_run_v2`, the same entry point
+/// `resolve_population_opponent_cycle4_v1` calls, and the same one
+/// `resolve_ladder_checkpoint_authority_v1` calls for the parent), and says
+/// yes or no in under a second.
+///
+/// Strictly read-only and device-free: it opens no Store root, reads no
+/// checkpoint, claims no Store-prefix mode marker, allocates no CUDA
+/// context, and writes nothing anywhere. The only files it touches are the
+/// locator and one `run.json` per named Store, all opened for reading.
+///
+/// Deliberately NOT the full slot resolution: a locator is checked on its
+/// own, without a refresh manifest, so this proves decodability, not
+/// identity binding. Identity binding needs a manifest and is still proven
+/// where it always was, at the slot resolver.
+///
+/// # Errors
+///
+/// Returns a classified [`Cycle4ArmErrorV1`]. Every rejection this mode can
+/// produce is `Contract` (bin exit code 3), including an unreadable locator
+/// or `run.json`: from a launcher's point of view "the inputs you named
+/// cannot be read" and "the inputs you named cannot be decoded" are the same
+/// answer, and a check mode with exactly two outcomes is easier to wire into
+/// a wrapper than one with three.
+pub fn run_native_cycle4_arm_check_slot_locator_v1(
+    slot_locator: &Path,
+) -> Result<Cycle4SlotLocatorCheckOutcomeV1> {
+    let locator_bytes = std::fs::read(slot_locator).map_err(|error| {
+        Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_slot_locator_read",
+            format!("{}: {error}", slot_locator.display()),
+        )
+    })?;
+    let locator = decode_slot_locator_v1(&locator_bytes)?;
+
+    let mut decoded_run_record_count = 0_usize;
+    let mut check_one = |store_root: &str| -> Result<()> {
+        let run_json = Path::new(store_root).join("run.json");
+        let bytes = std::fs::read(&run_json).map_err(|error| {
+            Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_slot_locator_store_run_read",
+                format!("{}: {error}", run_json.display()),
+            )
+        })?;
+        decode_train_run_v2(&bytes).map_err(|error| {
+            Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_slot_locator_store_run_rejected",
+                format!("{}: {error}", run_json.display()),
+            )
+        })?;
+        decoded_run_record_count += 1;
+        Ok(())
+    };
+
+    for entry in &locator.stores {
+        check_one(&entry.store_root)?;
+    }
+    let genesis_parent_checked = match &locator.genesis_parent_store_root {
+        Some(parent) => {
+            check_one(parent)?;
+            true
+        }
+        None => false,
+    };
+
+    Ok(Cycle4SlotLocatorCheckOutcomeV1 {
+        decoded_run_record_count,
+        genesis_parent_checked,
+    })
+}
+
+// ---------------------------------------------------------------------
 // Cycle-4 population resolution (sibling of resolve_population_opponent_v1)
 // ---------------------------------------------------------------------
 
@@ -3133,7 +3227,7 @@ mod tests {
     };
     use crate::native_training_store_run_v2::{
         test_fixture_bytes_population_program_v2_cycle4_seeded_v1,
-        test_fixture_bytes_population_program_v2_cycle4_v1,
+        test_fixture_bytes_population_program_v2_cycle4_v1, test_fixture_bytes_v2,
     };
     use crate::native_training_store_update_group_v4::{
         build_update_baseline_record_v4, UpdateBaselineCellPartsV4, UpdateBaselineRecordPartsV4,
@@ -3683,6 +3777,148 @@ mod tests {
 
         let good = locator_for_v1(&manifest);
         decode_slot_locator_v1(&encode(&good)).expect("a well-formed locator decodes");
+    }
+
+    // ------------------------------------------------------------------
+    // Read-only slot-locator decode check (round F item 3)
+    // ------------------------------------------------------------------
+
+    /// A locator naming eight synthetic Store roots, each holding a real,
+    /// decodable `run.json`, plus a ninth for the genesis parent. Nothing
+    /// else of a Store is created: `--check-slot-locator` reads `run.json`
+    /// and nothing else, and this fixture proves that by supplying nothing
+    /// else.
+    fn check_locator_fixture_v1(dir: &Path, parent: bool) -> (PathBuf, Cycle4SlotLocatorV1) {
+        let manifest = genesis_manifest_v1();
+        let mut locator = locator_for_v1(&manifest);
+        let run_bytes = test_fixture_bytes_v2();
+        for (index, entry) in locator.stores.iter_mut().enumerate() {
+            let store_root = dir.join(format!("slot-{index}"));
+            std::fs::create_dir_all(&store_root).expect("slot store root");
+            std::fs::write(store_root.join("run.json"), &run_bytes).expect("slot run.json");
+            entry.store_root = store_root.to_string_lossy().into_owned();
+        }
+        if parent {
+            let parent_root = dir.join("genesis-parent");
+            std::fs::create_dir_all(&parent_root).expect("parent store root");
+            std::fs::write(parent_root.join("run.json"), &run_bytes).expect("parent run.json");
+            locator.genesis_parent_store_root = Some(parent_root.to_string_lossy().into_owned());
+        }
+        let path = dir.join("slot-locator.json");
+        std::fs::write(&path, serde_json::to_vec(&locator).expect("encode")).expect("locator");
+        (path, locator)
+    }
+
+    #[test]
+    fn check_slot_locator_decodes_every_slot_and_the_parent_v1() {
+        let dir = fresh_temp_dir_v1("check-slot-locator-ok");
+        let (path, _) = check_locator_fixture_v1(&dir, true);
+        let outcome = run_native_cycle4_arm_check_slot_locator_v1(&path)
+            .expect("a locator of decodable records must pass");
+        assert_eq!(
+            outcome,
+            Cycle4SlotLocatorCheckOutcomeV1 {
+                decoded_run_record_count: CYCLE4_SLOT_COUNT_V1 + 1,
+                genesis_parent_checked: true,
+            }
+        );
+        // Read-only: the check created no Store artifact of its own beside
+        // the one run.json each fixture root holds.
+        for index in 0..CYCLE4_SLOT_COUNT_V1 {
+            let store_root = dir.join(format!("slot-{index}"));
+            let entries = std::fs::read_dir(&store_root)
+                .expect("slot root readable")
+                .count();
+            assert_eq!(entries, 1, "the check must not write into a Store root");
+        }
+    }
+
+    #[test]
+    fn check_slot_locator_without_a_parent_checks_only_the_slots_v1() {
+        let dir = fresh_temp_dir_v1("check-slot-locator-no-parent");
+        let (path, _) = check_locator_fixture_v1(&dir, false);
+        let outcome =
+            run_native_cycle4_arm_check_slot_locator_v1(&path).expect("no parent is not an error");
+        assert_eq!(
+            outcome,
+            Cycle4SlotLocatorCheckOutcomeV1 {
+                decoded_run_record_count: CYCLE4_SLOT_COUNT_V1,
+                genesis_parent_checked: false,
+            }
+        );
+    }
+
+    #[test]
+    fn check_slot_locator_fails_closed_on_an_undecodable_slot_record_v1() {
+        let dir = fresh_temp_dir_v1("check-slot-locator-bad-slot");
+        let (path, locator) = check_locator_fixture_v1(&dir, true);
+        // The shape of the defect round F item 1 fixed: a key this build's
+        // `deny_unknown_fields` schema does not know, which is exactly what
+        // an unreadable roster Store looks like from here. Injected in
+        // canonical key order ("a_" sorts before "artifact_schemas"), so the
+        // rejection is the schema one and not an incidental complaint about
+        // key ordering.
+        let victim = Path::new(&locator.stores[5].store_root).join("run.json");
+        let text = String::from_utf8(std::fs::read(&victim).expect("read")).expect("utf8");
+        let injected = text.replacen(
+            r#"{"artifact_schemas":"#,
+            r#"{"a_round_f_unknown_key":1,"artifact_schemas":"#,
+            1,
+        );
+        assert_ne!(injected, text, "the injection must actually apply");
+        std::fs::write(&victim, injected).expect("write");
+        let error = run_native_cycle4_arm_check_slot_locator_v1(&path)
+            .expect_err("an undecodable slot record must fail closed");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(error.exit_code_v1(), 3);
+        assert_eq!(
+            error.code_v1(),
+            "cycle4_arm_v1_slot_locator_store_run_rejected"
+        );
+    }
+
+    #[test]
+    fn check_slot_locator_fails_closed_on_a_missing_store_v1() {
+        let dir = fresh_temp_dir_v1("check-slot-locator-missing");
+        let (path, locator) = check_locator_fixture_v1(&dir, true);
+        std::fs::remove_file(Path::new(&locator.stores[0].store_root).join("run.json"))
+            .expect("remove");
+        let error = run_native_cycle4_arm_check_slot_locator_v1(&path)
+            .expect_err("a missing slot record must fail closed");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(error.exit_code_v1(), 3);
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_slot_locator_store_run_read");
+    }
+
+    #[test]
+    fn check_slot_locator_fails_closed_on_an_undecodable_parent_record_v1() {
+        let dir = fresh_temp_dir_v1("check-slot-locator-bad-parent");
+        let (path, locator) = check_locator_fixture_v1(&dir, true);
+        let parent = Path::new(
+            locator
+                .genesis_parent_store_root
+                .as_ref()
+                .expect("parent present"),
+        )
+        .join("run.json");
+        std::fs::write(&parent, b"{}\n").expect("write");
+        let error = run_native_cycle4_arm_check_slot_locator_v1(&path)
+            .expect_err("an undecodable parent record must fail closed");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(
+            error.code_v1(),
+            "cycle4_arm_v1_slot_locator_store_run_rejected"
+        );
+    }
+
+    #[test]
+    fn check_slot_locator_fails_closed_on_a_missing_locator_v1() {
+        let dir = fresh_temp_dir_v1("check-slot-locator-absent");
+        let error = run_native_cycle4_arm_check_slot_locator_v1(&dir.join("nothing-here.json"))
+            .expect_err("an absent locator must fail closed");
+        assert_eq!(error.failure_v1(), Cycle4ArmFailureV1::Contract);
+        assert_eq!(error.exit_code_v1(), 3);
+        assert_eq!(error.code_v1(), "cycle4_arm_v1_slot_locator_read");
     }
 
     // ------------------------------------------------------------------

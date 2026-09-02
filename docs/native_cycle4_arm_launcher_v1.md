@@ -117,6 +117,21 @@ pure input-state rejections so those stay diagnosable. Without that a record bui
 one build and an arm binary from another produced a Store whose record
 attributed it to the wrong source tree, with every validator passing.
 
+Round F adds a third whole-command-line mode, `--check-slot-locator PATH`,
+accepted ALONE like `--print-build-identity`. It decodes the eight slot
+Stores' `run.json` named by that locator, plus the genesis parent's when the
+locator carries one, through the same `decode_train_run_v2` entry point
+`resolve_population_opponent_cycle4_v1` and
+`resolve_ladder_checkpoint_authority_v1` use, and exits 0 or 3. It is
+strictly read-only and device-free: no Store root is opened, no checkpoint
+read, no Store-prefix mode marker claimed, no CUDA context allocated, nothing
+written. It exists because the first CONTROL preflight ladder attempt spent
+two five-minute genesis bootstraps before either rung reached slot resolution
+and refused there, on a roster record that had been on disk and undecodable
+from the attempt's first second. The wrapper now runs this before any
+bootstrap. It proves decodability only; identity binding needs a refresh
+manifest and stays where it is proven, at the slot resolver.
+
 ## 4a. Bin `src/bin/cycle4_run_record_v1.rs` (round E)
 
 Section 1 says what a cycle-4 `run.json` must declare but nothing produced
