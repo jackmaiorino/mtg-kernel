@@ -55,33 +55,50 @@ line with `reason == "compiler-artifact"`, `target.name == "mtg_kernel"`,
 and `"lib" in target.kind`.
 
 Inputs: the current cycle-4 refresh manifest (its eight slots are the panel
-roster; its own SHA-256 is recorded in `panel.json` as the content the next
-manifest binds against), a slot-locator JSON, `G` games per matchup (default
-256 -- MUST equal `CYCLE4_PANEL_GAMES_PER_MATCHUP_V1` in
+roster; its own `refresh_index` picks this run's output filename, see
+below; its own SHA-256 is recorded in the panel document as the content the
+next manifest binds against), a slot-locator JSON, `G` games per matchup
+(default 256 -- MUST equal `CYCLE4_PANEL_GAMES_PER_MATCHUP_V1` in
 `native_population_refresh_manifest_cycle4_v1.rs` for the panel to be valid
-input to the Rust builder; a different `G` is accepted for local dry-run or
-smoke testing only, with a warning, since the Rust side's rank-sum bound is
-FIXED at `7*256=1792` regardless of what `G` this runner used), a base-seed
+input to the Rust builder; a different `G` is accepted ONLY under
+`--dry-run`, for local smoke testing -- passing a non-canonical `G` outside
+`--dry-run` is a hard usage error, since the Rust side's rank-sum bound is
+FIXED at `7*256=1792` regardless of what `G` this runner used and the
+production panel schema is only ever emitted for `G=256`), a base-seed
 literal (the caller is responsible for using a fresh literal per refresh so
 no pair environment seed is ever reused across the whole campaign; this
 script only guarantees no reuse WITHIN one panel run), and an output
 directory.
 
-Outputs, all under `--output-dir`:
+Outputs, all under `--output-dir` (resolved to an absolute path before any
+child process is launched, since matchup subprocesses run with
+`cwd=repo_root`, not `cwd=output_dir`):
   - `<matchup-label>/{outcome.json,stdout.log,stderr.log}` per matchup (28
     directories), each `outcome.json` the ignored test's own create-new
     terminal-stream artifact.
-  - `panel.json`: ONE canonical document (sorted keys, LF -- see
-    `canonical_bytes`), schema `mtg-kernel-cycle4-payoff-panel/v1`. Its exact
-    bytes are what the next refresh manifest binds by SHA-256
+  - `refresh-NN.panel.json` (`NN` = the loaded manifest's own
+    `refresh_index + 1`, zero-padded to two digits -- `panel_filename`):
+    ONE canonical document (sorted keys, LF -- see `canonical_bytes`),
+    schema `mtg-kernel-cycle4-payoff-panel/v1`. Its exact bytes are what
+    refresh `NN`'s manifest binds by SHA-256
     (`build_cycle4_next_refresh_v1`'s `panel_bytes` argument); nothing in
     this script's own JSON encoding path may drift from the canonical form
-    the Rust builder re-derives independently.
+    the Rust builder re-derives independently. This filename is the SAME
+    fixed chain-directory naming scheme the Rust builder module documents
+    (`cycle4_chain_panel_filename_v1` in
+    `native_population_refresh_builder_cycle4_v1.rs`) -- both sides must
+    never drift from it. Staged to a temporary name and committed (renamed
+    into place) LAST, after `bt-rating-input.json`, so its presence at this
+    path is the single signal that the whole run succeeded; any exception
+    during staging or committing removes every temporary file so a failed
+    run never leaves a consumable panel document.
   - `bt-rating-input.json`: schema `mtg-kernel-bt-rating-input/v1`, ready for
     `bt_rating_v1.py <this file> <result.json>`. Scoped to this one panel's
     28 pairs only; a later aggregator, not this script, is responsible for
     folding in cross-panel history across refreshes (the derived-metric
-    module's own docstring anticipates that as a separate step).
+    module's own docstring anticipates that as a separate step). Committed
+    BEFORE the panel document (it is downstream analysis input, not content
+    any manifest binds by hash).
 
 `--dry-run` computes and prints every matchup's exact command line, H2H_*
 environment, and evaluation seed without touching a process or the
@@ -119,10 +136,13 @@ SLOT_COUNT = 8
 DEFAULT_GAMES_PER_MATCHUP = 256
 # Matches the Rust contract's own constant
 # (`CYCLE4_PANEL_GAMES_PER_MATCHUP_V1`); see the module docstring's note on
-# --games-per-matchup for why this is only enforced as a warning, not a
-# hard failure.
+# --games-per-matchup -- outside --dry-run this is a hard requirement, not a
+# warning.
 CANONICAL_GAMES_PER_MATCHUP = 256
 MATCHUP_COUNT = 28
+# Matches the Rust contract's own constant (`CYCLE4_REFRESH_MAX_INDEX_V1`):
+# the highest refresh index the campaign ever chains to.
+MAX_REFRESH_INDEX = 16
 # Ported from v1's MATRIX_EVAL_SEED_STRIDE: generously larger than any
 # plausible per-matchup pair count, so the per-matchup evaluation seeds
 # cannot plausibly collide before the explicit global uniqueness check below
@@ -236,7 +256,35 @@ def write_new_json(path: Path, value: dict) -> bytes:
     with path.open("xb") as stream:
         stream.write(encoded)
         stream.flush()
+        os.fsync(stream.fileno())
     return encoded
+
+
+def staged_temp_path(final_path: Path) -> Path:
+    """The create-new temporary name `write_new_json` stages `final_path`'s
+    content to before the atomic commit (`commit_staged_file`) renames it
+    into place. Computed as pure path arithmetic (no I/O) so a caller always
+    knows this path for cleanup, even if staging itself never got far enough
+    to create the file."""
+    return final_path.with_name(f"{final_path.name}.tmp-{os.getpid()}")
+
+
+def commit_staged_file(temp_path: Path, final_path: Path) -> None:
+    """The atomic commit: renames a file staged by `write_new_json` (at
+    `staged_temp_path(final_path)`) into its final name. Whichever staged
+    file a caller commits LAST is the one whose presence at its final name
+    is the signal that the whole batch of commits succeeded."""
+    os.replace(temp_path, final_path)
+
+
+def remove_stray(path: Path) -> None:
+    """Best-effort cleanup of a staged-but-not-committed (or partially
+    written) temporary file; a no-op if it was never created or was already
+    committed away."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -244,19 +292,40 @@ def write_new_json(path: Path, value: dict) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def load_manifest(path: Path) -> tuple[bytes, str, list[dict]]:
-    """Reads the manifest's exact bytes, its own SHA-256, and its eight slot
-    records ordered 0..7. Only a STRUCTURAL check runs here (schema tag,
-    exactly eight slots, expected roles, required fields present); the
-    manifest's full semantic contract -- roster identities, weight
-    arithmetic, chain linkage against its predecessor -- was already the
-    Rust builder's job when this file was constructed, and is not
-    re-verified here."""
+def panel_filename(refresh_index: int) -> str:
+    """Fixed on-disk name for the payoff panel that will be bound into
+    refresh `refresh_index`'s manifest, matching the Rust chain builder's
+    `cycle4_chain_panel_filename_v1` exactly
+    (`native_population_refresh_builder_cycle4_v1.rs`); both sides must
+    never drift from this scheme."""
+    return f"refresh-{refresh_index:02d}.panel.json"
+
+
+def load_manifest(path: Path) -> tuple[bytes, str, int, list[dict]]:
+    """Reads the manifest's exact bytes, its own SHA-256, its own
+    `refresh_index` (the panel this run produces evaluates THIS index's
+    roster and is bound into refresh `refresh_index + 1`'s manifest, so the
+    panel's own output filename is derived from this field -- see
+    `panel_filename`), and its eight slot records ordered 0..7. Only a
+    STRUCTURAL check runs here (schema tag, exactly eight slots, expected
+    roles, required fields present); the manifest's full semantic contract
+    -- roster identities, weight arithmetic, chain linkage against its
+    predecessor -- was already the Rust builder's job when this file was
+    constructed, and is not re-verified here."""
     raw = path.read_bytes()
     manifest_sha256 = sha256_bytes(raw)
     document = json.loads(raw.decode("utf-8-sig"))
     if document.get("schema") != MANIFEST_SCHEMA:
         raise PanelRunnerError(f"unexpected manifest schema: {document.get('schema')!r}")
+    refresh_index = document.get("refresh_index")
+    if (
+        not isinstance(refresh_index, int)
+        or isinstance(refresh_index, bool)
+        or refresh_index < 0
+    ):
+        raise PanelRunnerError(
+            f"manifest refresh_index must be a non-negative int: {refresh_index!r}"
+        )
     slots = document.get("slots")
     if not isinstance(slots, list) or len(slots) != SLOT_COUNT:
         raise PanelRunnerError("manifest must carry exactly eight slots")
@@ -279,7 +348,7 @@ def load_manifest(path: Path) -> tuple[bytes, str, list[dict]]:
         ordered[index] = entry
     if any(slot is None for slot in ordered):
         raise PanelRunnerError("manifest is missing a slot")
-    return raw, manifest_sha256, ordered
+    return raw, manifest_sha256, refresh_index, ordered
 
 
 def load_slot_locator(path: Path) -> dict[int, Path]:
@@ -625,27 +694,29 @@ def run_matchup(
 
 
 def run(args: argparse.Namespace) -> Path | None:
-    manifest_bytes, manifest_sha256, slots = load_manifest(args.manifest)
-    del manifest_bytes  # only its hash is needed once loaded
+    manifest_bytes, manifest_sha256, refresh_index, slots = load_manifest(args.manifest)
+    del manifest_bytes  # only its hash (and refresh_index) is needed once loaded
     locator = load_slot_locator(args.slot_locator)
-    if args.games_per_matchup != CANONICAL_GAMES_PER_MATCHUP:
-        print(
-            f"run_payoff_panel_v1: WARNING --games-per-matchup="
-            f"{args.games_per_matchup} != {CANONICAL_GAMES_PER_MATCHUP}; the "
-            "resulting panel.json is not valid input to the Rust builder "
-            "(its rank-sum bound is fixed at 7*256=1792) -- local testing only",
-            file=sys.stderr,
+    next_refresh_index = refresh_index + 1
+    if next_refresh_index > MAX_REFRESH_INDEX:
+        raise PanelRunnerError(
+            f"manifest refresh_index={refresh_index} is already at the campaign's "
+            f"max ({MAX_REFRESH_INDEX}); there is no next boundary to panel"
         )
     specs = build_matchup_specs(args.base_seed, args.games_per_matchup)
+    # Resolved once, up front: every matchup path derived from this (the
+    # per-matchup outcome directories AND H2H_OUTCOME_JSON) must be absolute,
+    # since `run_matchup` launches its subprocess with `cwd=repo_root`, not
+    # `cwd=output_dir` -- a relative --output-dir would otherwise resolve
+    # against the WRONG directory inside the child process.
+    output_dir = args.output_dir.resolve()
 
     if args.dry_run:
-        for line in render_dry_run_lines(
-            specs, slots, locator, args.executable, args.output_dir
-        ):
+        for line in render_dry_run_lines(specs, slots, locator, args.executable, output_dir):
             print(line)
         return None
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     summaries = []
     outcome_hashes = []
     all_seeds: set[int] = set()
@@ -653,7 +724,7 @@ def run(args: argparse.Namespace) -> Path | None:
         result = run_matchup(
             args.executable.resolve(),
             args.repo_root.resolve(),
-            args.output_dir,
+            output_dir,
             slots,
             locator,
             spec,
@@ -684,12 +755,25 @@ def run(args: argparse.Namespace) -> Path | None:
         summaries,
         outcome_hashes,
     )
-    panel_path = args.output_dir / "panel.json"
-    write_new_json(panel_path, panel)
-
     bt_input = build_bt_input_document(slots, panel)
-    bt_input_path = args.output_dir / "bt-rating-input.json"
-    write_new_json(bt_input_path, bt_input)
+
+    panel_path = output_dir / panel_filename(next_refresh_index)
+    bt_input_path = output_dir / "bt-rating-input.json"
+    panel_temp = staged_temp_path(panel_path)
+    bt_input_temp = staged_temp_path(bt_input_path)
+    try:
+        write_new_json(panel_temp, panel)
+        write_new_json(bt_input_temp, bt_input)
+        # bt-rating-input.json is downstream analysis input; panel_path is
+        # the content the NEXT manifest binds by SHA-256, so it is committed
+        # LAST -- its presence there is the single signal this whole run
+        # succeeded.
+        commit_staged_file(bt_input_temp, bt_input_path)
+        commit_staged_file(panel_temp, panel_path)
+    except BaseException:
+        remove_stray(panel_temp)
+        remove_stray(bt_input_temp)
+        raise
 
     print(panel_path)
     print(bt_input_path)
@@ -713,7 +797,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="print every matchup's exact command/environment/seed and exit "
         "without touching a process or the filesystem",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if not args.dry_run and args.games_per_matchup != CANONICAL_GAMES_PER_MATCHUP:
+        parser.error(
+            f"--games-per-matchup={args.games_per_matchup} is not allowed outside "
+            f"--dry-run: the production panel schema is only ever emitted for "
+            f"G={CANONICAL_GAMES_PER_MATCHUP} (pass --dry-run for local smoke "
+            "testing with a different game count)"
+        )
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

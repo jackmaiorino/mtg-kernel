@@ -9,7 +9,10 @@ requirement.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,9 +27,15 @@ from run_payoff_panel_v1 import (
     build_matchup_specs,
     build_panel_document,
     canonical_bytes,
+    commit_staged_file,
     load_manifest,
     load_slot_locator,
+    panel_filename,
+    parse_args,
+    remove_stray,
     render_dry_run_lines,
+    run,
+    staged_temp_path,
     summarize_outcome,
 )
 
@@ -370,11 +379,21 @@ class ManifestAndSlotLocatorLoadingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "manifest.json"
             path.write_bytes(canonical_bytes(synthetic_manifest_document()))
-            raw, manifest_sha256, slots = load_manifest(path)
+            raw, manifest_sha256, refresh_index, slots = load_manifest(path)
             self.assertEqual(len(slots), SLOT_COUNT)
             self.assertEqual(slots[0]["role"], "anchor-0")
             self.assertEqual(len(manifest_sha256), 64)
+            self.assertEqual(refresh_index, 0)
             self.assertEqual(raw, path.read_bytes())
+
+    def test_load_manifest_rejects_non_integer_refresh_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            document = synthetic_manifest_document()
+            document["refresh_index"] = "zero"
+            path.write_bytes(canonical_bytes(document))
+            with self.assertRaises(PanelRunnerError):
+                load_manifest(path)
 
     def test_load_manifest_rejects_wrong_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -444,6 +463,134 @@ class ManifestAndSlotLocatorLoadingTests(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(PanelRunnerError):
                 load_slot_locator(path)
+
+
+class PanelFilenameTests(unittest.TestCase):
+    def test_panel_filename_matches_the_fixed_naming_scheme(self):
+        # Matches the Rust chain builder's `cycle4_chain_panel_filename_v1`
+        # exactly -- see `native_population_refresh_builder_cycle4_v1.rs`.
+        self.assertEqual(panel_filename(1), "refresh-01.panel.json")
+        self.assertEqual(panel_filename(16), "refresh-16.panel.json")
+
+
+def _base_cli_args(tmp: str, **overrides: str) -> list[str]:
+    values = {
+        "--manifest": str(Path(tmp) / "manifest.json"),
+        "--slot-locator": str(Path(tmp) / "locator.json"),
+        "--base-seed": "1",
+        "--output-dir": str(Path(tmp) / "out"),
+        "--executable": str(Path(tmp) / "fake-exe"),
+        "--repo-root": tmp,
+    }
+    values.update(overrides)
+    argv: list[str] = []
+    for flag, value in values.items():
+        argv.extend([flag, value])
+    return argv
+
+
+class GamesPerMatchupValidationTests(unittest.TestCase):
+    """P1-4: a non-canonical --games-per-matchup outside --dry-run is a hard
+    usage error (exit 2), never a warning."""
+
+    def test_non_canonical_games_per_matchup_outside_dry_run_is_a_hard_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = _base_cli_args(tmp) + ["--games-per-matchup", "128"]
+            with self.assertRaises(SystemExit) as ctx:
+                parse_args(argv)
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_non_canonical_games_per_matchup_is_allowed_under_dry_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = _base_cli_args(tmp) + ["--games-per-matchup", "128", "--dry-run"]
+            args = parse_args(argv)
+            self.assertEqual(args.games_per_matchup, 128)
+
+    def test_canonical_games_per_matchup_outside_dry_run_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(_base_cli_args(tmp))
+            self.assertEqual(args.games_per_matchup, 256)
+
+
+class AtomicCommitTests(unittest.TestCase):
+    """P2-7: panel.json and bt-rating-input.json are staged to temporary
+    names and committed by rename; a failed run must never leave a
+    consumable panel document."""
+
+    def test_commit_staged_file_renames_into_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final_path = Path(tmp) / "refresh-01.panel.json"
+            temp_path = staged_temp_path(final_path)
+            temp_path.write_bytes(b"staged-bytes")
+            commit_staged_file(temp_path, final_path)
+            self.assertFalse(temp_path.exists())
+            self.assertEqual(final_path.read_bytes(), b"staged-bytes")
+
+    def test_remove_stray_is_a_noop_for_a_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "nope.tmp"
+            remove_stray(missing)  # must not raise
+
+    def test_remove_stray_deletes_an_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            present = Path(tmp) / "stray.tmp"
+            present.write_bytes(b"x")
+            remove_stray(present)
+            self.assertFalse(present.exists())
+
+
+class OutputDirResolutionTests(unittest.TestCase):
+    """P2-5: --output-dir (and every derived matchup path) is resolved to an
+    absolute path before H2H_OUTCOME_JSON is constructed, since matchup
+    subprocesses run with cwd=repo_root, not cwd=output_dir."""
+
+    def test_dry_run_resolves_a_relative_output_dir_to_absolute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp).resolve()
+            (tmp_path / "manifest.json").write_bytes(
+                canonical_bytes(synthetic_manifest_document())
+            )
+            (tmp_path / "locator.json").write_text(
+                json.dumps(
+                    {
+                        "schema": SLOT_LOCATOR_SCHEMA,
+                        "stores": {
+                            str(index): str(tmp_path / f"slot-{index}")
+                            for index in range(SLOT_COUNT)
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            original_cwd = Path.cwd()
+            os.chdir(tmp_path)
+            try:
+                args = parse_args(
+                    [
+                        "--manifest",
+                        "manifest.json",
+                        "--slot-locator",
+                        "locator.json",
+                        "--base-seed",
+                        "1",
+                        "--output-dir",
+                        "relative-output",
+                        "--executable",
+                        "fake-exe",
+                        "--repo-root",
+                        ".",
+                        "--dry-run",
+                    ]
+                )
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer):
+                    result = run(args)
+            finally:
+                os.chdir(original_cwd)
+            self.assertIsNone(result)
+            expected_absolute_fragment = str(tmp_path / "relative-output")
+            self.assertIn(expected_absolute_fragment, buffer.getvalue())
+            self.assertNotIn("H2H_OUTCOME_JSON=relative-output", buffer.getvalue())
 
 
 if __name__ == "__main__":
