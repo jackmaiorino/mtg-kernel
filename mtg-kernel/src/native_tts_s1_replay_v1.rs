@@ -2940,15 +2940,14 @@ pub fn merge_tts_s1_replay_shards_v1(
         .iter()
         .map(|(_, slot, episode_index)| shards[*slot].body.episodes[*episode_index].episode_id)
         .collect();
-    let mut sorted_ids = episode_ids.clone();
-    sorted_ids.sort_unstable();
-    sorted_ids.dedup();
-    if sorted_ids.len() != episode_ids.len() {
+    let placed_count = episode_ids.len();
+    episode_ids.sort_unstable();
+    episode_ids.dedup();
+    if episode_ids.len() != placed_count {
         return Err(invalid(
             "two shards replayed the same episode id".to_owned(),
         ));
     }
-    episode_ids.clear();
 
     // The union, in the order an unsharded replay would have produced it.
     let mut records: Vec<TtsS1ReplayDecisionRecordV1> = Vec::new();
