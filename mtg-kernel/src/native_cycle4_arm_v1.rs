@@ -109,6 +109,7 @@ use crate::native_training_store_resume_v2::{
 use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::{
     decode_train_run_v2, TrainerLossIdentityV2, ValidatedTrainRunV2,
+    CUDA_RUNTIME_TUPLE_IDENTITY_V2, CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
 };
 use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
 use crate::native_training_store_update_group_v4::{
@@ -1505,6 +1506,101 @@ struct Cycle4ArmContractV1 {
     trainee_local_generation: u64,
 }
 
+// ---------------------------------------------------------------------
+// Build provenance (round-E review round 3)
+//
+// A run record declares the build that publishes the Store. Nothing made
+// the ARM prove that claim was about ITSELF: a record built by one build's
+// cycle4_run_record_v1 and an arm binary from another build produced a
+// Store whose record attributes it to the wrong source tree, and every
+// validator passed. The arm now captures its own embedded build metadata
+// and its own executable at every launch and requires exact equality.
+// ---------------------------------------------------------------------
+
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+fn require_run_record_is_this_build_v1(run: &ValidatedTrainRunV2) -> Result<()> {
+    crate::native_store_production_capture_v2::require_run_record_matches_current_launcher_build_v2(
+        run,
+        CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
+        CUDA_RUNTIME_TUPLE_IDENTITY_V2,
+        crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
+    )
+    .map_err(|error| {
+        Cycle4ArmErrorV1::contract("cycle4_arm_v1_build_provenance_mismatch", error.to_string())
+    })
+}
+
+#[cfg(not(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+)))]
+fn require_run_record_is_this_build_v1(_run: &ValidatedTrainRunV2) -> Result<()> {
+    // Fail closed rather than skip: a build that cannot capture production
+    // provenance cannot prove a run record describes it, and an arm that
+    // cannot prove that must not publish a Store.
+    Err(Cycle4ArmErrorV1::contract(
+        "cycle4_arm_v1_build_provenance_mismatch",
+        "this build cannot capture production provenance, so it cannot prove the run record describes it",
+    ))
+}
+
+/// This binary's own embedded build identity as canonical JSON.
+///
+/// `cycle4_arm_v1 --print-build-identity` writes exactly these bytes, and
+/// `cycle4_run_record_v1` compares them against its own before it will build
+/// a record naming this launcher: two binaries from different builds must not
+/// be able to co-author one Store's provenance.
+///
+/// # Errors
+///
+/// Returns a classified [`Cycle4ArmErrorV1`] if this build cannot report an
+/// identity at all.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+pub fn cycle4_arm_build_identity_json_v1() -> Result<String> {
+    crate::native_store_production_capture_v2::current_launcher_build_identity_json_v2().map_err(
+        |error| {
+            Cycle4ArmErrorV1::contract(
+                "cycle4_arm_v1_build_identity_unavailable",
+                error.to_string(),
+            )
+        },
+    )
+}
+
+/// See the production sibling above.
+///
+/// # Errors
+///
+/// Always: a build without production capture has no identity to report.
+#[cfg(not(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+)))]
+pub fn cycle4_arm_build_identity_json_v1() -> Result<String> {
+    Err(Cycle4ArmErrorV1::contract(
+        "cycle4_arm_v1_build_identity_unavailable",
+        "this build embeds no production build-capture tuple",
+    ))
+}
+
 /// The record-level cycle-4 arm check, exposed for the run-record BUILDER
 /// (`native_cycle4_run_record_v1`) so a record is proven acceptable to this
 /// launcher before it is ever written, rather than only when the first
@@ -2054,6 +2150,11 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
             ),
         ));
     }
+    // The last gate before this prefix is claimed and anything is published
+    // into it: the run record must describe THIS build. Placed here rather
+    // than at the top so the pure input-state rejections above still fire
+    // first and stay diagnosable, and still strictly before any side effect.
+    require_run_record_is_this_build_v1(&run)?;
     // Genesis is proven, so the mode may now be fixed for the life of the
     // prefix.
     claim_store_mode_marker_v1(&parent_dir, request.arm, &run, mode)?;
@@ -2550,7 +2651,10 @@ pub fn run_native_cycle4_arm_bootstrap_genesis_v1(
     })?;
     let locator = decode_slot_locator_v1(&locator_bytes)?;
 
-    // 3. Claim the prefix as bootstrapped, then open it.
+    // 3. Claim the prefix as bootstrapped, then open it. The build-provenance
+    //    gate runs first: a Store must never be seeded by a build the run
+    //    record does not describe.
+    require_run_record_is_this_build_v1(&run)?;
     let (parent_dir, root_basename) = store_root_parts_v1(&request.store_root)?;
     claim_store_mode_marker_v1(
         &parent_dir,

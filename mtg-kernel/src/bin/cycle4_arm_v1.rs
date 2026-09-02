@@ -35,6 +35,13 @@
 //! prefix to one mode: a prefix a formal run trained refuses the relaxed
 //! check, and a prefix a preflight trained refuses to become formal.
 //!
+//! Build identity (`--print-build-identity`, value-less, accepted ALONE):
+//! writes this binary's embedded build tuple as canonical JSON to stdout and
+//! exits 0, having read nothing and touched no device. It exists so
+//! `cycle4_run_record_v1` can refuse to build a record naming an arm binary
+//! from a different build than its own; the arm separately requires, at
+//! every launch, that the run record's provenance is exactly this build's.
+//!
 //! Genesis bootstrap (`--bootstrap-genesis`, value-less, mutually exclusive
 //! with every interval flag): the genesis refresh manifest's own-run slot has
 //! to bind the arm's own generation-0 checkpoint, which cannot exist until
@@ -48,8 +55,8 @@
 //! that identity. On a Store that already holds a genesis it is exit 3.
 
 use mtg_kernel::native_cycle4_arm_v1::{
-    run_native_cycle4_arm_bootstrap_genesis_v1, run_native_cycle4_arm_v1,
-    Cycle4ArmBootstrapRequestV1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
+    cycle4_arm_build_identity_json_v1, run_native_cycle4_arm_bootstrap_genesis_v1,
+    run_native_cycle4_arm_v1, Cycle4ArmBootstrapRequestV1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
 };
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -196,6 +203,26 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
 }
 
 fn main() {
+    // Handled before argument parsing proper: `--print-build-identity` is a
+    // whole-command-line mode, not a flag that combines with others, and it
+    // must not require any of the mandatory flags.
+    let raw_first: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if raw_first.len() == 1 && raw_first[0] == *"--print-build-identity" {
+        match cycle4_arm_build_identity_json_v1() {
+            Ok(json) => {
+                // `print!`, not `println!`: the canonical encoding already
+                // ends with the LF it requires, and a second one would make
+                // the bytes non-canonical for the reader.
+                print!("{json}");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("cycle4_arm_v1: {error}");
+                std::process::exit(error.exit_code_v1());
+            }
+        }
+    }
+
     let raw: Vec<OsString> = std::env::args_os().skip(1).collect();
     let args = parse_args_v1(raw).unwrap_or_else(|()| usage_v1());
 
