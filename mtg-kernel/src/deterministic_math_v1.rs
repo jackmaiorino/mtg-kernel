@@ -342,6 +342,9 @@
 /// (panel-driven revision; see the module doc above and
 /// `oracle_correctly_rounded_comparison_v1` below). NOT `9.0`: that was
 /// the withdrawn first version's defect.
+use std::cell::Cell;
+use std::fmt;
+
 pub(crate) const TANH_SATURATION_THRESHOLD_V1: f32 = f32::from_bits(0x4110_2cb4);
 
 /// Small-magnitude linear-region cutoff for [`tanh_f32_v1`]. `2^-12`
@@ -623,12 +626,28 @@ pub(crate) fn read_mxcsr_v1() -> u32 {
     mxcsr
 }
 
-/// Writes the calling thread's MXCSR. Test-only (`#[cfg(test)]`); nothing
-/// in the production path calls it, since production only ever needs to
-/// read and verify, never repair, the FTZ/DAZ/rounding-control state.
-/// `pub(crate)` for the same cross-module test-reuse reason as
-/// [`read_mxcsr_v1`].
-#[cfg(all(test, target_arch = "x86_64"))]
+/// Writes the calling thread's MXCSR.
+///
+/// This was `#[cfg(test)]` until the test-time-search wrapper's S0
+/// engineering item ("MXCSR normalization at scorer process startup and on
+/// every worker thread that runs a search, plus fail-closed verification
+/// before the first search forward"). An earlier revision of this doc
+/// comment stated that "production only ever needs to read and verify,
+/// never repair" the FTZ/DAZ/rounding-control state; that is retracted
+/// here rather than left standing. The forward-determinism audit
+/// (`docs/audits/model_guided_forward_determinism_audit_v1.md`, Section 6
+/// recommendation 3) asks for exactly the opposite: "an explicit MXCSR
+/// read (and, if ever found dirty, a set, or a fail-closed error)". A
+/// read-and-assert gate defends the forward but leaves the process with no
+/// way to reach a pinned state at all: a thread whose MXCSR was dirtied by
+/// an in-process CUDA context or a third-party library would simply panic
+/// on every search, forever. Normalization is the repair half the audit
+/// named, and it belongs in production.
+///
+/// `ldmxcsr` with no `options(...)` is a full compiler side effect, so it
+/// cannot be reordered across neighboring floating-point work, the same
+/// property [`read_mxcsr_v1`] documents for `stmxcsr`.
+#[cfg(target_arch = "x86_64")]
 pub(crate) fn write_mxcsr_v1(value: u32) {
     unsafe {
         std::arch::asm!(
@@ -636,6 +655,128 @@ pub(crate) fn write_mxcsr_v1(value: u32) {
             in(reg) &value,
         );
     }
+}
+
+/// The observed MXCSR state failed the pinned FTZ=0 / DAZ=0 /
+/// rounding-control=0 contract. Carries the raw observed register value so
+/// a caller can report exactly which bits were dirty without this module
+/// having to enumerate them; nothing else is retained.
+///
+/// This is the fail-closed sibling of [`assert_pinned_mxcsr_state_v1`]:
+/// the assert form stays as the forward pass's own last-line panic gate
+/// (a `Result` there would change `forward_search_deterministic_v1`'s
+/// error type and force every existing caller to widen), while this form
+/// is what a scorer, launcher, or selector calls when it must refuse a
+/// decision instead of aborting a live episode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MxcsrPinnedStateErrorV1 {
+    observed: u32,
+}
+
+impl MxcsrPinnedStateErrorV1 {
+    pub(crate) const fn observed_v1(self) -> u32 {
+        self.observed
+    }
+
+    pub(crate) const fn code(self) -> &'static str {
+        "mxcsr_pinned_state_mismatch"
+    }
+}
+
+impl fmt::Display for MxcsrPinnedStateErrorV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} 0x{:08x}", self.code(), self.observed)
+    }
+}
+
+impl std::error::Error for MxcsrPinnedStateErrorV1 {}
+
+/// `true` when `mxcsr` has FTZ=0, DAZ=0, and rounding-control=0. The single
+/// predicate [`assert_pinned_mxcsr_state_v1`], [`verify_pinned_mxcsr_state_v1`],
+/// and [`normalize_pinned_mxcsr_state_v1`] all agree on, so the assert form
+/// and the fail-closed form can never drift apart.
+#[cfg(target_arch = "x86_64")]
+const fn mxcsr_state_is_pinned_v1(mxcsr: u32) -> bool {
+    mxcsr & MXCSR_DAZ_BIT_V1 == 0
+        && mxcsr & MXCSR_FTZ_BIT_V1 == 0
+        && (mxcsr >> MXCSR_ROUNDING_CONTROL_SHIFT_V1) & MXCSR_ROUNDING_CONTROL_MASK_V1 == 0
+}
+
+/// Fail-closed read-and-verify of the calling thread's pinned MXCSR state.
+/// Never repairs, never panics; the caller decides what a mismatch means.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn verify_pinned_mxcsr_state_v1() -> Result<(), MxcsrPinnedStateErrorV1> {
+    let observed = read_mxcsr_v1();
+    if mxcsr_state_is_pinned_v1(observed) {
+        Ok(())
+    } else {
+        Err(MxcsrPinnedStateErrorV1 { observed })
+    }
+}
+
+/// Clears FTZ and DAZ and forces rounding-control to round-to-nearest-even
+/// on the calling thread, leaving every other MXCSR field (the exception
+/// masks and the sticky exception flags) exactly as found, then re-reads
+/// and verifies. A post-write read that still fails the predicate is a hard
+/// error, not a silent success: the write is a plain `ldmxcsr`, so the only
+/// ways it can fail to take are ones this module must not paper over.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn normalize_pinned_mxcsr_state_v1() -> Result<(), MxcsrPinnedStateErrorV1> {
+    let observed = read_mxcsr_v1();
+    if !mxcsr_state_is_pinned_v1(observed) {
+        let normalized = observed
+            & !MXCSR_DAZ_BIT_V1
+            & !MXCSR_FTZ_BIT_V1
+            & !(MXCSR_ROUNDING_CONTROL_MASK_V1 << MXCSR_ROUNDING_CONTROL_SHIFT_V1);
+        write_mxcsr_v1(normalized);
+    }
+    verify_pinned_mxcsr_state_v1()
+}
+
+/// Non-`x86_64` build: there is no MXCSR to verify, so the pinned-state
+/// contract is vacuously satisfied. This mirrors the pre-existing scope
+/// limitation of [`assert_pinned_mxcsr_state_v1`] and its single call site
+/// in `native_policy_value_net_v1`, both of which are already
+/// `x86_64`-only. Returning `Ok` here is not a silent fallback on a
+/// supported target: it is the correct answer on a target where the
+/// register does not exist. Cross-target byte-identity remains out of
+/// scope, exactly as the forward-determinism audit records.
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) fn verify_pinned_mxcsr_state_v1() -> Result<(), MxcsrPinnedStateErrorV1> {
+    Ok(())
+}
+
+/// Non-`x86_64` counterpart of [`normalize_pinned_mxcsr_state_v1`]; see
+/// the non-`x86_64` [`verify_pinned_mxcsr_state_v1`] for why this is `Ok`.
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) fn normalize_pinned_mxcsr_state_v1() -> Result<(), MxcsrPinnedStateErrorV1> {
+    Ok(())
+}
+
+thread_local! {
+    /// One-shot-per-thread normalization latch. `Cell<bool>`, not a
+    /// `Once`: the state is per-thread, so a process-wide `Once` would
+    /// normalize exactly one thread and leave every other worker
+    /// unpinned, which is the precise failure this latch exists to
+    /// prevent.
+    static MXCSR_THREAD_NORMALIZED_V1: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Normalizes the calling thread's MXCSR the first time this thread asks,
+/// then verifies on every call. Call it at the entry of any thread that is
+/// about to run a search: a worker pool's threads each get their own
+/// normalization, and the per-call verify means a register dirtied AFTER
+/// the first normalization (an in-process CUDA context initializing on
+/// that thread, say) is still caught, fail-closed, rather than trusted
+/// because the latch is already set.
+pub(crate) fn ensure_thread_mxcsr_normalized_v1() -> Result<(), MxcsrPinnedStateErrorV1> {
+    let already = MXCSR_THREAD_NORMALIZED_V1.with(Cell::get);
+    if already {
+        return verify_pinned_mxcsr_state_v1();
+    }
+    normalize_pinned_mxcsr_state_v1()?;
+    MXCSR_THREAD_NORMALIZED_V1.with(|flag| flag.set(true));
+    Ok(())
 }
 
 /// Panics unless the calling thread's MXCSR has FTZ=0, DAZ=0, and
@@ -1054,6 +1195,75 @@ mod tests {
         handle
             .join()
             .expect("mxcsr clean-state thread must not panic");
+    }
+
+    /// S0 normalization: each of the three dirty states is repaired in
+    /// place, the repair is verified by a fresh read, and every OTHER
+    /// MXCSR field (here the six exception masks, bits 7..=12) survives
+    /// untouched. Normalization that silently reset the exception masks
+    /// would be a different floating-point environment, not a pinned one.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn normalize_pinned_mxcsr_state_repairs_each_dirty_field_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            const EXCEPTION_MASK_FIELD_V1: u32 = 0b111_111 << 7;
+            for dirty_bits in [
+                MXCSR_DAZ_BIT_V1,
+                MXCSR_FTZ_BIT_V1,
+                1 << MXCSR_ROUNDING_CONTROL_SHIFT_V1,
+                0b10 << MXCSR_ROUNDING_CONTROL_SHIFT_V1,
+                MXCSR_DAZ_BIT_V1
+                    | MXCSR_FTZ_BIT_V1
+                    | (MXCSR_ROUNDING_CONTROL_MASK_V1 << MXCSR_ROUNDING_CONTROL_SHIFT_V1),
+            ] {
+                let dirty = original | dirty_bits;
+                write_mxcsr_v1(dirty);
+                assert_eq!(
+                    verify_pinned_mxcsr_state_v1(),
+                    Err(MxcsrPinnedStateErrorV1 { observed: dirty }),
+                    "verify must fail closed on 0x{dirty:08x}"
+                );
+                normalize_pinned_mxcsr_state_v1().expect("normalization repairs a dirty MXCSR");
+                assert_eq!(verify_pinned_mxcsr_state_v1(), Ok(()));
+                assert_eq!(
+                    read_mxcsr_v1() & EXCEPTION_MASK_FIELD_V1,
+                    dirty & EXCEPTION_MASK_FIELD_V1,
+                    "normalization must leave the exception masks alone"
+                );
+            }
+            write_mxcsr_v1(original);
+        });
+        handle
+            .join()
+            .expect("mxcsr normalization thread must not panic");
+    }
+
+    /// The per-thread latch is per-thread: a second thread that has never
+    /// normalized still repairs its own dirty register, and the verify on
+    /// the already-latched path still catches a register dirtied AFTER the
+    /// first normalization.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn ensure_thread_mxcsr_normalized_is_per_thread_and_reverifies_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            write_mxcsr_v1(original | MXCSR_FTZ_BIT_V1 | MXCSR_DAZ_BIT_V1);
+            ensure_thread_mxcsr_normalized_v1().expect("first call normalizes this thread");
+            assert_eq!(verify_pinned_mxcsr_state_v1(), Ok(()));
+            // Latch is set; a register dirtied afterwards must still be
+            // caught rather than trusted.
+            let latched = read_mxcsr_v1();
+            write_mxcsr_v1(latched | MXCSR_FTZ_BIT_V1);
+            assert!(
+                ensure_thread_mxcsr_normalized_v1().is_err(),
+                "the latched path must re-verify, not trust the latch"
+            );
+            write_mxcsr_v1(original);
+        });
+        handle
+            .join()
+            .expect("mxcsr per-thread latch thread must not panic");
     }
 
     #[test]

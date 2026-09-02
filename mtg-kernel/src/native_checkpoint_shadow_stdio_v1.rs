@@ -3701,6 +3701,29 @@ impl ShadowScorerServiceV1 {
     }
 }
 
+/// Scorer process-startup MXCSR normalization (test-time-search sketch V2
+/// Section 5, S0: "MXCSR normalization at scorer process startup and on
+/// every worker thread that runs a search, plus fail-closed verification").
+///
+/// This runs before the checkpoint authority is loaded and before any
+/// forward pass, on the process's main thread, and is a HARD startup error
+/// if the register cannot be brought to the pinned state. It is not a
+/// substitute for the per-thread normalization a search performs on its
+/// own thread (MXCSR is per-thread), and it does not replace
+/// `forward_search_deterministic_v1`'s own entry assert; it is the first
+/// of the three layers, the one that makes the ordinary single-threaded
+/// stdio scorer pinned from its first line of work.
+fn normalize_scorer_process_mxcsr_v1() -> Result<(), Box<dyn Error>> {
+    crate::deterministic_math_v1::normalize_pinned_mxcsr_state_v1().map_err(|error| {
+        io::Error::other(format!(
+            "scorer startup could not pin the MXCSR floating-point control state: {} (observed 0x{:08x})",
+            error.code(),
+            error.observed_v1(),
+        ))
+    })?;
+    Ok(())
+}
+
 fn serialize_response_v1(response: &ShadowScorerResponseV1) -> String {
     serde_json::to_string(response).unwrap_or_else(|_| {
         format!(
@@ -3803,6 +3826,7 @@ pub fn run_checkpoint_shadow_stdio_with_native_population_exports_jsonl_v1(
     teacher_jsonl: PathBuf,
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
+    normalize_scorer_process_mxcsr_v1()?;
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     install_native_population_exports_v1(&mut service, pool_root, teacher_jsonl, outcome_jsonl)?;
     run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
@@ -3858,6 +3882,7 @@ fn run_checkpoint_shadow_stdio_configured_v1(
     teacher_jsonl: Option<PathBuf>,
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
+    normalize_scorer_process_mxcsr_v1()?;
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     if selector == ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap {
         return Err(io::Error::new(
@@ -3908,6 +3933,20 @@ fn run_jsonl_v1(
     mut reader: impl BufRead,
     mut writer: impl Write,
 ) -> io::Result<()> {
+    // Layer two of the S0 MXCSR requirement: the thread that will actually
+    // serve decisions (and therefore run any search) normalizes its own
+    // register before the first request, independently of which thread ran
+    // `normalize_scorer_process_mxcsr_v1`. MXCSR is per-thread, so process
+    // startup alone does not cover a serving loop that was moved onto a
+    // different thread. Layer three is the per-decision fail-closed verify
+    // the search selector performs before its first forward.
+    crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1().map_err(|error| {
+        io::Error::other(format!(
+            "scorer serving thread could not pin the MXCSR floating-point control state: {} (observed 0x{:08x})",
+            error.code(),
+            error.observed_v1(),
+        ))
+    })?;
     let mut line = String::new();
     loop {
         line.clear();
