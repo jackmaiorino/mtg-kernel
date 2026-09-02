@@ -2774,10 +2774,10 @@ impl ModelGuidedSearchRuntimeV1 {
     }
 
     /// Reports the outer response boundary to the diagnostics writer: the
-    /// client's wait for this request ended `request_micros` after the
-    /// request line was read.
-    fn note_request_completed_v1(&mut self, request_micros: u64) {
-        self.diagnostics.note_request_completed_v4(request_micros);
+    /// client's wait for this request is over, so the tail that followed
+    /// the record this request published can be measured.
+    fn note_request_completed_v1(&mut self) {
+        self.diagnostics.note_request_completed_v4();
     }
 }
 
@@ -4474,9 +4474,9 @@ impl ShadowScorerServiceV1 {
     /// loop for every request, including ones that published nothing; the
     /// writer ignores those rather than charging an unrelated interval to
     /// an already measured record.
-    fn note_request_completed_v1(&mut self, request_received: Instant) {
+    fn note_request_completed_v1(&mut self) {
         if let Some(search) = self.search.as_mut() {
-            search.note_request_completed_v1(elapsed_micros_v1(request_received));
+            search.note_request_completed_v1();
         }
     }
 }
@@ -4821,7 +4821,7 @@ fn run_jsonl_v1(
         let response = service.handle_line_at_v1(&line, request_received);
         writeln!(writer, "{response}")?;
         writer.flush()?;
-        service.note_request_completed_v1(request_received);
+        service.note_request_completed_v1();
         if service.export_poisoned {
             return Err(io::Error::other(
                 "checkpoint shadow export is poisoned after a write failure",
@@ -5362,6 +5362,10 @@ mod tests {
             }
         }
         if close_episode {
+            // `handle_line_v1` has no response transport, so close the
+            // outer boundary the way the serving loop does before the
+            // footer picks the tail up.
+            service.note_request_completed_v1();
             service
                 .close_search_episode_v1(EpisodeCloseReasonV4::ProcessExit)
                 .expect("the episode closes with a footer");
