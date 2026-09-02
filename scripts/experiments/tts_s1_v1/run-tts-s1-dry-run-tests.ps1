@@ -21,6 +21,8 @@ What it proves:
     the child;
   * a full-ladder whole-corpus run plans as FORMAL and a partial one plans
     as a SMOKE;
+  * the wrapper pins the compute-cap rule and the gating view it will
+    accept from a tier report, and those pins are the current versions;
   * -LimitEpisodes appears only when it is set;
   * the input rejections all fire: equal seed blocks, a reordered ladder, a
     duplicated tier, a missing -Generation, a -Generation on the portable
@@ -149,6 +151,18 @@ try {
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.dry_run -eq $true) 'provenance.json records the dry run'
     Assert-True ($provenanceJson.formal_ladder -eq $true) 'a whole-corpus full-ladder run plans as FORMAL'
+
+    # The wrapper refuses a tier report produced under a superseded
+    # compute-cap rule or gated on the wrong view. Both pins are read out of
+    # the script itself, so a rule change that forgets the wrapper is caught
+    # here rather than after a formal run.
+    $wrapperText = [System.IO.File]::ReadAllText($ScriptPath)
+    Assert-True ($wrapperText -like '*-isotonic-per-ordinal-protocol-latency-curve-fitted-to-whole-episode-timings*') 'the wrapper pins the isotonic compute-cap rule'
+    Assert-True ($wrapperText -like '*-at-the-maximum-adjacent-fitted-rise*') 'the pinned rule names the adjacent-rise extrapolation'
+    Assert-True ($wrapperText -like "*'/v2'*") 'the pinned compute-cap rule is the V2 one'
+    Assert-True (-not ($wrapperText -like '*times-mean-decisions-per-episode-over-natural-and-truncated-episodes*')) 'the superseded mean-times-mean rule is gone'
+    Assert-True ($wrapperText -like "*`$script:TtsS1VerdictView = 'corpus_target_view'*") 'the wrapper pins the corpus-target gating view'
+    Assert-True ($wrapperText -like '*compute_cap.rule -cne $script:TtsS1ProjectionRule*') 'the wrapper asserts the rule on every tier report'
     Assert-True ($provenanceJson.corpus_executable.sha256.Length -eq 64) 'the corpus bin is hashed'
     Assert-True ($provenanceJson.replay_executable.sha256.Length -eq 64) 'the replay bin is hashed'
     Assert-True ($null -eq $provenanceJson.git) 'the git record is skipped under -SkipHostAssertions'

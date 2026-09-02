@@ -122,20 +122,29 @@ pub const TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1: u64 = 48_000;
 
 /// The projection, spelled out on the wire.
 ///
+/// V2, and the version is not cosmetic: V1's text declared a
+/// mean-length-times-mean-latency rule, which is not what is computed any
+/// more and was wrong for two reasons (it mixed populations, and a flat
+/// mean cannot cost an episode longer than the ones measured). A rule
+/// string that describes a computation the code no longer performs is worse
+/// than no rule string, because it is believed.
+///
 /// Note what is NOT in it: a division by the worker count. WORKER-hours are
-/// aggregate work, so 6,144 games of 300 decisions at 1 s each are 512
-/// worker-hours however many workers run them. Dividing by 16 would give
-/// ELAPSED hours on a full host, which is a different quantity against a
-/// different threshold; it is published separately, as
+/// aggregate work, so 6,144 games costing 300 s each are 512 worker-hours
+/// however many workers run them. Dividing by 16 would give ELAPSED hours
+/// on a full host, which is a different quantity against a different
+/// threshold; it is published separately, as
 /// `projected_elapsed_hours_at_workers_milli`, and the cap is checked
 /// against the worker-hours.
-pub const TTS_S1_S2_PROJECTION_RULE_V1: &str = concat!(
+pub const TTS_S1_S2_PROJECTION_RULE_V2: &str = concat!(
     "wrapped-games-only",
     "-3072-root-clusters-times-2-paired-units",
-    "-times-mean-decisions-per-episode-over-natural-and-truncated-episodes",
-    "-times-whole-episode-mean-protocol-decision-wall-time",
+    "-isotonic-per-ordinal-protocol-latency-curve-fitted-to-whole-episode-timings",
+    "-extrapolated-past-the-last-observed-ordinal-at-the-maximum-adjacent-fitted-rise",
+    "-every-harvested-episode-natural-and-truncated-costed-at-its-own-length",
+    "-mean-estimated-episode-cost-times-wrapped-games",
     "-as-aggregate-worker-hours-with-no-worker-division",
-    "/v1"
+    "/v2"
 );
 
 /// Why the raw-policy co-measurement is not in the projection.
@@ -308,25 +317,39 @@ pub struct TtsS1LatencyCurveKnotV1 {
 ///
 /// # The fit
 ///
-/// Pool every replayed decision as `(decision ordinal, protocol micros)`
-/// across every replayed episode, then run pool-adjacent-violators isotonic
-/// regression over ascending ordinal. The result is the least-squares
-/// monotone non-decreasing fit, expressed as maximal constant blocks. The
-/// comparison that decides a merge is done by cross-multiplying the blocks'
-/// (sum, count) pairs, so no rounding enters the shape of the fit; only the
-/// published `fitted_micros` is floored.
+/// Every replayed decision arrives as `(decision ordinal, protocol
+/// micros)`, pooled across every replayed episode, so the SAME ordinal
+/// carries one sample per episode. Those are PRE-AGGREGATED into one
+/// `(sum, count)` point per ordinal BEFORE pool-adjacent-violators runs.
+/// That order matters: folding a repeated ordinal into the running block
+/// without re-running the violation check lets a low later sample at an
+/// already-seen ordinal drag that block below its predecessor and leave the
+/// output non-monotone, which is not an isotonic fit at all. With the
+/// aggregation first, PAV sees a strictly increasing sequence of ordinals
+/// and its output is monotone by construction.
+///
+/// The result is the least-squares monotone non-decreasing fit, expressed
+/// as maximal constant blocks. The comparison that decides a merge
+/// cross-multiplies the blocks' `(sum, count)` pairs, so no rounding enters
+/// the shape of the fit; only the published `fitted_micros` is floored.
 ///
 /// # The extrapolation
 ///
 /// Beyond `last_observed_ordinal` the curve continues at
-/// `extrapolation_slope_micros_per_ordinal`, the LARGEST per-ordinal rise
-/// the fit itself exhibits between consecutive blocks. That is deliberately
-/// the steepest evidence available rather than an average one, because the
-/// estimate is meant to be conservative about episodes longer than anything
-/// replayed. The slope is floored at 1 micro per ordinal so the curve is
-/// never flat past its evidence: a flat tail would cost an arbitrarily long
-/// episode at the last measured rate, which is the exact understatement the
-/// growth-with-history property makes wrong.
+/// `extrapolation_slope_micros_per_ordinal`, the LARGEST rise between two
+/// ADJACENT fitted ordinals. In a step function that rise happens entirely
+/// at a block boundary, over a distance of one ordinal, so it is the jump
+/// between consecutive blocks' fitted values and nothing is divided by the
+/// blocks' width: dividing by the distance between block ends spreads a
+/// one-ordinal step across the whole preceding block and reports a smaller
+/// slope than the curve actually takes.
+///
+/// It is deliberately the steepest evidence available rather than an
+/// average one, because the estimate is meant to be conservative about
+/// episodes longer than anything replayed. It is floored at 1 micro per
+/// ordinal so the curve is never flat past its evidence: a flat tail would
+/// cost an arbitrarily long episode at the last measured rate, which is the
+/// exact understatement the growth-with-history property makes wrong.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TtsS1LatencyCurveV1 {
@@ -348,12 +371,20 @@ pub struct TtsS1LatencyCurveV1 {
 pub const TTS_S1_VERDICT_VIEW_V1: &str = "corpus_target_view";
 
 /// The fitted curve's own identity, on the wire.
-pub const TTS_S1_LATENCY_CURVE_RULE_V1: &str = concat!(
+///
+/// V2: V1's text said "maximum fitted slope", which was ambiguous and which
+/// the code read as a rise divided by the distance between block ENDS. That
+/// understates the largest step the fitted curve actually takes, because
+/// the step happens in a single ordinal at a block boundary and the
+/// division spread it over the whole preceding block. The rule now says
+/// what is measured: the largest rise between two ADJACENT fitted ordinals.
+pub const TTS_S1_LATENCY_CURVE_RULE_V2: &str = concat!(
     "pool-adjacent-violators-isotonic-regression-over-decision-ordinal",
-    "-on-pooled-whole-episode-protocol-micros",
-    "-extrapolated-past-the-last-observed-ordinal-at-the-maximum-fitted-slope",
+    "-on-whole-episode-protocol-micros-pre-aggregated-per-ordinal",
+    "-extrapolated-past-the-last-observed-ordinal",
+    "-at-the-maximum-rise-between-adjacent-fitted-ordinals",
     "-floored-at-one-micro-per-ordinal",
-    "/v1"
+    "/v2"
 );
 
 impl TtsS1LatencyCurveV1 {
@@ -362,24 +393,32 @@ impl TtsS1LatencyCurveV1 {
         if samples.is_empty() {
             return None;
         }
-        // Group by ordinal, ascending. Several episodes contribute a
-        // sample at the same ordinal, and they pool.
+        // STEP 1: aggregate by ordinal, ascending, BEFORE any pooling.
+        // Several episodes contribute a sample at the same ordinal; they
+        // become one (sum, count) point. Doing this first is what makes
+        // the fit monotone: folding a repeated ordinal into a running
+        // block without re-checking for a violation can leave that block
+        // below its predecessor.
         let mut ordered = samples.to_vec();
         ordered.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+        // (ordinal, sum, count), strictly increasing in ordinal.
+        let mut points: Vec<(u64, u128, u64)> = Vec::new();
+        for (ordinal, micros) in ordered {
+            match points.last_mut() {
+                Some(last) if last.0 == ordinal => {
+                    last.1 = last.1.saturating_add(u128::from(micros));
+                    last.2 = last.2.saturating_add(1);
+                }
+                _ => points.push((ordinal, u128::from(micros), 1)),
+            }
+        }
+        // STEP 2: pool adjacent violators over those points. Merge back
+        // while the previous block's mean exceeds this one's, compared by
+        // cross-multiplication so the fit's shape is exact.
         // (first_ordinal, last_ordinal, sum, count)
         let mut blocks: Vec<(u64, u64, u128, u64)> = Vec::new();
-        for (ordinal, micros) in ordered {
-            if let Some(last) = blocks.last_mut() {
-                if last.1 == ordinal {
-                    last.2 = last.2.saturating_add(u128::from(micros));
-                    last.3 = last.3.saturating_add(1);
-                    continue;
-                }
-            }
-            blocks.push((ordinal, ordinal, u128::from(micros), 1));
-            // Pool adjacent violators: merge back while the previous
-            // block's mean exceeds this one's. Compared by
-            // cross-multiplication, so the fit's shape is exact.
+        for (ordinal, sum, count) in points {
+            blocks.push((ordinal, ordinal, sum, count));
             while blocks.len() >= 2 {
                 let (_, _, sum_b, count_b) = blocks[blocks.len() - 1];
                 let (_, _, sum_a, count_a) = blocks[blocks.len() - 2];
@@ -388,10 +427,9 @@ impl TtsS1LatencyCurveV1 {
                 {
                     break;
                 }
-                let (first_b, last_b, sum_b, count_b) = blocks.pop()?;
+                let (_, last_b, sum_b, count_b) = blocks.pop()?;
                 let merged = blocks.last_mut()?;
                 merged.1 = last_b.max(merged.1);
-                let _ = first_b;
                 merged.2 = merged.2.saturating_add(sum_b);
                 merged.3 = merged.3.saturating_add(count_b);
             }
@@ -406,19 +444,19 @@ impl TtsS1LatencyCurveV1 {
             })
             .collect();
         let last_observed_ordinal = knots.last()?.last_ordinal;
-        // The steepest per-ordinal rise the fit itself shows, floored at
-        // one micro so the tail is never flat.
+        // The largest rise between two ADJACENT fitted ordinals. In a step
+        // function that rise is the jump at a block boundary, which spans
+        // exactly one ordinal, so nothing is divided by the blocks' width:
+        // dividing by the distance between block ends would spread a
+        // one-ordinal step over the whole preceding block and report a
+        // slope smaller than the curve actually takes. Floored at one micro
+        // so the tail is never flat.
         let mut slope = 1u64;
         for pair in knots.windows(2) {
-            let rise = pair[1].fitted_micros.saturating_sub(pair[0].fitted_micros);
-            let run = pair[1]
-                .last_ordinal
-                .saturating_sub(pair[0].last_ordinal)
-                .max(1);
-            slope = slope.max(rise / run);
+            slope = slope.max(pair[1].fitted_micros.saturating_sub(pair[0].fitted_micros));
         }
         Some(Self {
-            rule: TTS_S1_LATENCY_CURVE_RULE_V1.to_owned(),
+            rule: TTS_S1_LATENCY_CURVE_RULE_V2.to_owned(),
             observed_samples: samples.len() as u64,
             knots,
             last_observed_ordinal,
@@ -605,7 +643,7 @@ pub fn compute_cap_projection_v1(
     let projected_worker_hours_milli =
         project_s2_worker_hours_milli_v1(mean_estimated_episode_micros);
     Some(TtsS1ComputeCapProjectionV1 {
-        rule: TTS_S1_S2_PROJECTION_RULE_V1.to_owned(),
+        rule: TTS_S1_S2_PROJECTION_RULE_V2.to_owned(),
         s2_root_clusters: TTS_S1_S2_ROOT_CLUSTERS_V1,
         s2_paired_units_per_root_cluster: TTS_S1_S2_PAIRED_UNITS_PER_ROOT_CLUSTER_V1,
         s2_wrapped_games: TTS_S1_S2_ROOT_CLUSTERS_V1
@@ -2902,7 +2940,7 @@ mod tests {
     #[test]
     fn the_latency_curve_is_monotone_and_never_flat_past_its_evidence_v1() {
         let curve = TtsS1LatencyCurveV1::fit_v1(&synthetic_curve_samples_v1()).unwrap();
-        assert_eq!(curve.rule, TTS_S1_LATENCY_CURVE_RULE_V1);
+        assert_eq!(curve.rule, TTS_S1_LATENCY_CURVE_RULE_V2);
         assert_eq!(curve.observed_samples, 100);
         assert_eq!(curve.last_observed_ordinal, 99);
         // The input is already monotone, so the isotonic fit reproduces it
@@ -2945,6 +2983,70 @@ mod tests {
         assert_eq!(flat.extrapolation_slope_micros_per_ordinal, 1);
         assert!(flat.latency_at_v1(3) > flat.latency_at_v1(2));
         assert!(TtsS1LatencyCurveV1::fit_v1(&[]).is_none());
+    }
+
+    /// REGRESSION. Repeated ordinals must be aggregated BEFORE
+    /// pool-adjacent-violators runs.
+    ///
+    /// An earlier fit folded a second sample at an already-seen ordinal
+    /// into the running block and then skipped the violation check, so a
+    /// lower later sample at that ordinal dragged the block below its
+    /// predecessor and the output was not monotone at all: this exact input
+    /// fitted to 100, 50, 100. Every replayed episode contributes a sample
+    /// at every ordinal it reaches, so repeated ordinals are the normal
+    /// case here, not an edge one.
+    #[test]
+    fn repeated_ordinals_are_aggregated_before_pooling_v1() {
+        let samples = vec![(0u64, 100u64), (1, 100), (1, 0), (2, 100)];
+        let curve = TtsS1LatencyCurveV1::fit_v1(&samples).unwrap();
+        for ordinal in 1..3u64 {
+            assert!(
+                curve.latency_at_v1(ordinal) >= curve.latency_at_v1(ordinal - 1),
+                "the fit must be non-decreasing at {ordinal}, got {:?}",
+                (0..3).map(|o| curve.latency_at_v1(o)).collect::<Vec<_>>()
+            );
+        }
+        // Ordinal 1's two samples pool to a mean of 50, which violates
+        // ordinal 0's 100, so 0 and 1 merge to (100 + 100 + 0) / 3 = 66.
+        assert_eq!(curve.latency_at_v1(0), 66);
+        assert_eq!(curve.latency_at_v1(1), 66);
+        assert_eq!(curve.latency_at_v1(2), 100);
+        assert_eq!(curve.observed_samples, 4);
+        assert_eq!(curve.last_observed_ordinal, 2);
+        // The sample counts are preserved by the aggregation, not lost.
+        assert_eq!(
+            curve
+                .knots
+                .iter()
+                .map(|knot| knot.sample_count)
+                .sum::<u64>(),
+            4
+        );
+    }
+
+    /// REGRESSION. The extrapolation slope is the largest rise between two
+    /// ADJACENT fitted ordinals, not a block-value jump divided by the
+    /// distance between block ends.
+    ///
+    /// These samples fit to blocks [0] = 100, [1..2] = 600, [3] = 1000. The
+    /// curve's steepest single-ordinal step is 500, from ordinal 0 to
+    /// ordinal 1. An earlier form divided that 500 by the two-ordinal
+    /// distance between the blocks' ends and reported 400, understating the
+    /// step the curve actually takes and therefore under-costing every
+    /// extrapolated ordinal.
+    #[test]
+    fn the_extrapolation_slope_is_the_largest_adjacent_rise_v1() {
+        let curve =
+            TtsS1LatencyCurveV1::fit_v1(&[(0u64, 100u64), (1, 900), (2, 300), (3, 1_000)]).unwrap();
+        assert_eq!(curve.latency_at_v1(0), 100);
+        assert_eq!(curve.latency_at_v1(1), 600);
+        assert_eq!(curve.latency_at_v1(2), 600);
+        assert_eq!(curve.latency_at_v1(3), 1_000);
+        // max(600 - 100, 1000 - 600) = 500, and NOT 500 / 2 = 250 nor the
+        // 400 the divided form reported.
+        assert_eq!(curve.extrapolation_slope_micros_per_ordinal, 500);
+        assert_eq!(curve.latency_at_v1(4), 1_500);
+        assert_eq!(curve.latency_at_v1(5), 2_000);
     }
 
     /// THE CONSERVATISM CLAIM. A truncated episode longer than anything
@@ -3030,7 +3132,7 @@ mod tests {
         // The curve and its knots are published, so the estimate is
         // recomputable from the artifact alone.
         assert!(!projection.latency_curve.knots.is_empty());
-        assert_eq!(projection.latency_curve.rule, TTS_S1_LATENCY_CURVE_RULE_V1);
+        assert_eq!(projection.latency_curve.rule, TTS_S1_LATENCY_CURVE_RULE_V2);
         assert!(
             projection
                 .latency_curve
