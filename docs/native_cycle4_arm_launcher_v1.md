@@ -100,27 +100,55 @@ the CUDA feature and the production feature like the existing bins.
 Section 1 says what a cycle-4 `run.json` must declare but nothing produced
 one, so every arm was blocked on an input no operator could write. This bin
 derives it: `--arm`, `--parent-store-root`, `--parent-generation`,
-`--output`, plus the value-less `--force`. Same strict parsing, same exit
-codes (0/2/3), same feature gating as section 4.
+`--arm-executable`, `--output`, plus the value-less `--force`. Same strict
+parsing, same exit codes (0/2/3), same feature gating as section 4.
+`--parent-generation` admits only the pre-registered 896 and is checked
+before anything is staged from the parent, so the lineage tip can never be
+written into `opponent_ladder_initialization`.
 
 The record is assembled from three sources and nothing else: the arm kind
 (which decides `arm_kind`, `static_pool`, the presence of
 `trainer_v4_candidate`, the loss identity, and the arm's own base seed), the
-pinned parent Store (device contract, train step, model architecture,
-schedule shape, environment, toolchain and runtime tuple, plus the six
-digests of `opponent_ladder_initialization`, resolved through the same
+pinned parent Store (train step, model architecture, schedule
+shape, environment, plus the six digests of
+`opponent_ladder_initialization`, resolved through the same
 `stage_ladder_checkpoint_initialization_v1` the genesis bootstrap
 re-derives), and the compiled cycle-4 literals. No clock, no environment
 variable, no operator-chosen field, so two invocations against one parent
 produce byte-identical output. Every predecessor program section is dropped.
 
-The three formal training base seeds live in this module and nowhere else,
-with the disjoint-domain policy the pre-registration's section 8 requires:
-one reserved band per arm, and the whole training band disjoint from the
-payoff-panel band. Output passes `validate_train_run_record_v2` and the arm
-launcher's own record-level check before any bytes are written; `--output`
-is atomic and an existing DIFFERENT record is refused without `--force`,
-since a run record is a campaign identity.
+The three formal training base seeds live on `Cycle4ArmKindV1` and nowhere
+else, with the disjoint-domain policy the pre-registration's section 8
+requires: one reserved band per arm, and the whole training band disjoint
+from the payoff-panel band. The mapping is enforced in the launcher's own
+record-level validator, not only by this builder, so an operator-supplied
+record carrying another arm's seed is refused on every invocation.
+
+Provenance is CAPTURED, not inherited. `package`, `toolchain` and `source`
+come from this build's embedded build-capture tuple plus a real no-follow
+double read of `--arm-executable`, and `runtime` is the CUDA runtime pair
+all three arms train under; `contracts.train_step.numerical_backend_identity`
+is set to match. Inheriting the parent's provenance would make a cycle-4
+record describe an older executable built from an older tree, possibly
+without the CUDA feature. `source.binary_name` therefore names
+`cycle4_arm_v1.exe`, which section 1's validator now admits alongside the
+legacy launcher.
+
+The consequence is deliberate and worth stating: a record binds the exact
+arm executable, file identity included, so a rebuilt or recopied launcher
+produces a different record. The wrapper re-derives on every launch and the
+builder refuses to replace a differing record, so that shows up as a refused
+launch rather than a campaign that silently changed executables mid-run.
+Determinism is unchanged for a fixed executable: two invocations against one
+parent and one launcher still produce byte-identical output.
+
+Output passes `validate_train_run_record_v2` and the arm launcher's own
+record-level check before any bytes are written. `--output` is published
+through `durable_move_publication_v2`: create-new when absent, and
+`replace_file_by_move_v2` for a forced replacement, because a plain rename
+cannot replace an existing destination on Windows. An existing DIFFERENT
+record is refused without `--force`, since a run record is a campaign
+identity.
 
 Reading the cycle-3 parent at all required widening the run contract with a
 struct-only `population_program_v2_cycle3` section, on the terms

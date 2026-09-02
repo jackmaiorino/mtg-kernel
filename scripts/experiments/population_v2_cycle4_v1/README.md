@@ -22,11 +22,11 @@ Every path below is machine-local and never enters a hashed artifact.
 | Input | Wrapper parameter | Notes |
 | --- | --- | --- |
 | Parent (cycle-3 lineage) Store root | `-GenesisParentStoreRoot` | The arm's genesis weights are copied from it. |
-| Parent generation | `-GenesisParentGeneration` | `896`: the cycle-3 focal run's store generation 896, which is trainee-local 896 and the pre-registered start. NOT the lineage tip 2048. The wrapper hashes `update-<gen>.{checkpoint.json,sidecar.json,state.f32le}` and `run.json` under it into the genesis authority record, and cross-checks all four against the run record's own `contracts.opponent_ladder_initialization`, so a wrong generation fails at phase=inputs rather than binding the wrong parent. |
+| Parent generation | `-GenesisParentGeneration` | `896`: the cycle-3 focal run's store generation 896, which is trainee-local 896 and the pre-registered start. NOT the lineage tip 2048, and no other value is accepted: `cycle4_run_record_v1` refuses any generation but 896 before it stages anything from the parent. The wrapper hashes `update-<gen>.{checkpoint.json,sidecar.json,state.f32le}` and `run.json` under it into the genesis authority record, and cross-checks all four against the run record's own `contracts.opponent_ladder_initialization`, so a wrong generation fails twice over. |
 | Eight slot store roots | `-SlotStoreRoots` | Absolute, in slot order 0..7 (`anchor-0`, `anchor-1`, `historical-0`, `historical-1`, `current-0`, `current-1`, `exploiter-0`, `exploiter-1`). Two slots MAY name the same root when their pinned generations differ (anchor-1 is 970002 at 1536 and historical-1's middle rotation phase is 970002 at 1024, one Store as two occupants); the same root at the same generation in two slots is still rejected. Whichever slots the manifest binds to the arm's own run (`current-1` always, `historical-0` from refresh 4) are overridden with `-StoreRoot`, so their table entries are placeholders. |
 | The three `historical-1` rotation roots | `-HistoricalOneStoreRoots` | Absolute, in rotation order: the Stores for program-v1 seeds 970001, 970002 and 970003, each pinned at generation 1024. Slot 3 takes `roots[refresh_index mod 3]` at every boundary. Omit it only if you intend the campaign to stop at refresh 1: the wrapper verifies the chosen root's four content hashes against that boundary's slot-3 identity and fails closed. |
 | The arm's `run.json` | `-RunRecord` | Where the wrapper WRITES the derived run record (and re-derives it on every later launch). Not an operator input unless `-UseExistingRunRecord` is given. |
-| `cycle4_run_record_v1.exe` | `-RunRecordExecutable` | The run-record builder. Required unless `-UseExistingRunRecord`. |
+| `cycle4_run_record_v1.exe` | `-RunRecordExecutable` | The run-record builder. Required unless `-UseExistingRunRecord`. It is handed `-ArmExecutable` as well, because the record declares the build provenance of the launcher that will publish the Store, not the parent record's. |
 | The arm's Store root | `-StoreRoot` | Formal mode only. Its PARENT directory is the Store prefix the mode marker claims. |
 | The arm's baseline chain directory | `-ChainDir` | Formal mode only. Per-update sidecars, boundary records, and `arm-origin.record.json` land here. |
 | The refresh chain directory | `-RefreshChainDir` | Holds `refresh-NN.manifest.json` and `refresh-NN.panel.json`. One per arm. The wrapper builds every manifest in it, genesis included. |
@@ -35,7 +35,7 @@ Every path below is machine-local and never enters a hashed artifact.
 | `cycle4_refresh_build_v1.exe` | `-RefreshBuilderExecutable` | |
 | The `mtg_kernel` release test executable | `-PanelExecutable` | The panel runner drives its ignored `ladder_head_to_head_eval_v1` test. |
 | A Python 3.11 interpreter | `-PythonExecutable` | |
-| Panel base seed | `-PanelBaseSeed` | One literal per arm. The wrapper strides 32,000,000 per refresh so no pair seed is reused anywhere in the campaign. |
+| Panel base seed | `-PanelBaseSeed` | One literal per arm. The wrapper strides 32,000,000 per refresh so no pair seed is reused anywhere in the campaign. The arm's TRAINING base seed is never an operator input: it is the arm's own pinned literal (`control-r` 978000, `static-rb` 979000, `treatment-rb` 980000), and the arm bin rejects any run record that declares a different one. |
 | Device | `-Device` | `0` or `1`; defaults to `1`. Sets `CUDA_VISIBLE_DEVICES` for each child. |
 
 Build the three bins and the panel test executable once:
