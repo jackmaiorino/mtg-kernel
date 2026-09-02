@@ -147,6 +147,17 @@ pub mod native_checkpoint_inference_v1;
 // at module scope instead of item-by-item.
 #[allow(dead_code)]
 pub mod native_checkpoint_shadow_stdio_v1;
+// Test-time-search wrapper S1 feasibility preflight
+// (LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md Section 5, S1), CP7-free. The
+// corpus builder plays seeded self-play with both seats on one checkpoint
+// and freezes a stratified >= 512-decision corpus; the replay tool reruns
+// each corpus decision through the production ModelGuidedSearch selector
+// for one tier and publishes the timing verdict. `pub` (not `pub(crate)`)
+// because `src/bin/tts_s1_corpus_v1.rs` and `src/bin/tts_s1_replay_v1.rs`
+// are separate crates in this package and call them directly; neither
+// module's public surface names a crate-private type.
+pub mod native_tts_s1_corpus_v1;
+pub mod native_tts_s1_replay_v1;
 // Trimmed port (fable/shadow-scorer-on-main-v1): only the
 // NativeStructuredHistoryEntryV1 record and its supporting constants, which
 // native_checkpoint_shadow_stdio_v1's core session logic constructs
