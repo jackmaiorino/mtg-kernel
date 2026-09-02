@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle4_m3_audit_v1 --mode reference --store-root PATH --output PATH [--audit-note PATH]\n\
+        "usage: cycle4_m3_audit_v1 --mode reference --store-root PATH --audit-note PATH --output PATH\n\
          \x20      cycle4_m3_audit_v1 --mode audit --arm (static-rb|treatment-rb) --store-root PATH --chain-dir PATH --reference-document PATH --output PATH"
     );
     std::process::exit(2);
@@ -133,9 +133,15 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     // error, never silently ignored.
     match mode {
         ModeV1::Reference => {
+            // `--audit-note` is REQUIRED, not optional: clarification V2.1
+            // binds the ratified note's bytes into the reference document,
+            // and the routing selector refuses a report whose reference did
+            // not carry one, so a reference published without it is dead on
+            // arrival.
             if parsed.arm.is_some()
                 || parsed.chain_dir.is_some()
                 || parsed.reference_document.is_some()
+                || parsed.audit_note.is_none()
             {
                 return Err(());
             }
@@ -230,15 +236,14 @@ fn main() {
 
     match args.mode {
         ModeV1::Reference => {
-            let audit_note_sha256 = args.audit_note.as_ref().map(|path| {
-                let bytes = std::fs::read(path)
-                    .unwrap_or_else(|error| fail_v1(format!("{}: {error}", path.display())));
-                lower_hex_v1(
-                    DurableFileExpectationV1::from_bytes(&bytes)
-                        .unwrap_or_else(|error| fail_v1(error))
-                        .sha256(),
-                )
-            });
+            let note_path = args.audit_note.as_ref().unwrap_or_else(|| usage_v1());
+            let note_bytes = std::fs::read(note_path)
+                .unwrap_or_else(|error| fail_v1(format!("{}: {error}", note_path.display())));
+            let audit_note_sha256 = lower_hex_v1(
+                DurableFileExpectationV1::from_bytes(&note_bytes)
+                    .unwrap_or_else(|error| fail_v1(error))
+                    .sha256(),
+            );
             let bytes = build_cycle4_m3_reference_document_v1(&window, audit_note_sha256)
                 .unwrap_or_else(|error| fail_v1(error));
             publish_or_exit_v1(&args.output, &bytes);
@@ -375,6 +380,20 @@ mod tests {
             "s",
             "--chain-dir",
             "c",
+            "--audit-note",
+            "n",
+            "--output",
+            "o",
+        ]))
+        .is_err());
+        // reference mode WITHOUT the audit note: clarification V2.1 binds
+        // the note's bytes, and routing refuses a reference that lacks one,
+        // so publishing one without it is a usage error here.
+        assert!(parse_args_v1(args_v1(&[
+            "--mode",
+            "reference",
+            "--store-root",
+            "s",
             "--output",
             "o",
         ]))

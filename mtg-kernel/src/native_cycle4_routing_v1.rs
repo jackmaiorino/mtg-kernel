@@ -100,6 +100,13 @@ pub const CYCLE4_BASELINE_ENDPOINT_ID_V1: &str = "g896";
 /// "is always eligible".
 pub const CYCLE4_V4_ARM_ENDPOINT_IDS_V1: [&str; 2] = ["static-rb", "treatment-rb"];
 
+/// "The carried arm's update-2048 checkpoint (endpoint pinned; no in-arm
+/// checkpoint selection)". A cycle-4 arm's own Store restarts at generation 0
+/// for trainee-local 896, so update 2048 is store generation 2048.
+pub const CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1: u64 = 2_048;
+/// The frozen start, in the cycle-3 focal Store's own numbering.
+pub const CYCLE4_BASELINE_ENDPOINT_STORE_GENERATION_V1: u64 = 896;
+
 const CYCLE4_LOSS_IDENTITY_V3_V1: &str = "terminal_reinforce_value/v3";
 const CYCLE4_LOSS_IDENTITY_V4_V1: &str = "terminal_reinforce_value/v4-candidate";
 
@@ -307,6 +314,36 @@ pub fn decode_cycle4_m2_panel_v1(bytes: &[u8]) -> Result<Cycle4M2PanelV1> {
             "cycle4_routing_v1_panel_endpoints",
             format!("the panel must carry exactly {expected_ids:?} in that order"),
         ));
+    }
+    // The endpoints are PINNED. A panel that played anything but the
+    // update-2048 arm checkpoints and the frozen g896 start is not the
+    // measurement the amendment names, and its deltas would silently route a
+    // different cycle.
+    for endpoint in &panel.endpoints {
+        let pinned = if endpoint.endpoint_id == CYCLE4_BASELINE_ENDPOINT_ID_V1 {
+            CYCLE4_BASELINE_ENDPOINT_STORE_GENERATION_V1
+        } else {
+            CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1
+        };
+        if endpoint.store_generation != pinned {
+            return Err(Cycle4RoutingErrorV1::new(
+                "cycle4_routing_v1_panel_endpoint_generation",
+                format!(
+                    "endpoint {} was played at store generation {}, not the pinned {pinned}",
+                    endpoint.endpoint_id, endpoint.store_generation
+                ),
+            ));
+        }
+        for (field, value) in [
+            ("run_sha256", &endpoint.run_sha256),
+            (
+                "checkpoint_manifest_sha256",
+                &endpoint.checkpoint_manifest_sha256,
+            ),
+            ("model_parameter_sha256", &endpoint.model_parameter_sha256),
+        ] {
+            hex64_or_reject_v1(value, &format!("endpoint {}.{field}", endpoint.endpoint_id))?;
+        }
     }
     let mut seeds = std::collections::BTreeSet::new();
     for (ordinal, root) in panel.roots.iter().enumerate() {
@@ -602,6 +639,8 @@ pub struct Cycle4RoutingInputsWireV1 {
     pub m3_static_rb_report_sha256: String,
     pub m3_treatment_rb_report_sha256: String,
     pub m3_reference_document_sha256: String,
+    pub m3_reference_run_sha256: String,
+    pub m3_reference_audit_note_sha256: String,
     pub cp7_evidence_root_checked: bool,
     pub endpoints: Vec<Cycle4M2EndpointV1>,
     pub pool: Vec<Cycle4M2PoolSlotV1>,
@@ -687,7 +726,25 @@ fn hex64_or_reject_v1(value: &str, what: &str) -> Result<()> {
     ))
 }
 
-fn m3_report_for_v1(endpoint_id: &str, bytes: &[u8]) -> Result<(Cycle4M3AuditReportV1, String)> {
+/// Decodes one M3 report and BINDS it to the panel endpoint it claims to
+/// describe.
+///
+/// A report is otherwise just a document naming an arm kind: a stale one from
+/// another training run, or from the same run at an earlier tip, would set
+/// eligibility for a checkpoint it never audited. So four things must hold,
+/// each of them a hard failure:
+///
+/// - `arm_kind` is the arm this flag supplied it for;
+/// - the audited run identity equals the panel endpoint's `run_sha256`;
+/// - the audited tip checkpoint identity equals the panel endpoint's
+///   `checkpoint_manifest_sha256` (the identity the probe itself reported for
+///   the checkpoint it loaded);
+/// - the audited window ends exactly at the pinned endpoint update.
+fn m3_report_for_v1(
+    endpoint_id: &str,
+    bytes: &[u8],
+    endpoint: &Cycle4M2EndpointV1,
+) -> Result<(Cycle4M3AuditReportV1, String)> {
     let report = decode_cycle4_m3_audit_report_v1(bytes).map_err(|error| {
         Cycle4RoutingErrorV1::new(
             "cycle4_routing_v1_m3_report",
@@ -703,7 +760,50 @@ fn m3_report_for_v1(endpoint_id: &str, bytes: &[u8]) -> Result<(Cycle4M3AuditRep
             ),
         ));
     }
+    if report.inputs.run_sha256 != endpoint.run_sha256 {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_report_endpoint_binding",
+            format!(
+                "the {endpoint_id} report audited run {} but the panel played run {}",
+                report.inputs.run_sha256, endpoint.run_sha256
+            ),
+        ));
+    }
+    if report.inputs.tip_checkpoint_manifest_sha256 != endpoint.checkpoint_manifest_sha256 {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_report_endpoint_binding",
+            format!(
+                "the {endpoint_id} report audited checkpoint {} but the panel played {}",
+                report.inputs.tip_checkpoint_manifest_sha256, endpoint.checkpoint_manifest_sha256
+            ),
+        ));
+    }
+    if report.window.last_update_index != CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1 {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_report_window",
+            format!(
+                "the {endpoint_id} report's window ends at update {}, not the pinned endpoint {}",
+                report.window.last_update_index, CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1
+            ),
+        ));
+    }
     Ok((report, lower_hex_raw32_v1(sha256_v1(bytes))))
+}
+
+fn panel_endpoint_v1<'a>(
+    panel: &'a Cycle4M2PanelV1,
+    endpoint_id: &str,
+) -> Result<&'a Cycle4M2EndpointV1> {
+    panel
+        .endpoints
+        .iter()
+        .find(|candidate| candidate.endpoint_id == endpoint_id)
+        .ok_or_else(|| {
+            Cycle4RoutingErrorV1::new(
+                "cycle4_routing_v1_panel_endpoints",
+                format!("the panel declares no identity for {endpoint_id}"),
+            )
+        })
 }
 
 /// Applies sections B and C and builds the routing record's canonical bytes.
@@ -720,20 +820,48 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
     let panel = decode_cycle4_m2_panel_v1(&inputs.m2_panel_bytes)?;
     let panel_sha256 = lower_hex_raw32_v1(sha256_v1(&inputs.m2_panel_bytes));
 
-    let (static_report, static_sha256) = m3_report_for_v1("static-rb", &inputs.m3_static_rb_bytes)?;
-    let (treatment_report, treatment_sha256) =
-        m3_report_for_v1("treatment-rb", &inputs.m3_treatment_rb_bytes)?;
+    let (static_report, static_sha256) = m3_report_for_v1(
+        "static-rb",
+        &inputs.m3_static_rb_bytes,
+        panel_endpoint_v1(&panel, "static-rb")?,
+    )?;
+    let (treatment_report, treatment_sha256) = m3_report_for_v1(
+        "treatment-rb",
+        &inputs.m3_treatment_rb_bytes,
+        panel_endpoint_v1(&panel, "treatment-rb")?,
+    )?;
     // Both v4 arms must be judged against ONE reference statistic, or their
     // dispersion verdicts are not comparable and the ranking is not the
     // amendment's.
     if static_report.inputs.reference_document_sha256
         != treatment_report.inputs.reference_document_sha256
+        || static_report.inputs.reference_run_sha256 != treatment_report.inputs.reference_run_sha256
+        || static_report.inputs.reference_audit_note_sha256
+            != treatment_report.inputs.reference_audit_note_sha256
     {
         return Err(Cycle4RoutingErrorV1::new(
             "cycle4_routing_v1_m3_reference_drift",
             "the two v4 arms' M3 reports bind different reference documents",
         ));
     }
+    // The reference statistic must have been computed from the cycle-3 focal
+    // Store this invocation names as the NO CARRY parent, not from some other
+    // run that happens to be to hand.
+    if static_report.inputs.reference_run_sha256 != inputs.cycle3_g2048_run_sha256 {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_reference_run",
+            format!(
+                "the M3 reference was computed from run {} but --cycle3-g2048-run-sha256 names {}",
+                static_report.inputs.reference_run_sha256, inputs.cycle3_g2048_run_sha256
+            ),
+        ));
+    }
+    // Clarification V2.1 binds the ratified audit note's bytes into the
+    // reference; a report whose reference did not carry one is refused.
+    hex64_or_reject_v1(
+        &static_report.inputs.reference_audit_note_sha256,
+        "the M3 reference audit-note SHA-256",
+    )?;
 
     // ---- Section B: the pairwise comparisons, recomputed and cross-checked.
     let mut declared_by_pair: BTreeMap<(String, String), &Cycle4M2ComparisonV1> = BTreeMap::new();
@@ -926,23 +1054,17 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
     let (outcome, carried_endpoint_id, recipe, parent_run, parent_checkpoint, parent_generation) =
         match carried {
             Some(endpoint_id) => {
-                let endpoint = panel
-                    .endpoints
-                    .iter()
-                    .find(|candidate| candidate.endpoint_id == endpoint_id)
-                    .ok_or_else(|| {
-                        Cycle4RoutingErrorV1::new(
-                            "cycle4_routing_v1_panel_endpoints",
-                            format!("the panel declares no identity for {endpoint_id}"),
-                        )
-                    })?;
+                let endpoint = panel_endpoint_v1(&panel, endpoint_id)?;
                 (
                     CYCLE4_ROUTING_OUTCOME_CARRY_V1,
                     Some(endpoint_id.to_owned()),
                     recipe_for_v1(endpoint_id)?,
                     endpoint.run_sha256.clone(),
                     endpoint.checkpoint_manifest_sha256.clone(),
-                    endpoint.store_generation,
+                    // Proven equal to the pinned arm endpoint generation by
+                    // `decode_cycle4_m2_panel_v1`, so the parent a next cycle
+                    // starts from can only ever be update 2048.
+                    CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1,
                 )
             }
             None => (
@@ -982,6 +1104,11 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
             m3_static_rb_report_sha256: static_sha256,
             m3_treatment_rb_report_sha256: treatment_sha256,
             m3_reference_document_sha256: static_report.inputs.reference_document_sha256.clone(),
+            m3_reference_run_sha256: static_report.inputs.reference_run_sha256.clone(),
+            m3_reference_audit_note_sha256: static_report
+                .inputs
+                .reference_audit_note_sha256
+                .clone(),
             cp7_evidence_root_checked: true,
             endpoints: panel.endpoints.clone(),
             pool: panel.pool.clone(),
@@ -1208,16 +1335,38 @@ mod tests {
 
     // ---- M3 report fixtures -------------------------------------------
 
-    fn reference_bytes_v1() -> Vec<u8> {
+    /// The cycle-3 focal run identity the fixtures pin, which is also what
+    /// `--cycle3-g2048-run-sha256` names: the selector requires the two to
+    /// agree.
+    fn cycle3_run_v1() -> String {
+        hex_v1(0xc1)
+    }
+
+    fn reference_bytes_for_run_v1(run_sha256: String) -> Vec<u8> {
         build_cycle4_m3_reference_document_v1(
             &crate::native_cycle4_m3_audit_v1::test_support_window_v1(
                 crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Raw,
                 vec![test_cell_v1(1, "p0", 10_000, -0.008, 1.0)],
                 10_000,
+                run_sha256,
+                hex_v1(0xc2),
             ),
-            None,
+            hex_v1(0x0a),
         )
         .expect("reference")
+    }
+
+    fn reference_bytes_v1() -> Vec<u8> {
+        reference_bytes_for_run_v1(cycle3_run_v1())
+    }
+
+    /// The panel identity of one endpoint, mirroring `panel_bytes_v1`.
+    fn endpoint_identity_v1(endpoint_id: &str) -> (String, String) {
+        let ordinal = all_endpoint_ids_v1()
+            .iter()
+            .position(|candidate| *candidate == endpoint_id)
+            .expect("known endpoint") as u8;
+        (hex_v1(0x70 + ordinal), hex_v1(0x90 + ordinal))
     }
 
     fn test_cell_v1(tag: u8, role: &str, decisions: u64, mean: f64, sd: f64) -> Cycle4M3CellV1 {
@@ -1233,10 +1382,28 @@ mod tests {
         }
     }
 
-    /// An M3 report for `arm_kind` whose verdict is PASS or FAIL as asked.
+    /// An M3 report for `arm_kind` whose verdict is PASS or FAIL as asked,
+    /// bound to that arm's own panel endpoint identity.
     fn m3_report_bytes_v1(arm_kind: &str, pass: bool) -> Vec<u8> {
-        let reference = decode_cycle4_m3_reference_document_v1(&reference_bytes_v1())
-            .expect("decode reference");
+        let (run_sha256, checkpoint_sha256) = endpoint_identity_v1(arm_kind);
+        m3_report_bytes_bound_v1(
+            arm_kind,
+            pass,
+            run_sha256,
+            checkpoint_sha256,
+            reference_bytes_v1(),
+        )
+    }
+
+    fn m3_report_bytes_bound_v1(
+        arm_kind: &str,
+        pass: bool,
+        run_sha256: String,
+        tip_checkpoint_manifest_sha256: String,
+        reference_bytes: Vec<u8>,
+    ) -> Vec<u8> {
+        let reference =
+            decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
         let cells = if pass {
             vec![test_cell_v1(1, "p0", 10_000, 0.001, 1.05)]
         } else {
@@ -1246,9 +1413,12 @@ mod tests {
             crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Centered,
             cells,
             10_000,
+            run_sha256,
+            tip_checkpoint_manifest_sha256,
         );
+        let reference_sha256 = lower_hex_raw32_v1(sha256_v1(&reference_bytes));
         let (bytes, produced) =
-            build_cycle4_m3_audit_report_v1(arm_kind, &window, &reference, &hex_v1(0x0d))
+            build_cycle4_m3_audit_report_v1(arm_kind, &window, &reference, &reference_sha256)
                 .expect("report");
         assert_eq!(produced, pass);
         bytes
@@ -1572,10 +1742,13 @@ mod tests {
         let plan = win_fraction_plan_v1(&[]);
         let reference = decode_cycle4_m3_reference_document_v1(&reference_bytes_v1())
             .expect("decode reference");
+        let (run_sha256, checkpoint_sha256) = endpoint_identity_v1("treatment-rb");
         let window = crate::native_cycle4_m3_audit_v1::test_support_window_v1(
             crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Centered,
             vec![test_cell_v1(1, "p0", 10_000, 0.001, 1.05)],
             10_000,
+            run_sha256,
+            checkpoint_sha256,
         );
         let (other, _) =
             build_cycle4_m3_audit_report_v1("treatment-rb", &window, &reference, &hex_v1(0xee))
@@ -1590,6 +1763,112 @@ mod tests {
                 .code(),
             "cycle4_routing_v1_m3_reference_drift"
         );
+    }
+
+    /// A report from another training run cannot set eligibility for the
+    /// endpoint the panel actually played.
+    #[test]
+    fn an_m3_report_from_another_run_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let (_, checkpoint_sha256) = endpoint_identity_v1("static-rb");
+        let inputs = Cycle4RoutingInputsV1 {
+            m3_static_rb_bytes: m3_report_bytes_bound_v1(
+                "static-rb",
+                true,
+                hex_v1(0xde),
+                checkpoint_sha256,
+                reference_bytes_v1(),
+            ),
+            ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
+        };
+        assert_eq!(
+            decide_cycle4_routing_v1(&inputs)
+                .expect_err("a foreign run must be refused")
+                .code(),
+            "cycle4_routing_v1_m3_report_endpoint_binding"
+        );
+    }
+
+    /// A report from the SAME run but an earlier tip is refused too: the
+    /// checkpoint identity it audited is not the one the panel played.
+    #[test]
+    fn an_m3_report_for_another_checkpoint_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let (run_sha256, _) = endpoint_identity_v1("treatment-rb");
+        let inputs = Cycle4RoutingInputsV1 {
+            m3_treatment_rb_bytes: m3_report_bytes_bound_v1(
+                "treatment-rb",
+                true,
+                run_sha256,
+                hex_v1(0xdf),
+                reference_bytes_v1(),
+            ),
+            ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
+        };
+        assert_eq!(
+            decide_cycle4_routing_v1(&inputs)
+                .expect_err("an earlier tip must be refused")
+                .code(),
+            "cycle4_routing_v1_m3_report_endpoint_binding"
+        );
+    }
+
+    /// A reference computed from some other cycle-3 run than the one this
+    /// invocation names as the NO CARRY parent is refused.
+    #[test]
+    fn an_m3_reference_from_another_run_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let foreign = reference_bytes_for_run_v1(hex_v1(0xdd));
+        let (static_run, static_checkpoint) = endpoint_identity_v1("static-rb");
+        let (treatment_run, treatment_checkpoint) = endpoint_identity_v1("treatment-rb");
+        let inputs = Cycle4RoutingInputsV1 {
+            m3_static_rb_bytes: m3_report_bytes_bound_v1(
+                "static-rb",
+                true,
+                static_run,
+                static_checkpoint,
+                foreign.clone(),
+            ),
+            m3_treatment_rb_bytes: m3_report_bytes_bound_v1(
+                "treatment-rb",
+                true,
+                treatment_run,
+                treatment_checkpoint,
+                foreign,
+            ),
+            ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
+        };
+        assert_eq!(
+            decide_cycle4_routing_v1(&inputs)
+                .expect_err("a foreign reference run must be refused")
+                .code(),
+            "cycle4_routing_v1_m3_reference_run"
+        );
+    }
+
+    /// The endpoints are pinned: a panel that played anything but update 2048
+    /// and the frozen g896 start is refused at decode.
+    #[test]
+    fn a_panel_endpoint_at_the_wrong_generation_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        for (endpoint_id, generation) in [("treatment-rb", 1_536_u64), ("g896", 2_048)] {
+            let mut panel = decode_cycle4_m2_panel_v1(&panel_bytes_v1(&plan)).expect("decode");
+            panel
+                .endpoints
+                .iter_mut()
+                .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+                .expect("endpoint row")
+                .store_generation = generation;
+            let edited = to_canonical_json_bytes_v1(&panel, CanonicalJsonNullPolicyV1::Forbid)
+                .expect("encode");
+            assert_eq!(
+                decode_cycle4_m2_panel_v1(&edited)
+                    .expect_err("an unpinned endpoint generation must be refused")
+                    .code(),
+                "cycle4_routing_v1_panel_endpoint_generation",
+                "{endpoint_id}"
+            );
+        }
     }
 
     /// A report supplied under the wrong arm's flag is refused.
@@ -1767,11 +2046,27 @@ mod tests {
 
         // The full selector over it: every declared statistic is re-derived
         // from the root table and must match bit for bit, or this errors.
+        // The M3 reports are bound to the identities the PYTHON fixture
+        // declared, since the selector requires that binding.
+        let bound = |arm_kind: &str| {
+            let endpoint = panel
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == arm_kind)
+                .expect("endpoint row");
+            m3_report_bytes_bound_v1(
+                arm_kind,
+                true,
+                endpoint.run_sha256.clone(),
+                endpoint.checkpoint_manifest_sha256.clone(),
+                reference_bytes_v1(),
+            )
+        };
         let record = decide_v1(&Cycle4RoutingInputsV1 {
             m2_panel_bytes: panel_bytes,
-            m3_static_rb_bytes: m3_report_bytes_v1("static-rb", true),
-            m3_treatment_rb_bytes: m3_report_bytes_v1("treatment-rb", true),
-            cycle3_g2048_run_sha256: hex_v1(0xc1),
+            m3_static_rb_bytes: bound("static-rb"),
+            m3_treatment_rb_bytes: bound("treatment-rb"),
+            cycle3_g2048_run_sha256: cycle3_run_v1(),
             cycle3_g2048_checkpoint_manifest_sha256: hex_v1(0xc2),
         });
         // The fixture gives treatment-rb the largest share, so it separates

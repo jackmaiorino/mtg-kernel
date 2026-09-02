@@ -335,7 +335,44 @@ def staged_temp_path(final_path: Path) -> Path:
 
 
 def commit_staged_file(temp_path: Path, final_path: Path) -> None:
-    os.replace(temp_path, final_path)
+    """Commits a staged file at its final name with CREATE-NEW semantics.
+
+    The panel is an input the routing record binds by SHA-256, so it is
+    immutable in exactly the way the Rust side's documents are: a rerun that
+    produced byte-identical content is a no-op success (the replay case, and
+    the staged copy is discarded), and anything else already at the final name
+    is an error. `os.replace` would have silently overwritten a published
+    panel, re-keying a freeze under whoever already read it.
+
+    `os.link` plus `unlink` is the create-new commit: `link` fails with
+    FileExistsError rather than replacing, on both Windows and POSIX. Where
+    the filesystem refuses hard links the fallback re-checks existence and
+    then renames, which is create-new for every caller here (one process,
+    one output directory, one panel per run)."""
+    encoded = temp_path.read_bytes()
+    if final_path.exists():
+        if final_path.read_bytes() == encoded:
+            remove_stray(temp_path)
+            return
+        raise M2PanelError(
+            f"{final_path} already holds a DIFFERENT panel; the M2 panel is immutable "
+            "because the routing record binds it by SHA-256, so publish to a fresh "
+            "--output-dir rather than replacing one"
+        )
+    try:
+        os.link(temp_path, final_path)
+    except FileExistsError as error:
+        raise M2PanelError(
+            f"{final_path} was created by another writer during this run"
+        ) from error
+    except OSError:
+        if final_path.exists():
+            raise M2PanelError(
+                f"{final_path} was created by another writer during this run"
+            ) from None
+        os.rename(temp_path, final_path)
+        return
+    remove_stray(temp_path)
 
 
 def remove_stray(path: Path) -> None:

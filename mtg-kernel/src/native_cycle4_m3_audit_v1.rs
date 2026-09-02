@@ -69,15 +69,19 @@
 //! store and avoids the cancellation a sum-of-squares form would invite.
 
 use crate::canonical_json_v1::{
-    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPathSegmentV1,
+    CanonicalJsonNullPolicyV1,
 };
 use crate::native_policy_baseline_state_v4::{
     BaselineCellKeyV4, BaselineObservationV4, BaselineRoleV4, NativeBaselineStateV4,
 };
+use crate::native_training_store_digest_v1::NativeTrainingStoreAtomSha256V1;
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
-use crate::native_training_store_update_group_v1::{EPISODE_SCHEMA_V1, UPDATE_EVIDENCE_SCHEMA_V1};
+use crate::native_training_store_update_group_v1::{
+    EPISODE_SCHEMA_V1, UPDATE_EVIDENCE_SCHEMA_V1, UPDATE_EVIDENCE_SHA256_IDENTITY_V1,
+};
 use crate::native_training_store_update_group_v4::{
     decode_update_baseline_record_v4, validate_update_baseline_v4, UpdateBaselineEpisodeViewV4,
     UpdateBaselineTermViewV4,
@@ -115,9 +119,55 @@ const SEGMENT_DIRECTORY_V1: &str = "segments";
 const SEGMENT_NAME_PREFIX_V1: &str = "segment-";
 const CONTINUATION_INFIX_V1: &str = ".continuation-";
 const CONTINUATION_SUFFIX_V1: &str = ".json";
+const CHECKPOINT_DIRECTORY_V1: &str = "checkpoints";
+const CHECKPOINT_NAME_PREFIX_V1: &str = "update-";
+const CHECKPOINT_NAME_SUFFIX_V1: &str = ".checkpoint.json";
 const FIXED_INDEX_DIGITS_V1: usize = 8;
 /// Domain separator for the aggregate sidecar/evidence chain digests below.
 const CHAIN_DIGEST_DOMAIN_V1: &[u8] = b"mtg-kernel-cycle4-m3-chain-digest/v1";
+
+// The Store's own nullable paths, restated here because the continuation
+// module's copies are private to it. A continuation file is decoded through
+// `from_canonical_json_bytes_v1` under exactly this policy, which enforces
+// the byte-exact canonical form as a side effect: a file that is not
+// canonical, or that carries a null anywhere but these three places, is
+// refused before a single residual is read.
+const M3_PREVIOUS_CONTINUATION_NULL_PATH_V1: &[CanonicalJsonNullPathSegmentV1] =
+    &[CanonicalJsonNullPathSegmentV1::ObjectKey(
+        "previous_continuation_sha256",
+    )];
+const M3_PREVIOUS_UPDATE_NULL_PATH_V1: &[CanonicalJsonNullPathSegmentV1] = &[
+    CanonicalJsonNullPathSegmentV1::ObjectKey("update_groups"),
+    CanonicalJsonNullPathSegmentV1::AnyArrayElement,
+    CanonicalJsonNullPathSegmentV1::ObjectKey("previous_update_evidence_sha256"),
+];
+const M3_EPISODE_WINNER_NULL_PATH_V1: &[CanonicalJsonNullPathSegmentV1] = &[
+    CanonicalJsonNullPathSegmentV1::ObjectKey("update_groups"),
+    CanonicalJsonNullPathSegmentV1::AnyArrayElement,
+    CanonicalJsonNullPathSegmentV1::ObjectKey("evidence"),
+    CanonicalJsonNullPathSegmentV1::ObjectKey("episodes"),
+    CanonicalJsonNullPathSegmentV1::AnyArrayElement,
+    CanonicalJsonNullPathSegmentV1::ObjectKey("winner"),
+];
+const M3_CONTINUATION_NULL_PATHS_V1: &[&[CanonicalJsonNullPathSegmentV1]] = &[
+    M3_PREVIOUS_CONTINUATION_NULL_PATH_V1,
+    M3_PREVIOUS_UPDATE_NULL_PATH_V1,
+    M3_EPISODE_WINNER_NULL_PATH_V1,
+];
+pub(crate) const M3_CONTINUATION_NULL_POLICY_V1: CanonicalJsonNullPolicyV1 =
+    CanonicalJsonNullPolicyV1::AllowOnly(M3_CONTINUATION_NULL_PATHS_V1);
+
+/// The same rule rooted at ONE update's `evidence` object, which is what the
+/// `update_evidence_sha256` domain hashes.
+const M3_EVIDENCE_WINNER_NULL_PATH_V1: &[CanonicalJsonNullPathSegmentV1] = &[
+    CanonicalJsonNullPathSegmentV1::ObjectKey("episodes"),
+    CanonicalJsonNullPathSegmentV1::AnyArrayElement,
+    CanonicalJsonNullPathSegmentV1::ObjectKey("winner"),
+];
+const M3_EVIDENCE_NULL_PATHS_V1: &[&[CanonicalJsonNullPathSegmentV1]] =
+    &[M3_EVIDENCE_WINNER_NULL_PATH_V1];
+pub(crate) const M3_EVIDENCE_NULL_POLICY_V1: CanonicalJsonNullPolicyV1 =
+    CanonicalJsonNullPolicyV1::AllowOnly(M3_EVIDENCE_NULL_PATHS_V1);
 
 // ---------------------------------------------------------------------
 // Errors
@@ -372,6 +422,8 @@ struct EvidenceReadV1 {
 struct UpdateGroupReadV1 {
     update_index: u64,
     update_evidence_sha256: String,
+    #[serde(default)]
+    previous_update_evidence_sha256: Option<String>,
     evidence: EvidenceReadV1,
 }
 
@@ -381,8 +433,9 @@ struct ContinuationReadV1 {
     update_groups: Vec<UpdateGroupReadV1>,
 }
 
-/// Index-only mirror for the first pass, which only has to find the tip and
-/// prove the update stream is contiguous.
+/// Index-only mirror for the first pass, which walks the whole Store to find
+/// the tip, prove the update stream is contiguous, and verify the declared
+/// evidence-digest chain end to end.
 #[derive(Clone, Debug, Deserialize)]
 struct ContinuationIndexReadV1 {
     update_groups: Vec<UpdateGroupIndexReadV1>,
@@ -391,6 +444,55 @@ struct ContinuationIndexReadV1 {
 #[derive(Clone, Debug, Deserialize)]
 struct UpdateGroupIndexReadV1 {
     update_index: u64,
+    update_evidence_sha256: String,
+    #[serde(default)]
+    previous_update_evidence_sha256: Option<String>,
+}
+
+/// Recomputes one update's `update_evidence_sha256` exactly as
+/// `native_training_store_update_group_v1::update_evidence_sha256_v1` does:
+/// the same domain separator, the same atom order, and the evidence object's
+/// own canonical JSON bytes.
+///
+/// This is what makes the audit's DISPERSION statistic tamper-evident. The
+/// v4 sidecar cross-check pins each cell's residual SUM and counts, so an
+/// edit that moves two equal-policy-weight values in one cell in opposite
+/// directions leaves every sidecar quantity untouched while changing that
+/// cell's sample standard deviation. The digest moves; the sums do not.
+fn recompute_update_evidence_sha256_v1(
+    run_sha256: [u8; 32],
+    update_index: u64,
+    previous_update_evidence_sha256: Option<[u8; 32]>,
+    evidence_cj: &[u8],
+) -> Result<[u8; 32]> {
+    let digest_error = |_| {
+        Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_evidence_digest_recompute",
+            format!("update {update_index}: atom hashing rejected an input"),
+        )
+    };
+    let mut digest = NativeTrainingStoreAtomSha256V1::new();
+    digest
+        .atom("domain", UPDATE_EVIDENCE_SHA256_IDENTITY_V1.as_bytes())
+        .map_err(digest_error)?;
+    digest
+        .atom("run_sha256", &run_sha256)
+        .map_err(digest_error)?;
+    digest
+        .atom("update_index_u64be", &update_index.to_be_bytes())
+        .map_err(digest_error)?;
+    digest
+        .atom(
+            "previous_update_evidence_sha256",
+            previous_update_evidence_sha256
+                .as_ref()
+                .map_or(&[][..], |value| value.as_slice()),
+        )
+        .map_err(digest_error)?;
+    digest
+        .atom("evidence_canonical_json", evidence_cj)
+        .map_err(digest_error)?;
+    Ok(digest.finalize())
 }
 
 fn io_error_v1(path: &Path, error: &std::io::Error) -> Cycle4M3AuditErrorV1 {
@@ -531,6 +633,11 @@ pub struct Cycle4M3WindowV1 {
     first_update_index: u64,
     last_update_index: u64,
     tip_update_evidence_sha256: String,
+    /// SHA-256 of the Store's own checkpoint manifest at the window's last
+    /// update, which is the identity the M2 probe reports for that endpoint.
+    /// It is what lets the routing selector prove a report describes the
+    /// checkpoint the panel actually played.
+    tip_checkpoint_manifest_sha256: String,
     evidence_chain_sha256: String,
     sidecar_chain_sha256: Option<String>,
     prewindow_sidecar_chain_sha256: Option<String>,
@@ -759,6 +866,33 @@ fn adapt_update_v1(path: &Path, evidence: &EvidenceReadV1) -> Result<AdaptedUpda
     })
 }
 
+/// SHA-256 of the Store's own checkpoint manifest at `generation_index`.
+///
+/// `native_training_store_checkpoint_v3` sets a checkpoint's
+/// `checkpoint_manifest_sha256` to `sha256(manifest canonical JSON)`, and the
+/// leaf holds exactly those bytes, so hashing the file reproduces the
+/// identity the M2 probe reports for the same checkpoint. A window whose last
+/// update is not a checkpoint boundary has no such leaf and fails closed:
+/// the audit is for a completed arm at its pinned endpoint.
+fn tip_checkpoint_manifest_sha256_v1(store_root: &Path, generation_index: u64) -> Result<String> {
+    let name = format!(
+        "{CHECKPOINT_NAME_PREFIX_V1}{generation_index:0width$}{CHECKPOINT_NAME_SUFFIX_V1}",
+        width = FIXED_INDEX_DIGITS_V1
+    );
+    let path = store_root.join(CHECKPOINT_DIRECTORY_V1).join(&name);
+    let bytes = fs::read(&path).map_err(|error| {
+        Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_tip_checkpoint_missing",
+            format!(
+                "{}: {error}; the audited window must end on a checkpoint boundary so the report \
+                 can name the checkpoint identity the M2 panel plays",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(lower_hex_raw32_v1(sha256_v1(&bytes)))
+}
+
 fn sidecar_bytes_v1(chain_dir: &Path, update_index: u64) -> Result<Vec<u8>> {
     let name = format!("baseline-update-{update_index:08}.record.json");
     let path = chain_dir.join(&name);
@@ -857,10 +991,17 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
 
     let files = list_continuation_paths_v1(&request.store_root)?;
 
-    // Pass one: the update stream, proven contiguous and ascending.
+    // Pass one: the update stream, proven contiguous and ascending, and its
+    // declared evidence-digest chain walked end to end from the genesis
+    // anchor. The chain binds each update's digest to its predecessor's, so a
+    // spliced, reordered or truncated Store fails here before any residual is
+    // read; pass two then proves each WINDOW digest against the evidence
+    // bytes it claims to cover.
     let mut file_ranges: Vec<(PathBuf, u64)> = Vec::with_capacity(files.len());
     let mut expected: Option<u64> = None;
     let mut first_update: Option<u64> = None;
+    let mut previous_declared_digest: Option<String> = None;
+    let mut declared_digests: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
     for (_, _, path) in &files {
         let bytes = fs::read(path).map_err(|error| io_error_v1(path, &error))?;
         let indexed: ContinuationIndexReadV1 =
@@ -885,6 +1026,32 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
                     ))
                 }
             }
+            // The first update in the Store must be the genesis anchor (no
+            // predecessor); every later one must name its predecessor's own
+            // declared digest.
+            if group.previous_update_evidence_sha256 != previous_declared_digest {
+                return Err(Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_evidence_chain_broken",
+                    format!(
+                        "{}: update {} names predecessor {:?} where the walked chain holds {:?}",
+                        path.display(),
+                        group.update_index,
+                        group.previous_update_evidence_sha256,
+                        previous_declared_digest
+                    ),
+                ));
+            }
+            let digest = parse_lower_hex_raw32_v1(&group.update_evidence_sha256).map_err(|_| {
+                decode_error_v1(
+                    path,
+                    format!(
+                        "update {} carries a malformed update_evidence_sha256",
+                        group.update_index
+                    ),
+                )
+            })?;
+            declared_digests.insert(group.update_index, digest);
+            previous_declared_digest = Some(group.update_evidence_sha256.clone());
             expected = Some(group.update_index + 1);
         }
         let end = expected.expect("at least one group") - 1;
@@ -936,9 +1103,22 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
             continue;
         }
         let bytes = fs::read(path).map_err(|error| io_error_v1(path, &error))?;
+        // The canonical decode is the container-level integrity check: it
+        // enforces the byte-exact canonical form and the Store's own three
+        // nullable paths, and it yields the untyped tree the per-update
+        // evidence bytes are re-encoded from.
+        let document: serde_json::Value =
+            from_canonical_json_bytes_v1(&bytes, M3_CONTINUATION_NULL_POLICY_V1).map_err(
+                |error| {
+                    Cycle4M3AuditErrorV1::new(
+                        "cycle4_m3_audit_v1_continuation_not_canonical",
+                        format!("{}: {error}", path.display()),
+                    )
+                },
+            )?;
         let continuation: ContinuationReadV1 =
             serde_json::from_slice(&bytes).map_err(|error| decode_error_v1(path, error))?;
-        for group in &continuation.update_groups {
+        for (ordinal, group) in continuation.update_groups.iter().enumerate() {
             if group.update_index < window_first {
                 continue;
             }
@@ -990,6 +1170,90 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
 
             let adapted = adapt_update_v1(path, &group.evidence)?;
             let views = adapted.views_v1();
+
+            // Digest recomputation. Everything above this line is a
+            // DECLARATION; this is where the declaration is made to answer
+            // for the evidence bytes it covers. Without it, an edit that
+            // preserves every sidecar quantity (two equal-policy-weight
+            // values in one cell moved in opposite directions) would change
+            // the cell's sample standard deviation and pass unnoticed.
+            let evidence_value = document
+                .get("update_groups")
+                .and_then(|groups| groups.get(ordinal))
+                .and_then(|group| group.get("evidence"))
+                .ok_or_else(|| {
+                    decode_error_v1(
+                        path,
+                        format!(
+                            "update {} has no evidence object in the canonical tree",
+                            group.update_index
+                        ),
+                    )
+                })?;
+            let evidence_cj =
+                to_canonical_json_bytes_v1(evidence_value, M3_EVIDENCE_NULL_POLICY_V1).map_err(
+                    |error| {
+                        Cycle4M3AuditErrorV1::new(
+                            "cycle4_m3_audit_v1_evidence_digest_recompute",
+                            format!("update {}: {error}", group.update_index),
+                        )
+                    },
+                )?;
+            let declared_run =
+                parse_lower_hex_raw32_v1(&group.evidence.run_sha256).map_err(|_| {
+                    decode_error_v1(
+                        path,
+                        format!(
+                            "update {} carries a malformed evidence run_sha256",
+                            group.update_index
+                        ),
+                    )
+                })?;
+            let previous_digest = if group.update_index == first_update {
+                None
+            } else {
+                Some(
+                    *declared_digests
+                        .get(&(group.update_index - 1))
+                        .ok_or_else(|| {
+                            Cycle4M3AuditErrorV1::new(
+                                "cycle4_m3_audit_v1_evidence_chain_broken",
+                                format!("update {} has no predecessor digest", group.update_index),
+                            )
+                        })?,
+                )
+            };
+            // The two mirrors of the same file must agree about the chain
+            // link before it is hashed into the digest.
+            if group.previous_update_evidence_sha256 != previous_digest.map(lower_hex_raw32_v1) {
+                return Err(Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_evidence_chain_broken",
+                    format!(
+                        "{}: update {} names a predecessor the walked chain does not hold",
+                        path.display(),
+                        group.update_index
+                    ),
+                ));
+            }
+            let recomputed = recompute_update_evidence_sha256_v1(
+                declared_run,
+                group.update_index,
+                previous_digest,
+                &evidence_cj,
+            )?;
+            if recomputed != evidence_digest {
+                return Err(Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_evidence_digest_mismatch",
+                    format!(
+                        "{}: update {} declares update_evidence_sha256 {} but its own evidence \
+                         bytes hash to {}",
+                        path.display(),
+                        group.update_index,
+                        group.update_evidence_sha256,
+                        lower_hex_raw32_v1(recomputed)
+                    ),
+                ));
+            }
 
             // Recover `c_t` exactly as the v4 evidence validator does: the
             // validator itself proves the sidecar against this update's own
@@ -1110,6 +1374,10 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
         first_update_index: window_first,
         last_update_index: tip_update,
         tip_update_evidence_sha256: tip_evidence_sha256.unwrap_or_default(),
+        tip_checkpoint_manifest_sha256: tip_checkpoint_manifest_sha256_v1(
+            &request.store_root,
+            tip_update,
+        )?,
         evidence_chain_sha256: aggregate_chain_digest_v1("window-evidence", &evidence_rows),
         sidecar_chain_sha256: request
             .chain_dir
@@ -1286,14 +1554,16 @@ pub struct Cycle4M3ReferenceDocumentV1 {
     pub run_sha256: String,
     pub window: Cycle4M3WindowWireV1,
     pub tip_update_evidence_sha256: String,
+    pub tip_checkpoint_manifest_sha256: String,
     pub evidence_chain_sha256: String,
     /// SHA-256 of the ratified audit note's bytes
-    /// (`OX_ADVANTAGE_BY_ROLE_AUDIT_RESULT_V1.md`), bound for provenance
-    /// when the operator supplies it. The note records means and winrates,
-    /// not per-cell standard deviations, so it cannot itself supply this
-    /// statistic; see the README.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub audit_note_sha256: Option<String>,
+    /// (`OX_ADVANTAGE_BY_ROLE_AUDIT_RESULT_V1.md`). REQUIRED: clarification
+    /// V2.1 binds the note's bytes into the reference, so the audit bin's
+    /// `--audit-note` is required in reference mode and the routing selector
+    /// refuses a report whose reference did not carry one. The note records
+    /// means and winrates, not per-cell standard deviations, so it cannot
+    /// itself supply this statistic; see the README.
+    pub audit_note_sha256: String,
     pub totals: Cycle4M3TotalsWireV1,
     pub cells: Vec<Cycle4M3CellV1>,
     pub decision_weighted_mean_standard_deviation: RealV1,
@@ -1302,7 +1572,7 @@ pub struct Cycle4M3ReferenceDocumentV1 {
 /// Builds the reference document's canonical bytes from a RAW window.
 pub fn build_cycle4_m3_reference_document_v1(
     window: &Cycle4M3WindowV1,
-    audit_note_sha256: Option<String>,
+    audit_note_sha256: String,
 ) -> Result<Vec<u8>> {
     if window.residual_mode != Cycle4M3ResidualModeV1::Raw {
         return Err(Cycle4M3AuditErrorV1::new(
@@ -1329,6 +1599,7 @@ pub fn build_cycle4_m3_reference_document_v1(
             update_count: window.last_update_index - window.first_update_index + 1,
         },
         tip_update_evidence_sha256: window.tip_update_evidence_sha256.clone(),
+        tip_checkpoint_manifest_sha256: window.tip_checkpoint_manifest_sha256.clone(),
         evidence_chain_sha256: window.evidence_chain_sha256.clone(),
         audit_note_sha256,
         totals: Cycle4M3TotalsWireV1 {
@@ -1368,9 +1639,59 @@ pub fn decode_cycle4_m3_reference_document_v1(bytes: &[u8]) -> Result<Cycle4M3Re
             "the reference statistic must be the RAW residual",
         ));
     }
-    document
-        .decision_weighted_mean_standard_deviation
-        .to_f64_v1()?;
+    if document.audit_note_sha256.len() != 64 {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_audit_note",
+            "the reference must bind the ratified audit note's bytes by SHA-256",
+        ));
+    }
+    for cell in &document.cells {
+        cell.mean_residual.to_f64_v1()?;
+        cell.sample_standard_deviation.to_f64_v1()?;
+        if cell.qualifies != (cell.decision_count >= CYCLE4_M3_QUALIFYING_MIN_DECISIONS_V1) {
+            return Err(Cycle4M3AuditErrorV1::new(
+                "cycle4_m3_audit_v1_reference_cell_qualification",
+                "a reference cell's declared qualification disagrees with its decision count",
+            ));
+        }
+    }
+    // The reference statistic is the number the whole dispersion clause is
+    // measured against, so it is never accepted as a declaration: it is
+    // recomputed from the document's own cell table, along with the totals
+    // that decide which cells enter it, and must match bit for bit.
+    let qualifying: Vec<&Cycle4M3CellV1> = document
+        .cells
+        .iter()
+        .filter(|cell| cell.qualifies)
+        .collect();
+    if qualifying.is_empty() {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_no_qualifying_cell",
+            "no reference cell qualifies, so the reference statistic has no population",
+        ));
+    }
+    let recomputed_totals = Cycle4M3TotalsWireV1 {
+        window_decision_count: document.totals.window_decision_count,
+        qualifying_cell_count: qualifying.len() as u64,
+        qualifying_decision_count: qualifying.iter().map(|cell| cell.decision_count).sum(),
+        cell_count: document.cells.len() as u64,
+    };
+    if recomputed_totals != document.totals {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_totals_mismatch",
+            "the reference totals do not follow from its own cell table",
+        ));
+    }
+    let recomputed = RealV1::from_f64_v1(decision_weighted_mean_standard_deviation_v1(&qualifying));
+    if recomputed.f64_bits != document.decision_weighted_mean_standard_deviation.f64_bits {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_statistic_mismatch",
+            format!(
+                "the reference declares {} but its own cell table gives {}",
+                document.decision_weighted_mean_standard_deviation.f64_bits, recomputed.f64_bits
+            ),
+        ));
+    }
     Ok(document)
 }
 
@@ -1388,6 +1709,10 @@ pub struct Cycle4M3ThresholdsWireV1 {
 pub struct Cycle4M3InputsWireV1 {
     pub run_sha256: String,
     pub tip_update_evidence_sha256: String,
+    /// The identity the M2 probe reports for this endpoint's checkpoint. The
+    /// routing selector requires it to equal the panel endpoint's, so a
+    /// report from another run or an earlier tip cannot set eligibility.
+    pub tip_checkpoint_manifest_sha256: String,
     pub evidence_chain_sha256: String,
     pub sidecar_chain_sha256: String,
     pub prewindow_sidecar_chain_sha256: String,
@@ -1395,8 +1720,7 @@ pub struct Cycle4M3InputsWireV1 {
     pub reference_document_sha256: String,
     pub reference_run_sha256: String,
     pub reference_window: Cycle4M3WindowWireV1,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference_audit_note_sha256: Option<String>,
+    pub reference_audit_note_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1485,6 +1809,7 @@ pub fn build_cycle4_m3_audit_report_v1(
         inputs: Cycle4M3InputsWireV1 {
             run_sha256: window.run_sha256.clone(),
             tip_update_evidence_sha256: window.tip_update_evidence_sha256.clone(),
+            tip_checkpoint_manifest_sha256: window.tip_checkpoint_manifest_sha256.clone(),
             evidence_chain_sha256: window.evidence_chain_sha256.clone(),
             sidecar_chain_sha256: window.sidecar_chain_sha256.clone().unwrap_or_default(),
             prewindow_sidecar_chain_sha256: window
@@ -1629,18 +1954,21 @@ pub(crate) fn test_support_window_v1(
     residual_mode: Cycle4M3ResidualModeV1,
     cells: Vec<Cycle4M3CellV1>,
     decision_count: u64,
+    run_sha256: String,
+    tip_checkpoint_manifest_sha256: String,
 ) -> Cycle4M3WindowV1 {
     let placeholder = "ab".repeat(32);
     let centered = residual_mode == Cycle4M3ResidualModeV1::Centered;
     Cycle4M3WindowV1 {
         residual_mode,
-        run_sha256: placeholder.clone(),
+        run_sha256,
         first_update_index: 1_537,
         last_update_index: 2_048,
         tip_update_evidence_sha256: placeholder.clone(),
+        tip_checkpoint_manifest_sha256,
         evidence_chain_sha256: placeholder.clone(),
         sidecar_chain_sha256: centered.then(|| placeholder.clone()),
-        prewindow_sidecar_chain_sha256: centered.then(|| placeholder.clone()),
+        prewindow_sidecar_chain_sha256: centered.then_some(placeholder),
         window_sidecars: Vec::new(),
         decision_count,
         cells,
@@ -1814,27 +2142,22 @@ mod tests {
 
     #[test]
     fn reference_document_round_trips_and_refuses_a_centered_window_v1() {
-        let window = Cycle4M3WindowV1 {
-            residual_mode: Cycle4M3ResidualModeV1::Raw,
-            run_sha256: identity_v1(7),
-            first_update_index: 1_537,
-            last_update_index: 2_048,
-            tip_update_evidence_sha256: identity_v1(8),
-            evidence_chain_sha256: identity_v1(9),
-            sidecar_chain_sha256: None,
-            prewindow_sidecar_chain_sha256: None,
-            window_sidecars: Vec::new(),
-            decision_count: 10_000,
-            cells: vec![
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Raw,
+            vec![
                 cell_v1(1, "p0", 6_000, -0.008, 0.90),
                 cell_v1(2, "p1", 4_000, 0.009, 0.94),
             ],
-        };
-        let bytes = build_cycle4_m3_reference_document_v1(&window, Some(identity_v1(0x0a)))
+            10_000,
+            identity_v1(7),
+            identity_v1(8),
+        );
+        let bytes = build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
             .expect("reference document");
         let decoded = decode_cycle4_m3_reference_document_v1(&bytes).expect("decode");
         assert_eq!(decoded.window.update_count, 512);
-        assert_eq!(decoded.audit_note_sha256, Some(identity_v1(0x0a)));
+        assert_eq!(decoded.audit_note_sha256, identity_v1(0x0a));
+        assert_eq!(decoded.tip_checkpoint_manifest_sha256, identity_v1(8));
         // (6000*0.90 + 4000*0.94) / 10000 = 0.916.
         let dispersion = decoded
             .decision_weighted_mean_standard_deviation
@@ -1847,10 +2170,55 @@ mod tests {
             ..window
         };
         assert_eq!(
-            build_cycle4_m3_reference_document_v1(&centered, None)
+            build_cycle4_m3_reference_document_v1(&centered, identity_v1(0x0a))
                 .expect_err("centered window must be refused")
                 .code(),
             "cycle4_m3_audit_v1_reference_mode"
+        );
+    }
+
+    /// The reference statistic and the totals that decide which cells enter
+    /// it are recomputed on decode, so an edited value is refused rather than
+    /// silently loosening the whole dispersion clause.
+    #[test]
+    fn an_edited_reference_statistic_is_refused_v1() {
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Raw,
+            vec![
+                cell_v1(1, "p0", 6_000, -0.008, 0.90),
+                cell_v1(2, "p1", 4_000, 0.009, 0.94),
+            ],
+            10_000,
+            identity_v1(7),
+            identity_v1(8),
+        );
+        let bytes = build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
+            .expect("reference document");
+        let mut document = decode_cycle4_m3_reference_document_v1(&bytes).expect("decode");
+
+        // A reference inflated from 0.916 to 2.0 would let any dispersion
+        // through; it does not follow from the cell table and is refused.
+        let mut edited = document.clone();
+        edited.decision_weighted_mean_standard_deviation = RealV1::from_f64_v1(2.0);
+        let encoded = to_canonical_json_bytes_v1(&edited, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("re-encode");
+        assert_eq!(
+            decode_cycle4_m3_reference_document_v1(&encoded)
+                .expect_err("an edited statistic must be refused")
+                .code(),
+            "cycle4_m3_audit_v1_reference_statistic_mismatch"
+        );
+
+        // So is an edited total, which would change which cells the
+        // statistic is taken over.
+        document.totals.qualifying_decision_count += 1;
+        let encoded = to_canonical_json_bytes_v1(&document, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("re-encode");
+        assert_eq!(
+            decode_cycle4_m3_reference_document_v1(&encoded)
+                .expect_err("edited totals must be refused")
+                .code(),
+            "cycle4_m3_audit_v1_reference_totals_mismatch"
         );
     }
 
@@ -1863,29 +2231,22 @@ mod tests {
                 Cycle4M3ResidualModeV1::Raw,
                 vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
                 10_000,
+                identity_v1(7),
+                identity_v1(8),
             ),
-            None,
+            identity_v1(0x0a),
         )
         .expect("reference");
         let reference =
             decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
 
-        let window = Cycle4M3WindowV1 {
-            residual_mode: Cycle4M3ResidualModeV1::Centered,
-            run_sha256: identity_v1(3),
-            first_update_index: 1_537,
-            last_update_index: 2_048,
-            tip_update_evidence_sha256: identity_v1(4),
-            evidence_chain_sha256: identity_v1(5),
-            sidecar_chain_sha256: Some(identity_v1(6)),
-            prewindow_sidecar_chain_sha256: Some(identity_v1(0x0b)),
-            window_sidecars: vec![Cycle4M3SidecarDigestV1 {
-                update_index: 1_537,
-                sha256: identity_v1(0x0c),
-            }],
-            decision_count: 10_000,
-            cells: vec![cell_v1(1, "p0", 10_000, 0.001, 1.05)],
-        };
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Centered,
+            vec![cell_v1(1, "p0", 10_000, 0.001, 1.05)],
+            10_000,
+            identity_v1(3),
+            identity_v1(4),
+        );
         let (bytes, pass) = build_cycle4_m3_audit_report_v1(
             "treatment-rb",
             &window,
@@ -1936,6 +2297,7 @@ mod tests {
                 std::process::id()
             ));
             fs::create_dir_all(root.join(SEGMENT_DIRECTORY_V1)).expect("segments dir");
+            fs::create_dir_all(root.join(CHECKPOINT_DIRECTORY_V1)).expect("checkpoints dir");
             fs::create_dir_all(root.join("chain")).expect("chain dir");
             Self { root }
         }
@@ -2075,14 +2437,35 @@ mod tests {
     ) {
         let mut groups = Vec::new();
         let mut prior = NativeBaselineStateV4::empty_v4();
+        // The fixture builds a REAL evidence-digest chain: each update's
+        // digest is computed over its own canonical evidence bytes with the
+        // Store's own domain and atom order, and names its predecessor. The
+        // audit recomputes exactly this, so a fixture with invented digests
+        // would not exercise the check at all.
+        let run_digest = parse_lower_hex_raw32_v1(run_sha256).expect("run sha256");
+        let mut previous_digest: Option<[u8; 32]> = None;
         for (ordinal, episodes) in updates.iter().enumerate() {
             let update_index = ordinal as u64 + 1;
-            let evidence_digest = [u8::try_from(update_index).expect("small index"); 32];
+            let evidence = synthetic_evidence_json_v1(run_sha256, update_index, episodes);
+            let evidence_cj = to_canonical_json_bytes_v1(&evidence, M3_EVIDENCE_NULL_POLICY_V1)
+                .expect("canonical evidence bytes");
+            let evidence_digest = recompute_update_evidence_sha256_v1(
+                run_digest,
+                update_index,
+                previous_digest,
+                &evidence_cj,
+            )
+            .expect("evidence digest");
             groups.push(serde_json::json!({
                 "update_index": update_index,
                 "update_evidence_sha256": lower_hex_raw32_v1(evidence_digest),
-                "evidence": synthetic_evidence_json_v1(run_sha256, update_index, episodes),
+                "previous_update_evidence_sha256": previous_digest
+                    .map_or(serde_json::Value::Null, |digest| {
+                        serde_json::Value::String(lower_hex_raw32_v1(digest))
+                    }),
+                "evidence": evidence,
             }));
+            previous_digest = Some(evidence_digest);
             if !chain {
                 continue;
             }
@@ -2149,7 +2532,40 @@ mod tests {
                 .store_root_v1()
                 .join(SEGMENT_DIRECTORY_V1)
                 .join("segment-00000004.continuation-00000000.json"),
-            serde_json::to_vec(&continuation).expect("serialize continuation"),
+            to_canonical_json_bytes_v1(&continuation, M3_CONTINUATION_NULL_POLICY_V1)
+                .expect("canonical continuation bytes"),
+        )
+        .expect("write continuation");
+        // The audit reads the tip checkpoint manifest to name the identity
+        // the M2 probe reports for the same checkpoint, so the fixture
+        // publishes one.
+        let tip = updates.len() as u64;
+        fs::write(
+            store
+                .store_root_v1()
+                .join(CHECKPOINT_DIRECTORY_V1)
+                .join(format!("update-{tip:08}.checkpoint.json")),
+            format!("{{\"synthetic_checkpoint_for_update\":{tip}}}\n"),
+        )
+        .expect("write tip checkpoint");
+    }
+
+    /// Rewrites the fixture's continuation with `edit` applied to the parsed
+    /// tree, re-canonicalizing so only the intended change is visible. The
+    /// evidence digests are deliberately NOT recomputed: an edit is meant to
+    /// be caught.
+    fn edit_continuation_v1(store: &TestStoreV1, edit: impl FnOnce(&mut serde_json::Value)) {
+        let path = store
+            .store_root_v1()
+            .join(SEGMENT_DIRECTORY_V1)
+            .join("segment-00000004.continuation-00000000.json");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).expect("read continuation")).expect("parse");
+        edit(&mut document);
+        fs::write(
+            &path,
+            to_canonical_json_bytes_v1(&document, M3_CONTINUATION_NULL_POLICY_V1)
+                .expect("canonical continuation bytes"),
         )
         .expect("write continuation");
     }
@@ -2289,23 +2705,16 @@ mod tests {
     /// sidecar's declared bits. This is the integrity argument the partial
     /// container mirrors rest on, exercised rather than asserted.
     #[test]
-    fn tampered_evidence_fails_the_sidecar_cross_check_v1() {
+    fn tampered_evidence_fails_the_evidence_digest_v1() {
         let store = TestStoreV1::new_v1("tampered-evidence");
         let run_sha256 = identity_v1(0x5c);
-        let updates = vec![two_cell_update_v1(&[0.2, 0.4], &[0.1])];
+        let updates = vec![two_cell_update_v1(&[0.25, 0.5], &[0.125])];
         write_synthetic_store_v1(&store, &run_sha256, &updates, true);
 
-        let path = store
-            .store_root_v1()
-            .join(SEGMENT_DIRECTORY_V1)
-            .join("segment-00000004.continuation-00000000.json");
-        let text = fs::read_to_string(&path).expect("read continuation");
-        let tampered = text.replace(
-            &format!("{:08x}", 0.2_f32.to_bits()),
-            &format!("{:08x}", 0.25_f32.to_bits()),
-        );
-        assert_ne!(text, tampered, "the fixture must actually change");
-        fs::write(&path, tampered).expect("write tampered continuation");
+        edit_continuation_v1(&store, |document| {
+            document["update_groups"][0]["evidence"]["physical_terms"][0]["value_f32_bits"] =
+                serde_json::Value::String(format!("{:08x}", 0.375_f32.to_bits()));
+        });
 
         let error = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
             store_root: store.store_root_v1(),
@@ -2314,7 +2723,216 @@ mod tests {
             window_updates: 1,
         })
         .expect_err("tampered evidence must fail closed");
+        assert_eq!(error.code(), "cycle4_m3_audit_v1_evidence_digest_mismatch");
+    }
+
+    /// THE case the sidecar cross-check alone cannot see. Two terms of one
+    /// cell carry the same joint log-probability, so moving them in opposite
+    /// directions by the same amount leaves the cell's residual SUM, its
+    /// counts, the cell set and even the v4 policy sum bit-identical, while
+    /// the cell's sample standard deviation changes. Every quantity the
+    /// sidecar declares still reconciles; only the evidence digest moves.
+    #[test]
+    fn perturbed_evidence_preserving_the_sidecar_sums_fails_the_digest_v1() {
+        let store = TestStoreV1::new_v1("perturbed-evidence");
+        let run_sha256 = identity_v1(0x60);
+        // Powers of two, so every f32 residual and its f64 widening is exact
+        // and the two readings really do agree to the bit.
+        let updates = vec![two_cell_update_v1(&[0.25, 0.5], &[0.125])];
+        write_synthetic_store_v1(&store, &run_sha256, &updates, true);
+
+        // 0.25 -> 0.125 and 0.5 -> 0.625: the residual sum is 1.25 either
+        // way, and the spread widens from 0.25 to 0.5.
+        let clean = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: Some(store.chain_dir_v1()),
+            residual_mode: Cycle4M3ResidualModeV1::Centered,
+            window_updates: 1,
+        })
+        .expect("clean window");
+        let clean_sd = clean
+            .cells()
+            .iter()
+            .find(|cell| cell.role == "p0")
+            .expect("p0 cell")
+            .sample_standard_deviation
+            .to_f64_v1()
+            .expect("sd");
+
+        edit_continuation_v1(&store, |document| {
+            let terms = &mut document["update_groups"][0]["evidence"]["physical_terms"];
+            terms[0]["value_f32_bits"] =
+                serde_json::Value::String(format!("{:08x}", 0.125_f32.to_bits()));
+            terms[1]["value_f32_bits"] =
+                serde_json::Value::String(format!("{:08x}", 0.625_f32.to_bits()));
+        });
+
+        let error = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: Some(store.chain_dir_v1()),
+            residual_mode: Cycle4M3ResidualModeV1::Centered,
+            window_updates: 1,
+        })
+        .expect_err("a sum-preserving perturbation must still fail closed");
+        assert_eq!(error.code(), "cycle4_m3_audit_v1_evidence_digest_mismatch");
+
+        // And the perturbation really would have moved the statistic: run the
+        // RAW reading of the edited store, which does not consult a sidecar,
+        // to show the sample standard deviation the audit would otherwise
+        // have reported.
+        let perturbed = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: None,
+            residual_mode: Cycle4M3ResidualModeV1::Raw,
+            window_updates: 1,
+        });
+        assert_eq!(
+            perturbed
+                .expect_err("the raw reading is guarded by the same digest")
+                .code(),
+            "cycle4_m3_audit_v1_evidence_digest_mismatch"
+        );
+        assert!(
+            (clean_sd - (0.03125_f64).sqrt()).abs() < 1e-12,
+            "clean sd was {clean_sd}"
+        );
+    }
+
+    /// The sidecar cross-check still guards the other direction: a sidecar
+    /// whose declared residual sum does not follow from the evidence fails
+    /// through `validate_update_baseline_v4`.
+    #[test]
+    fn a_tampered_sidecar_fails_the_v4_cross_check_v1() {
+        let store = TestStoreV1::new_v1("tampered-sidecar");
+        let run_sha256 = identity_v1(0x61);
+        let updates = vec![two_cell_update_v1(&[0.25, 0.5], &[0.125])];
+        write_synthetic_store_v1(&store, &run_sha256, &updates, true);
+
+        let path = store
+            .chain_dir_v1()
+            .join("baseline-update-00000001.record.json");
+        let text = fs::read_to_string(&path).expect("read sidecar");
+        let tampered = text.replace(
+            &format!("{:016x}", 1.25_f64.to_bits()),
+            &format!("{:016x}", 1.5_f64.to_bits()),
+        );
+        assert_ne!(text, tampered, "the fixture must actually change");
+        fs::write(&path, tampered).expect("write tampered sidecar");
+
+        let error = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: Some(store.chain_dir_v1()),
+            residual_mode: Cycle4M3ResidualModeV1::Centered,
+            window_updates: 1,
+        })
+        .expect_err("a tampered sidecar must fail closed");
         assert_eq!(error.code(), "cycle4_m3_audit_v1_sidecar_validation");
+    }
+
+    /// A reordered or spliced Store breaks the declared digest chain before
+    /// any residual is read.
+    #[test]
+    fn a_broken_evidence_chain_fails_closed_v1() {
+        let store = TestStoreV1::new_v1("broken-chain");
+        let run_sha256 = identity_v1(0x62);
+        let updates = vec![
+            two_cell_update_v1(&[0.25, 0.5], &[0.125]),
+            two_cell_update_v1(&[0.5, 0.25], &[0.375]),
+        ];
+        write_synthetic_store_v1(&store, &run_sha256, &updates, true);
+
+        edit_continuation_v1(&store, |document| {
+            document["update_groups"][1]["previous_update_evidence_sha256"] =
+                serde_json::Value::String("ff".repeat(32));
+        });
+
+        let error = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: None,
+            residual_mode: Cycle4M3ResidualModeV1::Raw,
+            window_updates: 1,
+        })
+        .expect_err("a broken chain must fail closed");
+        assert_eq!(error.code(), "cycle4_m3_audit_v1_evidence_chain_broken");
+    }
+
+    /// A continuation that is valid JSON but not the Store's canonical form
+    /// is refused: the digest is computed over canonical bytes, so a
+    /// non-canonical file could not be checked against one.
+    #[test]
+    fn a_noncanonical_continuation_is_refused_v1() {
+        let store = TestStoreV1::new_v1("noncanonical");
+        let run_sha256 = identity_v1(0x63);
+        let updates = vec![two_cell_update_v1(&[0.25], &[0.125])];
+        write_synthetic_store_v1(&store, &run_sha256, &updates, false);
+
+        let path = store
+            .store_root_v1()
+            .join(SEGMENT_DIRECTORY_V1)
+            .join("segment-00000004.continuation-00000000.json");
+        let mut bytes = fs::read(&path).expect("read continuation");
+        // Drop the trailing LF the canonical form requires.
+        bytes.pop();
+        fs::write(&path, bytes).expect("write continuation");
+
+        let error = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: None,
+            residual_mode: Cycle4M3ResidualModeV1::Raw,
+            window_updates: 1,
+        })
+        .expect_err("a non-canonical continuation must fail closed");
+        assert_eq!(
+            error.code(),
+            "cycle4_m3_audit_v1_continuation_not_canonical"
+        );
+    }
+
+    /// The report names the checkpoint identity the M2 probe would report for
+    /// the same checkpoint, which is what lets routing bind the two.
+    #[test]
+    fn the_window_names_the_tip_checkpoint_identity_v1() {
+        let store = TestStoreV1::new_v1("tip-checkpoint");
+        let run_sha256 = identity_v1(0x64);
+        let updates = vec![two_cell_update_v1(&[0.25], &[0.125])];
+        write_synthetic_store_v1(&store, &run_sha256, &updates, false);
+
+        let window = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: None,
+            residual_mode: Cycle4M3ResidualModeV1::Raw,
+            window_updates: 1,
+        })
+        .expect("window");
+        let expected = lower_hex_raw32_v1(sha256_v1(
+            &fs::read(
+                store
+                    .store_root_v1()
+                    .join(CHECKPOINT_DIRECTORY_V1)
+                    .join("update-00000001.checkpoint.json"),
+            )
+            .expect("read checkpoint"),
+        ));
+        assert_eq!(window.tip_checkpoint_manifest_sha256, expected);
+
+        fs::remove_file(
+            store
+                .store_root_v1()
+                .join(CHECKPOINT_DIRECTORY_V1)
+                .join("update-00000001.checkpoint.json"),
+        )
+        .expect("remove checkpoint");
+        assert_eq!(
+            compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+                store_root: store.store_root_v1(),
+                chain_dir: None,
+                residual_mode: Cycle4M3ResidualModeV1::Raw,
+                window_updates: 1,
+            })
+            .expect_err("a window off a checkpoint boundary must fail closed")
+            .code(),
+            "cycle4_m3_audit_v1_tip_checkpoint_missing"
+        );
     }
 
     #[test]
@@ -2383,18 +3001,16 @@ mod tests {
         let updates = vec![two_cell_update_v1(&[0.2], &[0.1])];
         write_synthetic_store_v1(&store, &run_sha256, &updates, false);
 
-        let path = store
-            .store_root_v1()
-            .join(SEGMENT_DIRECTORY_V1)
-            .join("segment-00000004.continuation-00000000.json");
-        let mut document: serde_json::Value =
-            serde_json::from_slice(&fs::read(&path).expect("read")).expect("parse");
-        document["update_groups"][0]["evidence"]["episodes"][0]
-            .as_object_mut()
-            .expect("episode object")
-            .remove("opponent_checkpoint_manifest_sha256");
-        fs::write(&path, serde_json::to_vec(&document).expect("serialize")).expect("write");
+        edit_continuation_v1(&store, |document| {
+            document["update_groups"][0]["evidence"]["episodes"][0]
+                .as_object_mut()
+                .expect("episode object")
+                .remove("opponent_checkpoint_manifest_sha256");
+        });
 
+        // The structural adaptation runs before the digest recomputation, so
+        // an episode with no cell is reported as such rather than as a digest
+        // mismatch, which would tell an operator nothing about the defect.
         assert_eq!(
             compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
                 store_root: store.store_root_v1(),
@@ -2417,17 +3033,12 @@ mod tests {
         let updates = vec![two_cell_update_v1(&[0.2], &[0.1])];
         write_synthetic_store_v1(&store, &run_sha256, &updates, false);
 
-        let path = store
-            .store_root_v1()
-            .join(SEGMENT_DIRECTORY_V1)
-            .join("segment-00000004.continuation-00000000.json");
-        let mut document: serde_json::Value =
-            serde_json::from_slice(&fs::read(&path).expect("read")).expect("parse");
-        document["update_groups"][0]["evidence"]["episodes"][0]
-            .as_object_mut()
-            .expect("episode object")
-            .insert("a_field_from_the_future".to_owned(), serde_json::json!(1));
-        fs::write(&path, serde_json::to_vec(&document).expect("serialize")).expect("write");
+        edit_continuation_v1(&store, |document| {
+            document["update_groups"][0]["evidence"]["episodes"][0]
+                .as_object_mut()
+                .expect("episode object")
+                .insert("a_field_from_the_future".to_owned(), serde_json::json!(1));
+        });
 
         assert_eq!(
             compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
@@ -2447,37 +3058,25 @@ mod tests {
     #[test]
     fn a_tampered_verdict_is_refused_v1() {
         let reference_bytes = build_cycle4_m3_reference_document_v1(
-            &Cycle4M3WindowV1 {
-                residual_mode: Cycle4M3ResidualModeV1::Raw,
-                run_sha256: identity_v1(7),
-                first_update_index: 1_537,
-                last_update_index: 2_048,
-                tip_update_evidence_sha256: identity_v1(8),
-                evidence_chain_sha256: identity_v1(9),
-                sidecar_chain_sha256: None,
-                prewindow_sidecar_chain_sha256: None,
-                window_sidecars: Vec::new(),
-                decision_count: 10_000,
-                cells: vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
-            },
-            None,
+            &test_support_window_v1(
+                Cycle4M3ResidualModeV1::Raw,
+                vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+                10_000,
+                identity_v1(7),
+                identity_v1(8),
+            ),
+            identity_v1(0x0a),
         )
         .expect("reference");
         let reference =
             decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
-        let window = Cycle4M3WindowV1 {
-            residual_mode: Cycle4M3ResidualModeV1::Centered,
-            run_sha256: identity_v1(3),
-            first_update_index: 1_537,
-            last_update_index: 2_048,
-            tip_update_evidence_sha256: identity_v1(4),
-            evidence_chain_sha256: identity_v1(5),
-            sidecar_chain_sha256: Some(identity_v1(6)),
-            prewindow_sidecar_chain_sha256: Some(identity_v1(0x0b)),
-            window_sidecars: Vec::new(),
-            decision_count: 10_000,
-            cells: vec![cell_v1(1, "p0", 10_000, 0.9, 1.0)],
-        };
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Centered,
+            vec![cell_v1(1, "p0", 10_000, 0.9, 1.0)],
+            10_000,
+            identity_v1(3),
+            identity_v1(4),
+        );
         let (bytes, pass) =
             build_cycle4_m3_audit_report_v1("static-rb", &window, &reference, &identity_v1(0x0d))
                 .expect("report");

@@ -54,6 +54,7 @@ from run_m2_common_root_panel_v1 import (
     build_matchup_specs,
     build_panel_document,
     canonical_bytes,
+    commit_staged_file,
     endpoint_store_generation,
     f64_bits,
     leg_score,
@@ -67,8 +68,10 @@ from run_m2_common_root_panel_v1 import (
     real,
     render_dry_run_lines,
     root_scores,
+    staged_temp_path,
     summarize_outcome,
     validate_slot_chain_dirs,
+    write_new_json,
 )
 
 ABS_ROOT = Path(tempfile.gettempdir()).resolve()
@@ -636,6 +639,54 @@ class CanonicalFormTests(unittest.TestCase):
         self.assertEqual(real(1.0), {"f64_bits": "3ff0000000000000", "text": "1.0"})
         with self.assertRaises(M2PanelError):
             f64_bits(float("inf"))
+
+
+class CommitSemanticsTests(unittest.TestCase):
+    """The panel is an input the routing record binds by SHA-256, so
+    committing it is CREATE-NEW: a rerun that produced identical bytes is a
+    no-op, and anything else already at the final name is an error. An
+    `os.replace` would have silently re-keyed a published freeze."""
+
+    def test_a_fresh_commit_writes_the_staged_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "m2-common-root-panel.json"
+            temp = staged_temp_path(final)
+            payload = write_new_json(temp, {"schema": PANEL_SCHEMA})
+            commit_staged_file(temp, final)
+            self.assertEqual(final.read_bytes(), payload)
+            self.assertFalse(temp.exists(), "the staged copy must not linger")
+
+    def test_an_identical_republish_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "m2-common-root-panel.json"
+            temp = staged_temp_path(final)
+            payload = write_new_json(temp, {"schema": PANEL_SCHEMA})
+            commit_staged_file(temp, final)
+            stat_before = final.stat().st_ino if os.name != "nt" else final.read_bytes()
+
+            temp = staged_temp_path(final)
+            write_new_json(temp, {"schema": PANEL_SCHEMA})
+            commit_staged_file(temp, final)
+            self.assertEqual(final.read_bytes(), payload)
+            self.assertFalse(temp.exists())
+            if os.name != "nt":
+                self.assertEqual(final.stat().st_ino, stat_before)
+
+    def test_a_differing_panel_is_refused_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "m2-common-root-panel.json"
+            temp = staged_temp_path(final)
+            original = write_new_json(temp, {"schema": PANEL_SCHEMA, "root_count": 1024})
+            commit_staged_file(temp, final)
+
+            temp = staged_temp_path(final)
+            write_new_json(temp, {"schema": PANEL_SCHEMA, "root_count": 16})
+            with self.assertRaises(M2PanelError) as context:
+                commit_staged_file(temp, final)
+            self.assertIn("immutable", str(context.exception))
+            self.assertEqual(
+                final.read_bytes(), original, "the published panel must be untouched"
+            )
 
 
 class WireShapeTests(unittest.TestCase):

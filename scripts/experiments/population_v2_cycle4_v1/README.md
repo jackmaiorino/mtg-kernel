@@ -309,11 +309,14 @@ $env:CARGO_TARGET_DIR = 'D:\cargo-target-cycle4'
 cargo build -p mtg-kernel --release --bin cycle4_m3_audit_v1 --bin cycle4_routing_v1
 ```
 
-**Step 2, the reference statistic.** `--audit-note` binds the ratified audit
-note's bytes by SHA-256 for provenance; it is optional because that note
-records per-role and per-slot MEANS and no per-cell standard deviation, so it
-cannot itself supply the dispersion reference. This mode computes that
-statistic "the same way" from the same evidence shape, on the RAW residual.
+**Step 2, the reference statistic.** `--audit-note` is REQUIRED and binds the
+ratified audit note's bytes by SHA-256: clarification V2.1 binds the note into
+the reference, and the selector refuses a report whose reference did not carry
+one. The note itself records per-role and per-slot MEANS and no per-cell
+standard deviation, so it cannot supply the dispersion reference; this mode
+computes that statistic "the same way" from the same evidence shape, on the
+RAW residual, and the reference document is re-derived from its own cell table
+every time it is read.
 
 ```
 D:\cargo-target-cycle4\release\cycle4_m3_audit_v1.exe `
@@ -412,6 +415,20 @@ the recipe, the rank order, and the record's own SHA-256. The selector
 recomputes every M2 number from the panel's own per-root outcome table and
 requires bit equality with what the panel declared; a disagreement is exit 3,
 not a tolerance.
+
+### What each step refuses
+
+Nothing in this chain accepts a document on its say-so.
+
+| Check | Where | Why |
+| --- | --- | --- |
+| Each window update's `update_evidence_sha256` is recomputed over the evidence's own canonical bytes, and the declared chain is walked from the genesis anchor. | `cycle4_m3_audit_v1` | The sidecar pins each cell's residual SUM and counts, so two equal-policy-weight values moved in opposite directions leave every sidecar quantity intact while changing the cell's sample standard deviation. Only the digest catches that. |
+| The reference statistic and its totals are recomputed from the reference document's own cell table. | `cycle4_m3_audit_v1`, `cycle4_routing_v1` | An inflated reference would loosen the whole dispersion clause. |
+| Each M3 report's audited run identity, tip checkpoint identity and window end must equal the panel endpoint's. | `cycle4_routing_v1` | A stale report from another run, or from the same run at an earlier tip, would otherwise set eligibility for a checkpoint it never audited. |
+| The reference's run identity must equal `--cycle3-g2048-run-sha256`. | `cycle4_routing_v1` | The dispersion reference has to come from the cycle-3 focal Store this cycle names, not from whatever run was to hand. |
+| Endpoint generations must be exactly 2048 (arms) and 896 (the frozen start). | `cycle4_routing_v1` | The endpoints are pinned; a panel that played anything else is not this measurement. |
+| Every M2 statistic is recomputed from the root table and compared bitwise. | `cycle4_routing_v1` | The selector decides on numbers it derived, never on numbers it was handed. |
+| Publishing over an existing artifact with different bytes is refused (identical bytes are a no-op). | all three | These artifacts are the freeze; a retried step is safe, a changed one is not. |
 
 ### Tests
 
