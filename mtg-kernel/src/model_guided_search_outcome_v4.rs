@@ -778,6 +778,24 @@ pub fn verify_episode_chain_v4(bytes: &[u8]) -> Result<usize, String> {
     Ok(count)
 }
 
+/// Truncates one phase INTERVAL, given as two nanosecond readings, to
+/// whole microseconds.
+///
+/// TRUNCATE THE INTERVAL, never its endpoints. Flooring each reading to
+/// microseconds first and then subtracting computes `floor(b) - floor(a)`,
+/// which differs from `floor(b - a)` whenever the two readings straddle a
+/// microsecond boundary: a 0.2 us phase running from 100.9 us to 101.1 us
+/// reports a whole microsecond that never elapsed. Every phase can gain
+/// one that way and two of them are summed into the protocol total, so a
+/// decision sitting exactly on the 4.0 s SLO or the 20.0 s hard timeout
+/// could be classified over it by arithmetic rather than by anything the
+/// panel host did.
+///
+/// Saturating, so a non-monotonic pair reads as zero rather than wrapping.
+fn interval_micros_v4(from_nanos: u64, to_nanos: u64) -> u64 {
+    to_nanos.saturating_sub(from_nanos) / 1_000
+}
+
 /// SHA-256 over the episode bytes a footer commits to: everything
 /// published before the footer's own line, newlines included.
 pub fn episode_content_digest_v4(bytes_before_footer: &[u8]) -> [u8; 32] {
@@ -804,15 +822,16 @@ struct OpenEpisodeV4 {
     /// [`ModelGuidedSearchOutcomeWriterV4::note_request_completed_v4`],
     /// which the serving loop calls once the response has been flushed.
     last_response_micros: u64,
-    /// The writer-clock reading at which the most recent publication
-    /// COMPLETED, and the anchor the response tail is measured from.
+    /// The writer-clock reading, in nanoseconds, at which the most recent
+    /// publication COMPLETED, and the anchor the response tail is measured
+    /// from.
     ///
     /// `Some` exactly while a response boundary is still owed for that
     /// publication, so a request that published nothing (a `score_current`,
     /// a rejected request) and a second boundary for the same publication
     /// are both no-ops rather than overwriting a measured tail with an
     /// interval that belongs to no record.
-    publication_completed_at_micros: Option<u64>,
+    publication_completed_at_nanos: Option<u64>,
 }
 
 /// Per-episode JSONL diagnostics writer: one file per episode in the
@@ -821,20 +840,24 @@ pub struct ModelGuidedSearchOutcomeWriterV4 {
     directory: PathBuf,
     open: Option<OpenEpisodeV4>,
     /// Origin of this writer's monotonic clock. Every phase boundary is a
-    /// microsecond offset from here rather than a bare `Instant`, which is
-    /// what lets a test substitute a clock it controls.
+    /// NANOSECOND offset from here rather than a bare `Instant`, which is
+    /// what lets a test substitute a clock it controls. Readings stay at
+    /// full precision and only the computed interval is truncated to
+    /// microseconds; see [`interval_micros_v4`].
     opened_at: Instant,
-    /// Test-only MANUAL clock, in microseconds.
+    /// Test-only MANUAL clock, in nanoseconds.
     ///
-    /// When installed, every instant the writer reads comes from here and
+    /// When installed, every reading the writer takes comes from here and
     /// only an explicit advance moves it, so a phase boundary is exact
     /// arithmetic. Sleeping guarantees a lower bound and nothing else, so
     /// any UPPER bound asserted over a real clock ("the tail stays under
     /// 25 ms") is a flake waiting for a descheduled thread. With this
     /// installed, "the tail is 220 ms" and "the tail is zero" are
-    /// statements about the writer, not about the scheduler.
+    /// statements about the writer, not about the scheduler. It carries
+    /// nanoseconds so a test can also place two readings on either side of
+    /// a microsecond boundary.
     #[cfg(test)]
-    manual_clock_micros_v4: Option<u64>,
+    manual_clock_nanos_v4: Option<u64>,
     /// Test-only fault injection: an artificial delay inside the measured
     /// publication window, so the publication-inclusive ceiling
     /// classification can be exercised without a genuinely slow disk.
@@ -866,7 +889,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
             open: None,
             opened_at: Instant::now(),
             #[cfg(test)]
-            manual_clock_micros_v4: None,
+            manual_clock_nanos_v4: None,
             #[cfg(test)]
             publish_delay_for_test_v4: None,
             #[cfg(test)]
@@ -874,34 +897,40 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         })
     }
 
-    /// This writer's monotonic clock, in microseconds since it was
-    /// opened. Every phase boundary reads it, so substituting a manual
-    /// clock substitutes all of them at once and none can drift apart.
-    fn now_micros_v4(&self) -> u64 {
+    /// This writer's monotonic clock, in NANOSECONDS since it was opened.
+    ///
+    /// Every phase boundary reads it, so substituting a manual clock
+    /// substitutes all of them at once and none can drift apart. Readings
+    /// are kept at nanosecond precision on purpose: truncating them to the
+    /// reported unit before subtracting would let a phase report a
+    /// microsecond that never elapsed. See [`interval_micros_v4`].
+    fn now_nanos_v4(&self) -> u64 {
         #[cfg(test)]
-        if let Some(micros) = self.manual_clock_micros_v4 {
-            return micros;
+        if let Some(nanos) = self.manual_clock_nanos_v4 {
+            return nanos;
         }
-        u64::try_from(self.opened_at.elapsed().as_micros()).unwrap_or(u64::MAX)
+        u64::try_from(self.opened_at.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 
     /// Test-only: replaces the system clock with one the test moves by
-    /// hand, starting at zero. See `manual_clock_micros_v4`.
+    /// hand, starting at zero. See `manual_clock_nanos_v4`.
     #[cfg(test)]
     fn install_manual_clock_for_test_v4(&mut self) {
-        self.manual_clock_micros_v4 = Some(0);
+        self.manual_clock_nanos_v4 = Some(0);
     }
 
-    /// Test-only: moves the manual clock forward. Panics if no manual
-    /// clock is installed, because silently measuring the system clock
-    /// instead is exactly the ambiguity this exists to remove.
+    /// Test-only: moves the manual clock forward by an exact duration, at
+    /// nanosecond resolution. Panics if no manual clock is installed,
+    /// because silently measuring the system clock instead is exactly the
+    /// ambiguity this exists to remove.
     #[cfg(test)]
-    fn advance_manual_clock_for_test_v4(&mut self, micros: u64) {
+    fn advance_manual_clock_for_test_v4(&mut self, by: std::time::Duration) {
+        let nanos = u64::try_from(by.as_nanos()).unwrap_or(u64::MAX);
         let clock = self
-            .manual_clock_micros_v4
+            .manual_clock_nanos_v4
             .as_mut()
             .expect("a manual clock must be installed before it can be advanced");
-        *clock = clock.saturating_add(micros);
+        *clock = clock.saturating_add(nanos);
     }
 
     /// Test-only: consumes an injected phase delay.
@@ -916,9 +945,8 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         let Some(delay) = delay else {
             return;
         };
-        let micros = u64::try_from(delay.as_micros()).unwrap_or(u64::MAX);
-        if self.manual_clock_micros_v4.is_some() {
-            self.advance_manual_clock_for_test_v4(micros);
+        if self.manual_clock_nanos_v4.is_some() {
+            self.advance_manual_clock_for_test_v4(delay);
         } else {
             std::thread::sleep(delay);
         }
@@ -1003,7 +1031,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         };
         // The publish clock starts BEFORE the serialization, because
         // serializing is part of publishing; see `append_and_publish_v4`.
-        let publish_started_micros = self.now_micros_v4();
+        let publish_started_nanos = self.now_nanos_v4();
         let line = serde_json::to_string(&header).map_err(io::Error::other)?;
         self.open = Some(OpenEpisodeV4 {
             episode_id,
@@ -1014,9 +1042,9 @@ impl ModelGuidedSearchOutcomeWriterV4 {
             next_decision_ordinal: 0,
             last_publish_micros: 0,
             last_response_micros: 0,
-            publication_completed_at_micros: None,
+            publication_completed_at_nanos: None,
         });
-        let published = self.append_and_publish_v4(line, false, publish_started_micros);
+        let published = self.append_and_publish_v4(line, false, publish_started_nanos);
         if published.is_err() {
             // The header never reached disk, so there is no episode to
             // close and no file for a footer to belong to. Dropping the
@@ -1048,7 +1076,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         // episode. Starting the clock at the durable move left all of it
         // outside every timer, and it then reappeared in whichever phase
         // was computed as a residual.
-        let publish_started_micros = self.now_micros_v4();
+        let publish_started_nanos = self.now_nanos_v4();
         let (ordinal, decision_ordinal, previous, last_publish_micros, last_response_micros) = {
             let episode = self
                 .open
@@ -1076,7 +1104,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         record.wall_time.previous_record_publish_micros = last_publish_micros;
         record.wall_time.previous_record_response_micros = last_response_micros;
         let line = serde_json::to_string(&record).map_err(io::Error::other)?;
-        self.append_and_publish_v4(line, true, publish_started_micros)
+        self.append_and_publish_v4(line, true, publish_started_nanos)
     }
 
     /// Closes the OUTER request boundary: the response line for the
@@ -1103,14 +1131,14 @@ impl ModelGuidedSearchOutcomeWriterV4 {
     /// the same publication: attributing an unrelated interval to an
     /// already measured record would be worse than measuring nothing.
     pub fn note_request_completed_v4(&mut self) {
-        let now_micros = self.now_micros_v4();
+        let now_nanos = self.now_nanos_v4();
         let Some(episode) = self.open.as_mut() else {
             return;
         };
-        let Some(completed_at_micros) = episode.publication_completed_at_micros.take() else {
+        let Some(completed_at_nanos) = episode.publication_completed_at_nanos.take() else {
             return;
         };
-        episode.last_response_micros = now_micros.saturating_sub(completed_at_micros);
+        episode.last_response_micros = interval_micros_v4(completed_at_nanos, now_nanos);
     }
 
     /// CLOSES the open episode with a footer, then forgets it.
@@ -1128,7 +1156,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
     pub fn close_episode_v4(&mut self, close_reason: EpisodeCloseReasonV4) -> io::Result<()> {
         // As in `write_decision_v4`: publishing the footer starts here,
         // and the whole-episode digest it commits to is part of that cost.
-        let publish_started_micros = self.now_micros_v4();
+        let publish_started_nanos = self.now_nanos_v4();
         let footer = {
             let episode = self
                 .open
@@ -1156,7 +1184,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
             }
         };
         let line = serde_json::to_string(&footer).map_err(io::Error::other)?;
-        self.append_and_publish_v4(line, false, publish_started_micros)?;
+        self.append_and_publish_v4(line, false, publish_started_nanos)?;
         self.open = None;
         Ok(())
     }
@@ -1193,7 +1221,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         &mut self,
         line: String,
         is_decision: bool,
-        publish_started_micros: u64,
+        publish_started_nanos: u64,
     ) -> io::Result<()> {
         let episode = self
             .open
@@ -1224,8 +1252,9 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         publish_atomically_v4(&path, &bytes)?;
         #[cfg(test)]
         self.apply_test_phase_delay_v4(self.publish_delay_for_test_v4);
-        let publication_completed_at_micros = self.now_micros_v4();
-        let publish_micros = publication_completed_at_micros.saturating_sub(publish_started_micros);
+        let publication_completed_at_nanos = self.now_nanos_v4();
+        let publish_micros =
+            interval_micros_v4(publish_started_nanos, publication_completed_at_nanos);
         // Commit. Nothing above this line mutated the writer.
         let episode = self
             .open
@@ -1239,7 +1268,7 @@ impl ModelGuidedSearchOutcomeWriterV4 {
         // reads as zero until the response boundary measures it from the
         // instant recorded here.
         episode.last_response_micros = 0;
-        episode.publication_completed_at_micros = Some(publication_completed_at_micros);
+        episode.publication_completed_at_nanos = Some(publication_completed_at_nanos);
         if is_decision {
             episode.next_decision_ordinal += 1;
         }
@@ -1944,14 +1973,14 @@ mod tests {
         // and the client's response going out. That is where a slow export
         // or a slow stdout sits, and the tail is measured across it rather
         // than inferred.
-        writer.advance_manual_clock_for_test_v4(220_000);
+        writer.advance_manual_clock_for_test_v4(std::time::Duration::from_micros(220_000));
         writer.note_request_completed_v4();
         // A second boundary for the same publish changes nothing: the tail
         // was already attributed, and a later request that published no
         // record must not overwrite it. On a controlled clock that is an
         // exact statement, and the assertions below make it: the tail
         // reads 220 ms, not 250 ms.
-        writer.advance_manual_clock_for_test_v4(30_000);
+        writer.advance_manual_clock_for_test_v4(std::time::Duration::from_micros(30_000));
         writer.note_request_completed_v4();
         writer
             .close_episode_v4(EpisodeCloseReasonV4::EpisodeTerminal)
@@ -1989,6 +2018,71 @@ mod tests {
             Some(CeilingStatusV4::SloExceeded),
             "a slow response path that crosses the SLO must be visible"
         );
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// CODEX P2, round 4. A phase is the DIFFERENCE of two clock
+    /// readings, so the truncation to whole microseconds has to happen
+    /// once, on that difference. Truncating each reading first computes
+    /// `floor(b) - floor(a)`, which reports a whole microsecond for any
+    /// phase whose endpoints happen to straddle a microsecond boundary,
+    /// however short it actually was. Both the publish and the response
+    /// tail can pick one up that way and both are summed into the protocol
+    /// total, so a decision sitting exactly on the 4.0 s SLO or the 20.0 s
+    /// hard timeout could be classified over it by arithmetic that
+    /// describes nothing the panel host did.
+    #[test]
+    fn a_phase_is_truncated_once_on_the_interval_and_never_at_its_endpoints_v4() {
+        // The witness: 100.9 us to 101.1 us is a 0.2 us phase and reads as
+        // zero. Flooring the endpoints first would report 101 - 100 = 1.
+        assert_eq!(interval_micros_v4(100_900, 101_100), 0);
+        // A phase that really does span a microsecond still reports one,
+        // wherever it starts.
+        assert_eq!(interval_micros_v4(100_900, 101_900), 1);
+        assert_eq!(interval_micros_v4(0, 999), 0);
+        assert_eq!(interval_micros_v4(0, 1_000), 1);
+        assert_eq!(interval_micros_v4(0, 1_999), 1);
+        // A non-monotonic pair reads as zero rather than wrapping.
+        assert_eq!(interval_micros_v4(1_500, 1_400), 0);
+
+        // And the same straddle through the real writer, so the rule is
+        // pinned where it is applied rather than only where it is defined.
+        let directory = scratch_directory_v4(18);
+        let mut writer = ModelGuidedSearchOutcomeWriterV4::open_directory_v4(directory.clone())
+            .expect("directory opens");
+        writer.install_manual_clock_for_test_v4();
+        writer
+            .begin_episode_v4(16, 909, PlayerSeatV1::P0, wrapper_identity_v4())
+            .expect("header publishes");
+        // Park the clock just under a microsecond boundary, so the publish
+        // below starts at 900 ns and ends at 1_100 ns: 200 ns of work
+        // across the boundary.
+        writer.advance_manual_clock_for_test_v4(std::time::Duration::from_nanos(900));
+        writer.set_publish_delay_for_test_v4(std::time::Duration::from_nanos(200));
+        writer
+            .write_decision_v4(decision_record_v4(16, WallTimeV4::default()))
+            .expect("decision publishes");
+        // The response tail straddles the next boundary the same way.
+        writer.advance_manual_clock_for_test_v4(std::time::Duration::from_nanos(200));
+        writer.note_request_completed_v4();
+        writer
+            .close_episode_v4(EpisodeCloseReasonV4::EpisodeTerminal)
+            .expect("footer publishes");
+
+        let bytes = fs::read(writer.episode_path_v4(16, 909)).unwrap();
+        let ceilings = episode_decision_ceilings_v4(&bytes).expect("chain verifies");
+        assert_eq!(ceilings.len(), 1);
+        assert_eq!(
+            ceilings[0].publish_micros,
+            Some(0),
+            "a 200 ns publish across a microsecond boundary is still 0 us"
+        );
+        assert_eq!(
+            ceilings[0].response_micros,
+            Some(0),
+            "and so is a 200 ns response tail"
+        );
+        assert_eq!(ceilings[0].protocol_micros, Some(0));
         fs::remove_dir_all(&directory).ok();
     }
 
