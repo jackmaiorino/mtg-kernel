@@ -10,6 +10,7 @@ use crate::native_policy_train_step_v1::NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKE
 use crate::native_training_store_run_v2::{
     NativeRunEnvironmentTrajectoryContractV1, TrainRunEnvironmentV2, TrainRunPackageV2,
     TrainRunRuntimeV2, TrainRunSourceV2, TrainRunToolchainV2, ValidatedTrainRunV2,
+    CPU_RUNTIME_TUPLE_IDENTITY_V2,
 };
 use crate::policy_surface_v5::POLICY_SURFACE_VERSION;
 use crate::rl_session::{
@@ -584,8 +585,29 @@ fn build_runtime_record(
     runtime: &RuntimeSnapshotV2,
     toolchain: &TrainRunToolchainV2,
 ) -> TrainRunRuntimeV2 {
+    build_runtime_record_for_tuple_v2(
+        runtime,
+        toolchain,
+        CPU_RUNTIME_TUPLE_IDENTITY_V2,
+        NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1,
+    )
+}
+
+/// The same runtime record, for a caller-named runtime tuple.
+///
+/// `build_runtime_record` above is exactly this with the CPU pair, so there
+/// is one implementation rather than two. The pair is never invented by the
+/// caller: `validate_runtime_v2` requires
+/// `store_backend_identity_for_runtime_tuple_v2(tuple) == backend`, and the
+/// only admissible pairs are the two this crate declares.
+fn build_runtime_record_for_tuple_v2(
+    runtime: &RuntimeSnapshotV2,
+    toolchain: &TrainRunToolchainV2,
+    tuple_identity: &str,
+    numerical_backend_identity: &str,
+) -> TrainRunRuntimeV2 {
     TrainRunRuntimeV2 {
-        tuple_identity: "mtg-kernel-native-windows-cpu-runtime-tuple-v1".to_string(),
+        tuple_identity: tuple_identity.to_string(),
         os_capture_identity: "windows-rtlgetversion-native-system-info-v1".to_string(),
         os_system: "windows".to_string(),
         os_major: runtime.os_major,
@@ -598,12 +620,181 @@ fn build_runtime_record(
         native_architecture: runtime.native_architecture.clone(),
         process_architecture: runtime.process_architecture.clone(),
         byte_order: "little".to_string(),
-        numerical_backend_identity: NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1
-            .to_string(),
+        numerical_backend_identity: numerical_backend_identity.to_string(),
         rustc_release: toolchain.rustc_release.clone(),
         rustc_commit_hash: toolchain.rustc_commit_hash.clone(),
         target_triple: toolchain.target_triple.clone(),
         build_profile: "release".to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Launcher-level build provenance (cycle-4 round E)
+//
+// A record BUILDER runs in a different process from the launcher that will
+// publish the Store, so it cannot use `NativeStoreProductionCaptureGuardV2`:
+// that guard captures the CURRENT module and requires it to be
+// `mtg-kernel-native.exe`. What it can do is emit exactly the same
+// provenance the guard would, from the same two sources -- this build's
+// embedded build-capture tuple, and a real capture of the launcher
+// executable the record names -- so a record's package, toolchain and
+// source describe the build that produced it rather than an inherited
+// ancestor's.
+// ---------------------------------------------------------------------
+
+/// The provenance half of a run record, captured for one named launcher
+/// executable by the build that is running right now.
+pub(crate) struct LauncherBuildProvenanceV2 {
+    pub(crate) package: TrainRunPackageV2,
+    pub(crate) toolchain: TrainRunToolchainV2,
+    pub(crate) source: TrainRunSourceV2,
+    pub(crate) runtime: TrainRunRuntimeV2,
+}
+
+/// Captures the provenance a record produced by THIS build must declare.
+///
+/// `executable` is the launcher that will publish the Store (for cycle 4,
+/// `cycle4_arm_v1.exe`), not the process calling this. Its leaf name is
+/// required to equal `expected_leaf` and is what the record's `binary_name`
+/// declares, so the record names the binary it was actually captured from.
+/// The file is opened no-follow, hashed, and reopened once to prove the
+/// bytes did not drift during capture -- the same double read
+/// `NativeStoreProductionCaptureGuardV2::begin` performs on its own module.
+///
+/// The source-tree half comes from the embedded build-capture constants,
+/// which are what `capture_and_require_build_source` verifies a live tree
+/// against; a builder therefore needs no source tree on disk, and cannot
+/// disagree with the guard about what this build's tree was.
+///
+/// # Errors
+///
+/// Returns the ordinary capture rejection if the build-capture constants
+/// are unusable, if `executable` is not a drive-absolute local path whose
+/// leaf is `expected_leaf`, if it cannot be opened as a regular file, or if
+/// its bytes changed between the two reads.
+pub(crate) fn capture_launcher_build_provenance_v2(
+    executable: &Path,
+    expected_leaf: &str,
+    runtime_tuple_identity: &str,
+    numerical_backend_identity: &str,
+) -> Result<LauncherBuildProvenanceV2> {
+    validate_build_capture_constants()?;
+    validate_executable_path(executable, expected_leaf)?;
+    let _parent_chain = validate_and_open_parent_chain(executable)?;
+    let mut file = open_regular_read_only(executable)?;
+    let snapshot = capture_executable_handle(&mut file)?;
+    let secondary = capture_named_executable_snapshot_v2(executable, expected_leaf)?;
+    if secondary != snapshot {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::ExecutableMismatch,
+            "executable_secondary_reopen_mismatch",
+        ));
+    }
+
+    let toolchain = build_toolchain_record();
+    let runtime_snapshot = capture_runtime_snapshot()?;
+    Ok(LauncherBuildProvenanceV2 {
+        package: build_package_record(),
+        source: build_source_record_from_build_capture_v2(&snapshot, expected_leaf),
+        runtime: build_runtime_record_for_tuple_v2(
+            &runtime_snapshot,
+            &toolchain,
+            runtime_tuple_identity,
+            numerical_backend_identity,
+        ),
+        toolchain,
+    })
+}
+
+/// The same provenance a real capture produces, with a SYNTHETIC executable
+/// snapshot, for sibling modules' tests.
+///
+/// The package, toolchain and source-tree halves are the real embedded
+/// build-capture constants -- which is the half a test actually wants to
+/// assert on, since it is what distinguishes this build from an inherited
+/// ancestor's. Only the four per-file executable fields are synthetic,
+/// because a test cannot conjure a PE image; they are still shaped exactly
+/// as `validate_source_v2` requires.
+#[cfg(test)]
+pub(crate) fn test_launcher_build_provenance_v2(
+    binary_leaf: &str,
+    runtime_tuple_identity: &str,
+    numerical_backend_identity: &str,
+) -> LauncherBuildProvenanceV2 {
+    let snapshot = ExecutableSnapshotV2 {
+        identity: FileIdentityV2 {
+            volume_serial_number: 0x0123_4567_89ab_cdef,
+            file_id: [
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+                0x0e, 0x0f,
+            ],
+        },
+        byte_len: 29_584_896,
+        sha256: "b46ee18ca8a89da93abcd68922236fb194d744ed393ef48d16287be7c5a73d06".to_string(),
+        pe_machine: 0x8664,
+        pe_size_of_image_bytes: 29_589_504,
+    };
+    let toolchain = build_toolchain_record();
+    let runtime_snapshot = RuntimeSnapshotV2 {
+        os_major: 10,
+        os_minor: 0,
+        os_build: 26_100,
+        service_pack_major: 0,
+        service_pack_minor: 0,
+        product_type: 1,
+        suite_mask_u16_hex: "0100".to_string(),
+        native_architecture: "amd64".to_string(),
+        process_architecture: "amd64".to_string(),
+    };
+    LauncherBuildProvenanceV2 {
+        package: build_package_record(),
+        source: build_source_record_from_build_capture_v2(&snapshot, binary_leaf),
+        runtime: build_runtime_record_for_tuple_v2(
+            &runtime_snapshot,
+            &toolchain,
+            runtime_tuple_identity,
+            numerical_backend_identity,
+        ),
+        toolchain,
+    }
+}
+
+fn capture_named_executable_snapshot_v2(
+    path: &Path,
+    expected_leaf: &str,
+) -> Result<ExecutableSnapshotV2> {
+    validate_executable_path(path, expected_leaf)?;
+    let _parent_chain = validate_and_open_parent_chain(path)?;
+    let mut file = open_regular_read_only(path)?;
+    capture_executable_handle(&mut file)
+}
+
+/// [`build_source_record`]'s sibling for a builder: the source-tree half
+/// from the embedded build-capture tuple instead of a live tree capture,
+/// and the executable half from an explicitly named launcher.
+fn build_source_record_from_build_capture_v2(
+    executable: &ExecutableSnapshotV2,
+    binary_leaf: &str,
+) -> TrainRunSourceV2 {
+    TrainRunSourceV2 {
+        git_commit: build_capture::NATIVE_STORE_BUILD_SOURCE_GIT_COMMIT_V1.to_string(),
+        source_tree_recipe_identity:
+            build_capture::NATIVE_STORE_BUILD_SOURCE_TREE_RECIPE_IDENTITY_V1.to_string(),
+        source_tree_recipe_sha256: build_capture::NATIVE_STORE_BUILD_SOURCE_TREE_RECIPE_SHA256_V1
+            .to_string(),
+        source_tree_recipe_byte_count: STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1,
+        source_tree_sha256: build_capture::NATIVE_STORE_BUILD_SOURCE_TREE_SHA256_V1.to_string(),
+        worktree_clean: build_capture::NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1,
+        git_status_sha256: build_capture::NATIVE_STORE_BUILD_SOURCE_GIT_STATUS_SHA256_V1
+            .to_string(),
+        executable_capture_identity: "windows-current-module-path-file-v2".to_string(),
+        binary_name: binary_leaf.to_string(),
+        binary_sha256: executable.sha256.clone(),
+        binary_byte_len: executable.byte_len,
+        binary_volume_serial_u64_hex: format!("{:016x}", executable.identity.volume_serial_number),
+        binary_file_id_128_hex: file_id_hex(&executable.identity.file_id),
+        binary_pe_size_of_image_bytes: executable.pe_size_of_image_bytes,
+        capture_scope: "module-path-file-not-loaded-section-provenance/v1".to_string(),
     }
 }
 

@@ -13,10 +13,14 @@
 //! independent name/value pairs, no positional arguments, every flag at most
 //! once, and one value-less marker (`--force`) that may appear at most once.
 //!
-//! `--output` is written atomically -- a create-new temporary in the
-//! output's own directory, written, flushed, synced, then renamed into place
-//! -- and the temporary is removed on any failure, so a failed run never
-//! leaves a partial run record behind. An existing `--output` is NOT
+//! `--output` is published through the repository's durable move
+//! primitives (`durable_move_publication_v2`), not a hand-rolled rename: an
+//! absent destination is a create-new immutable publication, and a forced
+//! replacement is `replace_file_by_move_v2`, which is the Windows
+//! `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` path.
+//! A plain `std::fs::rename` does NOT replace an existing destination on
+//! Windows, so `--force` over a differing record would otherwise always
+//! fail. An existing `--output` is NOT
 //! overwritten unless `--force` is given: a run record is a campaign
 //! identity, and silently replacing one under a running campaign would
 //! re-key every manifest, locator and origin record bound to it. When the
@@ -30,17 +34,22 @@
 //! only 0/2/3 for the launcher-level bins, so I/O failure is folded into 3
 //! alongside content rejection rather than adding a fourth code.
 
+use mtg_kernel::durable_move_publication_v2::{
+    publish_immutable_file_by_move_v2, replace_file_by_move_v2,
+};
+use mtg_kernel::durable_publication_v1::{
+    capture_existing_publication_parent_v1, DurableFileExpectationV1,
+};
 use mtg_kernel::native_cycle4_arm_v1::Cycle4ArmKindV1;
 use mtg_kernel::native_cycle4_run_record_v1::{
     build_cycle4_arm_run_record_v1, Cycle4RunRecordRequestV1,
 };
 use std::ffi::OsString;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle4_run_record_v1 --arm (control-r|static-rb|treatment-rb) --parent-store-root PATH --parent-generation N --output PATH [--force]"
+        "usage: cycle4_run_record_v1 --arm (control-r|static-rb|treatment-rb) --parent-store-root PATH --parent-generation N --arm-executable PATH --output PATH [--force]"
     );
     std::process::exit(2);
 }
@@ -49,6 +58,7 @@ struct ParsedArgsV1 {
     arm: Cycle4ArmKindV1,
     parent_store_root: PathBuf,
     parent_generation: u64,
+    arm_executable: PathBuf,
     output: PathBuf,
     force: bool,
 }
@@ -60,6 +70,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut arm: Option<Cycle4ArmKindV1> = None;
     let mut parent_store_root: Option<PathBuf> = None;
     let mut parent_generation: Option<u64> = None;
+    let mut arm_executable: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
     let mut force = false;
 
@@ -85,6 +96,9 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             "--parent-generation" if parent_generation.is_none() => {
                 parent_generation = Some(value.to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
             }
+            "--arm-executable" if arm_executable.is_none() => {
+                arm_executable = Some(PathBuf::from(value));
+            }
             "--output" if output.is_none() => {
                 output = Some(PathBuf::from(value));
             }
@@ -97,49 +111,67 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         arm: arm.ok_or(())?,
         parent_store_root: parent_store_root.ok_or(())?,
         parent_generation: parent_generation.ok_or(())?,
+        arm_executable: arm_executable.ok_or(())?,
         output: output.ok_or(())?,
         force,
     })
 }
 
-/// Writes `bytes` to `output` atomically, following
-/// `cycle4_refresh_build_v1.rs`'s writer exactly: a create-new temporary in
-/// `output`'s own directory, written, flushed, and synced, then renamed into
-/// place; the temporary is removed on any failure.
-fn write_output_atomically_or_exit_v1(output: &Path, bytes: &[u8]) {
+/// Publishes `bytes` at `output` through the repository's durable move
+/// primitives.
+///
+/// `replacing` picks which one: a create-new immutable publication when the
+/// destination is absent, and `replace_file_by_move_v2` when a forced
+/// replacement is called for. The distinction is not cosmetic on Windows --
+/// `std::fs::rename` maps to a no-replace move, so a forced overwrite
+/// written that way always fails -- and the replace primitive additionally
+/// stages, verifies the exact length and digest, and write-throughs the
+/// move, which a hand-rolled rename does not.
+fn publish_output_or_exit_v1(output: &Path, bytes: &[u8], replacing: bool) {
     let parent = output.parent().filter(|path| !path.as_os_str().is_empty());
     let parent = parent.unwrap_or_else(|| Path::new("."));
-    let file_name = output.file_name().map_or_else(
-        || "cycle4-run-record".to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let temp_path = parent.join(format!("{file_name}.tmp-{}", std::process::id()));
-
-    let write_result = (|| -> std::io::Result<()> {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        Ok(())
-    })();
-    if let Err(error) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
+    let final_name = output.file_name().unwrap_or_else(|| {
         eprintln!(
-            "cycle4_run_record_v1: failed writing --output ({}): {error}",
+            "cycle4_run_record_v1: --output names no file: {}",
             output.display()
         );
         std::process::exit(3);
+    });
+    let stage_name = format!(
+        "{}.stage-{}",
+        final_name.to_string_lossy(),
+        std::process::id()
+    );
+
+    let fail = |detail: String| -> ! {
+        eprintln!(
+            "cycle4_run_record_v1: failed writing --output ({}): {detail}",
+            output.display()
+        );
+        std::process::exit(3);
+    };
+
+    let captured = capture_existing_publication_parent_v1(parent)
+        .unwrap_or_else(|error| fail(error.to_string()));
+    let expectation =
+        DurableFileExpectationV1::from_bytes(bytes).unwrap_or_else(|error| fail(error.to_string()));
+
+    // A staging file left by an interrupted attempt would make the
+    // create-new publication below collide with its own debris.
+    let staged = parent.join(&stage_name);
+    if staged.exists() {
+        let _ = std::fs::remove_file(&staged);
     }
 
-    if let Err(error) = std::fs::rename(&temp_path, output) {
-        let _ = std::fs::remove_file(&temp_path);
-        eprintln!(
-            "cycle4_run_record_v1: failed writing --output ({}): {error}",
-            output.display()
-        );
-        std::process::exit(3);
+    let result = if replacing {
+        replace_file_by_move_v2(&captured, &stage_name, final_name, bytes, expectation).map(|_| ())
+    } else {
+        publish_immutable_file_by_move_v2(&captured, &stage_name, final_name, bytes, expectation)
+            .map(|_| ())
+    };
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&staged);
+        fail(error.to_string());
     }
 }
 
@@ -162,6 +194,7 @@ fn main() {
         arm: args.arm,
         parent_store_root: args.parent_store_root.clone(),
         parent_generation: args.parent_generation,
+        arm_executable: args.arm_executable.clone(),
     })
     .unwrap_or_else(|error| {
         eprintln!("cycle4_run_record_v1: {error}");
@@ -170,7 +203,9 @@ fn main() {
 
     let existing = std::fs::read(&args.output).ok();
     match overwrite_decision_v1(existing.as_deref(), &outcome.canonical_bytes, args.force) {
-        Some(true) => write_output_atomically_or_exit_v1(&args.output, &outcome.canonical_bytes),
+        Some(true) => {
+            publish_output_or_exit_v1(&args.output, &outcome.canonical_bytes, existing.is_some())
+        }
         Some(false) => {}
         None => {
             eprintln!(
@@ -199,23 +234,89 @@ mod tests {
         values.iter().map(OsString::from).collect()
     }
 
-    #[test]
-    fn parses_every_required_flag_v1() {
-        let parsed = parse_args_v1(args_v1(&[
+    fn required_flags_v1() -> Vec<&'static str> {
+        vec![
             "--arm",
             "treatment-rb",
             "--parent-store-root",
             "E:\\parent\\store",
             "--parent-generation",
             "896",
+            "--arm-executable",
+            "D:\\release\\cycle4_arm_v1.exe",
             "--output",
             "run.json",
-        ]))
-        .expect("well-formed command line parses");
+        ]
+    }
+
+    #[test]
+    fn parses_every_required_flag_v1() {
+        let parsed =
+            parse_args_v1(args_v1(&required_flags_v1())).expect("well-formed command line parses");
         assert_eq!(parsed.arm, Cycle4ArmKindV1::TreatmentRb);
         assert_eq!(parsed.parent_generation, 896);
         assert!(!parsed.force);
+        assert_eq!(
+            parsed.arm_executable,
+            PathBuf::from("D:\\release\\cycle4_arm_v1.exe")
+        );
         assert_eq!(parsed.output, PathBuf::from("run.json"));
+    }
+
+    /// The arm launcher is required: without it the record could only
+    /// inherit somebody else's provenance, which is the defect this flag
+    /// exists to close.
+    #[test]
+    fn the_arm_executable_is_required_v1() {
+        let mut flags = required_flags_v1();
+        let index = flags
+            .iter()
+            .position(|flag| *flag == "--arm-executable")
+            .expect("flag present");
+        flags.drain(index..index + 2);
+        assert!(parse_args_v1(args_v1(&flags)).is_err());
+    }
+
+    /// A create-new publication, then a FORCED replacement of a differing
+    /// file, both through the durable primitives. On Windows a plain
+    /// `std::fs::rename` cannot replace an existing destination, so this is
+    /// the case that used to always exit 3.
+    #[test]
+    fn a_forced_replacement_replaces_a_differing_file_v1() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mtg-kernel-cycle4-run-record-force-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).expect("create temp dir");
+        let output = root.join("run.json");
+
+        publish_output_or_exit_v1(&output, b"first-record-bytes", false);
+        assert_eq!(
+            std::fs::read(&output).expect("read output"),
+            b"first-record-bytes"
+        );
+
+        publish_output_or_exit_v1(&output, b"second-record-bytes", true);
+        assert_eq!(
+            std::fs::read(&output).expect("read replaced output"),
+            b"second-record-bytes"
+        );
+
+        let leftover: Vec<_> = std::fs::read_dir(&root)
+            .expect("list dir")
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".stage-"))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "no staging file should remain after a publication"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]
@@ -228,6 +329,8 @@ mod tests {
             "p",
             "--parent-generation",
             "896",
+            "--arm-executable",
+            "a.exe",
             "--output",
             "o",
         ]))

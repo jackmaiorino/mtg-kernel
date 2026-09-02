@@ -443,6 +443,8 @@ Assert-That -Condition ($runRecordCommand -like "*`"--parent-generation`" `"896`
 Assert-That -Condition ($runRecordCommand -like "*`"--output`"*run.json*") -Message 'the run-record builder writes the arm run record'
 Assert-That -Condition ($runRecordCommand -notlike '*--force*') -Message 'a launch never forces a run-record overwrite'
 Assert-That -Condition ($runRecordCommand -notlike '*--base-seed*') -Message "the arm's base seed is the builder's own literal, never a wrapper flag"
+Assert-That -Condition ($runRecordCommand -like "*`"--arm-executable`" `"$armExecutable`"*") `
+    -Message 'the run-record builder is handed the arm launcher whose build provenance the record declares'
 $genesisParentBinding = Get-Content -Raw -LiteralPath (Join-Path $attempt 'genesis-parent-binding.json') | ConvertFrom-Json
 Assert-That -Condition ([uint64]$genesisParentBinding.parent_generation -eq 896) `
     -Message 'the wrapper records the parent generation it proved against the run record'

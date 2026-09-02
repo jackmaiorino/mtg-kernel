@@ -46,11 +46,16 @@
 use crate::native_cycle4_arm_v1::{validate_cycle4_arm_run_record_v1, Cycle4ArmKindV1};
 use crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initialization_v1;
 use crate::native_policy_baseline_state_v4::NATIVE_BASELINE_STATE_SCHEMA_V4;
+use crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1;
+use crate::native_store_production_capture_v2::{
+    capture_launcher_build_provenance_v2, LauncherBuildProvenanceV2,
+};
 use crate::native_training_store_run_v2::{
     decode_train_run_v2, refresh_derived_fields_v2, validate_train_run_record_v2,
     OpponentLadderInitializationContractV1, PopulationProgramContractV2Cycle4, TrainRunContractsV2,
     TrainRunScheduleV2, TrainRunV2, TrainerV4CandidateContractV1, ValidatedTrainRunV2,
-    CYCLE4_PREREG_SHA256_V1, CYCLE4_REFRESH_INTERVAL_V1, CYCLE4_REFRESH_MANIFEST_SCHEMA_V1,
+    CUDA_RUNTIME_TUPLE_IDENTITY_V2, CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1, CYCLE4_PREREG_SHA256_V1,
+    CYCLE4_REFRESH_INTERVAL_V1, CYCLE4_REFRESH_MANIFEST_SCHEMA_V1,
     CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1, CYCLE4_TRAINEE_START_GENERATION_V1,
     CYCLE4_TRAINEE_STOP_GENERATION_V1, CYCLE4_TRAINER_V4_BETA_F32_BITS_V1,
     CYCLE4_TRAINER_V4_CELL_CAP_V1, CYCLE4_TRAINER_V4_CONTRACT_DOCUMENT_SHA256_V1,
@@ -61,43 +66,16 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
-/// The three arms' formal training base seeds.
+/// The arm's formal training base seed.
 ///
-/// Pre-registration V2 Section 8 requires the seed-schedule policy to be
-/// stated explicitly and Section 9 leaves the literals to ratification; this
-/// is that statement, and these three literals exist in exactly one place in
-/// the tree.
-///
-/// Domains are disjoint by construction, on two axes:
-///
-/// - Between arms: each arm owns its own reserved 1,000-wide training band
-///   (`[978_000, 979_000)`, `[979_000, 980_000)`, `[980_000, 981_000)`) and
-///   uses that band's base. Nothing derives a training seed by adding a
-///   small offset to another arm's base, so no two arms can ever draw the
-///   same environment, learner or opponent seed: every seed is
-///   `derive_seed(namespace, [base_seed, ...])`, keyed on the base literal.
-/// - Against the payoff panels: the whole training band `[978_000, 981_000)`
-///   is disjoint from the panel band `[4_100_000_000, 5_900_000_000)` the
-///   wrapper strides through (three arms x 600,000,000, 32,000,000 per
-///   refresh), so no training pair seed can ever collide with a panel pair
-///   seed. Training and payoff seeds are therefore DISJOINT, not common.
-///
-/// They are also distinct from every base seed any earlier program used
-/// (920012, 970001-3, 971xxx, 972002, 975002, 977002), so a cycle-4 arm can
-/// never be confused with an ancestor by base seed alone.
-const CYCLE4_ARM_BASE_SEED_CONTROL_R_V1: u64 = 978_000;
-const CYCLE4_ARM_BASE_SEED_STATIC_RB_V1: u64 = 979_000;
-const CYCLE4_ARM_BASE_SEED_TREATMENT_RB_V1: u64 = 980_000;
-
-/// The arm's formal training base seed. See the constants above for the
-/// disjoint-domain policy this implements.
+/// The literals and the disjoint-domain policy live on
+/// [`Cycle4ArmKindV1::formal_base_seed_v1`], not here: the mapping is a
+/// property of the ARM, and `validate_run_contract_v1` enforces it on every
+/// invocation, including one handed a record this builder never wrote. This
+/// is the builder's view of the same fact.
 #[must_use]
 pub const fn cycle4_arm_base_seed_v1(arm: Cycle4ArmKindV1) -> u64 {
-    match arm {
-        Cycle4ArmKindV1::ControlR => CYCLE4_ARM_BASE_SEED_CONTROL_R_V1,
-        Cycle4ArmKindV1::StaticRb => CYCLE4_ARM_BASE_SEED_STATIC_RB_V1,
-        Cycle4ArmKindV1::TreatmentRb => CYCLE4_ARM_BASE_SEED_TREATMENT_RB_V1,
-    }
+    arm.formal_base_seed_v1()
 }
 
 /// One run-record build request. Every field is required; there are no
@@ -108,8 +86,15 @@ pub struct Cycle4RunRecordRequestV1 {
     /// The cycle-3 lineage Store the arm's genesis weights come from.
     pub parent_store_root: PathBuf,
     /// The parent's generation in ITS OWN Store numbering, which for the
-    /// cycle-3 focal run is also the trainee-local number: 896.
+    /// cycle-3 focal run is also the trainee-local number: 896. Any other
+    /// value is rejected before the parent is even staged: cycle 4 starts at
+    /// the pre-registered g896 prefix and nowhere else.
     pub parent_generation: u64,
+    /// The cycle-4 arm launcher that will publish the Store
+    /// (`cycle4_arm_v1.exe`). Its build provenance, not the parent record's,
+    /// is what the assembled record declares, so the record describes the
+    /// executable that produced it.
+    pub arm_executable: PathBuf,
 }
 
 /// What one build produced.
@@ -133,9 +118,13 @@ pub enum Cycle4RunRecordErrorV1 {
     ParentRunFileIo { path: PathBuf, detail: String },
     /// The parent Store's `run.json` failed V2 record validation.
     ParentRunRejected { detail: String },
+    /// `--parent-generation` named a generation cycle 4 does not start from.
+    ParentGenerationNotPinned { requested: u64, required: u64 },
     /// The pinned parent checkpoint at `--parent-generation` could not be
     /// resolved from the parent Store.
     ParentCheckpointRejected { detail: String },
+    /// The arm launcher executable could not be captured.
+    ArmExecutableRejected { path: PathBuf, detail: String },
     /// The parent record does not carry the ladder tuple a cycle-4 arm needs
     /// (`opponent_ladder_pool` plus `opponent_schedule_v2` under the ladder
     /// opponent identity); the arm record is built FROM it, so it cannot be
@@ -156,9 +145,21 @@ impl Display for Cycle4RunRecordErrorV1 {
             Self::ParentRunRejected { detail } => {
                 write!(formatter, "parent run.json rejected: {detail}")
             }
+            Self::ParentGenerationNotPinned {
+                requested,
+                required,
+            } => write!(
+                formatter,
+                "parent generation {requested} is not the pre-registered cycle-4 start {required}; a cycle-4 arm is seeded from the cycle-3 focal run's g{required} prefix and from no other generation"
+            ),
             Self::ParentCheckpointRejected { detail } => {
                 write!(formatter, "parent checkpoint rejected: {detail}")
             }
+            Self::ArmExecutableRejected { path, detail } => write!(
+                formatter,
+                "the arm launcher executable could not be captured ({}): {detail}",
+                path.display()
+            ),
             Self::ParentMissingLadderTuple { section } => write!(
                 formatter,
                 "the parent run record carries no contracts.{section}; a cycle-4 arm record cannot be built from it"
@@ -215,6 +216,19 @@ fn population_program_section_v1(arm: Cycle4ArmKindV1) -> PopulationProgramContr
 pub fn build_cycle4_arm_run_record_v1(
     request: &Cycle4RunRecordRequestV1,
 ) -> Result<Cycle4RunRecordOutcomeV1> {
+    // The pinned start generation is checked BEFORE anything is staged: a
+    // request naming the lineage tip must not reach
+    // `stage_ladder_checkpoint_initialization_v1`, because whatever that
+    // staged would be written into `opponent_ladder_initialization` and the
+    // arm would then be seeded from it. The wrapper performs the same
+    // comparison against the finished record as a second, independent gate.
+    if request.parent_generation != CYCLE4_TRAINEE_START_GENERATION_V1 {
+        return Err(Cycle4RunRecordErrorV1::ParentGenerationNotPinned {
+            requested: request.parent_generation,
+            required: CYCLE4_TRAINEE_START_GENERATION_V1,
+        });
+    }
+
     let parent_root: &Path = request.parent_store_root.as_path();
     let parent_run_path = parent_root.join("run.json");
     let parent_bytes = std::fs::read(&parent_run_path).map_err(|error| {
@@ -244,7 +258,24 @@ pub fn build_cycle4_arm_run_record_v1(
         )?;
     let parent_run_sha256 = initialization.source_run_sha256.clone();
 
-    let validated = assemble_cycle4_arm_run_record_v1(request.arm, &parent, initialization)?;
+    // The provenance the record declares is THIS build's and the arm
+    // launcher's, never the parent's. Inheriting the parent's package,
+    // toolchain, source and runtime would make a cycle-4 record describe an
+    // older executable built from an older tree, possibly without the CUDA
+    // feature the arms train under.
+    let provenance = capture_launcher_build_provenance_v2(
+        request.arm_executable.as_path(),
+        CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
+        CUDA_RUNTIME_TUPLE_IDENTITY_V2,
+        CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
+    )
+    .map_err(|error| Cycle4RunRecordErrorV1::ArmExecutableRejected {
+        path: request.arm_executable.clone(),
+        detail: error.to_string(),
+    })?;
+
+    let validated =
+        assemble_cycle4_arm_run_record_v1(request.arm, &parent, initialization, provenance)?;
     Ok(Cycle4RunRecordOutcomeV1 {
         arm_kind: request.arm.wire_v1().to_owned(),
         base_seed: cycle4_arm_base_seed_v1(request.arm),
@@ -264,7 +295,40 @@ fn assemble_cycle4_arm_run_record_v1(
     arm: Cycle4ArmKindV1,
     parent: &ValidatedTrainRunV2,
     initialization: OpponentLadderInitializationContractV1,
+    provenance: LauncherBuildProvenanceV2,
 ) -> Result<ValidatedTrainRunV2> {
+    assemble_with_base_seed_v1(
+        arm,
+        parent,
+        initialization,
+        provenance,
+        cycle4_arm_base_seed_v1(arm),
+    )
+}
+
+/// The assembly body, with the base seed as an explicit parameter.
+///
+/// Production has exactly one caller, above, which passes the arm's pinned
+/// seed. The parameter exists so a test can present a record carrying the
+/// WRONG arm's seed and prove the launcher's own record-level validator
+/// refuses it -- the seed rule has to hold for records this builder never
+/// wrote, so it cannot be tested by only ever building correct ones.
+fn assemble_with_base_seed_v1(
+    arm: Cycle4ArmKindV1,
+    parent: &ValidatedTrainRunV2,
+    initialization: OpponentLadderInitializationContractV1,
+    provenance: LauncherBuildProvenanceV2,
+    base_seed: u64,
+) -> Result<ValidatedTrainRunV2> {
+    // Restated here as well as in the caller: this function is what a test
+    // drives, and a record whose pinned origin is not g896 must not be
+    // assemblable by any path.
+    if initialization.generation != CYCLE4_TRAINEE_START_GENERATION_V1 {
+        return Err(Cycle4RunRecordErrorV1::ParentGenerationNotPinned {
+            requested: initialization.generation,
+            required: CYCLE4_TRAINEE_START_GENERATION_V1,
+        });
+    }
     let parent_record = parent.record();
     let parent_contracts = &parent_record.contracts;
     let ladder_pool = parent_contracts.opponent_ladder_pool.clone().ok_or(
@@ -278,12 +342,18 @@ fn assemble_cycle4_arm_run_record_v1(
         },
     )?;
 
-    let base_seed = cycle4_arm_base_seed_v1(arm);
     let uses_v4 = arm.uses_baseline_v4_v1();
     let mut loss = parent_contracts.loss.clone();
     if uses_v4 {
         loss.identity = CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned();
     }
+    // Set, not inherited, and for every arm: all three train on the CUDA
+    // burn-dense backend, `validate_cross_bindings_v2` binds this field to
+    // `runtime.numerical_backend_identity` (which the captured provenance
+    // above pins to the CUDA tuple), and the v4 arms admit no other backend.
+    let mut train_step = parent_contracts.train_step.clone();
+    train_step.numerical_backend_identity =
+        CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1.to_owned();
 
     let contracts = TrainRunContractsV2 {
         trainer_identity: parent_contracts.trainer_identity.clone(),
@@ -295,7 +365,7 @@ fn assemble_cycle4_arm_run_record_v1(
         tensorizer: parent_contracts.tensorizer.clone(),
         model: parent_contracts.model.clone(),
         loss,
-        train_step: parent_contracts.train_step.clone(),
+        train_step,
         optimizer: parent_contracts.optimizer.clone(),
         trainer_schedule: parent_contracts.trainer_schedule.clone(),
         learner_sampler: parent_contracts.learner_sampler.clone(),
@@ -330,13 +400,25 @@ fn assemble_cycle4_arm_run_record_v1(
         ..parent_record.schedule.clone()
     };
 
+    let LauncherBuildProvenanceV2 {
+        package,
+        toolchain,
+        source,
+        runtime,
+    } = provenance;
     let mut record = TrainRunV2 {
         schema: TRAIN_RUN_SCHEMA_V2.to_owned(),
         store_identity: NATIVE_TRAINING_STORE_IDENTITY_V2.to_owned(),
-        package: parent_record.package.clone(),
-        toolchain: parent_record.toolchain.clone(),
-        source: parent_record.source.clone(),
-        runtime: parent_record.runtime.clone(),
+        // Provenance is the CURRENT build's and the arm launcher's. The
+        // environment below stays the parent's: it is a catalog fact, not a
+        // build fact, and `validate_environment_v2` plus
+        // `classify_catalog_profile_v1` check it against the live catalog at
+        // decode, so an inherited environment that disagreed with this build
+        // would not decode at all.
+        package,
+        toolchain,
+        source,
+        runtime,
         environment: parent_record.environment.clone(),
         contracts,
         model_snapshot: parent_record.model_snapshot.clone(),
@@ -373,10 +455,28 @@ fn assemble_cycle4_arm_run_record_v1(
 mod tests {
     use super::*;
     use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+    use crate::native_store_production_capture_v2::test_launcher_build_provenance_v2;
     use crate::native_training_store_run_v2::{
         test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
         test_fixture_ladder_initialization_v1, test_fixture_ladder_pool_v2,
     };
+
+    /// The pinned genesis origin at the pre-registered start generation.
+    /// The shared fixture pins an older program's parent generation, and a
+    /// cycle-4 record may only ever be seeded from g896.
+    fn pinned_origin_v1() -> OpponentLadderInitializationContractV1 {
+        let mut initialization = test_fixture_ladder_initialization_v1();
+        initialization.generation = CYCLE4_TRAINEE_START_GENERATION_V1;
+        initialization
+    }
+
+    fn provenance_v1() -> LauncherBuildProvenanceV2 {
+        test_launcher_build_provenance_v2(
+            CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
+            CUDA_RUNTIME_TUPLE_IDENTITY_V2,
+            CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
+        )
+    }
 
     const ARMS_V1: [Cycle4ArmKindV1; 3] = [
         Cycle4ArmKindV1::ControlR,
@@ -406,12 +506,123 @@ mod tests {
     }
 
     fn build_v1(arm: Cycle4ArmKindV1) -> ValidatedTrainRunV2 {
-        assemble_cycle4_arm_run_record_v1(
-            arm,
-            &parent_v1(),
-            test_fixture_ladder_initialization_v1(),
+        assemble_cycle4_arm_run_record_v1(arm, &parent_v1(), pinned_origin_v1(), provenance_v1())
+            .expect("the assembled cycle-4 arm record must validate")
+    }
+
+    /// A parent generation other than the pre-registered 896 is refused
+    /// before anything is staged from it, so `-GenesisParentGeneration 2048`
+    /// can never seed cycle 4 from the cycle-3 lineage tip.
+    #[test]
+    fn only_the_pinned_parent_generation_is_admissible_v1() {
+        for generation in [0_u64, 384, 895, 897, 2048] {
+            let mut initialization = pinned_origin_v1();
+            initialization.generation = generation;
+            let error = assemble_cycle4_arm_run_record_v1(
+                Cycle4ArmKindV1::TreatmentRb,
+                &parent_v1(),
+                initialization,
+                provenance_v1(),
+            )
+            .expect_err("a parent generation other than 896 must be refused");
+            assert_eq!(
+                error,
+                Cycle4RunRecordErrorV1::ParentGenerationNotPinned {
+                    requested: generation,
+                    required: CYCLE4_TRAINEE_START_GENERATION_V1,
+                }
+            );
+        }
+        // And 896 itself still builds.
+        assert_eq!(
+            build_v1(Cycle4ArmKindV1::TreatmentRb)
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .as_ref()
+                .expect("pinned origin")
+                .generation,
+            CYCLE4_TRAINEE_START_GENERATION_V1
+        );
+    }
+
+    /// The record's provenance is THIS build's and the arm launcher's, not
+    /// the parent's: a cycle-4 record must not describe an older executable
+    /// built from an older tree, possibly without the CUDA feature.
+    #[test]
+    fn provenance_is_the_current_build_not_the_parents_v1() {
+        let parent = parent_v1();
+        let built = assemble_cycle4_arm_run_record_v1(
+            Cycle4ArmKindV1::TreatmentRb,
+            &parent,
+            pinned_origin_v1(),
+            provenance_v1(),
         )
-        .expect("the assembled cycle-4 arm record must validate")
+        .expect("the assembled record must validate");
+        let expected = provenance_v1();
+        let record = built.record();
+
+        assert_eq!(record.package, expected.package);
+        assert_eq!(record.toolchain, expected.toolchain);
+        assert_eq!(record.source, expected.source);
+        assert_eq!(record.runtime, expected.runtime);
+
+        let parent_record = parent.record();
+        assert_ne!(record.package, parent_record.package);
+        assert_ne!(record.source, parent_record.source);
+        // The launcher the record names is the one that publishes the Store.
+        assert_eq!(
+            record.source.binary_name,
+            CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
+        );
+        // And the device contract is the CUDA pair, for every arm kind.
+        assert_eq!(
+            record.runtime.tuple_identity,
+            CUDA_RUNTIME_TUPLE_IDENTITY_V2
+        );
+        assert_eq!(
+            record.runtime.numerical_backend_identity,
+            CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1
+        );
+        assert_eq!(
+            record.contracts().train_step.numerical_backend_identity,
+            CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1
+        );
+    }
+
+    /// The arm-to-base-seed mapping is enforced by the LAUNCHER's own
+    /// record-level validator, not only by the builder, so a record
+    /// carrying another arm's seed is refused even though it is otherwise a
+    /// perfectly valid cycle-4 record for its declared arm kind.
+    #[test]
+    fn the_launcher_rejects_a_record_carrying_another_arms_seed_v1() {
+        for arm in ARMS_V1 {
+            for other in ARMS_V1 {
+                if other == arm {
+                    continue;
+                }
+                let wrong_seed = other.formal_base_seed_v1();
+                let error = assemble_with_base_seed_v1(
+                    arm,
+                    &parent_v1(),
+                    pinned_origin_v1(),
+                    provenance_v1(),
+                    wrong_seed,
+                )
+                .expect_err("another arm's base seed must be refused");
+                assert_eq!(
+                    error,
+                    Cycle4RunRecordErrorV1::ArmContractRejected {
+                        code: "cycle4_arm_v1_base_seed_mismatch".to_owned(),
+                        detail: format!(
+                            "cycle4_arm_v1_base_seed_mismatch: {} trains under base seed {}, but the run record declares {wrong_seed}",
+                            arm.wire_v1(),
+                            arm.formal_base_seed_v1()
+                        ),
+                    }
+                );
+            }
+        }
     }
 
     #[test]

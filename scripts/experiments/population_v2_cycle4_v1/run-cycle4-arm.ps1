@@ -9,7 +9,8 @@ child process (the arm bin, the payoff panel runner, the refresh builder bin)
 whose exit code this wrapper captures and whose inputs it proves first.
 
 The arm's run record is DERIVED, not supplied: cycle4_run_record_v1 builds it
-from the arm kind, the pinned parent Store, and the compiled cycle-4 literals,
+from the arm kind, the pinned parent Store, -ArmExecutable's own build
+provenance, and the compiled cycle-4 literals,
 and refuses to replace a DIFFERENT record already at -RunRecord. Running it on
 every launch therefore both produces the record the first time and re-proves an
 existing one on every later attempt. -UseExistingRunRecord is the explicit
@@ -217,6 +218,10 @@ try {
                 '--arm', $Arm,
                 '--parent-store-root', $GenesisParentStoreRoot,
                 '--parent-generation', [string]$GenesisParentGeneration,
+                # The record declares the provenance of the launcher that
+                # will publish the Store, so the builder is handed that exact
+                # executable rather than inheriting the parent record's.
+                '--arm-executable', $ArmExecutable,
                 '--output', $RunRecord
             ) `
             -WorkingDirectory $RepoRoot `

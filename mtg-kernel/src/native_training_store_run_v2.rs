@@ -329,8 +329,10 @@ const FROZEN_LOSS_IDENTITY_V2: &str = "terminal_reinforce_value/v3";
 const FROZEN_TRAIN_STEP_IDENTITY_V2: &str = "native-policy-value-cpu-train-step-v1";
 const FROZEN_NUMERICAL_BACKEND_IDENTITY_V2: &str =
     "rust-production-native-policy-train-step-v1-cpu-ieee754-binary32-sequential";
-const CPU_RUNTIME_TUPLE_IDENTITY_V2: &str = "mtg-kernel-native-windows-cpu-runtime-tuple-v1";
-const CUDA_RUNTIME_TUPLE_IDENTITY_V2: &str = "mtg-kernel-native-windows-cuda-runtime-tuple-v1";
+pub(crate) const CPU_RUNTIME_TUPLE_IDENTITY_V2: &str =
+    "mtg-kernel-native-windows-cpu-runtime-tuple-v1";
+pub(crate) const CUDA_RUNTIME_TUPLE_IDENTITY_V2: &str =
+    "mtg-kernel-native-windows-cuda-runtime-tuple-v1";
 
 /// The store-admitted (runtime tuple, numerical backend identity) pairs. A
 /// record may declare either pair; a CPU tuple can never carry the CUDA
@@ -480,6 +482,13 @@ pub(crate) const CYCLE4_REFRESH_INTERVAL_V1: u64 = 128;
 /// whose schedule stops short can never report a completed program.
 pub(crate) const CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1: u64 =
     CYCLE4_TRAINEE_STOP_GENERATION_V1 - CYCLE4_TRAINEE_START_GENERATION_V1;
+/// The two production launcher binaries a V2 record may name. The legacy
+/// one is what every pre-cycle-4 record declares; the cycle-4 arm launcher
+/// (`docs/native_cycle4_arm_launcher_v1.md` section 4) is the binary that
+/// actually publishes a cycle-4 arm's Store, so a record it produces names
+/// it rather than borrowing the other launcher's name.
+const LEGACY_LAUNCHER_BINARY_NAME_V2: &str = "mtg-kernel-native.exe";
+pub(crate) const CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1: &str = "cycle4_arm_v1.exe";
 pub(crate) const CYCLE4_ARM_KIND_CONTROL_R_V1: &str = "control-r";
 pub(crate) const CYCLE4_ARM_KIND_STATIC_RB_V1: &str = "static-rb";
 pub(crate) const CYCLE4_ARM_KIND_TREATMENT_RB_V1: &str = "treatment-rb";
@@ -2506,7 +2515,17 @@ fn validate_source_v2(source: &TrainRunSourceV2) -> Result<()> {
         || !source.worktree_clean
         || source.git_status_sha256 != EMPTY_SHA256
         || source.executable_capture_identity != "windows-current-module-path-file-v2"
-        || source.binary_name != "mtg-kernel-native.exe"
+        // The production launcher binary set. `mtg-kernel-native.exe` is the
+        // original and every pre-cycle-4 record names it, so their validation
+        // is unchanged. `cycle4_arm_v1.exe` is the cycle-4 arm launcher
+        // (`docs/native_cycle4_arm_launcher_v1.md` section 4), which is the
+        // binary that actually publishes a cycle-4 arm's Store; a record it
+        // produces has to be able to name it honestly rather than borrowing
+        // the other launcher's name.
+        || !matches!(
+            source.binary_name.as_str(),
+            LEGACY_LAUNCHER_BINARY_NAME_V2 | CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
+        )
         || !is_sha256(&source.binary_sha256)
         || !is_positive_u63(source.binary_byte_len)
         || !is_lower_hex(&source.binary_volume_serial_u64_hex, 16)
@@ -9822,6 +9841,14 @@ mod tests {
         // The schedule carries the whole program: 2048 successful updates,
         // the 896..=2944 trainee-local span in the arm Store's own numbering.
         record.schedule.requested_successful_updates = CYCLE4_TOTAL_SUCCESSFUL_UPDATES_V1;
+        // ... and the arm's own pinned training base seed, which the cycle-4
+        // launcher's record-level validator requires. Taken from the arm kind
+        // itself rather than restated, so this fixture cannot drift from the
+        // rule it has to satisfy.
+        record.schedule.base_seed =
+            crate::native_cycle4_arm_v1::Cycle4ArmKindV1::from_wire_v1(arm_kind)
+                .expect("the cycle-4 fixture is built for a real arm kind")
+                .formal_base_seed_v1();
         refresh_derived(&mut record);
         record
     }

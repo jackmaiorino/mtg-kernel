@@ -210,6 +210,41 @@ impl Cycle4ArmKindV1 {
         }
     }
 
+    /// The arm's formal TRAINING base seed.
+    ///
+    /// Pre-registration V2 section 8 requires the seed-schedule policy to be
+    /// stated explicitly and section 9 leaves the literals to ratification;
+    /// this is that statement, and these three literals exist in exactly one
+    /// place in the tree. Domains are disjoint on two axes:
+    ///
+    /// - Between arms: each arm owns its own reserved 1,000-wide training
+    ///   band (`[978_000, 979_000)`, `[979_000, 980_000)`,
+    ///   `[980_000, 981_000)`) and uses that band's base. Every training seed
+    ///   is `derive_seed(namespace, [base_seed, ...])`, keyed on the base
+    ///   literal, so two arms can never draw the same environment, learner or
+    ///   opponent seed.
+    /// - Against the payoff panels: the whole training band
+    ///   `[978_000, 981_000)` is disjoint from the panel band
+    ///   `[4_100_000_000, 5_900_000_000)` the wrapper strides through, so no
+    ///   training pair seed can collide with a panel pair seed. Training and
+    ///   payoff seeds are DISJOINT, not common.
+    ///
+    /// They are also distinct from every base seed an earlier program used
+    /// (920012, 970001-3, 971xxx, 972002, 975002, 977002), so a cycle-4 arm
+    /// can never be confused with an ancestor by base seed alone.
+    ///
+    /// This lives on the arm kind rather than in the record builder because
+    /// it is a property of the ARM: `validate_run_contract_v1` enforces it on
+    /// every invocation, including one handed an operator-supplied record.
+    #[must_use]
+    pub const fn formal_base_seed_v1(self) -> u64 {
+        match self {
+            Self::ControlR => 978_000,
+            Self::StaticRb => 979_000,
+            Self::TreatmentRb => 980_000,
+        }
+    }
+
     /// STATIC-RB's manifest never advances past genesis.
     #[must_use]
     pub const fn static_pool_v1(self) -> bool {
@@ -1548,6 +1583,22 @@ fn validate_run_contract_v1(run: &ValidatedTrainRunV2, arm: Cycle4ArmKindV1) -> 
         return Err(Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_trainer_section_mismatch",
             "declared loss identity disagrees with the arm kind",
+        ));
+    }
+    // The arm-to-base-seed mapping is a pre-registered fact about the ARM,
+    // not a property of whoever wrote the record, so it is enforced here
+    // rather than only where the record is built: an operator-supplied
+    // record, or one built for a different arm, cannot put one arm's seed
+    // under another arm's kind.
+    let expected_base_seed = arm.formal_base_seed_v1();
+    let declared_base_seed = run.record().schedule().base_seed;
+    if declared_base_seed != expected_base_seed {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_base_seed_mismatch",
+            format!(
+                "{} trains under base seed {expected_base_seed}, but the run record declares {declared_base_seed}",
+                arm.wire_v1()
+            ),
         ));
     }
     Ok(())
