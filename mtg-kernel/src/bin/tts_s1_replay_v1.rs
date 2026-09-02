@@ -26,7 +26,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --diagnostics-dir PATH --output PATH [--limit-decisions N]"
+        "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --diagnostics-dir PATH --max-episodes N --output PATH [--limit-episodes N]"
     );
     std::process::exit(2);
 }
@@ -44,12 +44,13 @@ struct ParsedArgsV1 {
     tier: KernelNativeSearchTierV1,
     seed_block_id: usize,
     diagnostics_dir: PathBuf,
+    max_episodes: u64,
     output: PathBuf,
-    limit_decisions: Option<u64>,
+    limit_episodes: Option<u64>,
 }
 
 fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
-    if raw.len() < 12 || raw.len() > 16 || !raw.len().is_multiple_of(2) {
+    if raw.len() < 14 || raw.len() > 18 || !raw.len().is_multiple_of(2) {
         return Err(());
     }
     let mut authority_root = None;
@@ -58,8 +59,9 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut tier = None;
     let mut seed_block_id = None;
     let mut diagnostics_dir = None;
+    let mut max_episodes = None;
     let mut output = None;
-    let mut limit_decisions = None;
+    let mut limit_episodes = None;
     for pair in raw.chunks_exact(2) {
         let flag = &pair[0];
         if flag == "--original-store-root" && authority_root.is_none() {
@@ -86,8 +88,10 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             diagnostics_dir = Some(PathBuf::from(&pair[1]));
         } else if flag == "--output" && output.is_none() {
             output = Some(PathBuf::from(&pair[1]));
-        } else if flag == "--limit-decisions" && limit_decisions.is_none() {
-            limit_decisions = Some(pair[1].to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
+        } else if flag == "--max-episodes" && max_episodes.is_none() {
+            max_episodes = Some(pair[1].to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
+        } else if flag == "--limit-episodes" && limit_episodes.is_none() {
+            limit_episodes = Some(pair[1].to_str().ok_or(())?.parse::<u64>().map_err(|_| ())?);
         } else {
             return Err(());
         }
@@ -115,8 +119,9 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         tier: tier.ok_or(())?,
         seed_block_id: seed_block_id.ok_or(())?,
         diagnostics_dir: diagnostics_dir.ok_or(())?,
+        max_episodes: max_episodes.ok_or(())?,
         output: output.ok_or(())?,
-        limit_decisions,
+        limit_episodes,
     })
 }
 
@@ -128,7 +133,8 @@ fn main() {
         corpus_path: parsed.corpus,
         tier: parsed.tier,
         seed_block_id: parsed.seed_block_id,
-        limit_decisions: parsed.limit_decisions,
+        max_episodes: parsed.max_episodes,
+        limit_episodes: parsed.limit_episodes,
         diagnostics_directory: parsed.diagnostics_dir,
     };
     let report = match run_tts_s1_replay_v1(&config) {
@@ -147,25 +153,24 @@ fn main() {
     };
     let body = &report.body;
     println!(
-        "TTS_S1_REPLAY_PUBLISHED path={} bytes={} report_sha256={} tier={} verdict={} decisions={} whole_corpus={} search_p50_micros={} search_p99_micros={} search_max_micros={} decision_p50_micros={} decision_p99_micros={} decision_max_micros={} protocol_p50_micros={} protocol_p99_micros={} protocol_max_micros={} decisions_per_second_milli={} projected_s2_worker_hours_milli={} compute_cap_worker_hours_milli={} within_compute_cap={} corpus_sha256={} authority_digest={}",
+        "TTS_S1_REPLAY_PUBLISHED path={} bytes={} report_sha256={} tier={} verdict={} episodes={} searched_decisions={} corpus_targets={} whole_corpus={} protocol_p50_micros={} protocol_p99_micros={} protocol_max_micros={} mean_protocol_micros={} decisions_per_second_milli={} target_protocol_p99_micros={} projected_s2_worker_hours_milli={} projected_elapsed_hours_at_16_workers_milli={} compute_cap_worker_hours_milli={} within_compute_cap={} corpus_sha256={} authority_digest={}",
         parsed.output.display(),
         bytes.len(),
         report.report_sha256,
         body.tier,
         body.verdict.tag_v1(),
-        body.decisions_replayed,
+        body.episodes_replayed,
+        body.searched_decisions,
+        body.corpus_targets_replayed,
         body.replayed_whole_corpus,
-        body.search_wall_time.p50_micros,
-        body.search_wall_time.p99_micros,
-        body.search_wall_time.max_micros,
-        body.decision_wall_time.p50_micros,
-        body.decision_wall_time.p99_micros,
-        body.decision_wall_time.max_micros,
-        body.protocol_wall_time.p50_micros,
-        body.protocol_wall_time.p99_micros,
-        body.protocol_wall_time.max_micros,
-        body.decisions_per_second_milli,
+        body.whole_episode_view.protocol_wall_time.p50_micros,
+        body.whole_episode_view.protocol_wall_time.p99_micros,
+        body.whole_episode_view.protocol_wall_time.max_micros,
+        body.whole_episode_view.mean_protocol_micros,
+        body.whole_episode_view.decisions_per_second_milli,
+        body.corpus_target_view.protocol_wall_time.p99_micros,
         body.compute_cap.projected_worker_hours_milli,
+        body.compute_cap.projected_elapsed_hours_at_workers_milli,
         body.compute_cap.cap_worker_hours_milli,
         body.compute_cap.within_cap,
         body.corpus_sha256,
@@ -202,6 +207,8 @@ mod tests {
             "1".into(),
             "--diagnostics-dir".into(),
             "diagnostics".into(),
+            "--max-episodes".into(),
+            "64".into(),
             "--output".into(),
             "report.json".into(),
         ]
@@ -220,7 +227,8 @@ mod tests {
             let parsed = parse_args_v1(argv).unwrap();
             assert_eq!(parsed.tier, expected);
             assert_eq!(parsed.seed_block_id, 1);
-            assert_eq!(parsed.limit_decisions, None);
+            assert_eq!(parsed.limit_episodes, None);
+            assert_eq!(parsed.max_episodes, 64);
             assert_eq!(parsed.diagnostics_dir, PathBuf::from("diagnostics"));
             assert_eq!(parsed.output, PathBuf::from("report.json"));
         }
@@ -235,20 +243,28 @@ mod tests {
     #[test]
     fn the_smoke_bound_is_optional_and_numeric_v1() {
         let mut argv = argv_v1();
-        argv.push("--limit-decisions".into());
+        argv.push("--limit-episodes".into());
         argv.push("8".into());
-        assert_eq!(parse_args_v1(argv).unwrap().limit_decisions, Some(8));
+        assert_eq!(parse_args_v1(argv).unwrap().limit_episodes, Some(8));
 
         let mut argv = argv_v1();
-        argv.push("--limit-decisions".into());
+        argv.push("--limit-episodes".into());
         argv.push("all".into());
         assert!(parse_args_v1(argv).is_err());
+
+        // The GUARD, by contrast, is required: whole-episode replay is
+        // orders of magnitude more work than the corpus size suggests, so
+        // a run may not start without a stated bound.
+        let mut argv = argv_v1();
+        argv.push("--max-episodes".into());
+        argv.push("2".into());
+        assert!(parse_args_v1(argv).is_err(), "a repeated guard is rejected");
     }
 
     #[test]
     fn the_flag_surface_is_strict_v1() {
         let full = argv_v1();
-        for drop_pair in [0usize, 4, 6, 8, 10, 12] {
+        for drop_pair in [0usize, 4, 6, 8, 10, 12, 14] {
             let mut partial = full.clone();
             partial.drain(drop_pair..drop_pair + 2);
             assert!(

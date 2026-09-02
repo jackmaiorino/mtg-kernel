@@ -86,7 +86,7 @@ use crate::native_trainer_schedule_v1::{
 use crate::native_tts_s1_corpus_v1::{
     corpus_policy_sample_seed_v1, decode_tts_s1_corpus_v1, nearest_rank_percentile_v1,
     publish_canonical_document_v1, TtsS1CorpusCheckpointV1, TtsS1CorpusDecisionV1,
-    TtsS1CorpusErrorV1, TtsS1CorpusManifestV1, TtsS1DecisionScorerV1,
+    TtsS1CorpusEpisodeV1, TtsS1CorpusErrorV1, TtsS1CorpusManifestV1, TtsS1DecisionScorerV1,
     TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1,
 };
 use crate::rl::{ActionSemanticV1, PlayerSeatV1};
@@ -121,12 +121,20 @@ pub const TTS_S1_S2_WORKERS_V1: u64 = 16;
 pub const TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1: u64 = 48_000;
 
 /// The projection, spelled out on the wire.
+///
+/// Note what is NOT in it: a division by the worker count. WORKER-hours are
+/// aggregate work, so 6,144 games of 300 decisions at 1 s each are 512
+/// worker-hours however many workers run them. Dividing by 16 would give
+/// ELAPSED hours on a full host, which is a different quantity against a
+/// different threshold; it is published separately, as
+/// `projected_elapsed_hours_at_workers_milli`, and the cap is checked
+/// against the worker-hours.
 pub const TTS_S1_S2_PROJECTION_RULE_V1: &str = concat!(
     "wrapped-games-only",
     "-3072-root-clusters-times-2-paired-units",
-    "-times-mean-decisions-per-natural-terminal-episode",
-    "-times-mean-protocol-decision-wall-time",
-    "-over-16-workers",
+    "-times-mean-decisions-per-episode-over-natural-and-truncated-episodes",
+    "-times-whole-episode-mean-protocol-decision-wall-time",
+    "-as-aggregate-worker-hours-with-no-worker-division",
     "/v1"
 );
 
@@ -218,6 +226,10 @@ pub struct TtsS1ReplayDecisionRecordV1 {
     pub previous_record_sha256: String,
     pub episode_id: u64,
     pub decision_ordinal: u64,
+    /// Whether this decision is one of the stratified corpus targets.
+    /// EVERY decision of a contributing episode is searched and recorded;
+    /// this is what separates the two published views.
+    pub is_corpus_target: bool,
     pub acting_player: PlayerSeatV1,
     pub legal_action_count: u32,
     /// What the search chose. The claim S1 has to keep is that this is a
@@ -297,28 +309,50 @@ pub struct TtsS1ComputeCapProjectionV1 {
     pub s2_paired_units_per_root_cluster: u64,
     pub s2_wrapped_games: u64,
     pub s2_workers: u64,
-    /// From the corpus: mean decisions per natural-terminal episode times
-    /// 1,000, floored.
+    /// From the corpus, over NATURAL AND TRUNCATED episodes: mean
+    /// decisions per episode times 1,000, floored. Truncated episodes are
+    /// included precisely because they are the longest games, and dropping
+    /// them would bias the cost downward.
     pub mean_decisions_per_game_milli: u64,
-    /// Corpus context for the mean above.
+    /// Corpus context for the mean above, on the same all-episodes basis.
     pub p99_decisions_per_game: u64,
     pub max_decisions_per_game: u64,
+    pub all_episode_count: u64,
     pub natural_terminal_episode_count: u64,
-    /// The mean this projection multiplies by.
+    pub truncated_episode_count: u64,
+    /// The mean this projection multiplies by: the WHOLE-EPISODE mean
+    /// protocol latency over every searched decision, not the stratified
+    /// corpus targets, which are not a representative sample of a game.
     pub mean_protocol_micros: u64,
     /// Recorded beside it so the projection can be recomputed on the
-    /// narrower basis too.
+    /// narrower bases too.
     pub mean_decision_micros: u64,
     pub mean_search_micros: u64,
     pub raw_policy_games_excluded: bool,
     pub raw_policy_exclusion_reason: String,
+    /// Aggregate work. THIS is what the cap is checked against.
     pub projected_worker_hours_milli: u64,
+    /// The same cost as elapsed hours on the 16-worker host.
+    /// Informational.
+    pub projected_elapsed_hours_at_workers_milli: u64,
     pub cap_worker_hours_milli: u64,
     pub within_cap: bool,
 }
 
-/// The projection itself. Integer arithmetic in `u128` throughout, so a
-/// slow tier cannot overflow its own cost estimate into a small number.
+/// The projection itself, in AGGREGATE WORKER-HOURS times 1,000.
+///
+/// Integer arithmetic in `u128` throughout, so a slow tier cannot overflow
+/// its own cost estimate into a small number.
+///
+/// There is deliberately no division by the worker count here. The product
+/// of games, decisions per game and seconds per decision IS the aggregate
+/// work: 6,144 games x 300 decisions x 1 s is 512 worker-hours, and it is
+/// 512 worker-hours whether one worker or a thousand run it. An earlier
+/// revision divided by 16 and reported that same configuration as 32,
+/// which is the ELAPSED time on a 16-worker host, not its cost, and it
+/// compared that elapsed figure against a worker-hour cap. See
+/// [`project_s2_elapsed_hours_milli_v1`] for the elapsed figure, published
+/// beside this one as information rather than as the gate.
 pub fn project_s2_worker_hours_milli_v1(
     mean_decisions_per_game_milli: u64,
     mean_protocol_micros: u64,
@@ -329,21 +363,30 @@ pub fn project_s2_worker_hours_milli_v1(
         .saturating_mul(u128::from(mean_decisions_per_game_milli))
         .saturating_mul(u128::from(mean_protocol_micros))
         / 1_000;
-    let per_worker_micros = total_micros / u128::from(TTS_S1_S2_WORKERS_V1);
-    // micros -> worker-hours, times 1,000: divide by 3.6e9, multiply by 1e3.
-    let milli = per_worker_micros.saturating_mul(1_000) / 3_600_000_000u128;
+    // micros -> hours, times 1,000: divide by 3.6e9, multiply by 1e3.
+    let milli = total_micros.saturating_mul(1_000) / 3_600_000_000u128;
     u64::try_from(milli).unwrap_or(u64::MAX)
 }
 
+/// The same cost as ELAPSED hours on the pre-registered 16-worker host.
+/// Informational: the cap is a worker-hour cap and is checked against
+/// [`project_s2_worker_hours_milli_v1`].
+pub fn project_s2_elapsed_hours_milli_v1(worker_hours_milli: u64) -> u64 {
+    worker_hours_milli / TTS_S1_S2_WORKERS_V1
+}
+
 /// Builds the projection block for one tier.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_cap_projection_v1(
-    episode_decisions: &crate::native_tts_s1_corpus_v1::TtsS1EpisodeDecisionStatsV1,
+    all_episode_decisions: &crate::native_tts_s1_corpus_v1::TtsS1EpisodeDecisionStatsV1,
+    natural_terminal_episode_count: u64,
+    truncated_episode_count: u64,
     mean_protocol_micros: u64,
     mean_decision_micros: u64,
     mean_search_micros: u64,
 ) -> TtsS1ComputeCapProjectionV1 {
     let projected_worker_hours_milli = project_s2_worker_hours_milli_v1(
-        episode_decisions.mean_decisions_milli,
+        all_episode_decisions.mean_decisions_milli,
         mean_protocol_micros,
     );
     TtsS1ComputeCapProjectionV1 {
@@ -353,16 +396,21 @@ pub fn compute_cap_projection_v1(
         s2_wrapped_games: TTS_S1_S2_ROOT_CLUSTERS_V1
             .saturating_mul(TTS_S1_S2_PAIRED_UNITS_PER_ROOT_CLUSTER_V1),
         s2_workers: TTS_S1_S2_WORKERS_V1,
-        mean_decisions_per_game_milli: episode_decisions.mean_decisions_milli,
-        p99_decisions_per_game: episode_decisions.p99_decisions,
-        max_decisions_per_game: episode_decisions.max_decisions,
-        natural_terminal_episode_count: episode_decisions.natural_terminal_episode_count,
+        mean_decisions_per_game_milli: all_episode_decisions.mean_decisions_milli,
+        p99_decisions_per_game: all_episode_decisions.p99_decisions,
+        max_decisions_per_game: all_episode_decisions.max_decisions,
+        all_episode_count: all_episode_decisions.natural_terminal_episode_count,
+        natural_terminal_episode_count,
+        truncated_episode_count,
         mean_protocol_micros,
         mean_decision_micros,
         mean_search_micros,
         raw_policy_games_excluded: true,
         raw_policy_exclusion_reason: TTS_S1_RAW_POLICY_EXCLUSION_REASON_V1.to_owned(),
         projected_worker_hours_milli,
+        projected_elapsed_hours_at_workers_milli: project_s2_elapsed_hours_milli_v1(
+            projected_worker_hours_milli,
+        ),
         cap_worker_hours_milli: TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
         within_cap: projected_worker_hours_milli <= TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
     }
@@ -405,6 +453,74 @@ pub fn summarize_micros_v1(samples: &[u64]) -> Option<TtsS1TimingSummaryV1> {
     })
 }
 
+/// One population's latency statistics.
+///
+/// Two are published and they answer different questions. The
+/// WHOLE-EPISODE view covers every decision searched, which is the
+/// population a panel actually plays and therefore the one the SLO verdict
+/// and the compute projection are taken from. The CORPUS-TARGET view
+/// covers the 512 stratified decisions alone: useful for reading the
+/// strata (high branching, stack interaction, combat, late game) against
+/// each other, and useless as a mean, because a quota-stratified sample is
+/// deliberately not representative of a game.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1LatencyViewV1 {
+    pub decisions: u64,
+    /// DIAGNOSTIC: the search alone.
+    pub search_wall_time: TtsS1TimingSummaryV1,
+    /// DIAGNOSTIC: the scorer's `decision_micros` phase alone.
+    pub decision_wall_time: TtsS1TimingSummaryV1,
+    /// Decision plus the production writer's own publication measurement
+    /// plus the measured response tail.
+    pub protocol_wall_time: TtsS1TimingSummaryV1,
+    pub mean_protocol_micros: u64,
+    /// Decisions per second times 1,000, floored, over the protocol total.
+    pub decisions_per_second_milli: u64,
+    pub p99_protocol_ceiling_status: CeilingStatusV4,
+    pub max_protocol_ceiling_status: CeilingStatusV4,
+}
+
+/// Summarizes one population of records.
+pub fn latency_view_v1(records: &[&TtsS1ReplayDecisionRecordV1]) -> Option<TtsS1LatencyViewV1> {
+    if records.is_empty() {
+        return None;
+    }
+    let search: Vec<u64> = records
+        .iter()
+        .map(|record| record.wall_time.search_micros)
+        .collect();
+    let decision: Vec<u64> = records
+        .iter()
+        .map(|record| record.wall_time.decision_micros)
+        .collect();
+    let protocol: Vec<u64> = records
+        .iter()
+        .map(|record| record.wall_time.protocol_micros)
+        .collect();
+    let search_wall_time = summarize_micros_v1(&search)?;
+    let decision_wall_time = summarize_micros_v1(&decision)?;
+    let protocol_wall_time = summarize_micros_v1(&protocol)?;
+    let decisions = records.len() as u64;
+    Some(TtsS1LatencyViewV1 {
+        decisions,
+        mean_protocol_micros: protocol_wall_time.total_micros / decisions,
+        decisions_per_second_milli: if protocol_wall_time.total_micros == 0 {
+            0
+        } else {
+            decisions
+                .saturating_mul(MICROS_PER_SECOND_V1)
+                .saturating_mul(1_000)
+                / protocol_wall_time.total_micros
+        },
+        p99_protocol_ceiling_status: classify_micros_v1(protocol_wall_time.p99_micros),
+        max_protocol_ceiling_status: classify_micros_v1(protocol_wall_time.max_micros),
+        search_wall_time,
+        decision_wall_time,
+        protocol_wall_time,
+    })
+}
+
 /// Everything the report digest covers.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -426,31 +542,34 @@ pub struct TtsS1ReplayReportBodyV1 {
     pub search_authority_digest_sha256: String,
     /// The frozen corpus this report measured.
     pub corpus_sha256: String,
+    /// Stratified targets in the frozen corpus.
     pub corpus_decision_count: u64,
-    pub decisions_replayed: u64,
-    /// False when `--limit-decisions` cut the run short. A partial run is
-    /// a smoke, never a feasibility verdict a panel may rely on, and the
-    /// verdict below says so.
+    /// Episodes in the corpus that contribute at least one target.
+    pub corpus_episode_count: u64,
+    /// Episodes this run replayed end to end.
+    pub episodes_replayed: u64,
+    /// EVERY decision searched, which is every decision of every replayed
+    /// episode, not only the targets. This is the replay's own cost, and
+    /// it is on the wire so the cost of a tier is visible.
+    pub searched_decisions: u64,
+    /// How many of those were stratified corpus targets.
+    pub corpus_targets_replayed: u64,
+    /// The guard the run was launched under.
+    pub max_episodes: u64,
+    /// False when `--limit-episodes` cut the run short, or when any corpus
+    /// target went unreached. A partial run is a smoke, never a
+    /// feasibility verdict a panel may rely on, and the verdict says so.
     pub replayed_whole_corpus: bool,
     pub percentile_rule: String,
-    /// DIAGNOSTIC: the search alone.
-    pub search_wall_time: TtsS1TimingSummaryV1,
-    /// DIAGNOSTIC: the scorer's `decision_micros` phase alone.
-    pub decision_wall_time: TtsS1TimingSummaryV1,
-    /// THE VERDICT BASIS: decision plus the production diagnostics
-    /// writer's own publication measurement plus the measured response
-    /// tail, exactly as `episode_decision_ceilings_v4` reconstructs a
-    /// panel's per-decision latency from a published episode file.
-    pub protocol_wall_time: TtsS1TimingSummaryV1,
-    /// Throughput as decisions per second times 1,000, floored, over the
-    /// PROTOCOL total. Scaled to an integer because the canonical JSON
-    /// codec forbids floats outright; the operands are on the wire beside
-    /// it, so the exact rational is recoverable.
-    pub decisions_per_second_milli: u64,
+    /// THE VERDICT BASIS: every decision searched, in episode order, with
+    /// the true accumulated publication history behind each one.
+    pub whole_episode_view: TtsS1LatencyViewV1,
+    /// The 512 stratified targets alone, for reading the strata against
+    /// each other. Never the verdict basis: a quota-stratified sample is
+    /// deliberately not representative of a game.
+    pub corpus_target_view: TtsS1LatencyViewV1,
     pub slo_micros: u64,
     pub hard_timeout_micros: u64,
-    pub p99_protocol_ceiling_status: CeilingStatusV4,
-    pub max_protocol_ceiling_status: CeilingStatusV4,
     /// The published V4 diagnostics episode files the protocol latencies
     /// were read from.
     pub diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1>,
@@ -536,7 +655,14 @@ pub fn verify_tts_s1_replay_chain_v1(
     if body.decisions.is_empty() || body.final_record_sha256 != expected_previous {
         return Err(TtsS1ReplayErrorV1::BrokenChain);
     }
-    if body.decisions.len() as u64 != body.decisions_replayed {
+    if body.decisions.len() as u64 != body.searched_decisions
+        || body
+            .decisions
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .count() as u64
+            != body.corpus_targets_replayed
+    {
         return Err(TtsS1ReplayErrorV1::BrokenChain);
     }
     Ok(body.decisions.len())
@@ -564,12 +690,8 @@ pub fn strip_timing_fields_v1(bytes: &[u8]) -> Result<serde_json::Value, TtsS1Re
         .and_then(serde_json::Value::as_object_mut)
         .ok_or(TtsS1ReplayErrorV1::InvalidReport)?;
     for key in [
-        "search_wall_time",
-        "decision_wall_time",
-        "protocol_wall_time",
-        "decisions_per_second_milli",
-        "p99_protocol_ceiling_status",
-        "max_protocol_ceiling_status",
+        "whole_episode_view",
+        "corpus_target_view",
         "diagnostics_episode_files",
         "compute_cap",
         "verdict",
@@ -627,8 +749,20 @@ pub enum TtsS1ReplayErrorV1 {
     /// The production diagnostics writer, the response sink, or the
     /// published episode file it all has to be read back from.
     Diagnostics(String),
-    /// `--limit-decisions 0`, or an empty corpus.
+    /// An empty corpus, or `--limit-episodes 0`.
     NoDecisions,
+    /// The corpus names more contributing episodes than the launcher's
+    /// `--max-episodes` guard allows.
+    TooManyEpisodes {
+        episodes: u64,
+        max_episodes: u64,
+    },
+    /// Playing the recorded episode sequence did not land on a terminal,
+    /// so the episode the corpus describes is not the one the kernel just
+    /// played.
+    EpisodeDidNotTerminate {
+        episode_id: u64,
+    },
     CanonicalJson,
     InvalidReport,
     BrokenChain,
@@ -656,6 +790,8 @@ impl TtsS1ReplayErrorV1 {
             Self::Search(_) => "tts_s1_replay_search_failed",
             Self::Diagnostics(_) => "tts_s1_replay_diagnostics_failed",
             Self::NoDecisions => "tts_s1_replay_no_decisions",
+            Self::TooManyEpisodes { .. } => "tts_s1_replay_too_many_episodes",
+            Self::EpisodeDidNotTerminate { .. } => "tts_s1_replay_episode_did_not_terminate",
             Self::CanonicalJson => "tts_s1_replay_canonical_json_failed",
             Self::InvalidReport => "tts_s1_replay_report_invalid",
             Self::BrokenChain => "tts_s1_replay_chain_broken",
@@ -685,6 +821,17 @@ impl fmt::Display for TtsS1ReplayErrorV1 {
                 "{}: episode {episode_id} decision {decision_ordinal} field {field}",
                 self.code_v1()
             ),
+            Self::TooManyEpisodes {
+                episodes,
+                max_episodes,
+            } => write!(
+                formatter,
+                "{}: the corpus contributes {episodes} episodes, above the --max-episodes guard of {max_episodes}",
+                self.code_v1()
+            ),
+            Self::EpisodeDidNotTerminate { episode_id } => {
+                write!(formatter, "{}: episode {episode_id}", self.code_v1())
+            }
             _ => formatter.write_str(self.code_v1()),
         }
     }
@@ -720,9 +867,15 @@ pub struct TtsS1ReplayConfigV1 {
     /// Index into `MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`. The
     /// wrapper's own action seed, independent of the corpus's.
     pub seed_block_id: usize,
-    /// Smoke bound. `None` replays the whole corpus, which is the only
-    /// configuration whose verdict a panel may rely on.
-    pub limit_decisions: Option<u64>,
+    /// Fail-closed guard on how many whole episodes this replay may run.
+    /// Whole-episode replay costs one search per decision of every
+    /// contributing episode, so a tier is far more work than the corpus
+    /// size suggests; the launcher states the bound it expects and a
+    /// corpus above it is refused before anything runs.
+    pub max_episodes: u64,
+    /// Smoke bound on contributing episodes. `None` replays them all,
+    /// which is the only configuration whose verdict a panel may rely on.
+    pub limit_episodes: Option<u64>,
     /// Where the PRODUCTION model-guided diagnostics writer publishes this
     /// run's V4 episode files, and where the scorer-shaped response lines
     /// are written. Not optional: the protocol latency the SLO is
@@ -758,7 +911,8 @@ pub fn run_tts_s1_replay_v1(
         config.tier,
         config.seed_block_id,
         action_seed,
-        config.limit_decisions,
+        config.max_episodes,
+        config.limit_episodes,
         &config.diagnostics_directory,
     )?;
     TtsS1ReplayReportV1::seal_v1(body)
@@ -780,7 +934,8 @@ pub(crate) fn replay_corpus_body_v1(
     tier: KernelNativeSearchTierV1,
     seed_block_id: usize,
     action_seed: u64,
-    limit_decisions: Option<u64>,
+    max_episodes: u64,
+    limit_episodes: Option<u64>,
     diagnostics_directory: &Path,
 ) -> Result<TtsS1ReplayReportBodyV1, TtsS1ReplayErrorV1> {
     // The corpus names the checkpoint it was drawn from; measuring a
@@ -791,11 +946,28 @@ pub(crate) fn replay_corpus_body_v1(
     }
 
     let corpus_decision_count = corpus.body.decisions.len() as u64;
-    let budget = limit_decisions.unwrap_or(corpus_decision_count);
-    if budget == 0 || corpus_decision_count == 0 {
+    let corpus_episode_count = corpus.body.episodes.len() as u64;
+    if corpus_decision_count == 0 || corpus_episode_count == 0 {
         return Err(TtsS1ReplayErrorV1::NoDecisions);
     }
-    let planned = budget.min(corpus_decision_count);
+    // THE GUARD. Whole-episode replay costs one search per decision of
+    // every contributing episode, not one per corpus target, so a tier can
+    // legitimately be two orders of magnitude more work than the corpus
+    // size suggests. The launcher states the bound it expects and the run
+    // refuses to start above it, rather than discovering after two days
+    // that it was never going to finish.
+    if corpus_episode_count > max_episodes {
+        return Err(TtsS1ReplayErrorV1::TooManyEpisodes {
+            episodes: corpus_episode_count,
+            max_episodes,
+        });
+    }
+    let planned_episodes = limit_episodes
+        .unwrap_or(corpus_episode_count)
+        .min(corpus_episode_count);
+    if planned_episodes == 0 {
+        return Err(TtsS1ReplayErrorV1::NoDecisions);
+    }
 
     let value_domain = MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1;
     let mut bound: Option<BoundModelGuidedSearchV1> = None;
@@ -826,46 +998,65 @@ pub(crate) fn replay_corpus_body_v1(
     // (episode id, published path, the record indices written for it, in
     // write order) so the writer-observed phases can be matched back.
     let mut published_episodes: Vec<(u64, PathBuf, Vec<usize>)> = Vec::new();
+    let mut corpus_targets_replayed: u64 = 0;
 
-    let mut cursor = 0usize;
-    let targets = &corpus.body.decisions;
-    while cursor < targets.len() && (records.len() as u64) < planned {
-        let episode_id = targets[cursor].coordinates.episode_id;
+    // WHOLE EPISODES, in ascending episode id. Every decision of a
+    // contributing episode is reconstructed and searched, in order, not
+    // only the stratified targets. That is not thoroughness for its own
+    // sake: the production writer republishes the whole episode file after
+    // every decision, so a decision's publication cost is a function of
+    // every earlier searched decision in that episode. A replay that
+    // searched only the sparse targets would publish short files and
+    // measure a publication phase no panel ever pays.
+    for episode in corpus
+        .body
+        .episodes
+        .iter()
+        .take(usize::try_from(planned_episodes).map_err(|_| TtsS1ReplayErrorV1::NoDecisions)?)
+    {
         let (mut session, schedule) = reset_episode_v1(
-            &targets[cursor],
+            episode,
             corpus.body.max_physical_decisions,
             corpus.body.max_policy_steps,
         )?;
-        let mut applied: Vec<u32> = Vec::new();
+        // This episode's targets, ascending. The decision list is already
+        // in ascending (episode id, ordinal) order, which `decode` proved.
+        let mut targets = corpus
+            .body
+            .decisions
+            .iter()
+            .filter(|decision| decision.coordinates.episode_id == episode.episode_id)
+            .peekable();
         let mut episode_record_indices: Vec<usize> = Vec::new();
         let mut episode_opened = false;
 
-        while cursor < targets.len()
-            && targets[cursor].coordinates.episode_id == episode_id
-            && (records.len() as u64) < planned
-        {
-            let target = &targets[cursor];
-            let ordinal = target.coordinates.decision_ordinal;
-            if (ordinal as usize) < applied.len()
-                || target.coordinates.action_sequence.len() != ordinal as usize
-                || target.coordinates.action_sequence[..applied.len()] != applied[..]
-            {
-                return Err(TtsS1ReplayErrorV1::CorpusOrder);
-            }
-            while applied.len() < ordinal as usize {
-                let expected = live_decision_v1(&session, target, "fast_forward_terminal")?;
-                let binding = session
-                    .native_full_trajectory_current_binding_v2(expected)
-                    .map_err(|error| TtsS1ReplayErrorV1::Binding(format!("{error:?}")))?;
-                let action = target.coordinates.action_sequence[applied.len()];
-                session
-                    .consume_current_flat_action_slice_v2(binding, action)
-                    .map_err(|error| TtsS1ReplayErrorV1::Consume(format!("{:?}", error.code)))?;
-                applied.push(action);
-            }
+        for ordinal in 0..episode.decision_count {
+            let expected = match session.current_response() {
+                FastActorResponseV1::Decision(decision) => decision,
+                FastActorResponseV1::Terminal(_) => {
+                    return Err(TtsS1ReplayErrorV1::ReconstructionMismatch {
+                        episode_id: episode.episode_id,
+                        decision_ordinal: ordinal,
+                        field: "early_terminal",
+                    })
+                }
+            };
 
-            let expected = live_decision_v1(&session, target, "target_terminal")?;
-            verify_reconstructed_surface_v1(&session, expected, target)?;
+            // A target at this ordinal gets the full fail-closed surface
+            // check. The decisions between targets are still searched and
+            // still published, because they are what gives the targets
+            // their real publication history, but the corpus makes no
+            // claim about them to check against.
+            let mut is_corpus_target = false;
+            if targets
+                .peek()
+                .is_some_and(|target| target.coordinates.decision_ordinal == ordinal)
+            {
+                let target = targets.next().ok_or(TtsS1ReplayErrorV1::CorpusOrder)?;
+                verify_reconstructed_surface_v1(&session, expected, target)?;
+                is_corpus_target = true;
+                corpus_targets_replayed += 1;
+            }
 
             if bound.is_none() {
                 bound = Some(
@@ -898,8 +1089,8 @@ pub(crate) fn replay_corpus_body_v1(
                 // record has something to chain to.
                 diagnostics
                     .begin_episode_v4(
-                        episode_id,
-                        corpus.body.seed_block_seed,
+                        episode.episode_id,
+                        episode.episode_base_seed,
                         schedule.learner_seat,
                         bound_ref.wrapper_identity.clone(),
                     )
@@ -910,7 +1101,7 @@ pub(crate) fn replay_corpus_body_v1(
             let context = TtsS1DecisionContextV1 {
                 identity,
                 deck_ids: &corpus.body.deck_ids,
-                base_seed: corpus.body.seed_block_seed,
+                base_seed: episode.episode_base_seed,
                 schedule: &schedule,
             };
             let record = search_and_publish_one_decision_v1(
@@ -919,41 +1110,55 @@ pub(crate) fn replay_corpus_body_v1(
                 &value_domain,
                 &session,
                 expected,
-                target,
                 &context,
+                episode.episode_id,
+                ordinal,
+                is_corpus_target,
                 &mut diagnostics,
                 &mut responses,
             )?;
             episode_record_indices.push(records.len());
             records.push(record);
-            cursor += 1;
+
+            let action = episode
+                .action_sequence
+                .get(usize::try_from(ordinal).unwrap_or(usize::MAX))
+                .copied()
+                .ok_or(TtsS1ReplayErrorV1::CorpusOrder)?;
+            session
+                .consume_current_flat_action_slice_v2(
+                    session
+                        .native_full_trajectory_current_binding_v2(expected)
+                        .map_err(|error| TtsS1ReplayErrorV1::Binding(format!("{error:?}")))?,
+                    action,
+                )
+                .map_err(|error| TtsS1ReplayErrorV1::Consume(format!("{:?}", error.code)))?;
+        }
+
+        // Playing the whole recorded sequence must land on a terminal. If
+        // it does not, the episode the corpus describes is not the episode
+        // the kernel just played, and every latency measured from it would
+        // be a measurement of something else.
+        if !matches!(session.current_response(), FastActorResponseV1::Terminal(_)) {
+            return Err(TtsS1ReplayErrorV1::EpisodeDidNotTerminate {
+                episode_id: episode.episode_id,
+            });
+        }
+        if targets.next().is_some() {
+            return Err(TtsS1ReplayErrorV1::CorpusOrder);
         }
 
         if episode_opened {
-            let path = diagnostics.episode_path_v4(episode_id, corpus.body.seed_block_seed);
-            // An S1 replay never plays an episode to a terminal: it visits
-            // a stratified sample of one and moves on. Closing with the
-            // reason that is actually true (this episode was replaced by
-            // the next, or the run ended) keeps the footer honest, and the
-            // footer is what gives the episode's LAST decision a successor
-            // and therefore a protocol verdict at all.
-            let more_to_come = cursor < targets.len() && (records.len() as u64) < planned;
-            let reason = if more_to_come {
-                EpisodeCloseReasonV4::EpisodeReplaced
-            } else {
-                EpisodeCloseReasonV4::ProcessExit
-            };
+            let path = diagnostics.episode_path_v4(episode.episode_id, episode.episode_base_seed);
+            // The episode was played to its terminal, so the honest close
+            // reason is the terminal one, and the footer is what gives the
+            // episode's LAST decision a successor and therefore a protocol
+            // verdict at all.
             diagnostics
-                .close_episode_v4(reason)
+                .close_episode_v4(EpisodeCloseReasonV4::EpisodeTerminal)
                 .map_err(|error| TtsS1ReplayErrorV1::Diagnostics(error.to_string()))?;
-            published_episodes.push((episode_id, path, episode_record_indices));
+            published_episodes.push((episode.episode_id, path, episode_record_indices));
         }
-
-        // The inner loop leaves `cursor` either at the first decision of
-        // the next episode (this episode is finished) or at an unreplayed
-        // decision of this one (the smoke budget ran out). The outer
-        // loop's own budget test covers the second case, so nothing more
-        // is needed here to terminate.
     }
 
     responses
@@ -961,8 +1166,8 @@ pub(crate) fn replay_corpus_body_v1(
         .map_err(|error| TtsS1ReplayErrorV1::Diagnostics(error.to_string()))?;
     drop(responses);
 
-    let decisions_replayed = records.len() as u64;
-    if decisions_replayed == 0 {
+    let searched_decisions = records.len() as u64;
+    if searched_decisions == 0 {
         return Err(TtsS1ReplayErrorV1::NoDecisions);
     }
 
@@ -1032,44 +1237,32 @@ pub(crate) fn replay_corpus_body_v1(
         previous_record_sha256 = lower_hex_sha256_v4(record.chain_link_v1()?);
     }
 
-    let search_samples: Vec<u64> = records
+    // The two views. The whole-episode one is every searched decision and
+    // is the verdict basis; the corpus-target one is the stratified subset
+    // and is diagnostics only.
+    let all_records: Vec<&TtsS1ReplayDecisionRecordV1> = records.iter().collect();
+    let target_records: Vec<&TtsS1ReplayDecisionRecordV1> = records
         .iter()
-        .map(|record| record.wall_time.search_micros)
+        .filter(|record| record.is_corpus_target)
         .collect();
-    let decision_samples: Vec<u64> = records
-        .iter()
-        .map(|record| record.wall_time.decision_micros)
-        .collect();
-    let protocol_samples: Vec<u64> = records
-        .iter()
-        .map(|record| record.wall_time.protocol_micros)
-        .collect();
-    let search_wall_time =
-        summarize_micros_v1(&search_samples).ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
-    let decision_wall_time =
-        summarize_micros_v1(&decision_samples).ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
-    let protocol_wall_time =
-        summarize_micros_v1(&protocol_samples).ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
-    let decisions_per_second_milli = if protocol_wall_time.total_micros == 0 {
-        0
-    } else {
-        decisions_replayed
-            .saturating_mul(MICROS_PER_SECOND_V1)
-            .saturating_mul(1_000)
-            / protocol_wall_time.total_micros
-    };
+    let whole_episode_view =
+        latency_view_v1(&all_records).ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
+    let corpus_target_view =
+        latency_view_v1(&target_records).ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
+
     let compute_cap = compute_cap_projection_v1(
-        &corpus.body.episode_decisions,
-        protocol_wall_time.total_micros / decisions_replayed,
-        decision_wall_time.total_micros / decisions_replayed,
-        search_wall_time.total_micros / decisions_replayed,
+        &corpus.body.all_episode_decisions,
+        corpus.body.natural_terminal_episode_count,
+        corpus.body.truncated_episode_count,
+        whole_episode_view.mean_protocol_micros,
+        whole_episode_view.decision_wall_time.total_micros / searched_decisions,
+        whole_episode_view.search_wall_time.total_micros / searched_decisions,
     );
-    let p99_protocol_ceiling_status = classify_micros_v1(protocol_wall_time.p99_micros);
-    let max_protocol_ceiling_status = classify_micros_v1(protocol_wall_time.max_micros);
-    let replayed_whole_corpus = decisions_replayed == corpus_decision_count;
+    let replayed_whole_corpus = planned_episodes == corpus_episode_count
+        && corpus_targets_replayed == corpus_decision_count;
     let (verdict, verdict_reason) = verdict_v1(
-        p99_protocol_ceiling_status,
-        max_protocol_ceiling_status,
+        whole_episode_view.p99_protocol_ceiling_status,
+        whole_episode_view.max_protocol_ceiling_status,
         compute_cap.within_cap,
         replayed_whole_corpus,
     );
@@ -1090,17 +1283,17 @@ pub(crate) fn replay_corpus_body_v1(
         search_authority_digest_sha256: bound_ref.authority_digest_sha256.clone(),
         corpus_sha256: corpus.corpus_sha256.clone(),
         corpus_decision_count,
-        decisions_replayed,
+        corpus_episode_count,
+        episodes_replayed: planned_episodes,
+        searched_decisions,
+        corpus_targets_replayed,
+        max_episodes,
         replayed_whole_corpus,
         percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
-        search_wall_time,
-        decision_wall_time,
-        protocol_wall_time,
-        decisions_per_second_milli,
+        whole_episode_view,
+        corpus_target_view,
         slo_micros: slo_micros_v1(),
         hard_timeout_micros: hard_timeout_micros_v1(),
-        p99_protocol_ceiling_status,
-        max_protocol_ceiling_status,
         diagnostics_episode_files,
         compute_cap,
         verdict,
@@ -1188,23 +1381,22 @@ pub fn verdict_v1(
 }
 
 fn reset_episode_v1(
-    target: &TtsS1CorpusDecisionV1,
+    episode: &TtsS1CorpusEpisodeV1,
     max_physical_decisions: u64,
     max_policy_steps: u64,
 ) -> Result<(FastActorSessionV1, NativeTrainerEpisodeScheduleV1), TtsS1ReplayErrorV1> {
-    let coordinates = &target.coordinates;
     let schedule =
-        native_trainer_episode_schedule_v1(coordinates.episode_base_seed, coordinates.episode_id)
+        native_trainer_episode_schedule_v1(episode.episode_base_seed, episode.episode_id)
             .map_err(|_| TtsS1ReplayErrorV1::EpisodeSchedule)?;
-    if schedule.environment_seed != coordinates.environment_seed {
+    if schedule.environment_seed != episode.environment_seed {
         return Err(TtsS1ReplayErrorV1::ReconstructionMismatch {
-            episode_id: coordinates.episode_id,
-            decision_ordinal: coordinates.decision_ordinal,
+            episode_id: episode.episode_id,
+            decision_ordinal: 0,
             field: "environment_seed",
         });
     }
     let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
-        coordinates.episode_id,
+        episode.episode_id,
         schedule.environment_seed,
         max_physical_decisions,
         max_policy_steps,
@@ -1215,21 +1407,6 @@ fn reset_episode_v1(
     )
     .map_err(|error| TtsS1ReplayErrorV1::SessionReset(format!("{:?}", error.code)))?;
     Ok((session, schedule))
-}
-
-fn live_decision_v1(
-    session: &FastActorSessionV1,
-    target: &TtsS1CorpusDecisionV1,
-    field: &'static str,
-) -> Result<FastActorDecisionV1, TtsS1ReplayErrorV1> {
-    match session.current_response() {
-        FastActorResponseV1::Decision(decision) => Ok(decision),
-        FastActorResponseV1::Terminal(_) => Err(TtsS1ReplayErrorV1::ReconstructionMismatch {
-            episode_id: target.coordinates.episode_id,
-            decision_ordinal: target.coordinates.decision_ordinal,
-            field,
-        }),
-    }
 }
 
 /// The fail-closed surface check. Every recorded field of the legal
@@ -1387,8 +1564,10 @@ fn search_and_publish_one_decision_v1(
     value_domain: &crate::model_guided_search_value_quantization_v1::ModelGuidedSearchValueHeadDomainV1,
     session: &FastActorSessionV1,
     expected: FastActorDecisionV1,
-    target: &TtsS1CorpusDecisionV1,
     context: &TtsS1DecisionContextV1<'_>,
+    episode_id: u64,
+    decision_ordinal: u64,
+    is_corpus_target: bool,
     diagnostics: &mut ModelGuidedSearchOutcomeWriterV4,
     responses: &mut impl Write,
 ) -> Result<TtsS1ReplayDecisionRecordV1, TtsS1ReplayErrorV1> {
@@ -1437,11 +1616,7 @@ fn search_and_publish_one_decision_v1(
     if action_semantics.len() != score.logits.len() {
         return Err(TtsS1ReplayErrorV1::ScoreContract);
     }
-    let action_seed = corpus_policy_sample_seed_v1(
-        target.coordinates.episode_base_seed,
-        target.coordinates.episode_id,
-        expected,
-    );
+    let action_seed = corpus_policy_sample_seed_v1(context.base_seed, episode_id, expected);
     let policy_sample = FastCategoricalScratch::default()
         .sample(&score.logits, action_seed)
         .map_err(|_| TtsS1ReplayErrorV1::Sample)?;
@@ -1515,10 +1690,7 @@ fn search_and_publish_one_decision_v1(
     let response = TtsS1ScorerShapedResponseV1 {
         protocol: CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1,
         schema_version: CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1,
-        request_id: format!(
-            "tts-s1-{}-{}",
-            target.coordinates.episode_id, target.coordinates.decision_ordinal
-        ),
+        request_id: format!("tts-s1-{episode_id}-{decision_ordinal}"),
         checkpoint: context.identity,
         kind: "decision",
         deck_ids: context.deck_ids,
@@ -1569,8 +1741,9 @@ fn search_and_publish_one_decision_v1(
         // replay loop.
         record_ordinal: 0,
         previous_record_sha256: String::new(),
-        episode_id: target.coordinates.episode_id,
-        decision_ordinal: target.coordinates.decision_ordinal,
+        episode_id,
+        decision_ordinal,
+        is_corpus_target,
         acting_player: expected.acting_player,
         legal_action_count: expected.legal_action_count,
         chosen_action_index: full.selected_index,
@@ -1706,8 +1879,24 @@ mod tests {
     }
 
     const FIXTURE_SEED_BLOCK_ID_V1: usize = 1;
+    /// The scorer's own caps, deliberately.
+    ///
+    /// A smaller cap would make the fixture episode cheap, and it was
+    /// tried: it does not work, and the reason is worth recording. The
+    /// searcher's own simulations run up to the depth cap from whatever
+    /// decision they start at, so with a small decision cap a search near
+    /// the end of the episode reaches the cap inside its own tree and hits
+    /// the `TerminalClassificationV1::Truncated` synthetic-key dispatch,
+    /// where the real-forward evaluator fails closed with
+    /// `NoLiveDecisionToEncode` by design (see `model_guided_search_core_v1`,
+    /// "Determination: the real-forward evaluator's live-decision
+    /// requirement"). A short episode therefore cannot be searched at all,
+    /// under production caps or any other. The fixture episode is a real
+    /// 274-decision game, which is why the whole-episode tests below are
+    /// `#[ignore]`d in a debug build.
     const FIXTURE_MAX_PHYSICAL_DECISIONS_V1: u64 = 1_024;
     const FIXTURE_MAX_POLICY_STEPS_V1: u64 = 2_048;
+    const FIXTURE_MAX_EPISODES_V1: u64 = 4;
 
     /// A fresh scratch directory for one replay's production diagnostics
     /// writer. Named by process and a counter so parallel tests never
@@ -1726,20 +1915,16 @@ mod tests {
         path
     }
 
-    /// Harvests one seeded self-play episode and seals a corpus over a
-    /// strided sample of its decisions.
+    /// Harvests one short seeded self-play episode and seals a corpus over
+    /// a strided sample of its decisions, plus the WHOLE episode.
     ///
     /// It bypasses `select_tts_s1_corpus_v1` deliberately: the quota rules
     /// are covered exhaustively by the corpus module's own pure tests, and
-    /// filling a 512-decision quota here would mean running hundreds of
-    /// full searches inside a unit test. What this fixture exists to
-    /// exercise is the other half, the reconstruct-verify-search-record
-    /// path.
-    fn fixture_corpus_v1(
-        scorer: &RunnerFixedScorerV1,
-        take: usize,
-        stride: usize,
-    ) -> TtsS1CorpusManifestV1 {
+    /// filling a 512-decision quota here would mean running thousands of
+    /// searches inside a unit test. What this fixture exists to exercise
+    /// is the other half, the whole-episode
+    /// reconstruct-verify-search-publish path.
+    fn fixture_corpus_v1(scorer: &RunnerFixedScorerV1, take: usize) -> TtsS1CorpusManifestV1 {
         let base_seed = MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1];
         let harvest = harvest_episode_v1(
             scorer,
@@ -1750,10 +1935,18 @@ mod tests {
         )
         .expect("the fixture episode plays");
         assert!(
-            harvest.decisions.len() > take * stride,
-            "the fixture episode must be long enough to sample from"
+            harvest.decisions.len() > take,
+            "the fixture episode must be strictly longer than the target sample, so the \
+             whole-episode replay is provably more than the targets: got {} for {take}",
+            harvest.decisions.len()
         );
-        let natural = harvest.natural;
+        // Spread the targets across the episode rather than clustering
+        // them at its start, so the surface checks land at genuinely
+        // different accumulated histories.
+        let stride = (harvest.decisions.len() / take).max(1);
+        let classification = harvest.classification;
+        let actions = harvest.actions.clone();
+        let environment_seed = harvest.decisions[0].coordinates.environment_seed;
         let all_decisions = harvest.into_decisions_with_action_sequences_v1();
         let episode_decisions = all_decisions.len() as u64;
         let decisions: Vec<_> = all_decisions
@@ -1763,6 +1956,7 @@ mod tests {
             .collect();
         let candidate_count = decisions.len() as u64;
         let architecture = scorer.net.architecture_identity_v1().to_owned();
+        let natural = classification == crate::rl::TerminalClassificationV1::Natural;
         TtsS1CorpusManifestV1::seal_v1(corpus_body_v1(
             TtsS1CorpusCheckpointV1::from_identity_v1(&fixture_identity_v1(), &architecture),
             FIXTURE_SEED_BLOCK_ID_V1,
@@ -1772,13 +1966,27 @@ mod tests {
             FIXTURE_MAX_POLICY_STEPS_V1,
             TtsS1CorpusSelectionV1 {
                 decisions,
+                episodes: vec![TtsS1CorpusEpisodeV1 {
+                    episode_id: 0,
+                    episode_base_seed: base_seed,
+                    environment_seed,
+                    decision_count: episode_decisions,
+                    terminal_classification:
+                        crate::native_tts_s1_corpus_v1::terminal_classification_tag_v1(
+                            classification,
+                        )
+                        .to_owned(),
+                    action_sequence: actions,
+                }],
                 candidate_count,
                 natural_terminal_episode_count: u64::from(natural),
-                // The whole episode's decision count, which is what the
-                // compute-cap projection multiplies by. Taken from the
-                // episode this fixture actually played, not invented.
+                truncated_episode_count: u64::from(!natural),
                 episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[episode_decisions])
                     .expect("one episode summarizes"),
+                all_episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[
+                    episode_decisions,
+                ])
+                .expect("one episode summarizes"),
             },
         ))
         .expect("the fixture corpus seals")
@@ -1801,6 +2009,7 @@ mod tests {
             KernelNativeSearchTierV1::T512,
             FIXTURE_SEED_BLOCK_ID_V1,
             MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+            FIXTURE_MAX_EPISODES_V1,
             None,
             &directory,
         )
@@ -1826,33 +2035,92 @@ mod tests {
         TtsS1ReplayReportV1::seal_v1(body).expect("the fixture report seals")
     }
 
-    /// END TO END, t512, on a handful of decisions: self-play produces a
-    /// corpus, the corpus reconstructs through the kernel, the production
-    /// selector searches every reconstructed decision, and the report
+    /// END TO END, t512, over a WHOLE episode: self-play produces a
+    /// corpus, the corpus's episode reconstructs through the kernel, the
+    /// production selector searches EVERY decision of it in order with the
+    /// production diagnostics writer publishing behind it, and the report
     /// chains and verifies.
+    ///
+    /// IGNORED IN A DEBUG BUILD, and the reason is the measurement itself.
+    /// Whole-episode replay searches every decision of the fixture episode
+    /// (274 of them), and one t512 search costs seconds in an unoptimized
+    /// build, so this test takes tens of minutes there and about half a
+    /// minute in release. It cannot be made cheap by shortening the
+    /// episode: see `FIXTURE_MAX_PHYSICAL_DECISIONS_V1` for why a short
+    /// episode cannot be searched at all.
+    ///
+    ///     cargo test --release --lib native_tts_s1 -- --ignored
+    ///
+    /// Everything this test covers that does NOT cost a whole episode of
+    /// searches is covered by the always-on tests below: the fail-closed
+    /// reconstruction refusals, the episode guard, the terminal
+    /// requirement, the corpus determinism, and all of the arithmetic.
     #[test]
+    #[ignore = "whole-episode t512 replay: ~274 searches, minutes in a debug build; run with cargo test --release -- --ignored"]
     fn a_t512_replay_runs_end_to_end_over_a_freshly_built_corpus_v1() {
         let scorer = RunnerFixedScorerV1::new_v1();
-        let corpus = fixture_corpus_v1(&scorer, 3, 7);
+        let corpus = fixture_corpus_v1(&scorer, 3);
         let report = replay_fixture_v1(&scorer, &corpus, "e2e");
         let body = &report.body;
 
         assert_eq!(body.tier, "t512");
         assert_eq!(body.transition_budget, 512);
-        assert_eq!(body.decisions_replayed, 3);
+        // WHOLE EPISODES: every decision of the fixture episode is
+        // searched, not only the three stratified targets, so each
+        // published record carries the true accumulated history.
         assert_eq!(body.corpus_decision_count, 3);
+        assert_eq!(body.corpus_targets_replayed, 3);
+        assert_eq!(body.corpus_episode_count, 1);
+        assert_eq!(body.episodes_replayed, 1);
+        assert_eq!(
+            body.searched_decisions, corpus.body.episodes[0].decision_count,
+            "every decision of the episode must be searched"
+        );
+        assert!(
+            body.searched_decisions > body.corpus_targets_replayed,
+            "the whole episode must be strictly more than its targets"
+        );
+        assert_eq!(body.whole_episode_view.decisions, body.searched_decisions);
+        assert_eq!(body.corpus_target_view.decisions, 3);
+        assert_eq!(body.max_episodes, FIXTURE_MAX_EPISODES_V1);
         assert!(body.replayed_whole_corpus);
         assert!(!body.stability_halves_enabled);
         assert_eq!(body.corpus_sha256, corpus.corpus_sha256);
         assert_eq!(body.slo_micros, 4_000_000);
         assert_eq!(body.hard_timeout_micros, 20_000_000);
-        assert_eq!(verify_tts_s1_replay_chain_v1(body).unwrap(), 3);
+        assert_eq!(
+            verify_tts_s1_replay_chain_v1(body).unwrap(),
+            body.searched_decisions as usize
+        );
+        // The records accumulate in episode order, and exactly the target
+        // ordinals are flagged.
+        for (index, record) in body.decisions.iter().enumerate() {
+            assert_eq!(record.record_ordinal, index as u64);
+            assert_eq!(record.decision_ordinal, index as u64);
+            assert_eq!(record.episode_id, 0);
+        }
+        let flagged: Vec<u64> = body
+            .decisions
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .map(|record| record.decision_ordinal)
+            .collect();
+        let expected_targets: Vec<u64> = corpus
+            .body
+            .decisions
+            .iter()
+            .map(|decision| decision.coordinates.decision_ordinal)
+            .collect();
+        assert_eq!(flagged, expected_targets);
 
         // The PROTOCOL latency is strictly more than the decision phase
         // alone, on every decision: the publication and the response tail
         // are real, measured, non-zero work, which is the whole point of
         // routing S1 through the production writer.
-        assert!(body.protocol_wall_time.total_micros >= body.decision_wall_time.total_micros);
+        assert!(
+            body.whole_episode_view.protocol_wall_time.total_micros
+                >= body.whole_episode_view.decision_wall_time.total_micros
+        );
         for record in &body.decisions {
             assert_eq!(
                 record.wall_time.protocol_micros,
@@ -1868,7 +2136,10 @@ mod tests {
         // One published, chain-valid V4 episode file, committed to by the
         // report.
         assert_eq!(body.diagnostics_episode_files.len(), 1);
-        assert_eq!(body.diagnostics_episode_files[0].decision_record_count, 3);
+        assert_eq!(
+            body.diagnostics_episode_files[0].decision_record_count,
+            body.searched_decisions
+        );
         assert_eq!(body.diagnostics_episode_files[0].sha256.len(), 64);
 
         // The compute cap carries every input, and the projection is the
@@ -1880,9 +2151,19 @@ mod tests {
         assert_eq!(cap.s2_workers, 16);
         assert_eq!(cap.cap_worker_hours_milli, 48_000);
         assert!(cap.raw_policy_games_excluded);
+        // The ALL-episodes mean, not the natural-only one, and the
+        // WHOLE-EPISODE mean protocol latency, not the stratified targets'.
         assert_eq!(
             cap.mean_decisions_per_game_milli,
-            corpus.body.episode_decisions.mean_decisions_milli
+            corpus.body.all_episode_decisions.mean_decisions_milli
+        );
+        assert_eq!(
+            cap.mean_protocol_micros,
+            body.whole_episode_view.mean_protocol_micros
+        );
+        assert_eq!(
+            cap.projected_elapsed_hours_at_workers_milli,
+            cap.projected_worker_hours_milli / 16
         );
         assert_eq!(
             cap.projected_worker_hours_milli,
@@ -1896,10 +2177,11 @@ mod tests {
             cap.projected_worker_hours_milli <= cap.cap_worker_hours_milli
         );
 
-        for (record, target) in body.decisions.iter().zip(corpus.body.decisions.iter()) {
-            assert_eq!(record.episode_id, target.coordinates.episode_id);
-            assert_eq!(record.decision_ordinal, target.coordinates.decision_ordinal);
-            assert_eq!(record.legal_action_count, target.surface.legal_action_count);
+        // EVERY searched decision, not only the targets: the corpus
+        // targets are a subset of the records now, so these invariants are
+        // asserted over the whole population the verdict is taken from.
+        for record in &body.decisions {
+            assert_eq!(record.episode_id, 0);
             assert!(record.chosen_action_index < record.legal_action_count);
             assert!(record.policy_sample_index < record.legal_action_count);
             assert_eq!(record.requested_transitions, 512);
@@ -1919,6 +2201,23 @@ mod tests {
             assert!(u32::from(census.max_simulation_depth) <= 64);
         }
 
+        // The TARGET records line up with the corpus targets, in order,
+        // and each one really was searched at the state the corpus
+        // recorded: the surface check that let it through compared the
+        // legal-action count, so the record's count must match too.
+        let target_records: Vec<&TtsS1ReplayDecisionRecordV1> = body
+            .decisions
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .collect();
+        assert_eq!(target_records.len(), corpus.body.decisions.len());
+        for (record, target) in target_records.iter().zip(corpus.body.decisions.iter()) {
+            assert_eq!(record.episode_id, target.coordinates.episode_id);
+            assert_eq!(record.decision_ordinal, target.coordinates.decision_ordinal);
+            assert_eq!(record.legal_action_count, target.surface.legal_action_count);
+            assert_eq!(record.acting_player, target.surface.acting_player);
+        }
+
         // The report really is publishable and re-provable from bytes.
         let bytes = report.canonical_bytes_v1().unwrap();
         assert_eq!(decode_tts_s1_replay_report_v1(&bytes).unwrap(), report);
@@ -1927,10 +2226,14 @@ mod tests {
     /// The chosen actions and the whole search product do not depend on
     /// wall time: two runs of the same tier over the same corpus strip
     /// equal. The S0 bit-identical-replay pattern, applied to S1.
+    ///
+    /// Ignored for the same reason as the end-to-end test above, doubled:
+    /// it runs the whole episode twice.
     #[test]
+    #[ignore = "two whole-episode t512 replays: ~548 searches, minutes in a debug build; run with cargo test --release -- --ignored"]
     fn the_chosen_action_is_independent_of_timing_v1() {
         let scorer = RunnerFixedScorerV1::new_v1();
-        let corpus = fixture_corpus_v1(&scorer, 2, 11);
+        let corpus = fixture_corpus_v1(&scorer, 2);
         let first = replay_fixture_v1(&scorer, &corpus, "timing-a")
             .canonical_bytes_v1()
             .unwrap();
@@ -1947,17 +2250,18 @@ mod tests {
         let parsed: TtsS1ReplayReportV1 = serde_json::from_slice(&first).unwrap();
         assert!(!parsed.body.decisions.is_empty());
         assert!(
-            parsed.body.decision_wall_time.max_micros >= parsed.body.search_wall_time.p50_micros
+            parsed.body.whole_episode_view.decision_wall_time.max_micros
+                >= parsed.body.whole_episode_view.search_wall_time.p50_micros
         );
     }
 
     /// The corpus manifest is reproducible byte for byte across two runs.
     #[test]
     fn the_corpus_manifest_is_byte_identical_across_two_runs_v1() {
-        let first = fixture_corpus_v1(&RunnerFixedScorerV1::new_v1(), 4, 5)
+        let first = fixture_corpus_v1(&RunnerFixedScorerV1::new_v1(), 4)
             .canonical_bytes_v1()
             .unwrap();
-        let second = fixture_corpus_v1(&RunnerFixedScorerV1::new_v1(), 4, 5)
+        let second = fixture_corpus_v1(&RunnerFixedScorerV1::new_v1(), 4)
             .canonical_bytes_v1()
             .unwrap();
         assert_eq!(first, second);
@@ -1970,7 +2274,7 @@ mod tests {
     #[test]
     fn a_reconstruction_mismatch_fails_closed_v1() {
         let scorer = RunnerFixedScorerV1::new_v1();
-        let corpus = fixture_corpus_v1(&scorer, 2, 9);
+        let corpus = fixture_corpus_v1(&scorer, 2);
         let architecture = scorer.net.architecture_identity_v1().to_owned();
         let identity = fixture_identity_v1();
         let directory = scratch_diagnostics_dir_v1("mismatch");
@@ -2004,12 +2308,6 @@ mod tests {
                 }),
             ),
             (
-                "environment_seed",
-                Box::new(|decision: &mut TtsS1CorpusDecisionV1| {
-                    decision.coordinates.environment_seed ^= 1;
-                }),
-            ),
-            (
                 "decision_kind",
                 Box::new(|decision: &mut TtsS1CorpusDecisionV1| {
                     // Any OTHER kind in the closed vocabulary: a surface
@@ -2037,6 +2335,7 @@ mod tests {
                 KernelNativeSearchTierV1::T512,
                 FIXTURE_SEED_BLOCK_ID_V1,
                 MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+                FIXTURE_MAX_EPISODES_V1,
                 None,
                 &directory,
             )
@@ -2050,6 +2349,124 @@ mod tests {
                 "tampering {field} produced {error}"
             );
         }
+
+        // The environment seed is checked at the RESET, against the
+        // episode record, which is where it now lives: a tampered one must
+        // be refused before a single decision is reconstructed, let alone
+        // searched.
+        let mut tampered = corpus.clone();
+        tampered.body.episodes[0].environment_seed ^= 1;
+        let tampered = TtsS1CorpusManifestV1::seal_v1(tampered.body).unwrap();
+        let error = replay_corpus_body_v1(
+            &scorer,
+            &identity,
+            &architecture,
+            TtsS1CorpusCheckpointV1::from_identity_v1(&identity, &architecture),
+            &tampered,
+            KernelNativeSearchTierV1::T512,
+            FIXTURE_SEED_BLOCK_ID_V1,
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+            FIXTURE_MAX_EPISODES_V1,
+            None,
+            &directory,
+        )
+        .expect_err("a tampered environment seed must fail closed");
+        assert!(
+            matches!(
+                error,
+                TtsS1ReplayErrorV1::ReconstructionMismatch {
+                    field: "environment_seed",
+                    ..
+                }
+            ),
+            "tampering the episode environment seed produced {error}"
+        );
+        // And `decode` refuses it too, because the episode's seed and its
+        // targets' recorded seeds must agree.
+        assert!(matches!(
+            decode_tts_s1_corpus_v1(&tampered.canonical_bytes_v1().unwrap()),
+            Err(TtsS1CorpusErrorV1::InvalidManifest)
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// The episode guard is fail-closed, and it fires BEFORE any search.
+    #[test]
+    fn a_corpus_above_the_episode_guard_is_refused_v1() {
+        let scorer = RunnerFixedScorerV1::new_v1();
+        let corpus = fixture_corpus_v1(&scorer, 1);
+        let architecture = scorer.net.architecture_identity_v1().to_owned();
+        let identity = fixture_identity_v1();
+        let directory = scratch_diagnostics_dir_v1("guard");
+        let error = replay_corpus_body_v1(
+            &scorer,
+            &identity,
+            &architecture,
+            TtsS1CorpusCheckpointV1::from_identity_v1(&identity, &architecture),
+            &corpus,
+            KernelNativeSearchTierV1::T512,
+            FIXTURE_SEED_BLOCK_ID_V1,
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+            // The corpus contributes one episode, so a guard of zero must
+            // refuse it.
+            0,
+            None,
+            &directory,
+        )
+        .expect_err("a corpus above the guard must be refused");
+        assert!(matches!(
+            error,
+            TtsS1ReplayErrorV1::TooManyEpisodes {
+                episodes: 1,
+                max_episodes: 0
+            }
+        ));
+        assert_eq!(error.code_v1(), "tts_s1_replay_too_many_episodes");
+        // Nothing was published: the guard fires before the writer opens.
+        assert!(!directory.join(TTS_S1_RESPONSE_LINES_FILE_V1).exists());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// An episode whose recorded sequence does not reach a terminal is
+    /// refused: the episode the corpus describes is then not the episode
+    /// the kernel just played, and no latency taken from it means anything.
+    #[test]
+    fn an_episode_that_does_not_reach_a_terminal_is_refused_v1() {
+        let scorer = RunnerFixedScorerV1::new_v1();
+        let mut corpus = fixture_corpus_v1(&scorer, 1);
+        // Keep the first decision only. Its own recorded prefix is empty,
+        // so the decode invariant still holds, but playing one action of a
+        // 274-decision game does not end it.
+        corpus.body.episodes[0].decision_count = 1;
+        corpus.body.episodes[0].action_sequence.truncate(1);
+        corpus.body.decisions.truncate(1);
+        let corpus = TtsS1CorpusManifestV1::seal_v1(corpus.body).unwrap();
+        assert!(
+            decode_tts_s1_corpus_v1(&corpus.canonical_bytes_v1().unwrap()).is_ok(),
+            "the truncated fixture must still be a well-formed corpus"
+        );
+
+        let architecture = scorer.net.architecture_identity_v1().to_owned();
+        let identity = fixture_identity_v1();
+        let directory = scratch_diagnostics_dir_v1("unterminated");
+        let error = replay_corpus_body_v1(
+            &scorer,
+            &identity,
+            &architecture,
+            TtsS1CorpusCheckpointV1::from_identity_v1(&identity, &architecture),
+            &corpus,
+            KernelNativeSearchTierV1::T512,
+            FIXTURE_SEED_BLOCK_ID_V1,
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+            FIXTURE_MAX_EPISODES_V1,
+            None,
+            &directory,
+        )
+        .expect_err("an unterminated episode must be refused");
+        assert!(matches!(
+            error,
+            TtsS1ReplayErrorV1::EpisodeDidNotTerminate { episode_id: 0 }
+        ));
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -2057,7 +2474,7 @@ mod tests {
     #[test]
     fn a_foreign_corpus_checkpoint_fails_closed_v1() {
         let scorer = RunnerFixedScorerV1::new_v1();
-        let corpus = fixture_corpus_v1(&scorer, 1, 3);
+        let corpus = fixture_corpus_v1(&scorer, 1);
         let architecture = scorer.net.architecture_identity_v1().to_owned();
         let mut identity = fixture_identity_v1();
         identity.loaded_payload_sha256 = "ff".repeat(32);
@@ -2072,6 +2489,7 @@ mod tests {
                 KernelNativeSearchTierV1::T512,
                 FIXTURE_SEED_BLOCK_ID_V1,
                 MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+                FIXTURE_MAX_EPISODES_V1,
                 None,
                 &directory,
             ),
@@ -2201,29 +2619,48 @@ mod tests {
 
     #[test]
     fn the_compute_cap_projection_is_the_stated_arithmetic_v1() {
-        // 6,144 wrapped games x 300 decisions x 1 s / 16 workers
-        //   = 115,200 worker-seconds = 32 worker-hours.
-        assert_eq!(project_s2_worker_hours_milli_v1(300_000, 1_000_000), 32_000);
-        // Doubling the latency doubles the cost and crosses the cap.
-        let doubled = project_s2_worker_hours_milli_v1(300_000, 2_000_000);
-        assert_eq!(doubled, 64_000);
+        // 6,144 wrapped games x 300 decisions x 1 s = 1,843,200 seconds of
+        // AGGREGATE work = 512 worker-hours. There is no division by the
+        // worker count: worker-hours are work, not elapsed time. A prior
+        // revision divided by 16 and reported this same configuration as
+        // 32, which is the elapsed time on a 16-worker host and is not the
+        // quantity the 48 worker-hour cap bounds.
+        assert_eq!(
+            project_s2_worker_hours_milli_v1(300_000, 1_000_000),
+            512_000
+        );
+        // The elapsed figure is published beside it, as information.
+        assert_eq!(project_s2_elapsed_hours_milli_v1(512_000), 32_000);
+
+        // At 1 s per decision the tier is already ten times over the cap.
         assert!(
-            doubled > TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
-            "the doubled projection must land outside the 48 worker-hour cap"
+            project_s2_worker_hours_milli_v1(300_000, 1_000_000)
+                > TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
+            "512 worker-hours must land outside the 48 worker-hour cap"
+        );
+        // 6,144 x 300 x 90 ms = 46.08 worker-hours, just inside it.
+        let inside_micros = 90_000;
+        assert_eq!(
+            project_s2_worker_hours_milli_v1(300_000, inside_micros),
+            46_080
         );
 
         let stats = TtsS1EpisodeDecisionStatsV1::summarize_v1(&[300]).unwrap();
-        let inside = compute_cap_projection_v1(&stats, 1_000_000, 900_000, 800_000);
+        let inside = compute_cap_projection_v1(&stats, 7, 2, inside_micros, 80_000, 70_000);
         assert!(inside.within_cap);
-        assert_eq!(inside.projected_worker_hours_milli, 32_000);
+        assert_eq!(inside.projected_worker_hours_milli, 46_080);
+        assert_eq!(inside.projected_elapsed_hours_at_workers_milli, 2_880);
         assert_eq!(inside.s2_wrapped_games, 6_144);
+        assert_eq!(inside.s2_workers, 16);
         assert!(inside.raw_policy_games_excluded);
-        assert_eq!(inside.mean_decision_micros, 900_000);
-        assert_eq!(inside.mean_search_micros, 800_000);
+        assert_eq!(inside.mean_decision_micros, 80_000);
+        assert_eq!(inside.mean_search_micros, 70_000);
+        assert_eq!(inside.natural_terminal_episode_count, 7);
+        assert_eq!(inside.truncated_episode_count, 2);
 
-        let outside = compute_cap_projection_v1(&stats, 2_000_000, 1_900_000, 1_800_000);
+        let outside = compute_cap_projection_v1(&stats, 7, 2, 1_000_000, 900_000, 800_000);
         assert!(!outside.within_cap);
-        assert_eq!(outside.projected_worker_hours_milli, 64_000);
+        assert_eq!(outside.projected_worker_hours_milli, 512_000);
     }
 
     fn synthetic_record_v1(ordinal: u64, previous: String) -> TtsS1ReplayDecisionRecordV1 {
@@ -2232,6 +2669,7 @@ mod tests {
             previous_record_sha256: previous,
             episode_id: 0,
             decision_ordinal: ordinal,
+            is_corpus_target: true,
             acting_player: PlayerSeatV1::P0,
             legal_action_count: 4,
             chosen_action_index: 1,
@@ -2282,10 +2720,9 @@ mod tests {
             .iter()
             .map(|record| record.wall_time.decision_micros)
             .collect();
-        let protocol: Vec<u64> = records
-            .iter()
-            .map(|record| record.wall_time.protocol_micros)
-            .collect();
+        let borrowed: Vec<&TtsS1ReplayDecisionRecordV1> = records.iter().collect();
+        let view = latency_view_v1(&borrowed).unwrap();
+        let _ = (&search, &decision);
         TtsS1ReplayReportBodyV1 {
             engine_commit: "deadbeef".to_owned(),
             tier: "t512".to_owned(),
@@ -2332,17 +2769,17 @@ mod tests {
             search_authority_digest_sha256: "66".repeat(32),
             corpus_sha256: "aa".repeat(32),
             corpus_decision_count: record_count,
-            decisions_replayed: record_count,
+            corpus_episode_count: 1,
+            episodes_replayed: 1,
+            searched_decisions: record_count,
+            corpus_targets_replayed: record_count,
+            max_episodes: 8,
             replayed_whole_corpus: true,
             percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
-            search_wall_time: summarize_micros_v1(&search).unwrap(),
-            decision_wall_time: summarize_micros_v1(&decision).unwrap(),
-            protocol_wall_time: summarize_micros_v1(&protocol).unwrap(),
-            decisions_per_second_milli: 1,
+            whole_episode_view: view.clone(),
+            corpus_target_view: view,
             slo_micros: slo_micros_v1(),
             hard_timeout_micros: hard_timeout_micros_v1(),
-            p99_protocol_ceiling_status: CeilingStatusV4::WithinSlo,
-            max_protocol_ceiling_status: CeilingStatusV4::WithinSlo,
             diagnostics_episode_files: vec![TtsS1DiagnosticsEpisodeFileV1 {
                 episode_id: 0,
                 file_name: "episode-synthetic.jsonl".to_owned(),
@@ -2352,6 +2789,8 @@ mod tests {
             }],
             compute_cap: compute_cap_projection_v1(
                 &TtsS1EpisodeDecisionStatsV1::summarize_v1(&[300]).unwrap(),
+                1,
+                0,
                 2_400,
                 2_000,
                 1_000,
@@ -2406,38 +2845,25 @@ mod tests {
             previous = lower_hex_sha256_v4(record.chain_link_v1().unwrap());
         }
         slow.final_record_sha256 = previous;
-        let search: Vec<u64> = slow
-            .decisions
-            .iter()
-            .map(|record| record.wall_time.search_micros)
-            .collect();
-        let decision: Vec<u64> = slow
-            .decisions
-            .iter()
-            .map(|record| record.wall_time.decision_micros)
-            .collect();
-        let protocol: Vec<u64> = slow
-            .decisions
-            .iter()
-            .map(|record| record.wall_time.protocol_micros)
-            .collect();
-        slow.search_wall_time = summarize_micros_v1(&search).unwrap();
-        slow.decision_wall_time = summarize_micros_v1(&decision).unwrap();
-        slow.protocol_wall_time = summarize_micros_v1(&protocol).unwrap();
-        slow.p99_protocol_ceiling_status = classify_micros_v1(slow.protocol_wall_time.p99_micros);
-        slow.max_protocol_ceiling_status = classify_micros_v1(slow.protocol_wall_time.max_micros);
+        let borrowed: Vec<&TtsS1ReplayDecisionRecordV1> = slow.decisions.iter().collect();
+        let view = latency_view_v1(&borrowed).unwrap();
+        let searched = slow.decisions.len() as u64;
         slow.compute_cap = compute_cap_projection_v1(
             &TtsS1EpisodeDecisionStatsV1::summarize_v1(&[300]).unwrap(),
-            slow.protocol_wall_time.total_micros / slow.decisions.len() as u64,
-            slow.decision_wall_time.total_micros / slow.decisions.len() as u64,
-            slow.search_wall_time.total_micros / slow.decisions.len() as u64,
+            1,
+            0,
+            view.mean_protocol_micros,
+            view.decision_wall_time.total_micros / searched,
+            view.search_wall_time.total_micros / searched,
         );
         let (verdict, reason) = verdict_v1(
-            slow.p99_protocol_ceiling_status,
-            slow.max_protocol_ceiling_status,
+            view.p99_protocol_ceiling_status,
+            view.max_protocol_ceiling_status,
             slow.compute_cap.within_cap,
             true,
         );
+        slow.whole_episode_view = view.clone();
+        slow.corpus_target_view = view;
         slow.verdict = verdict;
         slow.verdict_reason = reason;
 

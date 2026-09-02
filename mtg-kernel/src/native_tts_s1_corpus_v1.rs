@@ -350,24 +350,69 @@ impl TtsS1CorpusQuotasV1 {
     }
 }
 
-/// Decisions per NATURAL-TERMINAL episode, as this self-play sweep
-/// actually observed them.
+/// One whole episode that contributes at least one selected decision.
+///
+/// The per-tier replay runs WHOLE EPISODES, not the stratified targets in
+/// isolation, because the production diagnostics writer republishes the
+/// episode file after every decision: a late decision's publication cost
+/// is a function of every earlier searched decision in that episode. A
+/// replay that searched only the 512 stratified targets would publish
+/// short files and measure a publication phase no panel ever pays. So the
+/// corpus records the episode's whole action sequence, and the replay
+/// plays it from the start, searching every decision in order.
+///
+/// The targets' own `action_sequence` prefixes are kept as well, because
+/// they are the per-decision replay coordinates the corpus contract
+/// promises. The duplication is checkable rather than merely tolerated:
+/// [`decode_tts_s1_corpus_v1`] rejects a manifest in which any target's
+/// sequence is not exactly the prefix of its episode's.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1CorpusEpisodeV1 {
+    pub episode_id: u64,
+    pub episode_base_seed: u64,
+    pub environment_seed: u64,
+    /// Decisions in the whole episode, which is `action_sequence.len()`.
+    pub decision_count: u64,
+    /// How the episode ended. Only `natural` episodes contribute
+    /// candidates, so in a published corpus this is always `natural`; the
+    /// field exists so a reader never has to take that on trust.
+    pub terminal_classification: String,
+    /// Every flat-action index the episode played, in order.
+    pub action_sequence: Vec<u32>,
+}
+
+/// Stable wire spelling of a terminal classification.
+pub fn terminal_classification_tag_v1(classification: TerminalClassificationV1) -> &'static str {
+    match classification {
+        TerminalClassificationV1::Natural => "natural",
+        TerminalClassificationV1::Truncated => "truncated",
+        TerminalClassificationV1::Halted => "halted",
+    }
+}
+
+/// Decisions per episode, as this self-play sweep actually observed them.
 ///
 /// This is the corpus's contribution to the sketch's compute cap (Section
 /// 4: "a tier whose projected S2 cost (from S1 timings) exceeds 48
-/// worker-hours on the 16-worker host is INFEASIBLE"). The replay cannot
-/// derive it: it only ever visits the 512 SELECTED decisions, which are a
-/// stratified sample and not a game's worth of decisions. So the builder,
-/// which is the only thing that ever played a whole game, records it.
+/// worker-hours on the 16-worker host is INFEASIBLE"). Only the builder
+/// ever plays a whole game, so only the builder can record it.
 ///
 /// Every count is decisions by BOTH seats, because that is what a
 /// self-play episode contains. See the replay's own projection docs for
 /// why that makes the projection conservative for a wrapped agent that
 /// occupies one seat.
 ///
-/// Truncated and halted episodes contribute nothing here, for the same
-/// reason they contribute no candidates: their length is set by the
-/// decision cap rather than by the game.
+/// TWO of these are published, and they are not interchangeable.
+/// `episode_decisions` covers NATURAL-terminal episodes only and is the
+/// context for the stratified corpus, which is drawn from those episodes
+/// alone. `all_episode_decisions` covers natural AND truncated episodes,
+/// and is what the compute projection multiplies by: a truncated episode
+/// is one that ran into the decision cap, which means it is among the
+/// LONGEST games played, and excluding exactly the longest games from a
+/// cost projection biases that projection downward. Truncated episodes
+/// still contribute no candidates, because their tail is shaped by the cap
+/// rather than by the game; the two uses are simply different questions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TtsS1EpisodeDecisionStatsV1 {
@@ -429,10 +474,20 @@ pub struct TtsS1CorpusBodyV1 {
     /// How many of `episode_count` episodes reached a natural terminal and
     /// therefore contributed candidates.
     pub natural_terminal_episode_count: u64,
-    /// Decisions per natural-terminal episode. The compute-cap projection
-    /// in `native_tts_s1_replay_v1` reads `mean_decisions_milli` from
-    /// here; nothing else in S1 can supply it.
+    /// How many ran into the decision cap instead. These contribute no
+    /// candidates but DO contribute to `all_episode_decisions`.
+    pub truncated_episode_count: u64,
+    /// Decisions per natural-terminal episode: context for the stratified
+    /// corpus, which is drawn from those episodes alone.
     pub episode_decisions: TtsS1EpisodeDecisionStatsV1,
+    /// Decisions per episode over natural AND truncated episodes. THIS is
+    /// what the compute-cap projection multiplies by; see the statistics
+    /// type's own docs for why excluding truncated episodes would bias the
+    /// projection downward by dropping the longest games.
+    pub all_episode_decisions: TtsS1EpisodeDecisionStatsV1,
+    /// Every episode that contributes at least one selected decision, with
+    /// its whole action sequence, so the replay can run it end to end.
+    pub episodes: Vec<TtsS1CorpusEpisodeV1>,
     /// The selected corpus, in ascending (episode id, decision ordinal)
     /// order regardless of the order selection visited them in.
     pub decisions: Vec<TtsS1CorpusDecisionV1>,
@@ -517,6 +572,11 @@ pub enum TtsS1CorpusErrorV1 {
     /// decision count and therefore no compute-cap projection. Fail closed
     /// rather than publish a corpus a tier verdict cannot be built from.
     NoNaturalTerminalEpisode,
+    /// An episode ended in an engine fail-closed. That is a defect, not a
+    /// game outcome, and it is reported rather than counted or skipped.
+    HaltedEpisode {
+        episode_id: u64,
+    },
     CanonicalJson,
     /// A decoded manifest's `corpus_sha256` does not cover its own body,
     /// or its bytes were not canonical, or its schema is not this one.
@@ -542,6 +602,7 @@ impl TtsS1CorpusErrorV1 {
             Self::CorpusTooSmall { .. } => "tts_s1_corpus_too_small",
             Self::MissingEpisodeActions => "tts_s1_corpus_missing_episode_actions",
             Self::NoNaturalTerminalEpisode => "tts_s1_corpus_no_natural_terminal_episode",
+            Self::HaltedEpisode { .. } => "tts_s1_corpus_halted_episode",
             Self::CanonicalJson => "tts_s1_corpus_canonical_json_failed",
             Self::InvalidManifest => "tts_s1_corpus_manifest_invalid",
             Self::Publication(_) => "tts_s1_corpus_publication_failed",
@@ -572,6 +633,9 @@ impl fmt::Display for TtsS1CorpusErrorV1 {
                 "{}: selected {selected}, needs {required}",
                 self.code_v1()
             ),
+            Self::HaltedEpisode { episode_id } => {
+                write!(formatter, "{}: episode {episode_id}", self.code_v1())
+            }
             _ => formatter.write_str(self.code_v1()),
         }
     }
@@ -822,7 +886,7 @@ impl TtsS1DecisionScorerV1 for crate::native_checkpoint_inference_v1::NativeChec
 
 /// One episode's self-play product.
 pub(crate) struct EpisodeHarvestV1 {
-    pub(crate) natural: bool,
+    pub(crate) classification: TerminalClassificationV1,
     /// Every decision, in order, each carrying an EMPTY `action_sequence`.
     ///
     /// The prefixes are deferred rather than filled here because a
@@ -864,9 +928,12 @@ impl EpisodeHarvestV1 {
 /// What one whole self-play sweep produced.
 pub(crate) struct TtsS1CorpusSelectionV1 {
     pub(crate) decisions: Vec<TtsS1CorpusDecisionV1>,
+    pub(crate) episodes: Vec<TtsS1CorpusEpisodeV1>,
     pub(crate) candidate_count: u64,
     pub(crate) natural_terminal_episode_count: u64,
+    pub(crate) truncated_episode_count: u64,
     pub(crate) episode_decisions: TtsS1EpisodeDecisionStatsV1,
+    pub(crate) all_episode_decisions: TtsS1EpisodeDecisionStatsV1,
 }
 
 /// Plays one seeded self-play episode with both seats on `scorer` and
@@ -905,9 +972,14 @@ pub(crate) fn harvest_episode_v1(
     loop {
         let expected = match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
-                let natural = terminal.terminal_classification == TerminalClassificationV1::Natural;
+                // Halted is an engine fail-closed, not a game outcome, and
+                // an episode that reached one says nothing about decision
+                // counts or anything else. Reported rather than counted.
+                if terminal.terminal_classification == TerminalClassificationV1::Halted {
+                    return Err(TtsS1CorpusErrorV1::HaltedEpisode { episode_id });
+                }
                 return Ok(EpisodeHarvestV1 {
-                    natural,
+                    classification: terminal.terminal_classification,
                     decisions,
                     actions,
                 });
@@ -991,15 +1063,19 @@ pub(crate) fn harvest_and_select_v1(
     max_policy_steps: u64,
 ) -> Result<TtsS1CorpusSelectionV1, TtsS1CorpusErrorV1> {
     let mut candidates: Vec<TtsS1CorpusDecisionV1> = Vec::new();
-    // Kept per contributing episode so the selected decisions' replay
-    // prefixes can be cut from them afterwards; see
-    // `EpisodeHarvestV1::decisions` for why they are not cut per candidate.
-    let mut episode_actions: Vec<(u64, Vec<u32>)> = Vec::new();
+    // Kept per natural-terminal episode so the selected decisions' replay
+    // prefixes can be cut from them afterwards, and so the contributing
+    // episodes can be published whole for the replay to run end to end.
+    let mut episode_actions: Vec<(u64, u64, Vec<u32>)> = Vec::new();
     let mut natural_terminal_episode_count: u64 = 0;
-    // One entry per natural-terminal episode: the whole-game decision
-    // count the compute-cap projection needs. Only a whole game supplies
-    // it, and only this loop ever plays one.
-    let mut episode_decision_counts: Vec<u64> = Vec::new();
+    let mut truncated_episode_count: u64 = 0;
+    // Whole-game decision counts. NATURAL ones are the stratified corpus's
+    // own context; ALL of them (natural plus truncated) are what the
+    // compute-cap projection multiplies by, because a truncated episode is
+    // one that hit the decision cap and is therefore among the longest
+    // games played.
+    let mut natural_decision_counts: Vec<u64> = Vec::new();
+    let mut all_decision_counts: Vec<u64> = Vec::new();
     for episode_id in 0..episode_count {
         let harvest = harvest_episode_v1(
             scorer,
@@ -1008,35 +1084,81 @@ pub(crate) fn harvest_and_select_v1(
             max_physical_decisions,
             max_policy_steps,
         )?;
-        if harvest.natural {
-            natural_terminal_episode_count += 1;
-            episode_decision_counts.push(harvest.decisions.len() as u64);
-            candidates.extend(harvest.decisions);
-            episode_actions.push((episode_id, harvest.actions));
+        let decision_count = harvest.decisions.len() as u64;
+        all_decision_counts.push(decision_count);
+        match harvest.classification {
+            TerminalClassificationV1::Natural => {
+                natural_terminal_episode_count += 1;
+                natural_decision_counts.push(decision_count);
+                let environment_seed = harvest
+                    .decisions
+                    .first()
+                    .map(|decision| decision.coordinates.environment_seed)
+                    .unwrap_or_default();
+                candidates.extend(harvest.decisions);
+                episode_actions.push((episode_id, environment_seed, harvest.actions));
+            }
+            TerminalClassificationV1::Truncated => {
+                truncated_episode_count += 1;
+            }
+            // Rejected at the harvest, above.
+            TerminalClassificationV1::Halted => {
+                return Err(TtsS1CorpusErrorV1::HaltedEpisode { episode_id })
+            }
         }
     }
-    let episode_decisions = TtsS1EpisodeDecisionStatsV1::summarize_v1(&episode_decision_counts)
+    let episode_decisions = TtsS1EpisodeDecisionStatsV1::summarize_v1(&natural_decision_counts)
+        .ok_or(TtsS1CorpusErrorV1::NoNaturalTerminalEpisode)?;
+    let all_episode_decisions = TtsS1EpisodeDecisionStatsV1::summarize_v1(&all_decision_counts)
         .ok_or(TtsS1CorpusErrorV1::NoNaturalTerminalEpisode)?;
     let candidate_count = candidates.len() as u64;
     let chosen = select_tts_s1_corpus_v1(&candidates)?;
     let mut decisions = Vec::with_capacity(chosen.len());
+    let mut contributing: Vec<u64> = Vec::new();
     for index in chosen {
         let mut decision = candidates[index].clone();
         let ordinal = decision.coordinates.decision_ordinal;
         let actions = episode_actions
             .iter()
-            .find(|(episode_id, _)| *episode_id == decision.coordinates.episode_id)
-            .map(|(_, actions)| actions)
+            .find(|(episode_id, _, _)| *episode_id == decision.coordinates.episode_id)
+            .map(|(_, _, actions)| actions)
             .ok_or(TtsS1CorpusErrorV1::MissingEpisodeActions)?;
         decision.coordinates.action_sequence =
             action_prefix_v1(actions, ordinal).ok_or(TtsS1CorpusErrorV1::MissingEpisodeActions)?;
+        if !contributing.contains(&decision.coordinates.episode_id) {
+            contributing.push(decision.coordinates.episode_id);
+        }
         decisions.push(decision);
+    }
+    // Ascending episode id, matching the decision order, so the replay
+    // walks both in one pass.
+    contributing.sort_unstable();
+    let mut episodes = Vec::with_capacity(contributing.len());
+    for episode_id in contributing {
+        let (_, environment_seed, actions) = episode_actions
+            .iter()
+            .find(|(candidate, _, _)| *candidate == episode_id)
+            .ok_or(TtsS1CorpusErrorV1::MissingEpisodeActions)?;
+        episodes.push(TtsS1CorpusEpisodeV1 {
+            episode_id,
+            episode_base_seed: base_seed,
+            environment_seed: *environment_seed,
+            decision_count: actions.len() as u64,
+            terminal_classification: terminal_classification_tag_v1(
+                TerminalClassificationV1::Natural,
+            )
+            .to_owned(),
+            action_sequence: actions.clone(),
+        });
     }
     Ok(TtsS1CorpusSelectionV1 {
         decisions,
+        episodes,
         candidate_count,
         natural_terminal_episode_count,
+        truncated_episode_count,
         episode_decisions,
+        all_episode_decisions,
     })
 }
 
@@ -1067,7 +1189,10 @@ pub(crate) fn corpus_body_v1(
         quotas: TtsS1CorpusQuotasV1::pre_registered_v1(),
         candidate_count: selection.candidate_count,
         natural_terminal_episode_count: selection.natural_terminal_episode_count,
+        truncated_episode_count: selection.truncated_episode_count,
         episode_decisions: selection.episode_decisions,
+        all_episode_decisions: selection.all_episode_decisions,
+        episodes: selection.episodes,
         decisions: selection.decisions,
     }
 }
@@ -1121,6 +1246,33 @@ pub fn decode_tts_s1_corpus_v1(bytes: &[u8]) -> Result<TtsS1CorpusManifestV1, Tt
             .map_err(|_| TtsS1CorpusErrorV1::InvalidManifest)?;
     let reencoded = to_canonical_json_bytes_v1(&manifest, CanonicalJsonNullPolicyV1::Forbid)
         .map_err(|_| TtsS1CorpusErrorV1::CanonicalJson)?;
+    // Each target's recorded prefix must be exactly its episode's, so the
+    // duplication between the per-decision coordinates and the whole
+    // episode sequence is a checked invariant rather than two independent
+    // claims that could disagree.
+    for decision in &manifest.body.decisions {
+        let Some(episode) = manifest
+            .body
+            .episodes
+            .iter()
+            .find(|episode| episode.episode_id == decision.coordinates.episode_id)
+        else {
+            return Err(TtsS1CorpusErrorV1::InvalidManifest);
+        };
+        if episode.action_sequence.len() as u64 != episode.decision_count
+            || episode.episode_base_seed != decision.coordinates.episode_base_seed
+            || episode.environment_seed != decision.coordinates.environment_seed
+            || decision.coordinates.decision_ordinal >= episode.decision_count
+            || action_prefix_v1(
+                &episode.action_sequence,
+                decision.coordinates.decision_ordinal,
+            )
+            .as_deref()
+                != Some(decision.coordinates.action_sequence.as_slice())
+        {
+            return Err(TtsS1CorpusErrorV1::InvalidManifest);
+        }
+    }
     if reencoded != bytes
         || manifest.schema != TTS_S1_CORPUS_SCHEMA_V1
         || manifest.corpus_sha256 != lower_hex_sha256_v4(corpus_body_digest_v1(&manifest.body)?)
@@ -1386,9 +1538,58 @@ mod tests {
     }
 
     #[test]
+    fn a_manifest_whose_target_prefix_disagrees_with_its_episode_is_rejected_v1() {
+        let pool = synthetic_pool_v1();
+        let chosen = select_tts_s1_corpus_v1(&pool).unwrap();
+        let manifest = synthetic_manifest_v1(&pool, chosen);
+        // The prefixes agree, so the manifest decodes.
+        assert!(decode_tts_s1_corpus_v1(&manifest.canonical_bytes_v1().unwrap()).is_ok());
+
+        // A target whose recorded prefix is not its episode's is refused,
+        // even though its own digest is perfectly valid.
+        let mut tampered = manifest.clone();
+        tampered.body.decisions[8].coordinates.action_sequence[0] = 7;
+        let tampered = TtsS1CorpusManifestV1::seal_v1(tampered.body).unwrap();
+        assert!(matches!(
+            decode_tts_s1_corpus_v1(&tampered.canonical_bytes_v1().unwrap()),
+            Err(TtsS1CorpusErrorV1::InvalidManifest)
+        ));
+
+        // So is one whose episode is missing outright.
+        let mut orphaned = manifest.clone();
+        orphaned
+            .body
+            .episodes
+            .retain(|episode| episode.episode_id != 0);
+        let orphaned = TtsS1CorpusManifestV1::seal_v1(orphaned.body).unwrap();
+        assert!(matches!(
+            decode_tts_s1_corpus_v1(&orphaned.canonical_bytes_v1().unwrap()),
+            Err(TtsS1CorpusErrorV1::InvalidManifest)
+        ));
+    }
+
+    #[test]
     fn a_sealed_manifest_round_trips_and_rejects_a_tampered_digest_v1() {
         let pool = synthetic_pool_v1();
         let chosen = select_tts_s1_corpus_v1(&pool).unwrap();
+        let manifest = synthetic_manifest_v1(&pool, chosen);
+        let bytes = manifest.canonical_bytes_v1().unwrap();
+        assert_eq!(decode_tts_s1_corpus_v1(&bytes).unwrap(), manifest);
+
+        let mut tampered = manifest.clone();
+        tampered.body.decisions[0].labels.kernel_turn += 1;
+        let tampered_bytes = tampered.canonical_bytes_v1().unwrap();
+        assert!(matches!(
+            decode_tts_s1_corpus_v1(&tampered_bytes),
+            Err(TtsS1CorpusErrorV1::InvalidManifest)
+        ));
+    }
+
+    /// A sealed manifest over the synthetic pool.
+    fn synthetic_manifest_v1(
+        pool: &[TtsS1CorpusDecisionV1],
+        chosen: Vec<usize>,
+    ) -> TtsS1CorpusManifestV1 {
         let body = TtsS1CorpusBodyV1 {
             engine_commit: "deadbeef".to_owned(),
             checkpoint: TtsS1CorpusCheckpointV1 {
@@ -1415,26 +1616,38 @@ mod tests {
             quotas: TtsS1CorpusQuotasV1::pre_registered_v1(),
             candidate_count: pool.len() as u64,
             natural_terminal_episode_count: 9,
+            truncated_episode_count: 1,
             episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[
                 180, 220, 240, 260, 280, 300, 320, 340, 360,
             ])
             .expect("nine episodes summarize"),
+            all_episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[
+                180, 220, 240, 260, 280, 300, 320, 340, 360, 1_024,
+            ])
+            .expect("ten episodes summarize"),
+            // One record per episode the synthetic pool draws from, each
+            // an all-zero sequence, which is exactly what the pool's own
+            // candidates carry as their prefixes. The decode invariant
+            // then holds by construction rather than by luck.
+            episodes: (0..9)
+                .map(|episode_id| TtsS1CorpusEpisodeV1 {
+                    episode_id,
+                    episode_base_seed: 3_101_001,
+                    environment_seed: 7,
+                    decision_count: 100,
+                    terminal_classification: terminal_classification_tag_v1(
+                        TerminalClassificationV1::Natural,
+                    )
+                    .to_owned(),
+                    action_sequence: vec![0; 100],
+                })
+                .collect(),
             decisions: chosen
                 .into_iter()
                 .map(|index| pool[index].clone())
                 .collect(),
         };
-        let manifest = TtsS1CorpusManifestV1::seal_v1(body).unwrap();
-        let bytes = manifest.canonical_bytes_v1().unwrap();
-        assert_eq!(decode_tts_s1_corpus_v1(&bytes).unwrap(), manifest);
-
-        let mut tampered = manifest.clone();
-        tampered.body.decisions[0].labels.kernel_turn += 1;
-        let tampered_bytes = tampered.canonical_bytes_v1().unwrap();
-        assert!(matches!(
-            decode_tts_s1_corpus_v1(&tampered_bytes),
-            Err(TtsS1CorpusErrorV1::InvalidManifest)
-        ));
+        TtsS1CorpusManifestV1::seal_v1(body).unwrap()
     }
 
     #[test]
