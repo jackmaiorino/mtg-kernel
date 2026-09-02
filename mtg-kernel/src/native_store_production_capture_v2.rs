@@ -5,6 +5,9 @@
 //! fragments, retains the current executable handle, and proves pre/postflight
 //! equality against an already validated run.
 
+use crate::canonical_json_v1::{
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
+};
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_policy_train_step_v1::NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1;
 use crate::native_training_store_run_v2::{
@@ -27,6 +30,7 @@ use crate::strict_source_tree_attestation_v1::{
 };
 use crate::surface_v2::H2_PREDICATE_VERSION;
 use crate::KERNEL_VERSION;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::ffi::c_void;
@@ -757,6 +761,219 @@ pub(crate) fn test_launcher_build_provenance_v2(
         ),
         toolchain,
     }
+}
+
+/// The build identity two binaries must SHARE to belong to one build.
+///
+/// It is deliberately the path-free half of the provenance tuple: the
+/// package, the toolchain, and the source tree. The per-binary executable
+/// fields are excluded because two binaries of the same build necessarily
+/// differ there. Every field is an embedded build-capture constant, so a
+/// binary reports the build that produced it and cannot be talked out of it
+/// at runtime.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LauncherBuildIdentityV2 {
+    pub schema: String,
+    pub package_name: String,
+    pub package_version: String,
+    pub workspace_manifest_sha256: String,
+    pub crate_manifest_sha256: String,
+    pub cargo_lock_sha256: String,
+    pub enabled_features: Vec<String>,
+    pub rustc_release: String,
+    pub rustc_commit_hash: String,
+    pub rustc_commit_date: String,
+    pub host_triple: String,
+    pub target_triple: String,
+    pub llvm_version: String,
+    pub rustc_verbose_version_sha256: String,
+    pub build_profile: String,
+    pub source_git_commit: String,
+    pub source_tree_recipe_sha256: String,
+    pub source_tree_sha256: String,
+}
+
+pub const LAUNCHER_BUILD_IDENTITY_SCHEMA_V2: &str = "mtg-kernel-launcher-build-identity/v2";
+
+/// This binary's own embedded build identity.
+#[must_use]
+pub fn current_launcher_build_identity_v2() -> LauncherBuildIdentityV2 {
+    LauncherBuildIdentityV2 {
+        schema: LAUNCHER_BUILD_IDENTITY_SCHEMA_V2.to_string(),
+        package_name: build_capture::NATIVE_STORE_BUILD_PACKAGE_NAME_V1.to_string(),
+        package_version: build_capture::NATIVE_STORE_BUILD_PACKAGE_VERSION_V1.to_string(),
+        workspace_manifest_sha256: build_capture::NATIVE_STORE_BUILD_WORKSPACE_MANIFEST_SHA256_V1
+            .to_string(),
+        crate_manifest_sha256: build_capture::NATIVE_STORE_BUILD_CRATE_MANIFEST_SHA256_V1
+            .to_string(),
+        cargo_lock_sha256: build_capture::NATIVE_STORE_BUILD_CARGO_LOCK_SHA256_V1.to_string(),
+        enabled_features: build_capture::NATIVE_STORE_BUILD_ENABLED_FEATURES_V1
+            .iter()
+            .map(|feature| (*feature).to_string())
+            .collect(),
+        rustc_release: build_capture::NATIVE_STORE_BUILD_RUSTC_RELEASE_V1.to_string(),
+        rustc_commit_hash: build_capture::NATIVE_STORE_BUILD_RUSTC_COMMIT_HASH_V1.to_string(),
+        rustc_commit_date: build_capture::NATIVE_STORE_BUILD_RUSTC_COMMIT_DATE_V1.to_string(),
+        host_triple: build_capture::NATIVE_STORE_BUILD_HOST_TRIPLE_V1.to_string(),
+        target_triple: build_capture::NATIVE_STORE_BUILD_TARGET_TRIPLE_V1.to_string(),
+        llvm_version: build_capture::NATIVE_STORE_BUILD_LLVM_VERSION_V1.to_string(),
+        rustc_verbose_version_sha256:
+            build_capture::NATIVE_STORE_BUILD_RUSTC_VERBOSE_VERSION_SHA256_V1.to_string(),
+        build_profile: build_capture::NATIVE_STORE_BUILD_PROFILE_V1.to_string(),
+        source_git_commit: build_capture::NATIVE_STORE_BUILD_SOURCE_GIT_COMMIT_V1.to_string(),
+        source_tree_recipe_sha256: build_capture::NATIVE_STORE_BUILD_SOURCE_TREE_RECIPE_SHA256_V1
+            .to_string(),
+        source_tree_sha256: build_capture::NATIVE_STORE_BUILD_SOURCE_TREE_SHA256_V1.to_string(),
+    }
+}
+
+/// This binary's embedded build identity as canonical JSON, which is what
+/// `cycle4_arm_v1 --print-build-identity` writes and what a builder compares
+/// against its own byte for byte.
+///
+/// # Errors
+///
+/// Returns a capture rejection if the embedded constants are unusable or the
+/// identity cannot be canonically encoded.
+pub fn current_launcher_build_identity_json_v2() -> Result<String> {
+    validate_build_capture_constants()?;
+    let bytes = to_canonical_json_bytes_v1(
+        &current_launcher_build_identity_v2(),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .map_err(|_| {
+        capture_error(
+            NativeStoreProductionCaptureErrorKindV2::BuildCapture,
+            "build_identity_canonical_encoding_failed",
+        )
+    })?;
+    String::from_utf8(bytes).map_err(|_| {
+        capture_error(
+            NativeStoreProductionCaptureErrorKindV2::BuildCapture,
+            "build_identity_canonical_encoding_failed",
+        )
+    })
+}
+
+/// Decodes a build identity another binary printed.
+///
+/// # Errors
+///
+/// Returns a capture rejection if the bytes are not the exact canonical
+/// encoding of a [`LauncherBuildIdentityV2`] carrying this schema.
+pub fn decode_launcher_build_identity_v2(bytes: &[u8]) -> Result<LauncherBuildIdentityV2> {
+    let decoded: LauncherBuildIdentityV2 =
+        from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).map_err(|_| {
+            capture_error(
+                NativeStoreProductionCaptureErrorKindV2::BuildCapture,
+                "build_identity_not_canonical",
+            )
+        })?;
+    if decoded.schema != LAUNCHER_BUILD_IDENTITY_SCHEMA_V2 {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::BuildCapture,
+            "build_identity_schema_mismatch",
+        ));
+    }
+    Ok(decoded)
+}
+
+/// The provenance THIS process's own executable implies.
+///
+/// Resolves the running binary through `std::env::current_exe` (rather than
+/// the module handle the guard uses, which is pinned to the legacy launcher
+/// name), requires its leaf to be `expected_leaf`, and performs the same
+/// no-follow double read. This is what lets a launcher compare a run record
+/// against the build that is actually about to publish a Store.
+///
+/// # Errors
+///
+/// Returns a capture rejection if the running executable cannot be resolved,
+/// is not named `expected_leaf`, or cannot be captured.
+pub(crate) fn capture_current_launcher_build_provenance_v2(
+    expected_leaf: &str,
+    runtime_tuple_identity: &str,
+    numerical_backend_identity: &str,
+) -> Result<LauncherBuildProvenanceV2> {
+    let executable = std::env::current_exe().map_err(|_| {
+        capture_error(
+            NativeStoreProductionCaptureErrorKindV2::Path,
+            "current_exe_unavailable",
+        )
+    })?;
+    // `current_exe` may hand back a verbatim path; the drive-absolute local
+    // path rule the capture module enforces everywhere else does not accept
+    // one, and stripping the prefix is a normalization, not a relaxation.
+    let executable = executable
+        .to_str()
+        .and_then(|value| value.strip_prefix("\\\\?\\"))
+        .map_or_else(|| executable.clone(), PathBuf::from);
+    capture_launcher_build_provenance_v2(
+        &executable,
+        expected_leaf,
+        runtime_tuple_identity,
+        numerical_backend_identity,
+    )
+}
+
+/// Exact equality between a validated run record's provenance and a captured
+/// tuple, field group by field group so the rejection says which one drifted.
+///
+/// # Errors
+///
+/// Returns a `RunMismatch` capture rejection naming the group that differs.
+pub(crate) fn require_run_record_matches_provenance_v2(
+    run: &ValidatedTrainRunV2,
+    captured: &LauncherBuildProvenanceV2,
+) -> Result<()> {
+    let record = run.record();
+    if record.package != captured.package {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "run_record_package_is_not_this_build",
+        ));
+    }
+    if record.toolchain != captured.toolchain {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "run_record_toolchain_is_not_this_build",
+        ));
+    }
+    if record.source != captured.source {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "run_record_source_is_not_this_build",
+        ));
+    }
+    if record.runtime != captured.runtime {
+        return Err(capture_error(
+            NativeStoreProductionCaptureErrorKindV2::RunMismatch,
+            "run_record_runtime_is_not_this_build",
+        ));
+    }
+    Ok(())
+}
+
+/// [`require_run_record_matches_provenance_v2`] against a capture of THIS
+/// process's own executable: the check a launcher performs at every launch.
+///
+/// # Errors
+///
+/// Returns a capture rejection if the running executable cannot be captured,
+/// or if the record's provenance is not this build's.
+pub(crate) fn require_run_record_matches_current_launcher_build_v2(
+    run: &ValidatedTrainRunV2,
+    expected_leaf: &str,
+    runtime_tuple_identity: &str,
+    numerical_backend_identity: &str,
+) -> Result<()> {
+    let captured = capture_current_launcher_build_provenance_v2(
+        expected_leaf,
+        runtime_tuple_identity,
+        numerical_backend_identity,
+    )?;
+    require_run_record_matches_provenance_v2(run, &captured)
 }
 
 fn capture_named_executable_snapshot_v2(

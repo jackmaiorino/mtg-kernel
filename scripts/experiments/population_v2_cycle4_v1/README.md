@@ -31,7 +31,7 @@ Every path below is machine-local and never enters a hashed artifact.
 | The arm's baseline chain directory | `-ChainDir` | Formal mode only. Per-update sidecars, boundary records, and `arm-origin.record.json` land here. |
 | The refresh chain directory | `-RefreshChainDir` | Holds `refresh-NN.manifest.json` and `refresh-NN.panel.json`. One per arm. The wrapper builds every manifest in it, genesis included. |
 | The slot-identities roster directory | `-SlotIdentitiesRosterDir` | `refresh-NN.slot-identities.json` for NN = 0..16, schema `mtg-kernel-cycle4-slot-identities/v1`. See below. |
-| `cycle4_arm_v1.exe` | `-ArmExecutable` | |
+| `cycle4_arm_v1.exe` | `-ArmExecutable` | Also handed to the run-record builder, which requires it to report the same embedded build identity (`cycle4_arm_v1 --print-build-identity`) before it will build a record naming it. The arm re-proves the record's provenance against its own build at every launch, so a builder and an arm binary from different builds cannot co-author a Store. |
 | `cycle4_refresh_build_v1.exe` | `-RefreshBuilderExecutable` | |
 | The `mtg_kernel` release test executable | `-PanelExecutable` | The panel runner drives its ignored `ladder_head_to_head_eval_v1` test. |
 | A Python 3.11 interpreter | `-PythonExecutable` | |

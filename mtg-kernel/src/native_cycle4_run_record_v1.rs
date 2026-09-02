@@ -48,7 +48,8 @@ use crate::native_ladder_pool_resolution_v1::stage_ladder_checkpoint_initializat
 use crate::native_policy_baseline_state_v4::NATIVE_BASELINE_STATE_SCHEMA_V4;
 use crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1;
 use crate::native_store_production_capture_v2::{
-    capture_launcher_build_provenance_v2, LauncherBuildProvenanceV2,
+    capture_launcher_build_provenance_v2, current_launcher_build_identity_v2,
+    decode_launcher_build_identity_v2, LauncherBuildProvenanceV2,
 };
 use crate::native_training_store_run_v2::{
     decode_train_run_v2, refresh_derived_fields_v2, validate_train_run_record_v2,
@@ -65,6 +66,7 @@ use crate::native_training_store_run_v2::{
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The arm's formal training base seed.
 ///
@@ -125,6 +127,9 @@ pub enum Cycle4RunRecordErrorV1 {
     ParentCheckpointRejected { detail: String },
     /// The arm launcher executable could not be captured.
     ArmExecutableRejected { path: PathBuf, detail: String },
+    /// The arm launcher did not report this build's own identity, so the two
+    /// binaries come from different builds and must not co-author a record.
+    ArmBuildIdentityMismatch { path: PathBuf, detail: String },
     /// The parent record does not carry the ladder tuple a cycle-4 arm needs
     /// (`opponent_ladder_pool` plus `opponent_schedule_v2` under the ladder
     /// opponent identity); the arm record is built FROM it, so it cannot be
@@ -158,6 +163,11 @@ impl Display for Cycle4RunRecordErrorV1 {
             Self::ArmExecutableRejected { path, detail } => write!(
                 formatter,
                 "the arm launcher executable could not be captured ({}): {detail}",
+                path.display()
+            ),
+            Self::ArmBuildIdentityMismatch { path, detail } => write!(
+                formatter,
+                "the arm launcher ({}) does not report this builder's own build identity: {detail}; a record must not be built by one build and published by another",
                 path.display()
             ),
             Self::ParentMissingLadderTuple { section } => write!(
@@ -202,6 +212,69 @@ fn population_program_section_v1(arm: Cycle4ArmKindV1) -> PopulationProgramContr
         refresh_interval: CYCLE4_REFRESH_INTERVAL_V1,
         static_pool: arm.static_pool_v1(),
     }
+}
+
+/// Requires the arm launcher to report exactly THIS builder's own embedded
+/// build identity.
+///
+/// The record carries this build's package, toolchain and source tree beside
+/// the arm launcher's executable hash. Those two halves are only coherent if
+/// both binaries came from one build, and nothing in the file system says so:
+/// a hash is just a hash. So the launcher is asked, by running it with
+/// `--print-build-identity`, which reads nothing, touches no device, and
+/// writes its embedded tuple as canonical JSON.
+///
+/// # Errors
+///
+/// Returns [`Cycle4RunRecordErrorV1::ArmBuildIdentityMismatch`] if the child
+/// cannot be run, exits nonzero, prints something that is not a canonical
+/// identity, or reports an identity that is not this build's.
+fn require_arm_executable_build_identity_v1(arm_executable: &Path) -> Result<()> {
+    let reject = |detail: String| Cycle4RunRecordErrorV1::ArmBuildIdentityMismatch {
+        path: arm_executable.to_path_buf(),
+        detail,
+    };
+    let output = Command::new(arm_executable)
+        .arg("--print-build-identity")
+        .output()
+        .map_err(|error| reject(format!("--print-build-identity could not run: {error}")))?;
+    if !output.status.success() {
+        return Err(reject(format!(
+            "--print-build-identity exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    require_reported_identity_is_own_v1(arm_executable, &output.stdout)
+}
+
+/// The decision half of [`require_arm_executable_build_identity_v1`], over
+/// the bytes the launcher printed. Split out so the comparison is testable
+/// without a second binary on disk.
+fn require_reported_identity_is_own_v1(arm_executable: &Path, stdout: &[u8]) -> Result<()> {
+    let reject = |detail: String| Cycle4RunRecordErrorV1::ArmBuildIdentityMismatch {
+        path: arm_executable.to_path_buf(),
+        detail,
+    };
+    // The canonical encoding ENDS with a single LF, so the framing is
+    // normalized rather than trimmed: trailing whitespace (a console CRLF,
+    // say) is removed and exactly one LF restored. Trimming outright would
+    // strip the terminator that makes the bytes canonical.
+    let printed = String::from_utf8_lossy(stdout);
+    let body = printed.trim_end_matches(['\r', '\n', ' ', '\t']);
+    let reported = decode_launcher_build_identity_v2(format!("{body}\n").as_bytes())
+        .map_err(|error| reject(error.to_string()))?;
+    let own = current_launcher_build_identity_v2();
+    if reported != own {
+        return Err(reject(format!(
+            "the launcher reports commit {} with features [{}]; this builder is commit {} with features [{}]",
+            reported.source_git_commit,
+            reported.enabled_features.join(","),
+            own.source_git_commit,
+            own.enabled_features.join(",")
+        )));
+    }
+    Ok(())
 }
 
 /// Builds, validates and returns one arm's canonical `run.json` bytes.
@@ -263,6 +336,7 @@ pub fn build_cycle4_arm_run_record_v1(
     // toolchain, source and runtime would make a cycle-4 record describe an
     // older executable built from an older tree, possibly without the CUDA
     // feature the arms train under.
+    require_arm_executable_build_identity_v1(request.arm_executable.as_path())?;
     let provenance = capture_launcher_build_provenance_v2(
         request.arm_executable.as_path(),
         CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
@@ -455,7 +529,10 @@ fn assemble_with_base_seed_v1(
 mod tests {
     use super::*;
     use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
-    use crate::native_store_production_capture_v2::test_launcher_build_provenance_v2;
+    use crate::native_store_production_capture_v2::{
+        current_launcher_build_identity_json_v2, require_run_record_matches_provenance_v2,
+        test_launcher_build_provenance_v2,
+    };
     use crate::native_training_store_run_v2::{
         test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
         test_fixture_ladder_initialization_v1, test_fixture_ladder_pool_v2,
@@ -790,6 +867,81 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), identities.len());
+    }
+
+    /// An arm whose own build is not the record's build refuses to launch.
+    ///
+    /// This drives the exact comparison
+    /// `require_run_record_is_this_build_v1` performs at bootstrap and at
+    /// every interval, with the arm's captured tuple standing in for the
+    /// running process's. A record assembled from provenance A must be
+    /// refused against a capture that differs in the source commit, and
+    /// again against one that differs only in the executable hash.
+    #[test]
+    fn an_arm_from_a_different_build_refuses_the_record_v1() {
+        let built = build_v1(Cycle4ArmKindV1::TreatmentRb);
+        // The matching capture is accepted; this is the launch that proceeds.
+        require_run_record_matches_provenance_v2(&built, &provenance_v1())
+            .expect("the record's own build must be accepted");
+
+        // A different source commit.
+        let mut other_commit = provenance_v1();
+        other_commit.source.git_commit = "1111111111111111111111111111111111111111".to_owned();
+        let error = require_run_record_matches_provenance_v2(&built, &other_commit)
+            .expect_err("a record from another commit must be refused");
+        assert_eq!(error.code(), "run_record_source_is_not_this_build");
+
+        // The same commit, a different executable.
+        let mut other_binary = provenance_v1();
+        other_binary.source.binary_sha256 =
+            "0000000000000000000000000000000000000000000000000000000000000000".to_owned();
+        let error = require_run_record_matches_provenance_v2(&built, &other_binary)
+            .expect_err("a record naming another binary must be refused");
+        assert_eq!(error.code(), "run_record_source_is_not_this_build");
+
+        // And a different feature set, which lives in `package`.
+        let mut other_features = provenance_v1();
+        other_features.package.enabled_features =
+            vec!["native-training-store-v2-production".to_owned()];
+        let error = require_run_record_matches_provenance_v2(&built, &other_features)
+            .expect_err("a record from another feature set must be refused");
+        assert_eq!(error.code(), "run_record_package_is_not_this_build");
+    }
+
+    /// The builder refuses an arm launcher that reports a different build
+    /// identity, and accepts only its own.
+    #[test]
+    fn the_builder_refuses_an_arm_from_a_different_build_v1() {
+        let path = Path::new("D:\\release\\cycle4_arm_v1.exe");
+        let own =
+            current_launcher_build_identity_json_v2().expect("this build reports an identity");
+
+        // Exactly what the launcher prints, and the same bytes reframed the
+        // way a console would: both must be accepted.
+        require_reported_identity_is_own_v1(path, own.as_bytes())
+            .expect("the builder's own identity must be accepted");
+        require_reported_identity_is_own_v1(path, own.replace('\n', "\r\n").as_bytes())
+            .expect("a CRLF-reframed identity is still this build's");
+
+        // A different commit.
+        let own_commit = current_launcher_build_identity_v2().source_git_commit;
+        let other = own.replace(&own_commit, "1111111111111111111111111111111111111111");
+        assert_ne!(other, own);
+        let error = require_reported_identity_is_own_v1(path, other.as_bytes())
+            .expect_err("another commit must be refused");
+        assert!(matches!(
+            error,
+            Cycle4RunRecordErrorV1::ArmBuildIdentityMismatch { .. }
+        ));
+
+        // A different feature set.
+        let dropped = own.replace("\"experimental-burn-net8-packed-cuda-v1\",", "");
+        assert_ne!(dropped, own);
+        assert!(require_reported_identity_is_own_v1(path, dropped.as_bytes()).is_err());
+
+        // Anything that is not a canonical identity at all.
+        assert!(require_reported_identity_is_own_v1(path, b"").is_err());
+        assert!(require_reported_identity_is_own_v1(path, b"not json").is_err());
     }
 
     /// Predecessor program sections never survive into an arm record, even
