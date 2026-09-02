@@ -303,6 +303,10 @@ try {
     Assert-True ($reports.Count -eq 0) 'the dry run writes no tier report'
     $diagnostics = @(Get-ChildItem -LiteralPath $attempt -Filter 'tier-*.diagnostics' -ErrorAction SilentlyContinue)
     Assert-True ($diagnostics.Count -eq 0) 'the dry run creates no diagnostics directory'
+    $shardDirs = @(Get-ChildItem -LiteralPath $attempt -Filter 'tier-*.shards' -ErrorAction SilentlyContinue)
+    Assert-True ($shardDirs.Count -eq 0) 'the dry run creates no shard directory'
+    $shardReports = @(Get-ChildItem -LiteralPath $attempt -Filter 'shard-*.report.json' -Recurse -ErrorAction SilentlyContinue)
+    Assert-True ($shardReports.Count -eq 0) 'the dry run publishes no shard report'
 
     $resultJson = Get-Content -LiteralPath (Join-Path $attempt 'result.json') -Raw | ConvertFrom-Json
     Assert-True ($resultJson.status -ceq 'DRY_RUN_PLANNED') 'result.json says DRY_RUN_PLANNED'
