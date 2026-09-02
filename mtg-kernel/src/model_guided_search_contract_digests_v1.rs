@@ -342,7 +342,7 @@ fn classify_build_flag_value_v1(
         None => None,
         // Empty is unset: Cargo and many CI shells export these names with
         // an empty value, which changes nothing about the build.
-        Some(value) if value.is_empty() => None,
+        Some("") => None,
         Some(value) => Some(BuildFlagViolationV1 {
             variable,
             forbidden_fragment: forbidden_floating_point_fragment_v1(value),
