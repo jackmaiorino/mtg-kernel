@@ -84,6 +84,19 @@ a launch that asks for a formal ladder on a host too small for the topology
 is REFUSED before it starts rather than spending hours to publish a smoke
 nobody asked for.
 
+AND THE PIN IS NOT TAKEN ON TRUST. A declared count of eight is satisfied
+just as well by eight processes run one after another, so the run has to
+prove the contention it claims. Each shard announces itself READY once its
+checkpoint is loaded and before it waits; this launcher publishes the tier's
+one start token only after every announcement is in, on its own bounded
+deadline, and a shard that never announces fails the tier closed after every
+started child has been reaped. Each shard then records the wall-clock window
+of every decision on a shared time base, and the merge censuses how many
+shards were mid-work when each decision began. Formal standing needs the
+count, the host, the handshake and at least 950 permille of decisions
+searched with every other shard mid-work; the merged report publishes all of
+it, and this launcher reads the report rather than its own flags.
+
 Terminal state: an empty TTS_S1_COMPLETE marker in the attempt root on a
 successful FORMAL run, and a plain-text RUN_FAILED naming the failing step
 on any error. A DRY RUN writes neither marker; it writes result.json with
