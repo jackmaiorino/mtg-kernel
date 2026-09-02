@@ -320,6 +320,13 @@ pub mod native_cycle4_arm_v1;
 // launcher's own record-level check before returning its bytes. `pub` for
 // the same reason as the module above: `src/bin/cycle4_run_record_v1.rs`
 // calls it directly.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub mod native_cycle4_run_record_v1;
 pub mod native_science_loop_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
