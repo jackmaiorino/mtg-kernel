@@ -343,8 +343,8 @@ foreach ($index in 0..7) {
 Assert-That -Condition $agree -Message 'both locators name the same store for the same slot, keyed by identity and by index'
 
 # The genesis authority record lives with the campaign and is re-verified.
-$authorityPath = Join-Path $refreshChainDir 'cycle4-genesis-authority-treatment-rb.json'
-Assert-That -Condition (Test-Path -LiteralPath $authorityPath) -Message 'the genesis authority record is published beside the refresh chain'
+$authorityPath = Join-Path $evidence 'arm-prefix\chain\cycle4-genesis-authority-treatment-rb.json'
+Assert-That -Condition (Test-Path -LiteralPath $authorityPath) -Message 'the genesis authority record is published beside the bin arm-origin record in the baseline chain directory'
 $authority = Get-Content -Raw -LiteralPath $authorityPath | ConvertFrom-Json
 Assert-That -Condition ([string]$authority.schema -ceq 'mtg-kernel-cycle4-genesis-authority/v1') -Message 'the genesis authority declares its schema'
 Assert-That -Condition (([string]$authority.parent_checkpoint_sha256).Length -eq 64) -Message 'the genesis authority records the parent checkpoint hash'
@@ -415,39 +415,48 @@ Assert-That -Condition ($rungA -like '*ladder\a\store*' -and $rungB -like '*ladd
 Assert-That -Condition ($rungA -like "*`"--run-record`" `"$runRecord`"*" -and $rungB -like "*`"--run-record`" `"$runRecord`"*") -Message 'both rungs are seeded from the same run record'
 Assert-That -Condition ($rungA -like '*refresh-00.manifest.json*' -and $rungB -like '*refresh-00.manifest.json*') -Message 'both rungs run against the genesis manifest'
 Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'ladder\a\arm-slot-locator.json')) -Message 'each rung gets its own locator pair'
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'cycle4-genesis-authority-control-r.json')) `
+    -Message 'a preflight keeps its genesis authority copy inside the throwaway attempt root'
 
 # ---------------------------------------------------------------------------
 # 4. Fail-closed rejections
 # ---------------------------------------------------------------------------
 
-$rejectEvidence = Join-Path $WorkRoot 'evidence-rejections'
+# Each rejection gets its own evidence root: the genesis authority record is
+# campaign-scoped and re-verified on every launch, so two cases that differ in
+# their refresh chain would otherwise trip the drift check instead of the
+# rejection under test (which is itself the authority record working).
+function New-RejectionEvidenceRoot {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    return (Join-Path $WorkRoot "evidence-reject-$Name")
+}
 
-$noDryRun = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$noDryRun = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-dry-run')
 $noDryRun['DryRun'] = $false
 Assert-Throws -Action { & $wrapper @noDryRun *>&1 | Out-Null } `
     -ExpectedSubstring '-SkipHostAssertions is only accepted together with -DryRun' `
     -Message 'host assertions can never be skipped outside a dry run'
 
-$shortTable = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$shortTable = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'short-table')
 $shortTable['SlotStoreRoots'] = @($slotStoreRoots[0..6])
 Assert-Throws -Action { & $wrapper @shortTable *>&1 | Out-Null } `
     -ExpectedSubstring 'exactly 8 store roots' `
     -Message 'a seven-slot table is rejected'
 
-$noStoreRoot = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$noStoreRoot = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-store-root')
 $noStoreRoot.Remove('StoreRoot') | Out-Null
 Assert-Throws -Action { & $wrapper @noStoreRoot *>&1 | Out-Null } `
     -ExpectedSubstring 'formal mode requires -StoreRoot' `
     -Message 'formal mode requires a Store root'
 
-$wrongArm = New-WrapperArguments -Mode 'preflight' -Arm 'treatment-rb' -EvidenceRoot $rejectEvidence
+$wrongArm = New-WrapperArguments -Mode 'preflight' -Arm 'treatment-rb' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'wrong-arm')
 Assert-Throws -Action { & $wrapper @wrongArm *>&1 | Out-Null } `
     -ExpectedSubstring '-Arm must be control-r' `
     -Message 'the preflight ladder is the CONTROL ladder only'
 
 $emptyChain = Join-Path $WorkRoot 'refresh-chain-empty'
 New-Item -ItemType Directory -Force -Path $emptyChain | Out-Null
-$missingGenesis = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$missingGenesis = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'missing-genesis')
 $missingGenesis['RefreshChainDir'] = $emptyChain
 Assert-Throws -Action { & $wrapper @missingGenesis *>&1 | Out-Null } `
     -ExpectedSubstring 'genesis refresh manifest is missing' `
@@ -455,7 +464,7 @@ Assert-Throws -Action { & $wrapper @missingGenesis *>&1 | Out-Null } `
 
 $duplicateChain = Join-Path $WorkRoot 'refresh-chain-duplicate'
 New-SyntheticManifest -Path (Join-Path $duplicateChain 'refresh-00.manifest.json') -RefreshIndex ([uint64]0) -DuplicateIdentity
-$duplicateIdentity = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$duplicateIdentity = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'duplicate-identity')
 $duplicateIdentity['RefreshChainDir'] = $duplicateChain
 Assert-Throws -Action { & $wrapper @duplicateIdentity *>&1 | Out-Null } `
     -ExpectedSubstring 'repeats a checkpoint_manifest_sha256' `
@@ -466,13 +475,13 @@ New-SyntheticManifest -Path (Join-Path $badRoleChain 'refresh-00.manifest.json')
 $badRoleDocument = Get-Content -Raw -LiteralPath (Join-Path $badRoleChain 'refresh-00.manifest.json') | ConvertFrom-Json
 $badRoleDocument.slots[3].role = 'current-9'
 Write-SyntheticJson -Value $badRoleDocument -Path (Join-Path $badRoleChain 'refresh-00.manifest.json')
-$badRole = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$badRole = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'bad-role')
 $badRole['RefreshChainDir'] = $badRoleChain
 Assert-Throws -Action { & $wrapper @badRole *>&1 | Out-Null } `
     -ExpectedSubstring 'expected historical-1' `
     -Message 'a manifest whose roles drift from the pre-registered roster is rejected'
 
-$relativeSlot = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$relativeSlot = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'relative-slot')
 $relativeRoots = @($slotStoreRoots)
 $relativeRoots[2] = 'slot-2-relative'
 $relativeSlot['SlotStoreRoots'] = $relativeRoots
@@ -480,7 +489,7 @@ Assert-Throws -Action { & $wrapper @relativeSlot *>&1 | Out-Null } `
     -ExpectedSubstring 'must be a non-empty absolute path' `
     -Message 'a relative slot store root never reaches a locator'
 
-$duplicateRoots = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$duplicateRoots = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'duplicate-roots')
 $twinned = @($slotStoreRoots)
 $twinned[7] = $twinned[6]
 $duplicateRoots['SlotStoreRoots'] = $twinned
@@ -488,19 +497,19 @@ Assert-Throws -Action { & $wrapper @duplicateRoots *>&1 | Out-Null } `
     -ExpectedSubstring 'two slots to the same store root' `
     -Message 'one store may not occupy two slots'
 
-$badThrough = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$badThrough = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'bad-through')
 $badThrough['ThroughRefreshIndex'] = [uint64]17
 Assert-Throws -Action { & $wrapper @badThrough *>&1 | Out-Null } `
     -ExpectedSubstring '-ThroughRefreshIndex must be 1..16' `
     -Message 'the campaign never plans past refresh 16'
 
-$badWindow = New-WrapperArguments -Mode 'preflight' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$badWindow = New-WrapperArguments -Mode 'preflight' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'bad-window')
 $badWindow['PreflightUpdates'] = [uint64]2
 Assert-Throws -Action { & $wrapper @badWindow *>&1 | Out-Null } `
     -ExpectedSubstring 'not a whole number of checkpoint segments' `
     -Message 'a preflight window that cannot land on its own stop is rejected'
 
-$tooLargeWindow = New-WrapperArguments -Mode 'preflight' -Arm 'control-r' -EvidenceRoot $rejectEvidence
+$tooLargeWindow = New-WrapperArguments -Mode 'preflight' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'too-large-window')
 $tooLargeWindow['PreflightUpdates'] = [uint64]16
 Assert-Throws -Action { & $wrapper @tooLargeWindow *>&1 | Out-Null } `
     -ExpectedSubstring '-PreflightUpdates must be 0 (derive) or 1..8' `

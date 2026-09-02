@@ -207,12 +207,14 @@ try {
         -ParentGeneration $GenesisParentGeneration `
         -RunRecordPath $RunRecord `
         -GenesisManifestPath $genesisManifestPath
-    # The authority record lives with the campaign (next to the refresh chain),
-    # not inside one attempt, so every later attempt re-verifies the same
-    # genesis facts rather than re-asserting a fresh copy of them.
-    # Named per arm: the record declares arm_kind, so two arms sharing a
-    # directory must not overwrite each other's genesis facts.
-    $genesisAuthorityPath = Join-Path $RefreshChainDir "cycle4-genesis-authority-$Arm.json"
+    # Formal mode publishes it into the arm's baseline chain directory, beside
+    # the bin's own arm-origin.record.json: campaign-scoped rather than
+    # attempt-scoped, so every later attempt re-verifies the same genesis facts
+    # instead of re-asserting a fresh copy of them. A preflight has no formal
+    # chain directory, so its copy stays inside the throwaway attempt root.
+    # Named per arm because the record declares arm_kind.
+    if ($Mode -ceq 'formal') { $genesisAuthorityHome = $ChainDir } else { $genesisAuthorityHome = $root }
+    $genesisAuthorityPath = Join-Path $genesisAuthorityHome "cycle4-genesis-authority-$Arm.json"
     $genesisAuthorityRecord = Assert-OrCreateCycle4GenesisAuthority -Path $genesisAuthorityPath -Record $genesisAuthority
     Write-Cycle4JsonFile -Value $genesisAuthorityRecord -Path (Join-Path $root 'genesis-authority-binding.json')
 
