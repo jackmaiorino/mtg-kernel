@@ -528,11 +528,19 @@ fn assemble_with_base_seed_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canonical_json_v1::{to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1};
     use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
     use crate::native_store_production_capture_v2::{
         current_launcher_build_identity_json_v2, require_run_record_matches_provenance_v2,
-        test_launcher_build_provenance_v2,
+        test_launcher_build_provenance_v2, LauncherBuildIdentityV2,
     };
+
+    /// One build identity as the launcher prints it: the exact canonical
+    /// bytes, terminating LF included.
+    fn identity_bytes_v1(identity: &LauncherBuildIdentityV2) -> Vec<u8> {
+        to_canonical_json_bytes_v1(identity, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("a build identity encodes canonically")
+    }
     use crate::native_training_store_run_v2::{
         test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
         test_fixture_ladder_initialization_v1, test_fixture_ladder_pool_v2,
@@ -899,10 +907,28 @@ mod tests {
             .expect_err("a record naming another binary must be refused");
         assert_eq!(error.code(), "run_record_source_is_not_this_build");
 
-        // And a different feature set, which lives in `package`.
+        // And a different build input set, which lives in `package`. The
+        // lock digest is mutated rather than the feature list: the feature
+        // list depends on which features this build was compiled with, so a
+        // fixed replacement for it is a no-op under some configurations,
+        // while this digest differs from the embedded one in every one.
+        let mut other_package = provenance_v1();
+        other_package.package.cargo_lock_sha256 = "0".repeat(64);
+        assert_ne!(
+            other_package.package.cargo_lock_sha256,
+            provenance_v1().package.cargo_lock_sha256
+        );
+        let error = require_run_record_matches_provenance_v2(&built, &other_package)
+            .expect_err("a record from another build's inputs must be refused");
+        assert_eq!(error.code(), "run_record_package_is_not_this_build");
+
+        // The feature set is still covered, by ADDING a feature no build
+        // enables rather than by assuming which ones are on.
         let mut other_features = provenance_v1();
-        other_features.package.enabled_features =
-            vec!["native-training-store-v2-production".to_owned()];
+        other_features
+            .package
+            .enabled_features
+            .push("zz-not-a-real-feature".to_owned());
         let error = require_run_record_matches_provenance_v2(&built, &other_features)
             .expect_err("a record from another feature set must be refused");
         assert_eq!(error.code(), "run_record_package_is_not_this_build");
@@ -913,31 +939,46 @@ mod tests {
     #[test]
     fn the_builder_refuses_an_arm_from_a_different_build_v1() {
         let path = Path::new("D:\\release\\cycle4_arm_v1.exe");
-        let own =
+        let own = current_launcher_build_identity_v2();
+        let own_json =
             current_launcher_build_identity_json_v2().expect("this build reports an identity");
+        assert_eq!(identity_bytes_v1(&own), own_json.as_bytes());
 
         // Exactly what the launcher prints, and the same bytes reframed the
         // way a console would: both must be accepted.
-        require_reported_identity_is_own_v1(path, own.as_bytes())
+        require_reported_identity_is_own_v1(path, own_json.as_bytes())
             .expect("the builder's own identity must be accepted");
-        require_reported_identity_is_own_v1(path, own.replace('\n', "\r\n").as_bytes())
+        require_reported_identity_is_own_v1(path, own_json.replace('\n', "\r\n").as_bytes())
             .expect("a CRLF-reframed identity is still this build's");
 
-        // A different commit.
-        let own_commit = current_launcher_build_identity_v2().source_git_commit;
-        let other = own.replace(&own_commit, "1111111111111111111111111111111111111111");
-        assert_ne!(other, own);
-        let error = require_reported_identity_is_own_v1(path, other.as_bytes())
+        // Each mutation is built from the struct and re-encoded, so it
+        // differs under EVERY supported feature configuration rather than
+        // depending on which features this build happens to carry.
+        let mut other_commit = own.clone();
+        other_commit.source_git_commit = "1".repeat(40);
+        assert_ne!(other_commit, own);
+        let error = require_reported_identity_is_own_v1(path, &identity_bytes_v1(&other_commit))
             .expect_err("another commit must be refused");
         assert!(matches!(
             error,
             Cycle4RunRecordErrorV1::ArmBuildIdentityMismatch { .. }
         ));
 
-        // A different feature set.
-        let dropped = own.replace("\"experimental-burn-net8-packed-cuda-v1\",", "");
-        assert_ne!(dropped, own);
-        assert!(require_reported_identity_is_own_v1(path, dropped.as_bytes()).is_err());
+        let mut other_tree = own.clone();
+        other_tree.source_tree_sha256 = "0".repeat(64);
+        assert_ne!(other_tree, own);
+        assert!(
+            require_reported_identity_is_own_v1(path, &identity_bytes_v1(&other_tree)).is_err()
+        );
+
+        let mut other_features = own.clone();
+        other_features
+            .enabled_features
+            .push("zz-not-a-real-feature".to_owned());
+        assert_ne!(other_features, own);
+        assert!(
+            require_reported_identity_is_own_v1(path, &identity_bytes_v1(&other_features)).is_err()
+        );
 
         // Anything that is not a canonical identity at all.
         assert!(require_reported_identity_is_own_v1(path, b"").is_err());
