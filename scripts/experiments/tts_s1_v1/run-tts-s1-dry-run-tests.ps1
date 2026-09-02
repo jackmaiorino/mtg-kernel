@@ -686,6 +686,13 @@ try {
     Assert-True ($commonText -like '*foreach ($entry in $running)*') 'the fan-out wait is its own loop over the started processes'
     Assert-True ($commonText -like '*finally {*') 'the fan-out reaps in a finally, so an unwinding start leaves nothing running'
     Assert-True ($commonText -like '*Stop-Process -Id $id -Force*') 'the fan-out stops anything still alive'
+    # ONE start path and ONE reap path: the single-child runner goes
+    # through the same fan-out, so a corpus build or a merge cannot be
+    # orphaned by a route that skips the reaping.
+    # .Contains rather than -like: the literal carries [ and ], which -like
+    # would read as a wildcard character class.
+    Assert-True ($commonText.Contains('$fanOut = Invoke-TtsS1ProcessFanOut -Jobs')) 'the single-child runner goes through the reaping fan-out'
+    Assert-True ((([regex]::Matches($commonText, [regex]::Escape('Start-Process -FilePath'))).Count) -eq 1) 'exactly one place in the stack starts a child process'
     Assert-True ($wrapperText -like '*if ($shardFailures.Count -ne 0)*') 'the wrapper raises a shard failure only after every shard has been waited on'
     Assert-True ($wrapperText -like '*shard $($shard.index) exited with $shardExit*') 'the wrapper fails closed on a non-zero shard exit'
     # And nothing it started outlives it: the fan-out reaps in a finally and

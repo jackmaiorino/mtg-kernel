@@ -367,17 +367,6 @@ function Wait-TtsS1Process {
     return [int]$exitCode
 }
 
-function Invoke-TtsS1Process {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][string]$StdoutPath,
-        [Parameter(Mandatory = $true)][string]$StderrPath
-    )
-    return Wait-TtsS1Process -Process (Start-TtsS1Process -FilePath $FilePath -Arguments $Arguments `
-            -StdoutPath $StdoutPath -StderrPath $StderrPath)
-}
-
 # What the last Invoke-TtsS1ProcessFanOut had to stop, as records carrying a
 # label and a process id.
 #
@@ -452,6 +441,27 @@ function Invoke-TtsS1ProcessFanOut {
         results = @($results)
         stopped = @($stopped)
     }
+}
+
+function Invoke-TtsS1Process {
+    # ONE child, run through the same fan-out as K of them, so there is
+    # exactly one place in this stack that starts a child and exactly one
+    # that reaps: a wait that failed while its child was still running
+    # would otherwise orphan it here too, for a corpus build or a merge.
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath
+    )
+    $fanOut = Invoke-TtsS1ProcessFanOut -Jobs @([pscustomobject]@{
+            label = $FilePath
+            file_path = $FilePath
+            arguments = $Arguments
+            stdout_path = $StdoutPath
+            stderr_path = $StderrPath
+        })
+    return $fanOut.results[0].exit_code
 }
 
 function Format-TtsS1StoppedChildren {
