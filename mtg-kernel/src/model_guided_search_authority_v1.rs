@@ -8,12 +8,30 @@
 //! SCOPE, strictly: this module defines the record's TYPE, its SERDE shape,
 //! its FAIL-CLOSED validation, and the frozen literals that pin its
 //! compile-bound fields. It does not run a search, does not dispatch an
-//! opponent, does not touch the science loop, Store records, population
-//! selection, or a scorer bridge, and does not compute or verify a live
-//! quantization-contract digest, a live forward-determinism build digest, or
-//! a live checkpoint hash. All of that is deferred to design item 5 (the
-//! search-loop change) and item 6 (stage-2-equivalent wiring), each gated on
-//! its own diff review exactly as the design requires.
+//! opponent, does not touch the science loop, Store records, or population
+//! selection, and does not verify a live checkpoint hash.
+//!
+//! ## Discharged since the first revision (test-time-search S0)
+//!
+//! Two of this header's original scope disclaimers no longer hold, and are
+//! corrected here rather than left standing:
+//!
+//! - "does not compute or verify a live quantization-contract digest [or] a
+//!   live forward-determinism build digest". It does now.
+//!   `LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5 (S0) requires
+//!   "quantization and deterministic-build digests bound to content", and
+//!   `crate::model_guided_search_contract_digests_v1` supplies exactly that
+//!   from live contract behavior. `validate` compares all three digest
+//!   fields against both the pinned literal and the live recomputation; the
+//!   fields are no longer caller-supplied at all (see `new`).
+//! - the `action_seed` bullet below, which stated that this schema
+//!   deliberately freezes no allowlist because the governing document
+//!   "authorizes no seed at all". The test-time-search sketch's S0/S1
+//!   stages are explicitly CP7-free engineering, so an engineering-scoped
+//!   allowlist authorizes nothing this design must not authorize; see
+//!   `MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`, whose own doc comment
+//!   states its scope and, in the same discipline the original bullet
+//!   demanded, declines to assign the formal S2/S3 blocks.
 //!
 //! ## Relationship to `kernel_native_search_opponent_v1`
 //!
@@ -45,22 +63,18 @@
 //!   `private_diagnostic_identity` are "inherited verbatim from v1" (Section
 //!   1.4's own closing bullet) and use the identical checks v1 uses.
 //! - `action_seed` is kept as a field (Section 1.4's "all of the same
-//!   fields" instruction), but, unlike v1, this schema does NOT freeze an
-//!   authorized-seed allowlist analogous to
-//!   `KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1`. v1's allowlist encodes
-//!   seeds already pre-registered for v1's own countersigned calibration
-//!   panel. This design's own governing document states plainly, twice,
-//!   that it authorizes no seed at all ("No seed is consumed or proposed by
-//!   this document"; "self-authorizing" seed use is explicitly deferred to
-//!   "whatever calibration, panel, or pilot pre-registration step" assigns
-//!   one). Freezing a seed allowlist here would fabricate an authorization
-//!   this document does not grant. `validate` therefore applies only the
-//!   minimal fail-closed structural guard available without inventing
-//!   authorization: `action_seed` must be nonzero (zero reads as an
-//!   uninitialized placeholder everywhere else in this codebase's seed
-//!   conventions, never a genuine domain-separation seed). Binding a real
-//!   allowlist is future work for whichever amendment or sheet pre-
-//!   registers this design's first seeds.
+//!   fields" instruction) and is now checked against a real allowlist,
+//!   `MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`, exactly as v1 checks
+//!   `KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1`. The first revision of this
+//!   bullet declined to freeze one, correctly at the time: the
+//!   model-guided-searcher design document authorizes no seed ("No seed is
+//!   consumed or proposed by this document"), and freezing an allowlist
+//!   would have fabricated an authorization it does not grant. What changed
+//!   is that a later pre-registration does grant one, narrowly:
+//!   `LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5's S0 ("no
+//!   games") and S1 ("CP7-free") stages. The allowlist's own doc comment
+//!   states that scope, and, keeping the original bullet's discipline,
+//!   assigns no S2 or S3 block.
 //!
 //! ## New fields (Section 1.4's "plus" list)
 //!
@@ -75,23 +89,17 @@
 //!   mismatched architecture code with weight bytes trained under a
 //!   different architecture.
 //! - `puct_prior_quantization_contract_sha256`,
-//!   `value_quantization_contract_sha256`: PLACEHOLDER commitment fields.
-//!   Design items 1 and 2 (the PUCT prior-quantization and value-
-//!   quantization contract modules, Sections 1.2-1.3) are being built
-//!   concurrently in a sibling worktree and are not available here. This
-//!   schema validates these two fields ONLY structurally (lower-hex,
-//!   64-character, i.e. SHA-256-shaped); it does not, and must not, freeze
-//!   an expected digest value for either, because that value does not exist
-//!   in this worktree. Asserting the record's digest equals the real
-//!   contract digest items 1/2 produce is item 6's wiring responsibility.
-//! - `forward_determinism_build_identity`: PLACEHOLDER commitment field for
-//!   "a build/target-cpu flag digest or binary SHA-256 pinning the exact
-//!   deterministic-forward build in use" (Section 1.4), extending v1's own
-//!   registration-layer "scorer binary SHA-256" requirement to this
-//!   design's forward-pass binary. Design item 3 (the deterministic-CPU-
-//!   forward audit) is a separate implementation item, also not built here.
-//!   Same placeholder discipline as the two quantization digests: validated
-//!   structurally only, no frozen expected value.
+//!   `value_quantization_contract_sha256`,
+//!   `forward_determinism_build_identity`: no longer placeholders. All
+//!   three are filled by `new` from
+//!   `crate::model_guided_search_contract_digests_v1`'s pinned literals and
+//!   checked by `validate` against both that literal and the digest
+//!   recomputed from live contract behavior. The third additionally
+//!   satisfies Section 1.4's "a build/target-cpu flag digest ... pinning
+//!   the exact deterministic-forward build in use" and the
+//!   forward-determinism audit's own recommendation 5. See that module's
+//!   header for what each digest commits to, and for why a source-file hash
+//!   was rejected in favor of a behavioral one.
 //! - `consumption_mode`: one of Section 2's three modes
 //!   (search-at-inference, search-as-opponent, search-at-training-targets).
 //!   This field is a closed Rust enum, so an unrecognized mode string is
@@ -160,6 +168,13 @@ use crate::kernel_native_search_opponent_v1::{
     KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1, KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1,
     KERNEL_NATIVE_SEARCH_NODE_KEY_V1, KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1,
 };
+use crate::model_guided_search_contract_digests_v1::{
+    forward_determinism_build_digest_v1, lower_hex_digest_v1,
+    prior_quantization_contract_digest_v1, value_quantization_contract_digest_v1,
+    MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_SHA256_V1,
+    MODEL_GUIDED_SEARCH_PRIOR_QUANTIZATION_CONTRACT_SHA256_V1,
+    MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_SHA256_V1,
+};
 use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -217,6 +232,59 @@ pub const MODEL_GUIDED_SEARCH_IDENTITY_STRING_MAX_LEN_V1: usize = 4096;
 /// `0..=MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1` range inclusive,
 /// not a strictly-positive subset of it.
 pub const MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1: u64 = (1_u64 << 63) - 1;
+
+/// Launcher-owned authorized seed blocks for the model-guided
+/// (test-time-search) authority, discharging the "Binding a real allowlist
+/// is future work" note in this module's own header. The header's reasoning
+/// stands and is why this array exists rather than a permissive nonzero
+/// check: an allowlist encodes an authorization, so it must name the
+/// authorization it encodes.
+///
+/// SCOPE: these four blocks are pre-registered for S0 ENGINEERING and S1
+/// FEASIBILITY only (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5,
+/// stages S0 and S1: "no games" and "CP7-free" respectively). They
+/// authorize no CP7 panel, no S2 search-gain screen, and no formal
+/// measurement of any kind. The S2 and S3 blocks are Jack's own
+/// launch-parameter decision and are deliberately NOT assigned here, in the
+/// same discipline `KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1`
+/// documents for its own placeholder. The owner law that formal seed
+/// literals live only in launcher-level code is why a formal block would
+/// not belong in this array at all: this array is the registration surface
+/// the launcher selects FROM by block id, exactly as
+/// `KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1` already is for v1's own
+/// calibration panels.
+///
+/// The band (3,1xx,xxx) is disjoint from v1's calibration band
+/// (1,9xx,xxx) and its pool band (2,0xx,xxx), so a seed can never be
+/// simultaneously authorized for two different search authorities;
+/// `authorized_seed_blocks_are_disjoint_from_v1_bands_v1` asserts this
+/// rather than leaving it to the eye.
+///
+/// DOMAIN SEPARATION. The block seed is not itself a per-decision seed. It
+/// enters `ModelGuidedSearchAuthorityV1` as `action_seed`, which is part of
+/// the record's canonical bytes and therefore of
+/// [`ModelGuidedSearchAuthorityV1::digest`]; that digest is the first input
+/// to `kernel_native_search_opponent_v1::derive_simulation_seed_v1`, which
+/// then mixes in the episode id, the physical decision id, the SUBSTEP
+/// index, the simulation ordinal, and the player to act under the frozen
+/// `KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1` label. So exact policy-step and
+/// substep domain separation is inherited verbatim from v1's formula, with
+/// this design's own authority digest substituted for v1's, exactly as
+/// Section 1.1 requires; nothing new is derived here.
+pub const MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1: [u64; 4] =
+    [3_101_001, 3_102_001, 3_103_001, 3_104_001];
+
+/// Resolves a launcher-supplied seed BLOCK ID (an index into
+/// [`MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`]) to its seed. Returns
+/// `None` for an out-of-range id, so a CLI can fail closed on an
+/// unregistered block without the caller having to know the array's length.
+/// Selecting by id, never by raw seed value, is what keeps an unregistered
+/// literal from reaching an authority record through a command line.
+pub fn authorized_seed_block_v1(block_id: usize) -> Option<u64> {
+    MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1
+        .get(block_id)
+        .copied()
+}
 
 /// One of Section 2's three consumption modes. A closed enum: an
 /// unrecognized mode string is rejected at deserialization, before
@@ -277,11 +345,25 @@ impl ModelGuidedSearchAuthorityV1 {
     /// verbatim from v1, that module's constants), then validates before
     /// returning.
     ///
-    /// The eleven-parameter shape is inherent to Section 1.4's record
+    /// The eight-parameter shape is inherent to Section 1.4's record
     /// schema, not an API design choice; see the repo's existing
     /// `#[allow(clippy::too_many_arguments)]` precedent (`event.rs`,
     /// `effect.rs`, `async_flat_scored_rollout_v1.rs`/`_v2.rs`) for records
     /// and call sites with a similarly irreducible field count.
+    ///
+    /// The three contract-digest fields used to be caller-supplied
+    /// parameters, because when this schema was written the contracts they
+    /// name were "being built concurrently in a sibling worktree and are
+    /// not available here" (module docs). They are available now, so they
+    /// are filled from
+    /// [`crate::model_guided_search_contract_digests_v1`]'s pinned,
+    /// content-bound literals instead. That is strictly stronger than
+    /// validating a caller-supplied value against the same literal: a
+    /// record can no longer be CONSTRUCTED carrying a wrong digest, and
+    /// because the three fields are no longer `new`'s inputs, they also
+    /// come under [`Self::matches_fresh_reconstruction_v1`]'s tamper
+    /// detection, which by that method's own documented limitation could
+    /// never cover them while they were inputs.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         tier: KernelNativeSearchTierV1,
@@ -291,9 +373,6 @@ impl ModelGuidedSearchAuthorityV1 {
         checkpoint_generation: u64,
         checkpoint_weight_bytes_sha256: &str,
         net_architecture_identity: &str,
-        puct_prior_quantization_contract_sha256: &str,
-        value_quantization_contract_sha256: &str,
-        forward_determinism_build_identity: &str,
         consumption_mode: ModelGuidedSearchConsumptionModeV1,
     ) -> Result<Self, ModelGuidedSearchAuthorityError> {
         let record = Self {
@@ -314,10 +393,12 @@ impl ModelGuidedSearchAuthorityV1 {
             checkpoint_generation,
             checkpoint_weight_bytes_sha256: checkpoint_weight_bytes_sha256.to_string(),
             net_architecture_identity: net_architecture_identity.to_string(),
-            puct_prior_quantization_contract_sha256: puct_prior_quantization_contract_sha256
-                .to_string(),
-            value_quantization_contract_sha256: value_quantization_contract_sha256.to_string(),
-            forward_determinism_build_identity: forward_determinism_build_identity.to_string(),
+            puct_prior_quantization_contract_sha256:
+                MODEL_GUIDED_SEARCH_PRIOR_QUANTIZATION_CONTRACT_SHA256_V1.to_string(),
+            value_quantization_contract_sha256:
+                MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_SHA256_V1.to_string(),
+            forward_determinism_build_identity:
+                MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_SHA256_V1.to_string(),
             consumption_mode,
         };
         record.validate()?;
@@ -385,7 +466,16 @@ impl ModelGuidedSearchAuthorityV1 {
             ));
         }
 
-        if self.action_seed == 0 {
+        // Was: `action_seed == 0`, the "minimal fail-closed structural
+        // guard available without inventing authorization" this module's
+        // header describes. The authorization now exists
+        // (`MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`, S0/S1 scope
+        // only), so the guard becomes the allowlist membership check v1
+        // already applies to its own seeds. Re-run at every call site that
+        // accepts an authority (construction, digest, and the start of
+        // every action selection), the same temporal re-verification v1's
+        // own allowlist doc describes.
+        if !MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1.contains(&self.action_seed) {
             return Err(ModelGuidedSearchAuthorityError::new(
                 Kind::InvalidActionSeed,
             ));
@@ -411,19 +501,41 @@ impl ModelGuidedSearchAuthorityV1 {
             ));
         }
 
-        if !is_lower_hex_v1(&self.puct_prior_quantization_contract_sha256, 64) {
+        // CONTENT-BOUND, no longer structural. Each field must equal both
+        // the pinned literal AND the digest recomputed from live contract
+        // content this process. The pinned literal alone would catch a
+        // record minted against a different contract; the live
+        // recomputation additionally catches a BUILD whose contract
+        // behavior has drifted away from the literal it still ships,
+        // which is the failure a structural lower-hex check could never
+        // see. Recomputation is `OnceLock`-memoized in the digest module,
+        // so this stays a pointer comparison plus a string compare on the
+        // per-decision path.
+        if self.puct_prior_quantization_contract_sha256
+            != MODEL_GUIDED_SEARCH_PRIOR_QUANTIZATION_CONTRACT_SHA256_V1
+            || self.puct_prior_quantization_contract_sha256
+                != lower_hex_digest_v1(prior_quantization_contract_digest_v1())
+        {
             return Err(ModelGuidedSearchAuthorityError::new(
                 Kind::InvalidPuctPriorQuantizationContractDigest,
             ));
         }
 
-        if !is_lower_hex_v1(&self.value_quantization_contract_sha256, 64) {
+        if self.value_quantization_contract_sha256
+            != MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CONTRACT_SHA256_V1
+            || self.value_quantization_contract_sha256
+                != lower_hex_digest_v1(value_quantization_contract_digest_v1())
+        {
             return Err(ModelGuidedSearchAuthorityError::new(
                 Kind::InvalidValueQuantizationContractDigest,
             ));
         }
 
-        if !is_lower_hex_v1(&self.forward_determinism_build_identity, 64) {
+        if self.forward_determinism_build_identity
+            != MODEL_GUIDED_SEARCH_FORWARD_DETERMINISM_BUILD_SHA256_V1
+            || self.forward_determinism_build_identity
+                != lower_hex_digest_v1(forward_determinism_build_digest_v1())
+        {
             return Err(ModelGuidedSearchAuthorityError::new(
                 Kind::InvalidForwardDeterminismBuildIdentity,
             ));
@@ -453,7 +565,9 @@ impl ModelGuidedSearchAuthorityV1 {
     /// Only catches tampering of fields NOT among `Self::new`'s inputs
     /// (`schema`, `authority_kind`, `algorithm_identity`, `node_key_identity`,
     /// `transition_budget`, `policy_step_depth_cap`, `seed_domain`,
-    /// `engine_commit`, `card_db_hash`, `runtime_deck_catalog_sha256`):
+    /// `engine_commit`, `card_db_hash`, `runtime_deck_catalog_sha256`, and,
+    /// since the S0 content-binding change, all three contract-digest
+    /// fields):
     /// tampering an input field and reconstructing from the tampered value
     /// would just reproduce a different, still-self-consistent record. Those
     /// input fields are exactly what `validate`'s explicit checks cover
@@ -478,9 +592,6 @@ impl ModelGuidedSearchAuthorityV1 {
             self.checkpoint_generation,
             &self.checkpoint_weight_bytes_sha256,
             &self.net_architecture_identity,
-            &self.puct_prior_quantization_contract_sha256,
-            &self.value_quantization_contract_sha256,
-            &self.forward_determinism_build_identity,
             self.consumption_mode,
         ) else {
             return false;
@@ -616,27 +727,21 @@ mod tests {
     const VALID_WEIGHT_SHA256: &str =
         "1111111111111111111111111111111111111111111111111111111111111111";
     const VALID_ARCH_IDENTITY: &str = "net8-family/v1";
-    const VALID_PUCT_DIGEST: &str =
-        "2222222222222222222222222222222222222222222222222222222222222222";
-    const VALID_VALUE_DIGEST: &str =
-        "3333333333333333333333333333333333333333333333333333333333333333";
-    const VALID_FORWARD_BUILD: &str =
-        "4444444444444444444444444444444444444444444444444444444444444444";
+    /// Was `42`, back when `validate` only required a nonzero seed. The
+    /// allowlist is real now, so the fixture must name a registered block.
+    const VALID_ACTION_SEED: u64 = MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[0];
 
     fn authority_v1(
         tier: KernelNativeSearchTierV1,
     ) -> Result<ModelGuidedSearchAuthorityV1, ModelGuidedSearchAuthorityError> {
         ModelGuidedSearchAuthorityV1::new(
             tier,
-            42,
+            VALID_ACTION_SEED,
             crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
             VALID_STORE_PATH,
             1_536,
             VALID_WEIGHT_SHA256,
             VALID_ARCH_IDENTITY,
-            VALID_PUCT_DIGEST,
-            VALID_VALUE_DIGEST,
-            VALID_FORWARD_BUILD,
             ModelGuidedSearchConsumptionModeV1::SearchAsOpponent,
         )
     }
@@ -863,12 +968,130 @@ mod tests {
             ModelGuidedSearchAuthorityErrorKind::InvalidProvenance
         );
 
-        let mut zero_seed = base;
-        zero_seed.action_seed = 0;
+        // Zero was the only rejected seed before the allowlist existed. It
+        // still is rejected, but now so is every other unregistered value,
+        // including ones that look plausible: v1's own calibration seed and
+        // v1's own pool seed must not be reusable as a model-guided seed,
+        // or the two authorities' seed spaces would silently overlap.
+        for unregistered in [
+            0,
+            1,
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[0] + 1,
+            crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1
+                [0],
+            u64::MAX,
+        ] {
+            let mut wrong_seed = base.clone();
+            wrong_seed.action_seed = unregistered;
+            assert_eq!(
+                wrong_seed.validate().unwrap_err().kind(),
+                ModelGuidedSearchAuthorityErrorKind::InvalidActionSeed,
+                "seed {unregistered} must not be authorized"
+            );
+        }
+
+        // Every registered block, conversely, constructs and validates.
+        for (block_id, &seed) in MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(authorized_seed_block_v1(block_id), Some(seed));
+            let mut registered = base.clone();
+            registered.action_seed = seed;
+            assert!(
+                registered.validate().is_ok(),
+                "block {block_id} must validate"
+            );
+        }
         assert_eq!(
-            zero_seed.validate().unwrap_err().kind(),
-            ModelGuidedSearchAuthorityErrorKind::InvalidActionSeed
+            authorized_seed_block_v1(MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1.len()),
+            None
         );
+    }
+
+    /// The model-guided seed band must not intersect either of v1's own
+    /// bands, so one seed can never be simultaneously authorized for two
+    /// different search authorities.
+    #[test]
+    fn authorized_seed_blocks_are_disjoint_from_v1_bands_v1() {
+        use crate::kernel_native_search_opponent_v1::{
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1, KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+        };
+        let ours: HashSet<u64> = MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1
+            .into_iter()
+            .collect();
+        assert_eq!(
+            ours.len(),
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1.len(),
+            "the allowlist must not contain a duplicate block"
+        );
+        for seed in KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1
+            .into_iter()
+            .chain(KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1)
+        {
+            assert!(!ours.contains(&seed), "seed {seed} is claimed twice");
+        }
+        assert!(!ours.contains(&0));
+    }
+
+    /// The three contract-digest fields are no longer caller-supplied, so
+    /// `new` always mints them from the pinned literals, and tampering one
+    /// is caught by BOTH `validate` and the fresh-reconstruction check
+    /// (which could not see them while they were inputs).
+    #[test]
+    fn contract_digests_are_content_bound_and_tamper_evident_v1() {
+        use crate::model_guided_search_contract_digests_v1::{
+            forward_determinism_build_digest_v1, lower_hex_digest_v1,
+            prior_quantization_contract_digest_v1, value_quantization_contract_digest_v1,
+        };
+        let base = authority_v1(KernelNativeSearchTierV1::T512).unwrap();
+        assert_eq!(
+            base.puct_prior_quantization_contract_sha256,
+            lower_hex_digest_v1(prior_quantization_contract_digest_v1())
+        );
+        assert_eq!(
+            base.value_quantization_contract_sha256,
+            lower_hex_digest_v1(value_quantization_contract_digest_v1())
+        );
+        assert_eq!(
+            base.forward_determinism_build_identity,
+            lower_hex_digest_v1(forward_determinism_build_digest_v1())
+        );
+        assert!(base.matches_fresh_reconstruction_v1());
+
+        // A well-formed but wrong SHA-256-shaped value used to pass the old
+        // structural check; each must now be rejected with its own kind.
+        let wrong = "5".repeat(64);
+        let mut wrong_prior = base.clone();
+        wrong_prior
+            .puct_prior_quantization_contract_sha256
+            .clone_from(&wrong);
+        assert_eq!(
+            wrong_prior.validate().unwrap_err().kind(),
+            ModelGuidedSearchAuthorityErrorKind::InvalidPuctPriorQuantizationContractDigest
+        );
+        assert!(!wrong_prior.matches_fresh_reconstruction_v1());
+
+        let mut wrong_value = base.clone();
+        wrong_value
+            .value_quantization_contract_sha256
+            .clone_from(&wrong);
+        assert_eq!(
+            wrong_value.validate().unwrap_err().kind(),
+            ModelGuidedSearchAuthorityErrorKind::InvalidValueQuantizationContractDigest
+        );
+        assert!(!wrong_value.matches_fresh_reconstruction_v1());
+
+        let mut wrong_build = base;
+        wrong_build
+            .forward_determinism_build_identity
+            .clone_from(&wrong);
+        assert_eq!(
+            wrong_build.validate().unwrap_err().kind(),
+            ModelGuidedSearchAuthorityErrorKind::InvalidForwardDeterminismBuildIdentity
+        );
+        assert!(!wrong_build.matches_fresh_reconstruction_v1());
     }
 
     #[test]

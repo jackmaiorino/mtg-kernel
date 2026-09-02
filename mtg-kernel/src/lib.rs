@@ -107,6 +107,11 @@ pub mod model_guided_search_prior_quantization_v1;
 // canonicalization, perspective flip, scale, round-ties-even, clamp). Same
 // disjoint-core discipline as the prior-quantization module above.
 pub mod model_guided_search_value_quantization_v1;
+// Test-time-search wrapper S0 (LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md
+// Section 5): content-bound digests for the two quantization contracts and
+// for the deterministic-forward build identity, replacing the placeholder
+// structural (lower-hex-shaped) checks the authority schema shipped with.
+pub mod model_guided_search_contract_digests_v1;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;

@@ -1313,10 +1313,10 @@ impl ModelGuidedSearchCoreV1 {
 mod tests {
     use super::*;
     use crate::ids::PlayerId;
-    use crate::kernel_native_search_opponent_v1::{
-        KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+    use crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
+    use crate::model_guided_search_authority_v1::{
+        ModelGuidedSearchConsumptionModeV1, MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1,
     };
-    use crate::model_guided_search_authority_v1::ModelGuidedSearchConsumptionModeV1;
     use crate::native_policy_value_net_v1::{
         NativeEncodedDecisionSchemaV1, NativePolicyValueModelConfigV1,
     };
@@ -1337,15 +1337,17 @@ mod tests {
     fn authority_v1(tier: KernelNativeSearchTierV1) -> ModelGuidedSearchAuthorityV1 {
         ModelGuidedSearchAuthorityV1::new(
             tier,
-            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            // Was `KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0]` (v1's own
+            // calibration seed), which validated only because this schema
+            // had no allowlist of its own. It does now, and the two bands
+            // are deliberately disjoint, so this fixture names a
+            // model-guided block.
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[0],
             crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
             "D:/mtg-kernel-store/test-lineage",
             0,
             &"1".repeat(64),
             "net8-family/test-v1",
-            &"2".repeat(64),
-            &"3".repeat(64),
-            &"4".repeat(64),
             ModelGuidedSearchConsumptionModeV1::SearchAsOpponent,
         )
         .unwrap()
