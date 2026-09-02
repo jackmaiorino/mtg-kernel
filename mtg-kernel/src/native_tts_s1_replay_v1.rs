@@ -85,9 +85,9 @@ use crate::native_trainer_schedule_v1::{
 };
 use crate::native_tts_s1_corpus_v1::{
     corpus_policy_sample_seed_v1, decode_tts_s1_corpus_v1, nearest_rank_percentile_v1,
-    publish_canonical_document_v1, TtsS1CorpusCheckpointV1, TtsS1CorpusDecisionV1,
-    TtsS1CorpusEpisodeV1, TtsS1CorpusErrorV1, TtsS1CorpusManifestV1, TtsS1DecisionScorerV1,
-    TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1,
+    publish_canonical_document_v1, TtsS1AllEpisodeDecisionStatsV1, TtsS1CorpusCheckpointV1,
+    TtsS1CorpusDecisionV1, TtsS1CorpusEpisodeV1, TtsS1CorpusErrorV1, TtsS1CorpusManifestV1,
+    TtsS1DecisionScorerV1, TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1,
 };
 use crate::rl::{ActionSemanticV1, PlayerSeatV1};
 use crate::rl_session::{
@@ -102,6 +102,31 @@ use std::time::Instant;
 
 /// Wire schema of the per-tier feasibility report.
 pub const TTS_S1_REPLAY_REPORT_SCHEMA_V1: &str = "mtg-kernel-tts-s1-replay-report/v1";
+
+/// Wire schema of ONE SHARD's partial report.
+///
+/// Deliberately a different string from
+/// [`TTS_S1_REPLAY_REPORT_SCHEMA_V1`], not a flag inside the same one: a
+/// shard report carries no verdict, no view and no compute-cap projection,
+/// because a fraction of the episodes cannot produce any of the three. A
+/// reader that mistook one for the other would be reading a partial
+/// measurement as a tier's feasibility, so the two are made
+/// unrepresentable as each other rather than merely distinguishable.
+pub const TTS_S1_REPLAY_SHARD_REPORT_SCHEMA_V1: &str = "mtg-kernel-tts-s1-replay-shard-report/v1";
+
+/// The largest shard count a tier may be split into.
+///
+/// A bound, not a tuning knob. Sharding is a pure execution split (see
+/// [`TtsS1ShardSelectorV1`]), so a larger count changes nothing about the
+/// published statistics; but every shard is a whole process holding a
+/// loaded checkpoint, and a mis-typed count must fail closed at
+/// configuration time rather than fork a thousand of them.
+pub const TTS_S1_MAX_SHARD_COUNT_V1: u64 = 64;
+
+/// How a shard's episode subset is defined, stated on the wire so nobody
+/// has to reconstruct it from the episode list.
+pub const TTS_S1_SHARD_ASSIGNMENT_RULE_V1: &str =
+    "contributing-episode-position-in-corpus-order-modulo-shard-count-equals-shard-index/v1";
 
 /// How the two percentiles are defined, stated on the wire so nobody has
 /// to guess which of the several common conventions produced them.
@@ -177,6 +202,61 @@ impl TtsS1TierVerdictV1 {
             Self::Feasible => "FEASIBLE",
             Self::Infeasible => "INFEASIBLE",
         }
+    }
+}
+
+/// Which slice of the contributing episodes one replay process owns.
+///
+/// # Sharding is an EXECUTION split and nothing else
+///
+/// The measured population, the two views, the isotonic curve, the
+/// per-episode cost estimates, the compute-cap projection and the verdict
+/// are all defined over the SAME set of decisions whether one process or
+/// sixty-four produced them, because every one of them is a function of
+/// the record set and not of the order or the process the records arrived
+/// in. What sharding changes is which process pays for which episode; see
+/// [`merge_tts_s1_replay_shards_v1`], which recomputes every statistic over
+/// the union through the same functions the unsharded path calls, so the
+/// merged report is the unsharded report.
+///
+/// The split is by EPISODE, never by decision, and that is forced rather
+/// than chosen: the production diagnostics writer republishes the whole
+/// episode file after every decision, so a decision's publication cost is a
+/// function of every earlier searched decision IN ITS EPISODE. Two
+/// processes splitting one episode would each publish a short file and
+/// measure a publication phase no panel ever pays.
+///
+/// A shard owns the contributing episodes whose POSITION in the corpus's
+/// own deterministic episode order (ascending episode id, which
+/// `decode_tts_s1_corpus_v1` proved) satisfies `position % count == index`.
+/// Round-robin rather than contiguous blocks, deliberately: episode length
+/// varies by a factor of several, and contiguous blocks would hand one
+/// process a run of long games while another finished early.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ShardSelectorV1 {
+    pub shard_index: u64,
+    pub shard_count: u64,
+}
+
+impl TtsS1ShardSelectorV1 {
+    /// The only constructor, so an out-of-range shard is unrepresentable
+    /// rather than merely rejected somewhere later.
+    pub fn new_v1(shard_index: u64, shard_count: u64) -> Option<Self> {
+        if shard_count == 0 || shard_count > TTS_S1_MAX_SHARD_COUNT_V1 || shard_index >= shard_count
+        {
+            return None;
+        }
+        Some(Self {
+            shard_index,
+            shard_count,
+        })
+    }
+
+    /// Whether this shard replays the episode at `position` in the corpus's
+    /// episode order.
+    pub const fn owns_position_v1(&self, position: u64) -> bool {
+        position % self.shard_count == self.shard_index
     }
 }
 
@@ -775,6 +855,65 @@ pub fn latency_view_v1(records: &[&TtsS1ReplayDecisionRecordV1]) -> Option<TtsS1
     })
 }
 
+/// Everything about a tier replay that is the SAME in every shard of it.
+///
+/// It exists so the two paths cannot drift. The unsharded replay builds one
+/// and finalizes its report from it; every shard publishes its own copy;
+/// and the merge refuses to proceed unless all K are equal to each other,
+/// equal to the merging binary's own compiled constants, and equal to its
+/// own `engine_commit`. So "the shards measured the same thing" is a
+/// checked fact rather than an assumption about how the launcher was
+/// invoked.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ReplayIdentityV1 {
+    pub engine_commit: String,
+    pub tier: String,
+    pub transition_budget: u32,
+    pub policy_step_depth_cap: u16,
+    pub seed_block_id: u64,
+    pub seed_block_seed: u64,
+    pub stability_halves_enabled: bool,
+    pub checkpoint: TtsS1CorpusCheckpointV1,
+    pub wrapper_identity: WrapperIdentityV4,
+    pub search_authority_digest_sha256: String,
+    pub corpus_sha256: String,
+    pub corpus_decision_count: u64,
+    pub corpus_episode_count: u64,
+    /// Episodes the WHOLE run replays: every shard together, not this one.
+    /// It is the unsharded report's `episodes_replayed`, and it is what the
+    /// merge checks the union of the shards' positions against.
+    pub episodes_replayed: u64,
+    pub max_episodes: u64,
+    pub percentile_rule: String,
+    pub verdict_view: String,
+    pub slo_micros: u64,
+    pub hard_timeout_micros: u64,
+    pub chain_genesis_sha256: String,
+    /// The corpus's whole harvested population, which the compute-cap
+    /// projection costs episode by episode. Carried here because the merge
+    /// reads shard reports and nothing else: it recomputes the projection
+    /// and so it needs the population, not a summary of it.
+    pub all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1,
+}
+
+impl TtsS1ReplayIdentityV1 {
+    /// The compiled-constant fields, checked rather than trusted.
+    ///
+    /// A shard produced by a binary whose percentile rule, gating view or
+    /// ceiling constants differ is refused at the merge, which is the
+    /// same class of guard the launcher's pinned report contract applies
+    /// to a finished tier report.
+    fn matches_compiled_constants_v1(&self) -> bool {
+        self.percentile_rule == TTS_S1_PERCENTILE_RULE_V1
+            && self.verdict_view == TTS_S1_VERDICT_VIEW_V1
+            && self.slo_micros == slo_micros_v1()
+            && self.hard_timeout_micros == hard_timeout_micros_v1()
+            && self.chain_genesis_sha256 == TTS_S1_REPLAY_CHAIN_GENESIS_V1
+            && self.engine_commit == env!("MTG_KERNEL_BUILD_GIT_HEAD")
+    }
+}
+
 /// Everything the report digest covers.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1025,6 +1164,28 @@ pub enum TtsS1ReplayErrorV1 {
     EpisodeDidNotTerminate {
         episode_id: u64,
     },
+    /// The requested shard owns no episode at all: the fan-out is wider
+    /// than the corpus's contributing episode population. The corpus states
+    /// that population precisely so a launcher can size the fan-out before
+    /// starting, so this is refused rather than published empty.
+    EmptyShard {
+        shard_index: u64,
+        shard_count: u64,
+        planned_episodes: u64,
+    },
+    /// `--shard-index` and `--shard-count` do not name a shard.
+    InvalidShardSelector {
+        shard_index: u64,
+        shard_count: u64,
+    },
+    /// A published shard report did not re-prove.
+    InvalidShardReport,
+    /// A shard report could not be read.
+    ShardRead(String),
+    /// The K shard reports are not one run's: a missing or duplicated
+    /// shard, a disagreeing identity, a duplicated or unreplayed episode,
+    /// or a stray report from a different fan-out.
+    ShardMerge(String),
     CanonicalJson,
     InvalidReport,
     BrokenChain,
@@ -1054,6 +1215,11 @@ impl TtsS1ReplayErrorV1 {
             Self::NoDecisions => "tts_s1_replay_no_decisions",
             Self::TooManyEpisodes { .. } => "tts_s1_replay_too_many_episodes",
             Self::EpisodeDidNotTerminate { .. } => "tts_s1_replay_episode_did_not_terminate",
+            Self::EmptyShard { .. } => "tts_s1_replay_empty_shard",
+            Self::InvalidShardSelector { .. } => "tts_s1_replay_invalid_shard_selector",
+            Self::InvalidShardReport => "tts_s1_replay_shard_report_invalid",
+            Self::ShardRead(_) => "tts_s1_replay_shard_unreadable",
+            Self::ShardMerge(_) => "tts_s1_replay_shard_merge_invalid",
             Self::CanonicalJson => "tts_s1_replay_canonical_json_failed",
             Self::InvalidReport => "tts_s1_replay_report_invalid",
             Self::BrokenChain => "tts_s1_replay_chain_broken",
@@ -1072,6 +1238,8 @@ impl fmt::Display for TtsS1ReplayErrorV1 {
             | Self::Binding(detail)
             | Self::Consume(detail)
             | Self::Diagnostics(detail)
+            | Self::ShardRead(detail)
+            | Self::ShardMerge(detail)
             | Self::Publication(detail) => write!(formatter, "{}: {detail}", self.code_v1()),
             Self::Search(detail) => write!(formatter, "{}: {detail}", self.code_v1()),
             Self::ReconstructionMismatch {
@@ -1094,6 +1262,23 @@ impl fmt::Display for TtsS1ReplayErrorV1 {
             Self::EpisodeDidNotTerminate { episode_id } => {
                 write!(formatter, "{}: episode {episode_id}", self.code_v1())
             }
+            Self::EmptyShard {
+                shard_index,
+                shard_count,
+                planned_episodes,
+            } => write!(
+                formatter,
+                "{}: shard {shard_index} of {shard_count} owns no episode, because the run plans only {planned_episodes}; size the fan-out from the corpus's contributing_episode_count",
+                self.code_v1()
+            ),
+            Self::InvalidShardSelector {
+                shard_index,
+                shard_count,
+            } => write!(
+                formatter,
+                "{}: --shard-index {shard_index} --shard-count {shard_count} is not a shard; the count is 1..={TTS_S1_MAX_SHARD_COUNT_V1} and the index is below it",
+                self.code_v1()
+            ),
             _ => formatter.write_str(self.code_v1()),
         }
     }
@@ -1138,6 +1323,12 @@ pub struct TtsS1ReplayConfigV1 {
     /// Smoke bound on contributing episodes. `None` replays them all,
     /// which is the only configuration whose verdict a panel may rely on.
     pub limit_episodes: Option<u64>,
+    /// Which slice of the planned episodes THIS process replays. `None` is
+    /// the unsharded run and publishes a full tier report; `Some` publishes
+    /// a shard report for [`merge_tts_s1_replay_shards_v1`]. See
+    /// [`TtsS1ShardSelectorV1`]: it changes which process does which
+    /// episode and nothing else.
+    pub shard: Option<TtsS1ShardSelectorV1>,
     /// Where the PRODUCTION model-guided diagnostics writer publishes this
     /// run's V4 episode files, and where the scorer-shaped response lines
     /// are written. Not optional: the protocol latency the SLO is
@@ -1148,22 +1339,20 @@ pub struct TtsS1ReplayConfigV1 {
 }
 
 /// Reconstructs, searches, times, and reports one tier over one corpus.
+///
+/// Refuses a sharded configuration: the two publish different documents,
+/// so which one is being produced is a decision the caller states rather
+/// than one this function makes from a `None`.
 pub fn run_tts_s1_replay_v1(
     config: &TtsS1ReplayConfigV1,
 ) -> Result<TtsS1ReplayReportV1, TtsS1ReplayErrorV1> {
-    let corpus_bytes = std::fs::read(&config.corpus_path)
-        .map_err(|error| TtsS1ReplayErrorV1::CorpusRead(error.to_string()))?;
-    let corpus = decode_tts_s1_corpus_v1(&corpus_bytes)?;
-    let action_seed = authorized_seed_block_v1(config.seed_block_id)
-        .ok_or(TtsS1ReplayErrorV1::UnauthorizedSeedBlock)?;
-    let loaded = load_checkpoint_v1(config.authority.clone())
-        .map_err(|error| TtsS1ReplayErrorV1::CheckpointLoad(error.to_string()))?;
-    let architecture = loaded
-        .inference
-        .search_model_v1()
-        .architecture_identity_v1()
-        .to_owned();
-    let checkpoint = TtsS1CorpusCheckpointV1::from_identity_v1(&loaded.identity, &architecture);
+    if let Some(selector) = config.shard {
+        return Err(TtsS1ReplayErrorV1::InvalidShardSelector {
+            shard_index: selector.shard_index,
+            shard_count: selector.shard_count,
+        });
+    }
+    let (corpus, action_seed, loaded, architecture, checkpoint) = load_replay_inputs_v1(config)?;
     let body = replay_corpus_body_v1(
         &loaded.inference,
         &loaded.identity,
@@ -1180,14 +1369,78 @@ pub fn run_tts_s1_replay_v1(
     TtsS1ReplayReportV1::seal_v1(body)
 }
 
+/// Reconstructs, searches, times, and reports ONE SHARD of one tier.
+pub fn run_tts_s1_replay_shard_v1(
+    config: &TtsS1ReplayConfigV1,
+) -> Result<TtsS1ReplayShardReportV1, TtsS1ReplayErrorV1> {
+    let shard = config
+        .shard
+        .ok_or(TtsS1ReplayErrorV1::InvalidShardSelector {
+            shard_index: 0,
+            shard_count: 0,
+        })?;
+    let (corpus, action_seed, loaded, architecture, checkpoint) = load_replay_inputs_v1(config)?;
+    let body = replay_corpus_shard_body_v1(
+        &loaded.inference,
+        &loaded.identity,
+        &architecture,
+        checkpoint,
+        &corpus,
+        config.tier,
+        config.seed_block_id,
+        action_seed,
+        config.max_episodes,
+        config.limit_episodes,
+        shard,
+        &config.diagnostics_directory,
+    )?;
+    TtsS1ReplayShardReportV1::seal_v1(body)
+}
+
+/// The corpus, the authorized action seed, and the loaded checkpoint: the
+/// inputs both the whole run and one shard of it open with, so the two
+/// cannot resolve them differently.
+#[allow(clippy::type_complexity)]
+fn load_replay_inputs_v1(
+    config: &TtsS1ReplayConfigV1,
+) -> Result<
+    (
+        TtsS1CorpusManifestV1,
+        u64,
+        crate::native_checkpoint_shadow_stdio_v1::LoadedShadowCheckpointV1,
+        String,
+        TtsS1CorpusCheckpointV1,
+    ),
+    TtsS1ReplayErrorV1,
+> {
+    let corpus_bytes = std::fs::read(&config.corpus_path)
+        .map_err(|error| TtsS1ReplayErrorV1::CorpusRead(error.to_string()))?;
+    let corpus = decode_tts_s1_corpus_v1(&corpus_bytes)?;
+    let action_seed = authorized_seed_block_v1(config.seed_block_id)
+        .ok_or(TtsS1ReplayErrorV1::UnauthorizedSeedBlock)?;
+    let loaded = load_checkpoint_v1(config.authority.clone())
+        .map_err(|error| TtsS1ReplayErrorV1::CheckpointLoad(error.to_string()))?;
+    let architecture = loaded
+        .inference
+        .search_model_v1()
+        .architecture_identity_v1()
+        .to_owned();
+    let checkpoint = TtsS1CorpusCheckpointV1::from_identity_v1(&loaded.identity, &architecture);
+    Ok((corpus, action_seed, loaded, architecture, checkpoint))
+}
+
 /// The replay itself, over the narrow model seam.
 ///
 /// Separated from [`run_tts_s1_replay_v1`] so this crate's own tests can
 /// drive the whole reconstruct-verify-search-record path against the
 /// in-memory runner-fixed net, with no Store on disk, exactly as the S0
 /// search tests do.
+///
+/// `shard` is `None` for the unsharded run, which replays every planned
+/// episode; `Some` restricts the run to that shard's episodes and changes
+/// NOTHING else. See [`TtsS1ShardSelectorV1`].
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn replay_corpus_body_v1(
+pub(crate) fn replay_corpus_pass_v1(
     scorer: &dyn TtsS1DecisionScorerV1,
     identity: &ShadowCheckpointIdentityV1,
     architecture: &str,
@@ -1198,8 +1451,9 @@ pub(crate) fn replay_corpus_body_v1(
     action_seed: u64,
     max_episodes: u64,
     limit_episodes: Option<u64>,
+    shard: Option<TtsS1ShardSelectorV1>,
     diagnostics_directory: &Path,
-) -> Result<TtsS1ReplayReportBodyV1, TtsS1ReplayErrorV1> {
+) -> Result<TtsS1ReplayPassV1, TtsS1ReplayErrorV1> {
     // The corpus names the checkpoint it was drawn from; measuring a
     // different one would produce a real report about a population that
     // does not exist.
@@ -1229,6 +1483,22 @@ pub(crate) fn replay_corpus_body_v1(
         .min(corpus_episode_count);
     if planned_episodes == 0 {
         return Err(TtsS1ReplayErrorV1::NoDecisions);
+    }
+    // A shard with no episode at all is refused rather than published
+    // empty. It is not a harmless no-op: it costs a process and a loaded
+    // checkpoint to measure nothing, and it means the operator asked for a
+    // fan-out the corpus cannot supply. The corpus states its contributing
+    // episode count precisely so a launcher can size the fan-out before
+    // starting, so this is a configuration error the run refuses, not a
+    // shape the merge has to tolerate.
+    if let Some(selector) = shard {
+        if selector.shard_count > planned_episodes {
+            return Err(TtsS1ReplayErrorV1::EmptyShard {
+                shard_index: selector.shard_index,
+                shard_count: selector.shard_count,
+                planned_episodes,
+            });
+        }
     }
 
     let value_domain = MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1;
@@ -1261,21 +1531,38 @@ pub(crate) fn replay_corpus_body_v1(
     // write order) so the writer-observed phases can be matched back.
     let mut published_episodes: Vec<(u64, PathBuf, Vec<usize>)> = Vec::new();
     let mut corpus_targets_replayed: u64 = 0;
+    // One block per episode this pass owns, in the corpus's own episode
+    // order, carrying the position the merge reassembles by.
+    let mut pass_episodes: Vec<TtsS1ShardEpisodeV1> = Vec::new();
 
-    // WHOLE EPISODES, in ascending episode id. Every decision of a
-    // contributing episode is reconstructed and searched, in order, not
+    // WHOLE EPISODES, in the corpus's own episode order. Every decision of
+    // a contributing episode is reconstructed and searched, in order, not
     // only the stratified targets. That is not thoroughness for its own
     // sake: the production writer republishes the whole episode file after
     // every decision, so a decision's publication cost is a function of
     // every earlier searched decision in that episode. A replay that
     // searched only the sparse targets would publish short files and
     // measure a publication phase no panel ever pays.
-    for episode in corpus
+    //
+    // A SHARD skips the episodes it does not own, and skips them entirely:
+    // it never resets, never searches and never publishes for them, which
+    // is the whole of what parallelism buys here.
+    for (position, episode) in corpus
         .body
         .episodes
         .iter()
+        .enumerate()
         .take(usize::try_from(planned_episodes).map_err(|_| TtsS1ReplayErrorV1::NoDecisions)?)
     {
+        let position = position as u64;
+        if let Some(selector) = shard {
+            if !selector.owns_position_v1(position) {
+                continue;
+            }
+        }
+        let episode_started = Instant::now();
+        let episode_first_record_index = records.len() as u64;
+        let mut episode_corpus_targets: u64 = 0;
         let (mut session, schedule) = reset_episode_v1(
             episode,
             corpus.body.max_physical_decisions,
@@ -1318,6 +1605,7 @@ pub(crate) fn replay_corpus_body_v1(
                 verify_reconstructed_surface_v1(&session, expected, target)?;
                 is_corpus_target = true;
                 corpus_targets_replayed += 1;
+                episode_corpus_targets += 1;
             }
 
             if bound.is_none() {
@@ -1419,6 +1707,21 @@ pub(crate) fn replay_corpus_body_v1(
             diagnostics
                 .close_episode_v4(EpisodeCloseReasonV4::EpisodeTerminal)
                 .map_err(|error| TtsS1ReplayErrorV1::Diagnostics(error.to_string()))?;
+            pass_episodes.push(TtsS1ShardEpisodeV1 {
+                episode_position: position,
+                episode_id: episode.episode_id,
+                episode_base_seed: episode.episode_base_seed,
+                decision_count: episode.decision_count,
+                searched_decisions: episode_record_indices.len() as u64,
+                corpus_targets_replayed: episode_corpus_targets,
+                first_record_index: episode_first_record_index,
+                elapsed_micros: elapsed_micros_v1(episode_started),
+                // Backfilled once the writer-observed phases are read off
+                // the published file, below: a protocol total summed from
+                // records that do not yet carry one would be a total of
+                // zeroes.
+                protocol_micros_total: 0,
+            });
             published_episodes.push((episode.episode_id, path, episode_record_indices));
         }
     }
@@ -1428,8 +1731,7 @@ pub(crate) fn replay_corpus_body_v1(
         .map_err(|error| TtsS1ReplayErrorV1::Diagnostics(error.to_string()))?;
     drop(responses);
 
-    let searched_decisions = records.len() as u64;
-    if searched_decisions == 0 {
+    if records.is_empty() {
         return Err(TtsS1ReplayErrorV1::NoDecisions);
     }
 
@@ -1490,8 +1792,92 @@ pub(crate) fn replay_corpus_body_v1(
         });
     }
 
+    // The per-episode protocol totals, now that every record carries one.
+    for episode in pass_episodes.iter_mut() {
+        let first = usize::try_from(episode.first_record_index)
+            .map_err(|_| TtsS1ReplayErrorV1::NoDecisions)?;
+        let count = usize::try_from(episode.searched_decisions)
+            .map_err(|_| TtsS1ReplayErrorV1::NoDecisions)?;
+        let slice = records
+            .get(first..first + count)
+            .ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
+        episode.protocol_micros_total = slice.iter().fold(0u64, |running, record| {
+            running.saturating_add(record.wall_time.protocol_micros)
+        });
+    }
+
+    let bound_ref = bound.as_ref().ok_or(TtsS1ReplayErrorV1::Search(
+        "model_guided_search_authority_unbound",
+    ))?;
+    Ok(TtsS1ReplayPassV1 {
+        identity: TtsS1ReplayIdentityV1 {
+            engine_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
+            tier: bound_ref.wrapper_identity.tier.clone(),
+            transition_budget: bound_ref.wrapper_identity.transition_budget,
+            policy_step_depth_cap: bound_ref.wrapper_identity.policy_step_depth_cap,
+            seed_block_id: seed_block_id as u64,
+            seed_block_seed: action_seed,
+            stability_halves_enabled: false,
+            checkpoint,
+            wrapper_identity: bound_ref.wrapper_identity.clone(),
+            search_authority_digest_sha256: bound_ref.authority_digest_sha256.clone(),
+            corpus_sha256: corpus.corpus_sha256.clone(),
+            corpus_decision_count,
+            corpus_episode_count,
+            episodes_replayed: planned_episodes,
+            max_episodes,
+            percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
+            verdict_view: TTS_S1_VERDICT_VIEW_V1.to_owned(),
+            slo_micros: slo_micros_v1(),
+            hard_timeout_micros: hard_timeout_micros_v1(),
+            chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
+            all_episode_decisions: corpus.body.all_episode_decisions.clone(),
+        },
+        records,
+        diagnostics_episode_files,
+        episodes: pass_episodes,
+        corpus_targets_replayed,
+    })
+}
+
+/// What one replay process produced, before any statistic is computed over
+/// it. The unsharded path finalizes it into a full report; a shard
+/// publishes it for the merge to finalize the union.
+pub(crate) struct TtsS1ReplayPassV1 {
+    pub(crate) identity: TtsS1ReplayIdentityV1,
+    /// Every searched decision, in episode order, with the writer-observed
+    /// phases already backfilled and the chain NOT yet assigned.
+    pub(crate) records: Vec<TtsS1ReplayDecisionRecordV1>,
+    pub(crate) diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1>,
+    pub(crate) episodes: Vec<TtsS1ShardEpisodeV1>,
+    pub(crate) corpus_targets_replayed: u64,
+}
+
+/// Turns a complete set of records into the published report body.
+///
+/// THE SINGLE SITE where every published statistic is computed. The
+/// unsharded replay calls it over its own records and the merge calls it
+/// over the union of the shards', so "the merged report is what an
+/// unsharded replay would have published" is true by construction rather
+/// than by two implementations agreeing. Nothing here can see how many
+/// processes produced `records`, and nothing here reads a clock.
+///
+/// `records` must already be in the unsharded order: episodes in the
+/// corpus's own order, decisions ascending within each episode. The chain
+/// is assigned here, over that order.
+pub(crate) fn finalize_tts_s1_replay_body_v1(
+    identity: &TtsS1ReplayIdentityV1,
+    mut records: Vec<TtsS1ReplayDecisionRecordV1>,
+    diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1>,
+    corpus_targets_replayed: u64,
+) -> Result<TtsS1ReplayReportBodyV1, TtsS1ReplayErrorV1> {
+    let searched_decisions = records.len() as u64;
+    if searched_decisions == 0 {
+        return Err(TtsS1ReplayErrorV1::NoDecisions);
+    }
+
     // The chain is assigned LAST, over finished records, because the
-    // writer-observed phases above are part of what it commits to.
+    // writer-observed phases are part of what it commits to.
     let mut previous_record_sha256 = TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned();
     for (ordinal, record) in records.iter_mut().enumerate() {
         record.record_ordinal = ordinal as u64;
@@ -1499,9 +1885,8 @@ pub(crate) fn replay_corpus_body_v1(
         previous_record_sha256 = lower_hex_sha256_v4(record.chain_link_v1()?);
     }
 
-    // The two views. The whole-episode one is every searched decision and
-    // is the verdict basis; the corpus-target one is the stratified subset
-    // and is diagnostics only.
+    // The two views. The whole-episode one is every searched decision; the
+    // corpus-target one is the stratified subset and is the verdict basis.
     let all_records: Vec<&TtsS1ReplayDecisionRecordV1> = records.iter().collect();
     let target_records: Vec<&TtsS1ReplayDecisionRecordV1> = records
         .iter()
@@ -1521,10 +1906,10 @@ pub(crate) fn replay_corpus_body_v1(
         .iter()
         .map(|record| (record.decision_ordinal, record.wall_time.protocol_micros))
         .collect();
-    let compute_cap = compute_cap_projection_v1(&curve_samples, &corpus.body.all_episode_decisions)
+    let compute_cap = compute_cap_projection_v1(&curve_samples, &identity.all_episode_decisions)
         .ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
-    let replayed_whole_corpus = planned_episodes == corpus_episode_count
-        && corpus_targets_replayed == corpus_decision_count;
+    let replayed_whole_corpus = identity.episodes_replayed == identity.corpus_episode_count
+        && corpus_targets_replayed == identity.corpus_decision_count;
     let (verdict, verdict_reason) = verdict_v1(
         corpus_target_view.p99_protocol_ceiling_status,
         corpus_target_view.max_protocol_ceiling_status,
@@ -1532,27 +1917,24 @@ pub(crate) fn replay_corpus_body_v1(
         replayed_whole_corpus,
     );
 
-    let bound_ref = bound.as_ref().ok_or(TtsS1ReplayErrorV1::Search(
-        "model_guided_search_authority_unbound",
-    ))?;
     let body = TtsS1ReplayReportBodyV1 {
-        engine_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
-        tier: bound_ref.wrapper_identity.tier.clone(),
-        transition_budget: bound_ref.wrapper_identity.transition_budget,
-        policy_step_depth_cap: bound_ref.wrapper_identity.policy_step_depth_cap,
-        seed_block_id: seed_block_id as u64,
-        seed_block_seed: action_seed,
-        stability_halves_enabled: false,
-        checkpoint,
-        wrapper_identity: bound_ref.wrapper_identity.clone(),
-        search_authority_digest_sha256: bound_ref.authority_digest_sha256.clone(),
-        corpus_sha256: corpus.corpus_sha256.clone(),
-        corpus_decision_count,
-        corpus_episode_count,
-        episodes_replayed: planned_episodes,
+        engine_commit: identity.engine_commit.clone(),
+        tier: identity.tier.clone(),
+        transition_budget: identity.transition_budget,
+        policy_step_depth_cap: identity.policy_step_depth_cap,
+        seed_block_id: identity.seed_block_id,
+        seed_block_seed: identity.seed_block_seed,
+        stability_halves_enabled: identity.stability_halves_enabled,
+        checkpoint: identity.checkpoint.clone(),
+        wrapper_identity: identity.wrapper_identity.clone(),
+        search_authority_digest_sha256: identity.search_authority_digest_sha256.clone(),
+        corpus_sha256: identity.corpus_sha256.clone(),
+        corpus_decision_count: identity.corpus_decision_count,
+        corpus_episode_count: identity.corpus_episode_count,
+        episodes_replayed: identity.episodes_replayed,
         searched_decisions,
         corpus_targets_replayed,
-        max_episodes,
+        max_episodes: identity.max_episodes,
         replayed_whole_corpus,
         percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
         verdict_view: TTS_S1_VERDICT_VIEW_V1.to_owned(),
@@ -1569,6 +1951,104 @@ pub(crate) fn replay_corpus_body_v1(
         decisions: records,
     };
     verify_tts_s1_replay_chain_v1(&body)?;
+    Ok(body)
+}
+
+/// The unsharded replay: every planned episode in one process.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replay_corpus_body_v1(
+    scorer: &dyn TtsS1DecisionScorerV1,
+    identity: &ShadowCheckpointIdentityV1,
+    architecture: &str,
+    checkpoint: TtsS1CorpusCheckpointV1,
+    corpus: &TtsS1CorpusManifestV1,
+    tier: KernelNativeSearchTierV1,
+    seed_block_id: usize,
+    action_seed: u64,
+    max_episodes: u64,
+    limit_episodes: Option<u64>,
+    diagnostics_directory: &Path,
+) -> Result<TtsS1ReplayReportBodyV1, TtsS1ReplayErrorV1> {
+    let pass = replay_corpus_pass_v1(
+        scorer,
+        identity,
+        architecture,
+        checkpoint,
+        corpus,
+        tier,
+        seed_block_id,
+        action_seed,
+        max_episodes,
+        limit_episodes,
+        None,
+        diagnostics_directory,
+    )?;
+    finalize_tts_s1_replay_body_v1(
+        &pass.identity,
+        pass.records,
+        pass.diagnostics_episode_files,
+        pass.corpus_targets_replayed,
+    )
+}
+
+/// One shard's replay: its own episodes, its own chain, and no verdict.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replay_corpus_shard_body_v1(
+    scorer: &dyn TtsS1DecisionScorerV1,
+    identity: &ShadowCheckpointIdentityV1,
+    architecture: &str,
+    checkpoint: TtsS1CorpusCheckpointV1,
+    corpus: &TtsS1CorpusManifestV1,
+    tier: KernelNativeSearchTierV1,
+    seed_block_id: usize,
+    action_seed: u64,
+    max_episodes: u64,
+    limit_episodes: Option<u64>,
+    shard: TtsS1ShardSelectorV1,
+    diagnostics_directory: &Path,
+) -> Result<TtsS1ReplayShardReportBodyV1, TtsS1ReplayErrorV1> {
+    let mut pass = replay_corpus_pass_v1(
+        scorer,
+        identity,
+        architecture,
+        checkpoint,
+        corpus,
+        tier,
+        seed_block_id,
+        action_seed,
+        max_episodes,
+        limit_episodes,
+        Some(shard),
+        diagnostics_directory,
+    )?;
+    if pass.records.is_empty() || pass.episodes.is_empty() {
+        return Err(TtsS1ReplayErrorV1::NoDecisions);
+    }
+    // The shard chains its OWN records, so a shard report is verifiable on
+    // its own before anything is merged. The merge re-chains over the
+    // union, because the published chain is over the whole run's records in
+    // the whole run's order and a shard cannot know that order.
+    let mut previous_record_sha256 = TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned();
+    for (ordinal, record) in pass.records.iter_mut().enumerate() {
+        record.record_ordinal = ordinal as u64;
+        record.previous_record_sha256 = previous_record_sha256.clone();
+        previous_record_sha256 = lower_hex_sha256_v4(record.chain_link_v1()?);
+    }
+    let body = TtsS1ReplayShardReportBodyV1 {
+        identity: pass.identity,
+        shard_assignment_rule: TTS_S1_SHARD_ASSIGNMENT_RULE_V1.to_owned(),
+        shard_index: shard.shard_index,
+        shard_count: shard.shard_count,
+        shard_episodes_replayed: pass.episodes.len() as u64,
+        searched_decisions: pass.records.len() as u64,
+        corpus_targets_replayed: pass.corpus_targets_replayed,
+        episodes: pass.episodes,
+        diagnostics_episode_files: pass.diagnostics_episode_files,
+        chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
+        final_record_sha256: previous_record_sha256,
+        decisions: pass.records,
+    };
+    verify_tts_s1_replay_shard_body_v1(&body)?;
     Ok(body)
 }
 
@@ -2056,6 +2536,452 @@ pub fn publish_tts_s1_replay_report_v1(
     Ok(bytes)
 }
 
+// ---------------------------------------------------------------------------
+// SHARDING. One tier's replay, split across K processes by episode, and the
+// merge that recomputes the tier report over the union.
+// ---------------------------------------------------------------------------
+
+/// One episode a shard replayed, with the position that reassembles it.
+///
+/// `elapsed_micros` and `protocol_micros_total` are WALL TIME and are
+/// deliberately shard-report-only: neither reaches the merged tier report,
+/// which computes every published statistic from the decision records
+/// themselves. They are here because a launcher that has just paid for K
+/// processes should be able to say what each episode cost it, and because
+/// the next tier's expected cost is read off exactly these numbers.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ShardEpisodeV1 {
+    /// Position in the corpus's own episode order. THE reassembly key: the
+    /// merged report's records are in position order, which is the order an
+    /// unsharded replay would have produced them in.
+    pub episode_position: u64,
+    pub episode_id: u64,
+    pub episode_base_seed: u64,
+    /// Decisions the corpus recorded for this episode.
+    pub decision_count: u64,
+    /// Decisions this shard searched in it. Equal to `decision_count`,
+    /// because episodes are replayed whole or not at all.
+    pub searched_decisions: u64,
+    pub corpus_targets_replayed: u64,
+    /// Where this episode's records start inside this shard's own record
+    /// list, so the merge can cut them out without re-scanning.
+    pub first_record_index: u64,
+    /// WALL TIME. Shard-report only.
+    pub elapsed_micros: u64,
+    /// The episode's summed protocol latency. WALL TIME, shard-report only.
+    pub protocol_micros_total: u64,
+}
+
+/// Everything one shard's report digest covers.
+///
+/// What is NOT here is the point: no verdict, no verdict reason, no
+/// latency view, no compute-cap projection. A fraction of the episodes can
+/// produce none of them honestly, so a shard report does not carry a field
+/// for them at all rather than carrying a partial one somebody might read.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ReplayShardReportBodyV1 {
+    /// Shared by every shard of this run, and checked to be.
+    pub identity: TtsS1ReplayIdentityV1,
+    pub shard_assignment_rule: String,
+    pub shard_index: u64,
+    pub shard_count: u64,
+    /// Episodes THIS shard replayed.
+    pub shard_episodes_replayed: u64,
+    /// Decisions THIS shard searched.
+    pub searched_decisions: u64,
+    /// Stratified corpus targets THIS shard reached.
+    pub corpus_targets_replayed: u64,
+    pub episodes: Vec<TtsS1ShardEpisodeV1>,
+    /// The V4 diagnostics episode files this shard published, in the same
+    /// order as `episodes`, so the merged report commits to every artifact
+    /// its protocol latencies were read from whichever process wrote it.
+    pub diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1>,
+    pub chain_genesis_sha256: String,
+    /// SHA-256 of this shard's last record, over the shard's own chain.
+    pub final_record_sha256: String,
+    pub decisions: Vec<TtsS1ReplayDecisionRecordV1>,
+}
+
+/// The published shard report.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ReplayShardReportV1 {
+    pub schema: String,
+    /// SHA-256 over the canonical JSON bytes of `body`, lower hex.
+    pub shard_report_sha256: String,
+    pub body: TtsS1ReplayShardReportBodyV1,
+}
+
+impl TtsS1ReplayShardReportV1 {
+    pub fn seal_v1(body: TtsS1ReplayShardReportBodyV1) -> Result<Self, TtsS1ReplayErrorV1> {
+        let bytes = to_canonical_json_bytes_v1(&body, CanonicalJsonNullPolicyV1::Forbid)
+            .map_err(|_| TtsS1ReplayErrorV1::CanonicalJson)?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let digest: [u8; 32] = hasher.finalize().into();
+        Ok(Self {
+            schema: TTS_S1_REPLAY_SHARD_REPORT_SCHEMA_V1.to_owned(),
+            shard_report_sha256: lower_hex_sha256_v4(digest),
+            body,
+        })
+    }
+
+    pub fn canonical_bytes_v1(&self) -> Result<Vec<u8>, TtsS1ReplayErrorV1> {
+        to_canonical_json_bytes_v1(self, CanonicalJsonNullPolicyV1::Forbid)
+            .map_err(|_| TtsS1ReplayErrorV1::CanonicalJson)
+    }
+}
+
+/// The deterministic file name one shard publishes under.
+///
+/// The merge is given a DIRECTORY and a shard count and nothing else, so
+/// the names have to be derivable from those two numbers: a merge that
+/// globbed for whatever it found could silently merge three shards of a
+/// four-shard run, which is the exact failure the whole design has to make
+/// impossible.
+pub fn tts_s1_shard_report_file_name_v1(shard_index: u64, shard_count: u64) -> String {
+    format!("shard-{shard_index:04}-of-{shard_count:04}.report.json")
+}
+
+/// Whether a file name is one of these reports at all, used to reject a
+/// directory holding a LEFTOVER shard set from a different fan-out.
+fn is_tts_s1_shard_report_file_name_v1(name: &str) -> bool {
+    name.starts_with("shard-") && name.ends_with(".report.json")
+}
+
+/// Re-proves a published shard report: canonical bytes, schema, own digest,
+/// and every internal invariant.
+pub fn decode_tts_s1_replay_shard_report_v1(
+    bytes: &[u8],
+) -> Result<TtsS1ReplayShardReportV1, TtsS1ReplayErrorV1> {
+    let report: TtsS1ReplayShardReportV1 =
+        from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid)
+            .map_err(|_| TtsS1ReplayErrorV1::InvalidShardReport)?;
+    let reencoded = to_canonical_json_bytes_v1(&report, CanonicalJsonNullPolicyV1::Forbid)
+        .map_err(|_| TtsS1ReplayErrorV1::CanonicalJson)?;
+    let resealed = TtsS1ReplayShardReportV1::seal_v1(report.body.clone())?;
+    if reencoded != bytes
+        || report.schema != TTS_S1_REPLAY_SHARD_REPORT_SCHEMA_V1
+        || resealed.shard_report_sha256 != report.shard_report_sha256
+    {
+        return Err(TtsS1ReplayErrorV1::InvalidShardReport);
+    }
+    verify_tts_s1_replay_shard_body_v1(&report.body)?;
+    Ok(report)
+}
+
+/// Publishes a shard report atomically and immutably.
+pub fn publish_tts_s1_replay_shard_report_v1(
+    report: &TtsS1ReplayShardReportV1,
+    path: &Path,
+) -> Result<Vec<u8>, TtsS1ReplayErrorV1> {
+    let bytes = report.canonical_bytes_v1()?;
+    publish_canonical_document_v1(&bytes, path)
+        .map_err(|error| TtsS1ReplayErrorV1::Publication(error.to_string()))?;
+    Ok(bytes)
+}
+
+/// Every invariant a shard report must satisfy on its own, before any
+/// question of merging arises.
+///
+/// It is deliberately exhaustive rather than "enough to reassemble":
+/// the merge trusts these, so an unchecked one would be an assumption the
+/// merged report inherits silently.
+pub fn verify_tts_s1_replay_shard_body_v1(
+    body: &TtsS1ReplayShardReportBodyV1,
+) -> Result<(), TtsS1ReplayErrorV1> {
+    let invalid = |detail: &str| TtsS1ReplayErrorV1::ShardMerge(detail.to_owned());
+    let selector = TtsS1ShardSelectorV1::new_v1(body.shard_index, body.shard_count)
+        .ok_or_else(|| invalid("shard index or shard count out of range"))?;
+    if body.shard_assignment_rule != TTS_S1_SHARD_ASSIGNMENT_RULE_V1 {
+        return Err(invalid("shard declares a different assignment rule"));
+    }
+    if body.chain_genesis_sha256 != TTS_S1_REPLAY_CHAIN_GENESIS_V1 {
+        return Err(TtsS1ReplayErrorV1::BrokenChain);
+    }
+    // The shard's own chain, exactly as the full report's is walked.
+    let mut expected_previous = TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned();
+    for (index, record) in body.decisions.iter().enumerate() {
+        if record.record_ordinal != index as u64
+            || record.previous_record_sha256 != expected_previous
+        {
+            return Err(TtsS1ReplayErrorV1::BrokenChain);
+        }
+        expected_previous = lower_hex_sha256_v4(record.chain_link_v1()?);
+    }
+    if body.decisions.is_empty() || body.final_record_sha256 != expected_previous {
+        return Err(TtsS1ReplayErrorV1::BrokenChain);
+    }
+    if body.decisions.len() as u64 != body.searched_decisions
+        || body
+            .decisions
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .count() as u64
+            != body.corpus_targets_replayed
+    {
+        return Err(TtsS1ReplayErrorV1::BrokenChain);
+    }
+    if body.episodes.is_empty() || body.episodes.len() as u64 != body.shard_episodes_replayed {
+        return Err(invalid(
+            "shard episode count disagrees with its episode list",
+        ));
+    }
+    if body.diagnostics_episode_files.len() != body.episodes.len() {
+        return Err(invalid(
+            "shard published a different number of diagnostics episode files than episodes",
+        ));
+    }
+    // The episodes partition the shard's records exactly, in order, and
+    // every one of them is an episode this shard is the owner of.
+    let mut cursor = 0u64;
+    let mut previous_position: Option<u64> = None;
+    let mut searched = 0u64;
+    let mut targets = 0u64;
+    for (episode, file) in body
+        .episodes
+        .iter()
+        .zip(body.diagnostics_episode_files.iter())
+    {
+        if !selector.owns_position_v1(episode.episode_position) {
+            return Err(invalid(
+                "shard carries an episode at a position it does not own",
+            ));
+        }
+        if episode.episode_position >= body.identity.episodes_replayed {
+            return Err(invalid("shard carries an episode past the planned run"));
+        }
+        if previous_position.is_some_and(|previous| previous >= episode.episode_position) {
+            return Err(invalid(
+                "shard episodes are not in ascending position order",
+            ));
+        }
+        previous_position = Some(episode.episode_position);
+        if episode.first_record_index != cursor
+            || episode.searched_decisions != episode.decision_count
+        {
+            return Err(invalid("shard episode records do not partition the shard"));
+        }
+        let first = usize::try_from(cursor).map_err(|_| invalid("shard record index overflow"))?;
+        let count = usize::try_from(episode.searched_decisions)
+            .map_err(|_| invalid("shard record index overflow"))?;
+        let slice = body
+            .decisions
+            .get(first..first + count)
+            .ok_or_else(|| invalid("shard episode names records it does not carry"))?;
+        if slice
+            .iter()
+            .any(|record| record.episode_id != episode.episode_id)
+        {
+            return Err(invalid(
+                "shard episode records carry a different episode id",
+            ));
+        }
+        if slice
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .count() as u64
+            != episode.corpus_targets_replayed
+        {
+            return Err(invalid(
+                "shard episode target count disagrees with its records",
+            ));
+        }
+        if file.episode_id != episode.episode_id
+            || file.decision_record_count != episode.searched_decisions
+        {
+            return Err(invalid(
+                "shard diagnostics episode file does not match its episode",
+            ));
+        }
+        cursor = cursor.saturating_add(episode.searched_decisions);
+        searched = searched.saturating_add(episode.searched_decisions);
+        targets = targets.saturating_add(episode.corpus_targets_replayed);
+    }
+    if searched != body.searched_decisions || targets != body.corpus_targets_replayed {
+        return Err(invalid(
+            "shard episode totals disagree with the shard totals",
+        ));
+    }
+    Ok(())
+}
+
+/// Reads exactly `shard_count` shard reports out of `directory` and
+/// recomputes the whole tier report over their union.
+///
+/// # Why this is the same report, not a similar one
+///
+/// Every published statistic is computed by
+/// [`finalize_tts_s1_replay_body_v1`], the SAME function the unsharded
+/// replay finalizes through, over records placed in the SAME order (the
+/// corpus's episode order, decisions ascending within an episode). The
+/// isotonic fit is pooled over every shard's samples because it is fitted
+/// to the concatenated record set, not to per-shard fits combined; the two
+/// views, the per-episode cost estimates, the projection and the verdict
+/// are likewise functions of that one record set. So the merged report
+/// differs from an unsharded one only where a re-run of the unsharded
+/// replay would differ from itself: in the measured timings and in what
+/// they derive.
+///
+/// # What is refused
+///
+/// Everything that could make the union not be the run. A missing shard, a
+/// duplicated shard index, a shard from a different corpus, tier, seed
+/// block, checkpoint, wrapper identity or engine build, a shard whose
+/// episodes are not the ones its index owns, a duplicated episode, an
+/// episode nobody replayed, or a stray shard report in the directory from
+/// some other fan-out. None of them is a warning and none of them is
+/// dropped: a partial union would publish a real-looking verdict over a
+/// population that was never measured.
+pub fn merge_tts_s1_replay_shards_v1(
+    directory: &Path,
+    shard_count: u64,
+) -> Result<TtsS1ReplayReportV1, TtsS1ReplayErrorV1> {
+    let invalid = |detail: String| TtsS1ReplayErrorV1::ShardMerge(detail);
+    if shard_count == 0 || shard_count > TTS_S1_MAX_SHARD_COUNT_V1 {
+        return Err(invalid(format!(
+            "shard count {shard_count} is outside 1..={TTS_S1_MAX_SHARD_COUNT_V1}"
+        )));
+    }
+    // The directory must hold EXACTLY this fan-out's reports and no other:
+    // a leftover set from a different shard count sitting beside them is
+    // how three shards of a four-shard run get merged as if complete.
+    let expected: Vec<String> = (0..shard_count)
+        .map(|index| tts_s1_shard_report_file_name_v1(index, shard_count))
+        .collect();
+    let mut observed: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| TtsS1ReplayErrorV1::ShardRead(error.to_string()))?
+    {
+        let entry = entry.map_err(|error| TtsS1ReplayErrorV1::ShardRead(error.to_string()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if is_tts_s1_shard_report_file_name_v1(&name) {
+            observed.push(name);
+        }
+    }
+    observed.sort();
+    let mut expected_sorted = expected.clone();
+    expected_sorted.sort();
+    if observed != expected_sorted {
+        return Err(invalid(format!(
+            "{} holds shard reports {:?}, not exactly the {shard_count} this merge requires ({:?})",
+            directory.display(),
+            observed,
+            expected_sorted
+        )));
+    }
+
+    let mut shards: Vec<TtsS1ReplayShardReportV1> = Vec::with_capacity(expected.len());
+    for (index, name) in expected.iter().enumerate() {
+        let path = directory.join(name);
+        let bytes = std::fs::read(&path)
+            .map_err(|error| TtsS1ReplayErrorV1::ShardRead(error.to_string()))?;
+        let report = decode_tts_s1_replay_shard_report_v1(&bytes)?;
+        if report.body.shard_index != index as u64 || report.body.shard_count != shard_count {
+            return Err(invalid(format!(
+                "{name} declares shard {} of {}, not shard {index} of {shard_count}",
+                report.body.shard_index, report.body.shard_count
+            )));
+        }
+        shards.push(report);
+    }
+
+    // ONE identity, shared. The first shard's is the reference and every
+    // other must equal it exactly; it must also equal this binary's own
+    // compiled constants, so a merge by a differently-built binary is
+    // refused rather than silently recomputing under different rules.
+    let identity = shards
+        .first()
+        .map(|shard| shard.body.identity.clone())
+        .ok_or_else(|| invalid("no shard reports".to_owned()))?;
+    if !identity.matches_compiled_constants_v1() {
+        return Err(invalid(
+            "the shard reports were produced by a build whose engine commit or pinned \
+             constants differ from this one's"
+                .to_owned(),
+        ));
+    }
+    for shard in &shards {
+        if shard.body.identity != identity {
+            return Err(invalid(format!(
+                "shard {} was replayed against a different corpus, tier, seed block, \
+                 checkpoint or build than shard 0",
+                shard.body.shard_index
+            )));
+        }
+    }
+
+    // The episodes across every shard must be exactly the planned run:
+    // each position once, no gap, no duplicate, no episode id twice.
+    let mut placed: Vec<(u64, usize, usize)> = Vec::new();
+    for (slot, shard) in shards.iter().enumerate() {
+        for (episode_index, episode) in shard.body.episodes.iter().enumerate() {
+            placed.push((episode.episode_position, slot, episode_index));
+        }
+    }
+    placed.sort_unstable_by_key(|(position, _, _)| *position);
+    if placed.len() as u64 != identity.episodes_replayed {
+        return Err(invalid(format!(
+            "the shards replayed {} episodes, not the {} the run planned",
+            placed.len(),
+            identity.episodes_replayed
+        )));
+    }
+    for (expected_position, (position, _, _)) in placed.iter().enumerate() {
+        if *position != expected_position as u64 {
+            return Err(invalid(format!(
+                "episode position {expected_position} is missing or duplicated across the shards"
+            )));
+        }
+    }
+    let mut episode_ids: Vec<u64> = placed
+        .iter()
+        .map(|(_, slot, episode_index)| shards[*slot].body.episodes[*episode_index].episode_id)
+        .collect();
+    let mut sorted_ids = episode_ids.clone();
+    sorted_ids.sort_unstable();
+    sorted_ids.dedup();
+    if sorted_ids.len() != episode_ids.len() {
+        return Err(invalid(
+            "two shards replayed the same episode id".to_owned(),
+        ));
+    }
+    episode_ids.clear();
+
+    // The union, in the order an unsharded replay would have produced it.
+    let mut records: Vec<TtsS1ReplayDecisionRecordV1> = Vec::new();
+    let mut diagnostics_episode_files: Vec<TtsS1DiagnosticsEpisodeFileV1> = Vec::new();
+    let mut corpus_targets_replayed = 0u64;
+    for (_, slot, episode_index) in &placed {
+        let shard = &shards[*slot];
+        let episode = &shard.body.episodes[*episode_index];
+        let first = usize::try_from(episode.first_record_index)
+            .map_err(|_| invalid("shard record index overflow".to_owned()))?;
+        let count = usize::try_from(episode.searched_decisions)
+            .map_err(|_| invalid("shard record index overflow".to_owned()))?;
+        let slice = shard
+            .body
+            .decisions
+            .get(first..first + count)
+            .ok_or_else(|| invalid("shard episode names records it does not carry".to_owned()))?;
+        records.extend(slice.iter().cloned());
+        diagnostics_episode_files
+            .push(shard.body.diagnostics_episode_files[*episode_index].clone());
+        corpus_targets_replayed =
+            corpus_targets_replayed.saturating_add(episode.corpus_targets_replayed);
+    }
+
+    let body = finalize_tts_s1_replay_body_v1(
+        &identity,
+        records,
+        diagnostics_episode_files,
+        corpus_targets_replayed,
+    )?;
+    TtsS1ReplayReportV1::seal_v1(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2193,70 +3119,108 @@ mod tests {
     /// is the other half, the whole-episode
     /// reconstruct-verify-search-publish path.
     fn fixture_corpus_v1(scorer: &RunnerFixedScorerV1, take: usize) -> TtsS1CorpusManifestV1 {
+        fixture_corpus_episodes_v1(scorer, 1, take)
+    }
+
+    /// The same fixture over `episode_count` CONTRIBUTING episodes.
+    ///
+    /// Seeded self-play is walked from episode id 0 upward until that many
+    /// NATURAL terminals are found; a truncated one contributes to the
+    /// costed population and no candidates, exactly as the corpus builder
+    /// treats it. More than one episode is what makes the sharding tests
+    /// mean anything: with a single episode every fan-out degenerates to
+    /// one shard doing all the work.
+    fn fixture_corpus_episodes_v1(
+        scorer: &RunnerFixedScorerV1,
+        episode_count: u64,
+        take: usize,
+    ) -> TtsS1CorpusManifestV1 {
+        use crate::rl::TerminalClassificationV1;
         let base_seed = MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1];
-        let harvest = harvest_episode_v1(
-            scorer,
-            base_seed,
-            0,
-            FIXTURE_MAX_PHYSICAL_DECISIONS_V1,
-            FIXTURE_MAX_POLICY_STEPS_V1,
-        )
-        .expect("the fixture episode plays");
-        assert!(
-            harvest.decisions.len() > take,
-            "the fixture episode must be strictly longer than the target sample, so the \
-             whole-episode replay is provably more than the targets: got {} for {take}",
-            harvest.decisions.len()
-        );
-        // Spread the targets across the episode rather than clustering
-        // them at its start, so the surface checks land at genuinely
-        // different accumulated histories.
-        let stride = (harvest.decisions.len() / take).max(1);
-        let classification = harvest.classification;
-        let actions = harvest.actions.clone();
-        let environment_seed = harvest.decisions[0].coordinates.environment_seed;
-        let all_decisions = harvest.into_decisions_with_action_sequences_v1();
-        let episode_decisions = all_decisions.len() as u64;
-        let decisions: Vec<_> = all_decisions
-            .into_iter()
-            .step_by(stride)
-            .take(take)
-            .collect();
+        let mut episodes: Vec<TtsS1CorpusEpisodeV1> = Vec::new();
+        let mut decisions: Vec<TtsS1CorpusDecisionV1> = Vec::new();
+        let mut all_counts: Vec<u64> = Vec::new();
+        let mut natural_counts: Vec<u64> = Vec::new();
+        let mut truncated_episode_count = 0u64;
+        let mut episode_id = 0u64;
+        while (episodes.len() as u64) < episode_count {
+            assert!(
+                episode_id < episode_count + 8,
+                "the fixture must find {episode_count} natural-terminal episodes"
+            );
+            let harvest = harvest_episode_v1(
+                scorer,
+                base_seed,
+                episode_id,
+                FIXTURE_MAX_PHYSICAL_DECISIONS_V1,
+                FIXTURE_MAX_POLICY_STEPS_V1,
+            )
+            .expect("the fixture episode plays");
+            let count = harvest.decisions.len() as u64;
+            all_counts.push(count);
+            if harvest.classification != TerminalClassificationV1::Natural {
+                truncated_episode_count += 1;
+                episode_id += 1;
+                continue;
+            }
+            assert!(
+                harvest.decisions.len() > take,
+                "the fixture episode must be strictly longer than the target sample, so the \
+                 whole-episode replay is provably more than the targets: got {} for {take}",
+                harvest.decisions.len()
+            );
+            natural_counts.push(count);
+            // Spread the targets across the episode rather than clustering
+            // them at its start, so the surface checks land at genuinely
+            // different accumulated histories.
+            let stride = (harvest.decisions.len() / take).max(1);
+            let actions = harvest.actions.clone();
+            let environment_seed = harvest.decisions[0].coordinates.environment_seed;
+            episodes.push(TtsS1CorpusEpisodeV1 {
+                episode_id,
+                episode_base_seed: base_seed,
+                environment_seed,
+                decision_count: count,
+                terminal_classification:
+                    crate::native_tts_s1_corpus_v1::terminal_classification_tag_v1(
+                        TerminalClassificationV1::Natural,
+                    )
+                    .to_owned(),
+                action_sequence: actions,
+            });
+            decisions.extend(
+                harvest
+                    .into_decisions_with_action_sequences_v1()
+                    .into_iter()
+                    .step_by(stride)
+                    .take(take),
+            );
+            episode_id += 1;
+        }
         let candidate_count = decisions.len() as u64;
+        let natural_terminal_episode_count = natural_counts.len() as u64;
         let architecture = scorer.net.architecture_identity_v1().to_owned();
-        let natural = classification == crate::rl::TerminalClassificationV1::Natural;
         TtsS1CorpusManifestV1::seal_v1(corpus_body_v1(
             TtsS1CorpusCheckpointV1::from_identity_v1(&fixture_identity_v1(), &architecture),
             FIXTURE_SEED_BLOCK_ID_V1,
             base_seed,
-            1,
+            episode_id,
             FIXTURE_MAX_PHYSICAL_DECISIONS_V1,
             FIXTURE_MAX_POLICY_STEPS_V1,
             TtsS1CorpusSelectionV1 {
                 decisions,
-                episodes: vec![TtsS1CorpusEpisodeV1 {
-                    episode_id: 0,
-                    episode_base_seed: base_seed,
-                    environment_seed,
-                    decision_count: episode_decisions,
-                    terminal_classification:
-                        crate::native_tts_s1_corpus_v1::terminal_classification_tag_v1(
-                            classification,
-                        )
-                        .to_owned(),
-                    action_sequence: actions,
-                }],
+                episodes,
                 candidate_count,
-                natural_terminal_episode_count: u64::from(natural),
-                truncated_episode_count: u64::from(!natural),
-                episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[episode_decisions])
-                    .expect("one episode summarizes"),
+                natural_terminal_episode_count,
+                truncated_episode_count,
+                episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&natural_counts)
+                    .expect("the natural episodes summarize"),
                 all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1::summarize_v1(
-                    &[episode_decisions],
-                    u64::from(natural),
-                    u64::from(!natural),
+                    &all_counts,
+                    natural_terminal_episode_count,
+                    truncated_episode_count,
                 )
-                .expect("one episode summarizes"),
+                .expect("the harvested episodes summarize"),
             },
         ))
         .expect("the fixture corpus seals")
@@ -3376,6 +4340,577 @@ mod tests {
                 parse_tts_s1_tier_v1(bad).is_none(),
                 "{bad:?} must be rejected"
             );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // SHARDING. The split, the shard report, and the merge.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn the_shard_selector_partitions_every_position_exactly_once_v1() {
+        for count in [1u64, 2, 3, 8, 64] {
+            for position in 0..200u64 {
+                let owners = (0..count)
+                    .filter(|index| {
+                        TtsS1ShardSelectorV1::new_v1(*index, count)
+                            .expect("a legal shard")
+                            .owns_position_v1(position)
+                    })
+                    .count();
+                assert_eq!(
+                    owners, 1,
+                    "position {position} must be owned by exactly one of {count} shards"
+                );
+            }
+        }
+        // The constructor is the whole range check: an index at or above
+        // the count, a zero count, and a count past the bound are all
+        // unrepresentable rather than merely rejected later.
+        assert!(TtsS1ShardSelectorV1::new_v1(0, 0).is_none());
+        assert!(TtsS1ShardSelectorV1::new_v1(8, 8).is_none());
+        assert!(TtsS1ShardSelectorV1::new_v1(0, TTS_S1_MAX_SHARD_COUNT_V1 + 1).is_none());
+        assert!(TtsS1ShardSelectorV1::new_v1(63, TTS_S1_MAX_SHARD_COUNT_V1).is_some());
+    }
+
+    /// A synthetic whole-run record set over `decision_counts` episodes,
+    /// carrying the per-ordinal publication growth the production writer
+    /// exhibits, so the isotonic fit has real shape to reproduce.
+    fn synthetic_run_records_v1(decision_counts: &[u64]) -> Vec<TtsS1ReplayDecisionRecordV1> {
+        let mut records = Vec::new();
+        for (position, count) in decision_counts.iter().enumerate() {
+            for ordinal in 0..*count {
+                let mut record = synthetic_record_v1(ordinal, String::new());
+                // Episode ids are deliberately NOT the positions: the
+                // merge reassembles by position, and an implementation
+                // that quietly sorted by episode id instead would pass a
+                // fixture in which the two agreed.
+                record.episode_id = 100 - position as u64;
+                record.decision_ordinal = ordinal;
+                record.is_corpus_target = ordinal % 3 == 0;
+                record.wall_time = TtsS1DecisionWallTimeV1 {
+                    search_micros: 1_000 + ordinal,
+                    decision_micros: 2_000 + ordinal,
+                    publish_micros: 300 + 7 * ordinal,
+                    response_micros: 100 + ordinal,
+                    protocol_micros: 2_400 + 9 * ordinal,
+                };
+                records.push(record);
+            }
+        }
+        records
+    }
+
+    fn synthetic_diagnostics_files_v1(
+        decision_counts: &[u64],
+    ) -> Vec<TtsS1DiagnosticsEpisodeFileV1> {
+        decision_counts
+            .iter()
+            .enumerate()
+            .map(|(position, count)| TtsS1DiagnosticsEpisodeFileV1 {
+                episode_id: 100 - position as u64,
+                file_name: format!("episode-{position}.jsonl"),
+                bytes: 4_096 + position as u64,
+                sha256: format!("{position:02x}").repeat(32),
+                decision_record_count: *count,
+            })
+            .collect()
+    }
+
+    fn synthetic_identity_v1(
+        decision_counts: &[u64],
+        corpus_decision_count: u64,
+    ) -> TtsS1ReplayIdentityV1 {
+        let template = synthetic_body_v1(1);
+        TtsS1ReplayIdentityV1 {
+            // The merge refuses a shard produced by another build, so the
+            // fixture states THIS build's commit rather than a literal.
+            engine_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
+            tier: template.tier,
+            transition_budget: template.transition_budget,
+            policy_step_depth_cap: template.policy_step_depth_cap,
+            seed_block_id: template.seed_block_id,
+            seed_block_seed: template.seed_block_seed,
+            stability_halves_enabled: false,
+            checkpoint: template.checkpoint,
+            wrapper_identity: template.wrapper_identity,
+            search_authority_digest_sha256: template.search_authority_digest_sha256,
+            corpus_sha256: template.corpus_sha256,
+            corpus_decision_count,
+            corpus_episode_count: decision_counts.len() as u64,
+            episodes_replayed: decision_counts.len() as u64,
+            max_episodes: 64,
+            percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
+            verdict_view: TTS_S1_VERDICT_VIEW_V1.to_owned(),
+            slo_micros: slo_micros_v1(),
+            hard_timeout_micros: hard_timeout_micros_v1(),
+            chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
+            all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1::summarize_v1(
+                decision_counts,
+                decision_counts.len() as u64,
+                0,
+            )
+            .expect("the synthetic population summarizes"),
+        }
+    }
+
+    /// Splits one synthetic run into `shard_count` shard bodies, exactly as
+    /// K replay processes would have produced them.
+    fn synthetic_shard_bodies_v1(
+        decision_counts: &[u64],
+        shard_count: u64,
+    ) -> Vec<TtsS1ReplayShardReportBodyV1> {
+        let records = synthetic_run_records_v1(decision_counts);
+        let files = synthetic_diagnostics_files_v1(decision_counts);
+        let targets = records
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .count() as u64;
+        let identity = synthetic_identity_v1(decision_counts, targets);
+        // Where each episode's records start in the whole run.
+        let mut offsets: Vec<usize> = Vec::with_capacity(decision_counts.len());
+        let mut running = 0usize;
+        for count in decision_counts {
+            offsets.push(running);
+            running += *count as usize;
+        }
+
+        let mut bodies = Vec::with_capacity(shard_count as usize);
+        for shard_index in 0..shard_count {
+            let selector =
+                TtsS1ShardSelectorV1::new_v1(shard_index, shard_count).expect("a legal shard");
+            let mut shard_records: Vec<TtsS1ReplayDecisionRecordV1> = Vec::new();
+            let mut shard_episodes: Vec<TtsS1ShardEpisodeV1> = Vec::new();
+            let mut shard_files: Vec<TtsS1DiagnosticsEpisodeFileV1> = Vec::new();
+            let mut shard_targets = 0u64;
+            for (position, count) in decision_counts.iter().enumerate() {
+                if !selector.owns_position_v1(position as u64) {
+                    continue;
+                }
+                let first = offsets[position];
+                let slice = &records[first..first + *count as usize];
+                let episode_targets = slice
+                    .iter()
+                    .filter(|record| record.is_corpus_target)
+                    .count() as u64;
+                shard_episodes.push(TtsS1ShardEpisodeV1 {
+                    episode_position: position as u64,
+                    episode_id: slice[0].episode_id,
+                    episode_base_seed: identity.seed_block_seed,
+                    decision_count: *count,
+                    searched_decisions: *count,
+                    corpus_targets_replayed: episode_targets,
+                    first_record_index: shard_records.len() as u64,
+                    elapsed_micros: 1_234 + position as u64,
+                    protocol_micros_total: slice.iter().fold(0u64, |running, record| {
+                        running + record.wall_time.protocol_micros
+                    }),
+                });
+                shard_files.push(files[position].clone());
+                shard_targets += episode_targets;
+                shard_records.extend(slice.iter().cloned());
+            }
+            let mut previous = TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned();
+            for (ordinal, record) in shard_records.iter_mut().enumerate() {
+                record.record_ordinal = ordinal as u64;
+                record.previous_record_sha256 = previous.clone();
+                previous = lower_hex_sha256_v4(record.chain_link_v1().unwrap());
+            }
+            bodies.push(TtsS1ReplayShardReportBodyV1 {
+                identity: identity.clone(),
+                shard_assignment_rule: TTS_S1_SHARD_ASSIGNMENT_RULE_V1.to_owned(),
+                shard_index,
+                shard_count,
+                shard_episodes_replayed: shard_episodes.len() as u64,
+                searched_decisions: shard_records.len() as u64,
+                corpus_targets_replayed: shard_targets,
+                episodes: shard_episodes,
+                diagnostics_episode_files: shard_files,
+                chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
+                final_record_sha256: previous,
+                decisions: shard_records,
+            });
+        }
+        bodies
+    }
+
+    fn write_shard_reports_v1(directory: &Path, bodies: &[TtsS1ReplayShardReportBodyV1]) {
+        for body in bodies {
+            let report =
+                TtsS1ReplayShardReportV1::seal_v1(body.clone()).expect("the shard report seals");
+            let path = directory.join(tts_s1_shard_report_file_name_v1(
+                body.shard_index,
+                body.shard_count,
+            ));
+            publish_tts_s1_replay_shard_report_v1(&report, &path)
+                .expect("the shard report publishes");
+        }
+    }
+
+    fn synthetic_unsharded_bytes_v1(decision_counts: &[u64]) -> Vec<u8> {
+        let records = synthetic_run_records_v1(decision_counts);
+        let targets = records
+            .iter()
+            .filter(|record| record.is_corpus_target)
+            .count() as u64;
+        let identity = synthetic_identity_v1(decision_counts, targets);
+        let body = finalize_tts_s1_replay_body_v1(
+            &identity,
+            records,
+            synthetic_diagnostics_files_v1(decision_counts),
+            targets,
+        )
+        .expect("the synthetic body finalizes");
+        TtsS1ReplayReportV1::seal_v1(body)
+            .expect("the synthetic report seals")
+            .canonical_bytes_v1()
+            .expect("the synthetic report encodes")
+    }
+
+    /// THE CLAIM SHARDING HAS TO KEEP, stated over timings that are held
+    /// fixed so it can be stated as BYTE equality rather than as equality
+    /// after a stripping.
+    ///
+    /// The same records, the same episodes, the same diagnostics files: the
+    /// merge of K shard reports is byte for byte the report one process
+    /// would have published, for every K from one to the episode count.
+    /// That covers the chain (re-assigned over the union in position
+    /// order), both views, the pooled isotonic fit, every per-episode cost
+    /// estimate, the projection and the verdict at once, because all of
+    /// them are inside those bytes.
+    #[test]
+    fn a_merged_report_is_byte_identical_to_the_unsharded_one_v1() {
+        let counts = [7u64, 5, 9, 4, 6];
+        let unsharded = synthetic_unsharded_bytes_v1(&counts);
+        // The fixture is not degenerate: the report really carries the
+        // records, the curve and a verdict.
+        let decoded = decode_tts_s1_replay_report_v1(&unsharded).expect("the fixture re-proves");
+        assert_eq!(decoded.body.searched_decisions, counts.iter().sum::<u64>());
+        assert!(decoded.body.compute_cap.latency_curve.knots.len() > 1);
+
+        for shard_count in [1u64, 2, 3, 5] {
+            let directory = scratch_diagnostics_dir_v1(&format!("merge-{shard_count}"));
+            let bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+            // Every shard is a self-verifying document before anything is
+            // merged, and the shards partition the run.
+            assert_eq!(bodies.len() as u64, shard_count);
+            assert_eq!(
+                bodies
+                    .iter()
+                    .map(|body| body.searched_decisions)
+                    .sum::<u64>(),
+                counts.iter().sum::<u64>()
+            );
+            write_shard_reports_v1(&directory, &bodies);
+            let merged = merge_tts_s1_replay_shards_v1(&directory, shard_count)
+                .expect("the shards merge")
+                .canonical_bytes_v1()
+                .expect("the merged report encodes");
+            assert_eq!(
+                merged, unsharded,
+                "the merge of {shard_count} shards must be the unsharded report, byte for byte"
+            );
+            let _ = std::fs::remove_dir_all(&directory);
+        }
+    }
+
+    /// Every way the K reports could fail to be one run is refused. None of
+    /// them is a warning and none is a dropped shard: a partial union would
+    /// publish a real-looking verdict over a population nobody measured.
+    #[test]
+    fn the_merge_fails_closed_on_anything_but_one_whole_run_v1() {
+        let counts = [7u64, 5, 9, 4];
+        let shard_count = 3u64;
+
+        // 1. A MISSING SHARD.
+        let directory = scratch_diagnostics_dir_v1("merge-missing");
+        let bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+        write_shard_reports_v1(&directory, &bodies[..2]);
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        // 2. A STRAY report from a different fan-out sitting beside them.
+        write_shard_reports_v1(&directory, &bodies[2..]);
+        assert!(merge_tts_s1_replay_shards_v1(&directory, shard_count).is_ok());
+        write_shard_reports_v1(&directory, &synthetic_shard_bodies_v1(&counts, 1));
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 3. A SHARD COUNT the reports do not agree with.
+        let directory = scratch_diagnostics_dir_v1("merge-count");
+        write_shard_reports_v1(&directory, &synthetic_shard_bodies_v1(&counts, shard_count));
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, 2),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        for bad in [0u64, TTS_S1_MAX_SHARD_COUNT_V1 + 1] {
+            assert!(matches!(
+                merge_tts_s1_replay_shards_v1(&directory, bad),
+                Err(TtsS1ReplayErrorV1::ShardMerge(_))
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 4. A SHARD FROM ANOTHER RUN: same shape, different corpus.
+        let directory = scratch_diagnostics_dir_v1("merge-foreign");
+        let mut bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+        bodies[1].identity.corpus_sha256 = "ee".repeat(32);
+        write_shard_reports_v1(&directory, &bodies);
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 5. A SHARD FROM ANOTHER BUILD.
+        let directory = scratch_diagnostics_dir_v1("merge-build");
+        let mut bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+        for body in bodies.iter_mut() {
+            body.identity.engine_commit = "deadbeef".to_owned();
+        }
+        write_shard_reports_v1(&directory, &bodies);
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 6. A SHARD CLAIMING AN EPISODE IT DOES NOT OWN, which is how a
+        //    duplicated episode would reach the union.
+        let directory = scratch_diagnostics_dir_v1("merge-duplicate");
+        let mut bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+        bodies[1].episodes[0].episode_position = 0;
+        write_shard_reports_v1(&directory, &bodies);
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 7. A TAMPERED RECORD, which breaks the shard's own chain and is
+        //    caught before the union is even assembled.
+        let directory = scratch_diagnostics_dir_v1("merge-tampered");
+        let mut bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+        bodies[0].decisions[0].chosen_action_index += 1;
+        write_shard_reports_v1(&directory, &bodies);
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::BrokenChain)
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // 8. A SHARD WHOSE EPISODE LIST DOES NOT PARTITION ITS RECORDS.
+        let directory = scratch_diagnostics_dir_v1("merge-partition");
+        let mut bodies = synthetic_shard_bodies_v1(&counts, shard_count);
+        bodies[0].episodes[0].searched_decisions += 1;
+        write_shard_reports_v1(&directory, &bodies);
+        assert!(matches!(
+            merge_tts_s1_replay_shards_v1(&directory, shard_count),
+            Err(TtsS1ReplayErrorV1::ShardMerge(_))
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A shard report re-proves from its own bytes, and is not a tier
+    /// report: the two schemas are mutually undecodable, so a shard can
+    /// never be read as a finished tier or the reverse.
+    #[test]
+    fn a_shard_report_round_trips_and_is_not_a_tier_report_v1() {
+        let counts = [7u64, 5, 9];
+        let bodies = synthetic_shard_bodies_v1(&counts, 2);
+        for body in &bodies {
+            let report = TtsS1ReplayShardReportV1::seal_v1(body.clone()).unwrap();
+            let bytes = report.canonical_bytes_v1().unwrap();
+            assert_eq!(
+                decode_tts_s1_replay_shard_report_v1(&bytes).unwrap(),
+                report
+            );
+            assert_eq!(report.schema, TTS_S1_REPLAY_SHARD_REPORT_SCHEMA_V1);
+            assert_ne!(report.schema, TTS_S1_REPLAY_REPORT_SCHEMA_V1);
+            // A shard report is not a tier report and vice versa.
+            assert!(decode_tts_s1_replay_report_v1(&bytes).is_err());
+        }
+        let tier_bytes = synthetic_unsharded_bytes_v1(&counts);
+        assert!(decode_tts_s1_replay_shard_report_v1(&tier_bytes).is_err());
+
+        // A tampered digest is refused, exactly as the tier report's is.
+        let mut report = TtsS1ReplayShardReportV1::seal_v1(bodies[0].clone()).unwrap();
+        report.shard_report_sha256 = "ff".repeat(32);
+        assert!(matches!(
+            decode_tts_s1_replay_shard_report_v1(&report.canonical_bytes_v1().unwrap()),
+            Err(TtsS1ReplayErrorV1::InvalidShardReport)
+        ));
+    }
+
+    /// A fan-out wider than the corpus's contributing episodes is refused
+    /// before anything runs, rather than publishing a shard that measured
+    /// nothing.
+    #[test]
+    fn a_shard_with_no_episode_is_refused_v1() {
+        let scorer = RunnerFixedScorerV1::new_v1();
+        let corpus = fixture_corpus_v1(&scorer, 1);
+        let architecture = scorer.net.architecture_identity_v1().to_owned();
+        let identity = fixture_identity_v1();
+        let directory = scratch_diagnostics_dir_v1("empty-shard");
+        let error = replay_corpus_shard_body_v1(
+            &scorer,
+            &identity,
+            &architecture,
+            TtsS1CorpusCheckpointV1::from_identity_v1(&identity, &architecture),
+            &corpus,
+            KernelNativeSearchTierV1::T512,
+            FIXTURE_SEED_BLOCK_ID_V1,
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+            FIXTURE_MAX_EPISODES_V1,
+            None,
+            TtsS1ShardSelectorV1::new_v1(1, 2).expect("a legal shard"),
+            &directory,
+        )
+        .expect_err("a shard with no episode must be refused");
+        assert!(matches!(
+            error,
+            TtsS1ReplayErrorV1::EmptyShard {
+                shard_index: 1,
+                shard_count: 2,
+                planned_episodes: 1
+            }
+        ));
+        assert_eq!(error.code_v1(), "tts_s1_replay_empty_shard");
+        // The guard fires before the diagnostics writer opens, so nothing
+        // at all was published for a shard that had nothing to do.
+        assert!(!directory.join(TTS_S1_RESPONSE_LINES_FILE_V1).exists());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// Replays one shard of the fixture corpus and returns its report.
+    fn replay_shard_fixture_v1(
+        scorer: &RunnerFixedScorerV1,
+        corpus: &TtsS1CorpusManifestV1,
+        tag: &str,
+        shard: TtsS1ShardSelectorV1,
+        directory: &Path,
+    ) -> TtsS1ReplayShardReportV1 {
+        let _ = tag;
+        let architecture = scorer.net.architecture_identity_v1().to_owned();
+        let identity = fixture_identity_v1();
+        let body = replay_corpus_shard_body_v1(
+            scorer,
+            &identity,
+            &architecture,
+            TtsS1CorpusCheckpointV1::from_identity_v1(&identity, &architecture),
+            corpus,
+            KernelNativeSearchTierV1::T512,
+            FIXTURE_SEED_BLOCK_ID_V1,
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[FIXTURE_SEED_BLOCK_ID_V1],
+            FIXTURE_MAX_EPISODES_V1,
+            None,
+            shard,
+            directory,
+        )
+        .expect("the fixture shard replays");
+        TtsS1ReplayShardReportV1::seal_v1(body).expect("the fixture shard report seals")
+    }
+
+    /// END TO END, t512, SHARDED: the same three-episode corpus replayed in
+    /// one process and then split across K processes, with K = 1 and K = 3,
+    /// and the merged tier report equal to the unsharded one.
+    ///
+    /// Equality is stated through [`strip_timing_fields_v1`], which is what
+    /// "the same report" can mean between two real runs at all: the timings
+    /// and everything derived from them (both views, the fitted curve, the
+    /// projection, the chain links, the verdict, the digests, the
+    /// diagnostics file hashes) are exactly what a re-run is allowed to
+    /// change, and the S0 pattern this crate already uses for a
+    /// bit-identical replay claim strips precisely those. What survives is
+    /// the substantive claim: the same episodes, in the same order, with
+    /// the same decisions, the same chosen actions and the same search
+    /// products, whether one process or three produced them. The BYTE
+    /// equality of the merge arithmetic itself, timings held fixed, is
+    /// proved separately and cheaply by
+    /// `a_merged_report_is_byte_identical_to_the_unsharded_one_v1`.
+    ///
+    /// IGNORED IN A DEBUG BUILD for the same reason as the other
+    /// whole-episode tests, tripled: it replays three whole episodes three
+    /// times over.
+    ///
+    ///     cargo test --release --lib native_tts_s1 -- --ignored
+    #[test]
+    #[ignore = "three whole-episode t512 replays of a three-episode corpus; minutes in release and far worse in debug: run with cargo test --release -- --ignored"]
+    fn a_sharded_replay_merges_to_the_unsharded_report_v1() {
+        let scorer = RunnerFixedScorerV1::new_v1();
+        let corpus = fixture_corpus_episodes_v1(&scorer, 3, 2);
+        assert_eq!(corpus.body.contributing_episode_count, 3);
+        assert_eq!(
+            corpus.body.contributing_episode_decisions,
+            corpus
+                .body
+                .episodes
+                .iter()
+                .map(|episode| episode.decision_count)
+                .sum::<u64>()
+        );
+
+        let unsharded = replay_fixture_v1(&scorer, &corpus, "shard-baseline")
+            .canonical_bytes_v1()
+            .unwrap();
+        let unsharded_stripped = strip_timing_fields_v1(&unsharded).unwrap();
+
+        for shard_count in [1u64, 3] {
+            let shard_root = scratch_diagnostics_dir_v1(&format!("shard-run-{shard_count}"));
+            let reports_dir = shard_root.join("reports");
+            std::fs::create_dir_all(&reports_dir).expect("the shard report directory");
+            for shard_index in 0..shard_count {
+                let selector =
+                    TtsS1ShardSelectorV1::new_v1(shard_index, shard_count).expect("a legal shard");
+                let diagnostics = shard_root.join(format!("diagnostics-{shard_index}"));
+                let report =
+                    replay_shard_fixture_v1(&scorer, &corpus, "shard", selector, &diagnostics);
+                // Exactly the episodes this index owns, and no other.
+                assert_eq!(report.body.shard_index, shard_index);
+                assert_eq!(report.body.shard_count, shard_count);
+                assert_eq!(report.body.identity.episodes_replayed, 3);
+                for episode in &report.body.episodes {
+                    assert!(selector.owns_position_v1(episode.episode_position));
+                    assert_eq!(episode.searched_decisions, episode.decision_count);
+                    assert!(episode.protocol_micros_total > 0);
+                }
+                publish_tts_s1_replay_shard_report_v1(
+                    &report,
+                    &reports_dir.join(tts_s1_shard_report_file_name_v1(shard_index, shard_count)),
+                )
+                .expect("the shard report publishes");
+            }
+
+            let merged =
+                merge_tts_s1_replay_shards_v1(&reports_dir, shard_count).expect("the shards merge");
+            let merged_bytes = merged.canonical_bytes_v1().unwrap();
+            // The merged document is a real, re-provable tier report.
+            assert_eq!(
+                decode_tts_s1_replay_report_v1(&merged_bytes).unwrap(),
+                merged
+            );
+            assert_eq!(merged.body.episodes_replayed, 3);
+            assert_eq!(
+                merged.body.searched_decisions,
+                corpus.body.contributing_episode_decisions
+            );
+            assert!(merged.body.replayed_whole_corpus);
+            assert_eq!(merged.body.diagnostics_episode_files.len(), 3);
+            assert_eq!(
+                merged.body.compute_cap.latency_curve.observed_samples,
+                merged.body.searched_decisions
+            );
+
+            assert_eq!(
+                strip_timing_fields_v1(&merged_bytes).unwrap(),
+                unsharded_stripped,
+                "the merge of {shard_count} shards must be the unsharded tier report"
+            );
+            let _ = std::fs::remove_dir_all(&shard_root);
         }
     }
 }
