@@ -343,12 +343,68 @@ if (-not (Test-Path -LiteralPath $StoreRoot)) {
     throw "-StoreRoot does not exist: $StoreRoot"
 }
 
+# FORMAL versus SMOKE, decided from the inputs BEFORE the attempt root
+# exists. A formal run is the whole corpus across the whole pre-registered
+# ladder AT THE PINNED CONCURRENCY; every tier's own report must
+# additionally agree that it replayed the whole corpus and that it was
+# measured at that topology, which is checked per tier below.
+#
+# The shard count is part of this and not a free knob: every latency in a
+# tier report is a wall-time sample taken under whatever contention the
+# fan-out created, so a run at another count measured a different machine.
+# See $script:TtsS1FormalShardCount.
+$isFormalLadder = ($LimitEpisodes -eq 0) -and ($Tiers.Count -eq $script:TtsS1Ladder.Count) `
+    -and ($ShardCount -eq $script:TtsS1FormalShardCount)
+
+# The host, read once, read-only. The tier reports carry the measuring
+# processes' own reading and are the authority for a finished run; this is
+# what lets a launch that could never be formal say so before it starts.
+$hostLogicalCpus = [System.Environment]::ProcessorCount
+$formalTopology = Test-TtsS1FormalShardTopology -ShardCount $ShardCount -HostLogicalCpus $hostLogicalCpus
+if ($isFormalLadder -and -not $formalTopology.admissible) {
+    # REFUSED, not demoted, and refused HERE, with the other input checks,
+    # before any directory is created. A throw after the attempt root
+    # exists would leave an empty directory carrying neither a summary nor
+    # a RUN_FAILED: nonterminal, and indistinguishable from a run that was
+    # killed. Every throw past this point writes RUN_FAILED first.
+    #
+    # An operator who asked for the whole ladder over the whole corpus at
+    # the pinned concurrency is asking for a formal result, and this host
+    # cannot produce one; spending hours to publish a smoke they did not
+    # ask for is worse than saying so now. A smoke is still available at
+    # any other -ShardCount.
+    $message = "a formal S1 run is refused on this host: $($formalTopology.reason). Re-run with a different -ShardCount for a SMOKE, or use a host with at least $($formalTopology.required_logical_cpus) logical CPUs"
+    if ($DryRun) {
+        # A dry run measures nothing, so it PLANS and says what a real
+        # launch would refuse, rather than refusing to plan.
+        Write-Output "TTS_S1_FORMAL_TOPOLOGY_REFUSED $message"
+    }
+    else {
+        throw $message
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $attemptRoot = Join-Path $EvidenceRoot ("tts-s1-{0}-{1}" -f $stamp, $PID)
+# This one throw is still bare, and has to be: it fires when the attempt
+# root ALREADY EXISTS, and writing a RUN_FAILED into it would overwrite the
+# terminal state of whatever run owns it.
 if (Test-Path -LiteralPath $attemptRoot) { throw "attempt root already exists: $attemptRoot" }
 New-Item -ItemType Directory -Force -Path $attemptRoot | Out-Null
 
+# ---------------------------------------------------------------------------
+# FROM HERE THE ATTEMPT ROOT EXISTS, so every failure has to leave a terminal
+# state in it. An empty attempt directory carrying neither a summary nor a
+# RUN_FAILED is nonterminal: an operator reading it later cannot tell it from
+# a run that was killed, and the whole point of the marker discipline is that
+# they never have to guess.
+#
+# The planning steps (the authority shape, the git and toolchain records, the
+# provenance write, the dry-run result) are wrapped here; the corpus, sizing
+# and tier steps have their own catches below, each naming its own step.
+# ---------------------------------------------------------------------------
+try {
 $authorityArgs = @()
 switch ($StoreKind) {
     'original' {
@@ -393,6 +449,11 @@ function New-TtsS1TierPlan {
     # scorer-shaped response file.
     $diagnosticsRoot = Join-Path $attemptRoot ("tier-{0}.diagnostics" -f $Tier)
     $shardRoot = Join-Path $attemptRoot ("tier-{0}.shards" -f $Tier)
+    # THE START BARRIER for this tier. Every shard waits on this one token
+    # and none of them searches before it appears, so no shard measures the
+    # machine before its siblings exist. The launcher publishes it only once
+    # every shard process has started; see the fan-out's -AfterStart hook.
+    $barrierPath = Join-Path $shardRoot 'start-barrier.token'
     $shards = @()
     for ($index = 0; $index -lt $TierShardCount; $index++) {
         # The same name the merge derives on the Rust side from the index
@@ -413,7 +474,9 @@ function New-TtsS1TierPlan {
             '--max-episodes', [string]$Episodes,
             '--output', $shardReportPath,
             '--shard-index', [string]$index,
-            '--shard-count', [string]$TierShardCount
+            '--shard-count', [string]$TierShardCount,
+            '--start-barrier', $barrierPath,
+            '--start-barrier-timeout-seconds', [string]$script:TtsS1StartBarrierTimeoutSeconds
         )
         if ($LimitEpisodes -gt 0) {
             $shardArgs += @('--limit-episodes', [string]$LimitEpisodes)
@@ -438,6 +501,8 @@ function New-TtsS1TierPlan {
         shard_count = $TierShardCount
         report_path = $reportPath
         shard_root = $shardRoot
+        barrier_path = $barrierPath
+        barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
         diagnostics_root = $diagnosticsRoot
         shards = $shards
         merge_arguments = $mergeArgs
@@ -450,41 +515,6 @@ function New-TtsS1TierPlan {
 # Planned at the REQUESTED shard count. The effective count is settled
 # after the corpus exists and can only be smaller; see the clamp below.
 $plannedTierPlans = @($Tiers | ForEach-Object { New-TtsS1TierPlan -Tier $_ -TierShardCount $ShardCount })
-
-# FORMAL versus SMOKE, decided from the inputs before anything runs. A
-# formal run is the whole corpus across the whole pre-registered ladder AT
-# THE PINNED CONCURRENCY; every tier's own report must additionally agree
-# that it replayed the whole corpus and that it was measured at that
-# topology, which is checked per tier below.
-#
-# The shard count is part of this and not a free knob: every latency in a
-# tier report is a wall-time sample taken under whatever contention the
-# fan-out created, so a run at another count measured a different machine.
-# See $script:TtsS1FormalShardCount.
-$isFormalLadder = ($LimitEpisodes -eq 0) -and ($Tiers.Count -eq $script:TtsS1Ladder.Count) `
-    -and ($ShardCount -eq $script:TtsS1FormalShardCount)
-
-# The host, read once, read-only. The tier reports carry the measuring
-# processes' own reading and are the authority for a finished run; this is
-# what lets a launch that could never be formal say so before it starts.
-$hostLogicalCpus = [System.Environment]::ProcessorCount
-$formalTopology = Test-TtsS1FormalShardTopology -ShardCount $ShardCount -HostLogicalCpus $hostLogicalCpus
-if ($isFormalLadder -and -not $formalTopology.admissible) {
-    # REFUSED, not demoted. An operator who asked for the whole ladder over
-    # the whole corpus at the pinned concurrency is asking for a formal
-    # result, and this host cannot produce one; spending hours to publish a
-    # smoke they did not ask for is worse than saying so now. A smoke is
-    # still available at any other -ShardCount.
-    $message = "a formal S1 run is refused on this host: $($formalTopology.reason). Re-run with a different -ShardCount for a SMOKE, or use a host with at least $($formalTopology.required_logical_cpus) logical CPUs"
-    if ($DryRun) {
-        # A dry run measures nothing, so it PLANS and says what a real
-        # launch would refuse, rather than refusing to plan.
-        Write-Output "TTS_S1_FORMAL_TOPOLOGY_REFUSED $message"
-    }
-    else {
-        throw $message
-    }
-}
 
 $gitRecord = $null
 $toolchainRecord = $null
@@ -530,6 +560,8 @@ $provenance = [ordered]@{
     shard_assignment_rule = $script:TtsS1ShardAssignmentRule
     formal_shard_count = $script:TtsS1FormalShardCount
     formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
+    formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
+    start_barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
     host_logical_cpus = $hostLogicalCpus
     formal_topology_admissible = $formalTopology.admissible
     formal_topology_reason = $formalTopology.reason
@@ -578,6 +610,12 @@ if ($DryRun) {
         planned_tier_merge_commands = $provenance.planned_tier_merge_commands
     }) -Path (Join-Path $attemptRoot 'result.json')
     exit 0
+}
+}
+catch {
+    Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step 'provenance' -Detail $_.Exception.Message
+    Write-Error $_.Exception.Message
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -722,6 +760,7 @@ foreach ($plan in $tierPlans) {
         foreach ($shard in $plan.shards) {
             Write-Output "TTS_S1_STEP tier-$($plan.tier) shard-$($shard.index) $($shard.command_line)"
         }
+        $barrierReleasedMicros = 0
         $fanOut = Invoke-TtsS1ProcessFanOut -Jobs @($plan.shards | ForEach-Object {
             [pscustomobject]@{
                 label = "tier-$($plan.tier) shard-$($_.index)"
@@ -730,7 +769,18 @@ foreach ($plan in $tierPlans) {
                 stdout_path = $_.stdout_path
                 stderr_path = $_.stderr_path
             }
-        })
+        }) -AfterStart {
+            # EVERY SHARD IS UP. Only now may the token appear: published
+            # any earlier and the shards would be released into a fan-out
+            # that did not yet exist, which is the whole thing the barrier
+            # is here to prevent.
+            $script:TtsS1BarrierReleasedMicros = Write-TtsS1StartBarrier -Path $plan.barrier_path
+        }
+        if (Test-Path -LiteralPath $plan.barrier_path) {
+            $barrierReleasedMicros = $script:TtsS1BarrierReleasedMicros
+        }
+        Write-Output ("TTS_S1_BARRIER tier={0} token={1} released_unix_micros={2} timeout_seconds={3}" -f `
+            $plan.tier, $plan.barrier_path, $barrierReleasedMicros, $plan.barrier_timeout_seconds)
         # EVERY SHARD IS WAITED ON BEFORE ANY FAILURE IS RAISED, so a
         # failing shard never leaves its siblings running unattended behind
         # a thrown launcher.
@@ -812,6 +862,17 @@ foreach ($plan in $tierPlans) {
             meets_formal_topology = $report.body.shard_topology.meets_formal_topology
             formal_topology_reason = $report.body.shard_topology.formal_topology_reason
             shard_topology_rule = $report.body.shard_topology.rule
+            # THE MEASURED OVERLAP, which is what separates eight processes
+            # run together from eight run one after another.
+            barrier_path = $plan.barrier_path
+            barrier_released_unix_micros = $report.body.shard_topology.start_barrier_released_unix_micros
+            every_shard_waited_on_the_barrier = $report.body.shard_topology.every_shard_waited_on_the_barrier
+            every_first_decision_after_the_barrier = $report.body.shard_topology.every_first_decision_after_the_barrier
+            censused_decisions = $report.body.shard_topology.censused_decisions
+            fully_concurrent_decisions = $report.body.shard_topology.fully_concurrent_decisions
+            fully_concurrent_permille = $report.body.shard_topology.fully_concurrent_permille
+            min_fully_concurrent_permille = $report.body.shard_topology.min_fully_concurrent_permille
+            concurrency_histogram = @($report.body.shard_topology.concurrency_histogram)
             episodes_replayed = $report.body.episodes_replayed
             searched_decisions = $report.body.searched_decisions
             corpus_targets_replayed = $report.body.corpus_targets_replayed
@@ -852,6 +913,14 @@ foreach ($plan in $tierPlans) {
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
+        Write-Output ("TTS_S1_TIER_TOPOLOGY tier={0} shard_count={1} barrier={2} first_decision_after_barrier={3} fully_concurrent_permille={4} of={5} required={6} formal={7}" -f `
+            $plan.tier, $report.body.shard_topology.shard_count, `
+            $report.body.shard_topology.every_shard_waited_on_the_barrier, `
+            $report.body.shard_topology.every_first_decision_after_the_barrier, `
+            $report.body.shard_topology.fully_concurrent_permille, `
+            $report.body.shard_topology.censused_decisions, `
+            $report.body.shard_topology.min_fully_concurrent_permille, `
+            $report.body.shard_topology.meets_formal_topology)
         Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} shard_count={5} target_protocol_p99_micros={6} target_protocol_max_micros={7} whole_episode_protocol_p99_micros={8} projected_s2_worker_hours_milli={9} extrapolated_ordinals={10} within_compute_cap={11}" -f `
             $plan.tier, $observedVerdict, $report.body.verdict_view, `
             $report.body.episodes_replayed, $report.body.searched_decisions, $plan.shard_count, `
@@ -919,6 +988,8 @@ $summary = [ordered]@{
     shard_topology_rule = $script:TtsS1ShardTopologyRule
     formal_shard_count = $script:TtsS1FormalShardCount
     formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
+    formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
+    start_barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
     host_logical_cpus = $hostLogicalCpus
     formal_topology = $isFormalTopology
     formal_topology_reason = $effectiveTopology.reason

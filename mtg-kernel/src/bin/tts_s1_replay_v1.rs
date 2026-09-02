@@ -35,14 +35,14 @@ use mtg_kernel::native_checkpoint_shadow_stdio_v1::ShadowCheckpointAuthorityV1;
 use mtg_kernel::native_tts_s1_replay_v1::{
     merge_tts_s1_replay_shards_v1, parse_tts_s1_tier_v1, publish_tts_s1_replay_report_v1,
     publish_tts_s1_replay_shard_report_v1, run_tts_s1_replay_shard_v1, run_tts_s1_replay_v1,
-    TtsS1ReplayConfigV1, TtsS1ShardSelectorV1, TtsS1TierVerdictV1,
+    TtsS1ReplayConfigV1, TtsS1ShardSelectorV1, TtsS1StartBarrierConfigV1, TtsS1TierVerdictV1,
 };
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --diagnostics-dir PATH --max-episodes N --output PATH [--limit-episodes N] [--shard-index N --shard-count K]"
+        "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --diagnostics-dir PATH --max-episodes N --output PATH [--limit-episodes N] [--shard-index N --shard-count K [--start-barrier PATH --start-barrier-timeout-seconds N]]"
     );
     eprintln!("   or: tts_s1_replay_v1 --merge-shards DIR --shard-count K --output PATH");
     std::process::exit(2);
@@ -66,6 +66,8 @@ struct ReplayArgsV1 {
     limit_episodes: Option<u64>,
     /// `None` is the unsharded run.
     shard: Option<TtsS1ShardSelectorV1>,
+    /// Where this shard waits for the rest of the fan-out. Shard-only.
+    start_barrier: Option<TtsS1StartBarrierConfigV1>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -92,7 +94,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     // authority pair, the generation, the corpus, the tier, the seed
     // block, the diagnostics directory, the guard, the output, the smoke
     // bound, and the two shard flags.
-    if raw.len() < 6 || raw.len() > 22 || !raw.len().is_multiple_of(2) {
+    if raw.len() < 6 || raw.len() > 26 || !raw.len().is_multiple_of(2) {
         return Err(());
     }
     let mut authority_root = None;
@@ -107,6 +109,8 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut shard_index = None;
     let mut shard_count = None;
     let mut merge_shards = None;
+    let mut start_barrier_path = None;
+    let mut start_barrier_timeout = None;
     for pair in raw.chunks_exact(2) {
         let flag = &pair[0];
         if flag == "--original-store-root" && authority_root.is_none() {
@@ -141,6 +145,10 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             shard_index = Some(parse_u64_v1(&pair[1])?);
         } else if flag == "--shard-count" && shard_count.is_none() {
             shard_count = Some(parse_u64_v1(&pair[1])?);
+        } else if flag == "--start-barrier" && start_barrier_path.is_none() {
+            start_barrier_path = Some(PathBuf::from(&pair[1]));
+        } else if flag == "--start-barrier-timeout-seconds" && start_barrier_timeout.is_none() {
+            start_barrier_timeout = Some(parse_u64_v1(&pair[1])?);
         } else if flag == "--merge-shards" && merge_shards.is_none() {
             merge_shards = Some(PathBuf::from(&pair[1]));
         } else {
@@ -161,6 +169,8 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             || max_episodes.is_some()
             || limit_episodes.is_some()
             || shard_index.is_some()
+            || start_barrier_path.is_some()
+            || start_barrier_timeout.is_some()
         {
             return Err(());
         }
@@ -197,6 +207,23 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         (Some(index), Some(count)) => Some(TtsS1ShardSelectorV1::new_v1(index, count).ok_or(())?),
         _ => return Err(()),
     };
+    // BOTH BARRIER FLAGS OR NEITHER, and only for a shard. A path with no
+    // deadline would be an unbounded wait, a deadline with no path would
+    // wait for nothing, and an unsharded run has nobody to wait for; each
+    // is a usage error rather than a silently ignored flag.
+    let start_barrier = match (start_barrier_path, start_barrier_timeout) {
+        (None, None) => None,
+        (Some(path), Some(timeout_seconds)) => {
+            if shard.is_none() || timeout_seconds == 0 {
+                return Err(());
+            }
+            Some(TtsS1StartBarrierConfigV1 {
+                path,
+                timeout_seconds,
+            })
+        }
+        _ => return Err(()),
+    };
     Ok(ParsedArgsV1::Replay(ReplayArgsV1 {
         authority,
         corpus: corpus.ok_or(())?,
@@ -207,6 +234,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         output: output.ok_or(())?,
         limit_episodes,
         shard,
+        start_barrier,
     }))
 }
 
@@ -301,6 +329,7 @@ fn main() {
         max_episodes: parsed.max_episodes,
         limit_episodes: parsed.limit_episodes,
         shard,
+        start_barrier: parsed.start_barrier,
         diagnostics_directory: parsed.diagnostics_dir,
     };
 
@@ -330,6 +359,13 @@ fn main() {
             body.corpus_targets_replayed,
             body.identity.corpus_sha256,
             body.identity.search_authority_digest_sha256,
+        );
+        eprintln!(
+            "TTS_S1_SHARD_BARRIER used={} released_unix_micros={} wait_micros={} first_decision_unix_micros={}",
+            body.start_barrier.used,
+            body.start_barrier.released_unix_micros,
+            body.start_barrier.wait_micros,
+            body.first_work_started_unix_micros,
         );
         eprintln!(
             "TTS_S1_SHARD_DONE tier={} shard_index={} shard_count={} shard_episodes={}",
@@ -518,6 +554,80 @@ mod tests {
         }
     }
 
+    /// The start barrier is a PAIR, and shard-only. A path with no deadline
+    /// would be an unbounded wait, a deadline with no path would wait for
+    /// nothing, and an unsharded run has nobody to wait for.
+    #[test]
+    fn the_start_barrier_flags_are_a_shard_only_pair_v1() {
+        let mut argv = argv_v1();
+        argv.push("--shard-index".into());
+        argv.push("0".into());
+        argv.push("--shard-count".into());
+        argv.push("8".into());
+        argv.push("--start-barrier".into());
+        argv.push("barrier.token".into());
+        argv.push("--start-barrier-timeout-seconds".into());
+        argv.push("900".into());
+        let parsed = replay_v1(argv).unwrap();
+        assert_eq!(
+            parsed.start_barrier,
+            Some(TtsS1StartBarrierConfigV1 {
+                path: PathBuf::from("barrier.token"),
+                timeout_seconds: 900,
+            })
+        );
+
+        // One alone is a usage error, in either direction.
+        for lone in [
+            vec![
+                OsString::from("--start-barrier"),
+                OsString::from("barrier.token"),
+            ],
+            vec![
+                OsString::from("--start-barrier-timeout-seconds"),
+                OsString::from("900"),
+            ],
+        ] {
+            let mut argv = argv_v1();
+            argv.push("--shard-index".into());
+            argv.push("0".into());
+            argv.push("--shard-count".into());
+            argv.push("8".into());
+            argv.extend(lone);
+            assert!(replay_v1(argv).is_err());
+        }
+
+        // A zero deadline is not a bound; it is a wait that ends before it
+        // begins, and a shard that never waited is a shard that ran alone.
+        let mut argv = argv_v1();
+        argv.push("--shard-index".into());
+        argv.push("0".into());
+        argv.push("--shard-count".into());
+        argv.push("8".into());
+        argv.push("--start-barrier".into());
+        argv.push("barrier.token".into());
+        argv.push("--start-barrier-timeout-seconds".into());
+        argv.push("0".into());
+        assert!(replay_v1(argv).is_err());
+
+        // AND SHARD-ONLY: an unsharded run has nobody to wait for.
+        let mut argv = argv_v1();
+        argv.push("--start-barrier".into());
+        argv.push("barrier.token".into());
+        argv.push("--start-barrier-timeout-seconds".into());
+        argv.push("900".into());
+        assert!(replay_v1(argv).is_err());
+
+        // A shard WITHOUT a barrier still parses: it is a legitimate smoke,
+        // and the report refuses it formal standing rather than the parser.
+        let mut argv = argv_v1();
+        argv.push("--shard-index".into());
+        argv.push("0".into());
+        argv.push("--shard-count".into());
+        argv.push("8".into());
+        assert_eq!(replay_v1(argv).unwrap().start_barrier, None);
+    }
+
     /// The merge takes three flags and refuses every replay-only one: a
     /// merge invoked with a tier would look like it had measured one.
     #[test]
@@ -567,6 +677,14 @@ mod tests {
             ],
             vec![OsString::from("--limit-episodes"), OsString::from("4")],
             vec![OsString::from("--shard-index"), OsString::from("0")],
+            vec![
+                OsString::from("--start-barrier"),
+                OsString::from("barrier.token"),
+            ],
+            vec![
+                OsString::from("--start-barrier-timeout-seconds"),
+                OsString::from("900"),
+            ],
             vec![
                 OsString::from("--population-store-root"),
                 OsString::from("store"),

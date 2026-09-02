@@ -82,12 +82,33 @@ $script:TtsS1FormalShardCount = 8
 # native_tts_s1_replay_v1::TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1
 $script:TtsS1FormalLogicalCpusPerShard = 2
 
-# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V1
+# native_tts_s1_replay_v1::TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1
+#
+# A declared shard count is an INTENTION: eight processes run one after
+# another declare exactly the same eight as eight run together, and every
+# latency the sequential eight measured was taken on a near-idle machine.
+# The merged report therefore carries a per-decision overlap census, and
+# formal standing needs at least this permille of decisions to have been
+# searched while every other shard was mid-work. The 5 percent that is not
+# required is the tail: shards own different episodes, episodes are
+# different lengths, and the shard that runs out of work first stops
+# contending while the others finish.
+$script:TtsS1FormalMinFullConcurrencyPermille = 950
+
+# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V2
 $script:TtsS1ShardTopologyRule = 'formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes' +
     '-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under' +
     '-on-a-host-with-at-least-2-logical-cpus-per-shard' +
-    '-any-other-shard-count-or-a-smaller-host-is-a-smoke-and-never-a-feasibility-result' +
-    '/v1'
+    '-every-shard-released-by-one-start-barrier-before-its-first-decision' +
+    '-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard' +
+    '-any-other-shard-count-or-a-smaller-host-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result' +
+    '/v2'
+
+# How long a shard may wait at the start barrier before failing closed.
+# The wait covers every OTHER shard's process start and checkpoint load, so
+# it is generous; what matters is that it is bounded, because a shard that
+# gave up and went ahead alone would measure an idle machine.
+$script:TtsS1StartBarrierTimeoutSeconds = 900
 
 function Get-TtsS1PinnedContract {
     # The whole pinned contract, for the provenance and summary records.
@@ -98,6 +119,7 @@ function Get-TtsS1PinnedContract {
         shard_topology_rule = $script:TtsS1ShardTopologyRule
         formal_shard_count = $script:TtsS1FormalShardCount
         formal_logical_cpus_per_shard = $script:TtsS1FormalLogicalCpusPerShard
+        formal_min_full_concurrency_permille = $script:TtsS1FormalMinFullConcurrencyPermille
     }
 }
 
@@ -224,10 +246,15 @@ function Assert-TtsS1TierReportContract {
         # meets_formal_topology would mean something else.
         @{ Path = 'body.shard_topology.rule'; Expected = $script:TtsS1ShardTopologyRule; What = 'shard-topology rule' },
         @{ Path = 'body.shard_topology.formal_shard_count'; Expected = $script:TtsS1FormalShardCount; What = 'pinned formal shard count' },
-        @{ Path = 'body.shard_topology.formal_logical_cpus_per_shard'; Expected = $script:TtsS1FormalLogicalCpusPerShard; What = 'pinned logical CPUs per shard' }
+        @{ Path = 'body.shard_topology.formal_logical_cpus_per_shard'; Expected = $script:TtsS1FormalLogicalCpusPerShard; What = 'pinned logical CPUs per shard' },
+        @{ Path = 'body.shard_topology.min_fully_concurrent_permille'; Expected = $script:TtsS1FormalMinFullConcurrencyPermille; What = 'pinned full-concurrency tolerance' }
     )
     if ($RequireFormalShardTopology) {
         $checks += @{ Path = 'body.shard_topology.shard_count'; Expected = $script:TtsS1FormalShardCount; What = 'measured shard count' }
+        # THE MEASURED OVERLAP, not the declared count: eight processes run
+        # one after another declare the same eight as eight run together.
+        $checks += @{ Path = 'body.shard_topology.every_shard_waited_on_the_barrier'; Expected = $true; What = 'start barrier' }
+        $checks += @{ Path = 'body.shard_topology.every_first_decision_after_the_barrier'; Expected = $true; What = 'first decision after the barrier' }
         $checks += @{ Path = 'body.shard_topology.meets_formal_topology'; Expected = $true; What = 'formal topology' }
     }
     foreach ($check in $checks) {
@@ -401,7 +428,16 @@ function Invoke-TtsS1ProcessFanOut {
     caller's business, because "non-zero" means different things to a shard
     and to a merge.
     #>
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Jobs)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Jobs,
+        # Run ONCE, after every job has started and before any is waited
+        # on. It exists for the start barrier: the token may only be
+        # published when the whole fan-out is up, and there is no other
+        # moment in this function's life when that is true. A hook that
+        # throws unwinds like any other failure, so the already-started
+        # children are still reaped.
+        [scriptblock]$AfterStart
+    )
     $script:TtsS1LastFanOutStopped = @()
     $running = @()
     $results = @()
@@ -414,6 +450,7 @@ function Invoke-TtsS1ProcessFanOut {
                     -StdoutPath $job.stdout_path -StderrPath $job.stderr_path
             }
         }
+        if ($null -ne $AfterStart) { & $AfterStart }
         foreach ($entry in $running) {
             $results += [pscustomobject]@{
                 label = $entry.label
@@ -462,6 +499,35 @@ function Invoke-TtsS1Process {
             stderr_path = $StderrPath
         })
     return $fanOut.results[0].exit_code
+}
+
+function Write-TtsS1StartBarrier {
+    # Publishes the start token every shard of a tier is waiting on.
+    #
+    # THE TOKEN'S CONTENT IS ITS RELEASE TIME, in microseconds since the
+    # UNIX epoch, and that is the point of writing anything at all: every
+    # shard reports the same number back, so the merge can check that no
+    # shard's first decision began before the fan-out was complete. A token
+    # whose content were the reader's own clock would prove nothing.
+    #
+    # Published by staged sibling then move, so a shard polling for it can
+    # never read a half-written one.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $directory = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
+    $micros = [long](([System.DateTimeOffset]::UtcNow).ToUnixTimeMilliseconds()) * 1000
+    $staged = "$Path.stage-$PID"
+    [System.IO.File]::WriteAllText($staged, "$micros`n", [System.Text.UTF8Encoding]::new($false))
+    try {
+        Move-Item -LiteralPath $staged -Destination $Path -Force
+    }
+    catch {
+        if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged -Force }
+        throw
+    }
+    return $micros
 }
 
 function Format-TtsS1StoppedChildren {

@@ -173,7 +173,11 @@ function New-TtsS1TestReport {
         [int]$MeasuredShardCount = $script:TtsS1FormalShardCount,
         [int]$PinnedShardCount = $script:TtsS1FormalShardCount,
         [int]$PinnedCpusPerShard = $script:TtsS1FormalLogicalCpusPerShard,
+        [int]$PinnedMinPermille = $script:TtsS1FormalMinFullConcurrencyPermille,
         [bool]$MeetsFormalTopology = $true,
+        [bool]$EveryShardWaitedOnTheBarrier = $true,
+        [bool]$EveryFirstDecisionAfterTheBarrier = $true,
+        [int]$FullyConcurrentPermille = 1000,
         [switch]$OmitLatencyCurve,
         [switch]$OmitShardTopology
     )
@@ -193,6 +197,13 @@ function New-TtsS1TestReport {
             formal_logical_cpus_per_shard = $PinnedCpusPerShard
             host_logical_cpus = 32
             host_total_memory_bytes = 137438953472
+            start_barrier_released_unix_micros = 1700000000000000
+            every_shard_waited_on_the_barrier = $EveryShardWaitedOnTheBarrier
+            every_first_decision_after_the_barrier = $EveryFirstDecisionAfterTheBarrier
+            censused_decisions = 1000
+            fully_concurrent_decisions = $FullyConcurrentPermille
+            fully_concurrent_permille = $FullyConcurrentPermille
+            min_fully_concurrent_permille = $PinnedMinPermille
             meets_formal_topology = $MeetsFormalTopology
             formal_topology_reason = 'synthetic'
         })
@@ -261,7 +272,13 @@ Assert-True ($script:TtsS1FormalShardCount -eq 8) 'the pinned formal shard count
 Assert-True ($script:TtsS1FormalLogicalCpusPerShard -eq 2) 'the pin requires two logical CPUs per shard'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*exactly-8-concurrent-replay-processes*') 'the topology rule names the pinned concurrency'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*at-least-2-logical-cpus-per-shard*') 'the topology rule names the host requirement'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*/v1') 'the pinned topology rule is the V1 one'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*/v2') 'the pinned topology rule is the V2 one'
+# THE OVERLAP CLAUSES, which are what V2 added: a declared count of eight is
+# satisfied just as well by eight processes run one after another.
+Assert-True ($script:TtsS1FormalMinFullConcurrencyPermille -eq 950) 'the pinned full-concurrency tolerance is 950 permille'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*start-barrier*') 'the topology rule names the start barrier'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*950-permille*') 'the topology rule names the overlap tolerance'
+Assert-True ($script:TtsS1StartBarrierTimeoutSeconds -gt 0) 'the launcher states a bounded barrier deadline'
 
 # The RULE and the PIN are checked on every report, formal or not: a report
 # whose idea of the formal count is not this one's came from a differently
@@ -270,6 +287,7 @@ foreach ($case in @(
     @{ Name = 'a stale shard-topology rule'; Report = (New-TtsS1TestReport -TopologyRule 'pooled-whatever/v0'); Fragment = 'shard-topology rule' },
     @{ Name = 'a differently pinned formal shard count'; Report = (New-TtsS1TestReport -PinnedShardCount 4); Fragment = 'pinned formal shard count' },
     @{ Name = 'a differently pinned CPUs-per-shard'; Report = (New-TtsS1TestReport -PinnedCpusPerShard 1); Fragment = 'pinned logical CPUs per shard' },
+    @{ Name = 'a differently pinned overlap tolerance'; Report = (New-TtsS1TestReport -PinnedMinPermille 500); Fragment = 'pinned full-concurrency tolerance' },
     @{ Name = 'a report with no shard topology at all'; Report = (New-TtsS1TestReport -OmitShardTopology); Fragment = 'missing' }
 )) {
     foreach ($formal in @($true, $false)) {
@@ -297,6 +315,20 @@ Assert-True ($message -like '*formal topology*') 'the refusal names the formal t
 
 # And the pinned topology, measured, is accepted with the switch on.
 Assert-True ($null -eq (Get-TtsS1ContractRejection -Report (New-TtsS1TestReport) -RequireFormalShardTopology)) 'a report measured at the pinned topology carries formal standing'
+
+# THE OVERLAP EVIDENCE, refused only when the run still claims formal
+# standing. A report from eight processes that never actually ran together
+# declares the same shard count as one from eight that did.
+foreach ($case in @(
+    @{ Name = 'a run whose shards never waited on a barrier'; Report = (New-TtsS1TestReport -EveryShardWaitedOnTheBarrier $false -MeetsFormalTopology $false); Fragment = 'start barrier' },
+    @{ Name = 'a run whose shard searched before the barrier'; Report = (New-TtsS1TestReport -EveryFirstDecisionAfterTheBarrier $false -MeetsFormalTopology $false); Fragment = 'first decision after the barrier' },
+    @{ Name = 'a run that never overlapped'; Report = (New-TtsS1TestReport -FullyConcurrentPermille 0 -MeetsFormalTopology $false); Fragment = 'formal topology' }
+)) {
+    Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $case.Report)) "$($case.Name) is still readable as a smoke"
+    $message = Get-TtsS1ContractRejection -Report $case.Report -RequireFormalShardTopology
+    Assert-True ($null -ne $message) "a run claiming formal standing refuses $($case.Name)"
+    Assert-True ($message -like "*$($case.Fragment)*") "the refusal of $($case.Name) names $($case.Fragment)"
+}
 
 # THE RULE ITSELF, as a pure function, evaluated at CPU counts this host
 # may not have. Both branches are covered without depending on the machine
@@ -463,14 +495,23 @@ try {
             $shardReportPattern = "*shard-{0}-of-{1:0000}.report.json*" -f $padded, $defaultShardCount
             Assert-True ($line -like $shardReportPattern) "tier $tier shard $shard publishes under the name the merge derives"
             Assert-True (-not ($line -like '*--merge-shards*')) "tier $tier shard $shard is not a merge"
+            # ONE token per tier, and every shard of it waits on that one:
+            # a per-shard token would release each shard the moment it was
+            # written and prove nothing about the others.
+            Assert-True ($line -like "*--start-barrier*tier-$tier.shards*start-barrier.token*") "tier $tier shard $shard waits on the tier start barrier"
+            Assert-True ($line -like "*--start-barrier-timeout-seconds $($script:TtsS1StartBarrierTimeoutSeconds)*") "tier $tier shard $shard carries a bounded barrier deadline"
         }
+        $barrierTokens = @($tierShardCommands | ForEach-Object {
+            if ($_ -match '--start-barrier ("[^"]+"|\S+)') { $Matches[1] } else { 'none' }
+        })
+        Assert-True ((@($barrierTokens | Sort-Object -Unique)).Count -eq 1) "tier $tier releases every shard from one token"
         # ONE merge per tier, naming the shard directory and the same count,
         # and carrying no replay-only flag: the merge loads no checkpoint.
         $merge = $provenanceJson.planned_tier_merge_commands[$index]
         Assert-True ($merge -like "*--merge-shards*tier-$tier.shards*") "tier $tier merges its own shard directory"
         Assert-True ($merge -like "*--shard-count $defaultShardCount*") "tier $tier merges exactly the shards it planned"
         Assert-True ($merge -like "*--output*tier-$tier.report.json*") "tier $tier merges into its tier report"
-        foreach ($forbidden in @('--tier', '--corpus', '--seed-block', '--max-episodes', '--diagnostics-dir', '--shard-index', '--population-store-root')) {
+        foreach ($forbidden in @('--tier', '--corpus', '--seed-block', '--max-episodes', '--diagnostics-dir', '--shard-index', '--start-barrier', '--population-store-root')) {
             Assert-True (-not ($merge -like "*$forbidden*")) "tier $tier merge carries no $forbidden"
         }
     }
@@ -643,6 +684,56 @@ try {
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.planned_corpus_command -like '*--portable-derivative-root*') 'the portable authority names its own flag'
 
+    # --- 3b. NO NONTERMINAL ATTEMPT. Every failure past the point where
+    #         the attempt root exists leaves a RUN_FAILED in it, and every
+    #         failure before that point leaves no attempt root at all.
+    #
+    #         The first case is a real launch: -SkipHostAssertions is
+    #         dropped so the git assertion runs, and it fails on this
+    #         worktree because a dry run is the only thing this suite may
+    #         start. Whatever the message, the attempt root must not be
+    #         left empty.
+    $evidence = Join-Path $sandbox 'evidence-terminal'
+    $parameters = $base.Clone()
+    $parameters['EvidenceRoot'] = $evidence
+    $parameters['Tiers'] = @('t512')
+    $parameters.Remove('DryRun')
+    $parameters.Remove('SkipHostAssertions')
+    $parameters['RepoRoot'] = (Join-Path $sandbox 'not-a-repo')
+    New-Item -ItemType Directory -Force -Path $parameters['RepoRoot'] | Out-Null
+    $result = Invoke-Wrapper -Parameters $parameters
+    Assert-True ($null -ne $result.Failure) 'a real launch whose planning fails does fail'
+    $attempts = @(Get-ChildItem -LiteralPath $evidence -Directory -ErrorAction SilentlyContinue)
+    Assert-True ($attempts.Count -eq 1) 'the failing launch created exactly one attempt root'
+    if ($attempts.Count -eq 1) {
+        $failedRoot = $attempts[0].FullName
+        $runFailed = Join-Path $failedRoot 'RUN_FAILED'
+        Assert-True (Test-Path -LiteralPath $runFailed -PathType Leaf) 'a planning failure leaves RUN_FAILED in the attempt root'
+        $failedText = [System.IO.File]::ReadAllText($runFailed)
+        Assert-True ($failedText -like '*step=provenance*') 'the RUN_FAILED names the step that failed'
+        Assert-True ($failedText -like '*detail=*') 'the RUN_FAILED carries the reason'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $failedRoot 'TTS_S1_COMPLETE'))) 'a failed launch writes no completion marker'
+        # And the stand-ins were still never executed: this failed during
+        # planning, before any child.
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $failedRoot 'corpus.json'))) 'the failing launch built no corpus'
+    }
+
+    # The undersized-host refusal is the OTHER side of the same rule: it
+    # fires with the input checks, so it leaves no attempt root to be
+    # nonterminal. Exercised at a shard count this host cannot host, which
+    # is the largest legal one on any host with fewer than 128 CPUs.
+    $tooManyShards = 64
+    $wouldRefuse = Test-TtsS1FormalShardTopology -ShardCount $script:TtsS1FormalShardCount -HostLogicalCpus 1
+    Assert-True (-not $wouldRefuse.admissible) 'a one-CPU host cannot host the pinned topology'
+    $evidence = Join-Path $sandbox 'evidence-no-root'
+    $parameters = $base.Clone()
+    $parameters['EvidenceRoot'] = $evidence
+    $parameters['CorpusExecutable'] = (Join-Path $sandbox 'absent-for-early-refusal.exe')
+    $result = Invoke-Wrapper -Parameters $parameters
+    Assert-True ($null -ne $result.Failure) 'an input rejection fails before anything is created'
+    Assert-True (-not (Test-Path -LiteralPath $evidence)) 'an input rejection leaves no attempt root at all'
+    $tooManyShards = $null
+
     # --- 4. Every rejection.
     $rejections = @(
         @{ Name = 'equal seed blocks'; Mutate = { param($p) $p['ReplaySeedBlock'] = $p['CorpusSeedBlock'] } },
@@ -708,6 +799,36 @@ try {
     Assert-True ($wrapperText -like '*Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path*') 'the merged tier report is validated through the pinned-contract reader'
     Assert-True ($wrapperText -like '*$corpus.body.contributing_episode_count*') 'the wrapper sizes the run from the corpus stated contributing population'
     Assert-True ($wrapperText -like '*TTS_S1_TIER_COST*') 'the wrapper prints the expected per-tier cost before the tiers run'
+    # THE BARRIER IS PUBLISHED AFTER THE FAN-OUT IS UP, which is the only
+    # moment at which it means anything. Written before the shards start it
+    # would release each into a fan-out that did not yet exist.
+    Assert-True ($wrapperText -like '*-AfterStart {*') 'the wrapper publishes the token through the after-start hook'
+    Assert-True ($wrapperText -like '*Write-TtsS1StartBarrier -Path $plan.barrier_path*') 'the wrapper publishes the tier start token'
+    $hookIndex = $wrapperText.IndexOf('-AfterStart {')
+    $jobsIndex = $wrapperText.IndexOf('Invoke-TtsS1ProcessFanOut -Jobs')
+    Assert-True ($jobsIndex -gt 0 -and $hookIndex -gt $jobsIndex) 'the token hook belongs to the shard fan-out'
+    Assert-True ($commonText -like '*if ($null -ne $AfterStart) { & $AfterStart }*') 'the fan-out runs the hook once every job has started'
+    $startLoopIndex = $commonText.IndexOf('process = Start-TtsS1Process -FilePath $job.file_path')
+    $hookRunIndex = $commonText.IndexOf('if ($null -ne $AfterStart) { & $AfterStart }')
+    Assert-True ($hookRunIndex -gt $startLoopIndex) 'the hook runs after the start loop, not inside it'
+    Assert-True ($hookRunIndex -lt $commonText.IndexOf('exit_code = Wait-TtsS1Process -Process $entry.process')) 'the hook runs before anything is waited on'
+
+    # P2: EVERY THROW PAST THE ATTEMPT ROOT LEAVES A TERMINAL STATE. An
+    # empty attempt directory carrying neither a summary nor a RUN_FAILED is
+    # indistinguishable from a killed run.
+    Assert-True ($wrapperText -like "*Write-TtsS1RunFailed -AttemptRoot `$attemptRoot -Step 'provenance'*") 'a planning failure past the attempt root writes RUN_FAILED'
+    Assert-True ($wrapperText -like "*Write-TtsS1RunFailed -AttemptRoot `$attemptRoot -Step 'corpus'*") 'a corpus failure writes RUN_FAILED'
+    Assert-True ($wrapperText -like "*Write-TtsS1RunFailed -AttemptRoot `$attemptRoot -Step 'sizing'*") 'a sizing failure writes RUN_FAILED'
+    Assert-True ($wrapperText -like '*Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step "tier-$($plan.tier)"*') 'a tier failure writes RUN_FAILED'
+    # The undersized-host refusal now fires with the other input checks,
+    # before any directory exists, so it cannot leave one behind.
+    $refusalIndex = $wrapperText.IndexOf('a formal S1 run is refused on this host')
+    $rootIndex = $wrapperText.IndexOf('New-Item -ItemType Directory -Force -Path $EvidenceRoot')
+    Assert-True ($refusalIndex -gt 0 -and $rootIndex -gt $refusalIndex) 'the undersized-host refusal fires before the attempt root is created'
+    # The one throw left bare is the one that must be: writing a RUN_FAILED
+    # into an attempt root that already exists would overwrite another
+    # run terminal state.
+    Assert-True ($wrapperText -like '*attempt root already exists*') 'a colliding attempt root is still refused'
 
     # --- 4c. THE PRIMITIVES THEMSELVES, run for real against cmd.exe.
     #
