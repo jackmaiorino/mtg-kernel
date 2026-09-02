@@ -2751,6 +2751,9 @@ mod tests {
         corpus.body.episodes[0].decision_count = 1;
         corpus.body.episodes[0].action_sequence.truncate(1);
         corpus.body.decisions.truncate(1);
+        // The stated contributing population follows the episode list, or
+        // `decode` refuses the fixture before the replay ever sees it.
+        corpus.body.contributing_episode_decisions = 1;
         let corpus = TtsS1CorpusManifestV1::seal_v1(corpus.body).unwrap();
         assert!(
             decode_tts_s1_corpus_v1(&corpus.canonical_bytes_v1().unwrap()).is_ok(),
