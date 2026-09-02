@@ -570,7 +570,17 @@ foreach ($plan in $tierPlans) {
             searched_decisions = $report.body.searched_decisions
             corpus_targets_replayed = $report.body.corpus_targets_replayed
             replayed_whole_corpus = $report.body.replayed_whole_corpus
-            # The verdict basis: every decision searched.
+            # THE VERDICT BASIS: the frozen stratified corpus's own
+            # targets, which is the population the sketch defines S1 over.
+            # The report names the gating view itself; this wrapper reads
+            # it rather than assuming which one it is.
+            verdict_view = $report.body.verdict_view
+            target_protocol_p50_micros = $report.body.corpus_target_view.protocol_wall_time.p50_micros
+            target_protocol_p99_micros = $report.body.corpus_target_view.protocol_wall_time.p99_micros
+            target_protocol_max_micros = $report.body.corpus_target_view.protocol_wall_time.max_micros
+            target_mean_protocol_micros = $report.body.corpus_target_view.mean_protocol_micros
+            target_decisions_per_second_milli = $report.body.corpus_target_view.decisions_per_second_milli
+            # DIAGNOSTIC: every decision searched. Not the latency gate.
             protocol_p50_micros = $report.body.whole_episode_view.protocol_wall_time.p50_micros
             protocol_p99_micros = $report.body.whole_episode_view.protocol_wall_time.p99_micros
             protocol_max_micros = $report.body.whole_episode_view.protocol_wall_time.max_micros
@@ -579,22 +589,32 @@ foreach ($plan in $tierPlans) {
             search_p99_micros = $report.body.whole_episode_view.search_wall_time.p99_micros
             search_max_micros = $report.body.whole_episode_view.search_wall_time.max_micros
             decisions_per_second_milli = $report.body.whole_episode_view.decisions_per_second_milli
-            # The stratified targets alone, for the strata diagnostics.
-            target_protocol_p50_micros = $report.body.corpus_target_view.protocol_wall_time.p50_micros
-            target_protocol_p99_micros = $report.body.corpus_target_view.protocol_wall_time.p99_micros
-            target_protocol_max_micros = $report.body.corpus_target_view.protocol_wall_time.max_micros
+            # The compute cap, estimated per episode against the fitted
+            # per-ordinal latency curve.
+            estimated_episode_count = $report.body.compute_cap.estimated_episode_count
+            mean_estimated_episode_micros = $report.body.compute_cap.mean_estimated_episode_micros
+            max_estimated_episode_micros = $report.body.compute_cap.max_estimated_episode_micros
+            extrapolated_ordinals = $report.body.compute_cap.extrapolated_ordinals
+            curve_last_observed_ordinal = $report.body.compute_cap.latency_curve.last_observed_ordinal
+            curve_extrapolation_slope_micros_per_ordinal = $report.body.compute_cap.latency_curve.extrapolation_slope_micros_per_ordinal
+            curve_knot_count = @($report.body.compute_cap.latency_curve.knots).Count
             projected_s2_worker_hours_milli = $report.body.compute_cap.projected_worker_hours_milli
             projected_elapsed_hours_at_workers_milli = $report.body.compute_cap.projected_elapsed_hours_at_workers_milli
             compute_cap_worker_hours_milli = $report.body.compute_cap.cap_worker_hours_milli
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        Write-Output ("TTS_S1_TIER tier={0} verdict={1} episodes={2} searched_decisions={3} protocol_p99_micros={4} protocol_max_micros={5} decisions_per_second_milli={6} projected_s2_worker_hours_milli={7} within_compute_cap={8}" -f `
-            $plan.tier, $observedVerdict, $report.body.episodes_replayed, $report.body.searched_decisions, `
+        if ($report.body.verdict_view -cne 'corpus_target_view') {
+            throw "tier $($plan.tier) reports its verdict from $($report.body.verdict_view), not the frozen corpus targets"
+        }
+        Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} target_protocol_p99_micros={5} target_protocol_max_micros={6} whole_episode_protocol_p99_micros={7} projected_s2_worker_hours_milli={8} extrapolated_ordinals={9} within_compute_cap={10}" -f `
+            $plan.tier, $observedVerdict, $report.body.verdict_view, `
+            $report.body.episodes_replayed, $report.body.searched_decisions, `
+            $report.body.corpus_target_view.protocol_wall_time.p99_micros, `
+            $report.body.corpus_target_view.protocol_wall_time.max_micros, `
             $report.body.whole_episode_view.protocol_wall_time.p99_micros, `
-            $report.body.whole_episode_view.protocol_wall_time.max_micros, `
-            $report.body.whole_episode_view.decisions_per_second_milli, `
-            $report.body.compute_cap.projected_worker_hours_milli, $report.body.compute_cap.within_cap)
+            $report.body.compute_cap.projected_worker_hours_milli, `
+            $report.body.compute_cap.extrapolated_ordinals, $report.body.compute_cap.within_cap)
     }
     catch {
         Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step "tier-$($plan.tier)" -Detail $_.Exception.Message
@@ -635,7 +655,9 @@ $summary = [ordered]@{
     limit_episodes = $LimitEpisodes
     max_episodes = $Episodes
     corpus_episode_count = @($corpus.body.episodes).Count
+    corpus_all_episode_count = $corpus.body.all_episode_decisions.episode_count
     corpus_all_episode_mean_decisions_milli = $corpus.body.all_episode_decisions.mean_decisions_milli
+    corpus_all_episode_max_decisions = $corpus.body.all_episode_decisions.max_decisions
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
     ladder = $script:TtsS1Ladder

@@ -278,29 +278,239 @@ pub struct TtsS1DiagnosticsEpisodeFileV1 {
     pub decision_record_count: u64,
 }
 
-/// Sketch Section 4's compute cap, with every input to the projection.
+/// One block of the fitted per-ordinal latency curve: a maximal run of
+/// decision ordinals the isotonic fit assigned a single value.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1LatencyCurveKnotV1 {
+    pub first_ordinal: u64,
+    pub last_ordinal: u64,
+    /// The block's pooled mean protocol latency, floored to micros.
+    pub fitted_micros: u64,
+    /// How many replayed decisions fell in this block.
+    pub sample_count: u64,
+}
+
+/// A monotone non-decreasing per-ordinal protocol-latency curve, fitted to
+/// the whole-episode replay and extrapolated past the last ordinal it
+/// observed.
+///
+/// # Why a curve and not a mean
+///
+/// The production diagnostics writer republishes the whole episode file
+/// after every decision, so publication cost GROWS with the decision
+/// ordinal. A single mean latency therefore cannot cost an episode that is
+/// longer than the ones measured: it would charge the long tail at the
+/// average of a short one. It also cannot be multiplied by a decision count
+/// drawn from a different population than the timings, which is what
+/// pairing an all-episodes mean length with contributing-episode timings
+/// did.
+///
+/// # The fit
+///
+/// Pool every replayed decision as `(decision ordinal, protocol micros)`
+/// across every replayed episode, then run pool-adjacent-violators isotonic
+/// regression over ascending ordinal. The result is the least-squares
+/// monotone non-decreasing fit, expressed as maximal constant blocks. The
+/// comparison that decides a merge is done by cross-multiplying the blocks'
+/// (sum, count) pairs, so no rounding enters the shape of the fit; only the
+/// published `fitted_micros` is floored.
+///
+/// # The extrapolation
+///
+/// Beyond `last_observed_ordinal` the curve continues at
+/// `extrapolation_slope_micros_per_ordinal`, the LARGEST per-ordinal rise
+/// the fit itself exhibits between consecutive blocks. That is deliberately
+/// the steepest evidence available rather than an average one, because the
+/// estimate is meant to be conservative about episodes longer than anything
+/// replayed. The slope is floored at 1 micro per ordinal so the curve is
+/// never flat past its evidence: a flat tail would cost an arbitrarily long
+/// episode at the last measured rate, which is the exact understatement the
+/// growth-with-history property makes wrong.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1LatencyCurveV1 {
+    pub rule: String,
+    pub knots: Vec<TtsS1LatencyCurveKnotV1>,
+    pub last_observed_ordinal: u64,
+    pub extrapolation_slope_micros_per_ordinal: u64,
+    pub observed_samples: u64,
+}
+
+/// Which published view the SLO and hard-timeout verdict is taken from.
+///
+/// The sketch defines S1's measured population as the FROZEN STRATIFIED
+/// CORPUS (Section 5, S1: "a FROZEN stratified corpus of >= 512 decisions
+/// ... replayed per tier; records p50/p99/max wall time"), so the gate is
+/// the corpus targets. The whole-episode replay exists to give those
+/// targets a realistic publication history, not to replace them as the
+/// population; its own percentiles are published as a diagnostic.
+pub const TTS_S1_VERDICT_VIEW_V1: &str = "corpus_target_view";
+
+/// The fitted curve's own identity, on the wire.
+pub const TTS_S1_LATENCY_CURVE_RULE_V1: &str = concat!(
+    "pool-adjacent-violators-isotonic-regression-over-decision-ordinal",
+    "-on-pooled-whole-episode-protocol-micros",
+    "-extrapolated-past-the-last-observed-ordinal-at-the-maximum-fitted-slope",
+    "-floored-at-one-micro-per-ordinal",
+    "/v1"
+);
+
+impl TtsS1LatencyCurveV1 {
+    /// Fits the curve to `(decision ordinal, protocol micros)` samples.
+    pub fn fit_v1(samples: &[(u64, u64)]) -> Option<Self> {
+        if samples.is_empty() {
+            return None;
+        }
+        // Group by ordinal, ascending. Several episodes contribute a
+        // sample at the same ordinal, and they pool.
+        let mut ordered = samples.to_vec();
+        ordered.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+        // (first_ordinal, last_ordinal, sum, count)
+        let mut blocks: Vec<(u64, u64, u128, u64)> = Vec::new();
+        for (ordinal, micros) in ordered {
+            if let Some(last) = blocks.last_mut() {
+                if last.1 == ordinal {
+                    last.2 = last.2.saturating_add(u128::from(micros));
+                    last.3 = last.3.saturating_add(1);
+                    continue;
+                }
+            }
+            blocks.push((ordinal, ordinal, u128::from(micros), 1));
+            // Pool adjacent violators: merge back while the previous
+            // block's mean exceeds this one's. Compared by
+            // cross-multiplication, so the fit's shape is exact.
+            while blocks.len() >= 2 {
+                let (_, _, sum_b, count_b) = blocks[blocks.len() - 1];
+                let (_, _, sum_a, count_a) = blocks[blocks.len() - 2];
+                if sum_a.saturating_mul(u128::from(count_b))
+                    <= sum_b.saturating_mul(u128::from(count_a))
+                {
+                    break;
+                }
+                let (first_b, last_b, sum_b, count_b) = blocks.pop()?;
+                let merged = blocks.last_mut()?;
+                merged.1 = last_b.max(merged.1);
+                let _ = first_b;
+                merged.2 = merged.2.saturating_add(sum_b);
+                merged.3 = merged.3.saturating_add(count_b);
+            }
+        }
+        let knots: Vec<TtsS1LatencyCurveKnotV1> = blocks
+            .iter()
+            .map(|(first, last, sum, count)| TtsS1LatencyCurveKnotV1 {
+                first_ordinal: *first,
+                last_ordinal: *last,
+                fitted_micros: u64::try_from(sum / u128::from(*count)).unwrap_or(u64::MAX),
+                sample_count: *count,
+            })
+            .collect();
+        let last_observed_ordinal = knots.last()?.last_ordinal;
+        // The steepest per-ordinal rise the fit itself shows, floored at
+        // one micro so the tail is never flat.
+        let mut slope = 1u64;
+        for pair in knots.windows(2) {
+            let rise = pair[1].fitted_micros.saturating_sub(pair[0].fitted_micros);
+            let run = pair[1]
+                .last_ordinal
+                .saturating_sub(pair[0].last_ordinal)
+                .max(1);
+            slope = slope.max(rise / run);
+        }
+        Some(Self {
+            rule: TTS_S1_LATENCY_CURVE_RULE_V1.to_owned(),
+            observed_samples: samples.len() as u64,
+            knots,
+            last_observed_ordinal,
+            extrapolation_slope_micros_per_ordinal: slope,
+        })
+    }
+
+    /// The fitted latency at one decision ordinal, extrapolating past the
+    /// last observed one.
+    pub fn latency_at_v1(&self, ordinal: u64) -> u64 {
+        let Some(last) = self.knots.last() else {
+            return 0;
+        };
+        if ordinal > self.last_observed_ordinal {
+            return last.fitted_micros.saturating_add(
+                self.extrapolation_slope_micros_per_ordinal
+                    .saturating_mul(ordinal - self.last_observed_ordinal),
+            );
+        }
+        // Below the first observed ordinal the curve holds its first
+        // value; a corpus episode always starts at ordinal 0, so this only
+        // arises if the replay never saw ordinal 0.
+        for knot in &self.knots {
+            if ordinal <= knot.last_ordinal {
+                return knot.fitted_micros;
+            }
+        }
+        last.fitted_micros
+    }
+
+    /// The estimated cost of one whole episode of `decision_count`
+    /// decisions: the fitted latency summed over ordinals `0..decision_count`.
+    ///
+    /// Returns the cost in micros and how many of those ordinals fell past
+    /// the last observed one, so the estimate says how much of itself is
+    /// extrapolation.
+    pub fn episode_cost_micros_v1(&self, decision_count: u64) -> (u128, u64) {
+        let mut cost = 0u128;
+        let mut extrapolated = 0u64;
+        for ordinal in 0..decision_count {
+            cost = cost.saturating_add(u128::from(self.latency_at_v1(ordinal)));
+            if ordinal > self.last_observed_ordinal {
+                extrapolated += 1;
+            }
+        }
+        (cost, extrapolated)
+    }
+}
+
+/// One harvested episode's estimated whole-episode cost.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1EpisodeCostEstimateV1 {
+    /// Index into the corpus's `all_episode_decisions.decision_counts`,
+    /// which is in ascending episode id.
+    pub episode_index: u64,
+    pub decision_count: u64,
+    pub estimated_micros: u64,
+    /// How many of this episode's ordinals were past anything replayed.
+    pub extrapolated_ordinals: u64,
+}
+
+/// Sketch Section 4's compute cap, with every input to the estimate.
 ///
 /// The rule, fixed here and restated on the wire:
 ///
 /// ```text
-/// wrapped_games   = 3,072 root clusters x 2 paired units = 6,144
-/// worker_seconds  = wrapped_games
-///                 x mean decisions per natural-terminal episode
-///                 x mean PROTOCOL decision wall time
-///                 / 16 workers
+/// curve(o)        = isotonic fit of protocol micros over decision ordinal,
+///                   extrapolated past the last observed ordinal at the
+///                   maximum fitted slope
+/// cost(episode)   = sum of curve(o) for o in 0..episode decisions
+/// worker_hours    = mean cost(episode) over EVERY harvested episode
+///                 x 6,144 wrapped games
 /// ```
 ///
-/// Two deliberate choices, both conservative and both recorded:
+/// No division by the worker count: worker-hours are aggregate work, and
+/// 6,144 games of 300 decisions at 1 s each are 512 worker-hours however
+/// many workers run them. The 16-worker elapsed figure is published beside
+/// it as information.
 ///
-/// The mean decisions per game comes from the CORPUS, which is the only
-/// part of S1 that ever played whole games, and counts BOTH seats'
-/// decisions. An S2 wrapped agent occupies one seat, so the true wrapped
-/// decision count per game is smaller and the projection over-estimates.
+/// The two populations now agree. Every harvested episode is costed, natural
+/// or truncated, contributing or not, and each is costed at ITS OWN length
+/// against a curve fitted to the replay's own per-ordinal timings. The
+/// earlier form multiplied an all-episodes mean LENGTH by a
+/// contributing-episodes mean LATENCY, which are different populations, and
+/// a flat mean latency cannot cost an episode longer than the ones measured
+/// at all, because publication cost grows with the ordinal.
 ///
-/// The mean wall time is the PROTOCOL latency, not the narrower
-/// `decision_micros`, because a worker's hour is spent on everything the
-/// client waits for, publication and response included. Both means are on
-/// the wire, so an auditor can recompute on either basis.
+/// One conservative reading remains and is recorded: every decision count
+/// here is decisions by BOTH seats, because that is what a self-play episode
+/// contains, while an S2 wrapped agent occupies one seat. The estimate is an
+/// over-estimate on that axis.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TtsS1ComputeCapProjectionV1 {
@@ -309,25 +519,23 @@ pub struct TtsS1ComputeCapProjectionV1 {
     pub s2_paired_units_per_root_cluster: u64,
     pub s2_wrapped_games: u64,
     pub s2_workers: u64,
-    /// From the corpus, over NATURAL AND TRUNCATED episodes: mean
-    /// decisions per episode times 1,000, floored. Truncated episodes are
-    /// included precisely because they are the longest games, and dropping
-    /// them would bias the cost downward.
-    pub mean_decisions_per_game_milli: u64,
-    /// Corpus context for the mean above, on the same all-episodes basis.
-    pub p99_decisions_per_game: u64,
-    pub max_decisions_per_game: u64,
-    pub all_episode_count: u64,
+    /// The fitted curve, with its knots and its extrapolation slope.
+    pub latency_curve: TtsS1LatencyCurveV1,
+    /// Every harvested episode's estimated cost, individually.
+    pub episode_cost_estimates: Vec<TtsS1EpisodeCostEstimateV1>,
+    /// The population that was costed: natural plus truncated.
+    pub estimated_episode_count: u64,
     pub natural_terminal_episode_count: u64,
     pub truncated_episode_count: u64,
-    /// The mean this projection multiplies by: the WHOLE-EPISODE mean
-    /// protocol latency over every searched decision, not the stratified
-    /// corpus targets, which are not a representative sample of a game.
-    pub mean_protocol_micros: u64,
-    /// Recorded beside it so the projection can be recomputed on the
-    /// narrower bases too.
-    pub mean_decision_micros: u64,
-    pub mean_search_micros: u64,
+    /// How many ordinals across the whole population fell past anything
+    /// replayed, so a reader can see how much of the estimate is
+    /// extrapolation.
+    pub extrapolated_ordinals: u64,
+    pub mean_estimated_episode_micros: u64,
+    pub max_estimated_episode_micros: u64,
+    /// Context: the observed lengths the estimate is taken over.
+    pub p99_decisions_per_game: u64,
+    pub max_decisions_per_game: u64,
     pub raw_policy_games_excluded: bool,
     pub raw_policy_exclusion_reason: String,
     /// Aggregate work. THIS is what the cap is checked against.
@@ -339,30 +547,15 @@ pub struct TtsS1ComputeCapProjectionV1 {
     pub within_cap: bool,
 }
 
-/// The projection itself, in AGGREGATE WORKER-HOURS times 1,000.
+/// Aggregate worker-hours (times 1,000) from a mean per-episode cost.
 ///
-/// Integer arithmetic in `u128` throughout, so a slow tier cannot overflow
-/// its own cost estimate into a small number.
-///
-/// There is deliberately no division by the worker count here. The product
-/// of games, decisions per game and seconds per decision IS the aggregate
-/// work: 6,144 games x 300 decisions x 1 s is 512 worker-hours, and it is
-/// 512 worker-hours whether one worker or a thousand run it. An earlier
-/// revision divided by 16 and reported that same configuration as 32,
-/// which is the ELAPSED time on a 16-worker host, not its cost, and it
-/// compared that elapsed figure against a worker-hour cap. See
-/// [`project_s2_elapsed_hours_milli_v1`] for the elapsed figure, published
-/// beside this one as information rather than as the gate.
-pub fn project_s2_worker_hours_milli_v1(
-    mean_decisions_per_game_milli: u64,
-    mean_protocol_micros: u64,
-) -> u64 {
+/// There is deliberately no division by the worker count here: the product
+/// of games and per-game cost IS the aggregate work. See
+/// [`project_s2_elapsed_hours_milli_v1`] for the elapsed figure.
+pub fn project_s2_worker_hours_milli_v1(mean_episode_micros: u64) -> u64 {
     let wrapped_games = u128::from(TTS_S1_S2_ROOT_CLUSTERS_V1)
         .saturating_mul(u128::from(TTS_S1_S2_PAIRED_UNITS_PER_ROOT_CLUSTER_V1));
-    let total_micros = wrapped_games
-        .saturating_mul(u128::from(mean_decisions_per_game_milli))
-        .saturating_mul(u128::from(mean_protocol_micros))
-        / 1_000;
+    let total_micros = wrapped_games.saturating_mul(u128::from(mean_episode_micros));
     // micros -> hours, times 1,000: divide by 3.6e9, multiply by 1e3.
     let milli = total_micros.saturating_mul(1_000) / 3_600_000_000u128;
     u64::try_from(milli).unwrap_or(u64::MAX)
@@ -376,35 +569,58 @@ pub fn project_s2_elapsed_hours_milli_v1(worker_hours_milli: u64) -> u64 {
 }
 
 /// Builds the projection block for one tier.
-#[allow(clippy::too_many_arguments)]
+///
+/// `samples` are the whole-episode replay's `(decision ordinal, protocol
+/// micros)` pairs; `all_episode_decisions` is the corpus's whole harvested
+/// population, every member of which is costed.
 pub fn compute_cap_projection_v1(
-    all_episode_decisions: &crate::native_tts_s1_corpus_v1::TtsS1EpisodeDecisionStatsV1,
-    natural_terminal_episode_count: u64,
-    truncated_episode_count: u64,
-    mean_protocol_micros: u64,
-    mean_decision_micros: u64,
-    mean_search_micros: u64,
-) -> TtsS1ComputeCapProjectionV1 {
-    let projected_worker_hours_milli = project_s2_worker_hours_milli_v1(
-        all_episode_decisions.mean_decisions_milli,
-        mean_protocol_micros,
-    );
-    TtsS1ComputeCapProjectionV1 {
+    samples: &[(u64, u64)],
+    all_episode_decisions: &crate::native_tts_s1_corpus_v1::TtsS1AllEpisodeDecisionStatsV1,
+) -> Option<TtsS1ComputeCapProjectionV1> {
+    let latency_curve = TtsS1LatencyCurveV1::fit_v1(samples)?;
+    let mut episode_cost_estimates =
+        Vec::with_capacity(all_episode_decisions.decision_counts.len());
+    let mut total_micros = 0u128;
+    let mut extrapolated_ordinals = 0u64;
+    let mut max_estimated_episode_micros = 0u64;
+    for (index, decision_count) in all_episode_decisions.decision_counts.iter().enumerate() {
+        let (cost, extrapolated) = latency_curve.episode_cost_micros_v1(*decision_count);
+        let estimated_micros = u64::try_from(cost).unwrap_or(u64::MAX);
+        total_micros = total_micros.saturating_add(cost);
+        extrapolated_ordinals = extrapolated_ordinals.saturating_add(extrapolated);
+        max_estimated_episode_micros = max_estimated_episode_micros.max(estimated_micros);
+        episode_cost_estimates.push(TtsS1EpisodeCostEstimateV1 {
+            episode_index: index as u64,
+            decision_count: *decision_count,
+            estimated_micros,
+            extrapolated_ordinals: extrapolated,
+        });
+    }
+    let episode_count = all_episode_decisions.episode_count;
+    if episode_count == 0 {
+        return None;
+    }
+    let mean_estimated_episode_micros =
+        u64::try_from(total_micros / u128::from(episode_count)).unwrap_or(u64::MAX);
+    let projected_worker_hours_milli =
+        project_s2_worker_hours_milli_v1(mean_estimated_episode_micros);
+    Some(TtsS1ComputeCapProjectionV1 {
         rule: TTS_S1_S2_PROJECTION_RULE_V1.to_owned(),
         s2_root_clusters: TTS_S1_S2_ROOT_CLUSTERS_V1,
         s2_paired_units_per_root_cluster: TTS_S1_S2_PAIRED_UNITS_PER_ROOT_CLUSTER_V1,
         s2_wrapped_games: TTS_S1_S2_ROOT_CLUSTERS_V1
             .saturating_mul(TTS_S1_S2_PAIRED_UNITS_PER_ROOT_CLUSTER_V1),
         s2_workers: TTS_S1_S2_WORKERS_V1,
-        mean_decisions_per_game_milli: all_episode_decisions.mean_decisions_milli,
+        latency_curve,
+        episode_cost_estimates,
+        estimated_episode_count: episode_count,
+        natural_terminal_episode_count: all_episode_decisions.natural_terminal_episode_count,
+        truncated_episode_count: all_episode_decisions.truncated_episode_count,
+        extrapolated_ordinals,
+        mean_estimated_episode_micros,
+        max_estimated_episode_micros,
         p99_decisions_per_game: all_episode_decisions.p99_decisions,
         max_decisions_per_game: all_episode_decisions.max_decisions,
-        all_episode_count: all_episode_decisions.natural_terminal_episode_count,
-        natural_terminal_episode_count,
-        truncated_episode_count,
-        mean_protocol_micros,
-        mean_decision_micros,
-        mean_search_micros,
         raw_policy_games_excluded: true,
         raw_policy_exclusion_reason: TTS_S1_RAW_POLICY_EXCLUSION_REASON_V1.to_owned(),
         projected_worker_hours_milli,
@@ -413,7 +629,7 @@ pub fn compute_cap_projection_v1(
         ),
         cap_worker_hours_milli: TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
         within_cap: projected_worker_hours_milli <= TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
-    }
+    })
 }
 
 /// p50, p99, max and the total, all in integer microseconds.
@@ -561,13 +777,21 @@ pub struct TtsS1ReplayReportBodyV1 {
     /// feasibility verdict a panel may rely on, and the verdict says so.
     pub replayed_whole_corpus: bool,
     pub percentile_rule: String,
-    /// THE VERDICT BASIS: every decision searched, in episode order, with
-    /// the true accumulated publication history behind each one.
-    pub whole_episode_view: TtsS1LatencyViewV1,
-    /// The 512 stratified targets alone, for reading the strata against
-    /// each other. Never the verdict basis: a quota-stratified sample is
-    /// deliberately not representative of a game.
+    /// Which view the SLO and hard-timeout verdict is taken from, on the
+    /// wire so a reader never has to infer it. Always
+    /// [`TTS_S1_VERDICT_VIEW_V1`].
+    pub verdict_view: String,
+    /// THE VERDICT BASIS: the frozen stratified corpus's own 512 targets,
+    /// which is the population the sketch defines S1 over. Each one was
+    /// searched at its true position in a whole replayed episode, so its
+    /// publication cost is a panel's, not a short file's.
     pub corpus_target_view: TtsS1LatencyViewV1,
+    /// DIAGNOSTIC: every decision searched, in episode order. It is the
+    /// population the compute-cap curve is fitted to, and it is reported
+    /// so the corpus targets can be read against the game they came from;
+    /// it is NOT the latency gate, because S1's measured population is the
+    /// frozen corpus.
+    pub whole_episode_view: TtsS1LatencyViewV1,
     pub slo_micros: u64,
     pub hard_timeout_micros: u64,
     /// The published V4 diagnostics episode files the protocol latencies
@@ -1250,19 +1474,22 @@ pub(crate) fn replay_corpus_body_v1(
     let corpus_target_view =
         latency_view_v1(&target_records).ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
 
-    let compute_cap = compute_cap_projection_v1(
-        &corpus.body.all_episode_decisions,
-        corpus.body.natural_terminal_episode_count,
-        corpus.body.truncated_episode_count,
-        whole_episode_view.mean_protocol_micros,
-        whole_episode_view.decision_wall_time.total_micros / searched_decisions,
-        whole_episode_view.search_wall_time.total_micros / searched_decisions,
-    );
+    // The curve is fitted to the WHOLE-EPISODE population, because that is
+    // where per-ordinal publication growth is observable at all; the
+    // stratified targets are a sparse sample of ordinals and could not fit
+    // one. The latency VERDICT is a separate question and is taken from
+    // the corpus targets, which is the population the sketch defines.
+    let curve_samples: Vec<(u64, u64)> = records
+        .iter()
+        .map(|record| (record.decision_ordinal, record.wall_time.protocol_micros))
+        .collect();
+    let compute_cap = compute_cap_projection_v1(&curve_samples, &corpus.body.all_episode_decisions)
+        .ok_or(TtsS1ReplayErrorV1::NoDecisions)?;
     let replayed_whole_corpus = planned_episodes == corpus_episode_count
         && corpus_targets_replayed == corpus_decision_count;
     let (verdict, verdict_reason) = verdict_v1(
-        whole_episode_view.p99_protocol_ceiling_status,
-        whole_episode_view.max_protocol_ceiling_status,
+        corpus_target_view.p99_protocol_ceiling_status,
+        corpus_target_view.max_protocol_ceiling_status,
         compute_cap.within_cap,
         replayed_whole_corpus,
     );
@@ -1290,8 +1517,9 @@ pub(crate) fn replay_corpus_body_v1(
         max_episodes,
         replayed_whole_corpus,
         percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
-        whole_episode_view,
+        verdict_view: TTS_S1_VERDICT_VIEW_V1.to_owned(),
         corpus_target_view,
+        whole_episode_view,
         slo_micros: slo_micros_v1(),
         hard_timeout_micros: hard_timeout_micros_v1(),
         diagnostics_episode_files,
@@ -1332,8 +1560,10 @@ pub fn classify_micros_v1(micros: u64) -> CeilingStatusV4 {
 ///
 /// 1. The run did not cover the whole frozen corpus. A smoke has no
 ///    feasibility standing at all.
-/// 2. p99 PROTOCOL wall time is not inside the 4.0 s SLO (Section 4).
-/// 3. The slowest decision reached the 20.0 s hard protocol timeout, which
+/// 2. p99 PROTOCOL wall time OVER THE CORPUS TARGETS is not inside the
+///    4.0 s SLO (Section 4). The corpus is the population the sketch
+///    defines S1 over; see [`TTS_S1_VERDICT_VIEW_V1`].
+/// 3. Any corpus target reached the 20.0 s hard protocol timeout, which
 ///    inside a formal panel is a product failure of that panel, so a tier
 ///    that can produce one is not admissible.
 /// 4. The projected S2 cost exceeds the 48 worker-hour compute cap
@@ -1354,12 +1584,12 @@ pub fn verdict_v1(
     }
     if p99 != CeilingStatusV4::WithinSlo {
         failures.push(format!(
-            "p99 protocol wall time exceeds the {MODEL_GUIDED_SEARCH_DECISION_SLO_SECONDS_V4} s SLO"
+            "p99 corpus-target protocol wall time exceeds the {MODEL_GUIDED_SEARCH_DECISION_SLO_SECONDS_V4} s SLO"
         ));
     }
     if max == CeilingStatusV4::HardTimeoutExceeded {
         failures.push(format!(
-            "the slowest decision reached the {MODEL_GUIDED_SEARCH_DECISION_HARD_TIMEOUT_SECONDS_V4} s hard protocol timeout"
+            "a corpus target reached the {MODEL_GUIDED_SEARCH_DECISION_HARD_TIMEOUT_SECONDS_V4} s hard protocol timeout"
         ));
     }
     if !within_compute_cap {
@@ -1372,7 +1602,7 @@ pub fn verdict_v1(
         return (
             TtsS1TierVerdictV1::Feasible,
             format!(
-                "the whole corpus replayed; p99 protocol wall time is inside the {MODEL_GUIDED_SEARCH_DECISION_SLO_SECONDS_V4} s SLO, no decision reached the {MODEL_GUIDED_SEARCH_DECISION_HARD_TIMEOUT_SECONDS_V4} s hard protocol timeout, and the projected S2 cost is inside the {} worker-hour compute cap",
+                "the whole corpus replayed; p99 corpus-target protocol wall time is inside the {MODEL_GUIDED_SEARCH_DECISION_SLO_SECONDS_V4} s SLO, no corpus target reached the {MODEL_GUIDED_SEARCH_DECISION_HARD_TIMEOUT_SECONDS_V4} s hard protocol timeout, and the projected S2 cost is inside the {} worker-hour compute cap",
                 TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1 / 1_000
             ),
         );
@@ -1799,8 +2029,8 @@ mod tests {
         NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
     };
     use crate::native_tts_s1_corpus_v1::{
-        corpus_body_v1, harvest_episode_v1, TtsS1CorpusSelectionV1, TtsS1EpisodeDecisionStatsV1,
-        TtsS1FlatScoreV1,
+        corpus_body_v1, harvest_episode_v1, TtsS1AllEpisodeDecisionStatsV1, TtsS1CorpusSelectionV1,
+        TtsS1EpisodeDecisionStatsV1, TtsS1FlatScoreV1,
     };
 
     /// The end-to-end fixture: the in-memory runner-fixed net that
@@ -1983,9 +2213,11 @@ mod tests {
                 truncated_episode_count: u64::from(!natural),
                 episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[episode_decisions])
                     .expect("one episode summarizes"),
-                all_episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[
-                    episode_decisions,
-                ])
+                all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1::summarize_v1(
+                    &[episode_decisions],
+                    u64::from(natural),
+                    u64::from(!natural),
+                )
                 .expect("one episode summarizes"),
             },
         ))
@@ -2151,31 +2383,72 @@ mod tests {
         assert_eq!(cap.s2_workers, 16);
         assert_eq!(cap.cap_worker_hours_milli, 48_000);
         assert!(cap.raw_policy_games_excluded);
-        // The ALL-episodes mean, not the natural-only one, and the
-        // WHOLE-EPISODE mean protocol latency, not the stratified targets'.
+        // EVERY harvested episode is costed, and the population that was
+        // costed is the corpus's own all-episode population.
         assert_eq!(
-            cap.mean_decisions_per_game_milli,
-            corpus.body.all_episode_decisions.mean_decisions_milli
+            cap.estimated_episode_count,
+            corpus.body.all_episode_decisions.episode_count
         );
         assert_eq!(
-            cap.mean_protocol_micros,
-            body.whole_episode_view.mean_protocol_micros
+            cap.natural_terminal_episode_count,
+            corpus
+                .body
+                .all_episode_decisions
+                .natural_terminal_episode_count
         );
+        assert_eq!(
+            cap.truncated_episode_count,
+            corpus.body.all_episode_decisions.truncated_episode_count
+        );
+        assert_eq!(
+            cap.episode_cost_estimates.len() as u64,
+            cap.estimated_episode_count
+        );
+        for (estimate, decision_count) in cap
+            .episode_cost_estimates
+            .iter()
+            .zip(corpus.body.all_episode_decisions.decision_counts.iter())
+        {
+            assert_eq!(estimate.decision_count, *decision_count);
+            assert!(estimate.estimated_micros > 0);
+        }
+        // The curve was fitted to the WHOLE-EPISODE population, which is
+        // the only one that can show per-ordinal growth, and it is
+        // published so the estimate is recomputable from the artifact.
+        assert_eq!(
+            cap.latency_curve.observed_samples,
+            body.whole_episode_view.decisions
+        );
+        assert_eq!(
+            cap.latency_curve.last_observed_ordinal,
+            body.searched_decisions - 1
+        );
+        assert!(cap.latency_curve.extrapolation_slope_micros_per_ordinal >= 1);
+        assert!(!cap.latency_curve.knots.is_empty());
+        // The fit really is monotone, on this real timing data.
+        for ordinal in 1..body.searched_decisions {
+            assert!(
+                cap.latency_curve.latency_at_v1(ordinal)
+                    >= cap.latency_curve.latency_at_v1(ordinal - 1)
+            );
+        }
         assert_eq!(
             cap.projected_elapsed_hours_at_workers_milli,
             cap.projected_worker_hours_milli / 16
         );
         assert_eq!(
             cap.projected_worker_hours_milli,
-            project_s2_worker_hours_milli_v1(
-                cap.mean_decisions_per_game_milli,
-                cap.mean_protocol_micros
-            )
+            project_s2_worker_hours_milli_v1(cap.mean_estimated_episode_micros)
         );
         assert_eq!(
             cap.within_cap,
             cap.projected_worker_hours_milli <= cap.cap_worker_hours_milli
         );
+
+        // The LATENCY verdict is taken from the corpus targets, which is
+        // the population the sketch defines S1 over, and the report says so.
+        assert_eq!(body.verdict_view, TTS_S1_VERDICT_VIEW_V1);
+        assert_eq!(body.verdict_view, "corpus_target_view");
 
         // EVERY searched decision, not only the targets: the corpus
         // targets are a subset of the records now, so these invariants are
@@ -2617,50 +2890,154 @@ mod tests {
         }
     }
 
+    /// A synthetic per-decision sample set with the growth the production
+    /// writer actually exhibits: publication cost rises with the decision
+    /// ordinal, because the whole episode file is republished each time.
+    fn synthetic_curve_samples_v1() -> Vec<(u64, u64)> {
+        (0..100u64)
+            .map(|ordinal| (ordinal, 1_000 + 10 * ordinal))
+            .collect()
+    }
+
     #[test]
-    fn the_compute_cap_projection_is_the_stated_arithmetic_v1() {
-        // 6,144 wrapped games x 300 decisions x 1 s = 1,843,200 seconds of
-        // AGGREGATE work = 512 worker-hours. There is no division by the
-        // worker count: worker-hours are work, not elapsed time. A prior
-        // revision divided by 16 and reported this same configuration as
-        // 32, which is the elapsed time on a 16-worker host and is not the
-        // quantity the 48 worker-hour cap bounds.
-        assert_eq!(
-            project_s2_worker_hours_milli_v1(300_000, 1_000_000),
-            512_000
-        );
-        // The elapsed figure is published beside it, as information.
-        assert_eq!(project_s2_elapsed_hours_milli_v1(512_000), 32_000);
+    fn the_latency_curve_is_monotone_and_never_flat_past_its_evidence_v1() {
+        let curve = TtsS1LatencyCurveV1::fit_v1(&synthetic_curve_samples_v1()).unwrap();
+        assert_eq!(curve.rule, TTS_S1_LATENCY_CURVE_RULE_V1);
+        assert_eq!(curve.observed_samples, 100);
+        assert_eq!(curve.last_observed_ordinal, 99);
+        // The input is already monotone, so the isotonic fit reproduces it
+        // exactly: one knot per ordinal, at that ordinal's own value.
+        assert_eq!(curve.knots.len(), 100);
+        for ordinal in 0..100u64 {
+            assert_eq!(curve.latency_at_v1(ordinal), 1_000 + 10 * ordinal);
+        }
+        // Past the evidence it continues at the steepest fitted slope, and
+        // never flat.
+        assert_eq!(curve.extrapolation_slope_micros_per_ordinal, 10);
+        assert_eq!(curve.latency_at_v1(100), 1_990 + 10);
+        assert_eq!(curve.latency_at_v1(200), 1_990 + 10 * 101);
+        // Monotone everywhere, observed and extrapolated alike.
+        for ordinal in 1..300u64 {
+            assert!(curve.latency_at_v1(ordinal) >= curve.latency_at_v1(ordinal - 1));
+        }
+    }
 
-        // At 1 s per decision the tier is already ten times over the cap.
+    #[test]
+    fn the_latency_curve_pools_adjacent_violators_v1() {
+        // A dip in the middle must be pooled away, not preserved: the fit
+        // is monotone non-decreasing by construction.
+        let samples = vec![(0u64, 100u64), (1, 900), (2, 300), (3, 1_000)];
+        let curve = TtsS1LatencyCurveV1::fit_v1(&samples).unwrap();
+        for ordinal in 1..4u64 {
+            assert!(
+                curve.latency_at_v1(ordinal) >= curve.latency_at_v1(ordinal - 1),
+                "the fit must be non-decreasing at {ordinal}"
+            );
+        }
+        // Ordinals 1 and 2 pool to their mean, 600.
+        assert_eq!(curve.latency_at_v1(1), 600);
+        assert_eq!(curve.latency_at_v1(2), 600);
+        assert_eq!(curve.latency_at_v1(0), 100);
+        assert_eq!(curve.latency_at_v1(3), 1_000);
+        // A wholly flat sample set still extrapolates upward, by the one
+        // micro per ordinal floor.
+        let flat = TtsS1LatencyCurveV1::fit_v1(&[(0, 500), (1, 500), (2, 500)]).unwrap();
+        assert_eq!(flat.extrapolation_slope_micros_per_ordinal, 1);
+        assert!(flat.latency_at_v1(3) > flat.latency_at_v1(2));
+        assert!(TtsS1LatencyCurveV1::fit_v1(&[]).is_none());
+    }
+
+    /// THE CONSERVATISM CLAIM. A truncated episode longer than anything
+    /// replayed must be costed above every replayed episode, because
+    /// publication cost grows with the ordinal and a flat mean would charge
+    /// its long tail at a short episode's average.
+    #[test]
+    fn an_episode_longer_than_any_replayed_one_is_costed_above_them_all_v1() {
+        let curve = TtsS1LatencyCurveV1::fit_v1(&synthetic_curve_samples_v1()).unwrap();
+        // The replayed episodes are all at most as long as the evidence.
+        let replayed = [40u64, 75, 100];
+        let longest_replayed = replayed
+            .iter()
+            .map(|count| curve.episode_cost_micros_v1(*count).0)
+            .max()
+            .unwrap();
+        // A truncated episode that ran into the decision cap, far beyond
+        // anything observed.
+        let (truncated_cost, extrapolated) = curve.episode_cost_micros_v1(1_024);
         assert!(
-            project_s2_worker_hours_milli_v1(300_000, 1_000_000)
-                > TTS_S1_S2_COMPUTE_CAP_WORKER_HOURS_MILLI_V1,
-            "512 worker-hours must land outside the 48 worker-hour cap"
+            truncated_cost > longest_replayed,
+            "the truncated episode must cost more than every replayed one"
         );
-        // 6,144 x 300 x 90 ms = 46.08 worker-hours, just inside it.
-        let inside_micros = 90_000;
+        assert_eq!(extrapolated, 1_024 - 100);
+        // And strictly more than a flat-mean estimate would have charged:
+        // the mean observed latency times its length.
+        let flat_mean = u128::from(
+            synthetic_curve_samples_v1()
+                .iter()
+                .map(|(_, micros)| micros)
+                .sum::<u64>()
+                / 100,
+        );
+        assert!(
+            truncated_cost > flat_mean * 1_024,
+            "the curve must charge the long tail above a flat mean"
+        );
+        // Cost is monotone in episode length.
+        assert!(curve.episode_cost_micros_v1(200).0 > curve.episode_cost_micros_v1(199).0);
+    }
+
+    #[test]
+    fn the_compute_cap_projection_costs_every_harvested_episode_v1() {
+        // A flat 1 s curve over 300 ordinals, so the arithmetic is
+        // checkable by hand: each 300-decision episode costs 300 s, and
+        // 6,144 games x 300 s = 1,843,200 s = 512 worker-hours. No
+        // division by the worker count: worker-hours are work.
+        let samples: Vec<(u64, u64)> = (0..300u64).map(|ordinal| (ordinal, 1_000_000)).collect();
+        let population = TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&[300], 1, 0).unwrap();
+        let projection = compute_cap_projection_v1(&samples, &population).unwrap();
+        assert_eq!(projection.mean_estimated_episode_micros, 300_000_000);
+        assert_eq!(projection.projected_worker_hours_milli, 512_000);
+        assert_eq!(projection.projected_elapsed_hours_at_workers_milli, 32_000);
+        assert!(!projection.within_cap);
+        assert_eq!(projection.s2_wrapped_games, 6_144);
+        assert_eq!(projection.s2_workers, 16);
+        assert_eq!(projection.cap_worker_hours_milli, 48_000);
+        assert!(projection.raw_policy_games_excluded);
+        assert_eq!(projection.extrapolated_ordinals, 0);
+
+        // EVERY harvested episode is costed individually, natural and
+        // truncated alike, and the truncated one is charged for the
+        // ordinals nobody replayed.
+        let population =
+            TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&[100, 300, 1_024], 2, 1).unwrap();
+        let projection = compute_cap_projection_v1(&samples, &population).unwrap();
+        assert_eq!(projection.estimated_episode_count, 3);
+        assert_eq!(projection.natural_terminal_episode_count, 2);
+        assert_eq!(projection.truncated_episode_count, 1);
+        assert_eq!(projection.episode_cost_estimates.len(), 3);
+        assert_eq!(projection.episode_cost_estimates[2].decision_count, 1_024);
         assert_eq!(
-            project_s2_worker_hours_milli_v1(300_000, inside_micros),
-            46_080
+            projection.episode_cost_estimates[2].extrapolated_ordinals,
+            1_024 - 300
         );
-
-        let stats = TtsS1EpisodeDecisionStatsV1::summarize_v1(&[300]).unwrap();
-        let inside = compute_cap_projection_v1(&stats, 7, 2, inside_micros, 80_000, 70_000);
-        assert!(inside.within_cap);
-        assert_eq!(inside.projected_worker_hours_milli, 46_080);
-        assert_eq!(inside.projected_elapsed_hours_at_workers_milli, 2_880);
-        assert_eq!(inside.s2_wrapped_games, 6_144);
-        assert_eq!(inside.s2_workers, 16);
-        assert!(inside.raw_policy_games_excluded);
-        assert_eq!(inside.mean_decision_micros, 80_000);
-        assert_eq!(inside.mean_search_micros, 70_000);
-        assert_eq!(inside.natural_terminal_episode_count, 7);
-        assert_eq!(inside.truncated_episode_count, 2);
-
-        let outside = compute_cap_projection_v1(&stats, 7, 2, 1_000_000, 900_000, 800_000);
-        assert!(!outside.within_cap);
-        assert_eq!(outside.projected_worker_hours_milli, 512_000);
+        assert_eq!(projection.extrapolated_ordinals, 1_024 - 300);
+        // The longest episode is the most expensive, and it is the one that
+        // sets the maximum.
+        assert_eq!(
+            projection.max_estimated_episode_micros,
+            projection.episode_cost_estimates[2].estimated_micros
+        );
+        // The curve and its knots are published, so the estimate is
+        // recomputable from the artifact alone.
+        assert!(!projection.latency_curve.knots.is_empty());
+        assert_eq!(projection.latency_curve.rule, TTS_S1_LATENCY_CURVE_RULE_V1);
+        assert!(
+            projection
+                .latency_curve
+                .extrapolation_slope_micros_per_ordinal
+                >= 1
+        );
+        assert!(compute_cap_projection_v1(&[], &population).is_none());
     }
 
     fn synthetic_record_v1(ordinal: u64, previous: String) -> TtsS1ReplayDecisionRecordV1 {
@@ -2776,8 +3153,9 @@ mod tests {
             max_episodes: 8,
             replayed_whole_corpus: true,
             percentile_rule: TTS_S1_PERCENTILE_RULE_V1.to_owned(),
-            whole_episode_view: view.clone(),
-            corpus_target_view: view,
+            verdict_view: TTS_S1_VERDICT_VIEW_V1.to_owned(),
+            corpus_target_view: view.clone(),
+            whole_episode_view: view,
             slo_micros: slo_micros_v1(),
             hard_timeout_micros: hard_timeout_micros_v1(),
             diagnostics_episode_files: vec![TtsS1DiagnosticsEpisodeFileV1 {
@@ -2788,13 +3166,10 @@ mod tests {
                 decision_record_count: record_count,
             }],
             compute_cap: compute_cap_projection_v1(
-                &TtsS1EpisodeDecisionStatsV1::summarize_v1(&[300]).unwrap(),
-                1,
-                0,
-                2_400,
-                2_000,
-                1_000,
-            ),
+                &synthetic_curve_samples_v1(),
+                &TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&[300], 1, 0).unwrap(),
+            )
+            .unwrap(),
             verdict: TtsS1TierVerdictV1::Feasible,
             verdict_reason: "synthetic".to_owned(),
             chain_genesis_sha256: TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned(),
@@ -2848,22 +3223,20 @@ mod tests {
         let borrowed: Vec<&TtsS1ReplayDecisionRecordV1> = slow.decisions.iter().collect();
         let view = latency_view_v1(&borrowed).unwrap();
         let searched = slow.decisions.len() as u64;
+        let _ = searched;
         slow.compute_cap = compute_cap_projection_v1(
-            &TtsS1EpisodeDecisionStatsV1::summarize_v1(&[300]).unwrap(),
-            1,
-            0,
-            view.mean_protocol_micros,
-            view.decision_wall_time.total_micros / searched,
-            view.search_wall_time.total_micros / searched,
-        );
+            &synthetic_curve_samples_v1(),
+            &TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&[300], 1, 0).unwrap(),
+        )
+        .unwrap();
         let (verdict, reason) = verdict_v1(
             view.p99_protocol_ceiling_status,
             view.max_protocol_ceiling_status,
             slow.compute_cap.within_cap,
             true,
         );
-        slow.whole_episode_view = view.clone();
-        slow.corpus_target_view = view;
+        slow.corpus_target_view = view.clone();
+        slow.whole_episode_view = view;
         slow.verdict = verdict;
         slow.verdict_reason = reason;
 

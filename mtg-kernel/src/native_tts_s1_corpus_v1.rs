@@ -403,16 +403,16 @@ pub fn terminal_classification_tag_v1(classification: TerminalClassificationV1) 
 /// why that makes the projection conservative for a wrapped agent that
 /// occupies one seat.
 ///
-/// TWO of these are published, and they are not interchangeable.
-/// `episode_decisions` covers NATURAL-terminal episodes only and is the
+/// This type is the NATURAL-TERMINAL population only, and its
+/// `natural_terminal_episode_count` means exactly what it says. It is the
 /// context for the stratified corpus, which is drawn from those episodes
-/// alone. `all_episode_decisions` covers natural AND truncated episodes,
-/// and is what the compute projection multiplies by: a truncated episode
-/// is one that ran into the decision cap, which means it is among the
-/// LONGEST games played, and excluding exactly the longest games from a
-/// cost projection biases that projection downward. Truncated episodes
-/// still contribute no candidates, because their tail is shaped by the cap
-/// rather than by the game; the two uses are simply different questions.
+/// alone.
+///
+/// The natural-plus-truncated population is a DIFFERENT type,
+/// [`TtsS1AllEpisodeDecisionStatsV1`], with its own `episode_count` and its
+/// own natural and truncated counts. Reusing one field name for two
+/// populations is how a reader ends up believing a truncated-inclusive
+/// total is a natural-terminal count.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TtsS1EpisodeDecisionStatsV1 {
@@ -453,6 +453,79 @@ impl TtsS1EpisodeDecisionStatsV1 {
     }
 }
 
+/// Decisions per episode over EVERY harvested episode, natural and
+/// truncated.
+///
+/// A separate type from [`TtsS1EpisodeDecisionStatsV1`] rather than the same
+/// one with a differently-meant field: this population's size is
+/// `episode_count`, and the natural and truncated counts that make it up
+/// are published separately.
+///
+/// Truncated episodes are in here precisely because they ran into the
+/// decision cap, which makes them among the LONGEST games played, and a
+/// cost estimate that dropped exactly the longest games would be biased
+/// downward. They still contribute no corpus candidates, because their tail
+/// is shaped by the cap rather than by the game; the two uses are different
+/// questions.
+///
+/// `decision_counts` is the whole population, not a summary: the replay's
+/// compute-cap estimator costs EVERY harvested episode individually against
+/// a fitted per-ordinal latency curve, so it needs each episode's length,
+/// not their mean.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1AllEpisodeDecisionStatsV1 {
+    /// Natural plus truncated. This is the population size.
+    pub episode_count: u64,
+    pub natural_terminal_episode_count: u64,
+    pub truncated_episode_count: u64,
+    pub total_decisions: u64,
+    /// Mean decisions per episode times 1,000, floored. Context only: the
+    /// compute projection does not multiply by it.
+    pub mean_decisions_milli: u64,
+    pub p50_decisions: u64,
+    pub p99_decisions: u64,
+    pub max_decisions: u64,
+    pub percentile_rule: String,
+    /// One entry per harvested episode, in ascending episode id.
+    pub decision_counts: Vec<u64>,
+}
+
+impl TtsS1AllEpisodeDecisionStatsV1 {
+    /// Summarizes the whole harvested population. `counts` is in ascending
+    /// episode id and is republished verbatim.
+    pub fn summarize_v1(
+        counts: &[u64],
+        natural_terminal_episode_count: u64,
+        truncated_episode_count: u64,
+    ) -> Option<Self> {
+        if counts.is_empty()
+            || counts.len() as u64
+                != natural_terminal_episode_count.checked_add(truncated_episode_count)?
+        {
+            return None;
+        }
+        let mut sorted = counts.to_vec();
+        sorted.sort_unstable();
+        let episode_count = sorted.len() as u64;
+        let total = sorted
+            .iter()
+            .fold(0u64, |running, value| running.saturating_add(*value));
+        Some(Self {
+            episode_count,
+            natural_terminal_episode_count,
+            truncated_episode_count,
+            total_decisions: total,
+            mean_decisions_milli: total.saturating_mul(1_000) / episode_count,
+            p50_decisions: nearest_rank_percentile_v1(&sorted, 50)?,
+            p99_decisions: nearest_rank_percentile_v1(&sorted, 99)?,
+            max_decisions: *sorted.last()?,
+            percentile_rule: TTS_S1_NEAREST_RANK_PERCENTILE_RULE_V1.to_owned(),
+            decision_counts: counts.to_vec(),
+        })
+    }
+}
+
 /// Everything the corpus digest covers. Split out from the envelope so
 /// `corpus_sha256` can commit to the corpus without committing to itself.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -480,11 +553,10 @@ pub struct TtsS1CorpusBodyV1 {
     /// Decisions per natural-terminal episode: context for the stratified
     /// corpus, which is drawn from those episodes alone.
     pub episode_decisions: TtsS1EpisodeDecisionStatsV1,
-    /// Decisions per episode over natural AND truncated episodes. THIS is
-    /// what the compute-cap projection multiplies by; see the statistics
-    /// type's own docs for why excluding truncated episodes would bias the
-    /// projection downward by dropping the longest games.
-    pub all_episode_decisions: TtsS1EpisodeDecisionStatsV1,
+    /// Every harvested episode, natural and truncated, with each one's own
+    /// decision count. The replay's compute-cap estimator costs each of
+    /// them individually; see the type's own docs.
+    pub all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1,
     /// Every episode that contributes at least one selected decision, with
     /// its whole action sequence, so the replay can run it end to end.
     pub episodes: Vec<TtsS1CorpusEpisodeV1>,
@@ -933,7 +1005,7 @@ pub(crate) struct TtsS1CorpusSelectionV1 {
     pub(crate) natural_terminal_episode_count: u64,
     pub(crate) truncated_episode_count: u64,
     pub(crate) episode_decisions: TtsS1EpisodeDecisionStatsV1,
-    pub(crate) all_episode_decisions: TtsS1EpisodeDecisionStatsV1,
+    pub(crate) all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1,
 }
 
 /// Plays one seeded self-play episode with both seats on `scorer` and
@@ -1109,8 +1181,12 @@ pub(crate) fn harvest_and_select_v1(
     }
     let episode_decisions = TtsS1EpisodeDecisionStatsV1::summarize_v1(&natural_decision_counts)
         .ok_or(TtsS1CorpusErrorV1::NoNaturalTerminalEpisode)?;
-    let all_episode_decisions = TtsS1EpisodeDecisionStatsV1::summarize_v1(&all_decision_counts)
-        .ok_or(TtsS1CorpusErrorV1::NoNaturalTerminalEpisode)?;
+    let all_episode_decisions = TtsS1AllEpisodeDecisionStatsV1::summarize_v1(
+        &all_decision_counts,
+        natural_terminal_episode_count,
+        truncated_episode_count,
+    )
+    .ok_or(TtsS1CorpusErrorV1::NoNaturalTerminalEpisode)?;
     let candidate_count = candidates.len() as u64;
     let chosen = select_tts_s1_corpus_v1(&candidates)?;
     let mut decisions = Vec::with_capacity(chosen.len());
@@ -1417,6 +1493,26 @@ mod tests {
     }
 
     #[test]
+    fn the_all_episode_statistics_name_their_own_population_v1() {
+        // Nine natural plus one truncated. The population size is
+        // `episode_count`; the natural count is its own field and is NOT
+        // the total, which is the confusion this type exists to remove.
+        let counts = [180u64, 220, 240, 260, 280, 300, 320, 340, 360, 1_024];
+        let stats = TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&counts, 9, 1).unwrap();
+        assert_eq!(stats.episode_count, 10);
+        assert_eq!(stats.natural_terminal_episode_count, 9);
+        assert_eq!(stats.truncated_episode_count, 1);
+        assert_eq!(stats.total_decisions, counts.iter().sum::<u64>());
+        assert_eq!(stats.max_decisions, 1_024);
+        // The whole population is republished, in the order given, because
+        // the replay's cost estimator costs each episode individually.
+        assert_eq!(stats.decision_counts, counts.to_vec());
+        // The counts and the natural/truncated split must agree.
+        assert!(TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&counts, 9, 2).is_none());
+        assert!(TtsS1AllEpisodeDecisionStatsV1::summarize_v1(&[], 0, 0).is_none());
+    }
+
+    #[test]
     fn episode_decision_statistics_are_exact_on_a_known_set_v1() {
         // 1..=100 decisions across 100 episodes: mean 50.5, p50 50, p99 99.
         let counts: Vec<u64> = (1..=100).collect();
@@ -1621,9 +1717,11 @@ mod tests {
                 180, 220, 240, 260, 280, 300, 320, 340, 360,
             ])
             .expect("nine episodes summarize"),
-            all_episode_decisions: TtsS1EpisodeDecisionStatsV1::summarize_v1(&[
-                180, 220, 240, 260, 280, 300, 320, 340, 360, 1_024,
-            ])
+            all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1::summarize_v1(
+                &[180, 220, 240, 260, 280, 300, 320, 340, 360, 1_024],
+                9,
+                1,
+            )
             .expect("ten episodes summarize"),
             // One record per episode the synthetic pool draws from, each
             // an all-zero sequence, which is exactly what the pool's own
