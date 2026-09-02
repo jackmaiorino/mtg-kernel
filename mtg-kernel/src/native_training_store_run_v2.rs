@@ -1942,6 +1942,17 @@ impl TrainRunTopologyV2 {
 /// validation of its own: the caller still passes the result through
 /// [`validate_train_run_record_v2`], which is what actually authorizes the
 /// record.
+///
+/// Gated exactly like its only caller, `native_cycle4_run_record_v1`: a build
+/// that cannot compile the record builder has nothing to refresh, and an
+/// ungated helper would be dead code in the default workspace lint gate.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub(crate) fn refresh_derived_fields_v2(record: &mut TrainRunV2) -> Result<()> {
     let requested_episode_count = checked_u63_mul(
         record.schedule.batch_episodes,
@@ -4380,14 +4391,28 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_
 /// The frozen ladder pool every ladder-identity fixture uses, exposed so
 /// sibling modules' tests can compose a ladder-tuple parent record without
 /// restating the pool's pinned weights and identities.
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub(crate) fn test_fixture_ladder_pool_v2() -> OpponentLadderPoolContractV1 {
     tests::valid_ladder_pool_fixture()
 }
 
 /// A shape-valid `opponent_ladder_initialization` section, exposed for the
 /// same reason as [`test_fixture_ladder_pool_v2`].
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
 pub(crate) fn test_fixture_ladder_initialization_v1() -> OpponentLadderInitializationContractV1 {
     tests::population_parent_initialization_fixture()
 }

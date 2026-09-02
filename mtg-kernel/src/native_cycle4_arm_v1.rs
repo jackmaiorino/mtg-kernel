@@ -109,7 +109,6 @@ use crate::native_training_store_resume_v2::{
 use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::{
     decode_train_run_v2, TrainerLossIdentityV2, ValidatedTrainRunV2,
-    CUDA_RUNTIME_TUPLE_IDENTITY_V2, CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
 };
 use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
 use crate::native_training_store_update_group_v4::{
@@ -1525,10 +1524,13 @@ struct Cycle4ArmContractV1 {
     not(debug_assertions)
 ))]
 fn require_run_record_is_this_build_v1(run: &ValidatedTrainRunV2) -> Result<()> {
+    // Fully-qualified rather than imported at module scope: these two are
+    // used only here, and a module-scope import would be unused in a build
+    // without production capture.
     crate::native_store_production_capture_v2::require_run_record_matches_current_launcher_build_v2(
         run,
-        CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
-        CUDA_RUNTIME_TUPLE_IDENTITY_V2,
+        crate::native_training_store_run_v2::CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1,
+        crate::native_training_store_run_v2::CUDA_RUNTIME_TUPLE_IDENTITY_V2,
         crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1,
     )
     .map_err(|error| {
