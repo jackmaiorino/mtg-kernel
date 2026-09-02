@@ -29,7 +29,10 @@ negative S1 result and still completes; only a real error (a missing input,
 a crash, a failed publication) writes RUN_FAILED.
 
 -DryRun validates every input, writes the provenance record, prints the
-exact command line of every child it would run, and launches nothing.
+exact command line of every child it would run, and launches nothing. The
+shard commands are printed at the REQUESTED -ShardCount, which is the only
+count knowable before the corpus exists; a real launch can only run fewer,
+and says so when it does.
 -SkipHostAssertions additionally skips the git and toolchain assertions and
 is accepted ONLY together with -DryRun, so a real launch can never quietly
 skip them.
@@ -41,6 +44,21 @@ every decision and a late decision's publication cost therefore depends on
 the whole history behind it. A tier is consequently far more work than the
 512-decision corpus suggests, which is why --max-episodes is passed as a
 fail-closed guard.
+
+SHARDING. -ShardCount K runs K replay processes per tier CONCURRENTLY, each
+owning the contributing episodes whose position in the corpus's episode
+order is its index modulo K, and then runs one merge process that publishes
+the tier report. The split is execution only: the merge recomputes every
+statistic over the union through the same code the unsharded replay
+finalizes through, so the tier report is the one a single process would have
+published. Every tier goes through the shard-and-merge path, K = 1 included,
+so there is one code path here rather than two that could drift.
+
+The effective per-tier shard count is min(-ShardCount, the planned
+contributing episodes), because a shard owning no episode is refused by the
+replay bin rather than published empty. The corpus manifest states its
+contributing episode population, so both the clamp and the expected per-tier
+cost are known before the first search runs and are printed.
 
 FORMAL versus SMOKE. A run is FORMAL only when it replays the WHOLE frozen
 corpus (no -LimitEpisodes) across the WHOLE pre-registered four-tier ladder,
@@ -89,6 +107,12 @@ param(
     # half and leave its later decisions with a publication history no panel
     # would ever produce.
     [uint64]$LimitEpisodes = 0,
+    # How many replay processes run CONCURRENTLY per tier. The tier report
+    # is identical for every value of this: it selects how the episodes are
+    # divided between processes and nothing else. Clamped down to the
+    # planned contributing episode count, because a shard owning no episode
+    # is refused rather than published empty.
+    [ValidateRange(1, 64)][int]$ShardCount = 8,
     [string]$RepoRoot,
     [switch]$DryRun,
     [switch]$SkipHostAssertions
@@ -105,10 +129,11 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\regularized_continuation_retest_v1\common.ps1')
 
 # The pinned report contract (the compute-cap rule, the NESTED latency-curve
-# rule, and the gating view) plus the validation that enforces it. Kept in a
+# rule, and the gating view) plus the validation that enforces it, and the
+# shared child-process primitives the shard fan-out is built on. Kept in a
 # file of its own so this launcher and the dry-run tests exercise the same
-# constants and the same check, rather than one asserting what the other
-# merely describes.
+# constants, the same check and the same process code, rather than one
+# asserting what the other merely describes.
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $script:TtsS1Ladder = @('t512', 't2048', 't8192', 't32768')
@@ -244,93 +269,6 @@ function Get-TtsS1ToolchainRecord {
     }
 }
 
-function ConvertTo-TtsS1WindowsArgument {
-    # Quotes ONE argument for the Windows command-line parser
-    # (CommandLineToArgvW), which is what a Rust `std::env::args_os` reads.
-    #
-    # PowerShell 5.1 runs on .NET Framework, where ProcessStartInfo has no
-    # ArgumentList: the only channel to a child is a single command-line
-    # STRING, and Start-Process joins an array into one with plain spaces
-    # and no quoting at all. A store root or evidence root containing a
-    # space therefore reaches the child as two arguments, and the bin's
-    # strict pair parser rejects the launch (or, worse, pairs the wrong
-    # flag with the wrong value). So the quoting is done here, once, and
-    # both the PLANNED command line and the executed one go through it, so
-    # what a dry run prints is what a real launch runs.
-    #
-    # The rule is the documented MSVC one: backslashes are literal except
-    # when they immediately precede a quote, where each must be doubled,
-    # and a run of backslashes at the end of a quoted argument must be
-    # doubled so it does not escape the closing quote.
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
-    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
-    $builder = New-Object System.Text.StringBuilder
-    [void]$builder.Append('"')
-    $backslashes = 0
-    foreach ($char in $Value.ToCharArray()) {
-        if ($char -ceq '\') {
-            $backslashes++
-            continue
-        }
-        if ($char -ceq '"') {
-            [void]$builder.Append('\' * (2 * $backslashes + 1))
-            [void]$builder.Append('"')
-            $backslashes = 0
-            continue
-        }
-        if ($backslashes -gt 0) {
-            [void]$builder.Append('\' * $backslashes)
-            $backslashes = 0
-        }
-        [void]$builder.Append($char)
-    }
-    if ($backslashes -gt 0) { [void]$builder.Append('\' * (2 * $backslashes)) }
-    [void]$builder.Append('"')
-    return $builder.ToString()
-}
-
-function Format-TtsS1CommandLine {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments
-    )
-    $quoted = @($Arguments | ForEach-Object { ConvertTo-TtsS1WindowsArgument -Value $_ })
-    return (@(ConvertTo-TtsS1WindowsArgument -Value $FilePath) + $quoted) -join ' '
-}
-
-function Format-TtsS1ArgumentString {
-    # The child's argument string alone, without the executable, which is
-    # what Start-Process wants in -ArgumentList.
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments)
-    return (@($Arguments | ForEach-Object { ConvertTo-TtsS1WindowsArgument -Value $_ }) -join ' ')
-}
-
-function Invoke-TtsS1Process {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][string]$StdoutPath,
-        [Parameter(Mandatory = $true)][string]$StderrPath
-    )
-    foreach ($path in @($StdoutPath, $StderrPath)) {
-        $directory = Split-Path -Parent $path
-        if (-not [string]::IsNullOrWhiteSpace($directory)) {
-            New-Item -ItemType Directory -Force -Path $directory | Out-Null
-        }
-        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
-    }
-    # ONE already-quoted string, not an array: Start-Process joins an array
-    # with unquoted spaces. See ConvertTo-TtsS1WindowsArgument.
-    $argumentString = Format-TtsS1ArgumentString -Arguments $Arguments
-    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentString -NoNewWindow -PassThru `
-        -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
-    # WaitForExit() then Refresh(), following the cycle-4 launcher: the
-    # parameterless overload alone can return before ExitCode is populated.
-    $process.WaitForExit()
-    $process.Refresh()
-    return [int]$process.ExitCode
-}
-
 function Write-TtsS1Marker {
     param(
         [Parameter(Mandatory = $true)][string]$AttemptRoot,
@@ -419,39 +357,86 @@ $corpusArgs = $authorityArgs + @(
     '--output', $corpusPath
 )
 
-$tierPlans = @()
-foreach ($tier in $Tiers) {
-    $reportPath = Join-Path $attemptRoot ("tier-{0}.report.json" -f $tier)
-    # One diagnostics directory per tier. The production model-guided
-    # diagnostics writer publishes this tier's V4 episode files there, and
-    # the replay reads the protocol latency the SLO is classified on back
-    # out of them; sharing one directory across tiers would mix two tiers'
-    # episode files under the same names.
-    $diagnosticsDir = Join-Path $attemptRoot ("tier-{0}.diagnostics" -f $tier)
-    $replayArgs = $authorityArgs + @(
-        '--corpus', $corpusPath,
-        '--tier', $tier,
-        '--seed-block', [string]$ReplaySeedBlock,
-        '--diagnostics-dir', $diagnosticsDir,
-        # The guard is the corpus's own episode count, which this launcher
-        # is the one that chose. Contributing episodes can only be a subset
-        # of the episodes played, so this is a true upper bound, and a
-        # corpus built by someone else with more episodes is refused rather
-        # than run for days.
-        '--max-episodes', [string]$Episodes,
+function New-TtsS1TierPlan {
+    # Every child one tier needs: K shard invocations and the merge that
+    # turns their reports into the tier report.
+    #
+    # It is a function because the shard count is known TWICE and can
+    # differ: once at planning time, from -ShardCount, for the provenance
+    # record and the dry run; and once after the corpus exists, clamped to
+    # the planned contributing episodes. Building the plan by two separate
+    # pieces of code is how the printed command and the executed one drift.
+    param(
+        [Parameter(Mandatory = $true)][string]$Tier,
+        [Parameter(Mandatory = $true)][int]$TierShardCount
+    )
+    $reportPath = Join-Path $attemptRoot ("tier-{0}.report.json" -f $Tier)
+    # One diagnostics tree per tier, and one directory per SHARD inside it.
+    # The production model-guided diagnostics writer publishes this tier's
+    # V4 episode files there, and the replay reads the protocol latency the
+    # SLO is classified on back out of them; sharing one directory across
+    # tiers would mix two tiers' episode files under the same names, and
+    # sharing one across shards would have two processes writing the same
+    # scorer-shaped response file.
+    $diagnosticsRoot = Join-Path $attemptRoot ("tier-{0}.diagnostics" -f $Tier)
+    $shardRoot = Join-Path $attemptRoot ("tier-{0}.shards" -f $Tier)
+    $shards = @()
+    for ($index = 0; $index -lt $TierShardCount; $index++) {
+        # The same name the merge derives on the Rust side from the index
+        # and the count; see tts_s1_shard_report_file_name_v1.
+        $shardReportPath = Join-Path $shardRoot ("shard-{0:0000}-of-{1:0000}.report.json" -f $index, $TierShardCount)
+        $shardDiagnostics = Join-Path $diagnosticsRoot ("shard-{0:0000}" -f $index)
+        $shardArgs = $authorityArgs + @(
+            '--corpus', $corpusPath,
+            '--tier', $Tier,
+            '--seed-block', [string]$ReplaySeedBlock,
+            '--diagnostics-dir', $shardDiagnostics,
+            # The guard is the corpus's own episode count, which this
+            # launcher is the one that chose. Contributing episodes can
+            # only be a subset of the episodes played, so this is a true
+            # upper bound, and a corpus built by someone else with more
+            # episodes is refused rather than run for days. It is the WHOLE
+            # run's bound, not the shard's: the guard is about the corpus.
+            '--max-episodes', [string]$Episodes,
+            '--output', $shardReportPath,
+            '--shard-index', [string]$index,
+            '--shard-count', [string]$TierShardCount
+        )
+        if ($LimitEpisodes -gt 0) {
+            $shardArgs += @('--limit-episodes', [string]$LimitEpisodes)
+        }
+        $shards += [pscustomobject]@{
+            index = $index
+            report_path = $shardReportPath
+            diagnostics_dir = $shardDiagnostics
+            stdout_path = Join-Path $attemptRoot ("tier-{0}.shard-{1:0000}.stdout.txt" -f $Tier, $index)
+            stderr_path = Join-Path $attemptRoot ("tier-{0}.shard-{1:0000}.stderr.txt" -f $Tier, $index)
+            arguments = $shardArgs
+            command_line = Format-TtsS1CommandLine -FilePath $ReplayExecutable -Arguments $shardArgs
+        }
+    }
+    $mergeArgs = @(
+        '--merge-shards', $shardRoot,
+        '--shard-count', [string]$TierShardCount,
         '--output', $reportPath
     )
-    if ($LimitEpisodes -gt 0) {
-        $replayArgs += @('--limit-episodes', [string]$LimitEpisodes)
-    }
-    $tierPlans += [pscustomobject]@{
-        tier = $tier
+    return [pscustomobject]@{
+        tier = $Tier
+        shard_count = $TierShardCount
         report_path = $reportPath
-        diagnostics_dir = $diagnosticsDir
-        arguments = $replayArgs
-        command_line = Format-TtsS1CommandLine -FilePath $ReplayExecutable -Arguments $replayArgs
+        shard_root = $shardRoot
+        diagnostics_root = $diagnosticsRoot
+        shards = $shards
+        merge_arguments = $mergeArgs
+        merge_command_line = Format-TtsS1CommandLine -FilePath $ReplayExecutable -Arguments $mergeArgs
+        merge_stdout_path = Join-Path $attemptRoot ("tier-{0}.merge.stdout.txt" -f $Tier)
+        merge_stderr_path = Join-Path $attemptRoot ("tier-{0}.merge.stderr.txt" -f $Tier)
     }
 }
+
+# Planned at the REQUESTED shard count. The effective count is settled
+# after the corpus exists and can only be smaller; see the clamp below.
+$plannedTierPlans = @($Tiers | ForEach-Object { New-TtsS1TierPlan -Tier $_ -TierShardCount $ShardCount })
 
 # FORMAL versus SMOKE, decided from the inputs before anything runs. A
 # formal run is the whole corpus across the whole pre-registered ladder;
@@ -488,25 +473,37 @@ $provenance = [ordered]@{
     limit_episodes = $LimitEpisodes
     max_episodes = $Episodes
     formal_ladder = $isFormalLadder
+    shard_count_requested = $ShardCount
+    # The effective per-tier count is settled once the corpus states its
+    # contributing episode population, and can only be smaller. The
+    # commands below are stated at the REQUESTED count, so a dry run at a
+    # count the corpus cannot supply prints more shard commands than a real
+    # launch would run; nothing else about them changes.
+    shard_count_rule = 'effective-per-tier-shard-count-is-min-of-requested-and-planned-contributing-episodes/v1'
+    shard_assignment_rule = $script:TtsS1ShardAssignmentRule
     slo_seconds = $script:TtsS1SloSeconds
     hard_timeout_seconds = $script:TtsS1HardTimeoutSeconds
     pinned_contract = Get-TtsS1PinnedContract
     planned_corpus_command = Format-TtsS1CommandLine -FilePath $CorpusExecutable -Arguments $corpusArgs
-    planned_tier_commands = @($tierPlans | ForEach-Object { $_.command_line })
+    planned_tier_shard_commands = @($plannedTierPlans | ForEach-Object { $_.shards } | ForEach-Object { $_.command_line })
+    planned_tier_merge_commands = @($plannedTierPlans | ForEach-Object { $_.merge_command_line })
 }
 Write-TtsS1JsonFile -Value $provenance -Path (Join-Path $attemptRoot 'provenance.json')
 
 if ($DryRun) {
-    Write-Output "DRY RUN attempt_root=$attemptRoot"
+    Write-Output "DRY RUN attempt_root=$attemptRoot shard_count_requested=$ShardCount"
     Write-Output $provenance.planned_corpus_command
-    foreach ($line in $provenance.planned_tier_commands) { Write-Output $line }
+    foreach ($line in $provenance.planned_tier_shard_commands) { Write-Output $line }
+    foreach ($line in $provenance.planned_tier_merge_commands) { Write-Output $line }
     Write-TtsS1JsonFile -Value ([ordered]@{
         schema = 'mtg-kernel-tts-s1-summary/v1'
         status = 'DRY_RUN_PLANNED'
         attempt_root = $attemptRoot
         tiers = $Tiers
+        shard_count_requested = $ShardCount
         planned_corpus_command = $provenance.planned_corpus_command
-        planned_tier_commands = $provenance.planned_tier_commands
+        planned_tier_shard_commands = $provenance.planned_tier_shard_commands
+        planned_tier_merge_commands = $provenance.planned_tier_merge_commands
     }) -Path (Join-Path $attemptRoot 'result.json')
     exit 0
 }
@@ -524,10 +521,101 @@ try {
     }
     $corpus = Read-TtsS1Json -Path $corpusPath
     $corpusRecord = Get-TtsS1FileRecord -Path $corpusPath
-    Write-Output "TTS_S1_CORPUS corpus_sha256=$($corpus.corpus_sha256) decisions=$(@($corpus.body.decisions).Count) contributing_episodes=$(@($corpus.body.episodes).Count) natural_episodes=$($corpus.body.natural_terminal_episode_count) truncated_episodes=$($corpus.body.truncated_episode_count)"
+    Write-Output "TTS_S1_CORPUS corpus_sha256=$($corpus.corpus_sha256) decisions=$(@($corpus.body.decisions).Count) contributing_episodes=$($corpus.body.contributing_episode_count) contributing_episode_decisions=$($corpus.body.contributing_episode_decisions) natural_episodes=$($corpus.body.natural_terminal_episode_count) truncated_episodes=$($corpus.body.truncated_episode_count)"
+    if ([uint64]$corpus.body.contributing_episode_count -ne [uint64]@($corpus.body.episodes).Count) {
+        throw "the corpus states $($corpus.body.contributing_episode_count) contributing episodes but carries $(@($corpus.body.episodes).Count)"
+    }
 }
 catch {
     Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step 'corpus' -Detail $_.Exception.Message
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# 1b. Size the run BEFORE the first search, from the corpus's own stated
+#     contributing population.
+#
+#     THE COST IS PRINTED IN DECISIONS, not in seconds, and deliberately: a
+#     per-decision second count is a property of the host and the tier, not
+#     of this launcher, and printing an invented one would be worse than
+#     printing none. What is published is the number of decision searches
+#     each tier owes and the same number weighted by the tier's transition
+#     budget relative to t512, which is the ratio the work actually scales
+#     by, plus the SLOWEST shard's share, which is what elapsed time
+#     tracks once K processes run at once. An operator multiplies by a
+#     measured per-decision cost.
+# ---------------------------------------------------------------------------
+$tierCostEstimates = @()
+$tierPlans = @()
+$effectiveShardCount = $ShardCount
+$plannedEpisodeCount = 0
+$plannedDecisions = [uint64]0
+$maxShardEpisodes = [uint64]0
+$maxShardDecisions = [uint64]0
+try {
+    $episodeDecisionCounts = @($corpus.body.episodes | ForEach-Object { [uint64]$_.decision_count })
+    $plannedEpisodeCount = $episodeDecisionCounts.Count
+    if ($LimitEpisodes -gt 0 -and [uint64]$LimitEpisodes -lt [uint64]$plannedEpisodeCount) {
+        $plannedEpisodeCount = [int]$LimitEpisodes
+    }
+    if ($plannedEpisodeCount -lt 1) {
+        throw 'the corpus contributes no episode to replay'
+    }
+    $plannedEpisodeDecisions = @($episodeDecisionCounts | Select-Object -First $plannedEpisodeCount)
+    foreach ($count in $plannedEpisodeDecisions) { $plannedDecisions += [uint64]$count }
+    # A shard owning no episode is refused by the replay bin, so the fan-out
+    # is clamped to what the corpus can supply rather than failing at the
+    # first shard. Stated loudly: a run that silently used one process where
+    # eight were asked for would look like a hung tier.
+    if ($effectiveShardCount -gt $plannedEpisodeCount) { $effectiveShardCount = $plannedEpisodeCount }
+    $shardEpisodeCounts = New-Object 'uint64[]' $effectiveShardCount
+    $shardDecisionCounts = New-Object 'uint64[]' $effectiveShardCount
+    for ($position = 0; $position -lt $plannedEpisodeDecisions.Count; $position++) {
+        $slot = $position % $effectiveShardCount
+        $shardEpisodeCounts[$slot] += 1
+        $shardDecisionCounts[$slot] += [uint64]$plannedEpisodeDecisions[$position]
+    }
+    $maxShardEpisodes = ($shardEpisodeCounts | Measure-Object -Maximum).Maximum
+    $maxShardDecisions = ($shardDecisionCounts | Measure-Object -Maximum).Maximum
+    Write-Output ("TTS_S1_SHARDS requested={0} effective={1} planned_episodes={2} planned_decisions={3} max_shard_episodes={4} max_shard_decisions={5} assignment={6}" -f `
+        $ShardCount, $effectiveShardCount, $plannedEpisodeCount, $plannedDecisions, `
+        $maxShardEpisodes, $maxShardDecisions, $script:TtsS1ShardAssignmentRule)
+    if ($effectiveShardCount -ne $ShardCount) {
+        Write-Output ("TTS_S1_SHARDS_CLAMPED the corpus contributes {0} planned episodes, so the fan-out is {1} and not the {2} requested; a shard owning no episode is refused rather than published empty" -f `
+            $plannedEpisodeCount, $effectiveShardCount, $ShardCount)
+    }
+    foreach ($tier in $Tiers) {
+        # The tier's transition budget is the number in its own
+        # pre-registered tag, so this is read off the ladder rather than
+        # being a second copy of the ladder's constants.
+        $tierBudget = [uint64]$tier.Substring(1)
+        $weight = $tierBudget / [uint64]512
+        $estimate = [ordered]@{
+            tier = $tier
+            transition_budget = $tierBudget
+            planned_episodes = $plannedEpisodeCount
+            planned_decisions = $plannedDecisions
+            budget_weighted_decisions = $plannedDecisions * $weight
+            shard_count = $effectiveShardCount
+            max_shard_episodes = $maxShardEpisodes
+            max_shard_decisions = $maxShardDecisions
+            max_shard_budget_weighted_decisions = $maxShardDecisions * $weight
+        }
+        $tierCostEstimates += $estimate
+        Write-Output ("TTS_S1_TIER_COST tier={0} transition_budget={1} planned_episodes={2} planned_decisions={3} budget_weighted_decisions={4} shard_count={5} max_shard_decisions={6} max_shard_budget_weighted_decisions={7}" -f `
+            $estimate.tier, $estimate.transition_budget, $estimate.planned_episodes, `
+            $estimate.planned_decisions, $estimate.budget_weighted_decisions, `
+            $estimate.shard_count, $estimate.max_shard_decisions, $estimate.max_shard_budget_weighted_decisions)
+    }
+    Write-Output 'TTS_S1_TIER_COST_UNIT decision searches, and the same weighted by the tier transition budget over 512; multiply by a measured per-decision cost for wall time, and read max_shard_* as the elapsed share once the shards run at once'
+
+    # The plans are rebuilt at the EFFECTIVE count, through the same
+    # function that produced the planned ones.
+    $tierPlans = @($Tiers | ForEach-Object { New-TtsS1TierPlan -Tier $_ -TierShardCount $effectiveShardCount })
+}
+catch {
+    Write-TtsS1RunFailed -AttemptRoot $attemptRoot -Step 'sizing' -Detail $_.Exception.Message
     Write-Error $_.Exception.Message
     exit 1
 }
@@ -539,12 +627,53 @@ catch {
 $tierResults = @()
 foreach ($plan in $tierPlans) {
     try {
-        Write-Output "TTS_S1_STEP tier-$($plan.tier) $($plan.command_line)"
-        $exitCode = Invoke-TtsS1Process -FilePath $ReplayExecutable -Arguments $plan.arguments `
-            -StdoutPath (Join-Path $attemptRoot ("tier-{0}.stdout.txt" -f $plan.tier)) `
-            -StderrPath (Join-Path $attemptRoot ("tier-{0}.stderr.txt" -f $plan.tier))
+        New-Item -ItemType Directory -Force -Path $plan.shard_root | Out-Null
+        # EVERY SHARD STARTS BEFORE ANY IS WAITED ON. Starting and waiting
+        # one at a time would be the old serial run with more processes.
+        $running = @()
+        foreach ($shard in $plan.shards) {
+            Write-Output "TTS_S1_STEP tier-$($plan.tier) shard-$($shard.index) $($shard.command_line)"
+            $running += [pscustomobject]@{
+                shard = $shard
+                process = Start-TtsS1Process -FilePath $ReplayExecutable -Arguments $shard.arguments `
+                    -StdoutPath $shard.stdout_path -StderrPath $shard.stderr_path
+            }
+        }
+        # EVERY SHARD IS WAITED ON BEFORE ANY FAILURE IS RAISED, so a
+        # failing shard never leaves its siblings running unattended behind
+        # a thrown launcher.
+        $shardResults = @()
+        $shardFailures = @()
+        foreach ($entry in $running) {
+            $shardExit = Wait-TtsS1Process -Process $entry.process
+            $shardResults += [ordered]@{
+                shard_index = $entry.shard.index
+                exit_code = $shardExit
+                command_line = $entry.shard.command_line
+                diagnostics_dir = $entry.shard.diagnostics_dir
+                report_path = $entry.shard.report_path
+            }
+            if ($shardExit -ne 0) {
+                $shardFailures += "shard $($entry.shard.index) exited with $shardExit"
+            }
+        }
+        if ($shardFailures.Count -ne 0) {
+            # FAIL CLOSED. A shard has no verdict to exit 4 on, so any
+            # non-zero exit is a real failure and the tier has no report.
+            throw "tier $($plan.tier): $($shardFailures -join '; '); see tier-$($plan.tier).shard-*.stderr.txt"
+        }
+        # Hash every shard report the merge is about to consume, so the
+        # summary commits to the exact partial artifacts the tier report
+        # was assembled from.
+        for ($index = 0; $index -lt $shardResults.Count; $index++) {
+            $shardResults[$index]['report'] = Get-TtsS1FileRecord -Path $shardResults[$index]['report_path']
+        }
+
+        Write-Output "TTS_S1_STEP tier-$($plan.tier) merge $($plan.merge_command_line)"
+        $exitCode = Invoke-TtsS1Process -FilePath $ReplayExecutable -Arguments $plan.merge_arguments `
+            -StdoutPath $plan.merge_stdout_path -StderrPath $plan.merge_stderr_path
         if ($exitCode -ne 0 -and $exitCode -ne 4) {
-            throw "tts_s1_replay_v1 exited with $exitCode for tier $($plan.tier); see tier-$($plan.tier).stderr.txt"
+            throw "tts_s1_replay_v1 --merge-shards exited with $exitCode for tier $($plan.tier); see tier-$($plan.tier).merge.stderr.txt"
         }
         # Read AND validate in one call. Every dereference below reaches a
         # contract field, so a report missing one must be refused BEFORE the
@@ -568,7 +697,11 @@ foreach ($plan in $tierPlans) {
             exit_code = $exitCode
             report = Get-TtsS1FileRecord -Path $plan.report_path
             report_sha256_self = $report.report_sha256
-            diagnostics_dir = $plan.diagnostics_dir
+            diagnostics_dir = $plan.diagnostics_root
+            shard_count = $plan.shard_count
+            shard_root = $plan.shard_root
+            merge_command_line = $plan.merge_command_line
+            shards = @($shardResults)
             episodes_replayed = $report.body.episodes_replayed
             searched_decisions = $report.body.searched_decisions
             corpus_targets_replayed = $report.body.corpus_targets_replayed
@@ -609,9 +742,9 @@ foreach ($plan in $tierPlans) {
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} target_protocol_p99_micros={5} target_protocol_max_micros={6} whole_episode_protocol_p99_micros={7} projected_s2_worker_hours_milli={8} extrapolated_ordinals={9} within_compute_cap={10}" -f `
+        Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} shard_count={5} target_protocol_p99_micros={6} target_protocol_max_micros={7} whole_episode_protocol_p99_micros={8} projected_s2_worker_hours_milli={9} extrapolated_ordinals={10} within_compute_cap={11}" -f `
             $plan.tier, $observedVerdict, $report.body.verdict_view, `
-            $report.body.episodes_replayed, $report.body.searched_decisions, `
+            $report.body.episodes_replayed, $report.body.searched_decisions, $plan.shard_count, `
             $report.body.corpus_target_view.protocol_wall_time.p99_micros, `
             $report.body.corpus_target_view.protocol_wall_time.max_micros, `
             $report.body.whole_episode_view.protocol_wall_time.p99_micros, `
@@ -657,6 +790,16 @@ $summary = [ordered]@{
     limit_episodes = $LimitEpisodes
     max_episodes = $Episodes
     corpus_episode_count = @($corpus.body.episodes).Count
+    corpus_contributing_episode_count = $corpus.body.contributing_episode_count
+    corpus_contributing_episode_decisions = $corpus.body.contributing_episode_decisions
+    shard_count_requested = $ShardCount
+    shard_count_effective = $effectiveShardCount
+    shard_assignment_rule = $script:TtsS1ShardAssignmentRule
+    planned_episodes = $plannedEpisodeCount
+    planned_decisions = $plannedDecisions
+    max_shard_episodes = $maxShardEpisodes
+    max_shard_decisions = $maxShardDecisions
+    tier_cost_estimates = @($tierCostEstimates)
     corpus_all_episode_count = $corpus.body.all_episode_decisions.episode_count
     corpus_all_episode_mean_decisions_milli = $corpus.body.all_episode_decisions.mean_decisions_milli
     corpus_all_episode_max_decisions = $corpus.body.all_episode_decisions.max_decisions
@@ -679,7 +822,7 @@ if ($isFormal) {
     Write-TtsS1Marker -AttemptRoot $attemptRoot -Name 'TTS_S1_COMPLETE'
 }
 
-Write-Output "TTS_S1_SUMMARY attempt_root=$attemptRoot status=$status formal_ladder=$isFormal feasible_tier_count=$($feasible.Count) feasible_tiers=$($feasible -join ',')"
+Write-Output "TTS_S1_SUMMARY attempt_root=$attemptRoot status=$status formal_ladder=$isFormal shard_count=$effectiveShardCount feasible_tier_count=$($feasible.Count) feasible_tiers=$($feasible -join ',')"
 if (-not $isFormal) {
     Write-Output 'TTS_S1_RESULT this run is a SMOKE (a partial corpus or a partial ladder); it carries no feasibility standing, no TTS_S1_COMPLETE marker was written, and it may not be read as closing the ladder either way'
 }

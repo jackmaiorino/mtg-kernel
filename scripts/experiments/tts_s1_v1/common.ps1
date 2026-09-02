@@ -22,6 +22,13 @@ This file lives apart from run-tts-s1.ps1 so the dry-run tests can dot-source
 the same constants and the same validation the launcher uses, rather than
 re-implementing either. It defines constants and functions only; it launches
 nothing and has no side effects.
+
+It also holds the launcher's shared child-process primitives (the Windows
+argument quoting, the printed command line, and starting and waiting on a
+child) for exactly the same reason: the shard fan-out's property, that K
+children run at once and every one of them is waited on and its exit code
+captured, cannot be observed from a planned command line, so the tests have
+to be able to call the real functions.
 #>
 
 # native_tts_s1_replay_v1::TTS_S1_S2_PROJECTION_RULE_V2
@@ -44,6 +51,18 @@ $script:TtsS1LatencyCurveRule = 'pool-adjacent-violators-isotonic-regression-ove
 
 # native_tts_s1_replay_v1::TTS_S1_VERDICT_VIEW_V1
 $script:TtsS1VerdictView = 'corpus_target_view'
+
+# native_tts_s1_replay_v1::TTS_S1_SHARD_ASSIGNMENT_RULE_V1
+#
+# Recorded in the provenance, NOT checked against a tier report: a merged
+# tier report is the report an unsharded run would have published and
+# therefore says nothing about shards at all. The rule is declared by each
+# SHARD report and is checked there, by the merge, on the Rust side.
+$script:TtsS1ShardAssignmentRule =
+    'contributing-episode-position-in-corpus-order-modulo-shard-count-equals-shard-index/v1'
+
+# native_tts_s1_replay_v1::TTS_S1_MAX_SHARD_COUNT_V1
+$script:TtsS1MaxShardCount = 64
 
 function Get-TtsS1PinnedContract {
     # The whole pinned contract, for the provenance and summary records.
@@ -130,4 +149,143 @@ function Assert-TtsS1TierReportContract {
                 $Tier, $check.What, $observed, $check.Path, $check.Expected)
         }
     }
+}
+
+# ---------------------------------------------------------------------------
+# The shared child-process primitives: Windows argument quoting, the command
+# line a reviewer reads, and starting and waiting on a child.
+#
+# They live here rather than in the launcher for the same reason the pinned
+# contract does: the dry-run tests exercise the SAME functions the launcher
+# runs. That matters most for the shard fan-out, where the property under
+# test (K children running at once, every one waited on, every exit code
+# captured) cannot be observed from a planned command line at all.
+# ---------------------------------------------------------------------------
+
+function ConvertTo-TtsS1WindowsArgument {
+    # Quotes ONE argument for the Windows command-line parser
+    # (CommandLineToArgvW), which is what a Rust `std::env::args_os` reads.
+    #
+    # PowerShell 5.1 runs on .NET Framework, where ProcessStartInfo has no
+    # ArgumentList: the only channel to a child is a single command-line
+    # STRING, and Start-Process joins an array into one with plain spaces
+    # and no quoting at all. A store root or evidence root containing a
+    # space therefore reaches the child as two arguments, and the bin's
+    # strict pair parser rejects the launch (or, worse, pairs the wrong
+    # flag with the wrong value). So the quoting is done here, once, and
+    # both the PLANNED command line and the executed one go through it, so
+    # what a dry run prints is what a real launch runs.
+    #
+    # The rule is the documented MSVC one: backslashes are literal except
+    # when they immediately precede a quote, where each must be doubled,
+    # and a run of backslashes at the end of a quoted argument must be
+    # doubled so it does not escape the closing quote.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($char in $Value.ToCharArray()) {
+        if ($char -ceq '\') {
+            $backslashes++
+            continue
+        }
+        if ($char -ceq '"') {
+            [void]$builder.Append('\' * (2 * $backslashes + 1))
+            [void]$builder.Append('"')
+            $backslashes = 0
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append('\' * $backslashes)
+            $backslashes = 0
+        }
+        [void]$builder.Append($char)
+    }
+    if ($backslashes -gt 0) { [void]$builder.Append('\' * (2 * $backslashes)) }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Format-TtsS1CommandLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments
+    )
+    $quoted = @($Arguments | ForEach-Object { ConvertTo-TtsS1WindowsArgument -Value $_ })
+    return (@(ConvertTo-TtsS1WindowsArgument -Value $FilePath) + $quoted) -join ' '
+}
+
+function Format-TtsS1ArgumentString {
+    # The child's argument string alone, without the executable, which is
+    # what Start-Process wants in -ArgumentList.
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments)
+    return (@($Arguments | ForEach-Object { ConvertTo-TtsS1WindowsArgument -Value $_ }) -join ' ')
+}
+
+function Start-TtsS1Process {
+    # Starts one child and returns it WITHOUT waiting, so the caller can
+    # hold several at once. The shard fan-out is the only reason this is
+    # separate from the wait: K replay processes at one tier have to be
+    # running at the same time or there is no parallelism at all.
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath
+    )
+    foreach ($path in @($StdoutPath, $StderrPath)) {
+        $directory = Split-Path -Parent $path
+        if (-not [string]::IsNullOrWhiteSpace($directory)) {
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        }
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+    }
+    # ONE already-quoted string, not an array: Start-Process joins an array
+    # with unquoted spaces. See ConvertTo-TtsS1WindowsArgument.
+    $argumentString = Format-TtsS1ArgumentString -Arguments $Arguments
+    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentString -NoNewWindow -PassThru `
+        -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+    # READING .Handle IS LOAD-BEARING, and this line is the whole reason a
+    # child's exit code is knowable at all.
+    #
+    # Under PowerShell 5.1 the object Start-Process -PassThru returns does
+    # not keep a process handle of its own, and once the child exits its
+    # ExitCode reads back as $null rather than a number. Nothing about that
+    # is visible at the call site: it waits, it gets $null, and a [int] cast
+    # turns $null into 0, so EVERY child looks like a clean success no
+    # matter what it did. Touching .Handle while the child is still alive
+    # caches a handle on the object, and ExitCode is readable for the rest
+    # of the object's life. [`Wait-TtsS1Process`] refuses a $null exit code
+    # outright, so if this ever stops working the run fails closed instead
+    # of reporting success it did not observe.
+    $null = $process.Handle
+    return $process
+}
+
+function Wait-TtsS1Process {
+    param([Parameter(Mandatory = $true)]$Process)
+    # WaitForExit() then Refresh(), following the cycle-4 launcher: the
+    # parameterless overload alone can return before ExitCode is populated.
+    $Process.WaitForExit()
+    $Process.Refresh()
+    $exitCode = $Process.ExitCode
+    # FAIL CLOSED on an unknowable exit. `[int]$null` is 0, which is exactly
+    # the value that means "the child succeeded", so a cast here would
+    # convert "we could not tell" into "it worked".
+    if ($null -eq $exitCode) {
+        throw 'a child process exited but its exit code could not be read; an unknown exit is never a success'
+    }
+    return [int]$exitCode
+}
+
+function Invoke-TtsS1Process {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath
+    )
+    return Wait-TtsS1Process -Process (Start-TtsS1Process -FilePath $FilePath -Arguments $Arguments `
+            -StdoutPath $StdoutPath -StderrPath $StderrPath)
 }

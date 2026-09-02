@@ -5,17 +5,34 @@ Dry-run tests for run-tts-s1.ps1. Launches nothing.
 .DESCRIPTION
 Every case runs the wrapper with -DryRun -SkipHostAssertions against a
 throwaway evidence root under the system temp directory, using two stand-in
-executable FILES that are never executed (a dry run only hashes them). No
-child process is started, no corpus is built, no search runs, no CP7 panel
-is contacted, and no GPU is touched.
+executable FILES that are never executed (a dry run only hashes them).
+NEITHER S1 BIN IS EVER STARTED: no corpus is built, no search runs, no CP7
+panel is contacted, and no GPU is touched.
+
+One section is the exception to "starts nothing" and says so where it sits:
+the shared child-process primitives are exercised against cmd.exe, because
+the property the shard fan-out rests on (several children running at once,
+every one waited on, every exit code captured) cannot be observed from a
+planned command line at all.
 
 What it proves:
   * a dry run writes provenance.json and result.json with status
     DRY_RUN_PLANNED, and writes NEITHER terminal marker;
   * a dry run produces no corpus and no tier report;
   * the planned command lines carry exactly the flags the two bins declare,
-    including the authority shape for each -StoreKind and the per-tier
+    including the authority shape for each -StoreKind and the per-shard
     diagnostics directory the production writer publishes into;
+  * every tier plans -ShardCount shard invocations, each with its own shard
+    index, its own diagnostics directory and its own shard report path, plus
+    exactly one merge invocation that names the shard directory, the same
+    shard count, and the tier report as its output and carries no
+    replay-only flag;
+  * the launcher starts every shard before waiting on any of them, waits
+    with the WaitForExit plus Refresh double call, waits on all of them
+    before raising a failure, and fails closed on any non-zero shard exit;
+  * the shared child-process primitives really do run several children at
+    once, really do report each child's own exit code, and refuse an exit
+    code they cannot read rather than casting it to a success;
   * every argument is quoted for the Windows command-line parser, so a
     store root or an evidence root containing a space survives the trip to
     the child;
@@ -50,6 +67,11 @@ if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
 
 $script:Failures = 0
 $script:Checks = 0
+
+# The wrapper's own -ShardCount default, restated so these tests count the
+# planned commands the launcher will actually emit. A change to the default
+# is meant to break this line and be reviewed, not to slip through.
+$defaultShardCount = 8
 
 function Assert-True {
     param(
@@ -284,11 +306,16 @@ try {
 
     $resultJson = Get-Content -LiteralPath (Join-Path $attempt 'result.json') -Raw | ConvertFrom-Json
     Assert-True ($resultJson.status -ceq 'DRY_RUN_PLANNED') 'result.json says DRY_RUN_PLANNED'
-    Assert-True ($resultJson.planned_tier_commands.Count -eq 4) 'the whole ladder is planned'
+    Assert-True ($resultJson.planned_tier_merge_commands.Count -eq 4) 'the whole ladder is planned'
+    Assert-True ($resultJson.planned_tier_shard_commands.Count -eq 4 * $defaultShardCount) 'every tier plans one command per shard'
+    Assert-True ($resultJson.shard_count_requested -eq $defaultShardCount) 'result.json records the requested shard count'
 
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.dry_run -eq $true) 'provenance.json records the dry run'
     Assert-True ($provenanceJson.formal_ladder -eq $true) 'a whole-corpus full-ladder run plans as FORMAL'
+    Assert-True ($provenanceJson.shard_count_requested -eq $defaultShardCount) 'provenance.json records the requested shard count'
+    Assert-True ($provenanceJson.shard_assignment_rule -ceq $script:TtsS1ShardAssignmentRule) 'provenance.json records the shard assignment rule'
+    Assert-True ($provenanceJson.shard_count_rule -like '*min-of-requested-and-planned-contributing-episodes*') 'provenance.json states the clamp rule'
 
     # The provenance record states the whole pinned contract, so a dry run
     # already says which rules a real launch would accept.
@@ -310,13 +337,62 @@ try {
 
     $ladder = @('t512', 't2048', 't8192', 't32768')
     for ($index = 0; $index -lt $ladder.Count; $index++) {
-        $line = $provenanceJson.planned_tier_commands[$index]
-        Assert-True ($line -like "*--tier $($ladder[$index])*") "tier $($ladder[$index]) is planned in ladder position $index"
-        Assert-True ($line -like '*--seed-block 1*') "tier $($ladder[$index]) uses the replay seed block"
-        Assert-True ($line -like '*--corpus*') "tier $($ladder[$index]) consumes the corpus"
-        Assert-True (-not ($line -like '*--limit-episodes*')) "tier $($ladder[$index]) has no smoke bound by default"
-        Assert-True ($line -like '*--max-episodes 64*') "tier $($ladder[$index]) carries the corpus episode count as its guard"
-        Assert-True ($line -like "*--diagnostics-dir*tier-$($ladder[$index]).diagnostics*") "tier $($ladder[$index]) gets its own diagnostics directory"
+        $tier = $ladder[$index]
+        # The shard commands are flattened in ladder order, K per tier.
+        $tierShardCommands = @($provenanceJson.planned_tier_shard_commands |
+            Select-Object -Skip ($index * $defaultShardCount) -First $defaultShardCount)
+        Assert-True ($tierShardCommands.Count -eq $defaultShardCount) "tier $tier plans $defaultShardCount shards in ladder position $index"
+        for ($shard = 0; $shard -lt $defaultShardCount; $shard++) {
+            $line = $tierShardCommands[$shard]
+            $padded = '{0:0000}' -f $shard
+            Assert-True ($line -like "*--tier $tier*") "tier $tier shard $shard names its tier"
+            Assert-True ($line -like '*--seed-block 1*') "tier $tier shard $shard uses the replay seed block"
+            Assert-True ($line -like '*--corpus*') "tier $tier shard $shard consumes the corpus"
+            Assert-True (-not ($line -like '*--limit-episodes*')) "tier $tier shard $shard has no smoke bound by default"
+            Assert-True ($line -like '*--max-episodes 64*') "tier $tier shard $shard carries the corpus episode count as its guard"
+            Assert-True ($line -like "*--shard-index $shard --shard-count $defaultShardCount*") "tier $tier shard $shard carries both shard flags"
+            Assert-True ($line -like "*--diagnostics-dir*tier-$tier.diagnostics*shard-$padded*") "tier $tier shard $shard gets its own diagnostics directory"
+            $shardReportPattern = "*shard-{0}-of-{1:0000}.report.json*" -f $padded, $defaultShardCount
+            Assert-True ($line -like $shardReportPattern) "tier $tier shard $shard publishes under the name the merge derives"
+            Assert-True (-not ($line -like '*--merge-shards*')) "tier $tier shard $shard is not a merge"
+        }
+        # ONE merge per tier, naming the shard directory and the same count,
+        # and carrying no replay-only flag: the merge loads no checkpoint.
+        $merge = $provenanceJson.planned_tier_merge_commands[$index]
+        Assert-True ($merge -like "*--merge-shards*tier-$tier.shards*") "tier $tier merges its own shard directory"
+        Assert-True ($merge -like "*--shard-count $defaultShardCount*") "tier $tier merges exactly the shards it planned"
+        Assert-True ($merge -like "*--output*tier-$tier.report.json*") "tier $tier merges into its tier report"
+        foreach ($forbidden in @('--tier', '--corpus', '--seed-block', '--max-episodes', '--diagnostics-dir', '--shard-index', '--population-store-root')) {
+            Assert-True (-not ($merge -like "*$forbidden*")) "tier $tier merge carries no $forbidden"
+        }
+    }
+
+    # --- 1b. The shard fan-out is a knob, and the whole ladder of legal
+    #         values plans; illegal ones are refused by the parameter
+    #         itself rather than discovered at the first shard.
+    foreach ($count in @(1, 2, 64)) {
+        $evidence = Join-Path $sandbox ("evidence-shards-{0}" -f $count)
+        $parameters = $base.Clone()
+        $parameters['EvidenceRoot'] = $evidence
+        $parameters['ShardCount'] = $count
+        $parameters['Tiers'] = @('t512')
+        $result = Invoke-Wrapper -Parameters $parameters
+        Assert-True ($null -eq $result.Failure) "a dry run at -ShardCount $count succeeds ($($result.Failure))"
+        $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
+        $shardJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
+        $lines = @($shardJson.planned_tier_shard_commands)
+        Assert-True ($lines.Count -eq $count) "-ShardCount $count plans $count shard commands for one tier"
+        Assert-True (@($shardJson.planned_tier_merge_commands).Count -eq 1) "-ShardCount $count still plans exactly one merge per tier"
+        Assert-True ($shardJson.planned_tier_merge_commands[0] -like "*--shard-count $count*") "-ShardCount $count reaches the merge"
+        Assert-True ($lines[0] -like "*--shard-index 0 --shard-count $count*") "-ShardCount $count names shard 0"
+        Assert-True ($lines[$count - 1] -like "*--shard-index $($count - 1) --shard-count $count*") "-ShardCount $count names its last shard"
+    }
+    foreach ($count in @(0, 65, -1)) {
+        $parameters = $base.Clone()
+        $parameters['EvidenceRoot'] = (Join-Path $sandbox ("evidence-shards-bad-{0}" -f ($count + 2)))
+        $parameters['ShardCount'] = $count
+        $result = Invoke-Wrapper -Parameters $parameters
+        Assert-True ($null -ne $result.Failure) "the wrapper rejects -ShardCount $count"
     }
 
     # --- 2. -LimitEpisodes is threaded to every tier when set.
@@ -329,8 +405,12 @@ try {
     Assert-True ($null -eq $result.Failure) "a single-tier dry run succeeds ($($result.Failure))"
     $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
-    Assert-True ($provenanceJson.planned_tier_commands.Count -eq 1) 'a tier subset plans only those tiers'
-    Assert-True ($provenanceJson.planned_tier_commands[0] -like '*--limit-episodes 8*') 'the smoke bound reaches the tier command'
+    Assert-True (@($provenanceJson.planned_tier_merge_commands).Count -eq 1) 'a tier subset plans only those tiers'
+    Assert-True (@($provenanceJson.planned_tier_shard_commands).Count -eq $defaultShardCount) 'a tier subset still plans one command per shard'
+    foreach ($line in $provenanceJson.planned_tier_shard_commands) {
+        Assert-True ($line -like '*--limit-episodes 8*') 'the smoke bound reaches every shard command'
+    }
+    Assert-True (-not ($provenanceJson.planned_tier_merge_commands[0] -like '*--limit-episodes*')) 'the smoke bound is not a merge flag'
     Assert-True ($provenanceJson.formal_ladder -eq $false) 'a bounded single-tier run plans as a SMOKE'
 
     # --- 2b. A full ladder with -LimitEpisodes is still a smoke, and so
@@ -375,8 +455,12 @@ try {
     Assert-True ($corpusCommand -like "*`"$spacedStore`"*") 'a store root with a space is quoted in the corpus command'
     Assert-True ($corpusCommand -like "*`"$spacedExe`"*") 'an executable path with a space is quoted'
     Assert-True ($corpusCommand -like '*"*corpus.json"*') 'an output path under a spaced evidence root is quoted'
-    $tierCommand = $provenanceJson.planned_tier_commands[0]
-    Assert-True ($tierCommand -like '*"*tier-t512.diagnostics"*') 'a diagnostics path under a spaced evidence root is quoted'
+    $tierCommand = $provenanceJson.planned_tier_shard_commands[0]
+    Assert-True ($tierCommand -like '*"*tier-t512.diagnostics*shard-0000"*') 'a per-shard diagnostics path under a spaced evidence root is quoted'
+    Assert-True ($tierCommand -like '*"*tier-t512.shards*shard-0000-of-0008.report.json"*') 'a shard report path under a spaced evidence root is quoted'
+    $mergeCommand = $provenanceJson.planned_tier_merge_commands[0]
+    Assert-True ($mergeCommand -like '*"*tier-t512.shards"*') 'the merge shard directory under a spaced evidence root is quoted'
+    Assert-True ($mergeCommand -like '*--shard-count 8*') 'the merge shard count is not quoted'
     # A flag with no space is NOT quoted: the quoter only quotes what needs
     # it, so a reviewer reading a command line sees the flags plainly.
     Assert-True ($corpusCommand -like '*--seed-block 0*') 'flags and simple values stay unquoted'
@@ -394,6 +478,7 @@ try {
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True ($provenanceJson.planned_corpus_command -like '*--original-store-root*') 'the original authority names its own flag'
     Assert-True (-not ($provenanceJson.planned_corpus_command -like '*--generation*')) 'the pinned g384 authority takes no generation'
+    Assert-True ($provenanceJson.planned_tier_shard_commands[0] -like '*--original-store-root*') 'every shard carries the same authority as the corpus build'
 
     $evidence = Join-Path $sandbox 'evidence-portable'
     $parameters = $base.Clone()
@@ -430,8 +515,104 @@ try {
         $index++
     }
 
-    # --- 5. Nothing in this whole test file ever started a child process:
-    #        the two stand-ins are still exactly the text files we wrote.
+    # --- 4b. THE SHARD LOOP'S SHAPE, asserted against the wrapper's own
+    #         text. Each of these is a way the fan-out could silently become
+    #         a serial run or leave orphaned processes behind, and none of
+    #         them would fail any other check here. The primitives
+    #         themselves are exercised for real in section 4c.
+    #
+    #         Every shard is started in one loop and waited on in a SECOND
+    #         loop. Starting and waiting inside one loop is the old serial
+    #         run with more processes, and it is the single most likely way
+    #         to lose the parallelism without losing anything else.
+    $startIndex = $wrapperText.IndexOf('process = Start-TtsS1Process -FilePath $ReplayExecutable -Arguments $shard.arguments')
+    $waitIndex = $wrapperText.IndexOf('$shardExit = Wait-TtsS1Process -Process $entry.process')
+    Assert-True ($startIndex -gt 0) 'the wrapper starts every shard through the non-blocking start'
+    Assert-True ($waitIndex -gt $startIndex) 'the wrapper waits on the shards only after starting them all'
+    Assert-True ($wrapperText -like '*foreach ($entry in $running)*') 'the shard wait is its own loop over the started processes'
+    Assert-True ($wrapperText -like '*if ($shardFailures.Count -ne 0)*') 'the wrapper raises a shard failure only after every shard has been waited on'
+    Assert-True ($wrapperText -like '*shard $($entry.shard.index) exited with $shardExit*') 'the wrapper fails closed on a non-zero shard exit'
+    Assert-True ($wrapperText -like '*Invoke-TtsS1Process -FilePath $ReplayExecutable -Arguments $plan.merge_arguments*') 'the wrapper runs the merge through the same child runner'
+    Assert-True ($wrapperText -like '*--merge-shards*') 'the wrapper plans the merge flag the bin declares'
+    # And the merged report goes through the SAME validating reader the
+    # unsharded report went through: sharding may not weaken the contract
+    # check that gates a tier.
+    Assert-True ($wrapperText -like '*Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path*') 'the merged tier report is validated through the pinned-contract reader'
+    Assert-True ($wrapperText -like '*$corpus.body.contributing_episode_count*') 'the wrapper sizes the run from the corpus stated contributing population'
+    Assert-True ($wrapperText -like '*TTS_S1_TIER_COST*') 'the wrapper prints the expected per-tier cost before the tiers run'
+
+    # --- 4c. THE PRIMITIVES THEMSELVES, run for real against cmd.exe.
+    #
+    #         These are the only child processes this file ever starts, and
+    #         they are deliberately NOT either S1 bin: nothing here searches,
+    #         no corpus is built, no CP7 panel is contacted and no GPU is
+    #         touched. What they prove is the one property the fan-out rests
+    #         on and that no planned command line can show: several children
+    #         really do run at once, every one is waited on, and every exit
+    #         code comes back, including a non-zero one.
+    $processSandbox = New-TtsS1TestRoot
+    try {
+        $comspec = Join-Path $env:SystemRoot 'System32\cmd.exe'
+        Assert-True (Test-Path -LiteralPath $comspec -PathType Leaf) 'cmd.exe is available to exercise the child-process primitives'
+        # Three children, each sleeping about three seconds, started
+        # together. Serialized they would take at least nine; run at once
+        # they take about three, so the elapsed time is the evidence of
+        # concurrency, and the ceiling sits between the two with room to
+        # spare so a loaded host cannot turn it into a flake.
+        #
+        # Every argument is passed as its OWN element rather than as one
+        # shell string, because the quoter would wrap a string with a space
+        # in quotes and cmd only strips those when the quoted text names an
+        # executable.
+        $started = @()
+        $watch = [System.Diagnostics.Stopwatch]::StartNew()
+        for ($index = 0; $index -lt 3; $index++) {
+            $started += Start-TtsS1Process -FilePath $comspec `
+                -Arguments @('/c', 'ping', '-n', '4', '127.0.0.1', '>nul', '&', 'exit', [string]$index) `
+                -StdoutPath (Join-Path $processSandbox ("child-{0}.stdout.txt" -f $index)) `
+                -StderrPath (Join-Path $processSandbox ("child-{0}.stderr.txt" -f $index))
+        }
+        $codes = @()
+        foreach ($process in $started) { $codes += Wait-TtsS1Process -Process $process }
+        $watch.Stop()
+        Assert-True ($codes.Count -eq 3) 'every started child is waited on'
+        Assert-True ($codes[0] -eq 0) 'a successful child reports exit 0'
+        Assert-True ($codes[1] -eq 1 -and $codes[2] -eq 2) 'each child reports its OWN exit code after the Refresh'
+        Assert-True ($watch.Elapsed.TotalSeconds -lt 7.0) "the children ran concurrently rather than one after another ($([math]::Round($watch.Elapsed.TotalSeconds, 2)) s)"
+        # And a non-zero exit is visible, which is what the launcher fails
+        # closed on.
+        $failing = Invoke-TtsS1Process -FilePath $comspec -Arguments @('/c', 'exit', '7') `
+            -StdoutPath (Join-Path $processSandbox 'failing.stdout.txt') `
+            -StderrPath (Join-Path $processSandbox 'failing.stderr.txt')
+        Assert-True ($failing -eq 7) 'a non-zero child exit code reaches the caller'
+        # THE FAIL-CLOSED CLAUSE, over a stand-in that reports no exit code
+        # at all. This is not hypothetical: PowerShell 5.1 hands back
+        # exactly such an object unless the started process's handle is
+        # retained, and a [int] cast would silently turn it into 0, which
+        # is the value that means the child succeeded.
+        $noExitCode = [pscustomobject]@{ ExitCode = $null }
+        $noExitCode | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { }
+        $noExitCode | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+        $unknownExit = $null
+        try { [void](Wait-TtsS1Process -Process $noExitCode) }
+        catch { $unknownExit = $_.Exception.Message }
+        Assert-True ($null -ne $unknownExit) 'an unreadable exit code is refused rather than cast to a success'
+        Assert-True ($unknownExit -like '*never a success*') 'the refusal says why an unknown exit is not a pass'
+        # The quoter is what carries a spaced path through to the child, so
+        # it is checked against the parser it is written for.
+        $echoOut = Join-Path $processSandbox 'echo.stdout.txt'
+        [void](Invoke-TtsS1Process -FilePath $comspec -Arguments @('/c', 'echo', 'a b') `
+                -StdoutPath $echoOut -StderrPath (Join-Path $processSandbox 'echo.stderr.txt'))
+        Assert-True (([System.IO.File]::ReadAllText($echoOut)).Trim() -ceq '"a b"') 'an argument containing a space reaches the child as one quoted argument'
+    }
+    finally {
+        if (Test-Path -LiteralPath $processSandbox) {
+            Remove-Item -LiteralPath $processSandbox -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # --- 5. Neither S1 BIN was ever started by this file: the two stand-ins
+    #        are still exactly the text files we wrote.
     foreach ($path in @($corpusExe, $replayExe)) {
         $text = [System.IO.File]::ReadAllText($path)
         Assert-True ($text -like 'not an executable*') "the stand-in at $path was never replaced or executed"
