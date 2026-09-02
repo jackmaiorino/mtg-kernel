@@ -925,13 +925,18 @@ fn terminal_value_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
     session: &FastActorSessionV1,
     terminal: &RlSessionTerminalV1,
     root_player: PlayerId,
+    census: &mut ModelGuidedSearchLeafCensusV1,
 ) -> Result<i32, ModelGuidedSearchCoreErrorV1> {
     match terminal.terminal_classification {
-        TerminalClassificationV1::Natural => Ok(natural_terminal_value_v1(
-            terminal.terminal_outcome,
-            root_player,
-        )?),
+        TerminalClassificationV1::Natural => {
+            census.natural_terminal_leaves = census.natural_terminal_leaves.saturating_add(1);
+            Ok(natural_terminal_value_v1(
+                terminal.terminal_outcome,
+                root_player,
+            )?)
+        }
         TerminalClassificationV1::Truncated => {
+            census.truncated_terminal_leaves = census.truncated_terminal_leaves.saturating_add(1);
             let mut leaf_key = [0u8; 32];
             leaf_key[..8]
                 .copy_from_slice(&session.privileged_core_environment_hash().to_le_bytes());
@@ -960,6 +965,7 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
     forced_root_action: Option<u32>,
     evaluator: &E,
     value_domain: &ModelGuidedSearchValueHeadDomainV1,
+    census: &mut ModelGuidedSearchLeafCensusV1,
 ) -> Result<(), ModelGuidedSearchCoreErrorV1> {
     let mut node_index = 0usize;
     let mut remaining_depth = depth_cap;
@@ -974,6 +980,7 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
                 .get(node_index)
                 .ok_or(KernelNativeSearchErrorV1::CorruptTree)?;
             let leaf_acting_player_is_root = node.actor == root_player;
+            census.depth_cap_leaves = census.depth_cap_leaves.saturating_add(1);
             value = dispatch_revisited_leaf_value_v1(
                 evaluator,
                 value_domain,
@@ -1025,6 +1032,7 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
                     session,
                     &terminal,
                     root_player,
+                    census,
                 )?;
                 break;
             }
@@ -1033,6 +1041,7 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
                 if remaining_depth == 0 || *transitions_used >= transition_budget {
                     let leaf_key = search_node_key_v1(session, next_decision, remaining_depth)?;
                     let leaf_acting_player_is_root = next_actor == root_player;
+                    census.depth_cap_leaves = census.depth_cap_leaves.saturating_add(1);
                     value = dispatch_revisited_leaf_value_v1(
                         evaluator,
                         value_domain,
@@ -1062,6 +1071,7 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
                     {
                         return Err(ModelGuidedSearchCoreErrorV1::EvaluatorContract);
                     }
+                    census.newly_expanded_leaves = census.newly_expanded_leaves.saturating_add(1);
                     let prior = quantize_prior_v1(&forward.legal_action_weights)?;
                     let created = tree.nodes.len();
                     tree.nodes
@@ -1089,6 +1099,7 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
                 if forced_root_action.is_some() {
                     let node = &tree.nodes[next_index];
                     let leaf_acting_player_is_root = node.actor == root_player;
+                    census.depth_cap_leaves = census.depth_cap_leaves.saturating_add(1);
                     value = dispatch_revisited_leaf_value_v1(
                         evaluator,
                         value_domain,
@@ -1102,6 +1113,16 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
             }
         }
     }
+
+    // Instrumentation only, after every decision the traversal makes: the
+    // simulation's own depth is exactly the number of transitions it
+    // consumed from the root.
+    let simulation_depth = u16::try_from(edge_path.len())
+        .map_err(|_| ModelGuidedSearchCoreErrorV1::from(KernelNativeSearchErrorV1::CorruptTree))?;
+    census.max_simulation_depth = census.max_simulation_depth.max(simulation_depth);
+    census.summed_simulation_depth = census
+        .summed_simulation_depth
+        .saturating_add(u64::from(simulation_depth));
 
     for index in node_path {
         let node = tree
@@ -1131,10 +1152,92 @@ fn run_simulation_puct_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
     Ok(())
 }
 
+/// Domain label for the diagnostic stability halves. Distinct from
+/// `KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1`, which stays the label for the
+/// per-simulation seed derivation itself: this one separates one seed
+/// SOURCE from another, one level above.
+pub const MODEL_GUIDED_SEARCH_SEED_HALF_DOMAIN_V1: &str =
+    "model-guided-search-chosen-action-stability-seed-half/v1";
+
+/// Which independent half of the simulation-seed space a diagnostic
+/// stability run draws from
+/// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5, S0: "chosen-
+/// action stability across two independent simulation-seed halves").
+///
+/// "Independent" is enforced by construction, not asserted: each half's
+/// seed digest is `SHA-256(domain || authority digest || half tag)`, so
+/// the two halves and the full-budget run all draw from
+/// computationally-unrelated digests, and the seeds one produces can never
+/// be reached by another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelGuidedSearchSeedHalfV1 {
+    A,
+    B,
+}
+
+impl ModelGuidedSearchSeedHalfV1 {
+    /// The stable, serializable tag for this half. Literal bytes, not the
+    /// enum discriminant, so reordering the variants cannot silently
+    /// change a derived seed.
+    pub const fn tag_v1(self) -> &'static str {
+        match self {
+            Self::A => "half-a",
+            Self::B => "half-b",
+        }
+    }
+
+    /// Domain-separated seed digest for this half, derived from the
+    /// authority digest. Never equal to the authority digest itself (the
+    /// domain label is prepended), so the full-budget run's seeds and this
+    /// half's seeds are disjoint sequences.
+    pub(crate) fn simulation_seed_digest_v1(self, authority_digest: [u8; 32]) -> [u8; 32] {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(MODEL_GUIDED_SEARCH_SEED_HALF_DOMAIN_V1.as_bytes());
+        hasher.update(authority_digest);
+        hasher.update(self.tag_v1().as_bytes());
+        hasher.finalize().into()
+    }
+}
+
+/// How each simulation's traversal ENDED, counted across a whole decision.
+/// Added for the test-time-search wrapper's outcome schema (V4 on the wire), which
+/// records "depth and terminal-leaf counts" per decision
+/// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5, S0).
+///
+/// The four leaf counts partition the simulations exactly: every
+/// simulation ends at exactly one of them, so they always sum to
+/// [`ModelGuidedSearchDecisionV1::simulations`]. That is an invariant a
+/// consumer can check, and this module's own tests do.
+///
+/// This is pure instrumentation. Nothing in the search reads it, so it
+/// cannot influence the chosen action; it is filled on the way out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelGuidedSearchLeafCensusV1 {
+    /// Section 1.3 site 1: a natural terminal (+/-10,000 constants, the
+    /// value head never invoked).
+    pub natural_terminal_leaves: u32,
+    /// A decision-cap truncation, routed to the value head by this
+    /// module's own resolved design point.
+    pub truncated_terminal_leaves: u32,
+    /// Section 1.3 site 2: the one new tree node a simulation may create.
+    pub newly_expanded_leaves: u32,
+    /// Section 1.3 site 3 plus this module's documented routing of budget
+    /// exhaustion and v1's coverage-guarantee early exit.
+    pub depth_cap_leaves: u32,
+    /// Deepest simulation, in transitions from the root. Never exceeds the
+    /// authority's `policy_step_depth_cap`.
+    pub max_simulation_depth: u16,
+    /// Sum of every simulation's depth, so a consumer can form the mean
+    /// cutoff depth exactly (integer division on its own terms) rather
+    /// than receiving a lossy float from here.
+    pub summed_simulation_depth: u64,
+}
+
 /// Per-root-action visit/value summary and the search's overall verdict.
-/// Structurally identical to v1's own `KernelNativeSearchDecisionV1`; reuses
-/// v1's own `KernelNativeSearchActionStatV1` directly as the element type of
-/// `root_action_stats`.
+/// Structurally identical to v1's own `KernelNativeSearchDecisionV1` plus
+/// the leaf census; reuses v1's own `KernelNativeSearchActionStatV1`
+/// directly as the element type of `root_action_stats`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelGuidedSearchDecisionV1 {
     pub selected_index: u32,
@@ -1142,6 +1245,8 @@ pub struct ModelGuidedSearchDecisionV1 {
     pub simulations: u32,
     pub tree_node_count: u32,
     pub root_action_stats: Vec<KernelNativeSearchActionStatV1>,
+    #[serde(default)]
+    pub leaf_census: ModelGuidedSearchLeafCensusV1,
 }
 
 /// The model-guided searcher's own algorithm path (design items 1-2, 5):
@@ -1187,6 +1292,52 @@ impl ModelGuidedSearchCoreV1 {
         )
     }
 
+    /// DIAGNOSTIC ONLY. Runs the identical search over a domain-separated
+    /// HALF of the simulation-seed space, at half the tier budget, for the
+    /// outcome-schema-V3 "chosen-action stability across two independent
+    /// simulation-seed halves" record
+    /// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5, S0).
+    ///
+    /// Its result is recorded and never consulted: the chosen action is,
+    /// per the sketch's own wording, "the full-budget result" from
+    /// [`Self::select_action_v1`]. Two properties make that structurally
+    /// true rather than a convention the caller must honor. First, each
+    /// call builds its own tree over its own freshly redeterminized
+    /// per-simulation clones, so a half run cannot perturb any state the
+    /// full run reads. Second, the half's seeds come from a digest that is
+    /// domain-separated from the authority digest itself
+    /// (`SHA-256(MODEL_GUIDED_SEARCH_SEED_HALF_DOMAIN_V1 || authority
+    /// digest || half tag)`), so no simulation seed drawn by a half can
+    /// ever collide with one the full-budget run draws, and the two halves
+    /// cannot collide with each other.
+    ///
+    /// The half budget is `max(tier_budget / 2, root_action_count)`: the
+    /// search's own coverage rule requires at least one transition per
+    /// root action, so a naive halving would turn a wide decision into a
+    /// `BudgetSmallerThanRootActionCount` error and lose the diagnostic
+    /// entirely. The `max` is deterministic and depends only on the
+    /// decision's own legal-action count, so it cannot make the record a
+    /// function of anything but (checkpoint, seed, decision, authority).
+    pub(crate) fn select_action_seed_half_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
+        &self,
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        evaluator: &E,
+        value_domain: &ModelGuidedSearchValueHeadDomainV1,
+        half: ModelGuidedSearchSeedHalfV1,
+    ) -> Result<ModelGuidedSearchDecisionV1, ModelGuidedSearchCoreErrorV1> {
+        let half_budget = (self.authority.transition_budget / 2).max(expected.legal_action_count);
+        self.select_action_with_seed_digest_and_budget_v1(
+            session,
+            expected,
+            half.simulation_seed_digest_v1(self.authority.digest()?),
+            half_budget,
+            self.authority.policy_step_depth_cap,
+            evaluator,
+            value_domain,
+        )
+    }
+
     /// Mirrors `KernelNativeSearchOpponentV1::select_action_with_budget_v1`
     /// line for line (root/coverage preflight, per-simulation redetermination
     /// loop, post-loop hidden-state re-verification, final selection); see
@@ -1196,6 +1347,36 @@ impl ModelGuidedSearchCoreV1 {
         &self,
         session: &FastActorSessionV1,
         expected: FastActorDecisionV1,
+        transition_budget: u32,
+        depth_cap: u16,
+        evaluator: &E,
+        value_domain: &ModelGuidedSearchValueHeadDomainV1,
+    ) -> Result<ModelGuidedSearchDecisionV1, ModelGuidedSearchCoreErrorV1> {
+        let authority_digest = self.authority.digest()?;
+        self.select_action_with_seed_digest_and_budget_v1(
+            session,
+            expected,
+            authority_digest,
+            transition_budget,
+            depth_cap,
+            evaluator,
+            value_domain,
+        )
+    }
+
+    /// The one implementation both the full-budget entry point and the
+    /// diagnostic seed-half entry point run. `simulation_seed_digest` is
+    /// the first input to
+    /// [`derive_simulation_seed_v1`]; the full-budget path passes the
+    /// authority digest itself (unchanged behavior, byte for byte), and
+    /// only the diagnostic path passes a domain-separated derivative.
+    /// Factored out rather than duplicated so the two can never drift.
+    #[allow(clippy::too_many_arguments)]
+    fn select_action_with_seed_digest_and_budget_v1<E: ModelGuidedSearchLeafEvaluatorV1>(
+        &self,
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        simulation_seed_digest: [u8; 32],
         transition_budget: u32,
         depth_cap: u16,
         evaluator: &E,
@@ -1239,15 +1420,15 @@ impl ModelGuidedSearchCoreV1 {
         let root_prior = quantize_prior_v1(&root_forward.legal_action_weights)?;
 
         let mut tree = ModelGuidedSearchTreeV1::new(root_key, root_player, root_prior)?;
-        let authority_digest = self.authority.digest()?;
         let authoritative_hash_before = session.privileged_core_environment_hash();
         let authoritative_response_before = session.current_response();
         let mut transitions_used = 0u32;
         let mut simulations = 0u32;
+        let mut leaf_census = ModelGuidedSearchLeafCensusV1::default();
 
         while transitions_used < transition_budget {
             let simulation_seed = derive_simulation_seed_v1(
-                authority_digest,
+                simulation_seed_digest,
                 expected,
                 u64::from(simulations),
                 root_player,
@@ -1268,6 +1449,7 @@ impl ModelGuidedSearchCoreV1 {
                 forced_root_action,
                 evaluator,
                 value_domain,
+                &mut leaf_census,
             )?;
             simulations = simulations
                 .checked_add(1)
@@ -1305,6 +1487,7 @@ impl ModelGuidedSearchCoreV1 {
             tree_node_count: u32::try_from(tree.nodes.len())
                 .map_err(|_| KernelNativeSearchErrorV1::CorruptTree)?,
             root_action_stats,
+            leaf_census,
         })
     }
 }
@@ -1314,9 +1497,11 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::kernel_native_search_opponent_v1::{
-        KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+        KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1,
     };
-    use crate::model_guided_search_authority_v1::ModelGuidedSearchConsumptionModeV1;
+    use crate::model_guided_search_authority_v1::{
+        ModelGuidedSearchConsumptionModeV1, MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1,
+    };
     use crate::native_policy_value_net_v1::{
         NativeEncodedDecisionSchemaV1, NativePolicyValueModelConfigV1,
     };
@@ -1337,15 +1522,17 @@ mod tests {
     fn authority_v1(tier: KernelNativeSearchTierV1) -> ModelGuidedSearchAuthorityV1 {
         ModelGuidedSearchAuthorityV1::new(
             tier,
-            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            // Was `KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0]` (v1's own
+            // calibration seed), which validated only because this schema
+            // had no allowlist of its own. It does now, and the two bands
+            // are deliberately disjoint, so this fixture names a
+            // model-guided block.
+            MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1[0],
             crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
             "D:/mtg-kernel-store/test-lineage",
             0,
             &"1".repeat(64),
             "net8-family/test-v1",
-            &"2".repeat(64),
-            &"3".repeat(64),
-            &"4".repeat(64),
             ModelGuidedSearchConsumptionModeV1::SearchAsOpponent,
         )
         .unwrap()
@@ -1570,6 +1757,7 @@ mod tests {
                 forced_root_action,
                 evaluator,
                 value_domain,
+                &mut ModelGuidedSearchLeafCensusV1::default(),
             )
             .unwrap();
             simulations += 1;
@@ -1781,6 +1969,126 @@ mod tests {
         assert_eq!(
             session.current_response(),
             FastActorResponseV1::Decision(decision)
+        );
+    }
+
+    // ---- outcome-schema-V3 instrumentation (test-time-search S0) ----
+
+    /// The four leaf counts partition the simulations exactly: every
+    /// simulation ends at one and only one of them. A consumer of the
+    /// diagnostics record relies on this to read "terminal-leaf fraction"
+    /// off the census without a second source of truth.
+    #[test]
+    fn leaf_census_partitions_the_simulation_count_exactly() {
+        let session = v2_session_v1("Rally", "Burn", 41_501);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        let searcher = ModelGuidedSearchCoreV1::new(authority_v1(KernelNativeSearchTierV1::T512))
+            .expect("authority validates");
+        let evaluator = MockLeafEvaluatorV1::new();
+        let value_domain = ModelGuidedSearchValueHeadDomainV1::Tanh;
+        let result = searcher
+            .select_action_v1(&session, decision, &evaluator, &value_domain)
+            .expect("full-tier search completes");
+        let census = result.leaf_census;
+        assert_eq!(
+            census.natural_terminal_leaves
+                + census.truncated_terminal_leaves
+                + census.newly_expanded_leaves
+                + census.depth_cap_leaves,
+            result.simulations,
+            "every simulation must end at exactly one leaf class"
+        );
+        assert!(census.max_simulation_depth <= KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1);
+        assert!(
+            census.summed_simulation_depth >= u64::from(census.max_simulation_depth),
+            "the depth sum must cover at least the deepest simulation"
+        );
+        // The census is instrumentation: it cannot have changed the
+        // verdict, so a search with the same inputs still agrees with
+        // itself.
+        let again = searcher
+            .select_action_v1(
+                &session,
+                decision,
+                &MockLeafEvaluatorV1::new(),
+                &value_domain,
+            )
+            .expect("full-tier search completes");
+        assert_eq!(result, again);
+    }
+
+    /// The diagnostic stability halves must be genuinely independent of
+    /// the full-budget run and of each other, and must never disturb it.
+    #[test]
+    fn stability_halves_are_domain_separated_and_do_not_perturb_the_full_run() {
+        let authority = authority_v1(KernelNativeSearchTierV1::T512);
+        let authority_digest = authority.digest().expect("authority digests");
+        let half_a = ModelGuidedSearchSeedHalfV1::A.simulation_seed_digest_v1(authority_digest);
+        let half_b = ModelGuidedSearchSeedHalfV1::B.simulation_seed_digest_v1(authority_digest);
+        assert_ne!(
+            half_a, authority_digest,
+            "half A must not reuse the authority digest"
+        );
+        assert_ne!(
+            half_b, authority_digest,
+            "half B must not reuse the authority digest"
+        );
+        assert_ne!(half_a, half_b, "the two halves must be independent");
+        assert_eq!(ModelGuidedSearchSeedHalfV1::A.tag_v1(), "half-a");
+        assert_eq!(ModelGuidedSearchSeedHalfV1::B.tag_v1(), "half-b");
+
+        let session = v2_session_v1("Rally", "Burn", 41_502);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        let searcher = ModelGuidedSearchCoreV1::new(authority).expect("authority validates");
+        let value_domain = ModelGuidedSearchValueHeadDomainV1::Tanh;
+        let full_before = searcher
+            .select_action_v1(
+                &session,
+                decision,
+                &MockLeafEvaluatorV1::new(),
+                &value_domain,
+            )
+            .expect("full search completes");
+        let a = searcher
+            .select_action_seed_half_v1(
+                &session,
+                decision,
+                &MockLeafEvaluatorV1::new(),
+                &value_domain,
+                ModelGuidedSearchSeedHalfV1::A,
+            )
+            .expect("half A completes");
+        let b = searcher
+            .select_action_seed_half_v1(
+                &session,
+                decision,
+                &MockLeafEvaluatorV1::new(),
+                &value_domain,
+                ModelGuidedSearchSeedHalfV1::B,
+            )
+            .expect("half B completes");
+        // Half budget, and never below the root action count (the search's
+        // own coverage rule would otherwise reject the decision).
+        assert!(a.transitions_used >= decision.legal_action_count);
+        assert_eq!(a.transitions_used, 256.max(decision.legal_action_count));
+        assert_eq!(b.transitions_used, a.transitions_used);
+        // Different seed sources really do produce different searches.
+        assert_ne!(a.root_action_stats, b.root_action_stats);
+        let full_after = searcher
+            .select_action_v1(
+                &session,
+                decision,
+                &MockLeafEvaluatorV1::new(),
+                &value_domain,
+            )
+            .expect("full search completes");
+        assert_eq!(
+            full_before, full_after,
+            "running the halves must not perturb the full-budget result"
         );
     }
 

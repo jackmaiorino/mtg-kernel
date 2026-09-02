@@ -228,6 +228,23 @@ impl NativeCheckpointInferenceV1 {
         self.generation_index
     }
 
+    /// The typed native net behind this handle, for the model-guided
+    /// (test-time search) selector's narrow search-capable seam
+    /// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5, S0: "a
+    /// narrow search-capable model interface that retains the typed native
+    /// net (the `dyn` scorer keeps flat scoring)").
+    ///
+    /// `pub(crate)` and immutable, so this does not widen the handle's
+    /// external surface: `NativePolicyValueNetV1` is itself `pub(crate)`,
+    /// and a shared reference cannot mutate parameters, replace a
+    /// snapshot, or reach optimizer state. The searcher needs the typed
+    /// net because `forward_search_deterministic_v1` (the MXCSR-gated,
+    /// kernel-tanh variant) exists only there; `score_decision_v1`, the
+    /// flat path, cannot express it.
+    pub(crate) const fn search_model_v1(&self) -> &NativePolicyValueNetV1 {
+        &self.model
+    }
+
     /// Scores one already-typed V2 decision using only immutable handle state.
     /// Tensorization uses fresh local scratch, so a failed decision cannot
     /// poison this handle or any independently loaded handle.

@@ -401,6 +401,107 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     println!("cargo:rustc-env=MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT={TRACKED_TREE_HASH_CONTRACT}");
 }
 
+/// The build-override variables re-exported to the crate so
+/// `model_guided_search_contract_digests_v1` can certify (or refuse to
+/// certify) the build it is compiled into.
+///
+/// `option_env!` inside the crate is NOT sufficient on its own, which is
+/// the whole reason this function exists. Flags configured in a
+/// `.cargo/config.toml` `[build] rustflags` key or a
+/// `[target.<triple>] rustflags` table are applied by Cargo to the rustc
+/// invocation WITHOUT ever appearing in an environment variable the
+/// compiled crate can observe, so a configured
+/// `-C llvm-args=-fp-contract=fast` used to pass certification untouched.
+///
+/// A build script sees the resolved picture: Cargo sets
+/// `CARGO_ENCODED_RUSTFLAGS` for build scripts, and that value already
+/// includes config-derived flags. Re-exporting it with
+/// `cargo:rustc-env` puts the effective flag set where `option_env!` can
+/// read it at crate-compile time.
+///
+/// The pair `(source variable, re-exported name)`. Plain `RUSTC` is
+/// deliberately absent: Cargo always sets it for build scripts (to the
+/// rustc it is driving), so its mere presence is not evidence of an
+/// override, and its value is an absolute path that would make any digest
+/// binding it host-specific. The crate keeps its own compile-time
+/// `option_env!("RUSTC")` check for that variable instead.
+const EFFECTIVE_BUILD_FLAG_VARIABLES: &[(&str, &str)] = &[
+    (
+        "CARGO_ENCODED_RUSTFLAGS",
+        "MTG_KERNEL_EFFECTIVE_ENCODED_RUSTFLAGS",
+    ),
+    ("RUSTFLAGS", "MTG_KERNEL_EFFECTIVE_RUSTFLAGS"),
+    (
+        "CARGO_BUILD_RUSTFLAGS",
+        "MTG_KERNEL_EFFECTIVE_BUILD_RUSTFLAGS",
+    ),
+    ("RUSTC_WRAPPER", "MTG_KERNEL_EFFECTIVE_RUSTC_WRAPPER"),
+    (
+        "RUSTC_WORKSPACE_WRAPPER",
+        "MTG_KERNEL_EFFECTIVE_RUSTC_WORKSPACE_WRAPPER",
+    ),
+    ("CARGO_BUILD_TARGET", "MTG_KERNEL_EFFECTIVE_BUILD_TARGET"),
+];
+
+/// Flattens a build-flag value into something safe to carry through
+/// `cargo:rustc-env`, WITHOUT destroying the substrings the crate scans
+/// for.
+///
+/// `CARGO_ENCODED_RUSTFLAGS` separates flags with `\x1f`, and any control
+/// character (a newline above all) would corrupt the one-line
+/// `cargo:` directive protocol. Every control character therefore becomes
+/// a space: flags stay individually readable and every forbidden fragment
+/// (`fp-contract`, `+fma`, ...) survives intact, because none of them
+/// contains a control character. Hex- or base64-encoding the value would
+/// have been safe too, but would have made the crate's substring scan
+/// impossible without a decoder.
+fn flatten_build_flag_value(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+/// Re-exports the effective build-flag environment to the crate.
+///
+/// Every variable is emitted unconditionally, empty when unset, so the
+/// crate can distinguish "the build script reported no override" from
+/// "the build script never ran". The latter is treated as a violation on
+/// the crate side, because a certification that silently degrades to
+/// "no evidence" is not a certification.
+fn configure_effective_build_flags() {
+    for (source, exported) in EFFECTIVE_BUILD_FLAG_VARIABLES {
+        println!("cargo:rerun-if-env-changed={source}");
+        let value = env::var(source).unwrap_or_default();
+        println!(
+            "cargo:rustc-env={exported}={}",
+            flatten_build_flag_value(&value)
+        );
+    }
+    // The target-specific table, which only exists once the triple is
+    // known. `TARGET` is always set for build scripts; the variable name
+    // Cargo honours is the upper-cased triple with `-` mapped to `_`.
+    let target = env::var("TARGET").unwrap_or_default();
+    let target_variable = format!(
+        "CARGO_TARGET_{}_RUSTFLAGS",
+        target.to_uppercase().replace('-', "_")
+    );
+    println!("cargo:rerun-if-env-changed={target_variable}");
+    let target_value = env::var(&target_variable).unwrap_or_default();
+    println!(
+        "cargo:rustc-env=MTG_KERNEL_EFFECTIVE_TARGET_RUSTFLAGS={}",
+        flatten_build_flag_value(&target_value)
+    );
+    // Recorded so a violation report can name the table it came from.
+    println!("cargo:rustc-env=MTG_KERNEL_EFFECTIVE_TARGET_RUSTFLAGS_VARIABLE={target_variable}");
+}
+
 fn canonical_json(value: &Value, output: &mut String) {
     match value {
         Value::Null => output.push_str("null"),
@@ -1757,6 +1858,7 @@ fn main() {
         Path::new(&out_dir),
     );
     configure_commit_tree_binding(&repo_root);
+    configure_effective_build_flags();
     let json_path = Path::new(&manifest_dir)
         .join("..")
         .join("data")

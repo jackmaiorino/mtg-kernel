@@ -13,6 +13,21 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::flat_policy_v2::{FlatDecisionBindingV2, FlatScoringDecisionViewV2};
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
+use crate::model_guided_search_authority_v1::{
+    authorized_seed_block_v1, ModelGuidedSearchAuthorityV1, ModelGuidedSearchConsumptionModeV1,
+};
+use crate::model_guided_search_contract_digests_v1::MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1;
+use crate::model_guided_search_core_v1::{
+    ModelGuidedSearchCoreV1, ModelGuidedSearchRealForwardValueEvaluatorV1,
+    ModelGuidedSearchSeedHalfV1,
+};
+use crate::model_guided_search_outcome_v4::{
+    lower_hex_sha256_v4, root_statistics_digest_v4, visit_margin_v4, CeilingStatusV4,
+    EpisodeCloseReasonV4, ModelGuidedSearchOutcomeWriterV4, ProtocolRequestKindV4,
+    SearchDecisionRecordV4, StabilityV4, WallTimeV4, WrapperIdentityV4,
+};
+use crate::model_guided_search_value_quantization_v1::ModelGuidedSearchValueHeadDomainV1;
 use crate::native_checkpoint_inference_v1::{
     NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
@@ -62,6 +77,15 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::Instant;
+
+/// Elapsed microseconds since `started`, saturating rather than wrapping.
+/// DIAGNOSTIC ONLY: no caller compares this against anything that could
+/// change a chosen action; see
+/// `ShadowScorerServiceV1::model_guided_search_selection_v1`.
+fn elapsed_micros_v1(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
 
 pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1: &str = "mtg-kernel-checkpoint-shadow-stdio/v1";
 pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
@@ -100,6 +124,15 @@ pub enum ShadowCandidateSelectorV1 {
     Depth8HistoryValueBootstrap,
     Depth8BoundedValueTeacherShadow,
     Depth8Cp7OpponentHistoryValueBootstrap,
+    /// The test-time-search wrapper
+    /// (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md`): bounded PUCT IS-MCTS
+    /// over `ModelGuidedSearchCoreV1` with the fixed checkpoint's own
+    /// policy prior and value head, overriding the sampled index AFTER the
+    /// policy forward so the step-protocol invariant (Java cannot override
+    /// the Rust-side choice) is preserved unchanged. Selectable only
+    /// through the scorer binary's strict CLI flags, never an environment
+    /// variable.
+    ModelGuidedSearch,
 }
 
 const ONE_STEP_VALUE_MIN_PHYSICAL_DECISION_V1: u64 = 20;
@@ -543,9 +576,42 @@ struct ShadowModelOutputV1 {
     structured_parent_value: Option<f32>,
 }
 
+/// The narrow search-capable model seam (test-time-search sketch V2
+/// Section 5, S0: "a narrow search-capable model interface that retains
+/// the typed native net for the searcher while the existing `dyn` scorer
+/// keeps flat scoring").
+///
+/// Exactly one method, returning exactly the one thing the searcher cannot
+/// get through [`ShadowModelScorerV1`]: the typed
+/// `NativePolicyValueNetV1`, whose `forward_search_deterministic_v1` (the
+/// MXCSR-gated, kernel-tanh forward the whole determinism argument rests
+/// on) has no flat-scoring equivalent. Everything else the searcher needs
+/// -- encoding, tensorizing, quantization, tree mechanics -- already
+/// exists behind `ModelGuidedSearchRealForwardValueEvaluatorV1` and is not
+/// re-plumbed here.
+///
+/// Deliberately NOT a supertrait of `ShadowModelScorerV1` and not a new
+/// required method on it: the flat scoring path must be unchanged, and
+/// making every scorer implement this would force the recurrent and
+/// test-only scorers (which have no native net at all) to either fabricate
+/// one or panic.
+trait ShadowSearchCapableModelV1 {
+    fn search_native_net_v1(&self) -> &NativePolicyValueNetV1;
+}
+
 trait ShadowModelScorerV1 {
     fn uses_structured_history_v1(&self) -> bool {
         false
+    }
+
+    /// Search capability, if this scorer has it. The default is `None`, so
+    /// every existing scorer keeps flat scoring with no behavior change of
+    /// any kind: the `PolicySample` path never calls this, and a scorer
+    /// that does not override it simply cannot be selected for search
+    /// (the selector fails closed at configuration time rather than
+    /// silently degrading to something else).
+    fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+        None
     }
 
     fn score_v1(
@@ -561,7 +627,17 @@ struct NativeShadowModelScorerV1 {
     inference: NativeCheckpointInferenceV1,
 }
 
+impl ShadowSearchCapableModelV1 for NativeShadowModelScorerV1 {
+    fn search_native_net_v1(&self) -> &NativePolicyValueNetV1 {
+        self.inference.search_model_v1()
+    }
+}
+
 impl ShadowModelScorerV1 for NativeShadowModelScorerV1 {
+    fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+        Some(self)
+    }
+
     fn score_v1(
         &self,
         decision: FlatScoringDecisionViewV2<'_>,
@@ -625,7 +701,17 @@ struct FixedNativeStateShadowModelScorerV1 {
     state: NativePolicyValueTrainStateV1,
 }
 
+impl ShadowSearchCapableModelV1 for FixedNativeStateShadowModelScorerV1 {
+    fn search_native_net_v1(&self) -> &NativePolicyValueNetV1 {
+        self.state.model_v1()
+    }
+}
+
 impl ShadowModelScorerV1 for FixedNativeStateShadowModelScorerV1 {
+    fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+        Some(self)
+    }
+
     fn score_v1(
         &self,
         decision: FlatScoringDecisionViewV2<'_>,
@@ -2539,6 +2625,292 @@ fn rl_error_code_v1(code: RlSessionErrorCode) -> &'static str {
     }
 }
 
+/// Everything the `ModelGuidedSearch` selector needs, held on the service
+/// so `score_session_v1` can reach it without widening any existing type.
+///
+/// The AUTHORITY is not built here. It is bound on the first reset, from
+/// the live session's own
+/// `kernel_search_private_diagnostic_identity_v1()`, because
+/// `ModelGuidedSearchAuthorityV1` commits to that identity and the core
+/// refuses to search a session whose identity disagrees with the record's.
+/// Which of the two admissible identities a session carries is a property
+/// of the loaded checkpoint's environment contract, and reading it off the
+/// real session is the only way to be right about it that does not
+/// duplicate the environment-contract mapping in a second place where it
+/// could drift. Later resets must agree with the first, or the search
+/// fails closed rather than silently re-minting an authority mid-run.
+struct ModelGuidedSearchRuntimeV1 {
+    tier: KernelNativeSearchTierV1,
+    seed_block_id: usize,
+    action_seed: u64,
+    value_domain: ModelGuidedSearchValueHeadDomainV1,
+    /// Whether the two diagnostic stability halves run. They execute
+    /// synchronously inside each decision, so leaving them on roughly
+    /// triples the per-decision transition count and the latency that goes
+    /// with it. A formal panel measuring product latency turns them off;
+    /// an S2 diagnostics run leaves them on. Either way the per-decision
+    /// record says which ran, and `ceiling_status` is classified from the
+    /// latency that configuration actually paid.
+    stability_halves_enabled: bool,
+    diagnostics: ModelGuidedSearchOutcomeWriterV4,
+    bound: Option<BoundModelGuidedSearchV1>,
+    /// The episode id of an episode that reached a TERMINAL whose footer
+    /// has not been published yet.
+    ///
+    /// A terminal close can fail transiently (a held handle, ENOSPC), and
+    /// once it has, the session already reports the episode as terminal:
+    /// a retried step is rejected before it can reach the close again, and
+    /// the next reset or the end of input would then close the file as
+    /// `episode_replaced` or `process_exit`. That misclassifies a game
+    /// that actually ended. This flag makes the terminal reason STICK
+    /// until the footer is really on disk, and gives the retry paths
+    /// something to notice.
+    pending_terminal_episode_id: Option<u64>,
+}
+
+struct BoundModelGuidedSearchV1 {
+    core: ModelGuidedSearchCoreV1,
+    private_diagnostic_identity: String,
+    wrapper_identity: WrapperIdentityV4,
+    authority_digest_sha256: String,
+}
+
+fn value_head_domain_tag_v1(domain: &ModelGuidedSearchValueHeadDomainV1) -> String {
+    match domain {
+        ModelGuidedSearchValueHeadDomainV1::Tanh => "tanh".to_owned(),
+        ModelGuidedSearchValueHeadDomainV1::SigmoidFamily => "sigmoid_family".to_owned(),
+        ModelGuidedSearchValueHeadDomainV1::Calibrated { lower, upper } => {
+            format!("calibrated:{:08x}:{:08x}", lower.to_bits(), upper.to_bits())
+        }
+    }
+}
+
+fn search_tier_tag_v1(tier: KernelNativeSearchTierV1) -> &'static str {
+    match tier {
+        KernelNativeSearchTierV1::T512 => "t512",
+        KernelNativeSearchTierV1::T2048 => "t2048",
+        KernelNativeSearchTierV1::T8192 => "t8192",
+        KernelNativeSearchTierV1::T32768 => "t32768",
+    }
+}
+
+impl ModelGuidedSearchRuntimeV1 {
+    /// Resolves the CLI-supplied seed BLOCK ID against the launcher-owned
+    /// allowlist and opens the diagnostics directory. Both fail closed:
+    /// an unregistered block id and a missing directory are startup
+    /// errors, never warnings.
+    fn new_v1(
+        tier: KernelNativeSearchTierV1,
+        seed_block_id: usize,
+        diagnostics_directory: PathBuf,
+        stability_halves_enabled: bool,
+    ) -> Result<Self, Box<dyn Error>> {
+        let action_seed = authorized_seed_block_v1(seed_block_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "model-guided search seed block id is not in the authorized allowlist",
+            )
+        })?;
+        let diagnostics = ModelGuidedSearchOutcomeWriterV4::open_directory_v4(
+            diagnostics_directory,
+        )
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("model-guided search diagnostics directory is unusable: {error}"),
+            )
+        })?;
+        Ok(Self {
+            tier,
+            seed_block_id,
+            action_seed,
+            value_domain: MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1,
+            stability_halves_enabled,
+            diagnostics,
+            bound: None,
+            pending_terminal_episode_id: None,
+        })
+    }
+
+    /// The lineage this authority binds: the identity of the checkpoint
+    /// that was actually LOADED, not the generic kind string every
+    /// Store-backed checkpoint shares.
+    ///
+    /// `authority_kind` alone is not a lineage. Every checkpoint drawn
+    /// from a population Store carries the same value for it, so two
+    /// different checkpoints from the same Store produced the same
+    /// `checkpoint_store_path_or_lineage_id`, and the authority record and
+    /// every seed derived from its digest failed to bind the lineage the
+    /// field promises. Composing the loaded run identity, the loaded
+    /// checkpoint manifest digest, and the loaded payload digest makes the
+    /// field discriminate exactly what it claims to: two different
+    /// checkpoints can no longer share an authority digest even when they
+    /// share a kind, a generation, and (in the degenerate case) their
+    /// weight bytes.
+    ///
+    /// The kind is kept as a readable prefix, so the field still says at a
+    /// glance which authority family a record came from.
+    fn checkpoint_lineage_id_v1(checkpoint: &ShadowCheckpointIdentityV1) -> String {
+        format!(
+            "{}|loaded_run_sha256={}|loaded_generation={}|loaded_checkpoint_sha256={}|loaded_payload_sha256={}",
+            checkpoint.authority_kind,
+            checkpoint.loaded_run_sha256,
+            checkpoint.loaded_generation,
+            checkpoint.loaded_checkpoint_sha256,
+            checkpoint.loaded_payload_sha256,
+        )
+    }
+
+    /// Binds (or re-checks) the authority against a live session, then
+    /// opens this episode's diagnostics file. Returns a stable error code
+    /// on any failure so the caller can surface it through the protocol's
+    /// existing error body.
+    ///
+    /// `net_architecture_identity` is read off the LOADED net rather than
+    /// pinned here, so the authority names the architecture that will
+    /// actually run.
+    fn begin_episode_v1(
+        &mut self,
+        session: &FastActorSessionV1,
+        checkpoint: &ShadowCheckpointIdentityV1,
+        net_architecture_identity: &str,
+        episode_id: u64,
+        base_seed: u64,
+        candidate_seat: PlayerSeatV1,
+    ) -> Result<(), &'static str> {
+        let live_identity = session
+            .kernel_search_private_diagnostic_identity_v1()
+            .to_owned();
+        if self.bound.is_none() {
+            let lineage = Self::checkpoint_lineage_id_v1(checkpoint);
+            let authority = ModelGuidedSearchAuthorityV1::new(
+                self.tier,
+                self.action_seed,
+                &live_identity,
+                &lineage,
+                checkpoint.loaded_generation,
+                &checkpoint.model_parameter_sha256,
+                net_architecture_identity,
+                // Mode (a): the wrapper IS the presented agent's decision
+                // rule, not an opponent and not a training-target source.
+                ModelGuidedSearchConsumptionModeV1::SearchAtInference,
+            )
+            .map_err(|_| "model_guided_search_authority_invalid")?;
+            let authority_digest = authority
+                .digest()
+                .map_err(|_| "model_guided_search_authority_invalid")?;
+            let wrapper_identity = WrapperIdentityV4 {
+                core_algorithm_identity: authority.algorithm_identity.clone(),
+                authority_kind: authority.authority_kind.clone(),
+                authority_schema: authority.schema.clone(),
+                node_key_identity: authority.node_key_identity.clone(),
+                seed_domain: authority.seed_domain.clone(),
+                tier: search_tier_tag_v1(self.tier).to_owned(),
+                transition_budget: authority.transition_budget,
+                policy_step_depth_cap: authority.policy_step_depth_cap,
+                seed_block_id: self.seed_block_id as u64,
+                action_seed_u64_hex: u64_hex_v1(self.action_seed),
+                search_authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
+                checkpoint_lineage_id: authority.checkpoint_store_path_or_lineage_id.clone(),
+                net_architecture_identity: authority.net_architecture_identity.clone(),
+                puct_prior_quantization_contract_sha256: authority
+                    .puct_prior_quantization_contract_sha256
+                    .clone(),
+                value_quantization_contract_sha256: authority
+                    .value_quantization_contract_sha256
+                    .clone(),
+                forward_determinism_build_identity: authority
+                    .forward_determinism_build_identity
+                    .clone(),
+                value_head_domain: value_head_domain_tag_v1(&self.value_domain),
+                checkpoint_manifest_sha256: checkpoint.loaded_checkpoint_sha256.clone(),
+                checkpoint_model_parameter_sha256: checkpoint.model_parameter_sha256.clone(),
+                engine_commit: authority.engine_commit.clone(),
+            };
+            let core = ModelGuidedSearchCoreV1::new(authority)
+                .map_err(|_| "model_guided_search_authority_invalid")?;
+            self.bound = Some(BoundModelGuidedSearchV1 {
+                core,
+                private_diagnostic_identity: live_identity.clone(),
+                wrapper_identity,
+                authority_digest_sha256: lower_hex_sha256_v4(authority_digest),
+            });
+        }
+        let bound = self
+            .bound
+            .as_ref()
+            .ok_or("model_guided_search_authority_invalid")?;
+        if bound.private_diagnostic_identity != live_identity {
+            return Err("model_guided_search_diagnostic_identity_changed");
+        }
+        let wrapper_identity = bound.wrapper_identity.clone();
+        // A reset REPLACES whatever episode was open. Closing it with a
+        // footer first is what makes its final decision classifiable and
+        // marks its file complete; the writer refuses to open a second
+        // episode over an unclosed one, so this cannot be skipped by
+        // accident.
+        self.close_episode_v1(EpisodeCloseReasonV4::EpisodeReplaced)?;
+        self.diagnostics
+            .begin_episode_v4(episode_id, base_seed, candidate_seat, wrapper_identity)
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")
+    }
+
+    /// Closes the open diagnostics episode with a footer, if one is open.
+    ///
+    /// A no-op when nothing is open, so callers on the three closing paths
+    /// (terminal, reset replacement, orderly process exit) do not each
+    /// need to ask first. A failure is reported: the footer carries the
+    /// last decision's publication and the episode's content digest, and
+    /// dropping it silently would put the episode back in exactly the
+    /// state this record exists to prevent.
+    fn close_episode_v1(&mut self, reason: EpisodeCloseReasonV4) -> Result<(), &'static str> {
+        let Some(open_episode_id) = self.diagnostics.open_episode_id_v4() else {
+            // Nothing open, so nothing is owed. A pending terminal that
+            // outlived its file cannot be honored and must not leak into
+            // the next episode's footer.
+            self.pending_terminal_episode_id = None;
+            return Ok(());
+        };
+        // A REMEMBERED terminal always wins over the reason the caller
+        // happens to be closing with. Once an episode has terminated, the
+        // only truthful footer says so, whether the footer finally
+        // publishes on the retried step, on the next reset, or at end of
+        // input.
+        let reason = if self.pending_terminal_episode_id == Some(open_episode_id) {
+            EpisodeCloseReasonV4::EpisodeTerminal
+        } else {
+            reason
+        };
+        self.diagnostics
+            .close_episode_v4(reason)
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")?;
+        self.pending_terminal_episode_id = None;
+        Ok(())
+    }
+
+    /// Records that `episode_id` reached a terminal and publishes its
+    /// footer. The terminal is remembered BEFORE the publish is attempted,
+    /// so a transient failure leaves the reason owed rather than lost.
+    fn close_terminal_episode_v1(&mut self, episode_id: u64) -> Result<(), &'static str> {
+        if self.diagnostics.open_episode_id_v4() == Some(episode_id) {
+            self.pending_terminal_episode_id = Some(episode_id);
+        }
+        self.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal)
+    }
+
+    /// Whether an episode terminated without its footer reaching disk.
+    fn has_pending_terminal_close_v1(&self) -> bool {
+        self.pending_terminal_episode_id.is_some()
+    }
+
+    /// Reports the outer response boundary to the diagnostics writer: the
+    /// client's wait for this request is over, so the tail that followed
+    /// the record this request published can be measured.
+    fn note_request_completed_v1(&mut self) {
+        self.diagnostics.note_request_completed_v4();
+    }
+}
+
 struct ShadowScorerServiceV1 {
     model: Box<dyn ShadowModelScorerV1>,
     opponent_model: Option<Box<dyn ShadowModelScorerV1>>,
@@ -2546,6 +2918,11 @@ struct ShadowScorerServiceV1 {
     identity: ShadowCheckpointIdentityV1,
     candidate_selector: ShadowCandidateSelectorV1,
     protocol: ShadowStdioProtocolV1,
+    /// Present exactly when `candidate_selector` is
+    /// `ModelGuidedSearch`; the two are installed together by
+    /// `run_checkpoint_shadow_stdio_with_model_guided_search_v1` and the
+    /// selector fails closed if this is absent.
+    search: Option<ModelGuidedSearchRuntimeV1>,
     max_physical_decisions: u64,
     max_policy_steps: u64,
     active: Option<ActiveShadowSessionV1>,
@@ -2615,6 +2992,7 @@ impl ShadowScorerServiceV1 {
                     identity,
                     candidate_selector: ShadowCandidateSelectorV1::PolicySample,
                     protocol: ShadowStdioProtocolV1::V1,
+                    search: None,
                     max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
                     max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
                     active: None,
@@ -2634,6 +3012,7 @@ impl ShadowScorerServiceV1 {
             identity: loaded.identity,
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
             protocol: ShadowStdioProtocolV1::V1,
+            search: None,
             max_physical_decisions: loaded.max_physical_decisions,
             max_policy_steps: loaded.max_policy_steps,
             active: None,
@@ -2669,6 +3048,7 @@ impl ShadowScorerServiceV1 {
             },
             candidate_selector: ShadowCandidateSelectorV1::PolicySample,
             protocol: ShadowStdioProtocolV1::V1,
+            search: None,
             max_physical_decisions: 128,
             max_policy_steps: 16_384,
             active: None,
@@ -2984,6 +3364,213 @@ impl ShadowScorerServiceV1 {
         Err("value_search_redeterminization_unavailable_on_this_lineage")
     }
 
+    /// The `ModelGuidedSearch` selector.
+    ///
+    /// Runs AFTER the policy forward and after the sampler has produced
+    /// `policy_sample`, and returns an index that OVERRIDES it. That
+    /// ordering is deliberate and load-bearing: `handle_step_v1` rejects
+    /// any `selected_index` that is not `scored.selected_action_index`, so
+    /// as long as the override lands in that same field before the
+    /// response is emitted, the existing protocol invariant -- Java can
+    /// never override the Rust-side choice -- holds for the wrapper
+    /// exactly as it does for a raw policy sample. No change to
+    /// `handle_step_v1` is needed or made.
+    ///
+    /// PURITY. The returned index is a function of (checkpoint weights,
+    /// game seed and episode, decision identity, authority) and nothing
+    /// else. The search's own seeds come from
+    /// `derive_simulation_seed_v1(authority digest, decision, simulation
+    /// ordinal, player)`; the tree is rebuilt from scratch per decision;
+    /// the two stability halves run on domain-separated digests and their
+    /// results are recorded, never read. Wall time is measured after the
+    /// fact and only ever written to a diagnostics field: `request_received`
+    /// below is read exactly once, to subtract, after `full.selected_index`
+    /// is already fixed.
+    ///
+    /// LATENCY. `request_received` is the instant `handle_line_v1` took
+    /// delivery of the request line, so the recorded protocol window
+    /// covers the packet encode, the tensorization, the model forward, the
+    /// policy sample, the search, the halves, and this record's own
+    /// construction. The previous shape started its clock here, after all
+    /// of the pre-search work, and stopped it before the record was built
+    /// and published, so a request genuinely sitting near the 4 s SLO or
+    /// the 20 s hard timeout could be recorded as comfortably inside it.
+    ///
+    /// MXCSR. This is layer three of the S0 requirement: the thread about
+    /// to run a search normalizes its own control register (a worker
+    /// thread that has never searched normalizes here), and then verifies
+    /// fail-closed BEFORE the first search forward. A mismatch is a hard
+    /// error returned through the protocol, never a fallback to the policy
+    /// sample: silently playing an unwrapped action while the panel
+    /// believes it measured the wrapper would be the worst possible
+    /// failure mode.
+    fn model_guided_search_selection_v1(
+        model: &dyn ShadowModelScorerV1,
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        policy_sample: u32,
+        search: &mut ModelGuidedSearchRuntimeV1,
+        request_received: Instant,
+        protocol_request_kind: ProtocolRequestKindV4,
+    ) -> Result<u32, &'static str> {
+        crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
+            .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
+        crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+            .map_err(|_| "model_guided_search_mxcsr_not_pinned")?;
+
+        let capable = model
+            .search_capable_v1()
+            .ok_or("model_guided_search_model_not_search_capable")?;
+        let net = capable.search_native_net_v1();
+        // Field-disjoint borrows: the searcher reads `bound` while the
+        // diagnostics writer needs `&mut diagnostics`. Destructuring is
+        // what lets both live at once without cloning the authority
+        // record on every decision.
+        let ModelGuidedSearchRuntimeV1 {
+            value_domain,
+            stability_halves_enabled,
+            diagnostics,
+            bound,
+            ..
+        } = search;
+        let value_domain = *value_domain;
+        let stability_halves_enabled = *stability_halves_enabled;
+        let bound = bound
+            .as_ref()
+            .ok_or("model_guided_search_authority_unbound")?;
+        let core = &bound.core;
+        let evaluator = ModelGuidedSearchRealForwardValueEvaluatorV1::new(net, value_domain);
+
+        let started = Instant::now();
+        let full = core
+            .select_action_v1(session, expected, &evaluator, &value_domain)
+            .map_err(|error| {
+                eprintln!("MODEL_GUIDED_SEARCH_FAILED full_budget error={error}");
+                "model_guided_search_failed"
+            })?;
+        let full_micros = elapsed_micros_v1(started);
+
+        // Diagnostic stability halves. Their results are recorded and
+        // never consulted; the chosen action above is already fixed.
+        //
+        // They run SYNCHRONOUSLY inside the decision, so when they are
+        // enabled their cost is part of the protocol latency the panel
+        // host actually pays. That is why `--model-guided-search-stability
+        // -halves off` exists and why `search_ceiling_status` is classified
+        // from `search_micros` below: a formal panel measuring product
+        // latency turns them off, and the record says which ran.
+        let (stability, half_a_micros, half_b_micros) = if stability_halves_enabled {
+            let half_a_started = Instant::now();
+            let half_a = core
+                .select_action_seed_half_v1(
+                    session,
+                    expected,
+                    &evaluator,
+                    &value_domain,
+                    ModelGuidedSearchSeedHalfV1::A,
+                )
+                .map_err(|error| {
+                    eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_a error={error}");
+                    "model_guided_search_stability_half_failed"
+                })?;
+            let half_a_micros = elapsed_micros_v1(half_a_started);
+            let half_b_started = Instant::now();
+            let half_b = core
+                .select_action_seed_half_v1(
+                    session,
+                    expected,
+                    &evaluator,
+                    &value_domain,
+                    ModelGuidedSearchSeedHalfV1::B,
+                )
+                .map_err(|error| {
+                    eprintln!("MODEL_GUIDED_SEARCH_FAILED stability_half_b error={error}");
+                    "model_guided_search_stability_half_failed"
+                })?;
+            let half_b_micros = elapsed_micros_v1(half_b_started);
+            (
+                Some(StabilityV4 {
+                    half_a_selected_index: half_a.selected_index,
+                    half_b_selected_index: half_b.selected_index,
+                    half_transition_budget: half_a.transitions_used.max(half_b.transitions_used),
+                    halves_agree: half_a.selected_index == half_b.selected_index,
+                    halves_agree_with_full_budget: half_a.selected_index == full.selected_index
+                        && half_b.selected_index == full.selected_index,
+                }),
+                half_a_micros,
+                half_b_micros,
+            )
+        } else {
+            (None, 0, 0)
+        };
+        let search_micros = elapsed_micros_v1(started);
+
+        let mut record = SearchDecisionRecordV4 {
+            // Chain and contract fields are writer-assigned; see
+            // `write_decision_v4`.
+            contract: String::new(),
+            schema_version: 0,
+            record_kind: String::new(),
+            record_ordinal: 0,
+            previous_record_sha256: String::new(),
+            decision_ordinal: 0,
+            episode_id: expected.episode_id,
+            step: expected.step,
+            physical_decision_id: expected.physical_decision_id,
+            substep_index: expected.substep_index,
+            acting_player: expected.acting_player,
+            legal_action_count: expected.legal_action_count,
+            search_authority_digest_sha256: bound.authority_digest_sha256.clone(),
+            requested_transitions: core.authority().transition_budget,
+            actual_transitions: full.transitions_used,
+            simulations: full.simulations,
+            tree_node_count: full.tree_node_count,
+            leaf_census: full.leaf_census,
+            root_statistics_digest_sha256: lower_hex_sha256_v4(root_statistics_digest_v4(&full)),
+            chosen_action_index: full.selected_index,
+            visit_margin: visit_margin_v4(&full),
+            policy_sample_index: policy_sample,
+            search_overrode_policy_sample: full.selected_index != policy_sample,
+            stability,
+            stability_halves_enabled,
+            protocol_request_kind,
+            // The SEARCH-ONLY verdict, classified from `search_micros`:
+            // the full-budget search plus the halves when they ran. It is
+            // deliberately NOT the protocol verdict, which additionally
+            // needs the pre-search protocol work (already inside
+            // `decision_micros` below) and this record's own publication
+            // (which only a later record can observe). Read the protocol
+            // verdict with `episode_decision_ceilings_v4`.
+            //
+            // Computed after the decision is already fixed; never acted on.
+            search_ceiling_status: CeilingStatusV4::classify_v4(search_micros as f64 / 1_000_000.0),
+            wall_time: WallTimeV4 {
+                full_search_micros: full_micros,
+                stability_half_a_micros: half_a_micros,
+                stability_half_b_micros: half_b_micros,
+                search_micros,
+                // Filled in below, once the record is otherwise complete:
+                // record construction and the writer's own bookkeeping are
+                // synchronous too, and leaving them outside the measured
+                // interval is how a near-boundary request gets recorded as
+                // comfortably inside the boundary.
+                decision_micros: 0,
+                // Writer-assigned, both of them: the diagnostics writer
+                // knows how long it spent publishing the previous record
+                // and how long the response tail that followed it took,
+                // and a caller that could set either could understate the
+                // latency it is being measured on.
+                previous_record_publish_micros: 0,
+                previous_record_response_micros: 0,
+            },
+        };
+        record.wall_time.decision_micros = elapsed_micros_v1(request_received);
+        diagnostics
+            .write_decision_v4(record)
+            .map_err(|_| "model_guided_search_diagnostics_write_failed")?;
+        Ok(full.selected_index)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn score_session_v1(
         model: &dyn ShadowModelScorerV1,
@@ -2991,6 +3578,7 @@ impl ShadowScorerServiceV1 {
         population_opponent: Option<&LadderOpponentEngineV1>,
         population_opponent_member: Option<OpponentLadderPoolMemberV2>,
         candidate_selector: ShadowCandidateSelectorV1,
+        search: Option<&mut ModelGuidedSearchRuntimeV1>,
         max_physical_decisions: u64,
         max_policy_steps: u64,
         base_seed: u64,
@@ -2998,6 +3586,14 @@ impl ShadowScorerServiceV1 {
         schedule: &mut NativeLaneScheduleStateV1,
         candidate_seat: PlayerSeatV1,
         structured_history: &[NativeStructuredHistoryEntryV1],
+        // The OUTER decision boundary: when `handle_line_v1` took delivery
+        // of the request whose response this scoring produces. Everything
+        // below is synchronous work the client is waiting on, so the
+        // diagnostics record's protocol window has to start here and not
+        // at the search. Threaded through rather than sampled locally for
+        // exactly that reason.
+        request_received: Instant,
+        protocol_request_kind: ProtocolRequestKindV4,
     ) -> Result<Option<ScoredCurrentDecisionV1>, &'static str> {
         let expected = match session.current_response() {
             FastActorResponseV1::Decision(expected) => expected,
@@ -3112,12 +3708,24 @@ impl ShadowScorerServiceV1 {
                     | ShadowCandidateSelectorV1::Depth8HistoryValueBootstrap
                     | ShadowCandidateSelectorV1::Depth8BoundedValueTeacherShadow
                     | ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap
+                    | ShadowCandidateSelectorV1::ModelGuidedSearch
             )
         {
             let fallback = scored
                 .selected_action_index
                 .ok_or("value_search_fallback_selection_missing")?;
             let selected = match candidate_selector {
+                ShadowCandidateSelectorV1::ModelGuidedSearch => {
+                    Some(Self::model_guided_search_selection_v1(
+                        model,
+                        session,
+                        expected,
+                        fallback,
+                        search.ok_or("model_guided_search_runtime_missing")?,
+                        request_received,
+                        protocol_request_kind,
+                    )?)
+                }
                 ShadowCandidateSelectorV1::OneStepHistoryValueBootstrap => {
                     Self::one_step_history_value_selection_v1(
                         model,
@@ -3280,6 +3888,7 @@ impl ShadowScorerServiceV1 {
         request_id: String,
         episode_id: u64,
         base_seed: u64,
+        request_received: Instant,
     ) -> ShadowScorerResponseV1 {
         if self
             .outcome_export
@@ -3347,6 +3956,48 @@ impl ShadowScorerServiceV1 {
             },
             None => None,
         };
+        // The search-diagnostics episode opens BEFORE the first decision is
+        // scored, because that first call may already search: an episode
+        // whose header had not been published yet would produce a decision
+        // record with nothing to chain to. Publishing the header here also
+        // means an episode that terminates before any searched decision
+        // still leaves an auditable file naming the wrapper that was
+        // configured for it.
+        let checkpoint_identity = self.identity.clone();
+        // Read off the LOADED net, so the authority names the architecture
+        // that will actually run rather than one the caller assumed. A
+        // model with no native net cannot be searched with, and saying so
+        // here fails the episode closed instead of at the first decision.
+        let net_architecture = self
+            .model
+            .search_capable_v1()
+            .map(|capable| capable.search_native_net_v1().architecture_identity_v1());
+        if let Some(search) = self.search.as_mut() {
+            let Some(net_architecture) = net_architecture else {
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(
+                        "model_guided_search_model_not_search_capable",
+                        "model-guided search episode could not be opened",
+                    ),
+                );
+            };
+            if let Err(code) = search.begin_episode_v1(
+                &session,
+                &checkpoint_identity,
+                net_architecture,
+                episode_id,
+                base_seed,
+                candidate_seat,
+            ) {
+                return response_v1(
+                    Some(request_id),
+                    &self.identity,
+                    error_body_v1(code, "model-guided search episode could not be opened"),
+                );
+            }
+        }
         let mut schedule = NativeLaneScheduleStateV1::new(
             base_seed,
             episode_id,
@@ -3360,6 +4011,7 @@ impl ShadowScorerServiceV1 {
             self.population_opponent.as_ref(),
             population_opponent_member,
             self.candidate_selector,
+            self.search.as_mut(),
             self.max_physical_decisions,
             self.max_policy_steps,
             base_seed,
@@ -3367,6 +4019,8 @@ impl ShadowScorerServiceV1 {
             &mut schedule,
             candidate_seat,
             &structured_history.completed,
+            request_received,
+            ProtocolRequestKindV4::Reset,
         ) {
             Ok(current) => current,
             Err(code) => {
@@ -3377,6 +4031,20 @@ impl ShadowScorerServiceV1 {
                 );
             }
         };
+        // A reset that lands directly on a terminal has no decision to
+        // search and never will, so its diagnostics episode closes here
+        // rather than waiting for the next reset to replace it.
+        if current.is_none() {
+            if let Some(search) = self.search.as_mut() {
+                if let Err(code) = search.close_terminal_episode_v1(episode_id) {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(code, "model-guided search episode could not be closed"),
+                    );
+                }
+            }
+        }
         let active = ActiveShadowSessionV1 {
             session,
             schedule,
@@ -3504,7 +4172,30 @@ impl ShadowScorerServiceV1 {
         expected_step: u64,
         selected_index: u32,
         expected_clock: Option<ExpectedKernelClockV2>,
+        request_received: Instant,
     ) -> ShadowScorerResponseV1 {
+        // RETRY an owed terminal footer first. If the terminal close failed
+        // transiently, the session already reports this episode as
+        // terminal, so the rejection below would answer the driver's retry
+        // without ever attempting the footer again, and the episode would
+        // eventually be closed as replaced or as a process exit: a game
+        // that ended recorded as one that did not. Retrying here is the
+        // only place a driver's own retry can reach.
+        if self
+            .search
+            .as_ref()
+            .is_some_and(ModelGuidedSearchRuntimeV1::has_pending_terminal_close_v1)
+        {
+            if let Some(search) = self.search.as_mut() {
+                if let Err(code) = search.close_episode_v1(EpisodeCloseReasonV4::EpisodeTerminal) {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(code, "model-guided search episode could not be closed"),
+                    );
+                }
+            }
+        }
         let protocol = self.protocol;
         let Some(active) = self.active.as_mut() else {
             return response_v1(
@@ -3689,6 +4380,7 @@ impl ShadowScorerServiceV1 {
                 self.population_opponent.as_ref(),
                 active.population_opponent_member,
                 self.candidate_selector,
+                self.search.as_mut(),
                 self.max_physical_decisions,
                 self.max_policy_steps,
                 active.base_seed,
@@ -3696,6 +4388,8 @@ impl ShadowScorerServiceV1 {
                 &mut active.schedule,
                 active.candidate_seat,
                 &structured_history_after.completed,
+                request_received,
+                ProtocolRequestKindV4::Step,
             ) {
                 Ok(Some(scored)) => Some(scored),
                 Ok(None) => {
@@ -3777,6 +4471,29 @@ impl ShadowScorerServiceV1 {
         }
         active.current = next_scored;
         active.structured_history = structured_history_after;
+        // The episode is over: CLOSE the diagnostics episode with a
+        // footer. The footer carries the publication time of the last
+        // decision record, which nothing else follows to observe, so
+        // without it the final search of every game has no protocol
+        // verdict at all: one dropped sample per game, always the same
+        // one.
+        //
+        // AFTER the session state is committed above, deliberately. The
+        // action has already been consumed and every export row already
+        // written by this point, so a failed footer must be reported
+        // without also leaving the service describing a decision the
+        // session has moved past.
+        if matches!(next, FastActorResponseV1::Terminal(_)) {
+            if let Some(search) = self.search.as_mut() {
+                if let Err(code) = search.close_terminal_episode_v1(episode_id) {
+                    return response_v1(
+                        Some(request_id),
+                        &self.identity,
+                        error_body_v1(code, "model-guided search episode could not be closed"),
+                    );
+                }
+            }
+        }
         let body = match next {
             FastActorResponseV1::Decision(_) => {
                 match Self::decision_body_v1(active, false, protocol) {
@@ -3804,7 +4521,33 @@ impl ShadowScorerServiceV1 {
         response
     }
 
+    /// The OUTER decision boundary, for a caller that owns no response
+    /// transport of its own. `run_jsonl_v1` uses
+    /// [`Self::handle_line_at_v1`] instead, because the client's wait does
+    /// not end until the response has been written and flushed.
+    #[cfg(test)]
     fn handle_line_v1(&mut self, line: &str) -> String {
+        self.handle_line_at_v1(line, Instant::now())
+    }
+
+    /// The OPENING half of the outer request boundary.
+    ///
+    /// `request_received` is taken by the caller before anything else and
+    /// threaded down to the diagnostics record. Everything between that
+    /// instant and the record's construction is synchronous work the
+    /// client is waiting on (request parsing, packet encoding,
+    /// tensorization, the model forward, the policy sample, the search,
+    /// the stability halves), so this is where a per-decision protocol
+    /// latency has to start being counted. Only requests that actually
+    /// score a decision carry it further: `score_current` answers from the
+    /// cache and publishes nothing, so it has no decision to charge.
+    ///
+    /// The CLOSING half is [`Self::note_request_completed_v1`], which the
+    /// serving loop calls once the response has been written and flushed.
+    /// It cannot be called from here: the record is already published by
+    /// the time this returns, and the response has not been serialized,
+    /// written or flushed yet.
+    fn handle_line_at_v1(&mut self, line: &str, request_received: Instant) -> String {
         if self.export_poisoned {
             let request_id = parse_strict_json_value(line)
                 .ok()
@@ -3847,7 +4590,7 @@ impl ShadowScorerServiceV1 {
                         request_id,
                         episode_id,
                         base_seed,
-                    } => self.handle_reset_v1(request_id, episode_id, base_seed),
+                    } => self.handle_reset_v1(request_id, episode_id, base_seed, request_received),
                     ShadowScorerRequestV1::ScoreCurrent {
                         request_id,
                         episode_id,
@@ -3879,6 +4622,7 @@ impl ShadowScorerServiceV1 {
                                 expected_step,
                                 selected_index,
                                 expected_clock,
+                                request_received,
                             )
                         }
                     }
@@ -3895,6 +4639,60 @@ impl ShadowScorerServiceV1 {
         };
         serialize_response_v1(&self.stamped_response_v1(response))
     }
+
+    /// Closes the model-guided search diagnostics episode, if one is open.
+    ///
+    /// A no-op when the wrapper is not installed or nothing is open. The
+    /// serving loop calls this on orderly exit so an episode that never
+    /// reached a terminal (the driver simply stopped) still ends in a
+    /// footer, which is what makes its last decision's protocol latency
+    /// recoverable and marks the file as a complete episode.
+    fn close_search_episode_v1(
+        &mut self,
+        reason: EpisodeCloseReasonV4,
+    ) -> Result<(), &'static str> {
+        match self.search.as_mut() {
+            Some(search) => search.close_episode_v1(reason),
+            None => Ok(()),
+        }
+    }
+
+    /// The CLOSING half of the outer request boundary: the response line
+    /// has been written and flushed, so the client's wait for this request
+    /// is over and the tail after the diagnostics publish is now known.
+    ///
+    /// A no-op when the wrapper is not installed. Called by the serving
+    /// loop for every request, including ones that published nothing; the
+    /// writer ignores those rather than charging an unrelated interval to
+    /// an already measured record.
+    fn note_request_completed_v1(&mut self) {
+        if let Some(search) = self.search.as_mut() {
+            search.note_request_completed_v1();
+        }
+    }
+}
+
+/// Scorer process-startup MXCSR normalization (test-time-search sketch V2
+/// Section 5, S0: "MXCSR normalization at scorer process startup and on
+/// every worker thread that runs a search, plus fail-closed verification").
+///
+/// This runs before the checkpoint authority is loaded and before any
+/// forward pass, on the process's main thread, and is a HARD startup error
+/// if the register cannot be brought to the pinned state. It is not a
+/// substitute for the per-thread normalization a search performs on its
+/// own thread (MXCSR is per-thread), and it does not replace
+/// `forward_search_deterministic_v1`'s own entry assert; it is the first
+/// of the three layers, the one that makes the ordinary single-threaded
+/// stdio scorer pinned from its first line of work.
+fn normalize_scorer_process_mxcsr_v1() -> Result<(), Box<dyn Error>> {
+    crate::deterministic_math_v1::normalize_pinned_mxcsr_state_v1().map_err(|error| {
+        io::Error::other(format!(
+            "scorer startup could not pin the MXCSR floating-point control state: {} (observed 0x{:08x})",
+            error.code(),
+            error.observed_v1(),
+        ))
+    })?;
+    Ok(())
 }
 
 fn serialize_response_v1(response: &ShadowScorerResponseV1) -> String {
@@ -3943,6 +4741,64 @@ pub fn run_checkpoint_shadow_stdio_with_depth8_teacher_exports_jsonl_v1(
         Some(opponent_teacher_jsonl),
         Some(outcome_jsonl),
     )
+}
+
+/// The test-time-search wrapper as a first-class scorer decision mode
+/// (`LEAD_RULING_TEST_TIME_SEARCH_V1.md` consequence 1: "The CP7 scorer
+/// gains a search-wrapped decision mode as a first-class,
+/// contract-validated path"). Every parameter is supplied by an explicit
+/// CLI flag on the scorer binary; nothing here reads an environment
+/// variable, and there is no default that could turn the wrapper on by
+/// accident.
+///
+/// `seed_block_id` indexes
+/// `MODEL_GUIDED_SEARCH_AUTHORIZED_SEED_BLOCKS_V1`, so an unregistered
+/// seed cannot reach an authority record through a command line at all.
+/// `diagnostics_directory` must already exist.
+///
+/// Deliberately incompatible with the two trajectory exports, for the same
+/// reason `run_checkpoint_shadow_stdio_with_selector_v1` documents for the
+/// value-search selectors: those export schemas record
+/// `selected_action_index` as a direct checkpoint-policy sample, and a
+/// wrapped decision is not one. Emitting search-chosen actions into a
+/// schema that claims they were policy samples would silently corrupt
+/// every downstream consumer of those files, so it fails closed at
+/// startup.
+pub fn run_checkpoint_shadow_stdio_with_model_guided_search_v1(
+    authority: ShadowCheckpointAuthorityV1,
+    tier: KernelNativeSearchTierV1,
+    seed_block_id: usize,
+    diagnostics_directory: PathBuf,
+    stability_halves_enabled: bool,
+) -> Result<(), Box<dyn Error>> {
+    normalize_scorer_process_mxcsr_v1()?;
+    let search = ModelGuidedSearchRuntimeV1::new_v1(
+        tier,
+        seed_block_id,
+        diagnostics_directory,
+        stability_halves_enabled,
+    )?;
+    let mut service = ShadowScorerServiceV1::load_v1(authority)?;
+    if service.model.search_capable_v1().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "model-guided search requires a checkpoint whose model exposes the typed native net",
+        )
+        .into());
+    }
+    eprintln!(
+        "MODEL_GUIDED_SEARCH tier={} transition_budget={} seed_block_id={} action_seed={} stability_halves={} diagnostics_dir={}",
+        search_tier_tag_v1(search.tier),
+        search.tier.transition_budget(),
+        search.seed_block_id,
+        search.action_seed,
+        if search.stability_halves_enabled { "on" } else { "off" },
+        search.diagnostics.directory_v4().display(),
+    );
+    service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
+    service.search = Some(search);
+    run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
+    Ok(())
 }
 
 /// Opt-in XMage CP7 teacher export. The destination is created exclusively;
@@ -3999,6 +4855,7 @@ pub fn run_checkpoint_shadow_stdio_with_native_population_exports_jsonl_v1(
     teacher_jsonl: PathBuf,
     outcome_jsonl: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
+    normalize_scorer_process_mxcsr_v1()?;
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     install_native_population_exports_v1(&mut service, pool_root, teacher_jsonl, outcome_jsonl)?;
     run_jsonl_v1(&mut service, io::stdin().lock(), io::stdout().lock())?;
@@ -4088,6 +4945,18 @@ fn run_checkpoint_shadow_stdio_fully_configured_v1(
     teacher_jsonl: Option<PathBuf>,
     outcome_jsonl: Option<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
+    normalize_scorer_process_mxcsr_v1()?;
+    if selector == ShadowCandidateSelectorV1::ModelGuidedSearch {
+        // The wrapper needs a tier, a seed block, and a diagnostics
+        // directory that this entry point has no way to supply, and it is
+        // incompatible with both trajectory exports; see
+        // `run_checkpoint_shadow_stdio_with_model_guided_search_v1`.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the model-guided search selector has its own entry point and cannot be configured here",
+        )
+        .into());
+    }
     let mut service = ShadowScorerServiceV1::load_v1(authority)?;
     service.protocol = protocol;
     if selector == ShadowCandidateSelectorV1::Depth8Cp7OpponentHistoryValueBootstrap {
@@ -4139,6 +5008,20 @@ fn run_jsonl_v1(
     mut reader: impl BufRead,
     mut writer: impl Write,
 ) -> io::Result<()> {
+    // Layer two of the S0 MXCSR requirement: the thread that will actually
+    // serve decisions (and therefore run any search) normalizes its own
+    // register before the first request, independently of which thread ran
+    // `normalize_scorer_process_mxcsr_v1`. MXCSR is per-thread, so process
+    // startup alone does not cover a serving loop that was moved onto a
+    // different thread. Layer three is the per-decision fail-closed verify
+    // the search selector performs before its first forward.
+    crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1().map_err(|error| {
+        io::Error::other(format!(
+            "scorer serving thread could not pin the MXCSR floating-point control state: {} (observed 0x{:08x})",
+            error.code(),
+            error.observed_v1(),
+        ))
+    })?;
     let mut line = String::new();
     loop {
         line.clear();
@@ -4152,20 +5035,44 @@ fn run_jsonl_v1(
                 line.pop();
             }
         }
-        writeln!(writer, "{}", service.handle_line_v1(&line))?;
+        // The OUTER request boundary, both halves. The client's wait
+        // starts when the request line has been read and does not end
+        // until the response line is out and flushed, so the diagnostics
+        // record's protocol accounting is opened and closed here rather
+        // than anywhere inside the handler: exports, response
+        // serialization, the write and the flush are all synchronous cost
+        // the panel host pays for that decision, and all of them happen
+        // after the record is already on disk.
+        let request_received = Instant::now();
+        let response = service.handle_line_at_v1(&line, request_received);
+        writeln!(writer, "{response}")?;
         writer.flush()?;
+        service.note_request_completed_v1();
         if service.export_poisoned {
             return Err(io::Error::other(
                 "checkpoint shadow export is poisoned after a write failure",
             ));
         }
     }
+    // ORDERLY EXIT. End of input, so no further decision can be searched
+    // in the open episode: close it with a footer. Without this, a run
+    // that a driver simply stops (rather than playing to a terminal)
+    // leaves its last decision with no successor record and therefore no
+    // protocol-latency verdict at all.
+    service
+        .close_search_episode_v1(EpisodeCloseReasonV4::ProcessExit)
+        .map_err(|code| {
+            io::Error::other(format!(
+                "the model-guided search diagnostics episode could not be closed: {code}"
+            ))
+        })?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_guided_search_outcome_v4::verify_episode_chain_v4;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -4354,6 +5261,1243 @@ mod tests {
 
     fn service_v1() -> ShadowScorerServiceV1 {
         ShadowScorerServiceV1::with_test_model_v1(Box::new(DeterministicTestModelV1))
+    }
+
+    /// Pinned `PolicySample` outputs for episode 2 / base seed 71,501 with
+    /// `DeterministicTestModelV1`, recorded before the search-capable seam
+    /// was added. See
+    /// `policy_sample_choice_is_unchanged_for_a_fixed_seed_v1`.
+    const POLICY_SAMPLE_REGRESSION_ACTION_SEED_HEX_V1: &str = "3b80443fc0e5af4d";
+    const POLICY_SAMPLE_REGRESSION_SELECTED_INDEX_V1: u64 = 0;
+    const POLICY_SAMPLE_REGRESSION_MODEL_INPUT_SHA256_V1: &str =
+        "fd13e231da01867dfa6ea0897d38baa05ba81bb761c7856374707a58160dddc6";
+    const POLICY_SAMPLE_REGRESSION_LEGAL_ACTION_COUNT_V1: u64 = 2;
+
+    // ------------------------------------------------------------------
+    // Test-time-search wrapper (LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md
+    // Section 5, S0)
+    // ------------------------------------------------------------------
+
+    /// A search-capable model over the runner-fixed native net: the same
+    /// in-memory net `model_guided_search_core_v1`'s own real-forward
+    /// tests use, with no checkpoint-manifest or Store dependency. Its
+    /// flat `score_v1` mirrors `FixedNativeStateShadowModelScorerV1`'s
+    /// exactly, so the policy-sample path this test model drives is the
+    /// production one.
+    struct SearchCapableTestModelV1 {
+        net: NativePolicyValueNetV1,
+    }
+
+    impl SearchCapableTestModelV1 {
+        fn new_v1() -> Self {
+            Self {
+                net: NativePolicyValueNetV1::runner_fixed_v1(
+                    NativePolicyValueModelConfigV1::contract_v1(),
+                )
+                .expect("runner-fixed model builds"),
+            }
+        }
+    }
+
+    impl ShadowSearchCapableModelV1 for SearchCapableTestModelV1 {
+        fn search_native_net_v1(&self) -> &NativePolicyValueNetV1 {
+            &self.net
+        }
+    }
+
+    impl ShadowModelScorerV1 for SearchCapableTestModelV1 {
+        fn search_capable_v1(&self) -> Option<&dyn ShadowSearchCapableModelV1> {
+            Some(self)
+        }
+
+        fn score_v1(
+            &self,
+            decision: FlatScoringDecisionViewV2<'_>,
+            _history: &[NativeStructuredHistoryEntryV1],
+            _acting_player: u8,
+            _substep_count: u32,
+        ) -> Result<ShadowModelOutputV1, ()> {
+            let mut tensorizer = NativeFlatTensorizerV2::new();
+            let mut tensor = NativeFlatDecisionTensorV2::default();
+            tensorizer.fill(decision, &mut tensor).map_err(|_| ())?;
+            let encoded = crate::native_checkpoint_inference_v1::encoded_decision_view_v1(&tensor);
+            let output = self.net.forward_v1(encoded).map_err(|_| ())?;
+            if output.logits.len() != decision.actions().len() {
+                return Err(());
+            }
+            Ok(ShadowModelOutputV1 {
+                logits: output.logits,
+                value: output.value,
+                structured_parent_logits: None,
+                structured_parent_value: None,
+            })
+        }
+    }
+
+    fn search_scratch_directory_v1(tag: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "mtg-kernel-scorer-search-{}-{tag}",
+            std::process::id()
+        ));
+        fs::remove_dir_all(&directory).ok();
+        fs::create_dir_all(&directory).expect("scratch directory");
+        directory
+    }
+
+    fn search_runtime_v1(directory: PathBuf) -> ModelGuidedSearchRuntimeV1 {
+        search_runtime_with_halves_v1(directory, true)
+    }
+
+    fn search_runtime_with_halves_v1(
+        directory: PathBuf,
+        stability_halves_enabled: bool,
+    ) -> ModelGuidedSearchRuntimeV1 {
+        ModelGuidedSearchRuntimeV1::new_v1(
+            KernelNativeSearchTierV1::T512,
+            0,
+            directory,
+            stability_halves_enabled,
+        )
+        .expect("the T512 tier and seed block zero are registered")
+    }
+
+    fn search_service_v1(directory: PathBuf) -> ShadowScorerServiceV1 {
+        search_service_with_halves_v1(directory, true)
+    }
+
+    fn search_service_with_halves_v1(
+        directory: PathBuf,
+        stability_halves_enabled: bool,
+    ) -> ShadowScorerServiceV1 {
+        let mut service =
+            ShadowScorerServiceV1::with_test_model_v1(Box::new(SearchCapableTestModelV1::new_v1()));
+        service.candidate_selector = ShadowCandidateSelectorV1::ModelGuidedSearch;
+        service.search = Some(search_runtime_with_halves_v1(
+            directory,
+            stability_halves_enabled,
+        ));
+        service
+    }
+
+    /// The architecture identity of the runner-fixed net the scorer tests
+    /// search with, read off the net rather than pinned by hand.
+    fn search_test_net_architecture_v1() -> &'static str {
+        SearchCapableTestModelV1::new_v1()
+            .search_native_net_v1()
+            .architecture_identity_v1()
+    }
+
+    /// Neutralizes wall time in a published episode file so two runs can
+    /// be compared for the bit identity the sketch requires "apart from
+    /// wall-time fields". EVERY record kind's timing surface lives in one
+    /// member literally named `wall_time` precisely so this is one
+    /// substitution and not a field-by-field allowlist that could silently
+    /// miss a new field or a new record kind. The replacement value is
+    /// null rather than a typed default so this rule does not have to know
+    /// which shape of `wall_time` a given record kind carries.
+    ///
+    /// The chain link is RE-DERIVED over the neutralized lines rather than
+    /// carried through. `previous_record_sha256` covers the previous
+    /// record's published bytes, wall time included, so two runs of the
+    /// same decision legitimately publish different links; comparing them
+    /// would be asserting that timing is reproducible, which it is not and
+    /// must not need to be. Re-deriving keeps the comparison sensitive to
+    /// record ORDER and content (a reordering still breaks it) while
+    /// dropping only the timing dependence. The published chain is
+    /// separately verified as-is by `verify_episode_chain_v4`.
+    /// The footer's `episode_content_sha256` is re-derived for the same
+    /// reason and in the same way: it commits to the published bytes,
+    /// which legitimately differ in their timing fields, so it is
+    /// recomputed over the NEUTRALIZED bytes instead of blanked. A
+    /// reordered or edited episode still changes it.
+    fn strip_wall_time_v1(bytes: &[u8]) -> Vec<String> {
+        let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
+        let mut previous =
+            crate::model_guided_search_outcome_v4::MODEL_GUIDED_SEARCH_OUTCOME_CHAIN_GENESIS_V4
+                .to_owned();
+        let mut normalized_lines: Vec<String> = Vec::new();
+        let mut normalized_content: Vec<u8> = Vec::new();
+        for line in text.lines() {
+            let mut value: serde_json::Value = serde_json::from_str(line).expect("record is JSON");
+            let object = value.as_object_mut().expect("record is an object");
+            if object.contains_key("wall_time") {
+                object.insert("wall_time".to_owned(), serde_json::Value::Null);
+            }
+            object.insert(
+                "previous_record_sha256".to_owned(),
+                serde_json::Value::String(previous.clone()),
+            );
+            if object.contains_key("episode_content_sha256") {
+                object.insert(
+                    "episode_content_sha256".to_owned(),
+                    serde_json::Value::String(lower_hex_sha256_v4(
+                        crate::model_guided_search_outcome_v4::episode_content_digest_v4(
+                            &normalized_content,
+                        ),
+                    )),
+                );
+            }
+            let normalized = serde_json::to_string(&value).unwrap();
+            previous = lower_hex_sha256_v4(
+                crate::model_guided_search_outcome_v4::record_chain_link_v4(&normalized),
+            );
+            normalized_content.extend_from_slice(normalized.as_bytes());
+            normalized_content.push(b'\n');
+            normalized_lines.push(normalized);
+        }
+        normalized_lines
+    }
+
+    /// Drives one short wrapped episode through the production protocol
+    /// (reset, then `steps` accepted steps on the scorer's own chosen
+    /// index) and returns the published diagnostics bytes.
+    fn run_wrapped_episode_v1(directory: &Path, steps: usize) -> (Vec<u32>, Vec<u8>) {
+        run_wrapped_episode_with_halves_v1(directory, steps, true)
+    }
+
+    fn run_wrapped_episode_with_halves_v1(
+        directory: &Path,
+        steps: usize,
+        stability_halves_enabled: bool,
+    ) -> (Vec<u32>, Vec<u8>) {
+        run_wrapped_episode_configured_v1(directory, steps, stability_halves_enabled, None, false)
+    }
+
+    /// A response transport that is slow to FLUSH.
+    ///
+    /// The delay sits entirely after the diagnostics record is on disk and
+    /// entirely outside `handle_line_at_v1`, which is where a slow export
+    /// or a slow stdout sits on a loaded panel host, and which is exactly
+    /// the interval a record cannot observe about itself.
+    struct SlowFlushWriterV1 {
+        sink: Vec<u8>,
+        delay: Option<std::time::Duration>,
+    }
+
+    impl Write for SlowFlushWriterV1 {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.sink.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if let Some(delay) = self.delay {
+                std::thread::sleep(delay);
+            }
+            self.sink.flush()
+        }
+    }
+
+    /// Records the exact request lines one wrapped episode produces, so
+    /// the same episode can be replayed through the real serving loop
+    /// (which reads a script and cannot ask the scorer what to send next).
+    /// The wrapper is deterministic, so a recorded script replays exactly.
+    fn wrapped_episode_script_v1(steps: usize) -> Vec<String> {
+        let directory = search_scratch_directory_v1("script");
+        let mut service = search_service_with_halves_v1(directory.clone(), false);
+        let reset = reset_line_v1("loop-reset");
+        let mut script = vec![reset.clone()];
+        let mut response = value_v1(&service.handle_line_v1(&reset));
+        assert_eq!(response["response_type"], "decision", "{response}");
+        for index in 0..steps {
+            let decision = &response["decision"];
+            let selected = decision["selected_action_index"].as_u64().unwrap();
+            let episode_id = decision["episode_id"].as_u64().unwrap();
+            let step = decision["step"].as_u64().unwrap();
+            let line = format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"loop-step-{index}\",\"episode_id\":{episode_id},\"expected_step\":{step},\"selected_index\":{selected}}}"
+            );
+            script.push(line.clone());
+            response = value_v1(&service.handle_line_v1(&line));
+            if response["response_type"] != "decision" {
+                break;
+            }
+        }
+        fs::remove_dir_all(&directory).ok();
+        script
+    }
+
+    /// Replays a recorded script through the PRODUCTION serving loop, with
+    /// an optionally slow response transport, and returns the published
+    /// diagnostics. The loop closes the episode with a footer at end of
+    /// input, so every decision in the result is classifiable.
+    fn run_script_through_loop_v1(
+        directory: &Path,
+        script: &[String],
+        flush_delay: Option<std::time::Duration>,
+    ) -> Vec<u8> {
+        let mut service = search_service_with_halves_v1(directory.to_path_buf(), false);
+        let input: String = script.iter().map(|line| format!("{line}\n")).collect();
+        let writer = SlowFlushWriterV1 {
+            sink: Vec::new(),
+            delay: flush_delay,
+        };
+        run_jsonl_v1(&mut service, input.as_bytes(), writer).expect("the serving loop runs");
+        let path = service
+            .search
+            .as_ref()
+            .expect("search runtime installed")
+            .diagnostics
+            .episode_path_v4(2, 71_501);
+        fs::read(path).expect("episode diagnostics published")
+    }
+
+    /// Drives one wrapped episode and, optionally, injects an artificial
+    /// delay into every diagnostics publication and closes the episode
+    /// with a footer at the end.
+    ///
+    /// The delay goes INSIDE the measured publication window, exactly
+    /// where a slow disk would sit, so a test can make one run genuinely
+    /// slower than another without touching anything the search reads.
+    fn run_wrapped_episode_configured_v1(
+        directory: &Path,
+        steps: usize,
+        stability_halves_enabled: bool,
+        publish_delay: Option<std::time::Duration>,
+        close_episode: bool,
+    ) -> (Vec<u32>, Vec<u8>) {
+        let mut service =
+            search_service_with_halves_v1(directory.to_path_buf(), stability_halves_enabled);
+        if let Some(delay) = publish_delay {
+            service
+                .search
+                .as_mut()
+                .expect("search runtime installed")
+                .diagnostics
+                .set_publish_delay_for_test_v4(delay);
+        }
+        let mut chosen = Vec::new();
+        let mut response = value_v1(&service.handle_line_v1(&reset_line_v1("mgs-reset")));
+        assert_eq!(
+            response["response_type"], "decision",
+            "wrapped reset must produce a decision: {response}"
+        );
+        for index in 0..steps {
+            let decision = &response["decision"];
+            let selected = decision["selected_action_index"]
+                .as_u64()
+                .expect("the wrapper always fixes a selected index")
+                as u32;
+            chosen.push(selected);
+            let episode_id = decision["episode_id"].as_u64().expect("episode id");
+            let step = decision["step"].as_u64().expect("step");
+            response = value_v1(&service.handle_line_v1(&format!(
+                "{{\"request_type\":\"step\",\"request_id\":\"mgs-step-{index}\",\"episode_id\":{episode_id},\"expected_step\":{step},\"selected_index\":{selected}}}"
+            )));
+            if response["response_type"] != "decision" {
+                break;
+            }
+        }
+        if close_episode {
+            // `handle_line_v1` has no response transport, so close the
+            // outer boundary the way the serving loop does before the
+            // footer picks the tail up.
+            service.note_request_completed_v1();
+            service
+                .close_search_episode_v1(EpisodeCloseReasonV4::ProcessExit)
+                .expect("the episode closes with a footer");
+        }
+        let path = service
+            .search
+            .as_ref()
+            .expect("search runtime installed")
+            .diagnostics
+            .episode_path_v4(2, 71_501);
+        let bytes = fs::read(path).expect("episode diagnostics published");
+        (chosen, bytes)
+    }
+
+    /// DELIVERABLE 2's regression guard. The `PolicySample` path must be
+    /// byte-identical to what it was before the search-capable seam
+    /// existed: the seam is a defaulted trait method that `PolicySample`
+    /// never calls, so the sampled index, its seed, the model input
+    /// digest, and the logits for a fixed seed must all be exactly what
+    /// they were. Pinned by literal, not merely by self-consistency, so
+    /// this catches a change the two-runs-agree tests never would.
+    #[test]
+    fn policy_sample_choice_is_unchanged_for_a_fixed_seed_v1() {
+        let mut service = service_v1();
+        assert_eq!(
+            service.candidate_selector,
+            ShadowCandidateSelectorV1::PolicySample
+        );
+        assert!(service.search.is_none());
+        let reset = value_v1(&service.handle_line_v1(&reset_line_v1("policy-sample-regression")));
+        assert_eq!(reset["response_type"], "decision");
+        assert_eq!(reset["decision"]["candidate_controls_current_actor"], true);
+        assert_eq!(reset["decision"]["episode_id"], 2);
+        assert_eq!(reset["decision"]["step"], 0);
+        assert_eq!(
+            reset["decision"]["candidate_action_seed_u64_hex"],
+            POLICY_SAMPLE_REGRESSION_ACTION_SEED_HEX_V1
+        );
+        assert_eq!(
+            reset["decision"]["selected_action_index"],
+            POLICY_SAMPLE_REGRESSION_SELECTED_INDEX_V1
+        );
+        assert_eq!(
+            reset["decision"]["model_input_sha256"],
+            POLICY_SAMPLE_REGRESSION_MODEL_INPUT_SHA256_V1
+        );
+        assert_eq!(
+            reset["decision"]["legal_action_count"],
+            POLICY_SAMPLE_REGRESSION_LEGAL_ACTION_COUNT_V1
+        );
+    }
+
+    /// DELIVERABLE 6, first half: one end-to-end bit-identical replay
+    /// through the PRODUCTION selector. Same checkpoint fixture, same
+    /// seed, two runs; identical chosen actions and identical diagnostics
+    /// bytes apart from the wall-time fields.
+    #[test]
+    fn model_guided_search_replay_is_bit_identical_apart_from_wall_time_v1() {
+        let first_directory = search_scratch_directory_v1("replay-a");
+        let second_directory = search_scratch_directory_v1("replay-b");
+        let (first_chosen, first_bytes) = run_wrapped_episode_v1(&first_directory, 2);
+        let (second_chosen, second_bytes) = run_wrapped_episode_v1(&second_directory, 2);
+
+        assert!(
+            !first_chosen.is_empty(),
+            "the replay must exercise at least one wrapped decision"
+        );
+        assert_eq!(first_chosen, second_chosen, "chosen actions must replay");
+        assert_eq!(
+            verify_episode_chain_v4(&first_bytes),
+            verify_episode_chain_v4(&second_bytes)
+        );
+        assert!(verify_episode_chain_v4(&first_bytes).is_ok());
+        assert_eq!(
+            strip_wall_time_v1(&first_bytes),
+            strip_wall_time_v1(&second_bytes),
+            "diagnostics must be bit-identical apart from wall time"
+        );
+        // The diagnostics are NOT trivially equal: the wall-time fields
+        // really are present and really do carry a measurement, so the
+        // comparison above is a stripping, not a no-op on empty data.
+        let text = String::from_utf8(first_bytes).unwrap();
+        let decision: serde_json::Value =
+            serde_json::from_str(text.lines().nth(1).expect("a decision record")).unwrap();
+        assert_eq!(decision["record_kind"], "search_decision");
+        assert!(decision["wall_time"]["search_micros"].as_u64().is_some());
+        assert!(decision["wall_time"]["decision_micros"].as_u64().is_some());
+        assert_eq!(decision["protocol_request_kind"], "reset");
+        assert_eq!(decision["requested_transitions"], 512);
+        assert!(decision["actual_transitions"].as_u64().unwrap() >= 1);
+        assert!(decision["root_statistics_digest_sha256"]
+            .as_str()
+            .is_some_and(|value| value.len() == 64));
+        assert!(decision["stability"]["halves_agree"].is_boolean());
+        assert!(decision["search_ceiling_status"].as_str().is_some());
+        // Every simulation ends at exactly one leaf class, so the census
+        // partitions the simulation count exactly.
+        let census = &decision["leaf_census"];
+        let total = census["natural_terminal_leaves"].as_u64().unwrap()
+            + census["truncated_terminal_leaves"].as_u64().unwrap()
+            + census["newly_expanded_leaves"].as_u64().unwrap()
+            + census["depth_cap_leaves"].as_u64().unwrap();
+        assert_eq!(total, decision["simulations"].as_u64().unwrap());
+        fs::remove_dir_all(&first_directory).ok();
+        fs::remove_dir_all(&second_directory).ok();
+    }
+
+    /// DELIVERABLE 6, second half: the metamorphic NON-LEAKAGE test.
+    /// Changing the authoritative hidden cards (the opponent's hand and
+    /// library arrangement) while holding public information and the
+    /// simulation seed fixed must leave the search result bit-identical.
+    ///
+    /// If the searcher ever read the authoritative hidden state instead of
+    /// its own per-simulation redeterminization, this is the test that
+    /// fails: the two sessions below are indistinguishable to every public
+    /// observer and differ only in which specific card sits in an unknown
+    /// opponent hand slot versus an unknown library slot.
+    ///
+    /// Run through the production selector
+    /// (`ShadowScorerServiceV1::model_guided_search_selection_v1`), not
+    /// through `ModelGuidedSearchCoreV1` directly, so the encode bridge,
+    /// the real forward, the MXCSR gate, and the diagnostics record are
+    /// all inside the invariance claim.
+    #[test]
+    fn model_guided_search_is_invariant_to_authoritative_hidden_cards_v1() {
+        let a = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            50_301,
+            81_101,
+            256,
+            32_768,
+            ["Rally".to_owned(), "Burn".to_owned()],
+        )
+        .expect("session resets");
+        let mut b = a.clone();
+        let FastActorResponseV1::Decision(decision_a) = a.current_response() else {
+            panic!("reset terminated")
+        };
+        let actor = crate::kernel_native_search_opponent_v1::player_id_v1(decision_a.acting_player);
+        let opponent = actor.opponent();
+        let unknown_hand = a.kernel_search_state_v1().players[opponent.index()].hand[0];
+        let unknown_library = a.kernel_search_state_v1().players[opponent.index()].library[0];
+        let hand_def = a
+            .kernel_search_state_v1()
+            .objects
+            .get(unknown_hand)
+            .card_def;
+        let library_def = a
+            .kernel_search_state_v1()
+            .objects
+            .get(unknown_library)
+            .card_def;
+        assert_ne!(
+            hand_def, library_def,
+            "the non-leakage witness must swap two DISTINCT hidden definitions"
+        );
+        {
+            let state = b.kernel_search_state_mut_for_test_v1();
+            for (object, definition) in [(unknown_hand, library_def), (unknown_library, hand_def)] {
+                state.objects.get_mut(object).card_def = definition;
+                state.objects.get_mut(object).name = crate::card_def::CARD_DEFS
+                    [definition as usize]
+                    .name
+                    .to_string();
+                state.objects.get_mut(object).v4 =
+                    crate::state::ObjectStateV4::from_card_def(definition);
+            }
+        }
+        let FastActorResponseV1::Decision(decision_b) = b.current_response() else {
+            panic!("reset terminated")
+        };
+        assert_eq!(
+            decision_a, decision_b,
+            "the two sessions must be publicly indistinguishable"
+        );
+
+        let model = SearchCapableTestModelV1::new_v1();
+        let identity = search_checkpoint_identity_v1();
+        let mut results = Vec::new();
+        let mut published = Vec::new();
+        for (tag, session) in [("leak-a", &a), ("leak-b", &b)] {
+            let directory = search_scratch_directory_v1(tag);
+            let mut runtime = search_runtime_v1(directory.clone());
+            runtime
+                .begin_episode_v1(
+                    session,
+                    &identity,
+                    search_test_net_architecture_v1(),
+                    50_301,
+                    81_101,
+                    PlayerSeatV1::P0,
+                )
+                .expect("search episode opens");
+            let selected = ShadowScorerServiceV1::model_guided_search_selection_v1(
+                &model,
+                session,
+                decision_a,
+                0,
+                &mut runtime,
+                Instant::now(),
+                ProtocolRequestKindV4::Step,
+            )
+            .expect("the wrapped decision completes");
+            results.push(selected);
+            published.push(strip_wall_time_v1(
+                &fs::read(runtime.diagnostics.episode_path_v4(50_301, 81_101)).unwrap(),
+            ));
+            fs::remove_dir_all(&directory).ok();
+        }
+        assert_eq!(
+            results[0], results[1],
+            "the chosen action must not depend on authoritative hidden cards"
+        );
+        assert_eq!(
+            published[0], published[1],
+            "the whole search record, not just the verdict, must be invariant"
+        );
+    }
+
+    /// CODEX P1. The authority must bind the LOADED checkpoint's lineage,
+    /// not the generic authority-kind string every Store-backed checkpoint
+    /// shares, and the ACTUAL net architecture, not the tensorizer's
+    /// encoding identity.
+    ///
+    /// The witness is deliberately the hardest case: two Store-backed
+    /// checkpoints that agree on authority kind, generation, AND weight
+    /// digest, differing only in the run and manifest identity of the
+    /// checkpoint that was loaded. Under the previous binding these
+    /// produced the SAME authority digest, so every simulation seed
+    /// derived from it was the same too, and the record's promise to name
+    /// a lineage was empty.
+    #[test]
+    fn two_store_backed_checkpoints_yield_different_authority_digests_v1() {
+        let mut first = search_checkpoint_identity_v1();
+        first.authority_kind = "population-store-generation".to_owned();
+        first.loaded_run_sha256 = "1".repeat(64);
+        first.loaded_checkpoint_sha256 = "2".repeat(64);
+        first.loaded_payload_sha256 = "3".repeat(64);
+        let mut second = first.clone();
+        second.loaded_run_sha256 = "4".repeat(64);
+        second.loaded_checkpoint_sha256 = "5".repeat(64);
+        second.loaded_payload_sha256 = "6".repeat(64);
+
+        // Everything the OLD binding looked at is identical.
+        assert_eq!(first.authority_kind, second.authority_kind);
+        assert_eq!(first.loaded_generation, second.loaded_generation);
+        assert_eq!(first.model_parameter_sha256, second.model_parameter_sha256);
+
+        let mut digests = Vec::new();
+        let mut lineages = Vec::new();
+        for (tag, identity) in [("lineage-a", &first), ("lineage-b", &second)] {
+            let directory = search_scratch_directory_v1(tag);
+            let mut runtime = search_runtime_v1(directory.clone());
+            let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                50_401,
+                81_201,
+                256,
+                32_768,
+                ["Rally".to_owned(), "Burn".to_owned()],
+            )
+            .expect("session resets");
+            runtime
+                .begin_episode_v1(
+                    &session,
+                    identity,
+                    search_test_net_architecture_v1(),
+                    50_401,
+                    81_201,
+                    PlayerSeatV1::P0,
+                )
+                .expect("search episode opens");
+            let bound = runtime.bound.as_ref().expect("authority bound");
+            digests.push(bound.authority_digest_sha256.clone());
+            lineages.push(bound.wrapper_identity.checkpoint_lineage_id.clone());
+            // The architecture really is the net's, not the tensorizer's.
+            assert_eq!(
+                bound.wrapper_identity.net_architecture_identity,
+                "kernel-policy-value-net-8"
+            );
+            assert_ne!(
+                bound.wrapper_identity.net_architecture_identity,
+                NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+                "the tensorizer identity describes encoding, not architecture"
+            );
+            fs::remove_dir_all(&directory).ok();
+        }
+        assert_ne!(
+            lineages[0], lineages[1],
+            "the lineage id must discriminate two different loaded checkpoints"
+        );
+        assert_ne!(
+            digests[0], digests[1],
+            "two Store-backed checkpoints must not share an authority digest"
+        );
+        // The lineage names what it binds, so a reader of a published
+        // header can tell which checkpoint produced it.
+        assert!(lineages[0].contains(&first.loaded_run_sha256));
+        assert!(lineages[0].contains(&first.loaded_checkpoint_sha256));
+        assert!(lineages[0].starts_with("population-store-generation|"));
+    }
+
+    /// CODEX P1. The stability halves run synchronously inside the
+    /// decision, so with them enabled the protocol's per-decision latency
+    /// includes them and `ceiling_status` must be classified from that
+    /// full synchronous latency. Turning them off is what a formal panel
+    /// does to measure product latency, and the record says which ran.
+    #[test]
+    fn stability_halves_are_optional_and_the_ceiling_measures_what_actually_ran_v1() {
+        // The classifier itself, at both pre-registered boundaries. `>`
+        // for the SLO and `>=` for the hard timeout, as pinned.
+        assert_eq!(
+            CeilingStatusV4::classify_v4(0.0),
+            CeilingStatusV4::WithinSlo
+        );
+        assert_eq!(
+            CeilingStatusV4::classify_v4(4.0),
+            CeilingStatusV4::WithinSlo
+        );
+        assert_eq!(
+            CeilingStatusV4::classify_v4(4.000_001),
+            CeilingStatusV4::SloExceeded
+        );
+        assert_eq!(
+            CeilingStatusV4::classify_v4(19.999),
+            CeilingStatusV4::SloExceeded
+        );
+        assert_eq!(
+            CeilingStatusV4::classify_v4(20.0),
+            CeilingStatusV4::HardTimeoutExceeded
+        );
+
+        let with_directory = search_scratch_directory_v1("halves-on");
+        let without_directory = search_scratch_directory_v1("halves-off");
+        let (with_chosen, with_bytes) =
+            run_wrapped_episode_with_halves_v1(&with_directory, 2, true);
+        let (without_chosen, without_bytes) =
+            run_wrapped_episode_with_halves_v1(&without_directory, 2, false);
+
+        // Disabling a DIAGNOSTIC must not change the product's decision.
+        assert_eq!(
+            with_chosen, without_chosen,
+            "the stability halves are diagnostics; they cannot move the chosen action"
+        );
+
+        let with_record = search_decision_record_v1(&with_bytes);
+        let without_record = search_decision_record_v1(&without_bytes);
+        assert_eq!(
+            with_record["root_statistics_digest_sha256"],
+            without_record["root_statistics_digest_sha256"],
+            "the full-budget search is identical either way"
+        );
+
+        // Halves ON: recorded, and the search timer exceeds the full
+        // search on its own.
+        assert_eq!(with_record["stability_halves_enabled"], true);
+        assert!(with_record["stability"].is_object());
+        assert!(with_record["stability"]["halves_agree"].is_boolean());
+        let with_full = with_record["wall_time"]["full_search_micros"]
+            .as_u64()
+            .unwrap();
+        let with_search = with_record["wall_time"]["search_micros"].as_u64().unwrap();
+        assert!(
+            with_search >= with_full,
+            "the halves run inside the decision, so the search timer cannot be smaller"
+        );
+
+        // Halves OFF: nulled, zero-timed, and the search timer IS the
+        // full-budget search, which is the product's own search cost.
+        assert_eq!(without_record["stability_halves_enabled"], false);
+        assert!(without_record["stability"].is_null());
+        assert_eq!(without_record["wall_time"]["stability_half_a_micros"], 0);
+        assert_eq!(without_record["wall_time"]["stability_half_b_micros"], 0);
+        let without_full = without_record["wall_time"]["full_search_micros"]
+            .as_u64()
+            .unwrap();
+        let without_search = without_record["wall_time"]["search_micros"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            without_search >= without_full,
+            "with halves off the search timer is the full-budget search alone"
+        );
+
+        // Both classify `search_ceiling_status` from their own search
+        // timer, and the PROTOCOL window strictly contains it: the encode,
+        // tensorization, forward and policy sample that precede the search
+        // are inside the window a client waits on, and used not to be.
+        for record in [&with_record, &without_record] {
+            let search = record["wall_time"]["search_micros"].as_u64().unwrap();
+            assert_eq!(
+                record["search_ceiling_status"].as_str().unwrap(),
+                match CeilingStatusV4::classify_v4(search as f64 / 1_000_000.0) {
+                    CeilingStatusV4::WithinSlo => "within_slo",
+                    CeilingStatusV4::SloExceeded => "slo_exceeded",
+                    CeilingStatusV4::HardTimeoutExceeded => "hard_timeout_exceeded",
+                },
+                "search_ceiling_status must classify the search that actually ran"
+            );
+            let decision = record["wall_time"]["decision_micros"].as_u64().unwrap();
+            assert!(
+                decision >= search,
+                "the protocol window must contain the search it wraps: {decision} < {search}"
+            );
+        }
+        fs::remove_dir_all(&with_directory).ok();
+        fs::remove_dir_all(&without_directory).ok();
+    }
+
+    /// CODEX P1. The protocol verdict for decision `n` needs the publish
+    /// time of decision `n`'s own record, which only a LATER record can
+    /// report. Before the footer existed, the final decision of every
+    /// episode had no later record, so its ceiling status was `None`:
+    /// exactly one systematically dropped sample per game, and always the
+    /// decision that ended it.
+    ///
+    /// Both closing paths a live run actually takes are exercised: end of
+    /// input with the episode open (the driver stopped), and a new reset
+    /// replacing an unfinished episode.
+    #[test]
+    fn a_closed_episode_classifies_every_decision_including_its_last_v1() {
+        use crate::model_guided_search_outcome_v4::{
+            episode_decision_ceilings_v4, EpisodeFooterRecordV4,
+        };
+
+        fn footer_of_v1(bytes: &[u8]) -> EpisodeFooterRecordV4 {
+            let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
+            serde_json::from_str(text.lines().next_back().expect("a record"))
+                .expect("the last record is an episode footer")
+        }
+
+        // ORDERLY PROCESS EXIT: the serving loop reaches end of input with
+        // the episode still open.
+        let exit_directory = search_scratch_directory_v1("footer-exit");
+        let mut service = search_service_with_halves_v1(exit_directory.clone(), false);
+        let mut output = Vec::new();
+        run_jsonl_v1(
+            &mut service,
+            format!("{}\n", reset_line_v1("footer-exit-reset")).as_bytes(),
+            &mut output,
+        )
+        .expect("the serving loop closes the open episode on exit");
+        assert!(
+            !service
+                .search
+                .as_ref()
+                .expect("search runtime installed")
+                .diagnostics
+                .has_open_episode_v4(),
+            "orderly exit must leave no episode open"
+        );
+        let exit_bytes = fs::read(
+            service
+                .search
+                .as_ref()
+                .unwrap()
+                .diagnostics
+                .episode_path_v4(2, 71_501),
+        )
+        .expect("episode diagnostics published");
+        assert!(verify_episode_chain_v4(&exit_bytes).is_ok());
+        let footer = footer_of_v1(&exit_bytes);
+        assert_eq!(footer.close_reason, EpisodeCloseReasonV4::ProcessExit);
+        assert_eq!(footer.decision_record_count, 1);
+        let ceilings = episode_decision_ceilings_v4(&exit_bytes).expect("chain verifies");
+        assert_eq!(ceilings.len(), 1);
+        assert!(
+            ceilings[0].protocol_ceiling_status.is_some(),
+            "the last decision of a closed episode must have a protocol verdict"
+        );
+        assert_eq!(
+            ceilings[0].protocol_micros,
+            Some(
+                ceilings[0].decision_micros
+                    + ceilings[0].publish_micros.unwrap()
+                    + ceilings[0].response_micros.unwrap()
+            ),
+            "the protocol latency is all three synchronous phases of the request"
+        );
+        assert!(
+            ceilings[0].response_micros.is_some(),
+            "the serving loop must report a response tail, even a tiny one"
+        );
+        fs::remove_dir_all(&exit_directory).ok();
+
+        // EPISODE REPLACEMENT: a new reset arrives before the old episode
+        // terminated. Episode 4 keeps the P0 learner seat that episode 2
+        // has, and writes a different file, so the replaced episode's
+        // footer survives to be read.
+        let replaced_directory = search_scratch_directory_v1("footer-replaced");
+        let mut service = search_service_with_halves_v1(replaced_directory.clone(), false);
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("footer-replaced-reset")));
+        assert_eq!(response["response_type"], "decision", "{response}");
+        let selected = response["decision"]["selected_action_index"]
+            .as_u64()
+            .unwrap();
+        let step = response["decision"]["step"].as_u64().unwrap();
+        let stepped = value_v1(&service.handle_line_v1(&format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"footer-step\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+        )));
+        assert_eq!(stepped["response_type"], "decision", "{stepped}");
+        let replacement = value_v1(&service.handle_line_v1(
+            "{\"request_type\":\"reset\",\"request_id\":\"footer-replacement\",\"episode_id\":4,\"base_seed\":71501}",
+        ));
+        assert_eq!(replacement["response_type"], "decision", "{replacement}");
+
+        let replaced_bytes = fs::read(
+            service
+                .search
+                .as_ref()
+                .unwrap()
+                .diagnostics
+                .episode_path_v4(2, 71_501),
+        )
+        .expect("the replaced episode's file survives");
+        assert!(verify_episode_chain_v4(&replaced_bytes).is_ok());
+        let footer = footer_of_v1(&replaced_bytes);
+        assert_eq!(footer.close_reason, EpisodeCloseReasonV4::EpisodeReplaced);
+        assert_eq!(footer.episode_id, 2);
+        let ceilings = episode_decision_ceilings_v4(&replaced_bytes).expect("chain verifies");
+        assert!(
+            ceilings.len() >= 2,
+            "the replaced episode searched at least twice"
+        );
+        assert_eq!(footer.decision_record_count, ceilings.len() as u64);
+        assert!(
+            ceilings
+                .iter()
+                .all(|ceiling| ceiling.protocol_ceiling_status.is_some()),
+            "no decision of a closed episode may be left unclassified"
+        );
+        fs::remove_dir_all(&replaced_directory).ok();
+    }
+
+    /// CODEX P1, the owner law. The measured latency is written down and
+    /// never read: a decision whose publication is made artificially slow
+    /// must choose the same action, with the same root statistics, as the
+    /// identical fast run.
+    ///
+    /// The delay sits inside the diagnostics publication, which is the one
+    /// timed phase that the selector could in principle observe (it calls
+    /// the writer and takes its result). Everything except the timing
+    /// fields themselves is compared, so this covers the chosen action,
+    /// the root-statistics digest, the visit margin, and the leaf census
+    /// in one assertion rather than an allowlist.
+    #[test]
+    fn the_chosen_action_is_independent_of_the_measured_latency_v1() {
+        use crate::model_guided_search_outcome_v4::episode_decision_ceilings_v4;
+
+        let fast_directory = search_scratch_directory_v1("latency-fast");
+        let slow_directory = search_scratch_directory_v1("latency-slow");
+        let (fast_chosen, fast_bytes) =
+            run_wrapped_episode_configured_v1(&fast_directory, 2, false, None, true);
+        let (slow_chosen, slow_bytes) = run_wrapped_episode_configured_v1(
+            &slow_directory,
+            2,
+            false,
+            Some(std::time::Duration::from_millis(120)),
+            true,
+        );
+
+        assert!(!fast_chosen.is_empty());
+        assert_eq!(
+            fast_chosen, slow_chosen,
+            "a slower decision must play exactly what the faster one played"
+        );
+        assert_eq!(
+            strip_wall_time_v1(&fast_bytes),
+            strip_wall_time_v1(&slow_bytes),
+            "nothing but the timing fields may depend on the timing"
+        );
+
+        let fast = episode_decision_ceilings_v4(&fast_bytes).expect("chain verifies");
+        let slow = episode_decision_ceilings_v4(&slow_bytes).expect("chain verifies");
+        assert_eq!(fast.len(), slow.len());
+        // The root-statistics digests are named explicitly by the finding,
+        // so they are compared explicitly too rather than only through the
+        // whole-record comparison above.
+        let digests = |bytes: &[u8]| -> Vec<String> {
+            String::from_utf8(bytes.to_vec())
+                .unwrap()
+                .lines()
+                .filter_map(|line| {
+                    let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    value["root_statistics_digest_sha256"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect()
+        };
+        assert!(!digests(&fast_bytes).is_empty());
+        assert_eq!(digests(&fast_bytes), digests(&slow_bytes));
+
+        // The injected delay really did change the measurement: every
+        // publication in the slow run is charged at least its 120 ms, and
+        // the protocol latency moves with it.
+        for (index, ceiling) in slow.iter().enumerate() {
+            let publish = ceiling
+                .publish_micros
+                .expect("a closed episode reports every publish");
+            assert!(
+                publish >= 120_000,
+                "decision {index} publish {publish} us must carry the injected delay"
+            );
+            // A statement about the DELAYED run alone. Comparing the two
+            // runs' totals would make the fast run an implicit upper
+            // bound, and a sleep only ever guarantees a minimum: a
+            // descheduled fast run could exceed the delayed one and fail
+            // a test that is really about where the delay landed.
+            assert!(
+                ceiling.protocol_micros.unwrap() >= ceiling.decision_micros + 120_000,
+                "decision {index} must classify a total that contains the injected delay"
+            );
+        }
+        fs::remove_dir_all(&fast_directory).ok();
+        fs::remove_dir_all(&slow_directory).ok();
+
+        // PART TWO: the delay moved out past the record entirely, into the
+        // RESPONSE path, through the production serving loop. This is the
+        // interval a record can least observe about itself: it is already
+        // published, synced and reverified before the response is
+        // serialized, written and flushed. Charging only the search and
+        // the publication would let a slow export or a slow stdout push
+        // the client's real wait past a pre-registered ceiling while the
+        // classification still called it comfortably inside.
+        let script = wrapped_episode_script_v1(2);
+        assert!(script.len() >= 2, "the script must include at least a step");
+        let prompt_directory = search_scratch_directory_v1("loop-prompt");
+        let sluggish_directory = search_scratch_directory_v1("loop-sluggish");
+        let prompt_bytes = run_script_through_loop_v1(&prompt_directory, &script, None);
+        let sluggish_bytes = run_script_through_loop_v1(
+            &sluggish_directory,
+            &script,
+            Some(std::time::Duration::from_millis(150)),
+        );
+
+        // Same conclusion as part one, reached by delaying a completely
+        // different phase: nothing the search decides may move.
+        assert_eq!(
+            strip_wall_time_v1(&prompt_bytes),
+            strip_wall_time_v1(&sluggish_bytes),
+            "a slow response path may not change a single non-timing byte"
+        );
+        assert_eq!(digests(&prompt_bytes), digests(&sluggish_bytes));
+
+        let prompt = episode_decision_ceilings_v4(&prompt_bytes).expect("chain verifies");
+        let sluggish = episode_decision_ceilings_v4(&sluggish_bytes).expect("chain verifies");
+        assert!(!prompt.is_empty());
+        assert_eq!(prompt.len(), sluggish.len());
+        for (index, ceiling) in sluggish.iter().enumerate() {
+            let response = ceiling
+                .response_micros
+                .expect("a closed episode reports every response tail");
+            assert!(
+                response >= 150_000,
+                "decision {index} response tail {response} us must carry the injected flush delay"
+            );
+            // Again a statement about the delayed run alone; see above.
+            assert!(
+                ceiling.protocol_micros.unwrap() >= ceiling.decision_micros + 150_000,
+                "decision {index} must classify a total that contains the slow response path"
+            );
+        }
+        // And the fast loop run really did measure a tail rather than
+        // leaving the field at its unmeasured zero, so the comparison
+        // above is between two measurements and not against a hole.
+        assert!(prompt
+            .iter()
+            .all(|ceiling| ceiling.response_micros.is_some()));
+        fs::remove_dir_all(&prompt_directory).ok();
+        fs::remove_dir_all(&sluggish_directory).ok();
+    }
+
+    /// CODEX P2. A terminal footer whose publish fails transiently must
+    /// stay owed as a TERMINAL footer.
+    ///
+    /// By the time the close is attempted the session already reports the
+    /// episode as terminal, so the driver's retried step is rejected
+    /// before it can reach the close again, and the next reset or the end
+    /// of input would close the file as `episode_replaced` or
+    /// `process_exit`: a game that actually ended, recorded as one that
+    /// did not.
+    #[test]
+    fn a_failed_terminal_footer_is_retried_and_still_says_terminal_v1() {
+        use crate::model_guided_search_outcome_v4::EpisodeFooterRecordV4;
+
+        let directory = search_scratch_directory_v1("pending-terminal");
+        let mut service = search_service_with_halves_v1(directory.clone(), false);
+        let response = value_v1(&service.handle_line_v1(&reset_line_v1("pending-reset")));
+        assert_eq!(response["response_type"], "decision", "{response}");
+        let selected = response["decision"]["selected_action_index"]
+            .as_u64()
+            .unwrap();
+        let step = response["decision"]["step"].as_u64().unwrap();
+        let step_line = format!(
+            "{{\"request_type\":\"step\",\"request_id\":\"pending-step\",\"episode_id\":2,\"expected_step\":{step},\"selected_index\":{selected}}}"
+        );
+        let path = service
+            .search
+            .as_ref()
+            .unwrap()
+            .diagnostics
+            .episode_path_v4(2, 71_501);
+        let mut stage = path.clone().into_os_string();
+        stage.push(".tmp");
+        let stage = PathBuf::from(stage);
+
+        // The state the finding describes: the episode reached a terminal
+        // and the footer publish failed. Blocking the staging name with a
+        // directory is the shape of a transient publish failure that no
+        // amount of retrying inside the writer can work around, and
+        // `active.current` is already None because the session is terminal.
+        service.active.as_mut().unwrap().current = None;
+        fs::create_dir(&stage).expect("stage name is occupiable");
+        assert_eq!(
+            service
+                .search
+                .as_mut()
+                .unwrap()
+                .close_terminal_episode_v1(2),
+            Err("model_guided_search_diagnostics_write_failed")
+        );
+        assert!(service
+            .search
+            .as_ref()
+            .unwrap()
+            .has_pending_terminal_close_v1());
+
+        // The driver retries its step. The footer is still blocked, so the
+        // retry reports the diagnostics failure rather than answering
+        // `episode_already_terminal` and quietly abandoning the footer.
+        let blocked = value_v1(&service.handle_line_v1(&step_line));
+        assert_eq!(
+            blocked["error_code"], "model_guided_search_diagnostics_write_failed",
+            "{blocked}"
+        );
+
+        // Unblock. The next retry publishes the footer, and only then does
+        // the step get its ordinary terminal rejection.
+        fs::remove_dir(&stage).expect("stage name frees");
+        let retried = value_v1(&service.handle_line_v1(&step_line));
+        assert_eq!(
+            retried["error_code"], "episode_already_terminal",
+            "{retried}"
+        );
+        assert!(!service
+            .search
+            .as_ref()
+            .unwrap()
+            .has_pending_terminal_close_v1());
+
+        // A later reset would have closed this file as `episode_replaced`
+        // and end of input as `process_exit`. It says what actually
+        // happened.
+        let text = fs::read_to_string(&path).expect("episode diagnostics published");
+        assert!(verify_episode_chain_v4(text.as_bytes()).is_ok());
+        let footer: EpisodeFooterRecordV4 =
+            serde_json::from_str(text.lines().next_back().unwrap()).expect("a footer");
+        assert_eq!(footer.close_reason, EpisodeCloseReasonV4::EpisodeTerminal);
+        assert_eq!(footer.episode_id, 2);
+
+        // The same rule holds when the retry never comes and the episode
+        // is closed by a reset or by end of input instead: a remembered
+        // terminal outranks whatever reason the closing path names.
+        let replaced_directory = search_scratch_directory_v1("pending-terminal-replaced");
+        let mut runtime = search_runtime_with_halves_v1(replaced_directory.clone(), false);
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            50_303,
+            81_107,
+            256,
+            32_768,
+            ["Rally".to_owned(), "Burn".to_owned()],
+        )
+        .expect("session resets");
+        runtime
+            .begin_episode_v1(
+                &session,
+                &search_checkpoint_identity_v1(),
+                search_test_net_architecture_v1(),
+                50_303,
+                81_107,
+                PlayerSeatV1::P0,
+            )
+            .expect("search episode opens");
+        let replaced_path = runtime.diagnostics.episode_path_v4(50_303, 81_107);
+        let mut replaced_stage = replaced_path.clone().into_os_string();
+        replaced_stage.push(".tmp");
+        let replaced_stage = PathBuf::from(replaced_stage);
+        fs::create_dir(&replaced_stage).expect("stage name is occupiable");
+        assert!(runtime.close_terminal_episode_v1(50_303).is_err());
+        fs::remove_dir(&replaced_stage).expect("stage name frees");
+        runtime
+            .close_episode_v1(EpisodeCloseReasonV4::ProcessExit)
+            .expect("the owed footer publishes");
+        let text = fs::read_to_string(&replaced_path).unwrap();
+        let footer: EpisodeFooterRecordV4 =
+            serde_json::from_str(text.lines().next_back().unwrap()).expect("a footer");
+        assert_eq!(
+            footer.close_reason,
+            EpisodeCloseReasonV4::EpisodeTerminal,
+            "a remembered terminal outranks the reason the closing path names"
+        );
+        fs::remove_dir_all(&replaced_directory).ok();
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    fn search_decision_record_v1(bytes: &[u8]) -> serde_json::Value {
+        let text = String::from_utf8(bytes.to_vec()).expect("diagnostics are UTF-8");
+        let record: serde_json::Value =
+            serde_json::from_str(text.lines().nth(1).expect("a decision record")).unwrap();
+        assert_eq!(record["record_kind"], "search_decision");
+        record
+    }
+
+    fn search_checkpoint_identity_v1() -> ShadowCheckpointIdentityV1 {
+        ShadowCheckpointIdentityV1 {
+            authority_kind: "test-only".to_owned(),
+            source_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            source_generation: SOURCE_GENERATION_V1,
+            source_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            source_sidecar_sha256: SOURCE_SIDECAR_SHA256_V1.to_owned(),
+            source_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            source_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            loaded_run_sha256: SOURCE_RUN_SHA256_V1.to_owned(),
+            loaded_generation: SOURCE_GENERATION_V1,
+            loaded_checkpoint_sha256: SOURCE_CHECKPOINT_SHA256_V1.to_owned(),
+            loaded_payload_sha256: SOURCE_PAYLOAD_SHA256_V1.to_owned(),
+            loaded_train_state_sha256: SOURCE_TRAIN_STATE_SHA256_V1.to_owned(),
+            model_parameter_sha256: SOURCE_MODEL_PARAMETER_SHA256_V1.to_owned(),
+            environment_trajectory_contract: SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
+            sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION,
+            sampler_contract_sha256: FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256,
+        }
+    }
+
+    /// The wrapper refuses a model that cannot expose the typed native
+    /// net, rather than falling back to the policy sample. A silent
+    /// fallback would let a panel believe it measured the wrapper while it
+    /// measured the raw policy.
+    #[test]
+    fn model_guided_search_fails_closed_without_a_search_capable_model_v1() {
+        let directory = search_scratch_directory_v1("not-capable");
+        let mut runtime = search_runtime_v1(directory.clone());
+        let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            50_302,
+            81_103,
+            256,
+            32_768,
+            ["Rally".to_owned(), "Burn".to_owned()],
+        )
+        .expect("session resets");
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        runtime
+            .begin_episode_v1(
+                &session,
+                &search_checkpoint_identity_v1(),
+                search_test_net_architecture_v1(),
+                50_302,
+                81_103,
+                PlayerSeatV1::P0,
+            )
+            .expect("search episode opens");
+        assert!(DeterministicTestModelV1.search_capable_v1().is_none());
+        assert_eq!(
+            ShadowScorerServiceV1::model_guided_search_selection_v1(
+                &DeterministicTestModelV1,
+                &session,
+                decision,
+                0,
+                &mut runtime,
+                Instant::now(),
+                ProtocolRequestKindV4::Step,
+            ),
+            Err("model_guided_search_model_not_search_capable")
+        );
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    /// The wrapper is not reachable through the general selector entry
+    /// point, and an unregistered seed block is a startup error rather
+    /// than a silently substituted default.
+    #[test]
+    fn model_guided_search_configuration_fails_closed_v1() {
+        assert!(run_checkpoint_shadow_stdio_with_selector_v1(
+            ShadowCheckpointAuthorityV1::PortablePromoted2WeightsGenesis {
+                root: PathBuf::from("unused"),
+            },
+            ShadowCandidateSelectorV1::ModelGuidedSearch,
+        )
+        .is_err());
+        let directory = search_scratch_directory_v1("bad-seed-block");
+        assert!(ModelGuidedSearchRuntimeV1::new_v1(
+            KernelNativeSearchTierV1::T512,
+            usize::MAX,
+            directory.clone(),
+            true,
+        )
+        .is_err());
+        assert!(ModelGuidedSearchRuntimeV1::new_v1(
+            KernelNativeSearchTierV1::T512,
+            0,
+            directory.join("missing-subdirectory"),
+            true,
+        )
+        .is_err());
+        fs::remove_dir_all(&directory).ok();
     }
 
     #[test]
