@@ -1,6 +1,7 @@
 //! Cycle-4 arm launcher CLI (`docs/native_cycle4_arm_launcher_v1.md`
-//! Section 4). One invocation runs exactly one refresh interval of one arm
-//! and exits; the wrapper loops, never this process.
+//! Section 4). One invocation seeds one arm's Store, or runs exactly one
+//! refresh interval of one arm, and exits; the wrapper loops, never this
+//! process.
 //!
 //! Strict flag parsing into a typed request, following
 //! `checkpoint_shadow_stdio_v1.rs`: order-independent name/value pairs, no
@@ -27,20 +28,46 @@
 //! accepted ONLY together with the value-less `--preflight` marker flag --
 //! two independent statements of the same intent, so no single typo can
 //! weaken a pre-registered constant. The library additionally pins each Store
-//! prefix to one mode: a prefix a formal run claimed refuses the relaxed
-//! check, and a prefix a preflight claimed refuses to become formal.
+//! prefix to one mode: a prefix a formal run trained refuses the relaxed
+//! check, and a prefix a preflight trained refuses to become formal.
+//!
+//! Genesis bootstrap (`--bootstrap-genesis`, value-less, mutually exclusive
+//! with every interval flag): the genesis refresh manifest's own-run slot has
+//! to bind the arm's own generation-0 checkpoint, which cannot exist until
+//! the Store does, and an interval invocation cannot open a Store without a
+//! manifest. This mode breaks that circularity: it validates the run and
+//! device contracts exactly as an interval would, seeds genesis from the
+//! pinned parent through the locator's `genesis_parent_store_root`, publishes
+//! `arm-origin.record.json` carrying that checkpoint's identity, claims the
+//! Store prefix, runs the final-store validation, and exits 0 having trained
+//! nothing. The refresh builder then authors `refresh-00.manifest.json` from
+//! that identity. On a Store that already holds a genesis it is exit 3.
 
 use mtg_kernel::native_cycle4_arm_v1::{
-    run_native_cycle4_arm_v1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
+    run_native_cycle4_arm_bootstrap_genesis_v1, run_native_cycle4_arm_v1,
+    Cycle4ArmBootstrapRequestV1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
 };
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle4_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --refresh-manifest PATH [--payoff-panel PATH] --slot-locator PATH --stop-generation N --device N [--preflight --preflight-updates N]"
+        "usage: cycle4_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --slot-locator PATH --device N (--bootstrap-genesis | --refresh-manifest PATH [--payoff-panel PATH] --stop-generation N [--preflight --preflight-updates N])"
     );
     std::process::exit(2);
+}
+
+/// The two things this bin can be asked to do. A bootstrap takes none of the
+/// interval flags, and an interval takes none of the bootstrap's absence of
+/// them; mixing the two is usage, never a silently-preferred default.
+enum ModeV1 {
+    BootstrapGenesis,
+    Interval {
+        refresh_manifest: PathBuf,
+        payoff_panel: Option<PathBuf>,
+        stop_generation: u64,
+        preflight_updates: Option<u64>,
+    },
 }
 
 struct ParsedArgsV1 {
@@ -48,14 +75,9 @@ struct ParsedArgsV1 {
     store_root: PathBuf,
     run_record: PathBuf,
     chain_dir: PathBuf,
-    refresh_manifest: PathBuf,
-    payoff_panel: Option<PathBuf>,
     slot_locator: PathBuf,
-    stop_generation: u64,
     device: u64,
-    /// `Some(n)` only when BOTH `--preflight` and `--preflight-updates n`
-    /// were given; either alone is a usage error.
-    preflight_updates: Option<u64>,
+    mode: ModeV1,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -63,6 +85,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     if raw.is_empty() {
         return Err(());
     }
+    let mut bootstrap_genesis = false;
     let mut preflight = false;
     let mut preflight_updates: Option<u64> = None;
     let mut arm: Option<Cycle4ArmKindV1> = None;
@@ -75,10 +98,11 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut stop_generation: Option<u64> = None;
     let mut device: Option<u64> = None;
 
-    // `--preflight` is the one value-less flag, so the command line is walked
-    // by index (the `cycle4_refresh_build_v1.rs` `--genesis` shape) rather
-    // than by fixed name/value pairs; every other flag still consumes exactly
-    // one following value and may appear at most once.
+    // `--preflight` and `--bootstrap-genesis` are the value-less flags, so the
+    // command line is walked by index (the `cycle4_refresh_build_v1.rs`
+    // `--genesis` shape) rather than by fixed name/value pairs; every other
+    // flag still consumes exactly one following value and may appear at most
+    // once.
     let mut index = 0;
     while index < raw.len() {
         let flag = raw[index].to_str().ok_or(())?;
@@ -87,6 +111,14 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
                 return Err(());
             }
             preflight = true;
+            index += 1;
+            continue;
+        }
+        if flag == "--bootstrap-genesis" {
+            if bootstrap_genesis {
+                return Err(());
+            }
+            bootstrap_genesis = true;
             index += 1;
             continue;
         }
@@ -119,25 +151,43 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         index += 2;
     }
 
-    // The relaxed interval check is only ever reachable when the operator
-    // asked for it twice, in two different ways. Either half alone is a
-    // truncated or accidental command line, never an intent to relax a
-    // pre-registered constant.
-    if preflight != preflight_updates.is_some() {
-        return Err(());
-    }
+    let mode = if bootstrap_genesis {
+        // A bootstrap trains nothing, so every interval flag is meaningless
+        // to it. Rejecting them is what keeps "seed the Store" and "train one
+        // interval" from ever being the same command line with a typo.
+        if refresh_manifest.is_some()
+            || payoff_panel.is_some()
+            || stop_generation.is_some()
+            || preflight
+            || preflight_updates.is_some()
+        {
+            return Err(());
+        }
+        ModeV1::BootstrapGenesis
+    } else {
+        // The relaxed interval check is only ever reachable when the operator
+        // asked for it twice, in two different ways. Either half alone is a
+        // truncated or accidental command line, never an intent to relax a
+        // pre-registered constant.
+        if preflight != preflight_updates.is_some() {
+            return Err(());
+        }
+        ModeV1::Interval {
+            refresh_manifest: refresh_manifest.ok_or(())?,
+            payoff_panel,
+            stop_generation: stop_generation.ok_or(())?,
+            preflight_updates,
+        }
+    };
 
     Ok(ParsedArgsV1 {
         arm: arm.ok_or(())?,
         store_root: store_root.ok_or(())?,
         run_record: run_record.ok_or(())?,
         chain_dir: chain_dir.ok_or(())?,
-        refresh_manifest: refresh_manifest.ok_or(())?,
-        payoff_panel,
         slot_locator: slot_locator.ok_or(())?,
-        stop_generation: stop_generation.ok_or(())?,
         device: device.ok_or(())?,
-        preflight_updates,
+        mode,
     })
 }
 
@@ -153,33 +203,66 @@ fn main() {
         std::env::set_var("CUDA_VISIBLE_DEVICES", args.device.to_string());
     }
 
-    let request = Cycle4ArmRequestV1 {
-        arm: args.arm,
-        store_root: args.store_root,
-        run_record: args.run_record,
-        chain_dir: args.chain_dir,
-        refresh_manifest: args.refresh_manifest,
-        payoff_panel: args.payoff_panel,
-        slot_locator: args.slot_locator,
-        stop_generation: args.stop_generation,
-        preflight_updates: args.preflight_updates,
+    let result = match args.mode {
+        ModeV1::BootstrapGenesis => {
+            let request = Cycle4ArmBootstrapRequestV1 {
+                arm: args.arm,
+                store_root: args.store_root,
+                run_record: args.run_record,
+                chain_dir: args.chain_dir,
+                slot_locator: args.slot_locator,
+            };
+            run_native_cycle4_arm_bootstrap_genesis_v1(&request).map(|outcome| {
+                format!(
+                    "arm={} bootstrap_genesis=1 genesis_generation={} trainee_local_generation={} run_sha256={} base_seed={} checkpoint_manifest_sha256={} checkpoint_payload_sha256={} model_parameter_sha256={} train_state_sha256={}",
+                    outcome.arm.wire_v1(),
+                    outcome.genesis_generation_index,
+                    outcome.trainee_local_generation,
+                    outcome.run_sha256,
+                    outcome.base_seed,
+                    outcome.genesis.checkpoint_manifest_sha256,
+                    outcome.genesis.checkpoint_payload_sha256,
+                    outcome.genesis.model_parameter_sha256,
+                    outcome.genesis.train_state_sha256,
+                )
+            })
+        }
+        ModeV1::Interval {
+            refresh_manifest,
+            payoff_panel,
+            stop_generation,
+            preflight_updates,
+        } => {
+            let request = Cycle4ArmRequestV1 {
+                arm: args.arm,
+                store_root: args.store_root,
+                run_record: args.run_record,
+                chain_dir: args.chain_dir,
+                refresh_manifest,
+                payoff_panel,
+                slot_locator: args.slot_locator,
+                stop_generation,
+                preflight_updates,
+            };
+            run_native_cycle4_arm_v1(&request).map(|outcome| {
+                format!(
+                    "arm={} refresh_index={} resume_generation={} latest_generation={} trainee_local_generation={} refresh_manifest_sha256={} baseline_chain_generation={}",
+                    outcome.arm.wire_v1(),
+                    outcome.refresh_index,
+                    outcome.resume_generation_index,
+                    outcome.latest_generation_index,
+                    outcome.trainee_local_generation,
+                    outcome.refresh_manifest_sha256,
+                    outcome
+                        .baseline_chain_generation
+                        .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                )
+            })
+        }
     };
 
-    match run_native_cycle4_arm_v1(&request) {
-        Ok(outcome) => {
-            println!(
-                "arm={} refresh_index={} resume_generation={} latest_generation={} trainee_local_generation={} refresh_manifest_sha256={} baseline_chain_generation={}",
-                outcome.arm.wire_v1(),
-                outcome.refresh_index,
-                outcome.resume_generation_index,
-                outcome.latest_generation_index,
-                outcome.trainee_local_generation,
-                outcome.refresh_manifest_sha256,
-                outcome
-                    .baseline_chain_generation
-                    .map_or_else(|| "none".to_owned(), |value| value.to_string()),
-            );
-        }
+    match result {
+        Ok(line) => println!("{line}"),
         Err(error) => {
             eprintln!("cycle4_arm_v1: {error}");
             std::process::exit(error.exit_code_v1());
@@ -189,7 +272,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args_v1, Cycle4ArmKindV1};
+    use super::{parse_args_v1, Cycle4ArmKindV1, ModeV1, ParsedArgsV1, PathBuf};
     use std::ffi::OsString;
 
     fn args_v1(values: &[&str]) -> Vec<OsString> {
@@ -219,13 +302,124 @@ mod tests {
         ]
     }
 
+    /// The interval fields of a parsed command line, or `None` when it parsed
+    /// as a bootstrap. Keeps every assertion below reading the same way it did
+    /// before the mode enum existed.
+    fn interval_v1(
+        parsed: &ParsedArgsV1,
+    ) -> Option<(&PathBuf, &Option<PathBuf>, u64, Option<u64>)> {
+        match &parsed.mode {
+            ModeV1::BootstrapGenesis => None,
+            ModeV1::Interval {
+                refresh_manifest,
+                payoff_panel,
+                stop_generation,
+                preflight_updates,
+            } => Some((
+                refresh_manifest,
+                payoff_panel,
+                *stop_generation,
+                *preflight_updates,
+            )),
+        }
+    }
+
+    fn bootstrap_v1() -> Vec<&'static str> {
+        vec![
+            "--arm",
+            "control-r",
+            "--store-root",
+            "D:/arm/store",
+            "--run-record",
+            "D:/arm/run.json",
+            "--chain-dir",
+            "D:/arm/chain",
+            "--slot-locator",
+            "D:/arm/locator.json",
+            "--device",
+            "1",
+            "--bootstrap-genesis",
+        ]
+    }
+
     #[test]
     fn complete_command_line_parses_v1() {
         let parsed = parse_args_v1(args_v1(&complete_v1())).expect("parse");
         assert_eq!(parsed.arm, Cycle4ArmKindV1::TreatmentRb);
-        assert_eq!(parsed.stop_generation, 256);
+        let (_, payoff_panel, stop_generation, _) = interval_v1(&parsed).expect("interval mode");
+        assert_eq!(stop_generation, 256);
         assert_eq!(parsed.device, 1);
-        assert!(parsed.payoff_panel.is_some());
+        assert!(payoff_panel.is_some());
+    }
+
+    #[test]
+    fn the_bootstrap_command_line_parses_and_takes_no_interval_flags_v1() {
+        let parsed = parse_args_v1(args_v1(&bootstrap_v1())).expect("parse");
+        assert_eq!(parsed.arm, Cycle4ArmKindV1::ControlR);
+        assert_eq!(parsed.device, 1);
+        assert!(matches!(parsed.mode, ModeV1::BootstrapGenesis));
+
+        for extra in [
+            vec![
+                "--refresh-manifest",
+                "D:/arm/refresh/refresh-00.manifest.json",
+            ],
+            vec!["--payoff-panel", "D:/arm/refresh/refresh-01.panel.json"],
+            vec!["--stop-generation", "128"],
+            vec!["--preflight-updates", "4"],
+        ] {
+            let mut values = bootstrap_v1();
+            values.extend(extra.iter().copied());
+            assert!(
+                parse_args_v1(args_v1(&values)).is_err(),
+                "--bootstrap-genesis must reject {extra:?}"
+            );
+        }
+        let mut with_preflight = bootstrap_v1();
+        with_preflight.push("--preflight");
+        assert!(parse_args_v1(args_v1(&with_preflight)).is_err());
+        let mut with_preflight_pair = bootstrap_v1();
+        with_preflight_pair.extend(["--preflight", "--preflight-updates", "4"]);
+        assert!(parse_args_v1(args_v1(&with_preflight_pair)).is_err());
+    }
+
+    #[test]
+    fn the_bootstrap_marker_still_requires_every_shared_flag_v1() {
+        for flag in [
+            "--arm",
+            "--store-root",
+            "--run-record",
+            "--chain-dir",
+            "--slot-locator",
+            "--device",
+        ] {
+            let mut values = bootstrap_v1();
+            let index = values
+                .iter()
+                .position(|value| *value == flag)
+                .expect("flag present");
+            values.drain(index..index + 2);
+            assert!(
+                parse_args_v1(args_v1(&values)).is_err(),
+                "{flag} must be required by a bootstrap too"
+            );
+        }
+        let mut duplicated = bootstrap_v1();
+        duplicated.push("--bootstrap-genesis");
+        assert!(parse_args_v1(args_v1(&duplicated)).is_err());
+    }
+
+    #[test]
+    fn an_interval_command_line_still_requires_its_own_flags_v1() {
+        // Dropping only the bootstrap marker from a bootstrap command line
+        // leaves an interval request with no manifest and no stop generation.
+        let mut values = bootstrap_v1();
+        let index = values
+            .iter()
+            .position(|value| *value == "--bootstrap-genesis")
+            .expect("marker present");
+        values.remove(index);
+        assert!(parse_args_v1(args_v1(&values)).is_err());
     }
 
     #[test]
@@ -237,7 +431,8 @@ mod tests {
             .expect("panel flag present");
         values.drain(index..index + 2);
         let parsed = parse_args_v1(args_v1(&values)).expect("parse");
-        assert!(parsed.payoff_panel.is_none());
+        let (_, payoff_panel, _, _) = interval_v1(&parsed).expect("interval mode");
+        assert!(payoff_panel.is_none());
     }
 
     #[test]
@@ -308,15 +503,11 @@ mod tests {
         both.push("--preflight-updates");
         both.push("8");
         let parsed = parse_args_v1(args_v1(&both)).expect("parse");
-        assert_eq!(parsed.preflight_updates, Some(8));
+        assert_eq!(interval_v1(&parsed).expect("interval mode").3, Some(8));
 
         // Neither half: the formal path, unchanged.
-        assert_eq!(
-            parse_args_v1(args_v1(&complete_v1()))
-                .expect("parse")
-                .preflight_updates,
-            None
-        );
+        let formal = parse_args_v1(args_v1(&complete_v1())).expect("parse");
+        assert_eq!(interval_v1(&formal).expect("interval mode").3, None);
 
         // `--preflight-updates` alone never relaxes anything.
         let mut updates_only = complete_v1();
@@ -363,8 +554,10 @@ mod tests {
         let mut leading = vec!["--preflight", "--preflight-updates", "4"];
         leading.extend(complete_v1());
         let parsed = parse_args_v1(args_v1(&leading)).expect("parse");
-        assert_eq!(parsed.preflight_updates, Some(4));
-        assert_eq!(parsed.stop_generation, 256);
+        let (_, _, stop_generation, preflight_updates) =
+            interval_v1(&parsed).expect("interval mode");
+        assert_eq!(preflight_updates, Some(4));
+        assert_eq!(stop_generation, 256);
         assert_eq!(parsed.device, 1);
         assert_eq!(parsed.arm, Cycle4ArmKindV1::TreatmentRb);
     }

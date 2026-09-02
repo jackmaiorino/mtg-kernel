@@ -73,11 +73,13 @@ $script:Cycle4ExpectedRoles = @(
 )
 # Slots the ARM's own Store occupies, and therefore the only slot identities
 # this wrapper ever derives rather than reads from the operator's roster.
-# Slot 5 (current-1) from refresh 1; slot 2 (historical-0) from refresh 4,
+# Slot 5 (current-1) at EVERY refresh including genesis, where it binds the
+# arm's own generation-0 checkpoint; slot 2 (historical-0) from refresh 4,
 # before which historical-0 is still the cycle-3 lineage.
 $script:Cycle4ArmOwnedSlotIndex = 5
 $script:Cycle4HistoricalArmSlotIndex = 2
 $script:Cycle4HistoricalArmFirstRefreshIndex = [uint64]4
+$script:Cycle4ArmOriginRecordSchema = 'mtg-kernel-cycle4-arm-origin/v1'
 
 $script:Cycle4ManifestSchema = 'mtg-kernel-population-refresh-manifest-cycle4/v1'
 $script:Cycle4ArmLocatorSchema = 'mtg-kernel-cycle4-arm-slot-locator/v1'
@@ -253,9 +255,13 @@ function Get-Cycle4CheckpointIdentity {
     # shape mtg-kernel-cycle4-slot-identities/v1 wants.
     #
     # checkpoint_manifest_sha256 is the SHA-256 of the checkpoint record's own
-    # bytes (the Store publishes canonical bytes, and the Rust decoder derives
-    # this same value from the bytes it read); the other three are the record's
-    # own declared bindings.
+    # bytes. That is exact, not an approximation: the decoder computes it as
+    # sha256(canonical manifest bytes) (native_training_store_checkpoint_v3.rs)
+    # and the Store writes exactly those bytes to this file. The other three
+    # are the record's own declared bindings, each of which the decoder
+    # re-derives from the payload and rejects on mismatch. The genesis
+    # boundary cross-checks this whole derivation against the bin's own
+    # arm-origin record, which reports the same four values from memory.
     param(
         [Parameter(Mandatory = $true)][string]$StoreRoot,
         [Parameter(Mandatory = $true)][uint64]$StoreGeneration
@@ -339,14 +345,27 @@ function New-Cycle4SlotLocatorPair {
     # entries, indexes 0..7 exactly once, absolute paths, no duplicate store
     # root, and eight DISTINCT roster identities (a repeated identity would
     # make the identity-keyed file ambiguous, and the Rust decoder rejects it).
+    #
+    # One slot root is never the operator's to supply: whichever slots the
+    # manifest binds to the ARM's OWN run are the arm's own Store, at
+    # different generations. The manifest itself says which those are
+    # (source_run_sha256 == the arm's run), so they are substituted here
+    # rather than trusted from the table -- which is also why two slots
+    # sharing the arm's Store root is admissible while any other repeated
+    # root is a typo.
     param(
         [Parameter(Mandatory = $true)]$SlotTable,
         [Parameter(Mandatory = $true)]$Manifest,
         [Parameter(Mandatory = $true)][string]$ArmLocatorPath,
         [Parameter(Mandatory = $true)][string]$PanelLocatorPath,
+        [Parameter(Mandatory = $true)][string]$ArmRunSha256,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot,
         [string]$GenesisParentStoreRoot,
         [switch]$AllowMissingStores
     )
+    if (-not [System.IO.Path]::IsPathRooted($ArmStoreRoot)) {
+        throw "the arm store root must be an absolute path: $ArmStoreRoot"
+    }
     $entries = @($SlotTable)
     if ($entries.Count -ne $script:Cycle4SlotCount) {
         throw "the slot table must carry exactly $($script:Cycle4SlotCount) entries, found $($entries.Count)"
@@ -362,17 +381,37 @@ function New-Cycle4SlotLocatorPair {
         if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Path]::IsPathRooted($root)) {
             throw "slot $index store root must be a non-empty absolute path, got '$root'"
         }
-        if (-not $AllowMissingStores -and -not (Test-Path -LiteralPath $root -PathType Container)) {
-            throw "slot $index store root does not exist: $root"
-        }
         $byIndex[$index] = [ordered]@{ slot_index = $index; store_root = $root }
     }
     foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
         if ($null -eq $byIndex[$index]) { throw "slot table is missing slot $index" }
     }
-    $distinctRoots = @($byIndex | ForEach-Object { $_.store_root.ToLowerInvariant() } | Sort-Object -Unique)
-    if ($distinctRoots.Count -ne $script:Cycle4SlotCount) {
+
+    $armSlots = @()
+    foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
+        if ([string]$Manifest.slots[$index].source_run_sha256 -ceq $ArmRunSha256) {
+            $byIndex[$index].store_root = $ArmStoreRoot
+            $armSlots += $index
+        }
+    }
+    $foreignRoots = @(
+        foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
+            if ($armSlots -notcontains $index) { $byIndex[$index].store_root.ToLowerInvariant() }
+        }
+    )
+    if (@($foreignRoots | Sort-Object -Unique).Count -ne $foreignRoots.Count) {
         throw 'the slot table maps two slots to the same store root'
+    }
+    if ($foreignRoots -contains $ArmStoreRoot.ToLowerInvariant()) {
+        throw "a slot the manifest does not bind to the arm's own run names the arm's Store root: $ArmStoreRoot"
+    }
+    if (-not $AllowMissingStores) {
+        foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
+            $root = $byIndex[$index].store_root
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+                throw "slot $index store root does not exist: $root"
+            }
+        }
     }
 
     $identities = @($Manifest.slots | ForEach-Object { [string]$_.checkpoint_manifest_sha256 })
@@ -420,6 +459,140 @@ function New-Cycle4SlotLocatorPair {
         panel_locator = Get-Cycle4FileRecord -Path $PanelLocatorPath
         manifest_sha256 = $Manifest.sha256
         manifest_refresh_index = $Manifest.refresh_index
+        arm_owned_slot_indexes = @($armSlots)
+    }
+}
+
+function New-Cycle4BootstrapLocator {
+    # The locator a `--bootstrap-genesis` invocation takes. Only its
+    # `genesis_parent_store_root` is used by that mode -- there is no manifest
+    # yet, so no roster to match identities against -- but the bin still
+    # decodes and structurally validates the eight entries, so they are filled
+    # from the operator's pinned roster (with the arm's own Store substituted
+    # for the own-run slot) rather than invented. Written into the attempt
+    # root, never reused as a training locator.
+    param(
+        [Parameter(Mandatory = $true)]$SlotTable,
+        [Parameter(Mandatory = $true)][string]$RosterPath,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot
+    )
+    $roster = Read-Cycle4Json -Path $RosterPath
+    if ([string]$roster.schema -cne $script:Cycle4SlotIdentitiesSchema) {
+        throw "unexpected slot-identities schema at $RosterPath`: $($roster.schema)"
+    }
+    $identities = New-Object object[] $script:Cycle4SlotCount
+    foreach ($slot in @($roster.slots)) {
+        $index = [int]$slot.slot_index
+        if ($index -lt 0 -or $index -ge $script:Cycle4SlotCount) {
+            throw "slot-identities roster has an out-of-range slot_index: $index"
+        }
+        $identities[$index] = [string]$slot.checkpoint_manifest_sha256
+    }
+    $roots = New-Object object[] $script:Cycle4SlotCount
+    foreach ($entry in @($SlotTable)) {
+        $roots[[int]$entry.slot_index] = [string]$entry.store_root
+    }
+    $roots[$script:Cycle4ArmOwnedSlotIndex] = $ArmStoreRoot
+    $stores = @(
+        foreach ($index in 0..($script:Cycle4SlotCount - 1)) {
+            if ($null -eq $identities[$index] -or $identities[$index] -notmatch '^[0-9a-f]{64}$') {
+                throw "slot-identities roster slot $index carries no lowercase SHA-256 identity"
+            }
+            [ordered]@{
+                checkpoint_manifest_sha256 = $identities[$index]
+                store_root = $roots[$index]
+            }
+        }
+    )
+    if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
+        throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+    }
+    Write-Cycle4JsonFile -Value ([ordered]@{
+        schema = $script:Cycle4ArmLocatorSchema
+        stores = $stores
+        genesis_parent_store_root = $GenesisParentStoreRoot
+    }) -Path $Path
+    return Get-Cycle4FileRecord -Path $Path
+}
+
+function Read-Cycle4ArmOriginRecord {
+    # The record the bin publishes at `--bootstrap-genesis`: the arm's run
+    # identity and base seed, the parent it was seeded from, and the four
+    # hashes of the genesis checkpoint the Store actually published. It is the
+    # authoritative source for all of those -- nothing else on disk carries the
+    # arm's own generation-0 identity before the genesis manifest exists.
+    param([Parameter(Mandatory = $true)][string]$ChainDir)
+    $path = Join-Path $ChainDir $script:Cycle4ArmOriginRecordFileName
+    $record = Read-Cycle4Json -Path $path
+    if ([string]$record.schema -cne $script:Cycle4ArmOriginRecordSchema) {
+        throw "unexpected arm-origin schema at $path`: $($record.schema)"
+    }
+    return [ordered]@{
+        path = (Resolve-Path -LiteralPath $path).Path
+        sha256 = Get-Cycle4Sha256 -Path $path
+        arm_kind = [string]$record.arm_kind
+        run_sha256 = [string]$record.run_sha256
+        base_seed = [uint64]$record.base_seed
+        init_generation = [uint64]$record.init_generation
+        genesis = [ordered]@{
+            store_generation = [uint64]0
+            checkpoint_manifest_sha256 = [string]$record.genesis_checkpoint_manifest_sha256
+            checkpoint_payload_sha256 = [string]$record.genesis_checkpoint_payload_sha256
+            model_parameter_sha256 = [string]$record.genesis_model_parameter_sha256
+            train_state_sha256 = [string]$record.genesis_train_state_sha256
+        }
+    }
+}
+
+function Assert-Cycle4GenesisManifestBinding {
+    # The genesis manifest is only trustworthy if its own-run slot binds the
+    # checkpoint the Store actually published. Three independent derivations
+    # of the same four hashes must agree: the manifest the builder just wrote,
+    # the bin's own arm-origin record (reported from memory at publication),
+    # and this wrapper's own read of the Store's generation-0 checkpoint file.
+    # Agreement also proves the wrapper's file-hash derivation is the same one
+    # the Rust decoder performs, which is what licenses using it unchecked at
+    # every later boundary.
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)]$Origin,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot
+    )
+    if ($Manifest.refresh_index -ne [uint64]0) {
+        throw "the genesis binding check wants refresh 0, got $($Manifest.refresh_index)"
+    }
+    if ($Manifest.trainee_run_sha256 -cne $Origin.run_sha256 -or $Manifest.trainee_base_seed -ne $Origin.base_seed) {
+        throw 'the genesis manifest binds a different trainee identity than the arm-origin record'
+    }
+    $slot = $Manifest.slots[$script:Cycle4ArmOwnedSlotIndex]
+    $expectedGeneration = $script:Cycle4TraineeStartLocalGeneration
+    if ([uint64]$slot.source_generation -ne $expectedGeneration) {
+        throw "the genesis manifest own-run slot declares generation $($slot.source_generation), not the trainee-local $expectedGeneration"
+    }
+    if ([string]$slot.source_run_sha256 -cne $Origin.run_sha256) {
+        throw 'the genesis manifest own-run slot is not bound to the arm run'
+    }
+    $fromStore = Get-Cycle4CheckpointIdentity -StoreRoot $ArmStoreRoot -StoreGeneration ([uint64]0)
+    foreach ($field in @('checkpoint_manifest_sha256', 'checkpoint_payload_sha256', 'model_parameter_sha256', 'train_state_sha256')) {
+        $manifestValue = [string]$slot.$field
+        if ($manifestValue -cne [string]$Origin.genesis.$field) {
+            throw "the genesis manifest own-run slot $field ($manifestValue) does not equal the arm-origin record's ($($Origin.genesis.$field))"
+        }
+        if ($manifestValue -cne [string]$fromStore.$field) {
+            throw "the genesis manifest own-run slot $field ($manifestValue) does not equal the Store's own generation-0 checkpoint ($($fromStore.$field))"
+        }
+    }
+    return [ordered]@{
+        manifest_sha256 = $Manifest.sha256
+        own_run_slot_index = $script:Cycle4ArmOwnedSlotIndex
+        trainee_local_generation = $expectedGeneration
+        arm_origin_record_sha256 = $Origin.sha256
+        genesis_checkpoint_manifest_sha256 = [string]$slot.checkpoint_manifest_sha256
+        genesis_checkpoint_payload_sha256 = [string]$slot.checkpoint_payload_sha256
+        genesis_model_parameter_sha256 = [string]$slot.model_parameter_sha256
+        genesis_train_state_sha256 = [string]$slot.train_state_sha256
     }
 }
 
@@ -430,12 +603,17 @@ function New-Cycle4SlotLocatorPair {
 # ---------------------------------------------------------------------------
 
 function Get-Cycle4GenesisAuthorityRecord {
+    #
+    # It binds the SEEDING facts only. The genesis manifest is no longer an
+    # input to the campaign (the wrapper builds it from the bootstrapped
+    # Store), so binding its hash here would only record something this same
+    # wrapper produced a moment later; Assert-Cycle4GenesisManifestBinding
+    # checks that relationship directly instead.
     param(
         [Parameter(Mandatory = $true)][string]$Arm,
         [Parameter(Mandatory = $true)][string]$ParentStoreRoot,
         [Parameter(Mandatory = $true)][uint64]$ParentGeneration,
-        [Parameter(Mandatory = $true)][string]$RunRecordPath,
-        [Parameter(Mandatory = $true)][string]$GenesisManifestPath
+        [Parameter(Mandatory = $true)][string]$RunRecordPath
     )
     $checkpoints = Join-Path $ParentStoreRoot 'checkpoints'
     $checkpoint = Join-Path $checkpoints ('update-{0:d8}.checkpoint.json' -f $ParentGeneration)
@@ -457,7 +635,6 @@ function Get-Cycle4GenesisAuthorityRecord {
         parent_sidecar_sha256 = Get-Cycle4Sha256 -Path $sidecar
         parent_state_sha256 = Get-Cycle4Sha256 -Path $state
         arm_run_record_sha256 = Get-Cycle4Sha256 -Path $RunRecordPath
-        genesis_refresh_manifest_sha256 = Get-Cycle4Sha256 -Path $GenesisManifestPath
     }
 }
 
@@ -497,9 +674,9 @@ function New-Cycle4SlotIdentitiesFile {
     # the only place their identity exists -- this is what the builder module
     # means by "as produced by the wrapper from the Store heads".
     #
-    # Refresh 0 is the one boundary where nothing is derived: the arm's Store
-    # does not exist until the genesis manifest already does, so slot 5's
-    # genesis identity is necessarily an operator input (see the README).
+    # Refresh 0 is derived like every other boundary now: `--bootstrap-genesis`
+    # publishes the arm's Store before any manifest exists, so slot 5's
+    # genesis identity is read from that Store's generation-0 checkpoint.
     param(
         [Parameter(Mandatory = $true)][string]$RosterPath,
         [Parameter(Mandatory = $true)][string]$OutputPath,
@@ -542,11 +719,9 @@ function New-Cycle4SlotIdentitiesFile {
 
     $traineeLocal = $script:Cycle4TraineeStartLocalGeneration + ($RefreshIndex * $script:Cycle4RefreshInterval)
     $derived = @()
-    if ($RefreshIndex -ge [uint64]1) {
-        $derived += [ordered]@{
-            slot_index = $script:Cycle4ArmOwnedSlotIndex
-            trainee_local_generation = $traineeLocal
-        }
+    $derived += [ordered]@{
+        slot_index = $script:Cycle4ArmOwnedSlotIndex
+        trainee_local_generation = $traineeLocal
     }
     if ($RefreshIndex -ge $script:Cycle4HistoricalArmFirstRefreshIndex) {
         $derived += [ordered]@{

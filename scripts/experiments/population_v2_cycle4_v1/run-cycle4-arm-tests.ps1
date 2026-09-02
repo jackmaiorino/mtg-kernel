@@ -8,6 +8,9 @@ manifest, a run record, eight slot store directories, a parent store with the
 three genesis-seeding artifacts, and placeholder executables -- then drives the
 wrapper in -DryRun -SkipHostAssertions and asserts:
 
+  * the genesis sequence -- the arm bin's `--bootstrap-genesis` (with no
+    interval flag on it) followed by the builder's `--genesis` -- on a
+    campaign where neither the Store nor the genesis manifest exists yet,
   * the exact command line of every child it would run (the arm bin's per
     interval --stop-generation and --payoff-panel, the panel runner's fixed
     G = 256 and its per-refresh disjoint seed, the builder's --next-generation
@@ -127,6 +130,11 @@ function New-SyntheticManifest {
     $slots = @(
         foreach ($index in 0..7) { New-SyntheticSlot -Index $index -Role $roles[$index] }
     )
+    # Slot 5 (current-1) is always the trainee's own run, which is what makes
+    # the wrapper substitute the arm's own Store root for it.
+    $slots[5].source_run_sha256 = $traineeRunSha256
+    $slots[5].source_base_seed = $traineeBaseSeed
+    $slots[5].source_generation = (896 + ($RefreshIndex * 128))
     if ($DuplicateIdentity) {
         $slots[7].checkpoint_manifest_sha256 = $slots[6].checkpoint_manifest_sha256
     }
@@ -189,7 +197,7 @@ foreach ($path in @($armExecutable, $builderExecutable, $panelExecutable, $pytho
 
 $rosterDir = Join-Path $WorkRoot 'slot-identities'
 New-Item -ItemType Directory -Force -Path $rosterDir | Out-Null
-foreach ($index in 1..16) {
+foreach ($index in 0..16) {
     Write-SyntheticJson -Value ([ordered]@{
         schema = 'mtg-kernel-cycle4-slot-identities/v1'
         slots = @(
@@ -283,15 +291,32 @@ Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $attempt 'RUN_FA
     -Message 'a passing dry run publishes no RUN_FAILED'
 
 $records = Get-CommandRecords -AttemptRoot $attempt
+$bootstrapCommands = @($records | Where-Object { $_.label -ceq 'bootstrap-genesis' })
+$genesisBuildCommands = @($records | Where-Object { $_.label -ceq 'genesis-build' })
 $armCommands = @($records | Where-Object { $_.label -like 'arm-interval-*' })
 $panelCommands = @($records | Where-Object { $_.label -like 'panel-interval-*' })
 $buildCommands = @($records | Where-Object { $_.label -like 'refresh-build-*' })
 
+Assert-That -Condition ($bootstrapCommands.Count -eq 1) -Message "an unseeded Store is bootstrapped exactly once (saw $($bootstrapCommands.Count))"
+Assert-That -Condition ($genesisBuildCommands.Count -eq 0) -Message 'an existing genesis manifest is never rebuilt'
 Assert-That -Condition ($armCommands.Count -eq 16) -Message "16 intervals run the arm bin (saw $($armCommands.Count))"
 Assert-That -Condition ($panelCommands.Count -eq 16) -Message "16 intervals run the panel (saw $($panelCommands.Count))"
 Assert-That -Condition ($buildCommands.Count -eq 16) -Message "16 intervals build the next manifest (saw $($buildCommands.Count))"
 Assert-That -Condition (@($records | Where-Object { $_.dry_run -ne $true }).Count -eq 0) `
     -Message 'every dry-run command is marked dry_run'
+
+$bootstrap = $bootstrapCommands[0].command_line
+Assert-That -Condition ($bootstrap -like '*"--bootstrap-genesis"*') -Message 'the bootstrap passes the value-less marker'
+Assert-That -Condition ($bootstrap -notlike '*--refresh-manifest*') -Message 'the bootstrap passes no refresh manifest'
+Assert-That -Condition ($bootstrap -notlike '*--stop-generation*') -Message 'the bootstrap passes no stop generation'
+Assert-That -Condition ($bootstrap -notlike '*--payoff-panel*') -Message 'the bootstrap passes no payoff panel'
+Assert-That -Condition ($bootstrap -notlike '*--preflight*') -Message 'the bootstrap passes no preflight flag'
+Assert-That -Condition ($bootstrap -like '*"--slot-locator"*bootstrap-slot-locator.json*') -Message 'the bootstrap gets its own locator naming the genesis parent'
+$bootstrapLocator = Get-Content -Raw -LiteralPath (Join-Path $attempt 'bootstrap-slot-locator.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$bootstrapLocator.genesis_parent_store_root -ceq (Resolve-Path -LiteralPath $parentStore).Path) `
+    -Message 'the bootstrap locator carries the genesis parent store root'
+Assert-That -Condition ([string]$bootstrapLocator.stores[5].store_root -ceq [string]$treatmentArguments['StoreRoot']) `
+    -Message "the bootstrap locator puts the arm's own Store in the own-run slot"
 
 $armZero = $armCommands[0].command_line
 Assert-That -Condition ($armZero -like "*`"--arm`" `"treatment-rb`"*") -Message 'the arm bin is told which arm it is'
@@ -336,11 +361,15 @@ Assert-That -Condition ([string]$armLocator.genesis_parent_store_root -ceq (Reso
     -Message 'the arm locator carries the genesis parent store root'
 $agree = $true
 foreach ($index in 0..7) {
-    if ([string]$armLocator.stores[$index].store_root -cne [string]$slotStoreRoots[$index]) { $agree = $false }
+    # Slot 5 is the arm's own run in the synthetic roster, so the wrapper
+    # substitutes the arm's own Store for the operator's table entry.
+    if ($index -eq 5) { $expectedRoot = [string]$treatmentArguments['StoreRoot'] }
+    else { $expectedRoot = [string]$slotStoreRoots[$index] }
+    if ([string]$armLocator.stores[$index].store_root -cne $expectedRoot) { $agree = $false }
     if ([string]$armLocator.stores[$index].checkpoint_manifest_sha256 -cne (New-SyntheticHash -Tag (0x20 + $index))) { $agree = $false }
-    if ([string]$panelLocator.stores."$index" -cne [string]$slotStoreRoots[$index]) { $agree = $false }
+    if ([string]$panelLocator.stores."$index" -cne $expectedRoot) { $agree = $false }
 }
-Assert-That -Condition $agree -Message 'both locators name the same store for the same slot, keyed by identity and by index'
+Assert-That -Condition $agree -Message "both locators name the same store for the same slot, with the arm's own Store substituted into its own slot"
 
 # The genesis authority record lives with the campaign and is re-verified.
 $authorityPath = Join-Path $evidence 'arm-prefix\chain\cycle4-genesis-authority-treatment-rb.json'
@@ -348,6 +377,47 @@ Assert-That -Condition (Test-Path -LiteralPath $authorityPath) -Message 'the gen
 $authority = Get-Content -Raw -LiteralPath $authorityPath | ConvertFrom-Json
 Assert-That -Condition ([string]$authority.schema -ceq 'mtg-kernel-cycle4-genesis-authority/v1') -Message 'the genesis authority declares its schema'
 Assert-That -Condition (([string]$authority.parent_checkpoint_sha256).Length -eq 64) -Message 'the genesis authority records the parent checkpoint hash'
+
+# ---------------------------------------------------------------------------
+# 1b. A fresh campaign: no Store, no genesis manifest
+# ---------------------------------------------------------------------------
+
+$freshChain = Join-Path $WorkRoot 'refresh-chain-fresh'
+New-Item -ItemType Directory -Force -Path $freshChain | Out-Null
+$freshEvidence = Join-Path $WorkRoot 'evidence-fresh'
+$freshArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $freshEvidence
+$freshArguments['RefreshChainDir'] = $freshChain
+& $wrapper @freshArguments *>&1 | Out-Null
+$freshAttempt = Get-LatestAttemptRoot -EvidenceRoot $freshEvidence -GateName 'cycle4-treatment-rb-formal'
+$freshRecords = Get-CommandRecords -AttemptRoot $freshAttempt
+
+Assert-That -Condition (@($freshRecords | Where-Object { $_.label -ceq 'bootstrap-genesis' }).Count -eq 1) `
+    -Message 'a fresh campaign plans exactly one bootstrap'
+$freshBuild = @($freshRecords | Where-Object { $_.label -ceq 'genesis-build' })
+Assert-That -Condition ($freshBuild.Count -eq 1) -Message 'a fresh campaign plans exactly one genesis manifest build'
+Assert-That -Condition ($freshBuild[0].command_line -like '*"--genesis"*') -Message 'the genesis manifest is built with the builder --genesis mode'
+Assert-That -Condition ($freshBuild[0].command_line -notlike '*--chain-dir*') -Message 'a genesis build passes no chain directory'
+Assert-That -Condition ($freshBuild[0].command_line -notlike '*--panel*') -Message 'a genesis build binds no panel'
+Assert-That -Condition ($freshBuild[0].command_line -notlike '*--next-generation*') -Message 'a genesis build declares no next generation'
+Assert-That -Condition ($freshBuild[0].command_line -like '*"--output"*refresh-00.manifest.json*') -Message 'the genesis build writes refresh-00.manifest.json'
+Assert-That -Condition ($freshBuild[0].command_line -like "*`"--trainee-base-seed`" `"$traineeBaseSeed`"*") -Message 'the genesis build takes the base seed from the run record'
+Assert-That -Condition ($freshBuild[0].command_line -like '*from-arm-origin.record.json-after-bootstrap*') `
+    -Message 'a dry run says plainly that the run identity comes from the record the bootstrap publishes'
+Assert-That -Condition ($freshBuild[0].command_line -like '*"--slot-identities"*refresh-00.slot-identities.json*') -Message 'the genesis build stages the operator roster'
+Assert-That -Condition (@($freshRecords | Where-Object { $_.label -like 'arm-interval-*' }).Count -eq 0) `
+    -Message 'a dry run over a fresh campaign plans no interval it cannot read a manifest for'
+$freshResult = Get-Content -Raw -LiteralPath (Join-Path $freshAttempt 'result.json') | ConvertFrom-Json
+Assert-That -Condition ([string]$freshResult.dry_run_stopped_after -ceq 'genesis-manifest') `
+    -Message 'the result says exactly where the dry run stopped'
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $freshAttempt 'TRAINING_COMPLETE')) -Message 'the fresh-campaign dry run still completes'
+
+$noRoster = Join-Path $WorkRoot 'slot-identities-no-genesis'
+New-Item -ItemType Directory -Force -Path $noRoster | Out-Null
+$missingRoster = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (Join-Path $WorkRoot 'evidence-reject-no-roster')
+$missingRoster['SlotIdentitiesRosterDir'] = $noRoster
+Assert-Throws -Action { & $wrapper @missingRoster *>&1 | Out-Null } `
+    -ExpectedSubstring 'genesis slot-identities roster is missing' `
+    -Message 'the genesis roster is a required operator input'
 
 # ---------------------------------------------------------------------------
 # 2. STATIC-RB never advances the manifest
@@ -404,17 +474,27 @@ $preflightAttempt = Get-LatestAttemptRoot -EvidenceRoot $preflightEvidence -Gate
 Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'PREFLIGHT_COMPLETE')) -Message 'the ladder publishes its own gate-specific marker'
 Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $preflightAttempt 'TRAINING_COMPLETE'))) -Message 'the ladder never publishes TRAINING_COMPLETE'
 $preflightRecords = Get-CommandRecords -AttemptRoot $preflightAttempt
-Assert-That -Condition ($preflightRecords.Count -eq 2) -Message "the ladder runs exactly two rungs (saw $($preflightRecords.Count))"
-$rungA = $preflightRecords[0].command_line
-$rungB = $preflightRecords[1].command_line
+$preflightBootstraps = @($preflightRecords | Where-Object { $_.label -like 'preflight-bootstrap-*' })
+$preflightBuilds = @($preflightRecords | Where-Object { $_.label -like 'preflight-genesis-build-*' })
+$preflightTraining = @($preflightRecords | Where-Object { $_.label -like 'preflight-rung-*' })
+Assert-That -Condition ($preflightBootstraps.Count -eq 2) -Message "each rung is bootstrapped on its own (saw $($preflightBootstraps.Count))"
+Assert-That -Condition ($preflightBuilds.Count -eq 2) -Message "each rung builds its own genesis manifest (saw $($preflightBuilds.Count))"
+Assert-That -Condition ($preflightTraining.Count -eq 2) -Message "the ladder runs exactly two rungs (saw $($preflightTraining.Count))"
+Assert-That -Condition ($preflightBootstraps[0].command_line -like '*ladder\a\store*' -and $preflightBootstraps[1].command_line -like '*ladder\b\store*') `
+    -Message 'each rung bootstraps its own throwaway Store'
+Assert-That -Condition ($preflightBuilds[0].command_line -like '*ladder\a\refresh-00.manifest.json*' -and $preflightBuilds[1].command_line -like '*ladder\b\refresh-00.manifest.json*') `
+    -Message "each rung's genesis manifest stays inside that rung"
+$rungA = $preflightTraining[0].command_line
+$rungB = $preflightTraining[1].command_line
 # checkpoint_segment_updates is 4 in the synthetic run record, so the smallest
 # window that is both at least two updates and a whole number of segments is 4.
 Assert-That -Condition ($rungA -like '*"--preflight" "--preflight-updates" "4"*') -Message 'the ladder passes both halves of the preflight pair'
 Assert-That -Condition ($rungA -like '*"--stop-generation" "4"*') -Message 'the ladder stops at the relaxed window, not 128'
 Assert-That -Condition ($rungA -like '*ladder\a\store*' -and $rungB -like '*ladder\b\store*') -Message 'the two rungs use two independent throwaway Store prefixes under the attempt root'
 Assert-That -Condition ($rungA -like "*`"--run-record`" `"$runRecord`"*" -and $rungB -like "*`"--run-record`" `"$runRecord`"*") -Message 'both rungs are seeded from the same run record'
-Assert-That -Condition ($rungA -like '*refresh-00.manifest.json*' -and $rungB -like '*refresh-00.manifest.json*') -Message 'both rungs run against the genesis manifest'
-Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'ladder\a\arm-slot-locator.json')) -Message 'each rung gets its own locator pair'
+Assert-That -Condition ($rungA -like '*ladder\a\refresh-00.manifest.json*' -and $rungB -like '*ladder\b\refresh-00.manifest.json*') `
+    -Message "each rung trains against its own genesis manifest, never the other's"
+Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'ladder\a\bootstrap-slot-locator.json')) -Message 'each rung gets its own bootstrap locator'
 Assert-That -Condition (Test-Path -LiteralPath (Join-Path $preflightAttempt 'cycle4-genesis-authority-control-r.json')) `
     -Message 'a preflight keeps its genesis authority copy inside the throwaway attempt root'
 
@@ -453,14 +533,6 @@ $wrongArm = New-WrapperArguments -Mode 'preflight' -Arm 'treatment-rb' -Evidence
 Assert-Throws -Action { & $wrapper @wrongArm *>&1 | Out-Null } `
     -ExpectedSubstring '-Arm must be control-r' `
     -Message 'the preflight ladder is the CONTROL ladder only'
-
-$emptyChain = Join-Path $WorkRoot 'refresh-chain-empty'
-New-Item -ItemType Directory -Force -Path $emptyChain | Out-Null
-$missingGenesis = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'missing-genesis')
-$missingGenesis['RefreshChainDir'] = $emptyChain
-Assert-Throws -Action { & $wrapper @missingGenesis *>&1 | Out-Null } `
-    -ExpectedSubstring 'genesis refresh manifest is missing' `
-    -Message 'a missing genesis manifest stops the launch'
 
 $duplicateChain = Join-Path $WorkRoot 'refresh-chain-duplicate'
 New-SyntheticManifest -Path (Join-Path $duplicateChain 'refresh-00.manifest.json') -RefreshIndex ([uint64]0) -DuplicateIdentity

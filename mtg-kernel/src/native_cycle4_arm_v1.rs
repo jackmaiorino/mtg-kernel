@@ -120,18 +120,16 @@ pub const CYCLE4_ARM_ORIGIN_RECORD_SCHEMA_V1: &str = "mtg-kernel-cycle4-arm-orig
 /// Fixed on-disk name of the origin record inside the chain directory.
 pub const CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1: &str = "arm-origin.record.json";
 
-/// Launcher-level marker pinning one Store prefix to exactly one mode, formal
-/// or preflight, for the life of that prefix. It lives in the Store root's
-/// PARENT directory (the "Store prefix"), never inside the Store: the Store's
-/// own leaf grammar is closed and a stray file under the root would be a
-/// layout violation.
+/// Launcher-level marker pinning one Store prefix to one mode for the life of
+/// that prefix. It lives in the Store root's PARENT directory (the "Store
+/// prefix"), never inside the Store: the Store's own leaf grammar is closed
+/// and a stray file under the root would be a layout violation.
 ///
 /// The marker exists for one reason: `--preflight-updates` relaxes the
 /// interval check from the pre-registered 128 to a short window, so a Store a
-/// preflight ever touched can never become a formal artifact, and a formal
-/// Store can never be re-entered under the relaxed check. Both directions
-/// fail closed, and the very first thing a run does is claim its mode, before
-/// the Store is bootstrapped.
+/// preflight ever TRAINED cannot become a formal artifact, and a formal Store
+/// cannot be re-entered under the relaxed check. See
+/// [`Cycle4ArmStoreModeV1`] for the one admissible transition.
 pub const CYCLE4_ARM_MODE_MARKER_SCHEMA_V1: &str = "mtg-kernel-cycle4-arm-mode-marker/v1";
 
 /// Fixed on-disk name of the mode marker inside the Store prefix.
@@ -787,7 +785,25 @@ struct Cycle4ArmOriginRecordV1 {
     parent_sidecar_sha256: String,
     parent_state_sha256: String,
     derived_model_parameter_sha256: String,
-    genesis_refresh_manifest_sha256: String,
+    /// The arm's own genesis checkpoint identity, exactly as the Store
+    /// published it. It exists nowhere else until the Store does, and it is
+    /// what the genesis refresh manifest's own-run slot must bind -- which is
+    /// why the bootstrap publishes it here rather than binding a manifest
+    /// that cannot exist yet.
+    genesis_checkpoint_manifest_sha256: String,
+    genesis_checkpoint_payload_sha256: String,
+    genesis_model_parameter_sha256: String,
+    genesis_train_state_sha256: String,
+}
+
+/// The four hashes that identify one published checkpoint, in the shape the
+/// cycle-4 slot roster wants.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Cycle4ArmGenesisIdentityV1 {
+    pub checkpoint_manifest_sha256: String,
+    pub checkpoint_payload_sha256: String,
+    pub model_parameter_sha256: String,
+    pub train_state_sha256: String,
 }
 
 // ---------------------------------------------------------------------
@@ -1221,16 +1237,30 @@ pub fn run_native_cycle4_arm_v1(request: &Cycle4ArmRequestV1) -> Result<Cycle4Ar
     // 3. Open or bootstrap the Store, authoring genesis from the pinned
     //    parent checkpoint when the Store is new.
     let (parent_dir, root_basename) = store_root_parts_v1(&request.store_root)?;
-    claim_store_mode_marker_v1(&parent_dir, request.arm, &run, request.preflight_updates)?;
+    let mode = if request.preflight_updates.is_some() {
+        Cycle4ArmStoreModeV1::Preflight
+    } else {
+        Cycle4ArmStoreModeV1::Formal
+    };
+    claim_store_mode_marker_v1(&parent_dir, request.arm, &run, mode)?;
     let bootstrapped =
         bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
             Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
         })?;
-    let genesis_required = !bootstrapped.latest_final_present();
-    let root = bootstrapped.into_root();
-    if genesis_required {
-        author_genesis_from_parent_v1(&root, &run, &locator, &manifest, request)?;
+    // Genesis is its own mode now. An interval invocation never authors one:
+    // the genesis refresh manifest this invocation was handed can only have
+    // been built AFTER the Store's genesis existed, so an unseeded Store here
+    // means the two are out of order.
+    if !bootstrapped.latest_final_present() {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_genesis_not_bootstrapped",
+            format!(
+                "{} holds no genesis; run --bootstrap-genesis before the first interval",
+                request.store_root.display()
+            ),
+        ));
     }
+    let root = bootstrapped.into_root();
 
     // 4. Baseline chain: v4 arms only. CONTROL-R never installs one.
     let access = request.arm.uses_baseline_v4_v1().then(|| {
@@ -1450,32 +1480,49 @@ struct Cycle4ArmModeMarkerV1 {
     run_sha256: String,
 }
 
-const CYCLE4_ARM_MODE_FORMAL_V1: &str = "formal";
-const CYCLE4_ARM_MODE_PREFLIGHT_V1: &str = "preflight";
+/// Which mode claimed a Store prefix.
+///
+/// `Bootstrap` is the pristine state `--bootstrap-genesis` leaves behind:
+/// genesis is published but NOTHING has trained, so the prefix may still
+/// become either a formal or a preflight Store. The first invocation that
+/// trains fixes the mode, and from then on the other mode is refused. That is
+/// the guarantee that actually matters, because only training can have run
+/// under the relaxed interval check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Cycle4ArmStoreModeV1 {
+    Bootstrap,
+    Formal,
+    Preflight,
+}
+
+impl Cycle4ArmStoreModeV1 {
+    const fn wire_v1(self) -> &'static str {
+        match self {
+            Self::Bootstrap => "bootstrap",
+            Self::Formal => "formal",
+            Self::Preflight => "preflight",
+        }
+    }
+}
 
 /// Claims `parent_dir` (the Store prefix) for this run's mode, or fails
 /// closed. Runs BEFORE the Store is bootstrapped so a wrong-mode invocation
 /// never creates or touches a Store at all.
 ///
-/// A prefix's mode, arm, and run identity are fixed by whichever run claimed
-/// it first: a later run in the other mode, for another arm, or against
-/// another run record is refused. The formal path claims `formal`, so the
-/// contract requirement "a preflight is rejected on any Store that already
-/// holds a formal marker" holds in both directions.
+/// The arm and the run identity are fixed by whoever claimed the prefix
+/// first. The mode admits exactly one transition, `bootstrap -> formal` or
+/// `bootstrap -> preflight`; `formal` and `preflight` are terminal, so a
+/// preflight is rejected on any prefix a formal run has trained and the
+/// reverse holds too.
 fn claim_store_mode_marker_v1(
     parent_dir: &Path,
     arm: Cycle4ArmKindV1,
     run: &ValidatedTrainRunV2,
-    preflight_updates: Option<u64>,
+    mode: Cycle4ArmStoreModeV1,
 ) -> Result<()> {
     let expected = Cycle4ArmModeMarkerV1 {
         schema: CYCLE4_ARM_MODE_MARKER_SCHEMA_V1.to_owned(),
-        mode: if preflight_updates.is_some() {
-            CYCLE4_ARM_MODE_PREFLIGHT_V1
-        } else {
-            CYCLE4_ARM_MODE_FORMAL_V1
-        }
-        .to_owned(),
+        mode: mode.wire_v1().to_owned(),
         arm_kind: arm.wire_v1().to_owned(),
         run_sha256: run.run_sha256().to_owned(),
     };
@@ -1495,19 +1542,38 @@ fn claim_store_mode_marker_v1(
                         format!("{} is unreadable: {error}", path.display()),
                     )
                 })?;
-            Err(Cycle4ArmErrorV1::contract(
-                "cycle4_arm_v1_mode_marker_conflict",
-                format!(
-                    "store prefix {} is already claimed by mode={} arm={} run={}, but this run is mode={} arm={} run={}",
-                    parent_dir.display(),
-                    actual.mode,
-                    actual.arm_kind,
-                    actual.run_sha256,
-                    expected.mode,
-                    expected.arm_kind,
-                    expected.run_sha256,
-                ),
-            ))
+            let conflict = || {
+                Cycle4ArmErrorV1::contract(
+                    "cycle4_arm_v1_mode_marker_conflict",
+                    format!(
+                        "store prefix {} is already claimed by mode={} arm={} run={}, but this run is mode={} arm={} run={}",
+                        parent_dir.display(),
+                        actual.mode,
+                        actual.arm_kind,
+                        actual.run_sha256,
+                        expected.mode,
+                        expected.arm_kind,
+                        expected.run_sha256,
+                    ),
+                )
+            };
+            if actual.arm_kind != expected.arm_kind || actual.run_sha256 != expected.run_sha256 {
+                return Err(conflict());
+            }
+            // The one admissible transition: a prefix that was only
+            // bootstrapped has trained nothing, so it may still become either
+            // a formal or a preflight Store.
+            if actual.mode == Cycle4ArmStoreModeV1::Bootstrap.wire_v1()
+                && matches!(
+                    mode,
+                    Cycle4ArmStoreModeV1::Formal | Cycle4ArmStoreModeV1::Preflight
+                )
+            {
+                return write_file_atomically_v1(&path, &bytes).map_err(|error| {
+                    Cycle4ArmErrorV1::runtime("cycle4_arm_v1_mode_marker", error.to_string())
+                });
+            }
+            Err(conflict())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             std::fs::create_dir_all(parent_dir).map_err(|error| {
@@ -1522,6 +1588,139 @@ fn claim_store_mode_marker_v1(
             format!("{}: {error}", path.display()),
         )),
     }
+}
+
+// ---------------------------------------------------------------------
+// Genesis bootstrap
+// ---------------------------------------------------------------------
+
+/// One genesis bootstrap's complete, typed request. Deliberately NOT a
+/// variant of [`Cycle4ArmRequestV1`]: a bootstrap takes no refresh manifest,
+/// no payoff panel, no stop generation, and no preflight window, because
+/// nothing about a training interval applies to it.
+#[derive(Clone, Debug)]
+pub struct Cycle4ArmBootstrapRequestV1 {
+    pub arm: Cycle4ArmKindV1,
+    pub store_root: PathBuf,
+    pub run_record: PathBuf,
+    pub chain_dir: PathBuf,
+    /// Only the locator's `genesis_parent_store_root` is used here; the eight
+    /// slot entries are still decoded and structurally validated, because a
+    /// malformed locator would fail the very first interval anyway and it
+    /// costs nothing to say so before genesis is published.
+    pub slot_locator: PathBuf,
+}
+
+/// What one genesis bootstrap actually published.
+#[derive(Clone, Debug)]
+pub struct Cycle4ArmBootstrapOutcomeV1 {
+    pub arm: Cycle4ArmKindV1,
+    pub run_sha256: String,
+    pub base_seed: u64,
+    /// Always 0: the Store's own genesis generation.
+    pub genesis_generation_index: u64,
+    /// Always 896: the same generation in the contract's trainee-local
+    /// numbering, which is what the genesis manifest's own-run slot declares.
+    pub trainee_local_generation: u64,
+    pub genesis: Cycle4ArmGenesisIdentityV1,
+}
+
+/// Seeds one arm's Store from the pinned parent checkpoint and exits without
+/// training, breaking the genesis circularity: the genesis refresh manifest's
+/// own-run slot binds the arm's own generation-0 checkpoint, which cannot
+/// exist until the Store does, and the Store cannot be opened by an interval
+/// invocation without a manifest. This mode publishes the Store, the origin
+/// record carrying that checkpoint's identity, and nothing else; the refresh
+/// builder then authors `refresh-00.manifest.json` from it.
+///
+/// # Errors
+///
+/// Returns a classified [`Cycle4ArmErrorV1`]: `Contract` (bin exit code 3)
+/// for any contract, locator, or already-seeded-Store rejection, `Runtime`
+/// (bin exit code 1) for an I/O or publication failure.
+pub fn run_native_cycle4_arm_bootstrap_genesis_v1(
+    request: &Cycle4ArmBootstrapRequestV1,
+) -> Result<Cycle4ArmBootstrapOutcomeV1> {
+    // 1. Exactly the run-contract, arm-kind, and device-contract validation a
+    //    normal invocation performs, so a run record that could never train
+    //    is rejected here rather than after a Store exists.
+    let run_bytes = std::fs::read(&request.run_record).map_err(|error| {
+        Cycle4ArmErrorV1::runtime(
+            "cycle4_arm_v1_run_record_read",
+            format!("{}: {error}", request.run_record.display()),
+        )
+    })?;
+    let run = decode_train_run_v2(&run_bytes).map_err(|error| {
+        Cycle4ArmErrorV1::contract("cycle4_arm_v1_run_record_rejected", error.to_string())
+    })?;
+    validate_run_contract_v1(&run, request.arm)?;
+    validate_device_contract_v1(&run, request.arm)?;
+
+    // 2. The locator, for its genesis parent store root.
+    let locator_bytes = std::fs::read(&request.slot_locator).map_err(|error| {
+        Cycle4ArmErrorV1::runtime(
+            "cycle4_arm_v1_slot_locator_read",
+            format!("{}: {error}", request.slot_locator.display()),
+        )
+    })?;
+    let locator = decode_slot_locator_v1(&locator_bytes)?;
+
+    // 3. Claim the prefix as bootstrapped, then open it.
+    let (parent_dir, root_basename) = store_root_parts_v1(&request.store_root)?;
+    claim_store_mode_marker_v1(
+        &parent_dir,
+        request.arm,
+        &run,
+        Cycle4ArmStoreModeV1::Bootstrap,
+    )?;
+    let bootstrapped =
+        bootstrap_native_training_store_v2(&parent_dir, &root_basename).map_err(|error| {
+            Cycle4ArmErrorV1::runtime("cycle4_arm_v1_bootstrap_failed", error.to_string())
+        })?;
+    if bootstrapped.latest_final_present() {
+        return Err(Cycle4ArmErrorV1::contract(
+            "cycle4_arm_v1_genesis_already_present",
+            format!(
+                "{} already holds a Store; --bootstrap-genesis only ever seeds a new one",
+                request.store_root.display()
+            ),
+        ));
+    }
+    let root = bootstrapped.into_root();
+
+    // 4. Publish genesis and the origin record.
+    let genesis =
+        author_genesis_from_parent_v1(&root, &run, &locator, &request.chain_dir, request.arm)?;
+
+    // 5. The same final-store validation an interval exit performs.
+    let access = request.arm.uses_baseline_v4_v1().then(|| {
+        Cycle4BaselineChainAccessV1::new_v1(
+            request.chain_dir.clone(),
+            run.checkpoint_segment_updates(),
+        )
+    });
+    let state = match access.as_ref() {
+        None => validate_native_training_store_v2(&root, &run),
+        Some(access) => validate_native_training_store_baseline_v4_v2(&root, &run, access),
+    }
+    .map_err(|error| {
+        Cycle4ArmErrorV1::runtime("cycle4_arm_v1_validate_failed", error.to_string())
+    })?;
+    if state.latest_generation_index() != 0 {
+        return Err(Cycle4ArmErrorV1::runtime(
+            "cycle4_arm_v1_validate_failed",
+            "a bootstrap must leave the Store at generation 0",
+        ));
+    }
+
+    Ok(Cycle4ArmBootstrapOutcomeV1 {
+        arm: request.arm,
+        run_sha256: run.run_sha256().to_owned(),
+        base_seed: run.record().schedule().base_seed,
+        genesis_generation_index: 0,
+        trainee_local_generation: CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1,
+        genesis,
+    })
 }
 
 fn store_root_parts_v1(store_root: &Path) -> Result<(PathBuf, String)> {
@@ -1555,9 +1754,9 @@ fn author_genesis_from_parent_v1(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
     locator: &Cycle4SlotLocatorV1,
-    manifest: &Cycle4RefreshManifestV1,
-    request: &Cycle4ArmRequestV1,
-) -> Result<()> {
+    chain_dir: &Path,
+    arm: Cycle4ArmKindV1,
+) -> Result<Cycle4ArmGenesisIdentityV1> {
     let declared = run
         .record()
         .contracts()
@@ -1569,12 +1768,6 @@ fn author_genesis_from_parent_v1(
                 "a cycle-4 arm's genesis must be seeded from a pinned parent checkpoint",
             )
         })?;
-    if manifest.refresh_index_v1() != 0 {
-        return Err(Cycle4ArmErrorV1::contract(
-            "cycle4_arm_v1_genesis_requires_genesis_manifest",
-            "an unseeded Store must be opened with the genesis refresh manifest",
-        ));
-    }
     let parent_root = locator.genesis_parent_store_root.as_ref().ok_or_else(|| {
         Cycle4ArmErrorV1::contract(
             "cycle4_arm_v1_genesis_parent_missing",
@@ -1634,18 +1827,28 @@ fn author_genesis_from_parent_v1(
             "genesis publication reported a nonzero generation".to_owned(),
         ));
     }
-    publish_origin_record_v1(request, run, declared, manifest)
+    // Taken from the manifest the Store just published, not re-read off disk:
+    // these are the same bytes `publish_genesis_generation_v2` committed.
+    let identity = Cycle4ArmGenesisIdentityV1 {
+        checkpoint_manifest_sha256: lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256()),
+        checkpoint_payload_sha256: lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256()),
+        model_parameter_sha256: lower_hex_raw32_v1(checkpoint.model_parameter_sha256()),
+        train_state_sha256: lower_hex_raw32_v1(checkpoint.train_state_sha256()),
+    };
+    publish_origin_record_v1(chain_dir, arm, run, declared, &identity)?;
+    Ok(identity)
 }
 
 fn publish_origin_record_v1(
-    request: &Cycle4ArmRequestV1,
+    chain_dir: &Path,
+    arm: Cycle4ArmKindV1,
     run: &ValidatedTrainRunV2,
     declared: &crate::native_training_store_run_v2::OpponentLadderInitializationContractV1,
-    manifest: &Cycle4RefreshManifestV1,
+    identity: &Cycle4ArmGenesisIdentityV1,
 ) -> Result<()> {
     let record = Cycle4ArmOriginRecordV1 {
         schema: CYCLE4_ARM_ORIGIN_RECORD_SCHEMA_V1.to_owned(),
-        arm_kind: request.arm.wire_v1().to_owned(),
+        arm_kind: arm.wire_v1().to_owned(),
         run_sha256: run.run_sha256().to_owned(),
         base_seed: run.record().schedule().base_seed,
         init_generation: declared.generation,
@@ -1654,15 +1857,18 @@ fn publish_origin_record_v1(
         parent_sidecar_sha256: declared.sidecar_sha256.clone(),
         parent_state_sha256: declared.state_sha256.clone(),
         derived_model_parameter_sha256: declared.derived_model_parameter_sha256.clone(),
-        genesis_refresh_manifest_sha256: lower_hex_raw32_v1(manifest.manifest_sha256_v1()),
+        genesis_checkpoint_manifest_sha256: identity.checkpoint_manifest_sha256.clone(),
+        genesis_checkpoint_payload_sha256: identity.checkpoint_payload_sha256.clone(),
+        genesis_model_parameter_sha256: identity.model_parameter_sha256.clone(),
+        genesis_train_state_sha256: identity.train_state_sha256.clone(),
     };
     let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).map_err(
         |error| Cycle4ArmErrorV1::runtime("cycle4_arm_v1_origin_record", error.to_string()),
     )?;
-    std::fs::create_dir_all(&request.chain_dir).map_err(|error| {
+    std::fs::create_dir_all(chain_dir).map_err(|error| {
         Cycle4ArmErrorV1::runtime("cycle4_arm_v1_origin_record", error.to_string())
     })?;
-    let path = request.chain_dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+    let path = chain_dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
     if let Ok(existing) = std::fs::read(&path) {
         if existing == bytes {
             return Ok(());
@@ -2473,40 +2679,141 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_marker_pins_a_store_prefix_to_one_mode_v1() {
+    fn the_mode_marker_pins_a_store_prefix_to_one_training_mode_v1() {
         let root = fresh_temp_dir_v1("mode-marker");
         let run = run_for_arm_v1(Cycle4ArmKindV1::ControlR);
         let prefix = root.join("prefix");
 
         // A preflight claims a fresh prefix, and re-claiming it in the same
         // mode is idempotent.
-        claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, Some(2))
-            .expect("first claim");
-        claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, Some(8))
-            .expect("same mode re-entry");
-        // The formal path may not re-enter a preflight-claimed prefix.
+        claim_store_mode_marker_v1(
+            &prefix,
+            Cycle4ArmKindV1::ControlR,
+            &run,
+            Cycle4ArmStoreModeV1::Preflight,
+        )
+        .expect("first claim");
+        claim_store_mode_marker_v1(
+            &prefix,
+            Cycle4ArmKindV1::ControlR,
+            &run,
+            Cycle4ArmStoreModeV1::Preflight,
+        )
+        .expect("same mode re-entry");
+        // The formal path may not re-enter a prefix a preflight trained.
         assert_eq!(
-            claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, None)
-                .expect_err("formal may not adopt a preflight prefix")
-                .code_v1(),
+            claim_store_mode_marker_v1(
+                &prefix,
+                Cycle4ArmKindV1::ControlR,
+                &run,
+                Cycle4ArmStoreModeV1::Formal
+            )
+            .expect_err("formal may not adopt a preflight prefix")
+            .code_v1(),
             "cycle4_arm_v1_mode_marker_conflict"
         );
 
         // And the reverse: a preflight is refused on a formal prefix.
         let formal = root.join("formal");
-        claim_store_mode_marker_v1(&formal, Cycle4ArmKindV1::ControlR, &run, None)
-            .expect("formal claim");
+        claim_store_mode_marker_v1(
+            &formal,
+            Cycle4ArmKindV1::ControlR,
+            &run,
+            Cycle4ArmStoreModeV1::Formal,
+        )
+        .expect("formal claim");
         assert_eq!(
-            claim_store_mode_marker_v1(&formal, Cycle4ArmKindV1::ControlR, &run, Some(2))
-                .expect_err("a formal marker forbids the relaxed check")
-                .code_v1(),
+            claim_store_mode_marker_v1(
+                &formal,
+                Cycle4ArmKindV1::ControlR,
+                &run,
+                Cycle4ArmStoreModeV1::Preflight
+            )
+            .expect_err("a formal marker forbids the relaxed check")
+            .code_v1(),
             "cycle4_arm_v1_mode_marker_conflict"
         );
         // A different arm on the same prefix is refused too.
         assert_eq!(
-            claim_store_mode_marker_v1(&formal, Cycle4ArmKindV1::TreatmentRb, &run, None)
-                .expect_err("one prefix, one arm")
-                .code_v1(),
+            claim_store_mode_marker_v1(
+                &formal,
+                Cycle4ArmKindV1::TreatmentRb,
+                &run,
+                Cycle4ArmStoreModeV1::Formal
+            )
+            .expect_err("one prefix, one arm")
+            .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+        // A bootstrapped prefix may not be downgraded back to bootstrap.
+        assert_eq!(
+            claim_store_mode_marker_v1(
+                &formal,
+                Cycle4ArmKindV1::ControlR,
+                &run,
+                Cycle4ArmStoreModeV1::Bootstrap
+            )
+            .expect_err("formal is terminal")
+            .code_v1(),
+            "cycle4_arm_v1_mode_marker_conflict"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_bootstrapped_prefix_may_still_become_either_training_mode_v1() {
+        let root = fresh_temp_dir_v1("mode-marker-bootstrap");
+        let run = run_for_arm_v1(Cycle4ArmKindV1::ControlR);
+
+        // Nothing has trained after a bootstrap, so neither transition can
+        // have been made under the relaxed interval check.
+        for (name, mode) in [
+            ("to-formal", Cycle4ArmStoreModeV1::Formal),
+            ("to-preflight", Cycle4ArmStoreModeV1::Preflight),
+        ] {
+            let prefix = root.join(name);
+            claim_store_mode_marker_v1(
+                &prefix,
+                Cycle4ArmKindV1::ControlR,
+                &run,
+                Cycle4ArmStoreModeV1::Bootstrap,
+            )
+            .expect("bootstrap claim");
+            claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, mode)
+                .expect("a bootstrapped prefix admits either training mode");
+            // ... but only once: the training mode is then terminal.
+            let other = if matches!(mode, Cycle4ArmStoreModeV1::Formal) {
+                Cycle4ArmStoreModeV1::Preflight
+            } else {
+                Cycle4ArmStoreModeV1::Formal
+            };
+            assert_eq!(
+                claim_store_mode_marker_v1(&prefix, Cycle4ArmKindV1::ControlR, &run, other)
+                    .expect_err("the training mode is terminal")
+                    .code_v1(),
+                "cycle4_arm_v1_mode_marker_conflict"
+            );
+        }
+
+        // A bootstrap for the wrong arm is refused before anything is opened.
+        let prefix = root.join("wrong-arm");
+        claim_store_mode_marker_v1(
+            &prefix,
+            Cycle4ArmKindV1::ControlR,
+            &run,
+            Cycle4ArmStoreModeV1::Bootstrap,
+        )
+        .expect("bootstrap claim");
+        assert_eq!(
+            claim_store_mode_marker_v1(
+                &prefix,
+                Cycle4ArmKindV1::TreatmentRb,
+                &run,
+                Cycle4ArmStoreModeV1::Formal
+            )
+            .expect_err("the arm is fixed by the bootstrap")
+            .code_v1(),
             "cycle4_arm_v1_mode_marker_conflict"
         );
 

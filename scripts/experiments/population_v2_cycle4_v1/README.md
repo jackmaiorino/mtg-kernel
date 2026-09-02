@@ -23,12 +23,12 @@ Every path below is machine-local and never enters a hashed artifact.
 | --- | --- | --- |
 | Parent (cycle-3 lineage) Store root | `-GenesisParentStoreRoot` | The arm's genesis weights are copied from it. |
 | Parent generation | `-GenesisParentGeneration` | `2048` for the cycle-3 lineage tip. The wrapper hashes `update-<gen>.{checkpoint.json,sidecar.json,state.f32le}` and `run.json` under it into the genesis authority record. |
-| Eight slot store roots | `-SlotStoreRoots` | Absolute, in slot order 0..7 (`anchor-0`, `anchor-1`, `historical-0`, `historical-1`, `current-0`, `current-1`, `exploiter-0`, `exploiter-1`). No two slots may name the same root. |
+| Eight slot store roots | `-SlotStoreRoots` | Absolute, in slot order 0..7 (`anchor-0`, `anchor-1`, `historical-0`, `historical-1`, `current-0`, `current-1`, `exploiter-0`, `exploiter-1`). No two may name the same root. Whichever slots the manifest binds to the arm's own run (`current-1` always, `historical-0` from refresh 4) are overridden with `-StoreRoot`, so their table entries are placeholders. |
 | The arm's `run.json` | `-RunRecord` | Must declare `population_program_v2_cycle4`, and `trainer_v4_candidate` for the two rb arms. |
 | The arm's Store root | `-StoreRoot` | Formal mode only. Its PARENT directory is the Store prefix the mode marker claims. |
 | The arm's baseline chain directory | `-ChainDir` | Formal mode only. Per-update sidecars, boundary records, and `arm-origin.record.json` land here. |
-| The refresh chain directory | `-RefreshChainDir` | Holds `refresh-NN.manifest.json` and `refresh-NN.panel.json`. One per arm. |
-| The slot-identities roster directory | `-SlotIdentitiesRosterDir` | `refresh-NN.slot-identities.json` for NN = 1..16, schema `mtg-kernel-cycle4-slot-identities/v1`. See below. |
+| The refresh chain directory | `-RefreshChainDir` | Holds `refresh-NN.manifest.json` and `refresh-NN.panel.json`. One per arm. The wrapper builds every manifest in it, genesis included. |
+| The slot-identities roster directory | `-SlotIdentitiesRosterDir` | `refresh-NN.slot-identities.json` for NN = 0..16, schema `mtg-kernel-cycle4-slot-identities/v1`. See below. |
 | `cycle4_arm_v1.exe` | `-ArmExecutable` | |
 | `cycle4_refresh_build_v1.exe` | `-RefreshBuilderExecutable` | |
 | The `mtg_kernel` release test executable | `-PanelExecutable` | The panel runner drives its ignored `ladder_head_to_head_eval_v1` test. |
@@ -48,20 +48,42 @@ The panel executable is the `executable` field of the last
 `compiler-artifact` line whose `target.name` is `mtg_kernel` and whose
 `target.kind` contains `lib`.
 
-### Two inputs the wrapper cannot produce
+### The one input the wrapper cannot produce
 
-1. **`refresh-00.manifest.json` (the genesis manifest).** Its `current-1` slot
-   binds the arm's own Store at trainee-local 896, but the arm bin will not
-   author that Store without a manifest to run against. The genesis manifest
-   is therefore built out of band, once per arm, and placed in
-   `-RefreshChainDir` before the first launch. The wrapper refuses to start
-   without it.
-2. **The frozen half of each `refresh-NN.slot-identities.json`.** Six slots
-   (both anchors, `historical-1`, `current-0`, both exploiters) and, before
-   refresh 4, `historical-0` are compiled Rust constants that the manifest
-   validator matches exactly. The wrapper stages the operator's roster and
-   overwrites only the slots the ARM itself occupies (`current-1` from refresh
-   1, `historical-0` from refresh 4), read from the arm's own Store head.
+**The frozen half of each `refresh-NN.slot-identities.json`, for NN = 0..16.**
+Six slots (both anchors, `historical-1`, `current-0`, both exploiters) and,
+before refresh 4, `historical-0` are compiled Rust constants that the manifest
+validator matches exactly. The wrapper stages the operator's roster and
+overwrites only the slots the ARM itself occupies (`current-1` at every
+refresh including genesis, `historical-0` from refresh 4), read from the arm's
+own Store head.
+
+Nothing else is an operator input. In particular `refresh-00.manifest.json` is
+NOT: see the genesis sequence below.
+
+### The genesis sequence
+
+The genesis manifest's `current-1` slot binds the arm's own Store at
+trainee-local 896 (store generation 0), which does not exist until the Store
+does, and an interval invocation cannot open a Store without a manifest. The
+wrapper breaks that circularity in two steps, both automatic:
+
+1. `cycle4_arm_v1 --bootstrap-genesis` seeds the Store from the pinned parent
+   and exits without training. It validates the run and device contracts
+   exactly as an interval would, claims the Store prefix, runs the final-store
+   validation, and publishes `arm-origin.record.json` carrying the four hashes
+   of the genesis checkpoint it just wrote. On a Store that already holds a
+   genesis it is exit 3, so the wrapper only calls it when `latest.json` is
+   absent.
+2. `cycle4_refresh_build_v1 --genesis` authors `refresh-00.manifest.json` from
+   the operator's pinned roster with the own-run slot filled from that Store.
+
+The wrapper then asserts the built manifest's own-run slot against the same
+four hashes read three independent ways: from the manifest, from the origin
+record, and from its own read of `checkpoints/update-00000000.checkpoint.json`.
+That agreement is written to `genesis-binding.json` in the attempt root. Both
+steps are skipped when the Store and the manifest already exist, so a
+restarted campaign runs neither.
 
 ## Invocations
 
@@ -86,11 +108,14 @@ powershell -NoProfile -File scripts\experiments\population_v2_cycle4_v1\run-cycl
 ```
 
 Two throwaway Store prefixes are created under the attempt root
-(`ladder\a\store`, `ladder\b\store`), seeded identically from the same parent
-and run record, each advanced by the same short window, then compared: every
-relative file's size and SHA-256, the whole store tree hash, and the
-endpoint's four identity fields. On pass the attempt root gets an empty
-`PREFLIGHT_COMPLETE`.
+(`ladder\a\store`, `ladder\b\store`). Each is bootstrapped from the same
+parent and run record and gets its OWN genesis manifest built from its own
+Store, so neither rung can read the other's artifacts as an opponent. Each is
+then advanced by the same short window and the two are compared: every
+relative file's size and SHA-256, the whole store tree hash, the endpoint's
+four identity fields, and the two genesis manifests, which must be
+byte-identical because the two genesis checkpoints must be. On pass the
+attempt root gets an empty `PREFLIGHT_COMPLETE`.
 
 `-PreflightUpdates` defaults to the smallest window that is at least two
 updates and a whole number of checkpoint segments (4, for the pre-registered
@@ -112,10 +137,11 @@ Substitute `-Arm control-r` or `-Arm static-rb` (with each arm's own store,
 chain, refresh chain, roster, run record, and panel base seed) for the other
 two.
 
-Per interval the wrapper asserts the Store's resume position, runs the arm bin
-at `position + 128`, asserts the Store advanced exactly one interval, runs the
-panel over that interval's manifest roster, publishes the panel into the
-refresh chain, and builds the next manifest. `static-rb` runs the panel but
+The wrapper bootstraps and builds the genesis manifest first if either is
+missing (see above). Then, per interval, it asserts the Store's resume
+position, runs the arm bin at `position + 128`, asserts the Store advanced
+exactly one interval, runs the panel over that interval's manifest roster,
+publishes the panel into the refresh chain, and builds the next manifest. `static-rb` runs the panel but
 never builds: the wrapper asserts before and after every interval that no
 manifest past `refresh-00` exists. On completion the attempt root gets an
 empty `TRAINING_COMPLETE`; any failure writes a plain-text `RUN_FAILED` naming
@@ -131,6 +157,13 @@ Add `-DryRun` to validate every input, write the provenance records and both
 locator files, and print the exact command line of every child without
 launching one. `-SkipHostAssertions` additionally skips the git, toolchain,
 and GPU assertions and is accepted ONLY with `-DryRun`.
+
+On a campaign that has not been bootstrapped yet, a dry run prints the two
+genesis commands and stops there (`dry_run_stopped_after: "genesis-manifest"`
+in `result.json`): every interval's roster, locators and stop generation are
+read from manifests those commands would have produced. The printed
+`--trainee-run-sha256` is the literal
+`<from-arm-origin.record.json-after-bootstrap>` for the same reason.
 
 ```
 powershell -NoProfile -File scripts\experiments\population_v2_cycle4_v1\run-cycle4-arm-tests.ps1
@@ -148,5 +181,5 @@ STORE generation, and the arm's Store numbers its own generations 0..2048.
 For the arm-owned slots the two readings differ by 896. The wrapper writes the
 value the manifest validator requires (trainee-local), because no other value
 is admissible into a manifest, and reads the hashes at the corresponding store
-generation. Resolving the disagreement is a round A/B/C change, not a wrapper
-change.
+generation. The 896-offset translation on the reading side is being added
+separately in `resolve_population_opponent_cycle4_v1` and the panel runner.
