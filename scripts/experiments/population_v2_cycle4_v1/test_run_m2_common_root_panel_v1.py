@@ -27,6 +27,7 @@ import json
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from run_m2_common_root_panel_v1 import (
@@ -687,6 +688,73 @@ class CommitSemanticsTests(unittest.TestCase):
             self.assertEqual(
                 final.read_bytes(), original, "the published panel must be untouched"
             )
+
+
+class CommitRaceTests(unittest.TestCase):
+    """The existence check inside `commit_staged_file` is a courtesy; what
+    makes the commit safe is that every primitive it uses FAILS when the
+    destination exists. These tests defeat the check (by patching
+    `Path.exists` to False while the final path is really there) and assert
+    the commit still refuses, on both the hard-link path and the exclusive-
+    create fallback. An `os.rename` fallback would silently pass both."""
+
+    def _commit_with_a_racing_panel(self) -> tuple[bytes, Exception]:
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "m2-common-root-panel.json"
+            temp = staged_temp_path(final)
+            write_new_json(temp, {"schema": PANEL_SCHEMA, "root_count": 16})
+            racer = canonical_bytes({"schema": PANEL_SCHEMA, "root_count": 1024})
+            final.write_bytes(racer)
+            # The panel appeared AFTER the check would have run.
+            with unittest.mock.patch.object(Path, "exists", return_value=False):
+                with self.assertRaises(M2PanelError) as context:
+                    commit_staged_file(temp, final)
+            return final.read_bytes(), context.exception
+
+    def test_a_panel_appearing_after_the_check_is_refused(self):
+        surviving, error = self._commit_with_a_racing_panel()
+        self.assertIn("another writer", str(error))
+        self.assertEqual(
+            surviving,
+            canonical_bytes({"schema": PANEL_SCHEMA, "root_count": 1024}),
+            "the racing panel must survive untouched",
+        )
+
+    def test_the_no_hard_link_fallback_also_refuses_a_racing_panel(self):
+        with unittest.mock.patch("run_m2_common_root_panel_v1.os.link") as link:
+            link.side_effect = OSError("hard links unsupported")
+            surviving, error = self._commit_with_a_racing_panel()
+        self.assertIn("another writer", str(error))
+        self.assertEqual(
+            surviving,
+            canonical_bytes({"schema": PANEL_SCHEMA, "root_count": 1024}),
+            "the racing panel must survive untouched",
+        )
+
+    def test_the_no_hard_link_fallback_still_publishes_a_fresh_panel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "m2-common-root-panel.json"
+            temp = staged_temp_path(final)
+            payload = write_new_json(temp, {"schema": PANEL_SCHEMA})
+            with unittest.mock.patch("run_m2_common_root_panel_v1.os.link") as link:
+                link.side_effect = OSError("hard links unsupported")
+                commit_staged_file(temp, final)
+            self.assertEqual(final.read_bytes(), payload)
+            self.assertFalse(temp.exists())
+
+    def test_a_filesystem_with_neither_primitive_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "m2-common-root-panel.json"
+            temp = staged_temp_path(final)
+            write_new_json(temp, {"schema": PANEL_SCHEMA})
+            with unittest.mock.patch("run_m2_common_root_panel_v1.os.link") as link:
+                link.side_effect = OSError("hard links unsupported")
+                with unittest.mock.patch("run_m2_common_root_panel_v1.os.open") as opener:
+                    opener.side_effect = OSError("no exclusive create either")
+                    with self.assertRaises(M2PanelError) as context:
+                        commit_staged_file(temp, final)
+            self.assertIn("create-new", str(context.exception))
+            self.assertFalse(final.exists(), "nothing may be published")
 
 
 class WireShapeTests(unittest.TestCase):

@@ -640,6 +640,8 @@ pub struct Cycle4RoutingInputsWireV1 {
     pub m3_treatment_rb_report_sha256: String,
     pub m3_reference_document_sha256: String,
     pub m3_reference_run_sha256: String,
+    pub m3_reference_tip_checkpoint_manifest_sha256: String,
+    pub m3_reference_window_last_update_index: u64,
     pub m3_reference_audit_note_sha256: String,
     pub cp7_evidence_root_checked: bool,
     pub endpoints: Vec<Cycle4M2EndpointV1>,
@@ -836,6 +838,13 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
     if static_report.inputs.reference_document_sha256
         != treatment_report.inputs.reference_document_sha256
         || static_report.inputs.reference_run_sha256 != treatment_report.inputs.reference_run_sha256
+        || static_report
+            .inputs
+            .reference_tip_checkpoint_manifest_sha256
+            != treatment_report
+                .inputs
+                .reference_tip_checkpoint_manifest_sha256
+        || static_report.inputs.reference_window != treatment_report.inputs.reference_window
         || static_report.inputs.reference_audit_note_sha256
             != treatment_report.inputs.reference_audit_note_sha256
     {
@@ -853,6 +862,41 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
             format!(
                 "the M3 reference was computed from run {} but --cycle3-g2048-run-sha256 names {}",
                 static_report.inputs.reference_run_sha256, inputs.cycle3_g2048_run_sha256
+            ),
+        ));
+    }
+    // Run identity alone does not pin WHICH snapshot of that run was
+    // measured. An older store of the same run, ending at update 1536, shares
+    // the run identity and would supply a reference over a different final
+    // 512 updates, quietly moving the dispersion allowance. So the reference
+    // must have been computed from the cycle-3 checkpoint this invocation
+    // names, and over a window ending at the same pinned endpoint.
+    if static_report
+        .inputs
+        .reference_tip_checkpoint_manifest_sha256
+        != inputs.cycle3_g2048_checkpoint_manifest_sha256
+    {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_reference_tip",
+            format!(
+                "the M3 reference was computed from checkpoint {} but \
+                 --cycle3-g2048-checkpoint-manifest-sha256 names {}",
+                static_report
+                    .inputs
+                    .reference_tip_checkpoint_manifest_sha256,
+                inputs.cycle3_g2048_checkpoint_manifest_sha256
+            ),
+        ));
+    }
+    if static_report.inputs.reference_window.last_update_index
+        != CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1
+    {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_reference_window",
+            format!(
+                "the M3 reference window ends at update {}, not the pinned {}",
+                static_report.inputs.reference_window.last_update_index,
+                CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1
             ),
         ));
     }
@@ -1105,6 +1149,14 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
             m3_treatment_rb_report_sha256: treatment_sha256,
             m3_reference_document_sha256: static_report.inputs.reference_document_sha256.clone(),
             m3_reference_run_sha256: static_report.inputs.reference_run_sha256.clone(),
+            m3_reference_tip_checkpoint_manifest_sha256: static_report
+                .inputs
+                .reference_tip_checkpoint_manifest_sha256
+                .clone(),
+            m3_reference_window_last_update_index: static_report
+                .inputs
+                .reference_window
+                .last_update_index,
             m3_reference_audit_note_sha256: static_report
                 .inputs
                 .reference_audit_note_sha256
@@ -1343,17 +1395,29 @@ mod tests {
     }
 
     fn reference_bytes_for_run_v1(run_sha256: String) -> Vec<u8> {
-        build_cycle4_m3_reference_document_v1(
-            &crate::native_cycle4_m3_audit_v1::test_support_window_v1(
-                crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Raw,
-                vec![test_cell_v1(1, "p0", 10_000, -0.008, 1.0)],
-                10_000,
-                run_sha256,
-                hex_v1(0xc2),
-            ),
-            hex_v1(0x0a),
-        )
-        .expect("reference")
+        reference_bytes_for_snapshot_v1(run_sha256, hex_v1(0xc2), 2_048)
+    }
+
+    /// One reference document over a named cycle-3 SNAPSHOT: its run, its tip
+    /// checkpoint, and the update its 512-update window ends at. Run identity
+    /// alone does not pin the snapshot, which is what the selector checks.
+    fn reference_bytes_for_snapshot_v1(
+        run_sha256: String,
+        tip_checkpoint_manifest_sha256: String,
+        last_update_index: u64,
+    ) -> Vec<u8> {
+        let mut window = crate::native_cycle4_m3_audit_v1::test_support_window_v1(
+            crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Raw,
+            vec![test_cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+            10_000,
+            run_sha256,
+            tip_checkpoint_manifest_sha256,
+        );
+        window.set_window_bounds_for_test_v1(
+            last_update_index + 1 - crate::native_cycle4_m3_audit_v1::CYCLE4_M3_WINDOW_UPDATES_V1,
+            last_update_index,
+        );
+        build_cycle4_m3_reference_document_v1(&window, hex_v1(0x0a)).expect("reference")
     }
 
     fn reference_bytes_v1() -> Vec<u8> {
@@ -1843,6 +1907,62 @@ mod tests {
                 .expect_err("a foreign reference run must be refused")
                 .code(),
             "cycle4_routing_v1_m3_reference_run"
+        );
+    }
+
+    /// An EARLIER SNAPSHOT of the right cycle-3 run is refused. It shares the
+    /// run identity, so the run check alone let it through, and it supplies a
+    /// reference over a different final 512 updates: a wrong dispersion
+    /// allowance for the whole gate.
+    #[test]
+    fn an_m3_reference_from_an_earlier_snapshot_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let bind = |reference: Vec<u8>| {
+            let (static_run, static_checkpoint) = endpoint_identity_v1("static-rb");
+            let (treatment_run, treatment_checkpoint) = endpoint_identity_v1("treatment-rb");
+            Cycle4RoutingInputsV1 {
+                m3_static_rb_bytes: m3_report_bytes_bound_v1(
+                    "static-rb",
+                    true,
+                    static_run,
+                    static_checkpoint,
+                    reference.clone(),
+                ),
+                m3_treatment_rb_bytes: m3_report_bytes_bound_v1(
+                    "treatment-rb",
+                    true,
+                    treatment_run,
+                    treatment_checkpoint,
+                    reference,
+                ),
+                ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
+            }
+        };
+
+        // Same run, same window END, but a different tip checkpoint: not the
+        // snapshot this invocation names.
+        assert_eq!(
+            decide_cycle4_routing_v1(&bind(reference_bytes_for_snapshot_v1(
+                cycle3_run_v1(),
+                hex_v1(0xcd),
+                2_048,
+            )))
+            .expect_err("a different cycle-3 snapshot must be refused")
+            .code(),
+            "cycle4_routing_v1_m3_reference_tip"
+        );
+
+        // Same run, same declared tip, but a window ending at 1536: the final
+        // 512 updates of a shorter store are not the final 512 of this one.
+        assert_eq!(
+            decide_cycle4_routing_v1(&bind(reference_bytes_for_snapshot_v1(
+                cycle3_run_v1(),
+                hex_v1(0xc2),
+                1_536,
+            )))
+            .expect_err("a reference over the wrong window must be refused")
+            .code(),
+            "cycle4_routing_v1_m3_reference_window"
         );
     }
 

@@ -683,6 +683,15 @@ impl Cycle4M3WindowV1 {
     pub fn cells(&self) -> &[Cycle4M3CellV1] {
         &self.cells
     }
+
+    /// Repoints a test fixture's window at a different span, so a test can
+    /// build a reference over an EARLIER snapshot of the same run without a
+    /// second Store on disk.
+    #[cfg(test)]
+    pub(crate) fn set_window_bounds_for_test_v1(&mut self, first: u64, last: u64) {
+        self.first_update_index = first;
+        self.last_update_index = last;
+    }
 }
 
 /// What to audit.
@@ -893,6 +902,50 @@ fn tip_checkpoint_manifest_sha256_v1(store_root: &Path, generation_index: u64) -
     Ok(lower_hex_raw32_v1(sha256_v1(&bytes)))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only fault injected between the audit's two filesystem passes.
+    /// Thread-local, so tests running in parallel cannot see each other's.
+    static BETWEEN_PASSES_FAULT_V1: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn run_between_passes_fault_v1() {
+    BETWEEN_PASSES_FAULT_V1.with(|fault| {
+        let fault = fault.borrow();
+        if let Some(fault) = fault.as_ref() {
+            fault();
+        }
+    });
+}
+
+#[cfg(not(test))]
+const fn run_between_passes_fault_v1() {}
+
+/// Installs a between-pass fault for the duration of the guard's lifetime.
+#[cfg(test)]
+struct BetweenPassesFaultGuardV1;
+
+#[cfg(test)]
+impl BetweenPassesFaultGuardV1 {
+    fn install_v1(fault: impl Fn() + 'static) -> Self {
+        BETWEEN_PASSES_FAULT_V1.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(fault));
+        });
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for BetweenPassesFaultGuardV1 {
+    fn drop(&mut self) {
+        BETWEEN_PASSES_FAULT_V1.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+    }
+}
+
 fn sidecar_bytes_v1(chain_dir: &Path, update_index: u64) -> Result<Vec<u8>> {
     let name = format!("baseline-update-{update_index:08}.record.json");
     let path = chain_dir.join(&name);
@@ -1076,6 +1129,13 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
     }
     let window_first = tip_update - request.window_updates + 1;
 
+    // Injected fault point, `cfg(test)` only and a no-op otherwise: the
+    // between-pass guard above can only be exercised by a Store that really
+    // does change between the two reads, and nothing else in this module can
+    // arrange that. Mirrors the established
+    // `DurablePublicationErrorKindV1::InjectedFault` precedent.
+    run_between_passes_fault_v1();
+
     // Pre-window replay: sidecar-only, from the chain's empty genesis state.
     let mut prior = NativeBaselineStateV4::empty_v4();
     let mut prewindow_rows: Vec<(u64, [u8; 32])> = Vec::new();
@@ -1165,6 +1225,40 @@ pub fn compute_cycle4_m3_window_v1(request: &Cycle4M3WindowRequestV1) -> Result<
                         ),
                     )
                 })?;
+            // The two filesystem passes must have read the SAME Store. Pass
+            // one walked the declared digest chain from the genesis anchor;
+            // pass two re-reads the files, so a leaf replaced in between with
+            // altered evidence and a freshly recomputed, internally
+            // consistent digest would otherwise be accepted -- and the TIP
+            // update is entirely free that way, since no later record links
+            // to it. Every second-pass digest is therefore compared against
+            // the value the chain walk fixed.
+            let walked_digest = declared_digests
+                .get(&group.update_index)
+                .copied()
+                .ok_or_else(|| {
+                    Cycle4M3AuditErrorV1::new(
+                        "cycle4_m3_audit_v1_evidence_replaced_between_passes",
+                        format!(
+                            "{}: update {} was not present when the chain was walked",
+                            path.display(),
+                            group.update_index
+                        ),
+                    )
+                })?;
+            if walked_digest != evidence_digest {
+                return Err(Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_evidence_replaced_between_passes",
+                    format!(
+                        "{}: update {} declared {} when the chain was walked and {} when its \
+                         evidence was read",
+                        path.display(),
+                        group.update_index,
+                        lower_hex_raw32_v1(walked_digest),
+                        group.update_evidence_sha256
+                    ),
+                ));
+            }
             evidence_rows.push((group.update_index, evidence_digest));
             tip_evidence_sha256 = Some(group.update_evidence_sha256.clone());
 
@@ -1618,6 +1712,39 @@ pub fn build_cycle4_m3_reference_document_v1(
     })
 }
 
+/// Every total, derived from the cell table and nothing else.
+///
+/// `window_decision_count` is the CHECKED sum of every cell's decision count,
+/// never the declared value: every learner physical term belongs to exactly
+/// one cell, so the sum is the window's decision count by construction, and
+/// copying the declaration would have let an edited denominator move the
+/// coverage floor.
+fn recompute_totals_v1(
+    cells: &[Cycle4M3CellV1],
+    qualifying: &[&Cycle4M3CellV1],
+) -> Result<Cycle4M3TotalsWireV1> {
+    fn checked_sum_v1(rows: impl Iterator<Item = u64>) -> Result<u64> {
+        let mut total = 0_u64;
+        for count in rows {
+            total = total.checked_add(count).ok_or_else(|| {
+                Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_totals_overflow",
+                    "a decision count sum overflowed u64",
+                )
+            })?;
+        }
+        Ok(total)
+    }
+    Ok(Cycle4M3TotalsWireV1 {
+        window_decision_count: checked_sum_v1(cells.iter().map(|cell| cell.decision_count))?,
+        qualifying_cell_count: qualifying.len() as u64,
+        qualifying_decision_count: checked_sum_v1(
+            qualifying.iter().map(|cell| cell.decision_count),
+        )?,
+        cell_count: cells.len() as u64,
+    })
+}
+
 /// Decodes and structurally validates a reference document.
 pub fn decode_cycle4_m3_reference_document_v1(bytes: &[u8]) -> Result<Cycle4M3ReferenceDocumentV1> {
     let document: Cycle4M3ReferenceDocumentV1 =
@@ -1670,12 +1797,7 @@ pub fn decode_cycle4_m3_reference_document_v1(bytes: &[u8]) -> Result<Cycle4M3Re
             "no reference cell qualifies, so the reference statistic has no population",
         ));
     }
-    let recomputed_totals = Cycle4M3TotalsWireV1 {
-        window_decision_count: document.totals.window_decision_count,
-        qualifying_cell_count: qualifying.len() as u64,
-        qualifying_decision_count: qualifying.iter().map(|cell| cell.decision_count).sum(),
-        cell_count: document.cells.len() as u64,
-    };
+    let recomputed_totals = recompute_totals_v1(&document.cells, &qualifying)?;
     if recomputed_totals != document.totals {
         return Err(Cycle4M3AuditErrorV1::new(
             "cycle4_m3_audit_v1_reference_totals_mismatch",
@@ -1719,6 +1841,12 @@ pub struct Cycle4M3InputsWireV1 {
     pub window_sidecars: Vec<Cycle4M3SidecarDigestV1>,
     pub reference_document_sha256: String,
     pub reference_run_sha256: String,
+    /// The reference Store's own tip checkpoint identity. Run identity alone
+    /// does not pin WHICH snapshot of that run was measured: an older store
+    /// ending at update 1536 shares the run and would supply a different
+    /// 512-update reference, so the selector requires this to equal
+    /// `--cycle3-g2048-checkpoint-manifest-sha256`.
+    pub reference_tip_checkpoint_manifest_sha256: String,
     pub reference_window: Cycle4M3WindowWireV1,
     pub reference_audit_note_sha256: String,
 }
@@ -1819,6 +1947,9 @@ pub fn build_cycle4_m3_audit_report_v1(
             window_sidecars: window.window_sidecars.clone(),
             reference_document_sha256: reference_document_sha256.to_owned(),
             reference_run_sha256: reference.run_sha256.clone(),
+            reference_tip_checkpoint_manifest_sha256: reference
+                .tip_checkpoint_manifest_sha256
+                .clone(),
             reference_window: reference.window.clone(),
             reference_audit_note_sha256: reference.audit_note_sha256.clone(),
         },
@@ -1931,9 +2062,21 @@ pub fn decode_cycle4_m3_audit_report_v1(bytes: &[u8]) -> Result<Cycle4M3AuditRep
             .reference_decision_weighted_mean_standard_deviation
             .to_f64_v1()
     })?;
+    // The totals are derived, never read: `window_decision_count` is the
+    // coverage clause's DENOMINATOR, so an edited one would move the floor
+    // without touching a single cell.
+    let qualifying: Vec<&Cycle4M3CellV1> =
+        report.cells.iter().filter(|cell| cell.qualifies).collect();
+    let recomputed_totals = recompute_totals_v1(&report.cells, &qualifying)?;
+    if recomputed_totals != report.totals {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_report_totals_mismatch",
+            "the report totals do not follow from its own cell table",
+        ));
+    }
     let recomputed = evaluate_cycle4_m3_gate_v1(
         &report.cells,
-        report.totals.window_decision_count,
+        recomputed_totals.window_decision_count,
         reference_dispersion,
     );
     if recomputed.verdict_pass != pass {
@@ -2211,14 +2354,76 @@ mod tests {
 
         // So is an edited total, which would change which cells the
         // statistic is taken over.
-        document.totals.qualifying_decision_count += 1;
-        let encoded = to_canonical_json_bytes_v1(&document, CanonicalJsonNullPolicyV1::Forbid)
+        let mut edited = document.clone();
+        edited.totals.qualifying_decision_count += 1;
+        let encoded = to_canonical_json_bytes_v1(&edited, CanonicalJsonNullPolicyV1::Forbid)
             .expect("re-encode");
         assert_eq!(
             decode_cycle4_m3_reference_document_v1(&encoded)
                 .expect_err("edited totals must be refused")
                 .code(),
             "cycle4_m3_audit_v1_reference_totals_mismatch"
+        );
+
+        // And so is an edited WINDOW DECISION COUNT, which is the coverage
+        // clause's denominator: it is the checked sum of every cell's
+        // decision count, never the declared value.
+        document.totals.window_decision_count += 1_000;
+        let encoded = to_canonical_json_bytes_v1(&document, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("re-encode");
+        assert_eq!(
+            decode_cycle4_m3_reference_document_v1(&encoded)
+                .expect_err("an edited window decision count must be refused")
+                .code(),
+            "cycle4_m3_audit_v1_reference_totals_mismatch"
+        );
+    }
+
+    /// The same denominator guard on the audit report, where an inflated
+    /// `window_decision_count` would drop the coverage ratio below the floor
+    /// (or lift it above one) without touching a single cell.
+    #[test]
+    fn an_edited_report_window_decision_count_is_refused_v1() {
+        let reference_bytes = build_cycle4_m3_reference_document_v1(
+            &test_support_window_v1(
+                Cycle4M3ResidualModeV1::Raw,
+                vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+                10_000,
+                identity_v1(7),
+                identity_v1(8),
+            ),
+            identity_v1(0x0a),
+        )
+        .expect("reference");
+        let reference =
+            decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Centered,
+            vec![
+                cell_v1(1, "p0", 8_000, 0.001, 1.0),
+                cell_v1(2, "p1", 2_000, 0.001, 1.0),
+            ],
+            10_000,
+            identity_v1(3),
+            identity_v1(4),
+        );
+        let (bytes, pass) =
+            build_cycle4_m3_audit_report_v1("static-rb", &window, &reference, &identity_v1(0x0d))
+                .expect("report");
+        assert!(pass);
+
+        let mut report = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode");
+        // 10,000 of a declared 40,000 is 25% coverage: an unchecked
+        // denominator would flip this report to FAIL on numbers no cell
+        // supports. The decoder derives it instead.
+        report.totals.window_decision_count = 40_000;
+        let encoded = to_canonical_json_bytes_v1(&report, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("re-encode");
+        assert_eq!(
+            decode_cycle4_m3_audit_report_v1(&encoded)
+                .expect_err("an edited denominator must be refused")
+                .code(),
+            "cycle4_m3_audit_v1_report_totals_mismatch"
         );
     }
 
@@ -2795,6 +3000,53 @@ mod tests {
         assert!(
             (clean_sd - (0.03125_f64).sqrt()).abs() < 1e-12,
             "clean sd was {clean_sd}"
+        );
+    }
+
+    /// A Store replaced BETWEEN the two filesystem passes is refused, even
+    /// when the replacement is fully self-consistent: fresh evidence, a
+    /// freshly recomputed digest chain, and matching sidecars. Pass one fixed
+    /// the tip's digest; pass two must find the same one. Without the
+    /// comparison the tip update was entirely free, since no later record
+    /// links to it.
+    #[test]
+    fn evidence_replaced_between_passes_is_refused_v1() {
+        let store = TestStoreV1::new_v1("between-passes");
+        let run_sha256 = identity_v1(0x65);
+        write_synthetic_store_v1(
+            &store,
+            &run_sha256,
+            &[two_cell_update_v1(&[0.25, 0.5], &[0.125])],
+            true,
+        );
+
+        let replacement_root = store.root.clone();
+        let replacement_run = run_sha256.clone();
+        let _fault = BetweenPassesFaultGuardV1::install_v1(move || {
+            // A whole second Store, self-consistent end to end, written over
+            // the first between the chain walk and the evidence read.
+            let store = TestStoreV1 {
+                root: replacement_root.clone(),
+            };
+            write_synthetic_store_v1(
+                &store,
+                &replacement_run,
+                &[two_cell_update_v1(&[0.125, 0.625], &[0.125])],
+                true,
+            );
+            std::mem::forget(store);
+        });
+
+        let error = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: Some(store.chain_dir_v1()),
+            residual_mode: Cycle4M3ResidualModeV1::Centered,
+            window_updates: 1,
+        })
+        .expect_err("a between-pass replacement must fail closed");
+        assert_eq!(
+            error.code(),
+            "cycle4_m3_audit_v1_evidence_replaced_between_passes"
         );
     }
 

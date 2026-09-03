@@ -344,11 +344,21 @@ def commit_staged_file(temp_path: Path, final_path: Path) -> None:
     is an error. `os.replace` would have silently overwritten a published
     panel, re-keying a freeze under whoever already read it.
 
-    `os.link` plus `unlink` is the create-new commit: `link` fails with
-    FileExistsError rather than replacing, on both Windows and POSIX. Where
-    the filesystem refuses hard links the fallback re-checks existence and
-    then renames, which is create-new for every caller here (one process,
-    one output directory, one panel per run)."""
+    The existence check below is a courtesy that gives the replay case its
+    no-op and a differing panel a clear message; it is NOT what makes the
+    commit safe, because a panel can appear between the check and the commit.
+    Safety comes from using only primitives that fail when the destination
+    already exists:
+
+      * `os.link`, which raises FileExistsError rather than replacing, on both
+        Windows and POSIX; and
+      * where the filesystem refuses hard links, an exclusive create
+        (`O_CREAT | O_EXCL`) of the final name, written and fsynced in place.
+
+    `os.rename` is deliberately NOT used as a fallback: on POSIX it replaces
+    the destination silently, so a panel created after the check would be
+    overwritten and a freeze re-keyed under whoever had already read it. If
+    neither primitive is available the commit fails rather than guessing."""
     encoded = temp_path.read_bytes()
     if final_path.exists():
         if final_path.read_bytes() == encoded:
@@ -359,19 +369,32 @@ def commit_staged_file(temp_path: Path, final_path: Path) -> None:
             "because the routing record binds it by SHA-256, so publish to a fresh "
             "--output-dir rather than replacing one"
         )
+    raced = M2PanelError(
+        f"{final_path} was created by another writer during this run; the M2 panel is "
+        "immutable and is never replaced"
+    )
     try:
         os.link(temp_path, final_path)
-    except FileExistsError as error:
-        raise M2PanelError(
-            f"{final_path} was created by another writer during this run"
-        ) from error
+    except FileExistsError:
+        raise raced from None
     except OSError:
-        if final_path.exists():
+        # No hard-link support: create the final name exclusively instead.
+        try:
+            descriptor = os.open(
+                final_path,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0),
+            )
+        except FileExistsError:
+            raise raced from None
+        except OSError as error:
             raise M2PanelError(
-                f"{final_path} was created by another writer during this run"
-            ) from None
-        os.rename(temp_path, final_path)
-        return
+                f"{final_path} cannot be published create-new: neither os.link nor an "
+                f"exclusive create is available on this filesystem ({error})"
+            ) from error
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
     remove_stray(temp_path)
 
 
