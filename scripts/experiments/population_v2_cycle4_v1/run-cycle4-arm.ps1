@@ -994,6 +994,7 @@ try {
         # answer; for static-rb, whose panel deliberately never enters the
         # chain and which never builds, only the journal can.
         $plan = @()
+        $candidateStates = @()
         for ($candidate = [uint64]0; $candidate -lt $ThroughRefreshIndex; $candidate++) {
             $candidateStop = ($candidate + [uint64]1) * $script:Cycle4RefreshInterval
             $recorded = Get-Cycle4IntervalPhase -Journals $journals -IntervalIndex $candidate
@@ -1037,6 +1038,11 @@ try {
                 $panelDone = $false
                 $manifestDone = $false
             }
+            $candidateStates += [ordered]@{
+                interval = [uint64]$candidate
+                training_done = [bool]$trainingDone
+                work_needed = (-not ($trainingDone -and $panelDone -and $manifestDone))
+            }
             if ($trainingDone -and $panelDone -and $manifestDone) { continue }
             $plan += [ordered]@{
                 interval = [uint64]$candidate
@@ -1048,19 +1054,18 @@ try {
                 resumed_from_phase = $recorded
             }
         }
-        # A Store's generation is monotonic, so an interval that still needs
-        # training can only be followed by intervals that also need training:
-        # an untrained interval planned BEFORE an interval whose training is
-        # already done means the Store and the refresh chain disagree about
-        # which campaign this is. On a fresh campaign every remaining interval
-        # needs training, which is the ordinary case and must plan cleanly.
-        for ($index = 0; $index -lt $plan.Count; $index++) {
+        # Campaign work is chronological. Once an interval still needs any
+        # work, no later interval can already be trained: that would mean the
+        # Store advanced past a hole in the refresh chain. On a fresh campaign
+        # every interval needs work and none is trained, which must plan cleanly.
+        for ($index = 0; $index -lt $candidateStates.Count; $index++) {
+            if (-not $candidateStates[$index].work_needed) { continue }
             $laterTrained = $false
-            for ($later = $index + 1; $later -lt $plan.Count; $later++) {
-                if (-not $plan[$later].train) { $laterTrained = $true; break }
+            for ($later = $index + 1; $later -lt $candidateStates.Count; $later++) {
+                if ($candidateStates[$later].training_done) { $laterTrained = $true; break }
             }
-            if ($plan[$index].train -and $laterTrained) {
-                $detail = "interval $($plan[$index].interval) still needs training while later intervals are planned after it"
+            if ($laterTrained) {
+                $detail = "interval $($candidateStates[$index].interval) still needs training while later intervals are planned after it"
                 if (-not $DryRun) {
                     throw "$detail; the Store and $RefreshChainDir disagree"
                 }
@@ -1105,6 +1110,11 @@ try {
                 Write-Host "interval-$interval`: resuming an interrupted interval, last journalled phase '$($step.resumed_from_phase)'"
             }
             $manifestPath = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex $refreshIndex)
+            if ($DryRun -and -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                Write-Host "DRY-RUN interval-$interval`: the manifest a prior planned build would produce is not present yet; stopping detailed command expansion"
+                $dryRunStoppedAfter = "refresh-$refreshIndex-manifest"
+                break
+            }
             $manifest = Read-Cycle4Manifest -Path $manifestPath
             if ($manifest.refresh_index -ne $refreshIndex) {
                 throw "$manifestPath declares refresh index $($manifest.refresh_index), not $refreshIndex"

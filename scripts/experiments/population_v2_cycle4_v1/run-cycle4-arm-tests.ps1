@@ -588,6 +588,12 @@ Assert-That -Condition (@($freshRecords | Where-Object { $_.label -ceq 'bootstra
     -Message 'a fresh campaign plans exactly one bootstrap'
 $freshBuild = @($freshRecords | Where-Object { $_.label -ceq 'genesis-build' })
 Assert-That -Condition ($freshBuild.Count -eq 1) -Message 'a fresh campaign plans exactly one genesis manifest build'
+$freshChainFullPath = [System.IO.Path]::GetFullPath($freshChain)
+Assert-That -Condition (
+        $recordedCreatedDirectories -ccontains $freshChainFullPath -and
+        (Test-Path -LiteralPath $freshChain -PathType Container) -and
+        $freshBuild.Count -eq 1) `
+    -Message 'the formal pre-creation set includes the refresh chain before the genesis-build command is recorded'
 Assert-That -Condition ($freshBuild[0].command_line -like '*"--genesis"*') -Message 'the genesis manifest is built with the builder --genesis mode'
 Assert-That -Condition ($freshBuild[0].command_line -notlike '*--chain-dir*') -Message 'a genesis build passes no chain directory'
 Assert-That -Condition ($freshBuild[0].command_line -notlike '*--panel*') -Message 'a genesis build binds no panel'
@@ -938,7 +944,11 @@ function New-InterruptionCampaign {
         [Parameter(Mandatory = $true)][int]$ChainThroughPanel,
         [Parameter(Mandatory = $true)][uint64]$StoreGeneration,
         [Parameter(Mandatory = $true)][hashtable]$JournalPhases,
-        [switch]$JournalFromDryRunAttempt
+        [switch]$JournalFromDryRunAttempt,
+        [int[]]$MissingManifestIndices = @(),
+        [int[]]$MissingPanelIndices = @(),
+        [switch]$OmitRefreshChain,
+        [switch]$PlantStoreCheckpoint
     )
     $script:ResumeCase++
     $caseRoot = Join-Path $WorkRoot ("resume-{0:d2}-{1}" -f $script:ResumeCase, $Name)
@@ -946,18 +956,28 @@ function New-InterruptionCampaign {
     $store = Join-Path $caseRoot 'store'
     $evidence = Join-Path $caseRoot 'evidence'
 
-    foreach ($index in 0..$ChainThroughManifest) {
-        New-SyntheticManifest -Path (Join-Path $chain ('refresh-{0:d2}.manifest.json' -f $index)) -RefreshIndex ([uint64]$index)
-    }
-    if ($ChainThroughPanel -ge 1) {
-        foreach ($index in 1..$ChainThroughPanel) {
-            $panel = Join-Path $chain ('refresh-{0:d2}.panel.json' -f $index)
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $panel) | Out-Null
-            [System.IO.File]::WriteAllText($panel, "{}", [System.Text.UTF8Encoding]::new($false))
+    if (-not $OmitRefreshChain) {
+        if ($ChainThroughManifest -ge 0) {
+            foreach ($index in 0..$ChainThroughManifest) {
+                if ($MissingManifestIndices -notcontains $index) {
+                    New-SyntheticManifest -Path (Join-Path $chain ('refresh-{0:d2}.manifest.json' -f $index)) -RefreshIndex ([uint64]$index)
+                }
+            }
+        }
+        if ($ChainThroughPanel -ge 1) {
+            foreach ($index in 1..$ChainThroughPanel) {
+                if ($MissingPanelIndices -contains $index) { continue }
+                $panel = Join-Path $chain ('refresh-{0:d2}.panel.json' -f $index)
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $panel) | Out-Null
+                [System.IO.File]::WriteAllText($panel, "{}", [System.Text.UTF8Encoding]::new($false))
+            }
         }
     }
     New-Item -ItemType Directory -Force -Path $store | Out-Null
     Write-SyntheticJson -Value ([ordered]@{ generation_index = $StoreGeneration }) -Path (Join-Path $store 'latest.json')
+    if ($PlantStoreCheckpoint) {
+        New-SyntheticStoreCheckpoint -StoreRoot $store -Generation $StoreGeneration -Tag (0xb0 + $script:ResumeCase) | Out-Null
+    }
 
     # The journal a previous attempt would have left, written with the wrapper's
     # own writer so its hash chain is genuine rather than hand-rolled.
@@ -1144,6 +1164,72 @@ $pastEndArguments = $pastEnd.arguments
 Assert-Throws -Action { & $wrapper @pastEndArguments *>&1 | Out-Null } `
     -ExpectedSubstring 'past the refresh 4 end' `
     -Message 'a Store past the requested end is refused'
+
+# (ix) The exact fresh CONTROL-R state after formal attempt 3: the run record,
+# generation-0 Store checkpoint, and genesis manifest exist, but no interval
+# has trained and no later refresh artifact exists yet.
+$freshMulti = New-InterruptionCampaign -Name 'fresh-multi-interval' -ArmKind 'control-r' `
+    -ThroughRefreshIndex ([uint64]16) -ChainThroughManifest 0 -ChainThroughPanel 0 `
+    -StoreGeneration ([uint64]0) -JournalPhases @{} -PlantStoreCheckpoint
+$freshMultiChainFiles = @(Get-ChildItem -LiteralPath $freshMulti.chain -File)
+Assert-That -Condition ($freshMultiChainFiles.Count -eq 1 -and $freshMultiChainFiles[0].Name -ceq 'refresh-00.manifest.json') `
+    -Message 'the fresh multi-interval fixture starts with only refresh-00 in its chain'
+$freshMultiLatest = Get-Content -Raw -LiteralPath (Join-Path $freshMulti.store 'latest.json') | ConvertFrom-Json
+Assert-That -Condition (
+        [uint64]$freshMultiLatest.generation_index -eq [uint64]0 -and
+        (Test-Path -LiteralPath (Join-Path $freshMulti.store 'checkpoints\update-00000000.checkpoint.json') -PathType Leaf) -and
+        (Test-Path -LiteralPath $runRecord -PathType Leaf)) `
+    -Message 'the fresh multi-interval fixture has its run record, generation-0 latest record, and genesis checkpoint'
+$run = Invoke-ResumeCase -Case $freshMulti
+$freshPlan = @($run.result.intervals_planned)
+Assert-That -Condition ([string]$run.result.status -ceq 'DRY_RUN_PLANNED') `
+    -Message 'a fresh multi-interval campaign reaches a dry-run plan without rejection'
+Assert-That -Condition ($freshPlan.Count -eq 16) `
+    -Message "the fresh campaign plan holds all 16 intervals (saw $($freshPlan.Count))"
+Assert-That -Condition (@($freshPlan | Where-Object { $_.train -ne $true }).Count -eq 0) `
+    -Message 'all 16 fresh campaign intervals need training'
+Assert-That -Condition ([uint64]$freshPlan[0].interval -eq [uint64]0) `
+    -Message 'the fresh campaign plan starts with interval 0'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $run.attempt 'RUN_FAILED'))) `
+    -Message 'the fresh contiguous training suffix publishes no rejection marker'
+
+# (x) A hole before a later completed interval is the integrity failure the
+# fresh suffix rule must retain. The Store trained through interval 1, but
+# refresh 1 is absent while refresh 2 is complete.
+$chainHole = New-InterruptionCampaign -Name 'chain-hole-before-trained' -ArmKind 'control-r' `
+    -ThroughRefreshIndex ([uint64]2) -ChainThroughManifest 2 -ChainThroughPanel 2 `
+    -StoreGeneration ([uint64]256) -JournalPhases @{} `
+    -MissingManifestIndices @(1) -MissingPanelIndices @(1) -PlantStoreCheckpoint
+$refreshOneMissing = (
+    -not (Test-Path -LiteralPath (Join-Path $chainHole.chain 'refresh-01.manifest.json')) -and
+    -not (Test-Path -LiteralPath (Join-Path $chainHole.chain 'refresh-01.panel.json')))
+$refreshTwoComplete = (
+    (Test-Path -LiteralPath (Join-Path $chainHole.chain 'refresh-02.manifest.json') -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $chainHole.chain 'refresh-02.panel.json') -PathType Leaf))
+$chainHoleLatest = Get-Content -Raw -LiteralPath (Join-Path $chainHole.store 'latest.json') | ConvertFrom-Json
+Assert-That -Condition ([uint64]$chainHoleLatest.generation_index -eq [uint64]256 -and $refreshOneMissing -and $refreshTwoComplete) `
+    -Message 'the generation-256 resume fixture has a refresh-1 hole before complete refresh 2'
+$chainHoleArguments = $chainHole.arguments
+$chainHoleOutput = @(& $wrapper @chainHoleArguments *>&1 | ForEach-Object { [string]$_ })
+Assert-That -Condition (($chainHoleOutput -join "`n") -like '*interval 0 still needs training while later intervals are planned after it*') `
+    -Message 'an unfinished interval before a trained interval reports the named integrity rejection'
+
+# (xi) An advanced Store cannot cause the wrapper to create a missing refresh
+# chain or any other formal output directory before it refuses the state.
+$advancedNoChain = New-InterruptionCampaign -Name 'advanced-no-chain' -ArmKind 'control-r' `
+    -ThroughRefreshIndex ([uint64]2) -ChainThroughManifest -1 -ChainThroughPanel 0 `
+    -StoreGeneration ([uint64]128) -JournalPhases @{} -OmitRefreshChain -PlantStoreCheckpoint
+$advancedNoChainArguments = $advancedNoChain.arguments
+$advancedLatest = Get-Content -Raw -LiteralPath (Join-Path $advancedNoChain.store 'latest.json') | ConvertFrom-Json
+Assert-That -Condition ([uint64]$advancedLatest.generation_index -eq [uint64]128 -and -not (Test-Path -LiteralPath $advancedNoChain.chain)) `
+    -Message 'the advanced fixture starts at generation 128 with no refresh-chain directory'
+Assert-Throws -Action { & $wrapper @advancedNoChainArguments *>&1 | Out-Null } `
+    -ExpectedSubstring 'refusing to create an empty chain for an advanced Store' `
+    -Message 'an advanced Store with no refresh chain is refused by name'
+Assert-That -Condition (-not (Test-Path -LiteralPath $advancedNoChain.chain)) `
+    -Message 'the advanced Store refusal does not create the missing refresh chain'
+Assert-That -Condition (-not (Test-Path -LiteralPath ([string]$advancedNoChainArguments['ChainDir']))) `
+    -Message 'the advanced Store refusal runs before formal output directory creation'
 
 # ---------------------------------------------------------------------------
 # 6. The genesis binding assertion itself
