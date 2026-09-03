@@ -89,18 +89,18 @@ just as well by eight processes run one after another, so the run has to
 prove the contention it claims. Each shard announces itself READY once its
 checkpoint is loaded and before it waits; a barrier-publisher process (the
 replay bin's --publish-start-barrier mode) waits for every announcement on a
-bounded deadline and only then stamps the tier's one start token, and a shard
+bounded deadline and only then writes the tier's one canonical start token,
+including each observed announcement's shard index, pid and bytes digest. A shard
 that never announces fails the tier closed after every started child has been
-reaped. The token is stamped by that process and not by this launcher on
-purpose: its instant is compared, exactly and with no tolerance, against
-instants the shards recorded through the crate's own clock, and this
-runtime's clock advances on a coarser cadence, so a second clock in that
-comparison could invert it. Each shard then records the wall-clock window
-of every decision on a shared time base, and the merge censuses how many
+reaped. Each shard reports the canonical token's digest and records at its
+first search that token observation already occurred. The merge uses those
+causal facts, never cross-process timestamp comparisons. Each shard records
+every decision window from direct OS-clock reads, and the merge censuses how many
 shards were mid-work when each decision began. Formal standing needs the
 count, the host, the handshake and at least 950 permille of decisions
 searched with every other shard mid-work; the merged report publishes all of
-it, and this launcher reads the report rather than its own flags.
+it, including a diagnostic count of non-monotone windows caused by a clock
+step, and this launcher reads the report rather than its own flags.
 
 Terminal state: an empty TTS_S1_COMPLETE marker in the attempt root on a
 successful FORMAL run, and a plain-text RUN_FAILED naming the failing step
@@ -819,15 +819,10 @@ foreach ($plan in $tierPlans) {
             # raises here, every started child is reaped, and the tier catch
             # writes RUN_FAILED naming both the silent shards and what it
             # killed.
-            # THE TOKEN IS NOT STAMPED HERE, and that is the point. Its
-            # instant is compared, exactly and with no tolerance, against
-            # instants the SHARDS recorded through the crate's own clock; a
-            # token stamped from THIS runtime would be a second clock in the
-            # comparison, and this runtime's DateTimeOffset::UtcNow can
-            # advance on a coarser cadence than the Windows clock behind
-            # Rust's SystemTime::now(). So the replay bin's publish mode
-            # does both halves: it waits for every announcement and stamps
-            # the token from the same function a shard announces with.
+            # THE TOKEN IS NOT WRITTEN HERE. The replay bin's publish mode
+            # reads and hashes every exact announcement, then commits that
+            # observed set into one canonical token. Cross-process instants
+            # remain diagnostics and never gate formality.
             #
             # It is a nested single-child fan-out, which is safe here: the
             # outer fan-out reset the reaped-children channel when it
@@ -843,7 +838,8 @@ foreach ($plan in $tierPlans) {
             # Read back what the publisher stamped, so the launcher records
             # the token it actually released rather than a number of its
             # own.
-            $script:TtsS1BarrierReleasedMicros = [long](([System.IO.File]::ReadAllText($plan.barrier_path)).Trim())
+            $barrierTokenDocument = [System.IO.File]::ReadAllText($plan.barrier_path) | ConvertFrom-Json
+            $script:TtsS1BarrierReleasedMicros = [long]$barrierTokenDocument.released_unix_micros
             $script:TtsS1LastShardReadiness = @(@(Get-Content -LiteralPath $plan.publish_stdout_path) |
                 Where-Object { $_ -like 'TTS_S1_SHARD_READY *' })
             Write-Output ("TTS_S1_SHARDS_READY tier={0} shards={1} released_unix_micros={2}" -f `
@@ -953,12 +949,14 @@ foreach ($plan in $tierPlans) {
             barrier_released_unix_micros = $report.body.shard_topology.start_barrier_released_unix_micros
             shard_readiness = @($report.body.shard_topology.shard_readiness)
             latest_ready_unix_micros = $report.body.shard_topology.latest_ready_unix_micros
-            released_after_every_shard_ready = $report.body.shard_topology.released_after_every_shard_ready
+            every_shard_announcement_observed_before_release = $report.body.shard_topology.every_shard_announcement_observed_before_release
             every_shard_waited_on_the_barrier = $report.body.shard_topology.every_shard_waited_on_the_barrier
-            every_first_decision_after_the_barrier = $report.body.shard_topology.every_first_decision_after_the_barrier
+            every_shard_reported_same_token = $report.body.shard_topology.every_shard_reported_same_token
+            every_shard_observed_token_before_first_decision = $report.body.shard_topology.every_shard_observed_token_before_first_decision
             censused_decisions = $report.body.shard_topology.censused_decisions
             fully_concurrent_decisions = $report.body.shard_topology.fully_concurrent_decisions
             fully_concurrent_permille = $report.body.shard_topology.fully_concurrent_permille
+            non_monotone_decision_windows = $report.body.shard_topology.non_monotone_decision_windows
             min_fully_concurrent_permille = $report.body.shard_topology.min_fully_concurrent_permille
             concurrency_histogram = @($report.body.shard_topology.concurrency_histogram)
             episodes_replayed = $report.body.episodes_replayed
@@ -1001,15 +999,17 @@ foreach ($plan in $tierPlans) {
             within_compute_cap = $report.body.compute_cap.within_cap
             search_authority_digest_sha256 = $report.body.search_authority_digest_sha256
         }
-        Write-Output ("TTS_S1_TIER_TOPOLOGY tier={0} shard_count={1} barrier={2} released_after_every_shard_ready={8} first_decision_after_barrier={3} fully_concurrent_permille={4} of={5} required={6} formal={7}" -f `
+        Write-Output ("TTS_S1_TIER_TOPOLOGY tier={0} shard_count={1} barrier={2} ready_digests_observed={8} shared_token_digest={9} token_before_first_search={3} fully_concurrent_permille={4} of={5} required={6} formal={7} non_monotone_windows={10}" -f `
             $plan.tier, $report.body.shard_topology.shard_count, `
             $report.body.shard_topology.every_shard_waited_on_the_barrier, `
-            $report.body.shard_topology.every_first_decision_after_the_barrier, `
+            $report.body.shard_topology.every_shard_observed_token_before_first_decision, `
             $report.body.shard_topology.fully_concurrent_permille, `
             $report.body.shard_topology.censused_decisions, `
             $report.body.shard_topology.min_fully_concurrent_permille, `
             $report.body.shard_topology.meets_formal_topology, `
-            $report.body.shard_topology.released_after_every_shard_ready)
+            $report.body.shard_topology.every_shard_announcement_observed_before_release, `
+            $report.body.shard_topology.every_shard_reported_same_token, `
+            $report.body.shard_topology.non_monotone_decision_windows)
         Write-Output ("TTS_S1_TIER tier={0} verdict={1} verdict_view={2} episodes={3} searched_decisions={4} shard_count={5} target_protocol_p99_micros={6} target_protocol_max_micros={7} whole_episode_protocol_p99_micros={8} projected_s2_worker_hours_milli={9} extrapolated_ordinals={10} within_compute_cap={11}" -f `
             $plan.tier, $observedVerdict, $report.body.verdict_view, `
             $report.body.episodes_replayed, $report.body.searched_decisions, $plan.shard_count, `

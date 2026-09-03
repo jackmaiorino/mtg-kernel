@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-Dry-run tests for run-tts-s1.ps1. Launches nothing.
+Dry-run tests for run-tts-s1.ps1.
 
 .DESCRIPTION
 Every case runs the wrapper with -DryRun -SkipHostAssertions against a
 throwaway evidence root under the system temp directory, using two stand-in
 executable FILES that are never executed (a dry run only hashes them).
-NEITHER S1 BIN IS EVER STARTED: no corpus is built, no search runs, no CP7
-panel is contacted, and no GPU is touched.
+No corpus is built, no search runs, no CP7 panel is contacted, and no GPU is
+touched.
 
-One section is the exception to "starts nothing" and says so where it sits:
-the shared child-process primitives are exercised against cmd.exe, because
-the property the shard fan-out rests on (several children running at once,
-every one waited on, every exit code captured) cannot be observed from a
-planned command line at all.
+One section is the exception to "starts nothing" and says so where it sits.
+The shared child-process primitives are exercised against cmd.exe. That
+section also runs only the replay bin's publisher mode against ready files
+written by real cmd.exe children. It loads no checkpoint, reads no corpus,
+performs no search and touches no GPU.
 
 What it proves:
   * a dry run writes provenance.json and result.json with status
@@ -177,10 +177,11 @@ function New-TtsS1TestReport {
         [int]$PinnedMinPermille = $script:TtsS1FormalMinFullConcurrencyPermille,
         [bool]$MeetsFormalTopology = $true,
         [bool]$EveryShardWaitedOnTheBarrier = $true,
-        [bool]$ReleasedAfterEveryShardReady = $true,
+        [bool]$EveryShardAnnouncementObservedBeforeRelease = $true,
+        [bool]$EveryShardReportedSameToken = $true,
         [long]$LatestReadyUnixMicros = 1699999999999000,
         [long]$ReleasedUnixMicros = 1699999999999500,
-        [bool]$EveryFirstDecisionAfterTheBarrier = $true,
+        [bool]$EveryShardObservedTokenBeforeFirstDecision = $true,
         [int]$FullyConcurrentPermille = 1000,
         [switch]$OmitLatencyCurve,
         [switch]$OmitShardTopology
@@ -208,11 +209,13 @@ function New-TtsS1TestReport {
                 [pscustomobject]@{ shard_index = $_; process_id = (4000 + $_); ready_unix_micros = ($LatestReadyUnixMicros - 7 + $_) }
             })
             latest_ready_unix_micros = $LatestReadyUnixMicros
-            released_after_every_shard_ready = $ReleasedAfterEveryShardReady
-            every_first_decision_after_the_barrier = $EveryFirstDecisionAfterTheBarrier
+            every_shard_announcement_observed_before_release = $EveryShardAnnouncementObservedBeforeRelease
+            every_shard_reported_same_token = $EveryShardReportedSameToken
+            every_shard_observed_token_before_first_decision = $EveryShardObservedTokenBeforeFirstDecision
             censused_decisions = 1000
             fully_concurrent_decisions = $FullyConcurrentPermille
             fully_concurrent_permille = $FullyConcurrentPermille
+            non_monotone_decision_windows = 0
             min_fully_concurrent_permille = $PinnedMinPermille
             meets_formal_topology = $MeetsFormalTopology
             formal_topology_reason = 'synthetic'
@@ -282,12 +285,15 @@ Assert-True ($script:TtsS1FormalShardCount -eq 8) 'the pinned formal shard count
 Assert-True ($script:TtsS1FormalLogicalCpusPerShard -eq 2) 'the pin requires two logical CPUs per shard'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*exactly-8-concurrent-replay-processes*') 'the topology rule names the pinned concurrency'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*at-least-2-logical-cpus-per-shard*') 'the topology rule names the host requirement'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*/v4') 'the pinned topology rule is the V4 one'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*compared-exactly-with-no-tolerance*') 'the topology rule states the comparison carries no tolerance'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*/v5') 'the pinned topology rule is the V5 one'
 Assert-True ($script:TtsS1TopologyTimeBase -like '*whole-microseconds*') 'the pinned time base is whole microseconds'
-Assert-True ($script:TtsS1TopologyTimeBase -like '*never-truncated-to-a-coarser-unit*') 'the pinned time base forbids a coarser recording'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*/v2') 'the pinned time base is the V2 one'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*read-directly-from-the-os-clock*') 'the pinned time base uses direct OS-clock reads'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*non-monotone-within-shard-windows-counted*') 'the pinned time base publishes clock-step diagnostics'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*announcing-itself-ready*') 'the topology rule names the readiness announcement'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*released-only-after-every-such-announcement*') 'the topology rule names what gates the release'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*committing-each-observed-announcement*') 'the topology rule names the observed-set commitment'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*same-token-sha256*') 'the topology rule names the shared token digest'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*observed-the-token-before-its-first-search*') 'the topology rule names the shard-local first-search fact'
 # The two deadlines are ordered: the token cannot go out until the launcher
 # has every announcement, so a shard whose own deadline expired first would
 # fail while the launcher was still legitimately waiting for a sibling.
@@ -342,9 +348,10 @@ Assert-True ($null -eq (Get-TtsS1ContractRejection -Report (New-TtsS1TestReport)
 # declares the same shard count as one from eight that did.
 foreach ($case in @(
     @{ Name = 'a run whose shards never waited on a barrier'; Report = (New-TtsS1TestReport -EveryShardWaitedOnTheBarrier $false -MeetsFormalTopology $false); Fragment = 'start barrier' },
-    @{ Name = 'a run whose shard searched before the barrier'; Report = (New-TtsS1TestReport -EveryFirstDecisionAfterTheBarrier $false -MeetsFormalTopology $false); Fragment = 'first decision after the barrier' },
+    @{ Name = 'a run whose shard started before observing the token'; Report = (New-TtsS1TestReport -EveryShardObservedTokenBeforeFirstDecision $false -MeetsFormalTopology $false); Fragment = 'token observed before first search' },
     @{ Name = 'a run that never overlapped'; Report = (New-TtsS1TestReport -FullyConcurrentPermille 0 -MeetsFormalTopology $false); Fragment = 'formal topology' },
-    @{ Name = 'a token released before every shard was ready'; Report = (New-TtsS1TestReport -ReleasedAfterEveryShardReady $false -MeetsFormalTopology $false); Fragment = 'readiness handshake' }
+    @{ Name = 'a token missing a shard announcement digest'; Report = (New-TtsS1TestReport -EveryShardAnnouncementObservedBeforeRelease $false -MeetsFormalTopology $false); Fragment = 'readiness digest handshake' },
+    @{ Name = 'shards reporting different token digests'; Report = (New-TtsS1TestReport -EveryShardReportedSameToken $false -MeetsFormalTopology $false); Fragment = 'shared token digest' }
 )) {
     Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $case.Report)) "$($case.Name) is still readable as a smoke"
     $message = Get-TtsS1ContractRejection -Report $case.Report -RequireFormalShardTopology
@@ -352,38 +359,17 @@ foreach ($case in @(
     Assert-True ($message -like "*$($case.Fragment)*") "the refusal of $($case.Name) names $($case.Fragment)"
 }
 
-# THE ORDERING THE READINESS CLAUSE TURNS ON, over instants stated here
-# rather than read from a clock. Nothing below depends on any I/O landing
-# inside a millisecond: the instants are the fixture.
-#
-# The report carries the ordering as a boolean the crate computed, so what
-# the launcher contract can check is that it refuses a report whose boolean
-# says the token went out early, and accepts one whose boolean says it did
-# not. The instants are published beside it so a reviewer can see the case.
+# Diagnostic timestamp skew never changes the causal barrier verdict.
 foreach ($case in @(
-    @{ Name = 'a token stamped in the same microsecond as the last announcement'; Ready = 1700000000000000; Released = 1700000000000000; Ordered = $true },
-    @{ Name = 'a token stamped later in the same millisecond'; Ready = 1700000000000000; Released = 1700000000000999; Ordered = $true },
-    @{ Name = 'a token stamped a microsecond early'; Ready = 1700000000000000; Released = 1699999999999999; Ordered = $false },
-    @{ Name = 'a token stamped a whole millisecond early'; Ready = 1700000000000000; Released = 1699999999999000; Ordered = $false }
+    @{ Name = 'publisher diagnostic behind shard'; Ready = 1700000000007000; Released = 1700000000000000 },
+    @{ Name = 'publisher diagnostic ahead of shard'; Ready = 1699999999995000; Released = 1700000000000000 }
 )) {
-    $report = New-TtsS1TestReport -LatestReadyUnixMicros $case.Ready -ReleasedUnixMicros $case.Released `
-        -ReleasedAfterEveryShardReady $case.Ordered -MeetsFormalTopology $case.Ordered
+    $report = New-TtsS1TestReport -LatestReadyUnixMicros $case.Ready -ReleasedUnixMicros $case.Released
     $observedReady = Get-TtsS1ReportField -Report $report -Path 'body.shard_topology.latest_ready_unix_micros'
     $observedRelease = Get-TtsS1ReportField -Report $report -Path 'body.shard_topology.start_barrier_released_unix_micros'
     Assert-True ($observedReady -eq $case.Ready) "$($case.Name) publishes the announcement instant it was built from"
     Assert-True ($observedRelease -eq $case.Released) "$($case.Name) publishes the release instant it was built from"
-    Assert-True (($observedRelease -ge $observedReady) -eq $case.Ordered) "$($case.Name) is ordered=$($case.Ordered) by exact comparison"
-    # Readable as a smoke either way; refused only when the run still
-    # claims formal standing.
-    Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $report)) "$($case.Name) is readable as a smoke"
-    $message = Get-TtsS1ContractRejection -Report $report -RequireFormalShardTopology
-    if ($case.Ordered) {
-        Assert-True ($null -eq $message) "$($case.Name) carries formal standing"
-    }
-    else {
-        Assert-True ($null -ne $message) "a run claiming formal standing refuses $($case.Name)"
-        Assert-True ($message -like '*readiness handshake*') "the refusal of $($case.Name) names the readiness handshake"
-    }
+    Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $report -RequireFormalShardTopology)) "$($case.Name) leaves causal formality intact"
 }
 
 # THE RULE ITSELF, as a pure function, evaluated at CPU counts this host
@@ -874,9 +860,8 @@ try {
     # moment at which it means anything. Written before the shards start it
     # would release each into a fan-out that did not yet exist.
     Assert-True ($wrapperText -like '*-AfterStart {*') 'the wrapper publishes the token through the after-start hook'
-    # THE TOKEN IS STAMPED BY THE BIN, not by this runtime: its instant is
-    # compared exactly against instants the shards recorded through the
-    # crate's clock, and a second clock in that comparison is the bug.
+    # THE TOKEN IS WRITTEN BY THE BIN, not by this runtime. It commits the
+    # exact observed ready-file digests into canonical JSON.
     Assert-True ($wrapperText -like '*--publish-start-barrier*') 'the wrapper plans the barrier publish mode'
     Assert-True ($wrapperText -like '*-Arguments $plan.publish_arguments*') 'the wrapper runs the publisher with its planned arguments'
     Assert-True ($wrapperText -like '*--publish-start-barrier exited with $publishExit*') 'the wrapper fails the tier closed when the publisher exits non-zero'
@@ -930,6 +915,60 @@ try {
     try {
         $comspec = Join-Path $env:SystemRoot 'System32\cmd.exe'
         Assert-True (Test-Path -LiteralPath $comspec -PathType Leaf) 'cmd.exe is available to exercise the child-process primitives'
+
+        # Real cmd.exe children publish three ready files while the real
+        # replay publisher waits. The resulting canonical token must carry
+        # each exact file digest with the announced shard index and pid.
+        $publisherRoot = Join-Path $processSandbox 'publisher-observed-set'
+        New-Item -ItemType Directory -Force -Path $publisherRoot | Out-Null
+        $publisherToken = Join-Path $publisherRoot 'start-barrier.token'
+        $publisherJobs = @()
+        for ($index = 0; $index -lt 3; $index++) {
+            $announcedPid = 4100 + $index
+            $announcedMicros = 1700000000000000 + $index
+            $readyPath = Join-Path $publisherRoot ("shard-ready-{0:0000}.token" -f $index)
+            $publisherJobs += [pscustomobject]@{
+                label = "ready-$index"
+                file_path = $comspec
+                arguments = @('/d', '/c', 'echo', [string]$announcedPid, [string]$announcedMicros, '>', $readyPath)
+                stdout_path = Join-Path $processSandbox ("ready-{0}.stdout.txt" -f $index)
+                stderr_path = Join-Path $processSandbox ("ready-{0}.stderr.txt" -f $index)
+            }
+        }
+        $cargoCommand = Get-Command cargo -ErrorAction Stop
+        $repoRoot = (Resolve-Path -LiteralPath (Join-Path $script:TtsS1WrapperDirectory '..\..\..')).Path
+        $publisherStdout = Join-Path $processSandbox 'publisher.stdout.txt'
+        $publisherStderr = Join-Path $processSandbox 'publisher.stderr.txt'
+        $publisherFanOut = Invoke-TtsS1ProcessFanOut -Jobs $publisherJobs -AfterStart {
+            $publisherExit = Invoke-TtsS1Process -FilePath $cargoCommand.Source -Arguments @(
+                'run', '--quiet', '--locked', '--manifest-path', (Join-Path $repoRoot 'Cargo.toml'),
+                '--bin', 'tts_s1_replay_v1', '--',
+                '--publish-start-barrier', $publisherToken,
+                '--barrier-dir', $publisherRoot,
+                '--shard-count', '3',
+                '--readiness-timeout-seconds', '30'
+            ) -StdoutPath $publisherStdout -StderrPath $publisherStderr
+            if ($publisherExit -ne 0) {
+                throw "the real barrier publisher exited $publisherExit"
+            }
+        }
+        Assert-True (@($publisherFanOut.results | Where-Object { $_.exit_code -ne 0 }).Count -eq 0) 'the cmd.exe ready-file children all succeeded'
+        Assert-True (Test-Path -LiteralPath $publisherToken -PathType Leaf) 'the real publisher wrote the canonical token'
+        $publisherDocument = [System.IO.File]::ReadAllText($publisherToken) | ConvertFrom-Json
+        Assert-True ($publisherDocument.schema -ceq 'mtg-kernel-tts-s1-start-barrier-token/v1') 'the real publisher wrote the pinned token schema'
+        Assert-True (@($publisherDocument.observed_shard_readiness).Count -eq 3) 'the real publisher recorded all three observed ready files'
+        for ($index = 0; $index -lt 3; $index++) {
+            $readyPath = Join-Path $publisherRoot ("shard-ready-{0:0000}.token" -f $index)
+            $observed = @($publisherDocument.observed_shard_readiness | Where-Object { $_.shard_index -eq $index })
+            Assert-True ($observed.Count -eq 1) "the token records shard $index exactly once"
+            if ($observed.Count -eq 1) {
+                $expectedDigest = (Get-FileHash -Algorithm SHA256 -LiteralPath $readyPath).Hash.ToLowerInvariant()
+                Assert-True ($observed[0].process_id -eq (4100 + $index)) "the token records shard $index announced pid"
+                Assert-True ($observed[0].announcement_sha256 -ceq $expectedDigest) "the token records shard $index exact bytes digest"
+            }
+        }
+        Assert-True (@(Get-Content -LiteralPath $publisherStdout | Where-Object { $_ -like 'TTS_S1_SHARD_READY *' }).Count -eq 3) 'the real publisher reports all observed ready files'
+
         # Three children, each sleeping about three seconds, started
         # together. Serialized they would take at least nine; run at once
         # they take about three, so the elapsed time is the evidence of

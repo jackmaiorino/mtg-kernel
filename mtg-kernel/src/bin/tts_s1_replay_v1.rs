@@ -320,9 +320,8 @@ fn fail_v1(error: impl std::fmt::Display) -> ! {
 }
 
 fn run_publish_barrier_v1(parsed: PublishBarrierArgsV1) -> ! {
-    // The base is fixed HERE, immediately before the wait, and the token is
-    // stamped from it through the same `micros_now_v1` a shard announces
-    // with. One clock, one runtime, one function.
+    // The base supplies diagnostic instants only. Formal ordering comes
+    // from the ready-file digests committed by the canonical token.
     let clock = TtsS1WallClockBaseV1::now_v1();
     let published = match publish_start_barrier_v1(
         &parsed.token_path,
@@ -335,10 +334,12 @@ fn run_publish_barrier_v1(parsed: PublishBarrierArgsV1) -> ! {
         Err(error) => fail_v1(error),
     };
     println!(
-        "TTS_S1_BARRIER_PUBLISHED path={} shard_count={} released_unix_micros={} latest_ready_unix_micros={} waited_micros={}",
+        "TTS_S1_BARRIER_PUBLISHED path={} shard_count={} token_sha256={} observed_ready_count={} released_unix_micros={} latest_ready_unix_micros={} waited_micros={}",
         parsed.token_path.display(),
         parsed.shard_count,
-        published.released_unix_micros,
+        published.token_sha256,
+        published.token.observed_shard_readiness.len(),
+        published.token.released_unix_micros,
         published.latest_ready_unix_micros,
         published.waited_micros,
     );
@@ -470,9 +471,11 @@ fn main() {
             body.identity.search_authority_digest_sha256,
         );
         eprintln!(
-            "TTS_S1_SHARD_BARRIER used={} released_unix_micros={} wait_micros={} first_decision_unix_micros={}",
+            "TTS_S1_SHARD_BARRIER used={} token_sha256={} observed_token_before_first_decision={} released_unix_micros={} wait_micros={} first_decision_unix_micros={}",
             body.start_barrier.used,
-            body.start_barrier.released_unix_micros,
+            body.start_barrier.token_sha256,
+            body.start_barrier.observed_token_before_first_decision,
+            body.start_barrier.token.released_unix_micros,
             body.start_barrier.wait_micros,
             body.first_work_started_unix_micros,
         );

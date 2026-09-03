@@ -114,6 +114,10 @@ pub const TTS_S1_REPLAY_REPORT_SCHEMA_V1: &str = "mtg-kernel-tts-s1-replay-repor
 /// unrepresentable as each other rather than merely distinguishable.
 pub const TTS_S1_REPLAY_SHARD_REPORT_SCHEMA_V1: &str = "mtg-kernel-tts-s1-replay-shard-report/v1";
 
+/// The canonical start-token document written after every ready file has
+/// been observed and hashed.
+pub const TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1: &str = "mtg-kernel-tts-s1-start-barrier-token/v1";
+
 /// The largest shard count a tier may be split into.
 ///
 /// A bound, not a tuning knob. Sharding is a pure execution split (see
@@ -168,7 +172,7 @@ pub const TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1: u64 = 950;
 /// infer which concurrency a tier's timings were taken under, or what would
 /// have made them formal.
 ///
-/// V3, and neither version bump was cosmetic. V1 granted formal standing
+/// V5, and none of the version bumps was cosmetic. V1 granted formal standing
 /// from the DECLARED shard count and the host's size, which eight processes
 /// run one after another satisfy exactly as well as eight run together: a
 /// count is an intention, not a measurement. V2 added the barrier and the
@@ -184,38 +188,44 @@ pub const TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1: u64 = 950;
 /// every shard now ANNOUNCES itself ready, after its checkpoint is loaded
 /// and before it waits, and the token may only be released once every
 /// announcement is in.
-pub const TTS_S1_SHARD_TOPOLOGY_RULE_V4: &str = concat!(
+///
+/// V5 replaces cross-process timestamp ordering with causal evidence. The
+/// publisher commits the exact ready-file bytes it observed into the token,
+/// every shard commits that token's digest into its report, and the shard
+/// records at its first search that it had already observed the token.
+/// Decision census windows now read the OS wall clock directly in each
+/// process. A clock step is tolerated by the overlap threshold and its
+/// within-shard anomalies are counted in the merged report.
+pub const TTS_S1_SHARD_TOPOLOGY_RULE_V5: &str = concat!(
     "formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes",
     "-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under",
     "-on-a-host-with-at-least-2-logical-cpus-per-shard",
     "-every-shard-announcing-itself-ready-after-loading-its-checkpoint",
-    "-one-start-barrier-released-only-after-every-such-announcement",
-    "-no-shard-searching-before-that-release",
-    "-every-such-instant-in-whole-microseconds-since-the-unix-epoch-and-compared-exactly-with-no-tolerance",
+    "-one-canonical-start-barrier-token-committing-each-observed-announcement-by-shard-index-pid-and-bytes-sha256",
+    "-every-shard-reporting-the-same-token-sha256",
+    "-every-shard-recording-that-it-observed-the-token-before-its-first-search",
+    "-decision-census-windows-read-directly-from-the-os-clock-in-whole-microseconds",
+    "-clock-steps-tolerated-by-the-overlap-threshold-with-non-monotone-windows-counted",
     "-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard",
     "-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result",
-    "/v4"
+    "/v5"
 );
 
-/// THE TIME BASE every instant in the topology block is expressed on, and
-/// the comparison they are subjected to.
+/// THE TIME BASE of topology diagnostics and census windows.
 ///
-/// It is pinned, on the wire, and checked by the launcher because the
-/// readiness clause is an EXACT `release >= ready` with no tolerance, and an
-/// exact comparison between two numbers is only meaningful when both were
-/// recorded at the same resolution. A producer that recorded the release at
-/// millisecond resolution and multiplied by a thousand would publish a
-/// number up to 999 microseconds BEFORE the instant it meant, and would
-/// strip formal standing from a run whose token genuinely went out after
-/// every announcement. No tolerance is added to paper over that: the fix is
-/// that both sides record whole microseconds, and this string is how a
-/// reader knows they did.
-pub const TTS_S1_TOPOLOGY_TIME_BASE_V1: &str = concat!(
+/// Readiness ordering is not inferred from this clock. Each process may
+/// retain its own launch anchor for diagnostic instants without affecting
+/// formality. Census windows read `SystemTime::now()` directly at each
+/// boundary so all processes sample the same OS clock, truncated to whole
+/// microseconds. A clock step is tolerated by the 950 permille overlap gate,
+/// and non-monotone within-shard windows are counted in the report.
+pub const TTS_S1_TOPOLOGY_TIME_BASE_V2: &str = concat!(
     "whole-microseconds-since-the-unix-epoch",
-    "-each-process-advancing-one-launch-reading-by-a-monotonic-delta",
-    "-never-truncated-to-a-coarser-unit",
-    "-and-ordered-by-exact-comparison-with-no-tolerance",
-    "/v1"
+    "-read-directly-from-the-os-clock-at-each-decision-window-boundary",
+    "-barrier-instants-are-diagnostics-only-and-never-compared-for-formality",
+    "-clock-steps-are-tolerated-by-the-950-permille-overlap-threshold",
+    "-with-non-monotone-within-shard-windows-counted",
+    "/v2"
 );
 
 /// The file one shard publishes to say it has loaded and is about to wait.
@@ -407,16 +417,15 @@ pub struct TtsS1DecisionWallTimeV1 {
     /// classified on.
     pub protocol_micros: u64,
     /// WHEN this decision's work began, in microseconds since the UNIX
-    /// epoch on a base shared by every shard of the run.
+    /// epoch, read directly from the OS clock at this boundary.
     ///
     /// This is the overlap evidence, and it is why it is a WALL-CLOCK
     /// timestamp rather than another duration: durations say how long a
     /// process was busy, and the question the formal topology turns on is
-    /// whether eight processes were busy AT THE SAME TIME. Only a common
-    /// time base can answer that, so each shard fixes one UNIX-epoch
-    /// reading at launch and advances it by a monotonic `Instant` delta,
-    /// which keeps the readings comparable across processes without
-    /// exposing them to a clock step mid-run.
+    /// whether eight processes were busy AT THE SAME TIME. Every process
+    /// therefore samples the same OS wall clock directly. A clock step may
+    /// make a window non-monotone; it is counted in the topology diagnostic
+    /// and tolerated by the 950 permille overlap threshold.
     ///
     /// The window is the decision's WHOLE measured work, from the flat
     /// encode through the response flush, and deliberately not the search
@@ -1087,15 +1096,12 @@ mod host_total_memory_v1 {
     }
 }
 
-/// One shared time base: a UNIX-epoch reading taken once, advanced by a
-/// MONOTONIC delta.
+/// One process-local diagnostic time base: a UNIX-epoch reading taken once,
+/// advanced by a monotonic delta.
 ///
-/// Both halves are load-bearing. The UNIX reading is what makes two
-/// processes' timestamps comparable at all; the monotonic delta is what
-/// keeps a clock step in the middle of a two-hour tier from moving a
-/// decision's window relative to its neighbours. Nothing branches on
-/// either: the values are recorded and the MERGE, which searches nothing
-/// and chooses no action, is the only thing that ever reads them.
+/// It records readiness and barrier observation instants without exposing
+/// those diagnostics to a later clock step. Different processes have
+/// independent anchors, so no formal clause compares these values.
 #[derive(Clone, Copy, Debug)]
 pub struct TtsS1WallClockBaseV1 {
     unix_micros: u64,
@@ -1120,13 +1126,7 @@ impl TtsS1WallClockBaseV1 {
 
     /// NOW, on this base.
     ///
-    /// THE ONE FUNCTION every instant the readiness clause compares comes
-    /// from: a shard's announcement and the start token alike. That is the
-    /// whole reason it exists. The clause is an exact `release >= ready`
-    /// with no tolerance, and two clocks in two runtimes do not have to
-    /// disagree by much to invert a comparison between instants a few
-    /// microseconds apart. Reading them through one function in one runtime
-    /// removes the question rather than bounding it.
+    /// The current diagnostic instant on this process-local base.
     pub fn micros_now_v1(&self) -> u64 {
         self.micros_at_v1(Instant::now())
     }
@@ -1137,6 +1137,51 @@ impl TtsS1WallClockBaseV1 {
 pub struct TtsS1StartBarrierConfigV1 {
     pub path: PathBuf,
     pub timeout_seconds: u64,
+}
+
+/// One ready file the publisher observed before it created the token.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ObservedShardReadinessV1 {
+    pub shard_index: u64,
+    pub process_id: u64,
+    /// SHA-256 of the exact announcement bytes, lower hex.
+    pub announcement_sha256: String,
+}
+
+/// The canonical start token. Its observed set is the causal proof that the
+/// publisher read every announcement before publishing this document.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1StartBarrierTokenV1 {
+    pub schema: String,
+    /// Diagnostic only. Barrier formality never compares this timestamp.
+    pub released_unix_micros: u64,
+    pub observed_shard_readiness: Vec<TtsS1ObservedShardReadinessV1>,
+}
+
+impl TtsS1StartBarrierTokenV1 {
+    fn canonical_bytes_v1(&self) -> Result<Vec<u8>, TtsS1ReplayErrorV1> {
+        to_canonical_json_bytes_v1(self, CanonicalJsonNullPolicyV1::Forbid)
+            .map_err(|_| TtsS1ReplayErrorV1::CanonicalJson)
+    }
+}
+
+fn sha256_bytes_v1(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest: [u8; 32] = hasher.finalize().into();
+    lower_hex_sha256_v4(digest)
+}
+
+fn decode_start_barrier_token_v1(bytes: &[u8]) -> Option<TtsS1StartBarrierTokenV1> {
+    let token: TtsS1StartBarrierTokenV1 =
+        from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).ok()?;
+    let reencoded = token.canonical_bytes_v1().ok()?;
+    if reencoded != bytes || token.schema != TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1 {
+        return None;
+    }
+    Some(token)
 }
 
 /// Waits for the launcher's start token and returns what was observed.
@@ -1159,16 +1204,19 @@ fn wait_for_start_barrier_v1(
     let started = Instant::now();
     let deadline = std::time::Duration::from_secs(config.timeout_seconds);
     loop {
-        if let Ok(text) = std::fs::read_to_string(&config.path) {
-            if let Ok(released) = text.trim().parse::<u64>() {
+        if let Ok(bytes) = std::fs::read(&config.path) {
+            if let Some(token) = decode_start_barrier_token_v1(&bytes) {
                 let observed = Instant::now();
                 return Ok(TtsS1StartBarrierV1 {
                     used: true,
                     // Backfilled by the caller, which is what announced.
                     ready_unix_micros: 0,
                     process_id: 0,
-                    released_unix_micros: released,
+                    announcement_sha256: String::new(),
+                    token,
+                    token_sha256: sha256_bytes_v1(&bytes),
                     observed_unix_micros: base.micros_at_v1(observed),
+                    observed_token_before_first_decision: false,
                     wait_micros: elapsed_micros_v1(started),
                     timeout_seconds: config.timeout_seconds,
                 });
@@ -1195,10 +1243,9 @@ fn read_shard_ready_announcement_v1(
     barrier_directory: &Path,
     shard_index: u64,
 ) -> Option<TtsS1ShardReadinessV1> {
-    let text = std::fs::read_to_string(
-        barrier_directory.join(tts_s1_shard_ready_file_name_v1(shard_index)),
-    )
-    .ok()?;
+    let bytes =
+        std::fs::read(barrier_directory.join(tts_s1_shard_ready_file_name_v1(shard_index))).ok()?;
+    let text = std::str::from_utf8(&bytes).ok()?;
     let mut fields = text.split_whitespace();
     let process_id = fields.next()?.parse::<u64>().ok()?;
     let ready_unix_micros = fields.next()?.parse::<u64>().ok()?;
@@ -1209,6 +1256,7 @@ fn read_shard_ready_announcement_v1(
         shard_index,
         process_id,
         ready_unix_micros,
+        announcement_sha256: sha256_bytes_v1(&bytes),
     })
 }
 
@@ -1256,7 +1304,8 @@ fn wait_for_shard_readiness_v1(
 /// What publishing the start token produced.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TtsS1PublishedBarrierV1 {
-    pub released_unix_micros: u64,
+    pub token: TtsS1StartBarrierTokenV1,
+    pub token_sha256: String,
     pub latest_ready_unix_micros: u64,
     pub ready: Vec<TtsS1ShardReadinessV1>,
     pub waited_micros: u64,
@@ -1266,17 +1315,9 @@ pub struct TtsS1PublishedBarrierV1 {
 ///
 /// # Why this is a mode of this bin and not three lines of the launcher
 ///
-/// The readiness clause is an exact `release >= ready` with no tolerance,
-/// and it compares the token's instant against instants the SHARDS recorded
-/// through [`TtsS1WallClockBaseV1`]. A launcher that stamped the token from
-/// its own runtime's clock would be comparing two clocks, and two clocks in
-/// two runtimes do not have to disagree by much to invert a comparison
-/// between instants a few microseconds apart: PowerShell 5.1's
-/// `DateTimeOffset::UtcNow` can advance on a coarser cadence than the
-/// Windows clock behind `SystemTime::now()`, so a token genuinely published
-/// last could still be stamped first. Publishing here removes the question
-/// instead of bounding it: the token and every announcement it is compared
-/// against come from one function in one runtime.
+/// The publisher records the exact ready-file bytes it observed by digest.
+/// The merge checks those digests rather than comparing clocks belonging to
+/// different processes. The release instant remains useful diagnostics.
 ///
 /// The token is written by staged sibling then rename, so a shard polling
 /// for it never reads a half-written one.
@@ -1300,20 +1341,24 @@ pub fn publish_start_barrier_v1(
         latest.max(announcement.ready_unix_micros)
     });
 
-    // EVERY ANNOUNCEMENT IS IN, so now, and only now.
+    // EVERY ANNOUNCEMENT IS IN, so now, and only now. The observed set is
+    // sorted by the wait loop's shard-index iteration and committed into
+    // the canonical token bytes.
     let released_unix_micros = base.micros_now_v1();
-    // The invariant the merge will check, checked HERE, where it can still
-    // be acted on. Reading this clock after observing every announcement
-    // cannot honestly produce an earlier instant, so one that does is a
-    // clock anomaly and not a run: failing here costs a restart, while
-    // publishing anyway would cost the whole tier and only be discovered at
-    // the merge, hours later.
-    if released_unix_micros < latest_ready_unix_micros {
-        return Err(TtsS1ReplayErrorV1::StartBarrierClockAnomaly {
-            released_unix_micros,
-            latest_ready_unix_micros,
-        });
-    }
+    let token = TtsS1StartBarrierTokenV1 {
+        schema: TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1.to_owned(),
+        released_unix_micros,
+        observed_shard_readiness: ready
+            .iter()
+            .map(|announcement| TtsS1ObservedShardReadinessV1 {
+                shard_index: announcement.shard_index,
+                process_id: announcement.process_id,
+                announcement_sha256: announcement.announcement_sha256.clone(),
+            })
+            .collect(),
+    };
+    let token_bytes = token.canonical_bytes_v1()?;
+    let token_sha256 = sha256_bytes_v1(&token_bytes);
 
     let parent = token_path
         .parent()
@@ -1329,13 +1374,14 @@ pub fn publish_start_barrier_v1(
             .unwrap_or_else(|| "start-barrier.token".to_owned()),
         std::process::id()
     ));
-    std::fs::write(&staged, format!("{released_unix_micros}\n")).map_err(failed)?;
+    std::fs::write(&staged, &token_bytes).map_err(failed)?;
     if let Err(error) = std::fs::rename(&staged, token_path) {
         let _ = std::fs::remove_file(&staged);
         return Err(failed(error));
     }
     Ok(TtsS1PublishedBarrierV1 {
-        released_unix_micros,
+        token,
+        token_sha256,
         latest_ready_unix_micros,
         ready,
         waited_micros: elapsed_micros_v1(started),
@@ -1358,7 +1404,7 @@ fn announce_shard_ready_v1(
     config: &TtsS1StartBarrierConfigV1,
     shard_index: u64,
     base: &TtsS1WallClockBaseV1,
-) -> Result<(u64, u64), TtsS1ReplayErrorV1> {
+) -> Result<TtsS1ShardReadinessV1, TtsS1ReplayErrorV1> {
     let directory = config
         .path
         .parent()
@@ -1370,17 +1416,22 @@ fn announce_shard_ready_v1(
     let published = directory.join(&name);
     let failed = |error: std::io::Error| TtsS1ReplayErrorV1::StartBarrierReady(error.to_string());
     std::fs::create_dir_all(directory).map_err(failed)?;
-    // The clock is read LAST before the write, so the announced instant is
-    // the one the file carries and not one the write then invalidated. It
-    // is the SAME function the start token is stamped with; see
-    // `TtsS1WallClockBaseV1::micros_now_v1`.
+    // The clock is read LAST before the write, so the diagnostic instant is
+    // the one the file carries and not one the write then invalidated.
     let ready_unix_micros = base.micros_now_v1();
-    std::fs::write(&staged, format!("{process_id} {ready_unix_micros}\n")).map_err(failed)?;
+    let bytes = format!("{process_id} {ready_unix_micros}\n").into_bytes();
+    let announcement_sha256 = sha256_bytes_v1(&bytes);
+    std::fs::write(&staged, &bytes).map_err(failed)?;
     if let Err(error) = std::fs::rename(&staged, &published) {
         let _ = std::fs::remove_file(&staged);
         return Err(failed(error));
     }
-    Ok((process_id, ready_unix_micros))
+    Ok(TtsS1ShardReadinessV1 {
+        shard_index,
+        process_id,
+        ready_unix_micros,
+        announcement_sha256,
+    })
 }
 
 /// Microseconds since the UNIX epoch, or 0 if the host clock is before it.
@@ -1399,28 +1450,31 @@ pub fn unix_micros_now_v1() -> u64 {
 /// on an idle machine, and those decisions are exactly the cheap ones that
 /// would flatter a p99. So the launcher publishes ONE token, only once every
 /// shard process has started, and no shard searches before it has read that
-/// token. `released_unix_micros` is the token's OWN content, so every shard
-/// of a run reports the same number and the merge can check that each
-/// shard's first decision began after it.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// token. Each shard reports the token's canonical digest and records at its
+/// first search that it had already observed the token.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TtsS1StartBarrierV1 {
     /// False for an unsharded run, which has nothing to wait for.
     pub used: bool,
     /// THE READINESS ANNOUNCEMENT: when this shard finished loading its
-    /// checkpoint and published its ready file, on the shared base. The
-    /// launcher may not release the token before this, and the merge
-    /// checks that it did not.
+    /// checkpoint and published its ready file, on this process's
+    /// diagnostic base.
     pub ready_unix_micros: u64,
     /// The announcing process, so a reader can tie the ready file on disk
     /// to the shard report that claims it.
     pub process_id: u64,
-    /// The release timestamp the launcher wrote INTO the token, so it is
-    /// one number shared by every shard rather than each shard's own
-    /// reading of when it noticed.
-    pub released_unix_micros: u64,
-    /// When this shard observed the token, on the shared base.
+    /// SHA-256 of this shard's exact ready-file bytes.
+    pub announcement_sha256: String,
+    /// The exact canonical token this shard observed.
+    pub token: TtsS1StartBarrierTokenV1,
+    /// SHA-256 of the token's exact canonical bytes, lower hex.
+    pub token_sha256: String,
+    /// When this shard observed the token, on its diagnostic base.
     pub observed_unix_micros: u64,
+    /// Set by this shard at the moment its first search starts. This is the
+    /// causal fact used for formality instead of comparing process clocks.
+    pub observed_token_before_first_decision: bool,
     /// How long this shard waited at the barrier.
     pub wait_micros: u64,
     /// The deadline the launcher gave it.
@@ -1429,13 +1483,20 @@ pub struct TtsS1StartBarrierV1 {
 
 impl TtsS1StartBarrierV1 {
     /// The block an unsharded run publishes: it waits for nobody.
-    pub const fn absent_v1() -> Self {
+    pub fn absent_v1() -> Self {
         Self {
             used: false,
             ready_unix_micros: 0,
             process_id: 0,
-            released_unix_micros: 0,
+            announcement_sha256: String::new(),
+            token: TtsS1StartBarrierTokenV1 {
+                schema: String::new(),
+                released_unix_micros: 0,
+                observed_shard_readiness: Vec::new(),
+            },
+            token_sha256: String::new(),
             observed_unix_micros: 0,
+            observed_token_before_first_decision: false,
             wait_micros: 0,
             timeout_seconds: 0,
         }
@@ -1443,14 +1504,16 @@ impl TtsS1StartBarrierV1 {
 }
 
 /// One shard's readiness announcement, as the merged report publishes it.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TtsS1ShardReadinessV1 {
     pub shard_index: u64,
     pub process_id: u64,
     /// When that shard finished loading and announced itself, on the run's
-    /// shared time base. The start token may not predate any of these.
+    /// process-local diagnostic time base.
     pub ready_unix_micros: u64,
+    /// SHA-256 of the exact ready-file bytes, lower hex.
+    pub announcement_sha256: String,
 }
 
 /// How many shards were mid-work when a decision began, and how many
@@ -1476,16 +1539,20 @@ pub struct TtsS1TopologyEvidenceV1 {
     pub shard_count: u64,
     pub barrier_released_unix_micros: u64,
     pub every_shard_waited_on_the_barrier: bool,
-    pub every_first_decision_after_the_barrier: bool,
+    pub every_shard_reported_same_token: bool,
+    pub every_shard_observed_token_before_first_decision: bool,
     /// Every shard's readiness announcement, ascending by shard index.
     pub shard_readiness: Vec<TtsS1ShardReadinessV1>,
     /// The LAST announcement to arrive: the earliest moment at which the
     /// token could honestly have been released.
     pub latest_ready_unix_micros: u64,
-    /// Whether the token was released at or after that moment. A token
-    /// released earlier means a shard was still loading when its siblings
-    /// were let go.
-    pub released_after_every_shard_ready: bool,
+    /// Whether each shard's exact ready-file digest appears with its index
+    /// and pid in the observed set committed by the shared token.
+    pub every_shard_announcement_observed_before_release: bool,
+    /// Windows whose end precedes their start, whose start precedes the
+    /// preceding start, or whose end precedes the preceding end within one
+    /// shard. Diagnostic only: the overlap threshold remains the gate.
+    pub non_monotone_decision_windows: u64,
     pub concurrency_histogram: Vec<TtsS1ConcurrencyBucketV1>,
     pub fully_concurrent_decisions: u64,
     pub census_decisions: u64,
@@ -1558,6 +1625,29 @@ pub fn concurrency_census_v1(
     (histogram, fully_concurrent_decisions, census_decisions)
 }
 
+/// Counts decision windows whose wall-clock sequence is non-monotone within
+/// a shard. The count is diagnostic and never an additional formal gate.
+pub fn non_monotone_decision_windows_v1(shard_windows: &[Vec<(u64, u64)>]) -> u64 {
+    shard_windows
+        .iter()
+        .map(|windows| {
+            let mut previous: Option<(u64, u64)> = None;
+            let mut count = 0u64;
+            for &(start, end) in windows {
+                if end < start
+                    || previous.is_some_and(|(previous_start, previous_end)| {
+                        start < previous_start || end < previous_end
+                    })
+                {
+                    count += 1;
+                }
+                previous = Some((start, end));
+            }
+            count
+        })
+        .sum()
+}
+
 impl TtsS1TopologyEvidenceV1 {
     /// The evidence a ONE-PROCESS run has: every decision was searched by
     /// the only process there was, and there was no barrier to wait at.
@@ -1577,10 +1667,14 @@ impl TtsS1TopologyEvidenceV1 {
             shard_count: 1,
             barrier_released_unix_micros: 0,
             every_shard_waited_on_the_barrier: false,
-            every_first_decision_after_the_barrier: false,
+            every_shard_reported_same_token: false,
+            every_shard_observed_token_before_first_decision: false,
             shard_readiness: Vec::new(),
             latest_ready_unix_micros: 0,
-            released_after_every_shard_ready: false,
+            every_shard_announcement_observed_before_release: false,
+            non_monotone_decision_windows: non_monotone_decision_windows_v1(std::slice::from_ref(
+                &windows,
+            )),
             concurrency_histogram,
             fully_concurrent_decisions,
             census_decisions,
@@ -1608,8 +1702,8 @@ impl TtsS1TopologyEvidenceV1 {
 #[serde(deny_unknown_fields)]
 pub struct TtsS1ShardTopologyV1 {
     pub rule: String,
-    /// [`TTS_S1_TOPOLOGY_TIME_BASE_V1`]: the unit and the comparison every
-    /// instant below is subject to, on the wire beside them.
+    /// [`TTS_S1_TOPOLOGY_TIME_BASE_V2`]: the unit and source of the census
+    /// windows, on the wire beside them.
     pub time_base: String,
     /// Replay processes that produced these timings. One for an unsharded
     /// run.
@@ -1627,19 +1721,23 @@ pub struct TtsS1ShardTopologyV1 {
     /// before its first decision, and which token.
     pub start_barrier_released_unix_micros: u64,
     pub every_shard_waited_on_the_barrier: bool,
-    pub every_first_decision_after_the_barrier: bool,
+    pub every_shard_reported_same_token: bool,
+    pub every_shard_observed_token_before_first_decision: bool,
     /// THE READINESS HANDSHAKE. Every shard's announcement that it had
     /// loaded and was about to wait, and whether the token was released
     /// only after the last of them.
     pub shard_readiness: Vec<TtsS1ShardReadinessV1>,
     pub latest_ready_unix_micros: u64,
-    pub released_after_every_shard_ready: bool,
+    pub every_shard_announcement_observed_before_release: bool,
     /// THE OVERLAP CENSUS. How many shards were mid-work when each
     /// decision began, over every decision in the run.
     pub concurrency_histogram: Vec<TtsS1ConcurrencyBucketV1>,
     pub censused_decisions: u64,
     pub fully_concurrent_decisions: u64,
     pub fully_concurrent_permille: u64,
+    /// Diagnostic count of windows affected by an OS clock step or other
+    /// within-shard wall-clock regression.
+    pub non_monotone_decision_windows: u64,
     /// [`TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1`], on the wire
     /// beside the measurement it gates.
     pub min_fully_concurrent_permille: u64,
@@ -1678,19 +1776,20 @@ impl TtsS1ShardTopologyV1 {
             failures.push(
                 "not every shard was released by a start barrier, so a shard may have searched before the others existed".to_owned(),
             );
-        } else if !evidence.released_after_every_shard_ready {
-            // Process creation is nearly instant; loading a checkpoint is
-            // not. A token released before the last shard announced itself
-            // let the fast shards search while a slow one was still
-            // loading, which is contention the report would be claiming
-            // and the machine never had.
-            failures.push(format!(
-                "the start barrier was released at {} micros, before the last shard announced itself ready at {}",
-                evidence.barrier_released_unix_micros, evidence.latest_ready_unix_micros
-            ));
-        } else if !evidence.every_first_decision_after_the_barrier {
+        }
+        if !evidence.every_shard_reported_same_token {
+            failures.push("the shards did not report one shared start-token digest".to_owned());
+        }
+        if !evidence.every_shard_announcement_observed_before_release {
             failures.push(
-                "a shard's first decision began before the start barrier was released".to_owned(),
+                "a shard's ready-file digest was absent from the observed set committed by the start token"
+                    .to_owned(),
+            );
+        }
+        if !evidence.every_shard_observed_token_before_first_decision {
+            failures.push(
+                "a shard did not record observing the start token before its first search"
+                    .to_owned(),
             );
         }
         if fully_concurrent_permille < TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1 {
@@ -1702,15 +1801,15 @@ impl TtsS1ShardTopologyV1 {
         let meets_formal_topology = failures.is_empty();
         let formal_topology_reason = if meets_formal_topology {
             format!(
-                "the timings were measured at the pinned {TTS_S1_FORMAL_SHARD_COUNT_V1} concurrent replay processes on a host reporting {} logical CPUs, at or above the {required_cpus} required, every shard announcing itself ready before one start barrier released them all at {}, no shard searching before that, and {fully_concurrent_permille} permille of the {} censused decisions searched while all {shard_count} shards were mid-work",
-                host.logical_cpus, evidence.barrier_released_unix_micros, evidence.census_decisions
+                "the timings were measured at the pinned {TTS_S1_FORMAL_SHARD_COUNT_V1} concurrent replay processes on a host reporting {} logical CPUs, at or above the {required_cpus} required, one canonical start token committed every shard's ready-file digest, every shard reported that token's digest and observed it before its first search, and {fully_concurrent_permille} permille of the {} censused decisions searched while all {shard_count} shards were mid-work",
+                host.logical_cpus, evidence.census_decisions
             )
         } else {
             failures.join("; ")
         };
         Self {
-            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V4.to_owned(),
-            time_base: TTS_S1_TOPOLOGY_TIME_BASE_V1.to_owned(),
+            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V5.to_owned(),
+            time_base: TTS_S1_TOPOLOGY_TIME_BASE_V2.to_owned(),
             shard_count,
             formal_shard_count: TTS_S1_FORMAL_SHARD_COUNT_V1,
             formal_logical_cpus_per_shard: TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1,
@@ -1718,14 +1817,18 @@ impl TtsS1ShardTopologyV1 {
             host_total_memory_bytes: host.total_memory_bytes,
             start_barrier_released_unix_micros: evidence.barrier_released_unix_micros,
             every_shard_waited_on_the_barrier: evidence.every_shard_waited_on_the_barrier,
-            every_first_decision_after_the_barrier: evidence.every_first_decision_after_the_barrier,
+            every_shard_reported_same_token: evidence.every_shard_reported_same_token,
+            every_shard_observed_token_before_first_decision: evidence
+                .every_shard_observed_token_before_first_decision,
             shard_readiness: evidence.shard_readiness.clone(),
             latest_ready_unix_micros: evidence.latest_ready_unix_micros,
-            released_after_every_shard_ready: evidence.released_after_every_shard_ready,
+            every_shard_announcement_observed_before_release: evidence
+                .every_shard_announcement_observed_before_release,
             concurrency_histogram: evidence.concurrency_histogram.clone(),
             censused_decisions: evidence.census_decisions,
             fully_concurrent_decisions: evidence.fully_concurrent_decisions,
             fully_concurrent_permille,
+            non_monotone_decision_windows: evidence.non_monotone_decision_windows,
             min_fully_concurrent_permille: TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1,
             meets_formal_topology,
             formal_topology_reason,
@@ -2081,14 +2184,6 @@ pub enum TtsS1ReplayErrorV1 {
         missing: String,
         timeout_seconds: u64,
     },
-    /// The clock ran backwards between the last announcement and the token.
-    /// Refused rather than published: a token stamped before an
-    /// announcement it demonstrably followed would strip the run of its
-    /// formal standing at the merge, hours later.
-    StartBarrierClockAnomaly {
-        released_unix_micros: u64,
-        latest_ready_unix_micros: u64,
-    },
     /// The shard waited out its start-barrier deadline. Never a shard that
     /// quietly went ahead alone: a shard that searched by itself measured
     /// an idle machine.
@@ -2141,7 +2236,6 @@ impl TtsS1ReplayErrorV1 {
             Self::EmptyShard { .. } => "tts_s1_replay_empty_shard",
             Self::StartBarrierReady(_) => "tts_s1_replay_start_barrier_ready_failed",
             Self::ShardReadinessTimeout { .. } => "tts_s1_replay_shard_readiness_timeout",
-            Self::StartBarrierClockAnomaly { .. } => "tts_s1_replay_start_barrier_clock_anomaly",
             Self::StartBarrierTimeout { .. } => "tts_s1_replay_start_barrier_timeout",
             Self::InvalidShardSelector { .. } => "tts_s1_replay_invalid_shard_selector",
             Self::InvalidShardReport => "tts_s1_replay_shard_report_invalid",
@@ -2205,14 +2299,6 @@ impl fmt::Display for TtsS1ReplayErrorV1 {
             } => write!(
                 formatter,
                 "{}: shards {missing} never announced themselves ready within {timeout_seconds} s; the start barrier was not released and no shard searched",
-                self.code_v1()
-            ),
-            Self::StartBarrierClockAnomaly {
-                released_unix_micros,
-                latest_ready_unix_micros,
-            } => write!(
-                formatter,
-                "{}: the clock read {released_unix_micros} micros for the start token, before the last announcement at {latest_ready_unix_micros}",
                 self.code_v1()
             ),
             Self::StartBarrierTimeout {
@@ -2418,8 +2504,8 @@ pub(crate) fn replay_corpus_pass_v1(
     // topology is the one the measurements were taken under and not one
     // sampled after the run has already loaded the machine.
     let host = TtsS1HostFactsV1::read_v1();
-    // The shared time base, fixed here for the same reason: every
-    // per-decision window this pass records is expressed against it.
+    // The process-local barrier diagnostic base. Decision census windows
+    // read the OS clock directly at each boundary instead.
     let clock = TtsS1WallClockBaseV1::now_v1();
 
     // The corpus names the checkpoint it was drawn from; measuring a
@@ -2508,17 +2594,17 @@ pub(crate) fn replay_corpus_pass_v1(
     // would release every shard into its own multi-second checkpoint load
     // and prove nothing; waiting later would leave the first decisions
     // measured on whatever machine happened to exist.
-    let barrier = match (start_barrier, shard) {
+    let mut barrier = match (start_barrier, shard) {
         (Some(config), Some(selector)) => {
             // ANNOUNCE, then WAIT, and in that order: the announcement is
             // what lets the launcher know this shard is loaded, and a shard
             // that waited before announcing would deadlock the whole
             // fan-out against itself.
-            let (process_id, ready_unix_micros) =
-                announce_shard_ready_v1(config, selector.shard_index, &clock)?;
+            let readiness = announce_shard_ready_v1(config, selector.shard_index, &clock)?;
             let mut barrier = wait_for_start_barrier_v1(config, &clock)?;
-            barrier.process_id = process_id;
-            barrier.ready_unix_micros = ready_unix_micros;
+            barrier.process_id = readiness.process_id;
+            barrier.ready_unix_micros = readiness.ready_unix_micros;
+            barrier.announcement_sha256 = readiness.announcement_sha256;
             barrier
         }
         _ => TtsS1StartBarrierV1::absent_v1(),
@@ -2643,6 +2729,12 @@ pub(crate) fn replay_corpus_pass_v1(
                 base_seed: episode.episode_base_seed,
                 schedule: &schedule,
             };
+            // This assignment is the shard-local causal fact. It occurs
+            // immediately before the first search begins, after the token
+            // wait has returned successfully.
+            if records.is_empty() && barrier.used {
+                barrier.observed_token_before_first_decision = true;
+            }
             let record = search_and_publish_one_decision_v1(
                 scorer,
                 bound_ref,
@@ -2653,7 +2745,6 @@ pub(crate) fn replay_corpus_pass_v1(
                 episode.episode_id,
                 ordinal,
                 is_corpus_target,
-                &clock,
                 &mut diagnostics,
                 &mut responses,
             )?;
@@ -3339,7 +3430,6 @@ fn search_and_publish_one_decision_v1(
     episode_id: u64,
     decision_ordinal: u64,
     is_corpus_target: bool,
-    clock: &TtsS1WallClockBaseV1,
     diagnostics: &mut ModelGuidedSearchOutcomeWriterV4,
     responses: &mut impl Write,
 ) -> Result<TtsS1ReplayDecisionRecordV1, TtsS1ReplayErrorV1> {
@@ -3348,6 +3438,7 @@ fn search_and_publish_one_decision_v1(
     use crate::flat_policy_v2::FlatDecisionEncoderV2;
     use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 
+    let work_started_unix_micros = unix_micros_now_v1();
     let decision_started = Instant::now();
     let (score, model_input_sha256, candidate_order_commitment) = {
         let mut encoder = FlatDecisionEncoderV2::default();
@@ -3508,6 +3599,7 @@ fn search_and_publish_one_decision_v1(
         .map_err(|error| TtsS1ReplayErrorV1::Diagnostics(error.to_string()))?;
     diagnostics.note_request_completed_v4();
 
+    let work_ended_unix_micros = unix_micros_now_v1();
     Ok(TtsS1ReplayDecisionRecordV1 {
         // Chain fields are assigned once every record is finished; see the
         // replay loop.
@@ -3536,11 +3628,11 @@ fn search_and_publish_one_decision_v1(
             publish_micros: 0,
             response_micros: 0,
             protocol_micros: 0,
-            // The overlap window: this decision's whole measured work, on
-            // the run's shared time base. Both ends are read AFTER the work
-            // they bound is finished, and nothing here branches on either.
-            work_started_unix_micros: clock.micros_at_v1(decision_started),
-            work_ended_unix_micros: clock.micros_at_v1(Instant::now()),
+            // The overlap window: this decision's whole measured work.
+            // Each boundary reads the OS wall clock directly so separate
+            // processes do not introduce launch-anchor skew.
+            work_started_unix_micros,
+            work_ended_unix_micros,
         },
         ceilings: TtsS1DecisionCeilingsV1 {
             search: classify_micros_v1(search_micros),
@@ -3615,10 +3707,10 @@ pub struct TtsS1ReplayShardReportBodyV1 {
     pub identity: TtsS1ReplayIdentityV1,
     pub shard_assignment_rule: String,
     /// What this shard waited for before its first decision. The merge
-    /// requires every shard of a run to have been released by one token,
-    /// and every shard's first decision to have begun after it.
+    /// requires every shard to report one token digest and its local
+    /// observation-before-first-search fact.
     pub start_barrier: TtsS1StartBarrierV1,
-    /// This shard's first and last decision windows, on the shared base.
+    /// This shard's first and last decision windows, on the OS clock.
     pub first_work_started_unix_micros: u64,
     pub last_work_ended_unix_micros: u64,
     pub shard_index: u64,
@@ -3733,6 +3825,14 @@ pub fn verify_tts_s1_replay_shard_body_v1(
         .ok_or_else(|| invalid("shard index or shard count out of range"))?;
     if body.shard_assignment_rule != TTS_S1_SHARD_ASSIGNMENT_RULE_V1 {
         return Err(invalid("shard declares a different assignment rule"));
+    }
+    if body.start_barrier.used {
+        let token_bytes = body.start_barrier.token.canonical_bytes_v1()?;
+        if body.start_barrier.token.schema != TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1
+            || sha256_bytes_v1(&token_bytes) != body.start_barrier.token_sha256
+        {
+            return Err(invalid("shard start-token digest does not re-prove"));
+        }
     }
     if body.chain_genesis_sha256 != TTS_S1_REPLAY_CHAIN_GENESIS_V1 {
         return Err(TtsS1ReplayErrorV1::BrokenChain);
@@ -4028,7 +4128,7 @@ pub fn merge_tts_s1_replay_shards_v1(
 /// processes run one after another declare the same eight as eight run
 /// together, and every latency the sequential eight measured was taken on a
 /// near-idle machine. So the census is built from the per-decision work
-/// windows the shards recorded on a shared time base: for every decision,
+/// windows the shards recorded from the OS wall clock: for every decision,
 /// how many shards were mid-work when it began. A run that really was
 /// eight-way concurrent shows almost every decision at eight; a sequential
 /// one shows almost every decision at one, whatever its reports claim.
@@ -4065,55 +4165,73 @@ pub(crate) fn shard_topology_evidence_v1(
     let (concurrency_histogram, fully_concurrent_decisions, census_decisions) =
         concurrency_census_v1(&shard_windows);
 
-    // ONE token, and every shard released by it. A run whose shards report
-    // different release timestamps did not share a barrier, whatever each
-    // of them waited on.
+    // ONE token, proved by its canonical digest. The timestamps remain
+    // diagnostics and are never compared for barrier formality.
     let released = shards
         .first()
-        .map(|shard| shard.body.start_barrier.released_unix_micros)
+        .map(|shard| shard.body.start_barrier.token.released_unix_micros)
         .unwrap_or(0);
-    let every_shard_waited_on_the_barrier = !shards.is_empty()
-        && released != 0
-        && shards.iter().all(|shard| {
-            shard.body.start_barrier.used
-                && shard.body.start_barrier.released_unix_micros == released
-        });
-    let every_first_decision_after_the_barrier = every_shard_waited_on_the_barrier
+    let every_shard_waited_on_the_barrier =
+        !shards.is_empty() && shards.iter().all(|shard| shard.body.start_barrier.used);
+    let token_sha256 = shards
+        .first()
+        .map(|shard| shard.body.start_barrier.token_sha256.as_str())
+        .unwrap_or("");
+    let every_shard_reported_same_token = every_shard_waited_on_the_barrier
+        && !token_sha256.is_empty()
         && shards
             .iter()
-            .all(|shard| shard.body.first_work_started_unix_micros >= released);
+            .all(|shard| shard.body.start_barrier.token_sha256 == token_sha256);
+    let every_shard_observed_token_before_first_decision = every_shard_waited_on_the_barrier
+        && shards.iter().all(|shard| {
+            shard
+                .body
+                .start_barrier
+                .observed_token_before_first_decision
+        });
 
-    // THE READINESS HANDSHAKE, reassembled from what each shard announced.
-    // A run whose token predates any announcement released a shard that was
-    // still loading, and the fast shards it released measured a machine the
-    // slow one was not yet on.
+    // THE READINESS HANDSHAKE, reassembled from what each shard announced
+    // and matched against the observed set committed by its token.
     let mut shard_readiness: Vec<TtsS1ShardReadinessV1> = shards
         .iter()
         .map(|shard| TtsS1ShardReadinessV1 {
             shard_index: shard.body.shard_index,
             process_id: shard.body.start_barrier.process_id,
             ready_unix_micros: shard.body.start_barrier.ready_unix_micros,
+            announcement_sha256: shard.body.start_barrier.announcement_sha256.clone(),
         })
         .collect();
     shard_readiness.sort_unstable_by_key(|readiness| readiness.shard_index);
     let latest_ready_unix_micros = shard_readiness.iter().fold(0u64, |latest, readiness| {
         latest.max(readiness.ready_unix_micros)
     });
-    let released_after_every_shard_ready = every_shard_waited_on_the_barrier
-        && !shard_readiness.is_empty()
-        && shard_readiness
-            .iter()
-            .all(|readiness| readiness.ready_unix_micros != 0)
-        && released >= latest_ready_unix_micros;
+    let every_shard_announcement_observed_before_release = every_shard_waited_on_the_barrier
+        && shards.iter().all(|shard| {
+            shard
+                .body
+                .start_barrier
+                .token
+                .observed_shard_readiness
+                .iter()
+                .any(|observed| {
+                    observed.shard_index == shard.body.shard_index
+                        && observed.process_id == shard.body.start_barrier.process_id
+                        && observed.announcement_sha256
+                            == shard.body.start_barrier.announcement_sha256
+                })
+        });
+    let non_monotone_decision_windows = non_monotone_decision_windows_v1(&shard_windows);
 
     TtsS1TopologyEvidenceV1 {
         shard_count: shards.len() as u64,
         barrier_released_unix_micros: released,
         every_shard_waited_on_the_barrier,
-        every_first_decision_after_the_barrier,
+        every_shard_reported_same_token,
+        every_shard_observed_token_before_first_decision,
         shard_readiness,
         latest_ready_unix_micros,
-        released_after_every_shard_ready,
+        every_shard_announcement_observed_before_release,
+        non_monotone_decision_windows,
         concurrency_histogram,
         fully_concurrent_decisions,
         census_decisions,
@@ -5640,6 +5758,33 @@ mod tests {
             running += *count as usize;
         }
 
+        let readiness: Vec<TtsS1ShardReadinessV1> = (0..shard_count)
+            .map(|shard_index| {
+                let process_id = 4_000 + shard_index;
+                let ready_unix_micros = SYNTHETIC_BARRIER_MICROS_V1 - 100 + shard_index;
+                let bytes = format!("{process_id} {ready_unix_micros}\n");
+                TtsS1ShardReadinessV1 {
+                    shard_index,
+                    process_id,
+                    ready_unix_micros,
+                    announcement_sha256: sha256_bytes_v1(bytes.as_bytes()),
+                }
+            })
+            .collect();
+        let token = TtsS1StartBarrierTokenV1 {
+            schema: TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1.to_owned(),
+            released_unix_micros: SYNTHETIC_BARRIER_MICROS_V1,
+            observed_shard_readiness: readiness
+                .iter()
+                .map(|announcement| TtsS1ObservedShardReadinessV1 {
+                    shard_index: announcement.shard_index,
+                    process_id: announcement.process_id,
+                    announcement_sha256: announcement.announcement_sha256.clone(),
+                })
+                .collect(),
+        };
+        let token_sha256 = sha256_bytes_v1(&token.canonical_bytes_v1().unwrap());
+
         let mut bodies = Vec::with_capacity(shard_count as usize);
         for shard_index in 0..shard_count {
             let selector =
@@ -5696,10 +5841,15 @@ mod tests {
                     // Announced before the release, as a real handshake is:
                     // the launcher waits for every announcement and only
                     // then publishes the token.
-                    ready_unix_micros: SYNTHETIC_BARRIER_MICROS_V1 - 100 + shard_index,
-                    process_id: 4_000 + shard_index,
-                    released_unix_micros: SYNTHETIC_BARRIER_MICROS_V1,
+                    ready_unix_micros: readiness[shard_index as usize].ready_unix_micros,
+                    process_id: readiness[shard_index as usize].process_id,
+                    announcement_sha256: readiness[shard_index as usize]
+                        .announcement_sha256
+                        .clone(),
+                    token: token.clone(),
+                    token_sha256: token_sha256.clone(),
                     observed_unix_micros: SYNTHETIC_BARRIER_MICROS_V1 + 10,
+                    observed_token_before_first_decision: true,
                     wait_micros: 10,
                     timeout_seconds: 600,
                 },
@@ -5758,6 +5908,7 @@ mod tests {
                 shard_index,
                 process_id: 4_000 + shard_index,
                 ready_unix_micros: SYNTHETIC_BARRIER_MICROS_V1 - 100 + shard_index,
+                announcement_sha256: format!("{shard_index:02x}").repeat(32),
             })
             .collect();
         let latest_ready_unix_micros = shard_readiness.iter().fold(0u64, |latest, readiness| {
@@ -5767,10 +5918,12 @@ mod tests {
             shard_count,
             barrier_released_unix_micros: SYNTHETIC_BARRIER_MICROS_V1,
             every_shard_waited_on_the_barrier: true,
-            every_first_decision_after_the_barrier: true,
+            every_shard_reported_same_token: true,
+            every_shard_observed_token_before_first_decision: true,
             shard_readiness,
             latest_ready_unix_micros,
-            released_after_every_shard_ready: true,
+            every_shard_announcement_observed_before_release: true,
+            non_monotone_decision_windows: 0,
             concurrency_histogram,
             fully_concurrent_decisions,
             census_decisions,
@@ -5910,7 +6063,7 @@ mod tests {
             &fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 40),
         );
         assert!(formal.meets_formal_topology);
-        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V4);
+        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V5);
         assert_eq!(formal.shard_count, 8);
         assert_eq!(formal.formal_shard_count, 8);
         assert_eq!(formal.formal_logical_cpus_per_shard, 2);
@@ -5924,7 +6077,7 @@ mod tests {
             TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1
         );
         assert!(formal.every_shard_waited_on_the_barrier);
-        assert!(formal.every_first_decision_after_the_barrier);
+        assert!(formal.every_shard_observed_token_before_first_decision);
         // The whole census sits in one bucket, at the shard count.
         assert_eq!(formal.concurrency_histogram.len(), 1);
         assert_eq!(formal.concurrency_histogram[0].concurrent_shards, 8);
@@ -5964,7 +6117,7 @@ mod tests {
         // does: the count, the host, the barrier and the overlap at once.
         let mut nothing = fully_concurrent_evidence_v1(4, 40);
         nothing.every_shard_waited_on_the_barrier = false;
-        nothing.every_first_decision_after_the_barrier = false;
+        nothing.every_shard_observed_token_before_first_decision = false;
         nothing.fully_concurrent_decisions = 0;
         let neither = TtsS1ShardTopologyV1::evaluate_v1(
             TtsS1HostFactsV1 {
@@ -6016,10 +6169,12 @@ mod tests {
                 shard_count,
                 barrier_released_unix_micros: SYNTHETIC_BARRIER_MICROS_V1,
                 every_shard_waited_on_the_barrier: true,
-                every_first_decision_after_the_barrier: true,
+                every_shard_reported_same_token: true,
+                every_shard_observed_token_before_first_decision: true,
                 shard_readiness: Vec::new(),
                 latest_ready_unix_micros: 0,
-                released_after_every_shard_ready: true,
+                every_shard_announcement_observed_before_release: true,
+                non_monotone_decision_windows: 0,
                 concurrency_histogram: histogram,
                 fully_concurrent_decisions: fully,
                 census_decisions: censused,
@@ -6082,150 +6237,141 @@ mod tests {
         assert!(!TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &empty).meets_formal_topology);
     }
 
-    /// THE BARRIER CLAUSE. A run whose shards never waited, or whose shards
-    /// waited on different tokens, or one of whose shards got its first
-    /// decision in before the token was released, is refused: the census
-    /// alone would not notice a shard that started early and only overlaps
-    /// on everything after its head.
+    /// A wall-clock step is published as a diagnostic count and does not
+    /// become a new formal refusal beyond its effect on the overlap census.
     #[test]
-    fn the_start_barrier_is_required_for_formal_standing_v1() {
+    fn non_monotone_census_windows_are_counted_but_not_separately_gated_v1() {
+        let windows = vec![
+            vec![(100, 120), (90, 110), (130, 125), (140, 150)],
+            vec![(100, 200), (201, 250)],
+        ];
+        assert_eq!(non_monotone_decision_windows_v1(&windows), 2);
+
+        let mut evidence = fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 40);
+        evidence.non_monotone_decision_windows = 2;
+        let topology = TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence);
+        assert!(topology.meets_formal_topology);
+        assert_eq!(topology.non_monotone_decision_windows, 2);
+    }
+
+    fn refresh_synthetic_token_v1(bodies: &mut [TtsS1ReplayShardReportBodyV1]) {
+        let observed_shard_readiness = bodies
+            .iter_mut()
+            .map(|body| {
+                let bytes = format!(
+                    "{} {}\n",
+                    body.start_barrier.process_id, body.start_barrier.ready_unix_micros
+                );
+                body.start_barrier.announcement_sha256 = sha256_bytes_v1(bytes.as_bytes());
+                TtsS1ObservedShardReadinessV1 {
+                    shard_index: body.shard_index,
+                    process_id: body.start_barrier.process_id,
+                    announcement_sha256: body.start_barrier.announcement_sha256.clone(),
+                }
+            })
+            .collect();
+        let token = TtsS1StartBarrierTokenV1 {
+            schema: TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1.to_owned(),
+            released_unix_micros: bodies[0].start_barrier.token.released_unix_micros,
+            observed_shard_readiness,
+        };
+        let token_sha256 = sha256_bytes_v1(&token.canonical_bytes_v1().unwrap());
+        for body in bodies {
+            body.start_barrier.token = token.clone();
+            body.start_barrier.token_sha256 = token_sha256.clone();
+        }
+    }
+
+    /// Process-local clock skew cannot deny an honest run and cannot grant
+    /// one missing any causal barrier fact.
+    #[test]
+    fn skewed_process_bases_are_gated_only_by_causal_barrier_facts_v1() {
         let counts = [4u64; 8];
-        let shards = synthetic_shard_reports_v1(&counts, 8);
-        let evidence = shard_topology_evidence_v1(&shards);
+        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
+        let release = bodies[0].start_barrier.token.released_unix_micros;
+        for (index, body) in bodies.iter_mut().enumerate() {
+            let offset = if index % 2 == 0 { 7_000 } else { 5_000 };
+            body.start_barrier.ready_unix_micros = if index % 2 == 0 {
+                release + offset
+            } else {
+                release - offset
+            };
+            body.start_barrier.observed_unix_micros = if index % 2 == 0 {
+                release - offset
+            } else {
+                release + offset
+            };
+        }
+        refresh_synthetic_token_v1(&mut bodies);
+        let reports: Vec<_> = bodies
+            .iter()
+            .cloned()
+            .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
+            .collect();
+        let evidence = shard_topology_evidence_v1(&reports);
         assert!(evidence.every_shard_waited_on_the_barrier);
-        assert!(evidence.every_first_decision_after_the_barrier);
-        assert_eq!(evidence.shard_count, 8);
-        assert_eq!(evidence.fully_concurrent_permille_v1(), 1_000);
+        assert!(evidence.every_shard_reported_same_token);
+        assert!(evidence.every_shard_announcement_observed_before_release);
+        assert!(evidence.every_shard_observed_token_before_first_decision);
         assert!(
             TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence).meets_formal_topology
         );
 
-        // A shard that waited on NOTHING.
-        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-        bodies[3].start_barrier = TtsS1StartBarrierV1::absent_v1();
-        let unbarriered: Vec<TtsS1ReplayShardReportV1> = bodies
-            .into_iter()
-            .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
-            .collect();
-        let evidence = shard_topology_evidence_v1(&unbarriered);
-        assert!(!evidence.every_shard_waited_on_the_barrier);
-        let topology = TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence);
-        assert!(!topology.meets_formal_topology);
-        assert!(topology.formal_topology_reason.contains("start barrier"));
-
-        // Shards that waited on DIFFERENT tokens are not one fan-out.
-        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-        bodies[5].start_barrier.released_unix_micros += 1;
-        let split: Vec<TtsS1ReplayShardReportV1> = bodies
-            .into_iter()
-            .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
-            .collect();
-        assert!(!shard_topology_evidence_v1(&split).every_shard_waited_on_the_barrier);
-
-        // A shard whose first decision beat the token: it measured an idle
-        // machine before the others existed.
-        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-        for body in bodies.iter_mut() {
-            body.start_barrier.released_unix_micros = SYNTHETIC_EPOCH_MICROS_V1 + 500;
+        let mut missing = bodies.clone();
+        let mut token = missing[0].start_barrier.token.clone();
+        token
+            .observed_shard_readiness
+            .retain(|observed| observed.shard_index != 3);
+        let token_sha256 = sha256_bytes_v1(&token.canonical_bytes_v1().unwrap());
+        for body in &mut missing {
+            body.start_barrier.token = token.clone();
+            body.start_barrier.token_sha256 = token_sha256.clone();
         }
-        let early: Vec<TtsS1ReplayShardReportV1> = bodies
+        let reports: Vec<_> = missing
             .into_iter()
             .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
             .collect();
-        let evidence = shard_topology_evidence_v1(&early);
-        assert!(evidence.every_shard_waited_on_the_barrier);
-        assert!(!evidence.every_first_decision_after_the_barrier);
-        let topology = TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence);
-        assert!(!topology.meets_formal_topology);
-        assert!(topology
-            .formal_topology_reason
-            .contains("before the start barrier"));
-    }
-
-    /// THE READINESS HANDSHAKE, and the hole it closes. Starting a process
-    /// is nearly instant; loading a checkpoint is not, and it does not take
-    /// the same time in every shard. A token released on process CREATION
-    /// would let a fast shard search while a slow sibling was still reading
-    /// weights, and if those head decisions fell under the census tolerance
-    /// the run would be certified as contention the machine never had.
-    #[test]
-    fn a_token_released_before_every_shard_is_ready_is_refused_v1() {
-        let counts = [4u64; 8];
-        // The honest case: every shard announced, then the token.
-        let ready = shard_topology_evidence_v1(&synthetic_shard_reports_v1(&counts, 8));
-        assert!(ready.released_after_every_shard_ready);
-        assert_eq!(ready.shard_readiness.len(), 8);
-        // Ascending by shard index, and each carries its announcing pid.
-        for (index, readiness) in ready.shard_readiness.iter().enumerate() {
-            assert_eq!(readiness.shard_index, index as u64);
-            assert_eq!(readiness.process_id, 4_000 + index as u64);
-            assert!(readiness.ready_unix_micros < ready.barrier_released_unix_micros);
-        }
-        assert_eq!(
-            ready.latest_ready_unix_micros,
-            ready
-                .shard_readiness
-                .iter()
-                .map(|readiness| readiness.ready_unix_micros)
-                .max()
-                .unwrap()
+        let missing_evidence = shard_topology_evidence_v1(&reports);
+        assert!(missing_evidence.every_shard_reported_same_token);
+        assert!(!missing_evidence.every_shard_announcement_observed_before_release);
+        assert!(
+            !TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &missing_evidence)
+                .meets_formal_topology
         );
-        assert!(TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &ready).meets_formal_topology);
 
-        // ONE SLOW SHARD, released late. Everything else about the run is
-        // right: the count, the host, the overlap, and every shard did wait
-        // on one token. Only the handshake catches it.
-        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-        let released = bodies[0].start_barrier.released_unix_micros;
-        bodies[6].start_barrier.ready_unix_micros = released + 1;
-        let late: Vec<TtsS1ReplayShardReportV1> = bodies
+        let mut split = bodies.clone();
+        split[5].start_barrier.token.released_unix_micros += 1;
+        split[5].start_barrier.token_sha256 =
+            sha256_bytes_v1(&split[5].start_barrier.token.canonical_bytes_v1().unwrap());
+        let reports: Vec<_> = split
             .into_iter()
             .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
             .collect();
-        let evidence = shard_topology_evidence_v1(&late);
-        assert!(evidence.every_shard_waited_on_the_barrier);
-        assert!(evidence.every_first_decision_after_the_barrier);
-        assert_eq!(evidence.fully_concurrent_permille_v1(), 1_000);
-        assert!(!evidence.released_after_every_shard_ready);
-        let topology = TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence);
-        assert!(!topology.meets_formal_topology);
-        assert!(topology
-            .formal_topology_reason
-            .contains("before the last shard announced itself ready"));
-        // The report still PUBLISHES what every shard announced, so the
-        // refusal is checkable rather than merely asserted.
-        assert_eq!(topology.shard_readiness.len(), 8);
-        assert_eq!(topology.latest_ready_unix_micros, released + 1);
-        assert!(topology.latest_ready_unix_micros > topology.start_barrier_released_unix_micros);
+        let split_evidence = shard_topology_evidence_v1(&reports);
+        assert!(!split_evidence.every_shard_reported_same_token);
+        assert!(
+            !TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &split_evidence)
+                .meets_formal_topology
+        );
 
-        // A shard that announced NOTHING is refused too: a zero timestamp
-        // is an announcement nobody made, not one that happened at the
-        // epoch.
-        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-        bodies[2].start_barrier.ready_unix_micros = 0;
-        let silent: Vec<TtsS1ReplayShardReportV1> = bodies
+        let mut early = bodies;
+        early[6].start_barrier.observed_token_before_first_decision = false;
+        let reports: Vec<_> = early
             .into_iter()
             .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
             .collect();
-        assert!(!shard_topology_evidence_v1(&silent).released_after_every_shard_ready);
+        let early_evidence = shard_topology_evidence_v1(&reports);
+        assert!(!early_evidence.every_shard_observed_token_before_first_decision);
+        assert!(
+            !TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &early_evidence)
+                .meets_formal_topology
+        );
     }
 
-    /// THE TOKEN AND THE ANNOUNCEMENTS COME FROM ONE FUNCTION.
-    ///
-    /// The readiness clause is an exact `release >= ready` with no
-    /// tolerance, and it compares the token's instant against instants the
-    /// SHARDS recorded. A launcher that stamped the token from its own
-    /// runtime's clock would be comparing two clocks, and two clocks in two
-    /// runtimes do not have to disagree by much to invert a comparison
-    /// between instants a few microseconds apart.
-    ///
-    /// Passing ONE base to both sides is what makes this deterministic
-    /// rather than a race against the host: the announcement and the token
-    /// are then provably the same monotonic advance of the same launch
-    /// reading, so the ordering below cannot flake and cannot be satisfied
-    /// by two clocks that merely happened to agree.
+    /// The publisher commits every exact ready-file digest into one
+    /// canonical token, and a shard reads and hashes those same bytes.
     #[test]
-    fn the_start_token_and_the_announcements_come_from_one_clock_v1() {
+    fn the_start_token_commits_the_observed_ready_file_set_v1() {
         let directory = scratch_diagnostics_dir_v1("publish-one-clock");
         let token = directory.join("start-barrier.token");
         let clock = TtsS1WallClockBaseV1::now_v1();
@@ -6234,51 +6380,39 @@ mod tests {
             timeout_seconds: 30,
         };
 
-        let before = clock.micros_now_v1();
-        let mut announced: Vec<u64> = Vec::new();
+        let mut announced = Vec::new();
         for shard_index in 0..3u64 {
-            let (process_id, ready) =
+            let readiness =
                 announce_shard_ready_v1(&config, shard_index, &clock).expect("a shard announces");
-            assert_eq!(process_id, u64::from(std::process::id()));
-            announced.push(ready);
+            assert_eq!(readiness.process_id, u64::from(std::process::id()));
+            announced.push(readiness);
         }
-        let latest_announced = *announced.iter().max().expect("three announcements");
-
-        // THE SAME BASE, handed to the publisher.
         let published = publish_start_barrier_v1(&token, &directory, 3, 30, &clock)
             .expect("the token publishes");
-        let after = clock.micros_now_v1();
-
-        // Every instant is one monotonic advance of one launch reading, so
-        // the ordering is exact and not approximate.
-        assert!(before <= announced[0]);
-        assert!(announced[0] <= announced[1] && announced[1] <= announced[2]);
-        assert_eq!(published.latest_ready_unix_micros, latest_announced);
-        assert!(
-            published.released_unix_micros >= published.latest_ready_unix_micros,
-            "the token is stamped at or after the last announcement it waited for"
-        );
-        assert!(published.released_unix_micros <= after);
-        // The publisher saw every announcement, with the pid each carried.
         assert_eq!(published.ready.len(), 3);
         for (shard_index, announcement) in published.ready.iter().enumerate() {
             assert_eq!(announcement.shard_index, shard_index as u64);
             assert_eq!(announcement.process_id, u64::from(std::process::id()));
-            assert_eq!(announcement.ready_unix_micros, announced[shard_index]);
+            assert_eq!(announcement, &announced[shard_index]);
+            assert_eq!(
+                published.token.observed_shard_readiness[shard_index],
+                TtsS1ObservedShardReadinessV1 {
+                    shard_index: shard_index as u64,
+                    process_id: announcement.process_id,
+                    announcement_sha256: announcement.announcement_sha256.clone(),
+                }
+            );
         }
 
-        // The token on disk carries exactly what was returned, and a shard
-        // waiting on it reads exactly that back: one number, end to end.
-        let written = std::fs::read_to_string(&token).expect("the token reads");
+        let written = std::fs::read(&token).expect("the token reads");
+        assert_eq!(sha256_bytes_v1(&written), published.token_sha256);
         assert_eq!(
-            written.trim().parse::<u64>().unwrap(),
-            published.released_unix_micros
+            decode_start_barrier_token_v1(&written),
+            Some(published.token.clone())
         );
         let observed = wait_for_start_barrier_v1(&config, &clock).expect("the token is observed");
-        assert_eq!(
-            observed.released_unix_micros,
-            published.released_unix_micros
-        );
+        assert_eq!(observed.token, published.token);
+        assert_eq!(observed.token_sha256, published.token_sha256);
         // No staging debris beside it.
         assert!(!directory
             .read_dir()
@@ -6286,16 +6420,6 @@ mod tests {
             .filter_map(Result::ok)
             .any(|entry| entry.file_name().to_string_lossy().contains(".stage-")));
 
-        // AND THE WHOLE HANDSHAKE, evaluated as the merge would: this
-        // ordering is what grants a run its readiness clause.
-        let mut evidence = fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 4);
-        evidence.barrier_released_unix_micros = published.released_unix_micros;
-        evidence.latest_ready_unix_micros = published.latest_ready_unix_micros;
-        evidence.released_after_every_shard_ready =
-            published.released_unix_micros >= published.latest_ready_unix_micros;
-        assert!(
-            TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence).meets_formal_topology
-        );
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -6379,81 +6503,10 @@ mod tests {
                 shard_index: 0,
                 process_id: 4_242,
                 ready_unix_micros: 1_700_000_000_000_042,
+                announcement_sha256: sha256_bytes_v1(b"4242 1700000000000042\n"),
             })
         );
         let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    /// THE COMPARISON IS EXACT, AND THAT ONLY WORKS AT ONE RESOLUTION.
-    ///
-    /// `release >= ready` carries no tolerance, deliberately: a tolerance
-    /// would be a licence for a token to go out slightly early. What a
-    /// tolerance-free comparison requires instead is that both sides be
-    /// recorded at the same resolution. A producer that recorded the
-    /// release in milliseconds and multiplied by a thousand would publish a
-    /// number up to 999 microseconds BEFORE the instant it meant, and would
-    /// strip formal standing from a run whose token genuinely went out
-    /// after every announcement.
-    ///
-    /// So the boundary is pinned here, at the microsecond: the same instant
-    /// is accepted, anywhere later in the same millisecond is accepted, and
-    /// one microsecond earlier is refused.
-    #[test]
-    fn the_readiness_comparison_is_exact_at_the_microsecond_v1() {
-        let counts = [4u64; 8];
-        let latest_ready = SYNTHETIC_EPOCH_MICROS_V1 - 1_000;
-        let released_at = |release: u64| {
-            let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-            for (index, body) in bodies.iter_mut().enumerate() {
-                body.start_barrier.released_unix_micros = release;
-                // One shard announces LAST, at `latest_ready`; the rest
-                // announced earlier, so the boundary is that one shard.
-                body.start_barrier.ready_unix_micros = if index == 3 {
-                    latest_ready
-                } else {
-                    latest_ready - 500
-                };
-            }
-            let reports: Vec<TtsS1ReplayShardReportV1> = bodies
-                .into_iter()
-                .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
-                .collect();
-            let evidence = shard_topology_evidence_v1(&reports);
-            assert_eq!(evidence.latest_ready_unix_micros, latest_ready);
-            evidence
-        };
-
-        // THE SAME MICROSECOND: a token published in the same instant as
-        // the last announcement is in order, and is accepted.
-        assert!(released_at(latest_ready).released_after_every_shard_ready);
-        // ANYWHERE LATER IN THE SAME MILLISECOND, which is the case a
-        // millisecond-resolution release would have wrongly refused: the
-        // announcement lands at .xxx400 and the token at .xxx999, and a
-        // release truncated to .xxx000 would read as 400 micros early.
-        for offset in [1u64, 400, 500, 999] {
-            assert!(
-                released_at(latest_ready + offset).released_after_every_shard_ready,
-                "a release {offset} micros after the last announcement is in order"
-            );
-        }
-        // ONE MICROSECOND EARLY IS STILL EARLY. No tolerance is added to
-        // paper over the resolution: the fix is that both sides record
-        // whole microseconds, not that the comparison got looser.
-        for offset in [1u64, 400, 999, 1_000] {
-            assert!(
-                !released_at(latest_ready - offset).released_after_every_shard_ready,
-                "a release {offset} micros before the last announcement is out of order"
-            );
-        }
-
-        // And the report says which unit and which comparison it means, so
-        // a reader never has to infer either.
-        let topology =
-            TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &released_at(latest_ready));
-        assert_eq!(topology.time_base, TTS_S1_TOPOLOGY_TIME_BASE_V1);
-        assert!(topology.time_base.contains("whole-microseconds"));
-        assert!(topology.time_base.contains("no-tolerance"));
-        assert!(topology.rule.contains("compared-exactly-with-no-tolerance"));
     }
 
     /// A shard ANNOUNCES BEFORE IT WAITS, and the announcement is a real
@@ -6468,10 +6521,10 @@ mod tests {
             timeout_seconds: 30,
         };
         let before = clock.micros_at_v1(Instant::now());
-        let (process_id, ready_unix_micros) =
+        let readiness =
             announce_shard_ready_v1(&config, 5, &clock).expect("the announcement publishes");
-        assert_eq!(process_id, u64::from(std::process::id()));
-        assert!(ready_unix_micros >= before);
+        assert_eq!(readiness.process_id, u64::from(std::process::id()));
+        assert!(readiness.ready_unix_micros >= before);
 
         // The name is derived from the index alone, which is how a launcher
         // that knows only how many shards it started can name every file it
@@ -6482,8 +6535,15 @@ mod tests {
         let text = std::fs::read_to_string(&published).expect("the announcement reads");
         let fields: Vec<&str> = text.split_whitespace().collect();
         assert_eq!(fields.len(), 2, "the announcement is a pid and an instant");
-        assert_eq!(fields[0].parse::<u64>().unwrap(), process_id);
-        assert_eq!(fields[1].parse::<u64>().unwrap(), ready_unix_micros);
+        assert_eq!(fields[0].parse::<u64>().unwrap(), readiness.process_id);
+        assert_eq!(
+            fields[1].parse::<u64>().unwrap(),
+            readiness.ready_unix_micros
+        );
+        assert_eq!(
+            sha256_bytes_v1(text.as_bytes()),
+            readiness.announcement_sha256
+        );
         // No staging debris left beside it.
         let staged: Vec<_> = std::fs::read_dir(&directory)
             .unwrap()
@@ -6516,91 +6576,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 
-    /// UNEQUAL STARTUP, driven for real: eight announcements arrive over
-    /// time, and a token published before the last one is refused while the
-    /// same token published after it is granted. This is the launcher's
-    /// contract expressed against the merge that enforces it.
-    #[test]
-    fn a_slow_shard_holds_the_token_until_it_is_ready_v1() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::sync::Arc;
-
-        let directory = scratch_diagnostics_dir_v1("ready-unequal");
-        let token = directory.join("start-barrier.token");
-        let config = TtsS1StartBarrierConfigV1 {
-            path: token.clone(),
-            timeout_seconds: 30,
-        };
-        let clock = TtsS1WallClockBaseV1::now_v1();
-
-        // Seven shards announce at once; the eighth is deliberately slow,
-        // exactly as a shard whose checkpoint load takes longer would be.
-        let latest = Arc::new(AtomicU64::new(0));
-        for shard_index in 0..7u64 {
-            let (_, ready) =
-                announce_shard_ready_v1(&config, shard_index, &clock).expect("a fast shard");
-            latest.fetch_max(ready, Ordering::Relaxed);
-        }
-        let slow_config = config.clone();
-        let slow_clock = clock;
-        let slow_latest = Arc::clone(&latest);
-        let slow = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let (_, ready) =
-                announce_shard_ready_v1(&slow_config, 7, &slow_clock).expect("the slow shard");
-            slow_latest.fetch_max(ready, Ordering::Relaxed);
-            ready
-        });
-
-        // A launcher that released here would be releasing on process
-        // creation: seven files exist, the eighth does not.
-        let present = |index: u64| {
-            directory
-                .join(tts_s1_shard_ready_file_name_v1(index))
-                .exists()
-        };
-        assert!((0..7).all(present));
-        assert!(!present(7), "the slow shard has not announced yet");
-        let premature_release = clock.micros_at_v1(Instant::now());
-
-        let slow_ready = slow.join().expect("the slow shard announces");
-        assert!(present(7));
-        assert!(
-            slow_ready > premature_release,
-            "the slow shard announced after the premature release"
-        );
-        let honest_release = clock.micros_at_v1(Instant::now());
-        assert_eq!(latest.load(Ordering::Relaxed), slow_ready);
-
-        // Build the two runs that differ only in WHEN the token went out.
-        let counts = [4u64; 8];
-        let readiness_of = |release: u64| {
-            let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
-            for (index, body) in bodies.iter_mut().enumerate() {
-                body.start_barrier.released_unix_micros = release;
-                body.start_barrier.ready_unix_micros = if index == 7 {
-                    slow_ready
-                } else {
-                    premature_release - 1
-                };
-            }
-            let reports: Vec<TtsS1ReplayShardReportV1> = bodies
-                .into_iter()
-                .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
-                .collect();
-            shard_topology_evidence_v1(&reports)
-        };
-        assert!(
-            !readiness_of(premature_release).released_after_every_shard_ready,
-            "a token released before the slow shard is refused"
-        );
-        assert!(
-            readiness_of(honest_release).released_after_every_shard_ready,
-            "the same token released after it is accepted"
-        );
-        let _ = std::fs::remove_dir_all(&directory);
-    }
-
     /// The barrier wait is BOUNDED: a shard that never sees a token fails
     /// closed rather than searching alone.
     #[test]
@@ -6629,9 +6604,14 @@ mod tests {
         // It really waited its deadline rather than returning at once.
         assert!(started.elapsed() >= std::time::Duration::from_secs(1));
 
-        // And a token that IS there is read, with the token's OWN content
-        // as the release timestamp rather than the reader's clock.
-        std::fs::write(&token, "1700000000000042\n").expect("the token writes");
+        // And a canonical token that IS there is read and hashed exactly.
+        let expected = TtsS1StartBarrierTokenV1 {
+            schema: TTS_S1_START_BARRIER_TOKEN_SCHEMA_V1.to_owned(),
+            released_unix_micros: 1_700_000_000_000_042,
+            observed_shard_readiness: Vec::new(),
+        };
+        let expected_bytes = expected.canonical_bytes_v1().unwrap();
+        std::fs::write(&token, &expected_bytes).expect("the token writes");
         let observed = wait_for_start_barrier_v1(
             &TtsS1StartBarrierConfigV1 {
                 path: token,
@@ -6641,7 +6621,8 @@ mod tests {
         )
         .expect("a published token is read");
         assert!(observed.used);
-        assert_eq!(observed.released_unix_micros, 1_700_000_000_000_042);
+        assert_eq!(observed.token, expected);
+        assert_eq!(observed.token_sha256, sha256_bytes_v1(&expected_bytes));
         assert_eq!(observed.timeout_seconds, 5);
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -6938,41 +6919,17 @@ mod tests {
             let shard_root = scratch_diagnostics_dir_v1(&format!("shard-run-{shard_count}"));
             let reports_dir = shard_root.join("reports");
             std::fs::create_dir_all(&reports_dir).expect("the shard report directory");
-            // THE BARRIER, published before the shards run because this
-            // test replays them one after another in one process rather
-            // than fanning out: the token is what the shards read, and a
-            // token already there is the sequential stand-in for a launcher
-            // that publishes it once every process has started. The overlap
-            // census then honestly reports NO concurrency, which is exactly
-            // what a sequential run should be recorded as.
-            let token = shard_root.join("start-barrier.token");
-            std::fs::write(&token, format!("{}\n", unix_micros_now_v1()))
-                .expect("the barrier token publishes");
-            let barrier = TtsS1StartBarrierConfigV1 {
-                path: token,
-                timeout_seconds: 30,
-            };
             for shard_index in 0..shard_count {
                 let selector =
                     TtsS1ShardSelectorV1::new_v1(shard_index, shard_count).expect("a legal shard");
                 let diagnostics = shard_root.join(format!("diagnostics-{shard_index}"));
-                let report = replay_shard_fixture_v1(
-                    &scorer,
-                    &corpus,
-                    selector,
-                    Some(&barrier),
-                    &diagnostics,
-                );
+                let report =
+                    replay_shard_fixture_v1(&scorer, &corpus, selector, None, &diagnostics);
                 // Exactly the episodes this index owns, and no other.
                 assert_eq!(report.body.shard_index, shard_index);
                 assert_eq!(report.body.shard_count, shard_count);
                 assert_eq!(report.body.identity.episodes_replayed, 3);
-                assert!(report.body.start_barrier.used);
-                assert!(
-                    report.body.first_work_started_unix_micros
-                        >= report.body.start_barrier.released_unix_micros,
-                    "no decision may begin before the barrier is released"
-                );
+                assert!(!report.body.start_barrier.used);
                 for episode in &report.body.episodes {
                     assert!(selector.owns_position_v1(episode.episode_position));
                     assert_eq!(episode.searched_decisions, episode.decision_count);
@@ -7006,15 +6963,15 @@ mod tests {
             );
             // THE TOPOLOGY IS HONEST ABOUT WHAT THIS TEST DID. The shards
             // ran one after another in one process, so the census must show
-            // that: every shard released by the one token, and, at K = 3,
-            // essentially no decision searched while all three were
-            // mid-work. A run that certified this as eight-way contention
-            // would be the exact defect the census exists to catch.
+            // that: at K = 3, essentially no decision searched while all
+            // three were mid-work. A run that certified this as eight-way
+            // contention would be the exact defect the census exists to
+            // catch.
             let topology = &merged.body.shard_topology;
             assert_eq!(topology.shard_count, shard_count);
             assert_eq!(topology.censused_decisions, merged.body.searched_decisions);
-            assert!(topology.every_shard_waited_on_the_barrier);
-            assert!(topology.every_first_decision_after_the_barrier);
+            assert!(!topology.every_shard_waited_on_the_barrier);
+            assert!(!topology.every_shard_observed_token_before_first_decision);
             assert!(
                 !topology.meets_formal_topology,
                 "a three-shard sequential run is never the pinned formal topology"

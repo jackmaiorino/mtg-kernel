@@ -95,32 +95,32 @@ $script:TtsS1FormalLogicalCpusPerShard = 2
 # contending while the others finish.
 $script:TtsS1FormalMinFullConcurrencyPermille = 950
 
-# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V4
+# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V5
 $script:TtsS1ShardTopologyRule = 'formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes' +
     '-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under' +
     '-on-a-host-with-at-least-2-logical-cpus-per-shard' +
     '-every-shard-announcing-itself-ready-after-loading-its-checkpoint' +
-    '-one-start-barrier-released-only-after-every-such-announcement' +
-    '-no-shard-searching-before-that-release' +
-    '-every-such-instant-in-whole-microseconds-since-the-unix-epoch-and-compared-exactly-with-no-tolerance' +
+    '-one-canonical-start-barrier-token-committing-each-observed-announcement-by-shard-index-pid-and-bytes-sha256' +
+    '-every-shard-reporting-the-same-token-sha256' +
+    '-every-shard-recording-that-it-observed-the-token-before-its-first-search' +
+    '-decision-census-windows-read-directly-from-the-os-clock-in-whole-microseconds' +
+    '-clock-steps-tolerated-by-the-overlap-threshold-with-non-monotone-windows-counted' +
     '-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard' +
     '-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result' +
-    '/v4'
+    '/v5'
 
-# native_tts_s1_replay_v1::TTS_S1_TOPOLOGY_TIME_BASE_V1
+# native_tts_s1_replay_v1::TTS_S1_TOPOLOGY_TIME_BASE_V2
 #
-# PINNED HERE BECAUSE THIS FILE IS WHERE THE RELEASE INSTANT IS RECORDED.
-# The readiness clause is an exact `release >= ready` with no tolerance, and
-# an exact comparison between two numbers is only meaningful when both were
-# recorded at the same resolution. A release recorded in milliseconds and
-# multiplied by a thousand is up to 999 microseconds BEFORE the instant it
-# means, which would strip formal standing from a run whose token genuinely
-# went out after every announcement. See Get-TtsS1UnixMicros.
+# Census windows read the OS clock directly at each boundary. Barrier
+# instants are diagnostics only because different processes retain separate
+# launch anchors. A clock step is tolerated by the overlap threshold and is
+# exposed through the non-monotone-window count.
 $script:TtsS1TopologyTimeBase = 'whole-microseconds-since-the-unix-epoch' +
-    '-each-process-advancing-one-launch-reading-by-a-monotonic-delta' +
-    '-never-truncated-to-a-coarser-unit' +
-    '-and-ordered-by-exact-comparison-with-no-tolerance' +
-    '/v1'
+    '-read-directly-from-the-os-clock-at-each-decision-window-boundary' +
+    '-barrier-instants-are-diagnostics-only-and-never-compared-for-formality' +
+    '-clock-steps-are-tolerated-by-the-950-permille-overlap-threshold' +
+    '-with-non-monotone-within-shard-windows-counted' +
+    '/v2'
 
 # How long the LAUNCHER waits for every shard to announce itself ready.
 #
@@ -292,8 +292,9 @@ function Assert-TtsS1TierReportContract {
         # RELEASED ONLY AFTER EVERY ANNOUNCEMENT: a token released when the
         # last process was CREATED is not one released when the last
         # process was READY.
-        $checks += @{ Path = 'body.shard_topology.released_after_every_shard_ready'; Expected = $true; What = 'readiness handshake' }
-        $checks += @{ Path = 'body.shard_topology.every_first_decision_after_the_barrier'; Expected = $true; What = 'first decision after the barrier' }
+        $checks += @{ Path = 'body.shard_topology.every_shard_announcement_observed_before_release'; Expected = $true; What = 'readiness digest handshake' }
+        $checks += @{ Path = 'body.shard_topology.every_shard_reported_same_token'; Expected = $true; What = 'shared token digest' }
+        $checks += @{ Path = 'body.shard_topology.every_shard_observed_token_before_first_decision'; Expected = $true; What = 'token observed before first search' }
         $checks += @{ Path = 'body.shard_topology.meets_formal_topology'; Expected = $true; What = 'formal topology' }
     }
     foreach ($check in $checks) {
@@ -561,14 +562,10 @@ function Get-TtsS1UnixMicros {
     <#
     Whole microseconds since the UNIX epoch. DIAGNOSTICS ONLY.
 
-    NOT ON THE FORMAL PATH, and deliberately. The start token is stamped by
-    tts_s1_replay_v1 --publish-start-barrier, from the same clock and the
-    same function the shards announce with, because the readiness clause is
-    an exact `release >= ready` with no tolerance and two clocks in two
-    runtimes do not have to disagree by much to invert a comparison between
-    instants a few microseconds apart: this runtime's DateTimeOffset::UtcNow
-    can advance on a coarser cadence than the Windows clock behind Rust's
-    SystemTime::now(). Nothing that gates formal standing may be read here.
+    NOT ON THE FORMAL PATH, and deliberately. Barrier formality is proved by
+    the canonical token's ready-file digests, the token digest each shard
+    reports, and the shard-local first-search flag. Nothing that gates
+    formal standing may be read here.
 
     What it is still good for is saying, in the run log, how far apart the
     two runtimes' readings were, which is a diagnostic and never a gate.
