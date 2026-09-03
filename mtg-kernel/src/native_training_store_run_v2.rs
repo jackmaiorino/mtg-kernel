@@ -3439,14 +3439,44 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     // literal by exact equality, so this stays as fail-closed as the single
     // exact-equality check it replaces -- a record may pin the original
     // authorization or the widened campaign authorization, and nothing else.
+    //
+    // Round F review finding (P2): exact content per shape is not enough on
+    // its own, because the shape union would then let seed 971_202 present
+    // the campaign array and a campaign-era seed present the original one.
+    // Neither hybrid was ever published, and admitting them would let a
+    // record claim an authorization state its own cohort never had. The
+    // accepted variant is therefore bound to the record's own seed:
+    //
+    //   971_202                        -- the ONLY seed authorized when the
+    //                                     array held one element, so its
+    //                                     record must pin `Original`.
+    //   971_211/971_212/971_213 and
+    //   971_221/971_222/971_223        -- every seed authorized only after
+    //                                     the in-place widening, so their
+    //                                     records must pin `Campaign`.
+    //
+    // Every other cohort ("build", "screen", "denovo-screen") published no
+    // 512-horizon array at all; absence stays accepted for them, and a
+    // present array is still content-pinned exactly.
+    let requires_original_512_shape =
+        RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.contains(&response.expected_base_seed);
+    let requires_campaign_512_shape = (RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_CAMPAIGN_V1
+        .contains(&response.expected_base_seed)
+        && !requires_original_512_shape)
+        || RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_1024_SEEDS_V1
+            .contains(&response.expected_base_seed);
     let authorized_denovo_512_seeds_invalid = match response.authorized_denovo_512_seeds {
         Some(AuthorizedDenovo512SeedsV1::Original(seeds)) => {
             seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
+                || requires_campaign_512_shape
         }
         Some(AuthorizedDenovo512SeedsV1::Campaign(seeds)) => {
             seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_CAMPAIGN_V1
+                || requires_original_512_shape
         }
-        None => expected_role_and_completion.0 == "denovo-screen-512",
+        // Both cohorts that pin this array published it; absence is a
+        // pre-amendment shape only the roles that never carried it may have.
+        None => requires_original_512_shape || requires_campaign_512_shape,
     };
     // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
     // a55e0777, Section 1b): the exact same amendment, one field over.
@@ -10841,6 +10871,76 @@ mod tests {
                 .is_err(),
                 "{json} is not a published shape and must not decode"
             );
+        }
+    }
+
+    /// Round F review finding (P2). The shape union decodes both published
+    /// forms, so validation must be the thing that stops a record from
+    /// pinning the form its own seed cohort never had. Both hybrids are
+    /// rejected, in both directions, with exactly-correct content in each
+    /// case: the objection is the cohort, not the bytes.
+    #[test]
+    fn response_exploiter_denovo_512_seed_shape_is_bound_to_the_seed_cohort() {
+        // 971_202 was the ONLY seed authorized while the array held one
+        // element, so its record may not present the widened campaign array
+        // even though that array's content is exactly the frozen literal.
+        let mut original_cohort = response_exploiter_denovo_record_for_seed(971_202);
+        original_cohort
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .authorized_denovo_512_seeds = Some(AuthorizedDenovo512SeedsV1::Campaign(
+            RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_CAMPAIGN_V1,
+        ));
+        refresh_derived(&mut original_cohort);
+        assert!(
+            validate_train_run_record_v2(original_cohort).is_err(),
+            "seed 971_202 must not pin the campaign array"
+        );
+
+        // Every seed authorized only after the widening must pin the
+        // campaign array, and may not fall back to the original one.
+        for seed in [971_211, 971_212, 971_213, 971_221, 971_222, 971_223] {
+            let mut campaign_cohort = response_exploiter_denovo_record_for_seed(seed);
+            campaign_cohort
+                .contracts
+                .response_exploiter_v1
+                .as_mut()
+                .unwrap()
+                .authorized_denovo_512_seeds = Some(AuthorizedDenovo512SeedsV1::Original(
+                RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
+            ));
+            refresh_derived(&mut campaign_cohort);
+            assert!(
+                validate_train_run_record_v2(campaign_cohort).is_err(),
+                "seed {seed} must not pin the original one-element array"
+            );
+
+            // Absence is a pre-amendment shape neither cohort can have.
+            let mut absent = response_exploiter_denovo_record_for_seed(seed);
+            absent
+                .contracts
+                .response_exploiter_v1
+                .as_mut()
+                .unwrap()
+                .authorized_denovo_512_seeds = None;
+            refresh_derived(&mut absent);
+            assert!(
+                validate_train_run_record_v2(absent).is_err(),
+                "seed {seed} must carry the campaign array, not omit it"
+            );
+        }
+
+        // And every cohort still validates with the form its own real
+        // records actually carry.
+        for seed in [
+            971_202, 971_211, 971_212, 971_213, 971_221, 971_222, 971_223,
+        ] {
+            let record = response_exploiter_denovo_record_for_seed(seed);
+            validate_train_run_record_v2(record).unwrap_or_else(|error| {
+                panic!("seed {seed} must validate with its own published shape: {error:?}")
+            });
         }
     }
 
