@@ -46,6 +46,11 @@ campaign will launch on**:
 $env:CARGO_TARGET_DIR = 'D:\cargo-target-cycle4'
 cargo build -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1,native-training-store-v2-production --bin cycle4_arm_v1 --bin cycle4_refresh_build_v1 --bin cycle4_run_record_v1
 
+# The tree MUST be clean: a binary built from a dirty worktree at commit X is
+# not the binary a clean tree at X would produce, and the receipt may not claim
+# otherwise.
+if (@(git status --porcelain).Count -ne 0) { throw 'refusing to write a panel build receipt from a dirty worktree' }
+
 # The panel executable, plus the build receipt a formal launch requires.
 $artifacts = cargo test -p mtg-kernel --release --features experimental-burn-net8-packed-cuda-v1 --lib --no-run --message-format=json |
     ConvertFrom-Json |
@@ -53,9 +58,16 @@ $artifacts = cargo test -p mtg-kernel --release --features experimental-burn-net
 $panelExecutable = ($artifacts | Select-Object -Last 1).executable
 $panelExecutable
 
+# The source-tree digest the Store build-capture computed for THIS tree, read
+# from the arm binary built above. It differs the moment any source byte
+# differs, committed or not, which is what a commit alone cannot tell you.
+$armIdentity = & "$env:CARGO_TARGET_DIR\release\cycle4_arm_v1.exe" --print-build-identity | ConvertFrom-Json
+
 @{
-    schema                  = 'mtg-kernel-cycle4-panel-build/v1'
-    source_git_commit       = (git rev-parse HEAD).Trim()
+    schema                  = 'mtg-kernel-cycle4-panel-build/v2'
+    source_git_commit       = $armIdentity.source_git_commit
+    source_tree_sha256      = $armIdentity.source_tree_sha256
+    source_worktree_clean   = $true
     panel_executable        = $panelExecutable
     panel_executable_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $panelExecutable).Hash.ToLowerInvariant()
     built_utc               = [DateTimeOffset]::UtcNow.ToString('O')
@@ -68,18 +80,25 @@ The panel executable is the `executable` field of the last
 so nothing about the path says which source it was built from.
 
 **Why the receipt.** A formal launch refuses a panel executable whose build
-identity it cannot tie to the launch commit. It first looks for that commit's
-own 40-hex string inside the binary (a build that carries the Store
-build-capture constants embeds it); a test binary built without
-`native-training-store-v2-production` does not, so it then requires the
-`<panel executable>.cycle4-panel-build.json` receipt the step above writes,
-whose `panel_executable_sha256` must be that binary's actual hash and whose
-`source_git_commit` must be the launch commit. If neither is present the
-launch fails closed in the inputs phase, before anything is claimed, seeded,
-or trained. Rebuild
-the panel executable, and rewrite its receipt, whenever the launch commit
-moves. A preflight ladder only hashes the panel binary, as before: the ladder
-publishes no panel.
+identity it cannot tie to this launch's own source. A commit alone will not
+do: a binary built from a dirty worktree at commit X carries that same commit,
+so the proof is bound to the Store build-capture's `source_tree_sha256`, which
+covers the actual source bytes the compiler saw. The launch reads that digest
+from its own `-ArmExecutable --print-build-identity`.
+
+It first looks for both that digest and the launch commit inside the panel
+binary (a build carrying the Store build-capture constants embeds both); a
+test binary built without `native-training-store-v2-production` embeds
+neither, so it then requires the
+`<panel executable>.cycle4-panel-build.json` receipt the step above writes.
+That receipt must name the binary's actual hash, the launch commit, the same
+`source_tree_sha256`, and `source_worktree_clean: true` (the build step
+refuses to write one from a dirty tree). A pre-v2 receipt is refused rather
+than read leniently: it can only prove a commit. If neither proof is present
+the launch fails closed in the inputs phase, before anything is claimed,
+seeded, or trained. Rebuild the panel executable, and rewrite its receipt,
+whenever the source tree moves. A preflight ladder only hashes the panel
+binary, as before: the ladder publishes no panel.
 
 ### The one input the wrapper cannot produce
 
@@ -106,7 +125,8 @@ NOT (see the genesis sequence below) and neither is the arm's `run.json`
 ### The inputs-phase decode check
 
 Before anything is bootstrapped, on every launch including a resumed one, the
-wrapper writes `inputs-check-slot-locator.json` into the attempt root and runs
+wrapper writes `inputs-check-slot-locator-rotation-NN.json` into the attempt
+root and runs, once per file,
 
 ```
 cycle4_arm_v1.exe --check-slot-locator <that file>
@@ -118,6 +138,17 @@ then exits 0 or 3. It is read-only and device-free: it opens no Store root,
 reads no checkpoint, claims no Store prefix, allocates no CUDA context, and
 writes nothing. `--check-slot-locator` is accepted ALONE, so no command line
 can mix it with a mode that touches a Store.
+
+**One file per rotation phase, not one per launch.** `historical-1` rotates
+over three Stores by `refresh_index mod 3`, and slot 3 is the only slot that
+varies with the refresh index, so the wrapper checks one representative
+refresh per rotation phase it will actually reach through
+`-ThroughRefreshIndex`. A campaign through refresh 16 therefore checks all
+three rotation roots; one through refresh 1 checks two. Without this, the two
+rotation roots that refreshes 1 and 2 train against would stay unproven until
+the GPU was already busy. `inputs-check-binding.json` records the required
+root set, the covered set, and the phases checked, and the launch fails
+closed if the two sets disagree.
 
 The slot the manifest binds to the arm's own run has no Store to name on a
 fresh campaign, so that one entry points at the genesis parent instead; the

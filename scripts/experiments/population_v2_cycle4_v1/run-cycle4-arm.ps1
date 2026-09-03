@@ -353,10 +353,25 @@ try {
         # still only hashes it: the ladder proves determinism between two
         # rungs of the same binary and publishes no panel.
         if ($Mode -ceq 'formal' -and -not $DryRun) {
+            # The launch's own source-tree digest, from the arm executable
+            # this launch will publish the Store with. Round F review finding
+            # (P1): the panel binary is bound to these exact source bytes,
+            # not merely to a commit, because a dirty-tree build at the same
+            # commit is a different compiler input.
+            $armBuildIdentity = Get-Cycle4ArmBuildIdentity `
+                -ArmExecutable $ArmExecutable `
+                -StdoutPath (Join-Path $root 'arm-build-identity.stdout.log') `
+                -StderrPath (Join-Path $root 'arm-build-identity.stderr.log') `
+                -WorkingDirectory $RepoRoot
+            Add-Cycle4CommandRecord -Result $armBuildIdentity.command | Out-Null
+            if ($armBuildIdentity.source_git_commit -cne $gitRecord.commit) {
+                throw "the arm executable was built from commit $($armBuildIdentity.source_git_commit), but this launch is on commit $($gitRecord.commit)"
+            }
             $panelBuildIdentity = Assert-Cycle4PanelBuildIdentity `
                 -PanelExecutable $PanelExecutable `
-                -LaunchCommit $gitRecord.commit
-            Write-Host "inputs: panel executable build identity proven from its $($panelBuildIdentity.source) at commit $($panelBuildIdentity.source_git_commit)"
+                -LaunchCommit $gitRecord.commit `
+                -LaunchSourceTreeSha256 $armBuildIdentity.source_tree_sha256
+            Write-Host "inputs: panel executable build identity proven from its $($panelBuildIdentity.source) at commit $($panelBuildIdentity.source_git_commit), source tree $($panelBuildIdentity.source_tree_sha256)"
         }
     }
 
@@ -443,25 +458,89 @@ try {
     # through the same `decode_train_run_v2` entry point the slot resolver
     # uses, and exits 0 or 3. Running it here turns that ten-minute discovery
     # into a one-second one.
+    #
+    # Round F review finding (P1): ONE refresh-0 slot table is not the
+    # campaign's input set. historical-1 (slot 3) rotates over three Stores
+    # by `refresh_index mod 3`, so a refresh-0-only check proves rotation
+    # root 0 and leaves roots 1 and 2 -- which refreshes 1 and 2 will train
+    # against -- entirely unproven until the GPU is already busy. Slot 3 is
+    # the only slot that varies with the refresh index, so checking one
+    # representative refresh per rotation phase reached through
+    # -ThroughRefreshIndex covers every distinct root the campaign needs.
+    # The coverage is then asserted against the union computed directly,
+    # rather than assumed.
     $phase = 'inputs-slot-decode'
-    $checkLocatorPath = Join-Path $root 'inputs-check-slot-locator.json'
-    $inputsCheckLocator = New-Cycle4InputsCheckLocator `
-        -SlotTable $slotTable `
-        -RosterPath $genesisRosterPath `
-        -Path $checkLocatorPath `
-        -GenesisParentStoreRoot $GenesisParentStoreRoot `
-        -ArmStoreRoot $StoreRoot
-    Write-Cycle4JsonFile -Value $inputsCheckLocator -Path (Join-Path $root 'inputs-check-binding.json')
-    $result = Invoke-Cycle4Process `
-        -FilePath $ArmExecutable `
-        -Arguments @('--check-slot-locator', $checkLocatorPath) `
-        -WorkingDirectory $RepoRoot `
-        -StdoutPath (Join-Path $root 'inputs-slot-decode.stdout.log') `
-        -StderrPath (Join-Path $root 'inputs-slot-decode.stderr.log') `
-        -Label 'inputs-slot-decode' `
-        -DryRun:$DryRun
-    Add-Cycle4CommandRecord -Result $result | Out-Null
-    Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+    $requiredRoots = [ordered]@{}
+    for ($refresh = [uint64]0; $refresh -le $ThroughRefreshIndex; $refresh++) {
+        foreach ($entry in @(Get-Cycle4SlotTableForRefresh `
+                    -SlotStoreRoots $SlotStoreRoots `
+                    -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
+                    -RefreshIndex $refresh)) {
+            $requiredRoots[[string]$entry.store_root] = $true
+        }
+    }
+    # An array of pairs, not a hashtable: [ordered] indexes an INTEGER key
+    # positionally rather than by key, and the rotation phase is an integer.
+    $representatives = @()
+    $seenRotations = @()
+    for ($refresh = [uint64]0; $refresh -le $ThroughRefreshIndex; $refresh++) {
+        $rotation = Get-Cycle4HistoricalOneRotationIndex -RefreshIndex $refresh
+        if ($seenRotations -notcontains $rotation) {
+            $seenRotations += $rotation
+            $representatives += [ordered]@{ rotation_index = $rotation; refresh_index = $refresh }
+        }
+    }
+    $coveredRoots = [ordered]@{}
+    $inputsCheckBindings = @()
+    foreach ($representative in $representatives) {
+        $rotation = [int]$representative.rotation_index
+        $refresh = [uint64]$representative.refresh_index
+        $checkTable = Get-Cycle4SlotTableForRefresh `
+            -SlotStoreRoots $SlotStoreRoots `
+            -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
+            -RefreshIndex $refresh
+        $checkLocatorPath = Join-Path $root ('inputs-check-slot-locator-rotation-{0}.json' -f $rotation)
+        $inputsCheckLocator = New-Cycle4InputsCheckLocator `
+            -SlotTable $checkTable `
+            -RosterPath $genesisRosterPath `
+            -Path $checkLocatorPath `
+            -GenesisParentStoreRoot $GenesisParentStoreRoot `
+            -ArmStoreRoot $StoreRoot
+        $inputsCheckLocator['rotation_index'] = $rotation
+        $inputsCheckLocator['representative_refresh_index'] = $refresh
+        $inputsCheckBindings += $inputsCheckLocator
+        foreach ($entry in @($checkTable)) { $coveredRoots[[string]$entry.store_root] = $true }
+        $coveredRoots[[string]$inputsCheckLocator.own_run_store_root] = $true
+        $result = Invoke-Cycle4Process `
+            -FilePath $ArmExecutable `
+            -Arguments @('--check-slot-locator', $checkLocatorPath) `
+            -WorkingDirectory $RepoRoot `
+            -StdoutPath (Join-Path $root ('inputs-slot-decode-rotation-{0}.stdout.log' -f $rotation)) `
+            -StderrPath (Join-Path $root ('inputs-slot-decode-rotation-{0}.stderr.log' -f $rotation)) `
+            -Label ('inputs-slot-decode-rotation-{0}' -f $rotation) `
+            -DryRun:$DryRun
+        Add-Cycle4CommandRecord -Result $result | Out-Null
+        Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+    }
+    # The own-run slot's table entry is a placeholder the wrapper always
+    # overrides (README, "Eight slot store roots"), so it is not part of the
+    # input set this check must prove.
+    $ownRunPlaceholder = [string]@($SlotStoreRoots)[$script:Cycle4ArmOwnedSlotIndex]
+    $uncovered = @($requiredRoots.Keys | Where-Object {
+            -not $coveredRoots.Contains($_) -and $_ -cne $ownRunPlaceholder
+        })
+    if ($uncovered.Count -gt 0) {
+        throw "the inputs decode check did not cover every store root this campaign needs through refresh $ThroughRefreshIndex; uncovered: $($uncovered -join ', ')"
+    }
+    Write-Cycle4JsonFile -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle4-inputs-check-binding/v1'
+        through_refresh_index = $ThroughRefreshIndex
+        rotation_phases_checked = @($seenRotations)
+        required_store_roots = @($requiredRoots.Keys)
+        covered_store_roots = @($coveredRoots.Keys)
+        own_run_slot_placeholder = $ownRunPlaceholder
+        locators = @($inputsCheckBindings)
+    }) -Path (Join-Path $root 'inputs-check-binding.json')
 
     # ---------------------------------------------------------------------
     # Genesis: seed the Store, then build the manifest that binds it.

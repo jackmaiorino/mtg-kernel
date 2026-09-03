@@ -174,7 +174,15 @@ function Write-Cycle4JsonFile {
 }
 
 $script:Cycle4ParameterFileSchema = 'mtg-kernel-cycle4-arm-parameters/v1'
-$script:Cycle4PanelBuildReceiptSchema = 'mtg-kernel-cycle4-panel-build/v1'
+# v2, not v1: round F review finding (P1). A v1 receipt recorded only the
+# launch commit and the binary's hash, which a binary built from a DIRTY tree
+# at commit X satisfies just as well as one built from the clean tree at X.
+# v2 additionally carries the Store build-capture's own `source_tree_sha256`
+# (which differs the moment any tracked source byte differs, committed or not)
+# and an explicit clean-worktree assertion made at build time. A v1 receipt is
+# refused rather than read leniently: it cannot answer the question v2 exists
+# to ask.
+$script:Cycle4PanelBuildReceiptSchema = 'mtg-kernel-cycle4-panel-build/v2'
 $script:Cycle4PanelBuildReceiptSuffix = '.cycle4-panel-build.json'
 
 function Read-Cycle4ParameterFile {
@@ -199,11 +207,26 @@ function Read-Cycle4ParameterFile {
         [Parameter(Mandatory = $true)][string[]]$KnownNames
     )
     $document = Read-Cycle4Json -Path $Path
+    # Round F review finding (P1). Deny unknown keys at the DOCUMENT root as
+    # well as inside `parameters`. Without this, a safety flag written one
+    # level too high -- `"DryRun": true` beside `parameters` rather than
+    # inside it, the easiest possible mistake in a hand-written launch file
+    # -- is silently dropped and the launch runs for real. Only `schema` and
+    # `parameters` may appear at the root, and nothing is ever ignored.
+    foreach ($property in @($document.PSObject.Properties)) {
+        $name = [string]$property.Name
+        if ($name -cne 'schema' -and $name -cne 'parameters') {
+            throw "$Path carries an unexpected top-level property '$name'; a parameter file has exactly two: 'schema' and 'parameters'. Every wrapper parameter belongs inside 'parameters'."
+        }
+    }
     if ([string]$document.schema -cne $script:Cycle4ParameterFileSchema) {
         throw "unexpected parameter-file schema at $Path`: '$($document.schema)', expected '$($script:Cycle4ParameterFileSchema)'"
     }
     if ($null -eq $document.parameters) {
         throw "$Path carries no 'parameters' object"
+    }
+    if ($document.parameters -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "$Path`: 'parameters' must be a JSON object naming wrapper parameters"
     }
     $values = [ordered]@{}
     foreach ($property in @($document.parameters.PSObject.Properties)) {
@@ -269,45 +292,62 @@ function Assert-Cycle4PanelBuildIdentity {
     # exactly what the first preflight attempt used: a binary that predated
     # the launch commit.
     #
+    # Round F review finding (P1): a commit alone is not provenance. A panel
+    # binary built from a DIRTY tree at commit X satisfies any commit-only
+    # check that a clean tree at X later performs, so the proof is bound to
+    # the Store build-capture's own `source_tree_sha256` instead. That digest
+    # covers the actual source bytes the compiler saw, so it differs the
+    # moment anything differs, committed or not. -LaunchSourceTreeSha256 is
+    # the arm executable's own, read from `cycle4_arm_v1 --print-build-identity`
+    # at launch, and the arm executable is already pinned to the run record's
+    # provenance at every launch.
+    #
     # Two acceptable proofs, tried in that order:
     #
-    #   embedded: the launch commit's own 40-hex string appears verbatim in
-    #             the executable. A build that carried the store build-capture
-    #             constants embeds it; nothing else in a binary built from a
-    #             different commit would.
+    #   embedded: BOTH the launch commit's 40-hex string and that source-tree
+    #             digest appear verbatim in the executable. A build carrying
+    #             the Store build-capture constants embeds both; a binary from
+    #             any other tree embeds neither.
     #   receipt:  a `<panel executable><suffix>` JSON receipt written beside
-    #             the binary by the documented build step, whose
-    #             `panel_executable_sha256` is that binary's actual hash and
-    #             whose `source_git_commit` is the launch commit. This is the
-    #             fallback the README's build step always writes, because a
-    #             test binary built without the production feature carries no
-    #             embedded identity at all.
+    #             the binary by the documented build step, which refuses to
+    #             write one from a dirty worktree. The receipt must name the
+    #             binary's actual hash, the launch commit, that same
+    #             source-tree digest, and an explicit clean-worktree
+    #             assertion. This is the normal path, because a test binary
+    #             built without the production feature carries no embedded
+    #             identity at all.
     #
     # Neither: hard failure. A panel binary of unknown provenance is not a
     # thing a formal interval may run.
     param(
         [Parameter(Mandatory = $true)][string]$PanelExecutable,
-        [Parameter(Mandatory = $true)][string]$LaunchCommit
+        [Parameter(Mandatory = $true)][string]$LaunchCommit,
+        [Parameter(Mandatory = $true)][string]$LaunchSourceTreeSha256
     )
     if ($LaunchCommit -notmatch '^[0-9a-f]{40}$') {
         throw "the launch commit must be a 40-character lowercase hex sha, got '$LaunchCommit'"
     }
+    if ($LaunchSourceTreeSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "the launch source tree sha256 must be 64 lowercase hex characters, got '$LaunchSourceTreeSha256'"
+    }
     $record = Get-Cycle4FileRecord -Path $PanelExecutable
-    if (Test-Cycle4FileContainsAscii -Path $record.path -Needle $LaunchCommit) {
+    if ((Test-Cycle4FileContainsAscii -Path $record.path -Needle $LaunchSourceTreeSha256) -and
+        (Test-Cycle4FileContainsAscii -Path $record.path -Needle $LaunchCommit)) {
         return [ordered]@{
             source = 'embedded'
             panel_executable = $record
             source_git_commit = $LaunchCommit
+            source_tree_sha256 = $LaunchSourceTreeSha256
             receipt = $null
         }
     }
     $receiptPath = "$($record.path)$($script:Cycle4PanelBuildReceiptSuffix)"
     if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
-        throw "the panel executable carries no embedded build identity for the launch commit $LaunchCommit, and no build receipt is present at $receiptPath. Build it with the README's documented panel build step, which writes that receipt."
+        throw "the panel executable carries no embedded build identity for the launch commit $LaunchCommit and source tree $LaunchSourceTreeSha256, and no build receipt is present at $receiptPath. Build it with the README's documented panel build step, which writes that receipt."
     }
     $receipt = Read-Cycle4Json -Path $receiptPath
     if ([string]$receipt.schema -cne $script:Cycle4PanelBuildReceiptSchema) {
-        throw "unexpected panel build receipt schema at $receiptPath`: '$($receipt.schema)', expected '$($script:Cycle4PanelBuildReceiptSchema)'"
+        throw "unexpected panel build receipt schema at $receiptPath`: '$($receipt.schema)', expected '$($script:Cycle4PanelBuildReceiptSchema)'. A pre-v2 receipt proves only a commit, which a dirty-tree build also satisfies; rebuild the panel executable with the README's build step."
     }
     $receiptExecutableSha256 = ([string]$receipt.panel_executable_sha256).ToLowerInvariant()
     if ($receiptExecutableSha256 -cne $record.sha256) {
@@ -317,11 +357,62 @@ function Assert-Cycle4PanelBuildIdentity {
     if ($receiptCommit -cne $LaunchCommit) {
         throw "the panel executable was built from commit $receiptCommit, but this is a formal launch on commit $LaunchCommit; rebuild the panel executable at the launch commit"
     }
+    # The clean-source proof, both halves. The assertion says the build step
+    # saw a clean worktree; the digest says WHICH source bytes it compiled,
+    # and must be the same ones this launch's arm executable was built from.
+    $cleanProperty = $receipt.PSObject.Properties['source_worktree_clean']
+    if ($null -eq $cleanProperty -or $cleanProperty.Value -ne $true) {
+        $claimed = $(if ($null -eq $cleanProperty) { '<absent>' } else { [string]$cleanProperty.Value })
+        throw "the panel build receipt at $receiptPath does not assert a clean worktree at build time (source_worktree_clean is '$claimed'); a panel binary built from a dirty tree may not drive a formal interval"
+    }
+    $treeProperty = $receipt.PSObject.Properties['source_tree_sha256']
+    if ($null -eq $treeProperty) {
+        throw "the panel build receipt at $receiptPath carries no source_tree_sha256"
+    }
+    $receiptTree = ([string]$treeProperty.Value).ToLowerInvariant()
+    if ($receiptTree -notmatch '^[0-9a-f]{64}$') {
+        throw "the panel build receipt at $receiptPath carries no source_tree_sha256"
+    }
+    if ($receiptTree -cne $LaunchSourceTreeSha256) {
+        throw "the panel executable was built from source tree $receiptTree, but this launch's arm executable was built from $LaunchSourceTreeSha256; the two were compiled from different source bytes even if they name the same commit. Rebuild the panel executable from this launch's tree."
+    }
     return [ordered]@{
         source = 'receipt'
         panel_executable = $record
         source_git_commit = $receiptCommit
+        source_tree_sha256 = $receiptTree
         receipt = (Get-Cycle4FileRecord -Path $receiptPath)
+    }
+}
+
+function Get-Cycle4ArmBuildIdentity {
+    # `cycle4_arm_v1 --print-build-identity`, decoded. A whole-command-line
+    # mode that reads nothing and touches no device, so it is safe to run in
+    # the inputs phase. Used for the launch's own source-tree digest, which
+    # the panel build receipt must match.
+    param(
+        [Parameter(Mandatory = $true)][string]$ArmExecutable,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+    $result = Invoke-Cycle4Process `
+        -FilePath $ArmExecutable `
+        -Arguments @('--print-build-identity') `
+        -WorkingDirectory $WorkingDirectory `
+        -StdoutPath $StdoutPath `
+        -StderrPath $StderrPath `
+        -Label 'arm-build-identity'
+    Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+    $identity = Read-Cycle4Json -Path $StdoutPath
+    if ([string]$identity.source_tree_sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "$ArmExecutable --print-build-identity carries no source_tree_sha256"
+    }
+    return [ordered]@{
+        command = $result
+        identity = $identity
+        source_git_commit = ([string]$identity.source_git_commit).ToLowerInvariant()
+        source_tree_sha256 = ([string]$identity.source_tree_sha256).ToLowerInvariant()
     }
 }
 
@@ -878,6 +969,19 @@ function New-Cycle4InputsCheckLocator {
     )
     if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
         throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+    }
+    # Round F review finding (P1): the same path rule the per-interval locator
+    # writer enforces, applied HERE, in the inputs phase. Without it a bad
+    # root -- a historical-1 rotation root the campaign only reaches at
+    # refresh 2, say -- is not refused until that interval's locator is
+    # written, which is after a genesis bootstrap and two trained intervals.
+    # In a dry run the arm bin never runs, so this is also the only place the
+    # rule is checked at all.
+    foreach ($entry in @($SlotTable)) {
+        $root = [string]$entry.store_root
+        if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Path]::IsPathRooted($root)) {
+            throw "slot $($entry.slot_index) store root must be a non-empty absolute path, got '$root'"
+        }
     }
     $ownRunRoot = $GenesisParentStoreRoot
     $ownRunSubstituted = $true

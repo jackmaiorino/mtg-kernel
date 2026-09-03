@@ -1030,9 +1030,9 @@ $run = Invoke-ResumeCase -Case $complete
 # finished campaign included: it is an input proof, not a unit of campaign
 # work, and it is what makes a resumed launch fail in a second rather than
 # after a bootstrap when a roster Store has become unreadable.
-Assert-That -Condition (@($run.records | Where-Object { $_.label -cne 'run-record' -and $_.label -cne 'inputs-slot-decode' }).Count -eq 0) `
+Assert-That -Condition (@($run.records | Where-Object { $_.label -cne 'run-record' -and $_.label -notlike 'inputs-slot-decode-*' }).Count -eq 0) `
     -Message 'a finished campaign plans no work beyond re-deriving its run record and re-proving its inputs'
-Assert-That -Condition (@($run.records | Where-Object { $_.label -ceq 'inputs-slot-decode' }).Count -eq 1) `
+Assert-That -Condition (@($run.records | Where-Object { $_.label -like 'inputs-slot-decode-*' }).Count -ge 1) `
     -Message 'even a finished campaign re-proves that every roster Store still decodes'
 Assert-That -Condition ([string]$run.result.status -ceq 'DRY_RUN_PLANNED') `
     -Message 'a finished campaign still only plans under -DryRun'
@@ -1458,36 +1458,85 @@ $checkArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -Evide
 & $wrapper @checkArguments *>&1 | Out-Null
 $checkAttempt = Get-LatestAttemptRoot -EvidenceRoot $checkEvidence -GateName 'cycle4-treatment-rb-formal'
 $checkRecords = Get-CommandRecords -AttemptRoot $checkAttempt
-$checkCommands = @($checkRecords | Where-Object { $_.label -ceq 'inputs-slot-decode' })
-Assert-That -Condition ($checkCommands.Count -eq 1) `
-    -Message "the inputs decode check runs exactly once per launch (saw $($checkCommands.Count))"
-$checkLine = [string]$checkCommands[0].command_line
-Assert-That -Condition ($checkLine -like '*"--check-slot-locator"*') `
-    -Message 'the inputs decode check drives the arm bin read-only mode'
-Assert-That -Condition ($checkLine -like '*inputs-check-slot-locator.json*') `
-    -Message 'and it names the locator the wrapper wrote for it'
-Assert-That -Condition ($checkLine -notlike '*--store-root*' -and $checkLine -notlike '*--device*') `
-    -Message 'the check command carries no Store and no device flag'
+$checkCommands = @($checkRecords | Where-Object { $_.label -like 'inputs-slot-decode-rotation-*' })
+Assert-That -Condition ($checkCommands.Count -eq 3) `
+    -Message "the inputs decode check runs once per rotation phase the campaign reaches (saw $($checkCommands.Count))"
+foreach ($checkCommand in $checkCommands) {
+    $checkLine = [string]$checkCommand.command_line
+    Assert-That -Condition ($checkLine -like '*"--check-slot-locator"*') `
+        -Message 'the inputs decode check drives the arm bin read-only mode'
+    Assert-That -Condition ($checkLine -like '*inputs-check-slot-locator-rotation-*') `
+        -Message 'and it names the locator the wrapper wrote for it'
+    Assert-That -Condition ($checkLine -notlike '*--store-root*' -and $checkLine -notlike '*--device*') `
+        -Message 'the check command carries no Store and no device flag'
+}
 
 $checkOrder = @($checkRecords | ForEach-Object { [string]$_.label })
-$checkIndex = [array]::IndexOf($checkOrder, 'inputs-slot-decode')
+$checkIndex = [array]::IndexOf($checkOrder, 'inputs-slot-decode-rotation-0')
+$lastCheckIndex = [array]::IndexOf($checkOrder, 'inputs-slot-decode-rotation-2')
 $bootstrapIndex = [array]::IndexOf($checkOrder, 'bootstrap-genesis')
-Assert-That -Condition ($checkIndex -ge 0 -and $bootstrapIndex -ge 0 -and $checkIndex -lt $bootstrapIndex) `
-    -Message 'the inputs decode check is planned before the genesis bootstrap, not after it'
+Assert-That -Condition ($checkIndex -ge 0 -and $bootstrapIndex -ge 0 -and $lastCheckIndex -lt $bootstrapIndex) `
+    -Message 'every inputs decode check is planned before the genesis bootstrap, not after it'
 
-$checkLocatorPath = Join-Path $checkAttempt 'inputs-check-slot-locator.json'
-Assert-That -Condition (Test-Path -LiteralPath $checkLocatorPath -PathType Leaf) `
-    -Message 'the inputs check locator is written even in a dry run'
-$checkLocator = Get-Content -Raw -LiteralPath $checkLocatorPath | ConvertFrom-Json
-Assert-That -Condition ([string]$checkLocator.schema -ceq 'mtg-kernel-cycle4-arm-slot-locator/v1') `
-    -Message 'the inputs check locator carries the arm locator schema'
-Assert-That -Condition (@($checkLocator.stores).Count -eq 8) `
-    -Message 'the inputs check locator names all eight slots'
-Assert-That -Condition ([string]$checkLocator.genesis_parent_store_root -ceq (Resolve-Path -LiteralPath $parentStore).Path) `
-    -Message 'the inputs check locator names the genesis parent so the parent record is decoded too'
+# Round F review finding (P1): historical-1 rotates over three Stores, so a
+# refresh-0-only check leaves the two roots refreshes 1 and 2 will train
+# against unproven. Every rotation root must appear in some check locator.
+$checkedRotationRoots = @()
+foreach ($rotation in 0..2) {
+    $checkLocatorPath = Join-Path $checkAttempt ('inputs-check-slot-locator-rotation-{0}.json' -f $rotation)
+    Assert-That -Condition (Test-Path -LiteralPath $checkLocatorPath -PathType Leaf) `
+        -Message "the inputs check locator for rotation phase $rotation is written even in a dry run"
+    $checkLocator = Get-Content -Raw -LiteralPath $checkLocatorPath | ConvertFrom-Json
+    Assert-That -Condition ([string]$checkLocator.schema -ceq 'mtg-kernel-cycle4-arm-slot-locator/v1') `
+        -Message "the rotation-$rotation check locator carries the arm locator schema"
+    Assert-That -Condition (@($checkLocator.stores).Count -eq 8) `
+        -Message "the rotation-$rotation check locator names all eight slots"
+    Assert-That -Condition ([string]$checkLocator.genesis_parent_store_root -ceq (Resolve-Path -LiteralPath $parentStore).Path) `
+        -Message "the rotation-$rotation check locator names the genesis parent so the parent record is decoded too"
+    $checkedRotationRoots += [string]@($checkLocator.stores)[3].store_root
+}
+foreach ($rotation in 0..2) {
+    Assert-That -Condition ($checkedRotationRoots -contains [string]@($historicalOneRoots)[$rotation]) `
+        -Message "historical-1 rotation root $rotation is decoded before any training"
+}
+
 $checkBinding = Get-Content -Raw -LiteralPath (Join-Path $checkAttempt 'inputs-check-binding.json') | ConvertFrom-Json
-Assert-That -Condition ($checkBinding.own_run_slot_substituted_with_parent -eq $true) `
+Assert-That -Condition ([string]$checkBinding.schema -ceq 'mtg-kernel-cycle4-inputs-check-binding/v1') `
+    -Message 'the inputs check binding declares its own schema'
+Assert-That -Condition (@($checkBinding.rotation_phases_checked).Count -eq 3) `
+    -Message 'the binding records that all three rotation phases were checked'
+Assert-That -Condition (@($checkBinding.locators)[0].own_run_slot_substituted_with_parent -eq $true) `
     -Message 'the own-run slot substitution is recorded, never hidden'
+foreach ($rotation in 0..2) {
+    Assert-That -Condition (@($checkBinding.covered_store_roots) -contains [string]@($historicalOneRoots)[$rotation]) `
+        -Message "the binding records rotation root $rotation as covered"
+}
+
+# A campaign that stops before refresh 1 needs only one rotation phase, and
+# the check must not invent work for roots it will never read.
+$shortEvidence = Join-Path $WorkRoot 'evidence-inputs-check-short'
+$shortArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $shortEvidence
+$shortArguments['ThroughRefreshIndex'] = [uint64]1
+& $wrapper @shortArguments *>&1 | Out-Null
+$shortAttempt = Get-LatestAttemptRoot -EvidenceRoot $shortEvidence -GateName 'cycle4-treatment-rb-formal'
+$shortChecks = @(Get-CommandRecords -AttemptRoot $shortAttempt | Where-Object { $_.label -like 'inputs-slot-decode-rotation-*' })
+Assert-That -Condition ($shortChecks.Count -eq 2) `
+    -Message "a campaign through refresh 1 checks exactly the two rotation phases it reaches (saw $($shortChecks.Count))"
+
+# The finding's own case: a rotation root the campaign will reach at refresh
+# 2 is proven in the inputs phase, so a bad one stops the launch there rather
+# than after two intervals of GPU time.
+$badRotation = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'bad-rotation-root-2')
+$badRotationRoots = @($historicalOneRoots)
+$badRotationRoots[2] = 'historical-one-rotation-2-relative'
+$badRotation['HistoricalOneStoreRoots'] = $badRotationRoots
+Assert-Throws -Action { & $wrapper @badRotation *>&1 | Out-Null } `
+    -ExpectedSubstring 'must be a non-empty absolute path' `
+    -Message 'a bad historical-1 rotation root at index 2 stops the launch in the inputs phase'
+$badRotationAttempt = Get-LatestAttemptRoot -EvidenceRoot (New-RejectionEvidenceRoot -Name 'bad-rotation-root-2') -GateName 'cycle4-treatment-rb-formal'
+$badRotationRecords = @(Get-CommandRecords -AttemptRoot $badRotationAttempt)
+Assert-That -Condition (@($badRotationRecords | Where-Object { $_.label -ceq 'bootstrap-genesis' }).Count -eq 0) `
+    -Message 'and it stops before any genesis bootstrap is planned'
 
 # ---------------------------------------------------------------------------
 # 11. Round F defect 4: -ParameterFile
@@ -1561,6 +1610,50 @@ Assert-Throws -Action { & $wrapper -ParameterFile $badValuePath *>&1 | Out-Null 
     -ExpectedSubstring 'sideways' `
     -Message "a parameter file value still faces the parameter's own ValidateSet"
 
+# Round F review finding (P1): a safety flag written one level too high must
+# be refused, not silently dropped. `"DryRun": true` beside `parameters`
+# rather than inside it is the easiest possible mistake in a hand-written
+# launch file, and the consequence of ignoring it is a real launch.
+$rootFlagText = @'
+{
+  "schema": "mtg-kernel-cycle4-arm-parameters/v1",
+  "DryRun": true,
+  "parameters": { "Mode": "formal" }
+}
+'@
+$rootFlagPath = Join-Path $WorkRoot 'launch-parameters-root-flag.json'
+[System.IO.File]::WriteAllText($rootFlagPath, $rootFlagText, [System.Text.UTF8Encoding]::new($false))
+Assert-Throws -Action { & $wrapper -ParameterFile $rootFlagPath *>&1 | Out-Null } `
+    -ExpectedSubstring "unexpected top-level property 'DryRun'" `
+    -Message 'a safety flag placed at the document root is refused, never dropped'
+
+$rootJunkText = @'
+{
+  "schema": "mtg-kernel-cycle4-arm-parameters/v1",
+  "comment": "notes for the operator",
+  "parameters": { "Mode": "formal" }
+}
+'@
+$rootJunkPath = Join-Path $WorkRoot 'launch-parameters-root-junk.json'
+[System.IO.File]::WriteAllText($rootJunkPath, $rootJunkText, [System.Text.UTF8Encoding]::new($false))
+Assert-Throws -Action { & $wrapper -ParameterFile $rootJunkPath *>&1 | Out-Null } `
+    -ExpectedSubstring "unexpected top-level property 'comment'" `
+    -Message 'no unknown top-level property is tolerated, however harmless it looks'
+
+# The same rule one level down, asserted directly on the reader so the
+# refusal is proven for a parameter that is real but not the wrapper's.
+$notOursText = @'
+{
+  "schema": "mtg-kernel-cycle4-arm-parameters/v1",
+  "parameters": { "Mode": "formal", "Verbose": true }
+}
+'@
+$notOursPath = Join-Path $WorkRoot 'launch-parameters-not-ours.json'
+[System.IO.File]::WriteAllText($notOursPath, $notOursText, [System.Text.UTF8Encoding]::new($false))
+Assert-Throws -Action { Read-Cycle4ParameterFile -Path $notOursPath -KnownNames @('Mode', 'Arm') } `
+    -ExpectedSubstring "unknown wrapper parameter: 'Verbose'" `
+    -Message 'a parameter outside the wrapper declared set is refused'
+
 # ---------------------------------------------------------------------------
 # 12. Round F defect 5: a failed attempt publishes a result document
 # ---------------------------------------------------------------------------
@@ -1607,47 +1700,115 @@ $panelIdentityRoot = Join-Path $WorkRoot 'panel-identity'
 New-Item -ItemType Directory -Force -Path $panelIdentityRoot | Out-Null
 $launchCommit = ('a' * 40)
 $otherCommit = ('b' * 40)
+$launchTree = ('c' * 64)
+$otherTree = ('d' * 64)
+
+function Write-PanelReceipt {
+    param(
+        [Parameter(Mandatory = $true)][string]$PanelExecutable,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Tree,
+        [string]$Schema = 'mtg-kernel-cycle4-panel-build/v2',
+        [string]$ExecutableSha256,
+        [object]$Clean = $true
+    )
+    if ([string]::IsNullOrWhiteSpace($ExecutableSha256)) {
+        $ExecutableSha256 = Get-Cycle4Sha256 -Path $PanelExecutable
+    }
+    Write-SyntheticJson -Value ([ordered]@{
+        schema = $Schema
+        source_git_commit = $Commit
+        source_tree_sha256 = $Tree
+        source_worktree_clean = $Clean
+        panel_executable = $PanelExecutable
+        panel_executable_sha256 = $ExecutableSha256
+        built_utc = '2026-09-02T00:00:00.0000000+00:00'
+    }) -Path "$PanelExecutable.cycle4-panel-build.json"
+}
 
 $plainPanel = Join-Path $panelIdentityRoot 'mtg_kernel-plain.exe'
 [System.IO.File]::WriteAllText($plainPanel, 'no identity here', [System.Text.UTF8Encoding]::new($false))
-Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $plainPanel -LaunchCommit $launchCommit } `
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $plainPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
     -ExpectedSubstring 'no build receipt is present' `
     -Message 'a panel binary with neither an embedded identity nor a receipt is refused'
 
 $embeddedPanel = Join-Path $panelIdentityRoot 'mtg_kernel-embedded.exe'
-[System.IO.File]::WriteAllText($embeddedPanel, "prefix $launchCommit suffix", [System.Text.UTF8Encoding]::new($false))
-$embeddedIdentity = Assert-Cycle4PanelBuildIdentity -PanelExecutable $embeddedPanel -LaunchCommit $launchCommit
+[System.IO.File]::WriteAllText($embeddedPanel, "prefix $launchCommit middle $launchTree suffix", [System.Text.UTF8Encoding]::new($false))
+$embeddedIdentity = Assert-Cycle4PanelBuildIdentity -PanelExecutable $embeddedPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree
 Assert-That -Condition ([string]$embeddedIdentity.source -ceq 'embedded') `
-    -Message 'an embedded launch-commit identity is accepted on its own'
+    -Message 'an embedded identity carrying both the commit and the source tree is accepted on its own'
+
+# Round F review finding (P1): the commit alone is not enough, because a
+# dirty-tree build at the same commit embeds the same commit string.
+$commitOnlyPanel = Join-Path $panelIdentityRoot 'mtg_kernel-commit-only.exe'
+[System.IO.File]::WriteAllText($commitOnlyPanel, "prefix $launchCommit suffix", [System.Text.UTF8Encoding]::new($false))
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $commitOnlyPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'no build receipt is present' `
+    -Message 'an embedded commit without the launch source tree is not accepted as an embedded identity'
 
 $receiptPanel = Join-Path $panelIdentityRoot 'mtg_kernel-receipt.exe'
 [System.IO.File]::WriteAllText($receiptPanel, 'built by the documented step', [System.Text.UTF8Encoding]::new($false))
-$receiptPath = "$receiptPanel.cycle4-panel-build.json"
-Write-SyntheticJson -Value ([ordered]@{
-    schema = 'mtg-kernel-cycle4-panel-build/v1'
-    source_git_commit = $launchCommit
-    panel_executable = $receiptPanel
-    panel_executable_sha256 = (Get-Cycle4Sha256 -Path $receiptPanel)
-    built_utc = '2026-09-02T00:00:00.0000000+00:00'
-}) -Path $receiptPath
-$receiptIdentity = Assert-Cycle4PanelBuildIdentity -PanelExecutable $receiptPanel -LaunchCommit $launchCommit
+Write-PanelReceipt -PanelExecutable $receiptPanel -Commit $launchCommit -Tree $launchTree
+$receiptIdentity = Assert-Cycle4PanelBuildIdentity -PanelExecutable $receiptPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree
 Assert-That -Condition ([string]$receiptIdentity.source -ceq 'receipt') `
     -Message 'a matching build receipt is accepted when there is no embedded identity'
+Assert-That -Condition ([string]$receiptIdentity.source_tree_sha256 -ceq $launchTree) `
+    -Message 'and the accepted identity carries the source tree it was proven against'
 
-Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $receiptPanel -LaunchCommit $otherCommit } `
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $receiptPanel -LaunchCommit $otherCommit -LaunchSourceTreeSha256 $launchTree } `
     -ExpectedSubstring 'but this is a formal launch on commit' `
     -Message 'a receipt from a different commit than the launch commit is refused'
 
-$staleReceiptPanel = Join-Path $panelIdentityRoot 'mtg_kernel-stale.exe'
-[System.IO.File]::WriteAllText($staleReceiptPanel, 'rebuilt after the receipt was written', [System.Text.UTF8Encoding]::new($false))
+# The finding itself: a binary built from a DIRTY tree at the launch commit
+# must not be accepted by a clean tree at that same commit.
+$dirtyPanel = Join-Path $panelIdentityRoot 'mtg_kernel-dirty.exe'
+[System.IO.File]::WriteAllText($dirtyPanel, 'built from a dirty worktree', [System.Text.UTF8Encoding]::new($false))
+Write-PanelReceipt -PanelExecutable $dirtyPanel -Commit $launchCommit -Tree $launchTree -Clean $false
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $dirtyPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'does not assert a clean worktree at build time' `
+    -Message 'a receipt written from a dirty worktree is refused even at the right commit'
+
+$noCleanPanel = Join-Path $panelIdentityRoot 'mtg_kernel-no-clean-field.exe'
+[System.IO.File]::WriteAllText($noCleanPanel, 'receipt with no cleanliness claim', [System.Text.UTF8Encoding]::new($false))
+Write-SyntheticJson -Value ([ordered]@{
+    schema = 'mtg-kernel-cycle4-panel-build/v2'
+    source_git_commit = $launchCommit
+    source_tree_sha256 = $launchTree
+    panel_executable = $noCleanPanel
+    panel_executable_sha256 = (Get-Cycle4Sha256 -Path $noCleanPanel)
+    built_utc = '2026-09-02T00:00:00.0000000+00:00'
+}) -Path "$noCleanPanel.cycle4-panel-build.json"
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $noCleanPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'does not assert a clean worktree at build time' `
+    -Message 'a receipt that makes no cleanliness claim at all is refused'
+
+# Same commit, different source bytes: exactly the dirty-build case seen from
+# the launch side, where the arm executable names the tree that was compiled.
+$otherTreePanel = Join-Path $panelIdentityRoot 'mtg_kernel-other-tree.exe'
+[System.IO.File]::WriteAllText($otherTreePanel, 'built from other source bytes', [System.Text.UTF8Encoding]::new($false))
+Write-PanelReceipt -PanelExecutable $otherTreePanel -Commit $launchCommit -Tree $otherTree
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $otherTreePanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'compiled from different source bytes' `
+    -Message 'a receipt naming a different source tree at the same commit is refused'
+
+# A pre-v2 receipt proves only a commit, so it may not be read leniently.
+$legacyPanel = Join-Path $panelIdentityRoot 'mtg_kernel-legacy.exe'
+[System.IO.File]::WriteAllText($legacyPanel, 'built before the receipt gained a tree hash', [System.Text.UTF8Encoding]::new($false))
 Write-SyntheticJson -Value ([ordered]@{
     schema = 'mtg-kernel-cycle4-panel-build/v1'
     source_git_commit = $launchCommit
-    panel_executable = $staleReceiptPanel
-    panel_executable_sha256 = ('0' * 64)
+    panel_executable = $legacyPanel
+    panel_executable_sha256 = (Get-Cycle4Sha256 -Path $legacyPanel)
     built_utc = '2026-09-02T00:00:00.0000000+00:00'
-}) -Path "$staleReceiptPanel.cycle4-panel-build.json"
-Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $staleReceiptPanel -LaunchCommit $launchCommit } `
+}) -Path "$legacyPanel.cycle4-panel-build.json"
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $legacyPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'unexpected panel build receipt schema' `
+    -Message 'a pre-v2 receipt is refused rather than read leniently'
+
+$staleReceiptPanel = Join-Path $panelIdentityRoot 'mtg_kernel-stale.exe'
+[System.IO.File]::WriteAllText($staleReceiptPanel, 'rebuilt after the receipt was written', [System.Text.UTF8Encoding]::new($false))
+Write-PanelReceipt -PanelExecutable $staleReceiptPanel -Commit $launchCommit -Tree $launchTree -ExecutableSha256 ('0' * 64)
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $staleReceiptPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
     -ExpectedSubstring 'describes a different binary' `
     -Message 'a receipt that does not hash to its binary is refused'
 
