@@ -404,6 +404,7 @@ D:\cargo-target-cycle4\release\cycle4_routing_v1.exe `
   --m2-panel E:\mtg-kernel-cycle4\routing\m2\m2-common-root-panel.json `
   --m3-report-static-rb    E:\mtg-kernel-cycle4\routing\m3-static-rb.json `
   --m3-report-treatment-rb E:\mtg-kernel-cycle4\routing\m3-treatment-rb.json `
+  --reference-document E:\mtg-kernel-cycle4\routing\m3-reference.json `
   --cp7-evidence-root E:\mtg-kernel-cycle4\cp7-evidence `
   --cycle3-g2048-run-sha256 <64 lower-hex> `
   --cycle3-g2048-checkpoint-manifest-sha256 <64 lower-hex> `
@@ -423,7 +424,9 @@ Nothing in this chain accepts a document on its say-so.
 | Check | Where | Why |
 | --- | --- | --- |
 | Each window update's `update_evidence_sha256` is recomputed over the evidence's own canonical bytes, and the declared chain is walked from the genesis anchor. | `cycle4_m3_audit_v1` | The sidecar pins each cell's residual SUM and counts, so two equal-policy-weight values moved in opposite directions leave every sidecar quantity intact while changing the cell's sample standard deviation. Only the digest catches that. |
+| Reference mode requires the computed window to be exactly updates 1537 through 2048 with count 512 before it serializes or publishes the document. | `cycle4_m3_audit_v1` | A Store ending at update 1536 would otherwise publish a document the decoder and routing selector must refuse. |
 | The reference statistic and its totals are recomputed from the reference document's own cell table. | `cycle4_m3_audit_v1`, `cycle4_routing_v1` | An inflated reference would loosen the whole dispersion clause. |
+| `--reference-document` is required, and both M3 reports must bind its hash, run, tip, window, audit-note hash, statistic, and allowance. | `cycle4_routing_v1` | Reports that name a missing or different reference cannot make eligibility comparable across arms. |
 | Each M3 report's audited run identity, tip checkpoint identity and window end must equal the panel endpoint's. | `cycle4_routing_v1` | A stale report from another run, or from the same run at an earlier tip, would otherwise set eligibility for a checkpoint it never audited. |
 | The reference's run identity, tip checkpoint identity and window end must equal `--cycle3-g2048-run-sha256`, `--cycle3-g2048-checkpoint-manifest-sha256` and update 2048. | `cycle4_routing_v1` | Run identity alone does not pin which SNAPSHOT was measured: an older store of the same run, ending at update 1536, would supply a reference over a different final 512 updates and move the dispersion allowance. |
 | Every window update's digest must be the same one the chain walk fixed. | `cycle4_m3_audit_v1` | The audit reads the Store twice; a leaf replaced in between with fresh evidence and a freshly recomputed digest would otherwise be accepted, and the tip update is entirely free that way. |

@@ -1631,6 +1631,40 @@ pub struct Cycle4M3WindowWireV1 {
     pub update_count: u64,
 }
 
+fn validate_reference_window_v1(window: &Cycle4M3WindowWireV1) -> Result<()> {
+    let internally_consistent_count = window
+        .last_update_index
+        .checked_sub(window.first_update_index)
+        .and_then(|span| span.checked_add(1));
+    if internally_consistent_count != Some(window.update_count) {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_window",
+            format!(
+                "the reference window declares {} updates for bounds {} through {}",
+                window.update_count, window.first_update_index, window.last_update_index
+            ),
+        ));
+    }
+    if window.first_update_index != CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1
+        || window.last_update_index != CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1
+        || window.update_count != CYCLE4_M3_WINDOW_UPDATES_V1
+    {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_window",
+            format!(
+                "the reference window must be updates {} through {} with count {}, not {} through {} with count {}",
+                CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1,
+                CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1,
+                CYCLE4_M3_WINDOW_UPDATES_V1,
+                window.first_update_index,
+                window.last_update_index,
+                window.update_count
+            ),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cycle4M3TotalsWireV1 {
@@ -1677,6 +1711,24 @@ pub fn build_cycle4_m3_reference_document_v1(
             "the reference statistic is computed on the RAW residual",
         ));
     }
+    let reference_window = Cycle4M3WindowWireV1 {
+        first_update_index: window.first_update_index,
+        last_update_index: window.last_update_index,
+        update_count: window
+            .last_update_index
+            .checked_sub(window.first_update_index)
+            .and_then(|span| span.checked_add(1))
+            .ok_or_else(|| {
+                Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_reference_window",
+                    format!(
+                        "the reference window bounds {} through {} are invalid",
+                        window.first_update_index, window.last_update_index
+                    ),
+                )
+            })?,
+    };
+    validate_reference_window_v1(&reference_window)?;
     let qualifying: Vec<&Cycle4M3CellV1> =
         window.cells.iter().filter(|cell| cell.qualifies).collect();
     if qualifying.is_empty() {
@@ -1690,11 +1742,7 @@ pub fn build_cycle4_m3_reference_document_v1(
         schema: CYCLE4_M3_REFERENCE_SCHEMA_V1.to_owned(),
         residual_mode: window.residual_mode.wire_v1().to_owned(),
         run_sha256: window.run_sha256.clone(),
-        window: Cycle4M3WindowWireV1 {
-            first_update_index: window.first_update_index,
-            last_update_index: window.last_update_index,
-            update_count: window.last_update_index - window.first_update_index + 1,
-        },
+        window: reference_window,
         tip_update_evidence_sha256: window.tip_update_evidence_sha256.clone(),
         tip_checkpoint_manifest_sha256: window.tip_checkpoint_manifest_sha256.clone(),
         evidence_chain_sha256: window.evidence_chain_sha256.clone(),
@@ -1769,39 +1817,7 @@ pub fn decode_cycle4_m3_reference_document_v1(bytes: &[u8]) -> Result<Cycle4M3Re
             "the reference statistic must be the RAW residual",
         ));
     }
-    let internally_consistent_count = document
-        .window
-        .last_update_index
-        .checked_sub(document.window.first_update_index)
-        .and_then(|span| span.checked_add(1));
-    if internally_consistent_count != Some(document.window.update_count) {
-        return Err(Cycle4M3AuditErrorV1::new(
-            "cycle4_m3_audit_v1_reference_window",
-            format!(
-                "the reference window declares {} updates for bounds {} through {}",
-                document.window.update_count,
-                document.window.first_update_index,
-                document.window.last_update_index
-            ),
-        ));
-    }
-    if document.window.first_update_index != CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1
-        || document.window.last_update_index != CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1
-        || document.window.update_count != CYCLE4_M3_WINDOW_UPDATES_V1
-    {
-        return Err(Cycle4M3AuditErrorV1::new(
-            "cycle4_m3_audit_v1_reference_window",
-            format!(
-                "the reference window must be updates {} through {} with count {}, not {} through {} with count {}",
-                CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1,
-                CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1,
-                CYCLE4_M3_WINDOW_UPDATES_V1,
-                document.window.first_update_index,
-                document.window.last_update_index,
-                document.window.update_count
-            ),
-        ));
-    }
+    validate_reference_window_v1(&document.window)?;
     if document.audit_note_sha256.len() != 64 {
         return Err(Cycle4M3AuditErrorV1::new(
             "cycle4_m3_audit_v1_reference_audit_note",
@@ -1894,7 +1910,12 @@ pub struct Cycle4M3StatisticsWireV1 {
     pub max_abs_mean_cell_identity: String,
     pub max_abs_mean_cell_role: String,
     pub decision_weighted_mean_standard_deviation: RealV1,
-    pub reference_decision_weighted_mean_standard_deviation: RealV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cycle4M3ReportReferenceWireV1 {
+    pub decision_weighted_mean_standard_deviation: RealV1,
     pub dispersion_allowance: RealV1,
 }
 
@@ -1911,6 +1932,7 @@ pub struct Cycle4M3AuditReportV1 {
     pub thresholds: Cycle4M3ThresholdsWireV1,
     pub totals: Cycle4M3TotalsWireV1,
     pub cells: Vec<Cycle4M3CellV1>,
+    pub reference: Cycle4M3ReportReferenceWireV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statistics: Option<Cycle4M3StatisticsWireV1>,
     pub verdict: String,
@@ -1953,10 +1975,6 @@ pub fn build_cycle4_m3_audit_report_v1(
                 max_abs_mean_cell_identity: identity,
                 max_abs_mean_cell_role: role,
                 decision_weighted_mean_standard_deviation: RealV1::from_f64_v1(dispersion),
-                reference_decision_weighted_mean_standard_deviation: RealV1::from_f64_v1(
-                    reference_dispersion,
-                ),
-                dispersion_allowance: RealV1::from_f64_v1(gate.dispersion_allowance),
             })
         }
         _ => None,
@@ -2002,6 +2020,10 @@ pub fn build_cycle4_m3_audit_report_v1(
             cell_count: window.cells.len() as u64,
         },
         cells: window.cells.clone(),
+        reference: Cycle4M3ReportReferenceWireV1 {
+            decision_weighted_mean_standard_deviation: RealV1::from_f64_v1(reference_dispersion),
+            dispersion_allowance: RealV1::from_f64_v1(gate.dispersion_allowance),
+        },
         statistics,
         verdict: if gate.verdict_pass {
             CYCLE4_M3_VERDICT_PASS_V1
@@ -2093,11 +2115,11 @@ pub fn decode_cycle4_m3_audit_report_v1(bytes: &[u8]) -> Result<Cycle4M3AuditRep
     // Re-run the gate over the report's own cell table and require the same
     // verdict: a report whose verdict does not follow from its own numbers is
     // refused rather than believed.
-    let reference_dispersion = report.statistics.as_ref().map_or(Ok(0.0), |statistics| {
-        statistics
-            .reference_decision_weighted_mean_standard_deviation
-            .to_f64_v1()
-    })?;
+    let reference_dispersion = report
+        .reference
+        .decision_weighted_mean_standard_deviation
+        .to_f64_v1()?;
+    report.reference.dispersion_allowance.to_f64_v1()?;
     // The totals are derived, never read: `window_decision_count` is the
     // coverage clause's DENOMINATOR, so an edited one would move the floor
     // without touching a single cell.
@@ -2357,24 +2379,36 @@ mod tests {
     }
 
     #[test]
-    fn a_1024_update_reference_window_is_refused_v1() {
-        let window = test_support_window_v1(
+    fn the_reference_builder_refuses_a_1024_update_window_v1() {
+        let mut window = test_support_window_v1(
             Cycle4M3ResidualModeV1::Raw,
             vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
             10_000,
             identity_v1(7),
             identity_v1(8),
         );
-        let bytes = build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
-            .expect("reference document");
-        let mut document = decode_cycle4_m3_reference_document_v1(&bytes).expect("decode");
-        document.window.first_update_index = 1_025;
-        document.window.update_count = 1_024;
-        let encoded = to_canonical_json_bytes_v1(&document, CanonicalJsonNullPolicyV1::Forbid)
-            .expect("re-encode");
+        window.set_window_bounds_for_test_v1(1_025, 2_048);
         assert_eq!(
-            decode_cycle4_m3_reference_document_v1(&encoded)
-                .expect_err("a 1024-update reference window must be refused")
+            build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
+                .expect_err("the producer must refuse a 1024-update reference window")
+                .code(),
+            "cycle4_m3_audit_v1_reference_window"
+        );
+    }
+
+    #[test]
+    fn the_reference_builder_refuses_a_1536_tip_v1() {
+        let mut window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Raw,
+            vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+            10_000,
+            identity_v1(7),
+            identity_v1(8),
+        );
+        window.set_window_bounds_for_test_v1(1_025, 1_536);
+        assert_eq!(
+            build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
+                .expect_err("the producer must refuse a reference ending at update 1536")
                 .code(),
             "cycle4_m3_audit_v1_reference_window"
         );
@@ -2562,6 +2596,54 @@ mod tests {
         let decoded = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode report");
         assert_eq!(decoded.verdict, CYCLE4_M3_VERDICT_FAIL_V1);
         assert_eq!(decoded.failures, vec!["dispersion_above_allowance"]);
+    }
+
+    #[test]
+    fn a_no_cell_qualifies_report_keeps_its_reference_v1() {
+        let reference_bytes = build_cycle4_m3_reference_document_v1(
+            &test_support_window_v1(
+                Cycle4M3ResidualModeV1::Raw,
+                vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+                10_000,
+                identity_v1(7),
+                identity_v1(8),
+            ),
+            identity_v1(0x0a),
+        )
+        .expect("reference");
+        let reference =
+            decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Centered,
+            vec![cell_v1(1, "p0", 999, 0.001, 1.05)],
+            999,
+            identity_v1(3),
+            identity_v1(4),
+        );
+        let (bytes, pass) =
+            build_cycle4_m3_audit_report_v1("static-rb", &window, &reference, &identity_v1(0x0d))
+                .expect("FAIL report");
+        assert!(!pass);
+        let report = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode FAIL report");
+        assert_eq!(report.verdict, CYCLE4_M3_VERDICT_FAIL_V1);
+        assert_eq!(report.failures, vec!["no_cell_qualifies"]);
+        assert!(report.statistics.is_none());
+        assert_eq!(
+            report
+                .reference
+                .decision_weighted_mean_standard_deviation
+                .to_f64_v1()
+                .expect("reference dispersion"),
+            1.0
+        );
+        assert_eq!(
+            report
+                .reference
+                .dispersion_allowance
+                .to_f64_v1()
+                .expect("allowance"),
+            1.1
+        );
     }
 
     // -----------------------------------------------------------------
@@ -2863,6 +2945,30 @@ mod tests {
             synthetic_episode_v1(1, BaselineRoleV4::P0, 1, p0_values),
             synthetic_episode_v1(2, BaselineRoleV4::P1, -1, p1_values),
         ]
+    }
+
+    #[test]
+    fn a_1536_tip_synthetic_store_cannot_publish_a_reference_v1() {
+        let store = TestStoreV1::new_v1("reference-tip-1536");
+        let run_sha256 = identity_v1(0x31);
+        let update = vec![synthetic_episode_v1(1, BaselineRoleV4::P0, 1, &[0.0, 0.0])];
+        write_synthetic_store_v1(&store, &run_sha256, &vec![update; 1_536], false);
+
+        let window = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: None,
+            residual_mode: Cycle4M3ResidualModeV1::Raw,
+            window_updates: CYCLE4_M3_WINDOW_UPDATES_V1,
+        })
+        .expect("the synthetic Store has a complete final 512-update window");
+        assert_eq!(window.first_update_index(), 1_025);
+        assert_eq!(window.last_update_index(), 1_536);
+        assert_eq!(
+            build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
+                .expect_err("reference publication input must be refused before serialization")
+                .code(),
+            "cycle4_m3_audit_v1_reference_window"
+        );
     }
 
     /// The RAW path end to end: cells, counts, means and sample standard

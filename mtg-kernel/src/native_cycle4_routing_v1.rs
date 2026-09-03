@@ -862,18 +862,6 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
         &inputs.m3_treatment_rb_bytes,
         panel_endpoint_v1(&panel, "treatment-rb")?,
     )?;
-    let static_statistics = static_report.statistics.as_ref().ok_or_else(|| {
-        Cycle4RoutingErrorV1::new(
-            "cycle4_routing_v1_m3_reference_statistic",
-            "the static-rb report carries no reference statistic",
-        )
-    })?;
-    let treatment_statistics = treatment_report.statistics.as_ref().ok_or_else(|| {
-        Cycle4RoutingErrorV1::new(
-            "cycle4_routing_v1_m3_reference_statistic",
-            "the treatment-rb report carries no reference statistic",
-        )
-    })?;
     // Both v4 arms must be judged against ONE reference statistic, or their
     // dispersion verdicts are not comparable and the ranking is not the
     // amendment's.
@@ -889,14 +877,16 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
         || static_report.inputs.reference_window != treatment_report.inputs.reference_window
         || static_report.inputs.reference_audit_note_sha256
             != treatment_report.inputs.reference_audit_note_sha256
-        || static_statistics
-            .reference_decision_weighted_mean_standard_deviation
+        || static_report
+            .reference
+            .decision_weighted_mean_standard_deviation
             .f64_bits
-            != treatment_statistics
-                .reference_decision_weighted_mean_standard_deviation
+            != treatment_report
+                .reference
+                .decision_weighted_mean_standard_deviation
                 .f64_bits
-        || static_statistics.dispersion_allowance.f64_bits
-            != treatment_statistics.dispersion_allowance.f64_bits
+        || static_report.reference.dispersion_allowance.f64_bits
+            != treatment_report.reference.dispersion_allowance.f64_bits
     {
         return Err(Cycle4RoutingErrorV1::new(
             "cycle4_routing_v1_m3_reference_drift",
@@ -912,9 +902,9 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
             Cycle4RoutingErrorV1::new("cycle4_routing_v1_m3_reference_document", error.to_string())
         })?;
     let reference_document_sha256 = lower_hex_raw32_v1(sha256_v1(&inputs.reference_document_bytes));
-    for (arm_kind, report, statistics) in [
-        ("static-rb", &static_report, static_statistics),
-        ("treatment-rb", &treatment_report, treatment_statistics),
+    for (arm_kind, report) in [
+        ("static-rb", &static_report),
+        ("treatment-rb", &treatment_report),
     ] {
         if report.inputs.reference_document_sha256 != reference_document_sha256
             || report.inputs.reference_run_sha256 != reference.run_sha256
@@ -930,8 +920,9 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
                 ),
             ));
         }
-        if statistics
-            .reference_decision_weighted_mean_standard_deviation
+        if report
+            .reference
+            .decision_weighted_mean_standard_deviation
             .f64_bits
             != reference.decision_weighted_mean_standard_deviation.f64_bits
         {
@@ -953,7 +944,7 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
             })?;
         let expected_allowance =
             RealV1::from_f64_v1(CYCLE4_M3_DISPERSION_RATIO_MAX_V1 * reference_dispersion);
-        if statistics.dispersion_allowance.f64_bits != expected_allowance.f64_bits {
+        if report.reference.dispersion_allowance.f64_bits != expected_allowance.f64_bits {
             return Err(Cycle4RoutingErrorV1::new(
                 "cycle4_routing_v1_m3_reference_allowance",
                 format!(
@@ -1585,16 +1576,35 @@ mod tests {
         bytes
     }
 
+    fn no_cell_qualifies_report_bytes_v1(arm_kind: &str) -> Vec<u8> {
+        let reference_bytes = reference_bytes_v1();
+        let reference =
+            decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
+        let (run_sha256, checkpoint_sha256) = endpoint_identity_v1(arm_kind);
+        let window = crate::native_cycle4_m3_audit_v1::test_support_window_v1(
+            crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Centered,
+            vec![test_cell_v1(1, "p0", 999, 0.001, 1.05)],
+            999,
+            run_sha256,
+            checkpoint_sha256,
+        );
+        let reference_sha256 = lower_hex_raw32_v1(sha256_v1(&reference_bytes));
+        let (bytes, pass) =
+            build_cycle4_m3_audit_report_v1(arm_kind, &window, &reference, &reference_sha256)
+                .expect("FAIL report");
+        assert!(!pass);
+        bytes
+    }
+
     fn report_with_reference_values_v1(
         bytes: Vec<u8>,
         reference_dispersion: f64,
         dispersion_allowance: f64,
     ) -> Vec<u8> {
         let mut report = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode report");
-        let statistics = report.statistics.as_mut().expect("report statistics");
-        statistics.reference_decision_weighted_mean_standard_deviation =
+        report.reference.decision_weighted_mean_standard_deviation =
             RealV1::from_f64_v1(reference_dispersion);
-        statistics.dispersion_allowance = RealV1::from_f64_v1(dispersion_allowance);
+        report.reference.dispersion_allowance = RealV1::from_f64_v1(dispersion_allowance);
         to_canonical_json_bytes_v1(&report, CanonicalJsonNullPolicyV1::Forbid)
             .expect("encode report")
     }
@@ -1839,6 +1849,24 @@ mod tests {
         assert_eq!(record.outcome, CYCLE4_ROUTING_OUTCOME_CARRY_V1);
         assert_ne!(record.carried_endpoint_id.as_deref(), Some("treatment-rb"));
         assert_eq!(record.carried_endpoint_id.as_deref(), Some("control-r"));
+    }
+
+    #[test]
+    fn a_no_cell_qualifies_fail_report_routes_as_ineligible_v1() {
+        let plan = win_fraction_plan_v1(&[("treatment-rb", 620)]);
+        let mut inputs = routing_inputs_v1(panel_bytes_v1(&plan), true, true);
+        inputs.m3_treatment_rb_bytes = no_cell_qualifies_report_bytes_v1("treatment-rb");
+
+        let record = decide_v1(&inputs);
+        let treatment = record
+            .arms
+            .iter()
+            .find(|arm| arm.endpoint_id == "treatment-rb")
+            .expect("arm row");
+        assert!(!treatment.eligible);
+        assert_eq!(treatment.m3_verdict.as_deref(), Some("FAIL"));
+        assert!(!treatment.versus_g896.tested);
+        assert_ne!(record.carried_endpoint_id.as_deref(), Some("treatment-rb"));
     }
 
     /// Every eligible arm is materially worse than g896, so no candidate
