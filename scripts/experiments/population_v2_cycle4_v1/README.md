@@ -25,7 +25,7 @@ Every path below is machine-local and never enters a hashed artifact.
 | Parent (cycle-3 lineage) Store root | `-GenesisParentStoreRoot` | The arm's genesis weights are copied from it. |
 | Parent generation | `-GenesisParentGeneration` | `896`: the cycle-3 focal run's store generation 896, which is trainee-local 896 and the pre-registered start. NOT the lineage tip 2048, and no other value is accepted: `cycle4_run_record_v1` refuses any generation but 896 before it stages anything from the parent. The wrapper hashes `update-<gen>.{checkpoint.json,sidecar.json,state.f32le}` and `run.json` under it into the genesis authority record, and cross-checks all four against the run record's own `contracts.opponent_ladder_initialization`, so a wrong generation fails twice over. |
 | Eight slot store roots | `-SlotStoreRoots` | Absolute, in slot order 0..7 (`anchor-0`, `anchor-1`, `historical-0`, `historical-1`, `current-0`, `current-1`, `exploiter-0`, `exploiter-1`). Two slots MAY name the same root when their pinned generations differ (anchor-1 is 970002 at 1536 and historical-1's middle rotation phase is 970002 at 1024, one Store as two occupants); the same root at the same generation in two slots is still rejected. Whichever slots the manifest binds to the arm's own run (`current-1` always, `historical-0` from refresh 4) are overridden with `-StoreRoot`, so their table entries are placeholders. |
-| The three `historical-1` rotation roots | `-HistoricalOneStoreRoots` | Absolute, in rotation order: the Stores for program-v1 seeds 970001, 970002 and 970003, each pinned at generation 1024. Slot 3 takes `roots[refresh_index mod 3]` at every boundary. Omit it only if you intend the campaign to stop at refresh 1: the wrapper verifies the chosen root's four content hashes against that boundary's slot-3 identity and fails closed. |
+| The three `historical-1` rotation roots | `-HistoricalOneStoreRoots` | Absolute, in rotation order: the Stores for program-v1 seeds 970001, 970002 and 970003, each pinned at generation 1024. Slot 3 takes `roots[refresh_index mod 3]` at every boundary. The full array is required for formal `control-r` and `treatment-rb` whenever `-ThroughRefreshIndex` is 1 or later. Preflight and `static-rb` consume only refresh 0, so they may omit it and use slot 3's fixed root. |
 | The arm's `run.json` | `-RunRecord` | Where the wrapper WRITES the derived run record (and re-derives it on every later launch). Not an operator input unless `-UseExistingRunRecord` is given. |
 | `cycle4_run_record_v1.exe` | `-RunRecordExecutable` | The run-record builder. Required unless `-UseExistingRunRecord`. It is handed `-ArmExecutable` as well, because the record declares the build provenance of the launcher that will publish the Store, not the parent record's. |
 | The arm's Store root | `-StoreRoot` | Formal mode only. Its PARENT directory is the Store prefix the mode marker claims. |
@@ -92,8 +92,9 @@ test binary built without `native-training-store-v2-production` embeds
 neither, so it then requires the
 `<panel executable>.cycle4-panel-build.json` receipt the step above writes.
 That receipt must name the binary's actual hash, the launch commit, the same
-`source_tree_sha256`, and `source_worktree_clean: true` (the build step
-refuses to write one from a dirty tree). A pre-v2 receipt is refused rather
+`source_tree_sha256`, and `source_worktree_clean: true` as a JSON boolean (the
+number `1` and string `"true"` are refused, and the build step refuses to write
+one from a dirty tree). A pre-v2 receipt is refused rather
 than read leniently: it can only prove a commit. If neither proof is present
 the launch fails closed in the inputs phase, before anything is claimed,
 seeded, or trained. Rebuild the panel executable, and rewrite its receipt,
@@ -139,12 +140,14 @@ reads no checkpoint, claims no Store prefix, allocates no CUDA context, and
 writes nothing. `--check-slot-locator` is accepted ALONE, so no command line
 can mix it with a mode that touches a Store.
 
-**One file per rotation phase, not one per launch.** `historical-1` rotates
-over three Stores by `refresh_index mod 3`, and slot 3 is the only slot that
-varies with the refresh index, so the wrapper checks one representative
-refresh per rotation phase it will actually reach through
-`-ThroughRefreshIndex`. A campaign through refresh 16 therefore checks all
-three rotation roots; one through refresh 1 checks two. Without this, the two
+**One file per consumed rotation phase, not one per launch.** `historical-1`
+rotates over three Stores by `refresh_index mod 3`, and slot 3 is the only slot
+that varies with the refresh index, so the wrapper checks one representative
+refresh per rotation phase the selected mode and arm actually consume. A
+formal `control-r` or `treatment-rb` campaign through refresh 16 checks all
+three rotation roots; one through refresh 1 checks two. Preflight and
+`static-rb` check only phase 0 because neither consumes a later refresh.
+Without this, the two
 rotation roots that refreshes 1 and 2 train against would stay unproven until
 the GPU was already busy. `inputs-check-binding.json` records the required
 root set, the covered set, and the phases checked, and the launch fails

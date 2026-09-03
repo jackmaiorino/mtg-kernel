@@ -696,6 +696,9 @@ $staticAttempt = Get-LatestAttemptRoot -EvidenceRoot $staticEvidence -GateName '
 Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $staticAttempt 'RUN_FAILED'))) -Message 'static-rb passes its dry run'
 Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $staticAttempt 'TRAINING_COMPLETE'))) -Message 'static-rb publishes no completion marker on a dry run'
 $staticRecords = Get-CommandRecords -AttemptRoot $staticAttempt
+$staticInputsChecks = @($staticRecords | Where-Object { $_.label -like 'inputs-slot-decode-rotation-*' })
+Assert-That -Condition ($staticInputsChecks.Count -eq 1 -and [string]$staticInputsChecks[0].label -ceq 'inputs-slot-decode-rotation-0') `
+    -Message 'static-rb checks exactly historical-1 rotation phase 0'
 Assert-That -Condition (@($staticRecords | Where-Object { $_.label -like 'arm-interval-*' }).Count -eq 16) -Message 'static-rb still runs all 16 training intervals'
 Assert-That -Condition (@($staticRecords | Where-Object { $_.label -like 'panel-interval-*' }).Count -eq 16) -Message 'static-rb still runs the panel every interval'
 Assert-That -Condition (@($staticRecords | Where-Object { $_.label -like 'refresh-build-*' }).Count -eq 0) -Message 'static-rb never builds a manifest'
@@ -750,6 +753,9 @@ $preflightResult = Get-Content -Raw -LiteralPath (Join-Path $preflightAttempt 'r
 Assert-That -Condition ([string]$preflightResult.status -ceq 'DRY_RUN_PLANNED') -Message 'the ladder dry run reports a plan'
 Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $preflightAttempt 'TRAINING_COMPLETE'))) -Message 'the ladder never publishes TRAINING_COMPLETE'
 $preflightRecords = Get-CommandRecords -AttemptRoot $preflightAttempt
+$preflightInputsChecks = @($preflightRecords | Where-Object { $_.label -like 'inputs-slot-decode-rotation-*' })
+Assert-That -Condition ($preflightInputsChecks.Count -eq 1 -and [string]$preflightInputsChecks[0].label -ceq 'inputs-slot-decode-rotation-0') `
+    -Message 'preflight checks exactly historical-1 rotation phase 0'
 $preflightBootstraps = @($preflightRecords | Where-Object { $_.label -like 'preflight-bootstrap-*' })
 $preflightBuilds = @($preflightRecords | Where-Object { $_.label -like 'preflight-genesis-build-*' })
 $preflightTraining = @($preflightRecords | Where-Object { $_.label -like 'preflight-rung-*' })
@@ -1352,19 +1358,24 @@ Assert-Throws -Action { & $wrapper @wrongRotation *>&1 | Out-Null } `
     -ExpectedSubstring 'does not match the manifest identity' `
     -Message 'a rotation triple in the wrong order is refused at the first boundary it is wrong for'
 
-# (i) Omitting the triple entirely leaves slot 3 pinned to one Store, which is
-# right at refresh 0 and wrong from refresh 1 -- and fails closed there.
-$noRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'no-rotation-triple')
+# (i) A rotating formal arm must provide the full triple before any bootstrap.
+$noRotationEvidence = New-RejectionEvidenceRoot -Name 'no-rotation-triple'
+$noRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $noRotationEvidence
 $noRotation.Remove('HistoricalOneStoreRoots') | Out-Null
 Assert-Throws -Action { & $wrapper @noRotation *>&1 | Out-Null } `
-    -ExpectedSubstring 'does not match the manifest identity' `
-    -Message 'a single fixed slot-3 root cannot express the rotation and is caught, not silently trained against'
+    -ExpectedSubstring '-HistoricalOneStoreRoots is required for formal control-r through refresh 16' `
+    -Message 'an omitted rotation array is refused at input validation'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $noRotationEvidence 'cycle4-control-r-formal'))) `
+    -Message 'the omitted rotation array is refused before a bootstrap attempt is created'
 
-$shortRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot (New-RejectionEvidenceRoot -Name 'short-rotation-triple')
+$shortRotationEvidence = New-RejectionEvidenceRoot -Name 'short-rotation-triple'
+$shortRotation = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -EvidenceRoot $shortRotationEvidence
 $shortRotation['HistoricalOneStoreRoots'] = @($historicalOneRoots[0], $historicalOneRoots[1])
 Assert-Throws -Action { & $wrapper @shortRotation *>&1 | Out-Null } `
-    -ExpectedSubstring '-HistoricalOneStoreRoots must name exactly 3 store roots' `
-    -Message 'a rotation triple that is not a triple is refused'
+    -ExpectedSubstring '-HistoricalOneStoreRoots is required for formal control-r through refresh 16' `
+    -Message 'a short rotation array is refused at input validation'
+Assert-That -Condition (-not (Test-Path -LiteralPath (Join-Path $shortRotationEvidence 'cycle4-control-r-formal'))) `
+    -Message 'the short rotation array is refused before a bootstrap attempt is created'
 
 # (j) historical-0's four content hashes are proven against the cycle-3 Store
 # before refresh 4, which is the only place they are checked at all.
@@ -1453,14 +1464,11 @@ Assert-That -Condition ([int]$null -eq 0) `
 # 10. Round F defect 3: the inputs-phase decode check runs before any bootstrap
 # ---------------------------------------------------------------------------
 
-$checkEvidence = Join-Path $WorkRoot 'evidence-inputs-check'
-$checkArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $checkEvidence
-& $wrapper @checkArguments *>&1 | Out-Null
-$checkAttempt = Get-LatestAttemptRoot -EvidenceRoot $checkEvidence -GateName 'cycle4-treatment-rb-formal'
+$checkAttempt = $controlAttempt
 $checkRecords = Get-CommandRecords -AttemptRoot $checkAttempt
 $checkCommands = @($checkRecords | Where-Object { $_.label -like 'inputs-slot-decode-rotation-*' })
 Assert-That -Condition ($checkCommands.Count -eq 3) `
-    -Message "the inputs decode check runs once per rotation phase the campaign reaches (saw $($checkCommands.Count))"
+    -Message "formal control-r through refresh 16 checks all three rotation phases (saw $($checkCommands.Count))"
 foreach ($checkCommand in $checkCommands) {
     $checkLine = [string]$checkCommand.command_line
     Assert-That -Condition ($checkLine -like '*"--check-slot-locator"*') `
@@ -1663,7 +1671,7 @@ $failureArguments = New-WrapperArguments -Mode 'formal' -Arm 'control-r' -Eviden
 $failureRotation = @($historicalOneRoots)
 $failureArguments['HistoricalOneStoreRoots'] = @($failureRotation[0], $failureRotation[1])
 Assert-Throws -Action { & $wrapper @failureArguments *>&1 | Out-Null } `
-    -ExpectedSubstring '-HistoricalOneStoreRoots must name exactly 3 store roots' `
+    -ExpectedSubstring '-HistoricalOneStoreRoots is required for formal control-r through refresh 16' `
     -Message 'the failure fixture fails where it is meant to'
 
 $laterFailureEvidence = New-RejectionEvidenceRoot -Name 'failure-result-late'
@@ -1767,6 +1775,20 @@ Write-PanelReceipt -PanelExecutable $dirtyPanel -Commit $launchCommit -Tree $lau
 Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $dirtyPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
     -ExpectedSubstring 'does not assert a clean worktree at build time' `
     -Message 'a receipt written from a dirty worktree is refused even at the right commit'
+
+$numericCleanPanel = Join-Path $panelIdentityRoot 'mtg_kernel-numeric-clean.exe'
+[System.IO.File]::WriteAllText($numericCleanPanel, 'receipt with numeric cleanliness', [System.Text.UTF8Encoding]::new($false))
+Write-PanelReceipt -PanelExecutable $numericCleanPanel -Commit $launchCommit -Tree $launchTree -Clean 1
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $numericCleanPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'with JSON boolean true' `
+    -Message 'numeric source_worktree_clean value 1 is refused'
+
+$stringCleanPanel = Join-Path $panelIdentityRoot 'mtg_kernel-string-clean.exe'
+[System.IO.File]::WriteAllText($stringCleanPanel, 'receipt with string cleanliness', [System.Text.UTF8Encoding]::new($false))
+Write-PanelReceipt -PanelExecutable $stringCleanPanel -Commit $launchCommit -Tree $launchTree -Clean 'true'
+Assert-Throws -Action { Assert-Cycle4PanelBuildIdentity -PanelExecutable $stringCleanPanel -LaunchCommit $launchCommit -LaunchSourceTreeSha256 $launchTree } `
+    -ExpectedSubstring 'with JSON boolean true' `
+    -Message 'string source_worktree_clean value true is refused'
 
 $noCleanPanel = Join-Path $panelIdentityRoot 'mtg_kernel-no-clean-field.exe'
 [System.IO.File]::WriteAllText($noCleanPanel, 'receipt with no cleanliness claim', [System.Text.UTF8Encoding]::new($false))

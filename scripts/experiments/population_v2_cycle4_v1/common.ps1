@@ -361,9 +361,9 @@ function Assert-Cycle4PanelBuildIdentity {
     # saw a clean worktree; the digest says WHICH source bytes it compiled,
     # and must be the same ones this launch's arm executable was built from.
     $cleanProperty = $receipt.PSObject.Properties['source_worktree_clean']
-    if ($null -eq $cleanProperty -or $cleanProperty.Value -ne $true) {
+    if ($null -eq $cleanProperty -or $cleanProperty.Value -isnot [bool] -or -not $cleanProperty.Value) {
         $claimed = $(if ($null -eq $cleanProperty) { '<absent>' } else { [string]$cleanProperty.Value })
-        throw "the panel build receipt at $receiptPath does not assert a clean worktree at build time (source_worktree_clean is '$claimed'); a panel binary built from a dirty tree may not drive a formal interval"
+        throw "the panel build receipt at $receiptPath does not assert a clean worktree at build time with JSON boolean true (source_worktree_clean is '$claimed'); a panel binary built from a dirty tree may not drive a formal interval"
     }
     $treeProperty = $receipt.PSObject.Properties['source_tree_sha256']
     if ($null -eq $treeProperty) {

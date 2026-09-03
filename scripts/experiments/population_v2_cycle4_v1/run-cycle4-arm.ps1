@@ -204,8 +204,13 @@ else {
 if (@($SlotStoreRoots).Count -ne $script:Cycle4SlotCount) {
     throw "-SlotStoreRoots must name exactly $($script:Cycle4SlotCount) store roots in slot order 0..7, got $(@($SlotStoreRoots).Count)"
 }
-if ($null -ne $HistoricalOneStoreRoots -and @($HistoricalOneStoreRoots).Count -ne 0 -and @($HistoricalOneStoreRoots).Count -ne [int]$script:Cycle4HistoricalRotationPeriod) {
-    throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)), got $(@($HistoricalOneStoreRoots).Count)"
+$historicalOneRootCount = @($HistoricalOneStoreRoots).Count
+$requiresHistoricalOneRotation = ($Mode -ceq 'formal' -and $Arm -cne 'static-rb' -and $ThroughRefreshIndex -ge [uint64]1)
+if ($requiresHistoricalOneRotation -and $historicalOneRootCount -ne [int]$script:Cycle4HistoricalRotationPeriod) {
+    throw "-HistoricalOneStoreRoots is required for formal $Arm through refresh $ThroughRefreshIndex and must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)); got $historicalOneRootCount"
+}
+if (-not $requiresHistoricalOneRotation -and $historicalOneRootCount -ne 0 -and $historicalOneRootCount -ne [int]$script:Cycle4HistoricalRotationPeriod) {
+    throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)), got $historicalOneRootCount"
 }
 if ($UseExistingRunRecord -and -not [string]::IsNullOrWhiteSpace($RunRecordExecutable)) {
     throw '-UseExistingRunRecord and -RunRecordExecutable are mutually exclusive: either the wrapper derives the run record or the operator supplies it, never both'
@@ -470,8 +475,15 @@ try {
     # The coverage is then asserted against the union computed directly,
     # rather than assumed.
     $phase = 'inputs-slot-decode'
+    $consumedRefreshIndices = @([uint64]0)
+    if ($Mode -ceq 'formal' -and $Arm -cne 'static-rb') {
+        $consumedRefreshIndices = @()
+        for ($refresh = [uint64]0; $refresh -le $ThroughRefreshIndex; $refresh++) {
+            $consumedRefreshIndices += $refresh
+        }
+    }
     $requiredRoots = [ordered]@{}
-    for ($refresh = [uint64]0; $refresh -le $ThroughRefreshIndex; $refresh++) {
+    foreach ($refresh in $consumedRefreshIndices) {
         foreach ($entry in @(Get-Cycle4SlotTableForRefresh `
                     -SlotStoreRoots $SlotStoreRoots `
                     -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
@@ -483,7 +495,7 @@ try {
     # positionally rather than by key, and the rotation phase is an integer.
     $representatives = @()
     $seenRotations = @()
-    for ($refresh = [uint64]0; $refresh -le $ThroughRefreshIndex; $refresh++) {
+    foreach ($refresh in $consumedRefreshIndices) {
         $rotation = Get-Cycle4HistoricalOneRotationIndex -RefreshIndex $refresh
         if ($seenRotations -notcontains $rotation) {
             $seenRotations += $rotation
