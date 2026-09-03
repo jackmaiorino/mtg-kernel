@@ -118,6 +118,11 @@ param(
     [string]$ChainDir,
     [string]$RepoRoot,
     [ValidateSet(0, 1)][int]$Device = 1,
+    # How many payoff-panel matchup subprocesses run at once. Matchups are
+    # independent engines (own environment, seed band, and outcome file), so
+    # the panel document is byte-identical for any value; the count is
+    # recorded in the launch manifest and never enters a hashed artifact.
+    [ValidateRange(1, 64)][int]$PanelMatchupWorkers = 1,
     [uint64]$ThroughRefreshIndex = 16,
     # Preflight only. 0 means "derive the smallest admissible window": the arm
     # bin requires a whole number of checkpoint segments, so a two-update
@@ -444,6 +449,7 @@ try {
         through_refresh_index = $ThroughRefreshIndex
         refresh_interval = $script:Cycle4RefreshInterval
         panel_games_per_matchup = $script:Cycle4PanelGamesPerMatchup
+        panel_matchup_workers = $PanelMatchupWorkers
         checkpoint_segment_updates = $checkpointSegmentUpdates
         panel_base_seed = $PanelBaseSeed
         slot_store_roots = @($SlotStoreRoots)
@@ -1233,6 +1239,7 @@ try {
                 # the same for all three arms), so the runner is told.
                 '--arm', $Arm,
                 '--games-per-matchup', [string]$script:Cycle4PanelGamesPerMatchup,
+                '--matchup-workers', [string]$PanelMatchupWorkers,
                 '--base-seed', [string]$panelSeed,
                 '--output-dir', $panelOutputDir,
                 '--executable', $PanelExecutable,

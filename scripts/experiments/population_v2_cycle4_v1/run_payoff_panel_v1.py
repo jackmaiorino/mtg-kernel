@@ -131,12 +131,21 @@ child process is launched, since matchup subprocesses run with
 environment, and evaluation seed without touching a process or the
 filesystem -- safe to run without the executable, store roots, or output
 directory actually existing.
+
+Concurrency. Every matchup is its own engine process with its own
+environment, seed band, and outcome file, so `--matchup-workers N` runs N
+of them at once (default 1, the original one-at-a-time loop). Results are
+consumed in matchup order whatever the completion order, so `panel.json`
+and `bt-rating-input.json` are byte-identical for any N; the worker count
+is an operator setting the wrapper records in its launch manifest and is
+never written into a hashed artifact.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import concurrent.futures
 import itertools
 import json
 import os
@@ -147,7 +156,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 TEST_NAME = (
     "native_science_loop_v1::windows_science_loop_tests::"
@@ -168,6 +177,12 @@ DEFAULT_GAMES_PER_MATCHUP = 256
 # warning.
 CANONICAL_GAMES_PER_MATCHUP = 256
 MATCHUP_COUNT = 28
+# Matchup subprocesses are independent (own environment, own seed band, own
+# outcome file), so they may run concurrently; the panel document is a pure
+# function of the per-matchup outcomes and is byte-identical for any worker
+# count. Bounded so a typo can never fork hundreds of engines.
+DEFAULT_MATCHUP_WORKERS = 1
+MAX_MATCHUP_WORKERS = 64
 # Matches the Rust contract's own constant (`CYCLE4_REFRESH_MAX_INDEX_V1`):
 # the highest refresh index the campaign ever chains to.
 MAX_REFRESH_INDEX = 16
@@ -871,6 +886,45 @@ def run_matchup(
     }
 
 
+def run_matchups_in_spec_order(
+    specs: list[MatchupSpec],
+    workers: int,
+    run_one: Callable[[MatchupSpec], dict],
+    consume: Callable[[MatchupSpec, dict], None],
+) -> None:
+    """Runs every matchup and hands `(spec, result)` to `consume` in SPEC
+    order regardless of completion order, so everything downstream (the
+    summaries, the seed-reuse check, the outcome hashes, the panel document)
+    is independent of `workers`.
+
+    `workers == 1` is the plain sequential loop: no thread pool at all, one
+    subprocess at a time, each consumed before the next starts. `workers > 1`
+    submits every matchup to a bounded thread pool (the threads only wait on
+    subprocesses; each engine is its own process with `--test-threads=1`)
+    and consumes the futures in spec order. Failure is fail-closed either
+    way: the first error in spec order propagates, every not-yet-started
+    matchup is cancelled, and every running one is waited for, so no orphaned
+    engine keeps writing under the output directory after the runner has
+    reported failure."""
+    if workers < 1 or workers > MAX_MATCHUP_WORKERS:
+        raise PanelRunnerError(
+            f"matchup workers must be within 1..{MAX_MATCHUP_WORKERS}, got {workers}"
+        )
+    if workers == 1:
+        for spec in specs:
+            consume(spec, run_one(spec))
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(run_one, spec) for spec in specs]
+        try:
+            for spec, future in zip(specs, futures, strict=True):
+                consume(spec, future.result())
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+
+
 def run(args: argparse.Namespace) -> Path | None:
     manifest_bytes, manifest_sha256, refresh_index, slots = load_manifest(args.manifest)
     del manifest_bytes  # only its hash (and refresh_index) is needed once loaded
@@ -898,18 +952,13 @@ def run(args: argparse.Namespace) -> Path | None:
         return None
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    executable = args.executable.resolve()
+    repo_root = args.repo_root.resolve()
     summaries = []
     outcome_hashes = []
     all_seeds: set[int] = set()
-    for spec in specs:
-        result = run_matchup(
-            args.executable.resolve(),
-            args.repo_root.resolve(),
-            output_dir,
-            slots,
-            locator,
-            spec,
-        )
+
+    def consume(spec: MatchupSpec, result: dict) -> None:
         outcome = load_json(result["outcome_path"])
         summary = summarize_outcome(
             outcome, spec, slots[spec.lower_slot], slots[spec.higher_slot]
@@ -920,6 +969,13 @@ def run(args: argparse.Namespace) -> Path | None:
             all_seeds.add(seed)
         summaries.append(summary)
         outcome_hashes.append(result["outcome_sha256"])
+
+    run_matchups_in_spec_order(
+        specs,
+        args.matchup_workers,
+        lambda matchup: run_matchup(executable, repo_root, output_dir, slots, locator, matchup),
+        consume,
+    )
 
     expected_pair_count = sum(spec.pair_count for spec in specs)
     if len(all_seeds) != expected_pair_count:
@@ -977,12 +1033,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument(
+        "--matchup-workers",
+        type=int,
+        default=DEFAULT_MATCHUP_WORKERS,
+        help="how many matchup subprocesses run at once (1..64; default 1). "
+        "Matchups are independent processes, so the panel document is "
+        "byte-identical for any value; the wrapper records the value in its "
+        "launch manifest, never in the panel",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print every matchup's exact command/environment/seed and exit "
         "without touching a process or the filesystem",
     )
     args = parser.parse_args(argv)
+    if not 1 <= args.matchup_workers <= MAX_MATCHUP_WORKERS:
+        parser.error(
+            f"--matchup-workers={args.matchup_workers} is outside 1..{MAX_MATCHUP_WORKERS}"
+        )
     if not args.dry_run and args.games_per_matchup != CANONICAL_GAMES_PER_MATCHUP:
         parser.error(
             f"--games-per-matchup={args.games_per_matchup} is not allowed outside "

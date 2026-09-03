@@ -20,6 +20,9 @@ import unittest
 from pathlib import Path
 
 from run_payoff_panel_v1 import (
+    DEFAULT_MATCHUP_WORKERS,
+    MAX_MATCHUP_WORKERS,
+    run_matchups_in_spec_order,
     MANIFEST_SCHEMA,
     OUTCOME_SCHEMA,
     SLOT_COUNT,
@@ -979,6 +982,104 @@ class OutputDirResolutionTests(unittest.TestCase):
             expected_absolute_fragment = str(tmp_path / "relative-output")
             self.assertIn(expected_absolute_fragment, buffer.getvalue())
             self.assertNotIn("H2H_OUTCOME_JSON=relative-output", buffer.getvalue())
+
+
+class MatchupWorkersTests(unittest.TestCase):
+    """Matchups are independent engine processes, so running several at once
+    may change nothing but wall time. The ordering helper is exercised with
+    fake matchups whose completion order is deliberately scrambled, so the
+    order-independence claim is tested rather than assumed."""
+
+    @staticmethod
+    def _fake_runner(delays: dict[int, float], started: list[str], fail_label: str | None = None):
+        import threading
+        import time
+
+        lock = threading.Lock()
+        completion_order: list[str] = []
+
+        def run_one(spec):
+            with lock:
+                started.append(spec.label)
+            time.sleep(delays.get(spec.matchup_index, 0.0))
+            if spec.label == fail_label:
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            with lock:
+                completion_order.append(spec.label)
+            return {
+                "outcome_path": None,
+                "wall_seconds": 0.0,
+                "outcome_sha256": hash_tag(spec.matchup_index),
+            }
+
+        return run_one, completion_order
+
+    def test_parse_args_default_and_bounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(parse_args(_base_cli_args(tmp)).matchup_workers, DEFAULT_MATCHUP_WORKERS)
+            self.assertEqual(DEFAULT_MATCHUP_WORKERS, 1)
+            args = parse_args(_base_cli_args(tmp) + ["--matchup-workers", "12"])
+            self.assertEqual(args.matchup_workers, 12)
+            for bad in ("0", str(MAX_MATCHUP_WORKERS + 1), "-3"):
+                with self.assertRaises(SystemExit) as ctx:
+                    parse_args(_base_cli_args(tmp) + ["--matchup-workers", bad])
+                self.assertEqual(ctx.exception.code, 2)
+
+    def test_helper_rejects_out_of_range_workers(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        for workers in (0, MAX_MATCHUP_WORKERS + 1):
+            with self.assertRaises(PanelRunnerError):
+                run_matchups_in_spec_order(specs, workers, lambda spec: {}, lambda spec, result: None)
+
+    def test_results_are_consumed_in_spec_order_for_any_worker_count(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        expected_order = [spec.label for spec in specs]
+        consumed_by_workers: dict[int, list[tuple[str, str]]] = {}
+        # Reverse delays under a pool as wide as the panel: the LAST matchup
+        # finishes first, so consumption order is only right if the helper
+        # orders by spec, not by completion.
+        reverse_delays = {spec.matchup_index: (len(specs) - spec.matchup_index) * 0.02 for spec in specs}
+        for workers, delays in ((1, {}), (4, {index: 0.005 * (index % 3) for index in range(len(specs))}), (len(specs), reverse_delays)):
+            started: list[str] = []
+            run_one, completion_order = self._fake_runner(delays, started)
+            consumed: list[tuple[str, str]] = []
+            run_matchups_in_spec_order(
+                specs, workers, run_one, lambda spec, result: consumed.append((spec.label, result["outcome_sha256"]))
+            )
+            self.assertEqual([label for label, _ in consumed], expected_order)
+            self.assertEqual(sorted(started), sorted(expected_order))
+            consumed_by_workers[workers] = consumed
+            if workers == len(specs):
+                self.assertNotEqual(completion_order, expected_order)
+        self.assertEqual(consumed_by_workers[1], consumed_by_workers[4])
+        self.assertEqual(consumed_by_workers[1], consumed_by_workers[len(specs)])
+
+    def test_failure_propagates_in_spec_order_and_cancels_pending_matchups(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        started: list[str] = []
+        delays = {index: 0.05 for index in range(len(specs))}
+        delays[2] = 0.0
+        run_one, _ = self._fake_runner(delays, started, fail_label=specs[2].label)
+        consumed: list[str] = []
+        with self.assertRaises(PanelRunnerError) as ctx:
+            run_matchups_in_spec_order(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
+        self.assertIn(specs[2].label, str(ctx.exception))
+        self.assertEqual(consumed, [specs[0].label, specs[1].label])
+        self.assertLess(len(started), len(specs))
+
+    def test_sequential_path_consumes_each_matchup_before_starting_the_next(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        events: list[str] = []
+
+        def run_one(spec):
+            events.append(f"run {spec.label}")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        run_matchups_in_spec_order(specs, 1, run_one, lambda spec, result: events.append(f"consume {spec.label}"))
+        expected = []
+        for spec in specs:
+            expected.extend([f"run {spec.label}", f"consume {spec.label}"])
+        self.assertEqual(events, expected)
 
 
 if __name__ == "__main__":

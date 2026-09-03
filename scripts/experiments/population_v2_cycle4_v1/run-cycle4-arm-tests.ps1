@@ -481,6 +481,7 @@ Assert-That -Condition ($armLast -like '*"--stop-generation" "2048"*') -Message 
 $panelZero = $panelCommands[0].command_line
 Assert-That -Condition ($panelZero -like '*run_payoff_panel_v1.py*') -Message 'the panel runs through the round-C runner'
 Assert-That -Condition ($panelZero -like '*"--games-per-matchup" "256"*') -Message 'the panel always runs the pre-registered G = 256'
+Assert-That -Condition ($panelZero -like '*"--matchup-workers" "1"*') -Message 'the panel runs one matchup at a time unless -PanelMatchupWorkers says otherwise'
 $expectedSeedZero = $panelBaseSeed + [uint64]32000000
 Assert-That -Condition ($panelZero -like "*`"--base-seed`" `"$expectedSeedZero`"*") -Message 'panel 1 uses its own disjoint seed window'
 $expectedSeedOne = $panelBaseSeed + [uint64]64000000
@@ -1684,6 +1685,7 @@ function Write-ParameterFile {
 
 $parameterFileEvidence = Join-Path $WorkRoot 'evidence-parameter-file'
 $parameterFileArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $parameterFileEvidence
+$parameterFileArguments['PanelMatchupWorkers'] = 12
 $parameterFilePath = Join-Path $WorkRoot 'launch-parameters.json'
 Write-ParameterFile -Path $parameterFilePath -Arguments $parameterFileArguments
 & $wrapper -ParameterFile $parameterFilePath *>&1 | Out-Null
@@ -1698,6 +1700,19 @@ Assert-That -Condition (@($parameterFileManifest.slot_store_roots).Count -eq 8) 
     -Message 'a parameter file passes an eight-element array intact, which -File cannot'
 Assert-That -Condition ($null -ne $parameterFileManifest.parameter_file) `
     -Message 'the launch manifest records the parameter file it was driven from'
+Assert-That -Condition ([int]$parameterFileManifest.panel_matchup_workers -eq 12) `
+    -Message 'the launch manifest records the panel worker count the parameter file set'
+$parameterFilePanel = @((Get-CommandRecords -AttemptRoot $parameterFileAttempt) | Where-Object { $_.label -like 'panel-interval-*' })
+Assert-That -Condition ($parameterFilePanel.Count -gt 0 -and $parameterFilePanel[0].command_line -like '*"--matchup-workers" "12"*') `
+    -Message 'the panel runner is told the worker count'
+
+$badWorkersArguments = $parameterFileArguments.Clone()
+$badWorkersArguments['PanelMatchupWorkers'] = 0
+$badWorkersPath = Join-Path $WorkRoot 'launch-parameters-bad-workers.json'
+Write-ParameterFile -Path $badWorkersPath -Arguments $badWorkersArguments
+Assert-Throws -Action { & $wrapper -ParameterFile $badWorkersPath *>&1 | Out-Null } `
+    -ExpectedSubstring 'PanelMatchupWorkers' `
+    -Message 'a zero panel worker count is refused by the parameter range'
 
 $badSchemaPath = Join-Path $WorkRoot 'launch-parameters-bad-schema.json'
 Write-ParameterFile -Path $badSchemaPath -Arguments $parameterFileArguments -Schema 'mtg-kernel-cycle4-arm-parameters/v2'
