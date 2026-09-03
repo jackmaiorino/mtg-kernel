@@ -785,6 +785,7 @@ catch {
 #    recorded verdict, not a wrapper failure: the ladder is measured in full.
 # ---------------------------------------------------------------------------
 $tierResults = @()
+$clockRegressionSmokeReasons = @()
 foreach ($plan in $tierPlans) {
     $shardResults = @()
     try {
@@ -900,14 +901,18 @@ foreach ($plan in $tierPlans) {
         # dies with a bare strict-mode PropertyNotFoundException naming
         # neither the tier nor the field the contract required.
         #
-        # -RequireFormalShardTopology only when this run is still a
-        # candidate for TTS_S1_COMPLETE: a smoke at another fan-out still
-        # publishes a full, readable tier report and refusing to read it
-        # would turn "carries no feasibility standing" into "the run
-        # failed". When the run IS a candidate, a report measured at any
-        # other topology is refused outright.
-        $report = Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path `
-            -RequireFormalShardTopology:$isFormalTopology
+        # Read the complete report first. A clock regression is the one
+        # formal-topology failure that demotes an otherwise formal launch to
+        # readable smoke, because its timing diagnostics remain useful. All
+        # other topology failures still fail closed for a formal candidate.
+        $report = Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path
+        $clockRegressionReason = Get-TtsS1ClockRegressionSmokeReason -Report $report
+        if ($isFormalTopology -and $null -eq $clockRegressionReason) {
+            Assert-TtsS1TierReportContract -Tier $plan.tier -Report $report -RequireFormalShardTopology
+        }
+        if ($null -ne $clockRegressionReason) {
+            $clockRegressionSmokeReasons += "tier $($plan.tier): $clockRegressionReason"
+        }
         if ($report.body.corpus_sha256 -cne $corpus.corpus_sha256) {
             throw "tier $($plan.tier) measured corpus $($report.body.corpus_sha256), not the corpus this attempt built"
         }
@@ -1048,9 +1053,17 @@ foreach ($result in $tierResults) {
 $isFormal = $isFormalTopology -and $everyTierWholeCorpus -and $everyTierFormalTopology
 $status = 'TTS_S1_SMOKE'
 if ($isFormal) { $status = 'TTS_S1_COMPLETE' }
+$statusReason = 'the run completed with formal standing'
+if (-not $isFormal) {
+    $statusReason = 'the run used a partial corpus, a partial ladder, or a shard topology other than the pinned formal one'
+}
+if ($clockRegressionSmokeReasons.Count -gt 0) {
+    $statusReason = $clockRegressionSmokeReasons -join '; '
+}
 $summary = [ordered]@{
     schema = 'mtg-kernel-tts-s1-summary/v1'
     status = $status
+    status_reason = $statusReason
     formal_ladder = $isFormal
     stage = 'S1'
     attempt_root = $attemptRoot
@@ -1113,6 +1126,7 @@ if ($isFormal) {
 
 Write-Output "TTS_S1_SUMMARY attempt_root=$attemptRoot status=$status formal_ladder=$isFormal shard_count=$effectiveShardCount formal_shard_count=$($script:TtsS1FormalShardCount) host_logical_cpus=$hostLogicalCpus feasible_tier_count=$($feasible.Count) feasible_tiers=$($feasible -join ',')"
 if (-not $isFormal) {
+    Write-Output "TTS_S1_SMOKE reason=$statusReason"
     Write-Output 'TTS_S1_RESULT this run is a SMOKE (a partial corpus, a partial ladder, or a shard topology other than the pinned formal one); it carries no feasibility standing, no TTS_S1_COMPLETE marker was written, and it may not be read as closing the ladder either way'
 }
 elseif ($feasible.Count -eq 0) {

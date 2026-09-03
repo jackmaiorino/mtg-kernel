@@ -183,6 +183,8 @@ function New-TtsS1TestReport {
         [long]$ReleasedUnixMicros = 1699999999999500,
         [bool]$EveryShardObservedTokenBeforeFirstDecision = $true,
         [int]$FullyConcurrentPermille = 1000,
+        [bool]$ClockRegressionDetected = $false,
+        [object[]]$ClockRegressions = @(),
         [switch]$OmitLatencyCurve,
         [switch]$OmitShardTopology
     )
@@ -215,7 +217,9 @@ function New-TtsS1TestReport {
             censused_decisions = 1000
             fully_concurrent_decisions = $FullyConcurrentPermille
             fully_concurrent_permille = $FullyConcurrentPermille
-            non_monotone_decision_windows = 0
+            non_monotone_decision_windows = [long]$ClockRegressions.Count
+            clock_regressions = @($ClockRegressions)
+            clock_regression_detected = $ClockRegressionDetected
             min_fully_concurrent_permille = $PinnedMinPermille
             meets_formal_topology = $MeetsFormalTopology
             formal_topology_reason = 'synthetic'
@@ -285,11 +289,12 @@ Assert-True ($script:TtsS1FormalShardCount -eq 8) 'the pinned formal shard count
 Assert-True ($script:TtsS1FormalLogicalCpusPerShard -eq 2) 'the pin requires two logical CPUs per shard'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*exactly-8-concurrent-replay-processes*') 'the topology rule names the pinned concurrency'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*at-least-2-logical-cpus-per-shard*') 'the topology rule names the host requirement'
-Assert-True ($script:TtsS1ShardTopologyRule -like '*/v5') 'the pinned topology rule is the V5 one'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*/v6') 'the pinned topology rule is the V6 one'
 Assert-True ($script:TtsS1TopologyTimeBase -like '*whole-microseconds*') 'the pinned time base is whole microseconds'
-Assert-True ($script:TtsS1TopologyTimeBase -like '*/v2') 'the pinned time base is the V2 one'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*/v3') 'the pinned time base is the V3 one'
 Assert-True ($script:TtsS1TopologyTimeBase -like '*read-directly-from-the-os-clock*') 'the pinned time base uses direct OS-clock reads'
-Assert-True ($script:TtsS1TopologyTimeBase -like '*non-monotone-within-shard-windows-counted*') 'the pinned time base publishes clock-step diagnostics'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*process-monotonic-clock*') 'the pinned time base publishes monotonic window durations'
+Assert-True ($script:TtsS1TopologyTimeBase -like '*non-monotone-within-shard-windows-named-and-formally-refused*') 'the pinned time base refuses clock regressions'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*announcing-itself-ready*') 'the topology rule names the readiness announcement'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*committing-each-observed-announcement*') 'the topology rule names the observed-set commitment'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*same-token-sha256*') 'the topology rule names the shared token digest'
@@ -304,6 +309,7 @@ Assert-True ($script:TtsS1StartBarrierTimeoutSeconds -gt $script:TtsS1ShardReady
 Assert-True ($script:TtsS1FormalMinFullConcurrencyPermille -eq 950) 'the pinned full-concurrency tolerance is 950 permille'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*start-barrier*') 'the topology rule names the start barrier'
 Assert-True ($script:TtsS1ShardTopologyRule -like '*950-permille*') 'the topology rule names the overlap tolerance'
+Assert-True ($script:TtsS1ShardTopologyRule -like '*wall-clock-regression*naming-its-shard-and-decision-ordinal-voids-formal-standing*') 'the topology rule names the clock-regression gate'
 Assert-True ($script:TtsS1StartBarrierTimeoutSeconds -gt 0) 'the launcher states a bounded barrier deadline'
 
 # The RULE and the PIN are checked on every report, formal or not: a report
@@ -342,6 +348,19 @@ Assert-True ($message -like '*formal topology*') 'the refusal names the formal t
 
 # And the pinned topology, measured, is accepted with the switch on.
 Assert-True ($null -eq (Get-TtsS1ContractRejection -Report (New-TtsS1TestReport) -RequireFormalShardTopology)) 'a report measured at the pinned topology carries formal standing'
+
+# A named clock regression remains readable and becomes an operator-facing
+# smoke reason that instructs a restart. It may never still claim formality.
+$clockRegression = [pscustomobject]@{ shard_index = 3; decision_ordinal = 17 }
+$clockSmoke = New-TtsS1TestReport -MeetsFormalTopology $false `
+    -ClockRegressionDetected $true -ClockRegressions @($clockRegression)
+Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $clockSmoke)) 'a clock-regressed report remains readable as a smoke'
+$clockSmokeReason = Get-TtsS1ClockRegressionSmokeReason -Report $clockSmoke
+Assert-True ($clockSmokeReason -like '*clock regression*') 'the smoke reason names the clock regression'
+Assert-True ($clockSmokeReason -like '*shard 3 decision ordinal 17*') 'the smoke reason names the shard and decision ordinal'
+Assert-True ($clockSmokeReason -like '*restart the run*') 'the smoke reason instructs the operator to restart the run'
+Assert-True ($wrapperText -like '*$clockRegressionSmokeReasons*') 'the launcher accumulates clock regressions as smoke reasons'
+Assert-True ($wrapperText -like '*TTS_S1_SMOKE reason=$statusReason*') 'the launcher writes TTS_S1_SMOKE with its reason'
 
 # THE OVERLAP EVIDENCE, refused only when the run still claims formal
 # standing. A report from eight processes that never actually ran together
@@ -594,7 +613,8 @@ try {
     Assert-True ($wrapperText -like '*else {*') 'the refusal has a real-launch branch'
     Assert-True ($wrapperText -like '*$isFormalLadder = ($LimitEpisodes -eq 0)*') 'the formal ladder is still decided from the corpus and the tiers'
     Assert-True ($wrapperText -like '*-and ($ShardCount -eq $script:TtsS1FormalShardCount)*') 'the shard count is part of what makes a ladder formal'
-    Assert-True ($wrapperText -like '*-RequireFormalShardTopology:$isFormalTopology*') 'the launcher demands the formal topology of a report only when the run still claims it'
+    Assert-True ($wrapperText -like '*$null -eq $clockRegressionReason*') 'the launcher keeps a clock-regressed report readable as smoke'
+    Assert-True ($wrapperText -like '*-RequireFormalShardTopology*') 'the launcher still demands formal topology when no clock regression was reported'
     Assert-True ($wrapperText -like '*$everyTierFormalTopology*') 'the tier reports get the last word on the topology'
 
     # --- 1a3. THE SMOKE DEMOTION. Any other -ShardCount is a smoke, and

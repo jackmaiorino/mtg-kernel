@@ -95,7 +95,7 @@ $script:TtsS1FormalLogicalCpusPerShard = 2
 # contending while the others finish.
 $script:TtsS1FormalMinFullConcurrencyPermille = 950
 
-# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V5
+# native_tts_s1_replay_v1::TTS_S1_SHARD_TOPOLOGY_RULE_V6
 $script:TtsS1ShardTopologyRule = 'formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes' +
     '-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under' +
     '-on-a-host-with-at-least-2-logical-cpus-per-shard' +
@@ -104,23 +104,24 @@ $script:TtsS1ShardTopologyRule = 'formal-s1-timings-are-measured-at-exactly-8-co
     '-every-shard-reporting-the-same-token-sha256' +
     '-every-shard-recording-that-it-observed-the-token-before-its-first-search' +
     '-decision-census-windows-read-directly-from-the-os-clock-in-whole-microseconds' +
-    '-clock-steps-tolerated-by-the-overlap-threshold-with-non-monotone-windows-counted' +
+    '-every-decision-recording-its-whole-work-window-monotonic-duration' +
+    '-any-within-shard-wall-clock-regression-naming-its-shard-and-decision-ordinal-voids-formal-standing' +
     '-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard' +
     '-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result' +
-    '/v5'
+    '/v6'
 
-# native_tts_s1_replay_v1::TTS_S1_TOPOLOGY_TIME_BASE_V2
+# native_tts_s1_replay_v1::TTS_S1_TOPOLOGY_TIME_BASE_V3
 #
 # Census windows read the OS clock directly at each boundary. Barrier
 # instants are diagnostics only because different processes retain separate
-# launch anchors. A clock step is tolerated by the overlap threshold and is
-# exposed through the non-monotone-window count.
+# launch anchors. A monotonic duration keeps each window diagnostically
+# useful, while any wall-clock regression voids formal standing.
 $script:TtsS1TopologyTimeBase = 'whole-microseconds-since-the-unix-epoch' +
     '-read-directly-from-the-os-clock-at-each-decision-window-boundary' +
     '-barrier-instants-are-diagnostics-only-and-never-compared-for-formality' +
-    '-clock-steps-are-tolerated-by-the-950-permille-overlap-threshold' +
-    '-with-non-monotone-within-shard-windows-counted' +
-    '/v2'
+    '-whole-work-window-durations-read-from-the-process-monotonic-clock' +
+    '-with-non-monotone-within-shard-windows-named-and-formally-refused' +
+    '/v3'
 
 # How long the LAUNCHER waits for every shard to announce itself ready.
 #
@@ -249,6 +250,41 @@ function Read-TtsS1TierReport {
     return $report
 }
 
+function Get-TtsS1ClockRegressionSmokeReason {
+    # Returns the operator-facing smoke reason when the merged report names a
+    # clock regression. The count, flag, and named list must agree so a
+    # partially updated report is refused instead of silently demoted.
+    param(
+        [Parameter(Mandatory = $true)]$Report
+    )
+    $detected = Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.clock_regression_detected'
+    $count = Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.non_monotone_decision_windows'
+    $regressions = @(Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.clock_regressions')
+    $countIsInteger = $count -is [int] -or $count -is [long] -or
+        $count -is [uint32] -or $count -is [uint64]
+    if ($detected -isnot [bool] -or -not $countIsInteger -or $count -lt 0) {
+        throw 'clock-regression fields have invalid types'
+    }
+    if ($count -ne $regressions.Count -or $detected -ne ($count -gt 0)) {
+        throw 'clock-regression flag, count, and named list disagree'
+    }
+    if (-not $detected) { return $null }
+    $meetsFormalTopology = Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.meets_formal_topology'
+    if ($meetsFormalTopology -ne $false) {
+        throw 'a report with a clock regression still claims formal topology'
+    }
+
+    $named = @()
+    foreach ($regression in $regressions) {
+        if (-not ($regression.PSObject.Properties.Name -ccontains 'shard_index') -or
+            -not ($regression.PSObject.Properties.Name -ccontains 'decision_ordinal')) {
+            throw 'a clock-regression entry does not name its shard and decision ordinal'
+        }
+        $named += "shard $($regression.shard_index) decision ordinal $($regression.decision_ordinal)"
+    }
+    return "clock regression reported at $($named -join ', '); restart the run because a backward clock step voids formal standing"
+}
+
 function Assert-TtsS1TierReportContract {
     # Every pinned string a tier report must declare, checked before the
     # report is summarized. Case-sensitive throughout: these are identity
@@ -304,6 +340,7 @@ function Assert-TtsS1TierReportContract {
                 $Tier, $check.What, $observed, $check.Path, $check.Expected)
         }
     }
+    [void](Get-TtsS1ClockRegressionSmokeReason -Report $Report)
 }
 
 # ---------------------------------------------------------------------------

@@ -172,7 +172,7 @@ pub const TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1: u64 = 950;
 /// infer which concurrency a tier's timings were taken under, or what would
 /// have made them formal.
 ///
-/// V5, and none of the version bumps was cosmetic. V1 granted formal standing
+/// V6, and none of the version bumps was cosmetic. V1 granted formal standing
 /// from the DECLARED shard count and the host's size, which eight processes
 /// run one after another satisfy exactly as well as eight run together: a
 /// count is an intention, not a measurement. V2 added the barrier and the
@@ -194,9 +194,14 @@ pub const TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1: u64 = 950;
 /// every shard commits that token's digest into its report, and the shard
 /// records at its first search that it had already observed the token.
 /// Decision census windows now read the OS wall clock directly in each
-/// process. A clock step is tolerated by the overlap threshold and its
-/// within-shard anomalies are counted in the merged report.
-pub const TTS_S1_SHARD_TOPOLOGY_RULE_V5: &str = concat!(
+/// process.
+///
+/// V6 makes a within-shard wall-clock regression a formal refusal. Sorting
+/// wall-clock windows for the overlap census can otherwise make work before
+/// a backward step appear concurrent with work after it. Each decision also
+/// records the monotonic duration of its whole work window so the timing
+/// diagnostic remains useful after a wall-clock step.
+pub const TTS_S1_SHARD_TOPOLOGY_RULE_V6: &str = concat!(
     "formal-s1-timings-are-measured-at-exactly-8-concurrent-replay-processes",
     "-the-concurrency-the-cp7-panel-host-runs-the-wrapped-agent-under",
     "-on-a-host-with-at-least-2-logical-cpus-per-shard",
@@ -205,10 +210,11 @@ pub const TTS_S1_SHARD_TOPOLOGY_RULE_V5: &str = concat!(
     "-every-shard-reporting-the-same-token-sha256",
     "-every-shard-recording-that-it-observed-the-token-before-its-first-search",
     "-decision-census-windows-read-directly-from-the-os-clock-in-whole-microseconds",
-    "-clock-steps-tolerated-by-the-overlap-threshold-with-non-monotone-windows-counted",
+    "-every-decision-recording-its-whole-work-window-monotonic-duration",
+    "-any-within-shard-wall-clock-regression-naming-its-shard-and-decision-ordinal-voids-formal-standing",
     "-and-at-least-950-permille-of-decisions-observed-mid-work-in-every-other-shard",
     "-any-other-shard-count-or-a-smaller-host-or-unproven-readiness-or-unproven-overlap-is-a-smoke-and-never-a-feasibility-result",
-    "/v5"
+    "/v6"
 );
 
 /// THE TIME BASE of topology diagnostics and census windows.
@@ -217,15 +223,16 @@ pub const TTS_S1_SHARD_TOPOLOGY_RULE_V5: &str = concat!(
 /// retain its own launch anchor for diagnostic instants without affecting
 /// formality. Census windows read `SystemTime::now()` directly at each
 /// boundary so all processes sample the same OS clock, truncated to whole
-/// microseconds. A clock step is tolerated by the 950 permille overlap gate,
-/// and non-monotone within-shard windows are counted in the report.
-pub const TTS_S1_TOPOLOGY_TIME_BASE_V2: &str = concat!(
+/// microseconds. Each window also records a duration from the process's
+/// monotonic clock. A non-monotone wall-clock window is reported with its
+/// shard and ordinal and voids formal standing.
+pub const TTS_S1_TOPOLOGY_TIME_BASE_V3: &str = concat!(
     "whole-microseconds-since-the-unix-epoch",
     "-read-directly-from-the-os-clock-at-each-decision-window-boundary",
     "-barrier-instants-are-diagnostics-only-and-never-compared-for-formality",
-    "-clock-steps-are-tolerated-by-the-950-permille-overlap-threshold",
-    "-with-non-monotone-within-shard-windows-counted",
-    "/v2"
+    "-whole-work-window-durations-read-from-the-process-monotonic-clock",
+    "-with-non-monotone-within-shard-windows-named-and-formally-refused",
+    "/v3"
 );
 
 /// The file one shard publishes to say it has loaded and is about to wait.
@@ -424,8 +431,8 @@ pub struct TtsS1DecisionWallTimeV1 {
     /// process was busy, and the question the formal topology turns on is
     /// whether eight processes were busy AT THE SAME TIME. Every process
     /// therefore samples the same OS wall clock directly. A clock step may
-    /// make a window non-monotone; it is counted in the topology diagnostic
-    /// and tolerated by the 950 permille overlap threshold.
+    /// make a window non-monotone; it is named in the topology diagnostic
+    /// and voids formal standing.
     ///
     /// The window is the decision's WHOLE measured work, from the flat
     /// encode through the response flush, and deliberately not the search
@@ -436,6 +443,9 @@ pub struct TtsS1DecisionWallTimeV1 {
     pub work_started_unix_micros: u64,
     /// When it ended, on the same base.
     pub work_ended_unix_micros: u64,
+    /// Duration of the same whole-work window, measured from `Instant` so it
+    /// remains useful when the OS wall clock steps.
+    pub work_elapsed_monotonic_micros: u64,
 }
 
 /// Where each timing landed against the pre-registered ceilings.
@@ -1527,6 +1537,15 @@ pub struct TtsS1ConcurrencyBucketV1 {
     pub decisions: u64,
 }
 
+/// One wall-clock regression reported by one shard.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsS1ClockRegressionV1 {
+    pub shard_index: u64,
+    /// The shard-local record ordinal of the affected decision.
+    pub decision_ordinal: u64,
+}
+
 /// The measured evidence that the run really was as concurrent as its shard
 /// count claims.
 ///
@@ -1549,10 +1568,9 @@ pub struct TtsS1TopologyEvidenceV1 {
     /// Whether each shard's exact ready-file digest appears with its index
     /// and pid in the observed set committed by the shared token.
     pub every_shard_announcement_observed_before_release: bool,
-    /// Windows whose end precedes their start, whose start precedes the
-    /// preceding start, or whose end precedes the preceding end within one
-    /// shard. Diagnostic only: the overlap threshold remains the gate.
-    pub non_monotone_decision_windows: u64,
+    /// Every wall-clock regression a shard reported, with the affected
+    /// shard-local decision ordinal.
+    pub clock_regressions: Vec<TtsS1ClockRegressionV1>,
     pub concurrency_histogram: Vec<TtsS1ConcurrencyBucketV1>,
     pub fully_concurrent_decisions: u64,
     pub census_decisions: u64,
@@ -1625,26 +1643,28 @@ pub fn concurrency_census_v1(
     (histogram, fully_concurrent_decisions, census_decisions)
 }
 
-/// Counts decision windows whose wall-clock sequence is non-monotone within
-/// a shard. The count is diagnostic and never an additional formal gate.
+/// Returns the shard-local ordinals of wall-clock windows that regress.
+///
+/// A window regresses when its end precedes its own start or its start
+/// precedes the previous decision's end. The latter includes both a backward
+/// clock step and wall-clock windows that overlap within one sequential shard.
+pub fn non_monotone_decision_ordinals_v1(shard_windows: &[(u64, u64)]) -> Vec<u64> {
+    let mut previous_end: Option<u64> = None;
+    let mut ordinals = Vec::new();
+    for (ordinal, &(start, end)) in shard_windows.iter().enumerate() {
+        if end < start || previous_end.is_some_and(|previous| start < previous) {
+            ordinals.push(ordinal as u64);
+        }
+        previous_end = Some(end);
+    }
+    ordinals
+}
+
+/// Counts non-monotone decision windows across all shards.
 pub fn non_monotone_decision_windows_v1(shard_windows: &[Vec<(u64, u64)>]) -> u64 {
     shard_windows
         .iter()
-        .map(|windows| {
-            let mut previous: Option<(u64, u64)> = None;
-            let mut count = 0u64;
-            for &(start, end) in windows {
-                if end < start
-                    || previous.is_some_and(|(previous_start, previous_end)| {
-                        start < previous_start || end < previous_end
-                    })
-                {
-                    count += 1;
-                }
-                previous = Some((start, end));
-            }
-            count
-        })
+        .map(|windows| non_monotone_decision_ordinals_v1(windows).len() as u64)
         .sum()
 }
 
@@ -1672,9 +1692,13 @@ impl TtsS1TopologyEvidenceV1 {
             shard_readiness: Vec::new(),
             latest_ready_unix_micros: 0,
             every_shard_announcement_observed_before_release: false,
-            non_monotone_decision_windows: non_monotone_decision_windows_v1(std::slice::from_ref(
-                &windows,
-            )),
+            clock_regressions: non_monotone_decision_ordinals_v1(&windows)
+                .into_iter()
+                .map(|decision_ordinal| TtsS1ClockRegressionV1 {
+                    shard_index: 0,
+                    decision_ordinal,
+                })
+                .collect(),
             concurrency_histogram,
             fully_concurrent_decisions,
             census_decisions,
@@ -1702,7 +1726,7 @@ impl TtsS1TopologyEvidenceV1 {
 #[serde(deny_unknown_fields)]
 pub struct TtsS1ShardTopologyV1 {
     pub rule: String,
-    /// [`TTS_S1_TOPOLOGY_TIME_BASE_V2`]: the unit and source of the census
+    /// [`TTS_S1_TOPOLOGY_TIME_BASE_V3`]: the unit and source of the census
     /// windows, on the wire beside them.
     pub time_base: String,
     /// Replay processes that produced these timings. One for an unsharded
@@ -1738,6 +1762,10 @@ pub struct TtsS1ShardTopologyV1 {
     /// Diagnostic count of windows affected by an OS clock step or other
     /// within-shard wall-clock regression.
     pub non_monotone_decision_windows: u64,
+    /// The affected shard and shard-local decision ordinal for every
+    /// regression. Empty exactly when `clock_regression_detected` is false.
+    pub clock_regressions: Vec<TtsS1ClockRegressionV1>,
+    pub clock_regression_detected: bool,
     /// [`TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1`], on the wire
     /// beside the measurement it gates.
     pub min_fully_concurrent_permille: u64,
@@ -1751,7 +1779,7 @@ pub struct TtsS1ShardTopologyV1 {
 impl TtsS1ShardTopologyV1 {
     /// Builds the block from the observed host and the measured evidence.
     ///
-    /// FOUR clauses, and every failing one is named rather than only the
+    /// Every failing clause is named rather than only the
     /// first, exactly as the tier verdict does. The last two are what
     /// separate a claim from a measurement: a declared count of eight is
     /// satisfied just as well by eight processes run one after another, and
@@ -1798,6 +1826,22 @@ impl TtsS1ShardTopologyV1 {
                 evidence.census_decisions, shard_count
             ));
         }
+        if !evidence.clock_regressions.is_empty() {
+            let named = evidence
+                .clock_regressions
+                .iter()
+                .map(|regression| {
+                    format!(
+                        "shard {} decision ordinal {}",
+                        regression.shard_index, regression.decision_ordinal
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            failures.push(format!(
+                "OS clock regression reported at {named}; restart the run because a backward clock step voids formal standing"
+            ));
+        }
         let meets_formal_topology = failures.is_empty();
         let formal_topology_reason = if meets_formal_topology {
             format!(
@@ -1808,8 +1852,8 @@ impl TtsS1ShardTopologyV1 {
             failures.join("; ")
         };
         Self {
-            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V5.to_owned(),
-            time_base: TTS_S1_TOPOLOGY_TIME_BASE_V2.to_owned(),
+            rule: TTS_S1_SHARD_TOPOLOGY_RULE_V6.to_owned(),
+            time_base: TTS_S1_TOPOLOGY_TIME_BASE_V3.to_owned(),
             shard_count,
             formal_shard_count: TTS_S1_FORMAL_SHARD_COUNT_V1,
             formal_logical_cpus_per_shard: TTS_S1_FORMAL_LOGICAL_CPUS_PER_SHARD_V1,
@@ -1828,7 +1872,9 @@ impl TtsS1ShardTopologyV1 {
             censused_decisions: evidence.census_decisions,
             fully_concurrent_decisions: evidence.fully_concurrent_decisions,
             fully_concurrent_permille,
-            non_monotone_decision_windows: evidence.non_monotone_decision_windows,
+            non_monotone_decision_windows: evidence.clock_regressions.len() as u64,
+            clock_regressions: evidence.clock_regressions.clone(),
+            clock_regression_detected: !evidence.clock_regressions.is_empty(),
             min_fully_concurrent_permille: TTS_S1_FORMAL_MIN_FULL_CONCURRENCY_PERMILLE_V1,
             meets_formal_topology,
             formal_topology_reason,
@@ -3145,12 +3191,24 @@ pub(crate) fn replay_corpus_shard_body_v1(
     let last_work_ended_unix_micros = pass.records.iter().fold(0u64, |latest, record| {
         latest.max(record.wall_time.work_ended_unix_micros)
     });
+    let shard_windows: Vec<(u64, u64)> = pass
+        .records
+        .iter()
+        .map(|record| {
+            (
+                record.wall_time.work_started_unix_micros,
+                record.wall_time.work_ended_unix_micros,
+            )
+        })
+        .collect();
+    let non_monotone_decision_ordinals = non_monotone_decision_ordinals_v1(&shard_windows);
     let body = TtsS1ReplayShardReportBodyV1 {
         identity: pass.identity,
         shard_assignment_rule: TTS_S1_SHARD_ASSIGNMENT_RULE_V1.to_owned(),
         start_barrier: pass.barrier,
         first_work_started_unix_micros,
         last_work_ended_unix_micros,
+        non_monotone_decision_ordinals,
         shard_index: shard.shard_index,
         shard_count: shard.shard_count,
         shard_episodes_replayed: pass.episodes.len() as u64,
@@ -3439,6 +3497,7 @@ fn search_and_publish_one_decision_v1(
     use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 
     let work_started_unix_micros = unix_micros_now_v1();
+    let work_started_monotonic = Instant::now();
     let decision_started = Instant::now();
     let (score, model_input_sha256, candidate_order_commitment) = {
         let mut encoder = FlatDecisionEncoderV2::default();
@@ -3599,6 +3658,7 @@ fn search_and_publish_one_decision_v1(
         .map_err(|error| TtsS1ReplayErrorV1::Diagnostics(error.to_string()))?;
     diagnostics.note_request_completed_v4();
 
+    let work_elapsed_monotonic_micros = elapsed_micros_v1(work_started_monotonic);
     let work_ended_unix_micros = unix_micros_now_v1();
     Ok(TtsS1ReplayDecisionRecordV1 {
         // Chain fields are assigned once every record is finished; see the
@@ -3633,6 +3693,7 @@ fn search_and_publish_one_decision_v1(
             // processes do not introduce launch-anchor skew.
             work_started_unix_micros,
             work_ended_unix_micros,
+            work_elapsed_monotonic_micros,
         },
         ceilings: TtsS1DecisionCeilingsV1 {
             search: classify_micros_v1(search_micros),
@@ -3713,6 +3774,9 @@ pub struct TtsS1ReplayShardReportBodyV1 {
     /// This shard's first and last decision windows, on the OS clock.
     pub first_work_started_unix_micros: u64,
     pub last_work_ended_unix_micros: u64,
+    /// Shard-local record ordinals whose wall-clock windows regress. Derived
+    /// from `decisions` and checked again when the shard report is decoded.
+    pub non_monotone_decision_ordinals: Vec<u64>,
     pub shard_index: u64,
     pub shard_count: u64,
     /// Episodes THIS shard replayed.
@@ -3849,6 +3913,21 @@ pub fn verify_tts_s1_replay_shard_body_v1(
     }
     if body.decisions.is_empty() || body.final_record_sha256 != expected_previous {
         return Err(TtsS1ReplayErrorV1::BrokenChain);
+    }
+    let shard_windows: Vec<(u64, u64)> = body
+        .decisions
+        .iter()
+        .map(|record| {
+            (
+                record.wall_time.work_started_unix_micros,
+                record.wall_time.work_ended_unix_micros,
+            )
+        })
+        .collect();
+    if body.non_monotone_decision_ordinals != non_monotone_decision_ordinals_v1(&shard_windows) {
+        return Err(invalid(
+            "shard non-monotone decision ordinals do not match its wall-clock windows",
+        ));
     }
     if body.decisions.len() as u64 != body.searched_decisions
         || body
@@ -4220,7 +4299,19 @@ pub(crate) fn shard_topology_evidence_v1(
                             == shard.body.start_barrier.announcement_sha256
                 })
         });
-    let non_monotone_decision_windows = non_monotone_decision_windows_v1(&shard_windows);
+    let clock_regressions = shards
+        .iter()
+        .flat_map(|shard| {
+            shard
+                .body
+                .non_monotone_decision_ordinals
+                .iter()
+                .map(|decision_ordinal| TtsS1ClockRegressionV1 {
+                    shard_index: shard.body.shard_index,
+                    decision_ordinal: *decision_ordinal,
+                })
+        })
+        .collect();
 
     TtsS1TopologyEvidenceV1 {
         shard_count: shards.len() as u64,
@@ -4231,7 +4322,7 @@ pub(crate) fn shard_topology_evidence_v1(
         shard_readiness,
         latest_ready_unix_micros,
         every_shard_announcement_observed_before_release,
-        non_monotone_decision_windows,
+        clock_regressions,
         concurrency_histogram,
         fully_concurrent_decisions,
         census_decisions,
@@ -5406,6 +5497,7 @@ mod tests {
                 protocol_micros: 2_400 + 3 * ordinal,
                 work_started_unix_micros: SYNTHETIC_EPOCH_MICROS_V1 + ordinal * 1_000,
                 work_ended_unix_micros: SYNTHETIC_EPOCH_MICROS_V1 + ordinal * 1_000 + 990,
+                work_elapsed_monotonic_micros: 2_400 + 3 * ordinal,
             },
             ceilings: TtsS1DecisionCeilingsV1 {
                 search: CeilingStatusV4::WithinSlo,
@@ -5672,6 +5764,7 @@ mod tests {
                     // gives the census something real to count.
                     work_started_unix_micros: SYNTHETIC_EPOCH_MICROS_V1 + ordinal * 1_000,
                     work_ended_unix_micros: SYNTHETIC_EPOCH_MICROS_V1 + ordinal * 1_000 + 990,
+                    work_elapsed_monotonic_micros: 2_400 + 9 * ordinal,
                 };
                 records.push(record);
             }
@@ -5833,6 +5926,16 @@ mod tests {
             let last_ended = shard_records.iter().fold(0u64, |latest, record| {
                 latest.max(record.wall_time.work_ended_unix_micros)
             });
+            let shard_windows: Vec<(u64, u64)> = shard_records
+                .iter()
+                .map(|record| {
+                    (
+                        record.wall_time.work_started_unix_micros,
+                        record.wall_time.work_ended_unix_micros,
+                    )
+                })
+                .collect();
+            let non_monotone_decision_ordinals = non_monotone_decision_ordinals_v1(&shard_windows);
             bodies.push(TtsS1ReplayShardReportBodyV1 {
                 identity: identity.clone(),
                 shard_assignment_rule: TTS_S1_SHARD_ASSIGNMENT_RULE_V1.to_owned(),
@@ -5855,6 +5958,7 @@ mod tests {
                 },
                 first_work_started_unix_micros: first_started,
                 last_work_ended_unix_micros: last_ended,
+                non_monotone_decision_ordinals,
                 shard_index,
                 shard_count,
                 shard_episodes_replayed: shard_episodes.len() as u64,
@@ -5881,6 +5985,36 @@ mod tests {
             publish_tts_s1_replay_shard_report_v1(&report, &path)
                 .expect("the shard report publishes");
         }
+    }
+
+    fn refresh_synthetic_shard_timing_evidence_v1(body: &mut TtsS1ReplayShardReportBodyV1) {
+        body.first_work_started_unix_micros = body
+            .decisions
+            .first()
+            .map(|record| record.wall_time.work_started_unix_micros)
+            .unwrap_or(0);
+        body.last_work_ended_unix_micros = body.decisions.iter().fold(0u64, |latest, record| {
+            latest.max(record.wall_time.work_ended_unix_micros)
+        });
+        let windows: Vec<(u64, u64)> = body
+            .decisions
+            .iter()
+            .map(|record| {
+                (
+                    record.wall_time.work_started_unix_micros,
+                    record.wall_time.work_ended_unix_micros,
+                )
+            })
+            .collect();
+        body.non_monotone_decision_ordinals = non_monotone_decision_ordinals_v1(&windows);
+
+        let mut previous = TTS_S1_REPLAY_CHAIN_GENESIS_V1.to_owned();
+        for (ordinal, record) in body.decisions.iter_mut().enumerate() {
+            record.record_ordinal = ordinal as u64;
+            record.previous_record_sha256 = previous.clone();
+            previous = lower_hex_sha256_v4(record.chain_link_v1().unwrap());
+        }
+        body.final_record_sha256 = previous;
     }
 
     /// Evidence of a run in which every shard was mid-work for the whole
@@ -5923,7 +6057,7 @@ mod tests {
             shard_readiness,
             latest_ready_unix_micros,
             every_shard_announcement_observed_before_release: true,
-            non_monotone_decision_windows: 0,
+            clock_regressions: Vec::new(),
             concurrency_histogram,
             fully_concurrent_decisions,
             census_decisions,
@@ -6063,7 +6197,9 @@ mod tests {
             &fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 40),
         );
         assert!(formal.meets_formal_topology);
-        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V5);
+        assert_eq!(formal.rule, TTS_S1_SHARD_TOPOLOGY_RULE_V6);
+        assert!(!formal.clock_regression_detected);
+        assert!(formal.clock_regressions.is_empty());
         assert_eq!(formal.shard_count, 8);
         assert_eq!(formal.formal_shard_count, 8);
         assert_eq!(formal.formal_logical_cpus_per_shard, 2);
@@ -6174,7 +6310,7 @@ mod tests {
                 shard_readiness: Vec::new(),
                 latest_ready_unix_micros: 0,
                 every_shard_announcement_observed_before_release: true,
-                non_monotone_decision_windows: 0,
+                clock_regressions: Vec::new(),
                 concurrency_histogram: histogram,
                 fully_concurrent_decisions: fully,
                 census_decisions: censused,
@@ -6237,21 +6373,78 @@ mod tests {
         assert!(!TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &empty).meets_formal_topology);
     }
 
-    /// A wall-clock step is published as a diagnostic count and does not
-    /// become a new formal refusal beyond its effect on the overlap census.
+    /// A wall-clock step is a formal refusal even if the sorted census would
+    /// otherwise grant standing.
     #[test]
-    fn non_monotone_census_windows_are_counted_but_not_separately_gated_v1() {
+    fn a_regressed_shard_window_voids_fabricated_formal_overlap_v1() {
         let windows = vec![
             vec![(100, 120), (90, 110), (130, 125), (140, 150)],
             vec![(100, 200), (201, 250)],
         ];
         assert_eq!(non_monotone_decision_windows_v1(&windows), 2);
+        assert_eq!(non_monotone_decision_ordinals_v1(&windows[0]), vec![1, 2]);
 
         let mut evidence = fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 40);
-        evidence.non_monotone_decision_windows = 2;
+        evidence.clock_regressions = vec![TtsS1ClockRegressionV1 {
+            shard_index: 3,
+            decision_ordinal: 17,
+        }];
         let topology = TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence);
-        assert!(topology.meets_formal_topology);
-        assert_eq!(topology.non_monotone_decision_windows, 2);
+        assert!(!topology.meets_formal_topology);
+        assert!(topology.clock_regression_detected);
+        assert_eq!(topology.non_monotone_decision_windows, 1);
+        assert!(topology
+            .formal_topology_reason
+            .contains("OS clock regression"));
+        assert!(topology
+            .formal_topology_reason
+            .contains("shard 3 decision ordinal 17"));
+        assert!(topology.formal_topology_reason.contains("restart the run"));
+    }
+
+    #[test]
+    fn merge_names_the_regressed_shard_despite_fabricated_overlap_v1() {
+        let counts = [2u64, 40, 40, 40, 40, 40, 40, 40];
+        let mut bodies = synthetic_shard_bodies_v1(&counts, 8);
+
+        for body in &mut bodies {
+            if body.shard_index == 0 {
+                body.decisions[0].wall_time.work_started_unix_micros =
+                    SYNTHETIC_EPOCH_MICROS_V1 + 100_000;
+                body.decisions[0].wall_time.work_ended_unix_micros =
+                    SYNTHETIC_EPOCH_MICROS_V1 + 140_000;
+            } else {
+                for record in &mut body.decisions {
+                    record.wall_time.work_started_unix_micros += 100_000;
+                    record.wall_time.work_ended_unix_micros += 100_000;
+                }
+            }
+            refresh_synthetic_shard_timing_evidence_v1(body);
+        }
+        assert_eq!(bodies[0].non_monotone_decision_ordinals, vec![1]);
+        assert!(bodies[1..]
+            .iter()
+            .all(|body| body.non_monotone_decision_ordinals.is_empty()));
+
+        let directory = scratch_diagnostics_dir_v1("clock-regression");
+        write_shard_reports_v1(&directory, &bodies);
+        let merged =
+            merge_tts_s1_replay_shards_v1(&directory, 8).expect("the smoke remains readable");
+        let topology = &merged.body.shard_topology;
+        assert!(topology.fully_concurrent_permille > 950);
+        assert!(!topology.meets_formal_topology);
+        assert!(topology.clock_regression_detected);
+        assert_eq!(
+            topology.clock_regressions,
+            vec![TtsS1ClockRegressionV1 {
+                shard_index: 0,
+                decision_ordinal: 1,
+            }]
+        );
+        assert!(topology
+            .formal_topology_reason
+            .contains("shard 0 decision ordinal 1"));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     fn refresh_synthetic_token_v1(bodies: &mut [TtsS1ReplayShardReportBodyV1]) {
