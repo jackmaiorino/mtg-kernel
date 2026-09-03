@@ -249,6 +249,41 @@ try {
         throw "the genesis slot-identities roster is missing: $genesisRosterPath"
     }
 
+    # Formal output parents are launcher inputs, not child-process side effects.
+    # Ensure the complete campaign layout before the first child process so a
+    # fresh campaign cannot bootstrap a Store and then fail because a later
+    # output parent is absent. The launch manifest records the exact set.
+    $createdDirectories = @()
+    if ($Mode -ceq 'formal') {
+        $storePrefix = Split-Path -Parent $StoreRoot
+        $runRecordDirectory = Split-Path -Parent $RunRecord
+        $formalOutputDirectories = @(
+            $EvidenceRoot,
+            $gateRoot,
+            $root,
+            $runRecordDirectory,
+            $storePrefix,
+            $StoreRoot,
+            $ChainDir,
+            $RefreshChainDir
+        )
+        for ($intervalIndex = [uint64]0; $intervalIndex -lt $ThroughRefreshIndex; $intervalIndex++) {
+            $intervalDirectory = Join-Path $root ('interval-{0:d2}' -f $intervalIndex)
+            $formalOutputDirectories += $intervalDirectory
+            $formalOutputDirectories += (Join-Path $intervalDirectory 'panel')
+        }
+        foreach ($directoryPath in $formalOutputDirectories) {
+            if ([string]::IsNullOrWhiteSpace($directoryPath)) { continue }
+            $directory = New-Item -ItemType Directory -Force -Path $directoryPath
+            if (-not (Test-Path -LiteralPath $directory.FullName -PathType Container)) {
+                throw "failed creating formal output directory: $directoryPath"
+            }
+            if ($createdDirectories -cnotcontains $directory.FullName) {
+                $createdDirectories += $directory.FullName
+            }
+        }
+    }
+
     # -------------------------------------------------------------------
     # The run record is DERIVED, not supplied. cycle4_run_record_v1 builds
     # it from the arm kind, the pinned parent Store, and the compiled
@@ -405,6 +440,7 @@ try {
         slot_identities_roster_dir = $SlotIdentitiesRosterDir
         store_root = $StoreRoot
         chain_dir = $ChainDir
+        created_directories = @($createdDirectories)
         inputs = $inputRecords
         git = $gitRecord
         toolchain = $toolchainRecord
@@ -636,6 +672,11 @@ try {
         }
         else {
             throw "the bootstrap published no arm-origin record in $TargetChainDir"
+        }
+        $outputDirectory = Split-Path -Parent $OutputManifest
+        if ([string]::IsNullOrWhiteSpace($outputDirectory) -or
+            -not (Test-Path -LiteralPath $outputDirectory -PathType Container)) {
+            throw "the genesis manifest output parent does not exist before the builder command: $outputDirectory"
         }
         $result = Invoke-Cycle4Process `
             -FilePath $RefreshBuilderExecutable `

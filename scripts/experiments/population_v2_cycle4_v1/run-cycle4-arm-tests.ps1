@@ -547,13 +547,42 @@ Assert-That -Condition (([string]$authority.parent_checkpoint_sha256).Length -eq
 # ---------------------------------------------------------------------------
 
 $freshChain = Join-Path $WorkRoot 'refresh-chain-fresh'
-New-Item -ItemType Directory -Force -Path $freshChain | Out-Null
 $freshEvidence = Join-Path $WorkRoot 'evidence-fresh'
+Assert-That -Condition (-not (Test-Path -LiteralPath $freshChain)) `
+    -Message 'the fresh formal test begins without a refresh-chain directory'
 $freshArguments = New-WrapperArguments -Mode 'formal' -Arm 'treatment-rb' -EvidenceRoot $freshEvidence
 $freshArguments['RefreshChainDir'] = $freshChain
 & $wrapper @freshArguments *>&1 | Out-Null
 $freshAttempt = Get-LatestAttemptRoot -EvidenceRoot $freshEvidence -GateName 'cycle4-treatment-rb-formal'
 $freshRecords = Get-CommandRecords -AttemptRoot $freshAttempt
+$freshLaunchManifest = Get-Content -Raw -LiteralPath (Join-Path $freshAttempt 'launch-manifest.json') | ConvertFrom-Json
+
+$expectedCreatedDirectories = @(
+    [System.IO.Path]::GetFullPath($freshEvidence),
+    [System.IO.Path]::GetFullPath((Join-Path $freshEvidence 'cycle4-treatment-rb-formal')),
+    [System.IO.Path]::GetFullPath($freshAttempt),
+    [System.IO.Path]::GetFullPath((Split-Path -Parent $runRecord)),
+    [System.IO.Path]::GetFullPath((Split-Path -Parent ([string]$freshArguments['StoreRoot']))),
+    [System.IO.Path]::GetFullPath([string]$freshArguments['StoreRoot']),
+    [System.IO.Path]::GetFullPath([string]$freshArguments['ChainDir']),
+    [System.IO.Path]::GetFullPath($freshChain)
+)
+foreach ($intervalIndex in 0..15) {
+    $intervalDirectory = Join-Path $freshAttempt ('interval-{0:d2}' -f $intervalIndex)
+    $expectedCreatedDirectories += [System.IO.Path]::GetFullPath($intervalDirectory)
+    $expectedCreatedDirectories += [System.IO.Path]::GetFullPath((Join-Path $intervalDirectory 'panel'))
+}
+$recordedCreatedDirectories = @($freshLaunchManifest.created_directories | ForEach-Object { [string]$_ })
+$createdDirectoryDifference = @(Compare-Object `
+        -ReferenceObject @($expectedCreatedDirectories | Sort-Object -Unique) `
+        -DifferenceObject @($recordedCreatedDirectories | Sort-Object -Unique))
+Assert-That -Condition ($createdDirectoryDifference.Count -eq 0) `
+    -Message 'a fresh formal plan records every directory ensured before child dispatch'
+$missingCreatedDirectories = @($recordedCreatedDirectories | Where-Object {
+        -not (Test-Path -LiteralPath $_ -PathType Container)
+    })
+Assert-That -Condition ($missingCreatedDirectories.Count -eq 0) `
+    -Message 'every directory recorded by the fresh formal plan exists on the real filesystem'
 
 Assert-That -Condition (@($freshRecords | Where-Object { $_.label -ceq 'bootstrap-genesis' }).Count -eq 1) `
     -Message 'a fresh campaign plans exactly one bootstrap'
@@ -564,6 +593,10 @@ Assert-That -Condition ($freshBuild[0].command_line -notlike '*--chain-dir*') -M
 Assert-That -Condition ($freshBuild[0].command_line -notlike '*--panel*') -Message 'a genesis build binds no panel'
 Assert-That -Condition ($freshBuild[0].command_line -notlike '*--next-generation*') -Message 'a genesis build declares no next generation'
 Assert-That -Condition ($freshBuild[0].command_line -like '*"--output"*refresh-00.manifest.json*') -Message 'the genesis build writes refresh-00.manifest.json'
+Assert-That -Condition (Test-Path -LiteralPath $freshChain -PathType Container) `
+    -Message 'the genesis manifest output parent exists before the dry-run builder command is recorded'
+Assert-That -Condition (@($freshRecords | Where-Object { $_.dry_run -ne $true }).Count -eq 0) `
+    -Message 'the real-path genesis-parent check launches no child process'
 Assert-That -Condition ($freshBuild[0].command_line -like "*`"--trainee-base-seed`" `"$traineeBaseSeed`"*") -Message 'the genesis build takes the base seed from the run record'
 Assert-That -Condition ($freshBuild[0].command_line -like '*from-arm-origin.record.json-after-bootstrap*') `
     -Message 'a dry run says plainly that the run identity comes from the record the bootstrap publishes'
