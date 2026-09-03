@@ -117,6 +117,21 @@ pure input-state rejections so those stay diagnosable. Without that a record bui
 one build and an arm binary from another produced a Store whose record
 attributed it to the wrong source tree, with every validator passing.
 
+Round F adds a third whole-command-line mode, `--check-slot-locator PATH`,
+accepted ALONE like `--print-build-identity`. It decodes the eight slot
+Stores' `run.json` named by that locator, plus the genesis parent's when the
+locator carries one, through the same `decode_train_run_v2` entry point
+`resolve_population_opponent_cycle4_v1` and
+`resolve_ladder_checkpoint_authority_v1` use, and exits 0 or 3. It is
+strictly read-only and device-free: no Store root is opened, no checkpoint
+read, no Store-prefix mode marker claimed, no CUDA context allocated, nothing
+written. It exists because the first CONTROL preflight ladder attempt spent
+two five-minute genesis bootstraps before either rung reached slot resolution
+and refused there, on a roster record that had been on disk and undecodable
+from the attempt's first second. The wrapper now runs this before any
+bootstrap. It proves decodability only; identity binding needs a refresh
+manifest and stays where it is proven, at the slot resolver.
+
 ## 4a. Bin `src/bin/cycle4_run_record_v1.rs` (round E)
 
 Section 1 says what a cycle-4 `run.json` must declare but nothing produced
@@ -225,6 +240,36 @@ pinned origin, and its value is the cycle-3 focal run's store generation
 with status `DRY_RUN_PLANNED` instead, because a run that trained and
 compared nothing may not leave behind the file an operator reads as
 "finished".
+
+Round F corrections, all five from the first CONTROL preflight ladder
+attempt:
+
+- **Exit codes are captured, or the launch stops.** `Start-Process -PassThru`
+  under PowerShell 5.1 can return a `Process` holding no cached native
+  handle; once the child is reaped `.ExitCode` answers `$null` forever, and
+  `[int]$null` is `0`. The ladder therefore recorded exit_code 0 for two arm
+  rungs that had in fact exited 3. `Invoke-Cycle4Process` now reads
+  `.Handle` immediately after the start, which caches the handle for the
+  object's lifetime, and treats a `$null` exit code as a hard failure rather
+  than casting it. The `WaitForExit()` plus `Refresh()` pair is kept.
+- **Inputs are proven before any bootstrap.** Section 4's
+  `--check-slot-locator` runs in the inputs phase, over a locator the wrapper
+  writes from the operator's roster plus the genesis parent, so an
+  undecodable roster record stops the launch in a second instead of after two
+  five-minute genesis bootstraps.
+- **A launch form that works.** `-ParameterFile` takes one deny-unknown-keys
+  JSON document naming every parameter, because `powershell -File` cannot
+  pass an array at all; splatting from inside a session is the documented
+  alternative.
+- **A failure publishes a result document.** `RUN_FAILED` is still written,
+  and beside it a `result.json` with status `RUN_FAILED`, the failing phase,
+  the error text, and the commands run so far.
+- **The panel executable's build identity is proven for a formal interval.**
+  `-PanelExecutable` is a cargo test binary whose name is a content hash, and
+  a preflight only hashed it; the first attempt used one that predated the
+  launch commit. A formal launch now requires its embedded build identity, or
+  a build receipt written beside it by the documented build step, to name the
+  launch commit.
 
 ## 7. Delivery order
 

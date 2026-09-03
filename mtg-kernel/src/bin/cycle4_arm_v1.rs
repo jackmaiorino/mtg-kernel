@@ -56,14 +56,15 @@
 
 use mtg_kernel::native_cycle4_arm_v1::{
     cycle4_arm_build_identity_json_v1, run_native_cycle4_arm_bootstrap_genesis_v1,
-    run_native_cycle4_arm_v1, Cycle4ArmBootstrapRequestV1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
+    run_native_cycle4_arm_check_slot_locator_v1, run_native_cycle4_arm_v1,
+    Cycle4ArmBootstrapRequestV1, Cycle4ArmKindV1, Cycle4ArmRequestV1,
 };
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle4_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --slot-locator PATH --device N (--bootstrap-genesis | --refresh-manifest PATH [--payoff-panel PATH] --stop-generation N [--preflight --preflight-updates N])"
+        "usage: cycle4_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --slot-locator PATH --device N (--bootstrap-genesis | --refresh-manifest PATH [--payoff-panel PATH] --stop-generation N [--preflight --preflight-updates N])\n   or: cycle4_arm_v1 --check-slot-locator PATH\n   or: cycle4_arm_v1 --print-build-identity"
     );
     std::process::exit(2);
 }
@@ -214,6 +215,33 @@ fn main() {
                 // ends with the LF it requires, and a second one would make
                 // the bytes non-canonical for the reader.
                 print!("{json}");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("cycle4_arm_v1: {error}");
+                std::process::exit(error.exit_code_v1());
+            }
+        }
+    }
+
+    // `--check-slot-locator PATH` is likewise a whole-command-line mode
+    // accepted ALONE, for the same reason and with the same shape. Round F
+    // item 3: it decodes the eight slot Stores' run records and the genesis
+    // parent's and exits, so a launcher can prove the inputs a later
+    // opponent-slot resolution depends on BEFORE it spends two five-minute
+    // genesis bootstraps discovering one of them is unreadable. Accepting it
+    // alone is what makes "this touched no Store and no GPU" a property of
+    // the command line rather than a claim about the code: none of the
+    // mandatory flags is present, so none of the mutating paths is
+    // reachable, and no `CUDA_VISIBLE_DEVICES` is written below.
+    if raw_first.len() == 2 && raw_first[0] == *"--check-slot-locator" {
+        match run_native_cycle4_arm_check_slot_locator_v1(&PathBuf::from(&raw_first[1])) {
+            Ok(outcome) => {
+                println!(
+                    "check_slot_locator=1 decoded_run_records={} genesis_parent_checked={}",
+                    outcome.decoded_run_record_count,
+                    u8::from(outcome.genesis_parent_checked),
+                );
                 std::process::exit(0);
             }
             Err(error) => {
@@ -602,5 +630,23 @@ mod tests {
             .expect("stop flag present");
         values[index + 1] = "256a";
         assert!(parse_args_v1(args_v1(&values)).is_err());
+    }
+
+    /// Round F item 3. `--check-slot-locator` is a whole-command-line mode
+    /// handled in `main` before parsing, exactly like
+    /// `--print-build-identity`. The strict parser must therefore refuse it
+    /// as an ordinary flag, so no command line can ever mix "just check the
+    /// inputs" with a mode that opens or writes a Store.
+    #[test]
+    fn check_slot_locator_is_not_an_ordinary_flag_v1() {
+        assert!(parse_args_v1(args_v1(&["--check-slot-locator", "D:/arm/locator.json"])).is_err());
+
+        let mut mixed = complete_v1();
+        mixed.extend(["--check-slot-locator", "D:/arm/locator.json"]);
+        assert!(parse_args_v1(args_v1(&mixed)).is_err());
+
+        let mut with_bootstrap = vec!["--check-slot-locator", "D:/arm/locator.json"];
+        with_bootstrap.extend(["--bootstrap-genesis"]);
+        assert!(parse_args_v1(args_v1(&with_bootstrap)).is_err());
     }
 }

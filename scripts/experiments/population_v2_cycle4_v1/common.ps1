@@ -173,6 +173,249 @@ function Write-Cycle4JsonFile {
     }
 }
 
+$script:Cycle4ParameterFileSchema = 'mtg-kernel-cycle4-arm-parameters/v1'
+# v2, not v1: round F review finding (P1). A v1 receipt recorded only the
+# launch commit and the binary's hash, which a binary built from a DIRTY tree
+# at commit X satisfies just as well as one built from the clean tree at X.
+# v2 additionally carries the Store build-capture's own `source_tree_sha256`
+# (which differs the moment any tracked source byte differs, committed or not)
+# and an explicit clean-worktree assertion made at build time. A v1 receipt is
+# refused rather than read leniently: it cannot answer the question v2 exists
+# to ask.
+$script:Cycle4PanelBuildReceiptSchema = 'mtg-kernel-cycle4-panel-build/v2'
+$script:Cycle4PanelBuildReceiptSuffix = '.cycle4-panel-build.json'
+
+function Read-Cycle4ParameterFile {
+    # Round F defect 4. `powershell -NoProfile -File run-cycle4-arm.ps1
+    # -SlotStoreRoots @('a','b')` does NOT pass an array: -File hands the
+    # script a flat list of strings, so the array literal arrives as the
+    # separate tokens `@('a',` and `'b')`, and the eight-root check then
+    # rejects a command line that looks correct in a README. Splatting from
+    # inside PowerShell works, but a launch that has to be typed into a
+    # running session is not a launch an operator can paste from a
+    # pre-registered document.
+    #
+    # This is the paste-able form: one JSON file, read with the same
+    # deny-unknown-keys discipline every other artifact in this stack uses.
+    # Every key must be a real wrapper parameter, spelled exactly (parameter
+    # names are matched case-sensitively here even though PowerShell's own
+    # binder is not, so a typo is a refusal rather than a silent miss), and
+    # no key may be null. `ParameterFile` itself is refused: a parameter file
+    # never names another parameter file.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string[]]$KnownNames
+    )
+    $document = Read-Cycle4Json -Path $Path
+    # Round F review finding (P1). Deny unknown keys at the DOCUMENT root as
+    # well as inside `parameters`. Without this, a safety flag written one
+    # level too high -- `"DryRun": true` beside `parameters` rather than
+    # inside it, the easiest possible mistake in a hand-written launch file
+    # -- is silently dropped and the launch runs for real. Only `schema` and
+    # `parameters` may appear at the root, and nothing is ever ignored.
+    foreach ($property in @($document.PSObject.Properties)) {
+        $name = [string]$property.Name
+        if ($name -cne 'schema' -and $name -cne 'parameters') {
+            throw "$Path carries an unexpected top-level property '$name'; a parameter file has exactly two: 'schema' and 'parameters'. Every wrapper parameter belongs inside 'parameters'."
+        }
+    }
+    if ([string]$document.schema -cne $script:Cycle4ParameterFileSchema) {
+        throw "unexpected parameter-file schema at $Path`: '$($document.schema)', expected '$($script:Cycle4ParameterFileSchema)'"
+    }
+    if ($null -eq $document.parameters) {
+        throw "$Path carries no 'parameters' object"
+    }
+    if ($document.parameters -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "$Path`: 'parameters' must be a JSON object naming wrapper parameters"
+    }
+    $values = [ordered]@{}
+    foreach ($property in @($document.parameters.PSObject.Properties)) {
+        $name = [string]$property.Name
+        if ($name -ceq 'ParameterFile') {
+            throw "$Path names ParameterFile; a parameter file never names another parameter file"
+        }
+        $match = @($KnownNames | Where-Object { $_ -ceq $name })
+        if ($match.Count -ne 1) {
+            throw "$Path names an unknown wrapper parameter: '$name'. Known parameters: $($KnownNames -join ', ')"
+        }
+        if ($null -eq $property.Value) {
+            throw "$Path sets '$name' to null; every parameter it names must carry a value"
+        }
+        $values[$name] = $property.Value
+    }
+    if ($values.Count -eq 0) {
+        throw "$Path names no parameters"
+    }
+    return $values
+}
+
+function Test-Cycle4FileContainsAscii {
+    # Streams a file in overlapping chunks looking for one ASCII needle.
+    # Used to probe a large executable for an embedded build identity without
+    # reading the whole thing into memory at once.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Needle
+    )
+    if ([string]::IsNullOrEmpty($Needle)) { throw 'Test-Cycle4FileContainsAscii needs a non-empty needle' }
+    $needleBytes = [System.Text.Encoding]::ASCII.GetBytes($Needle)
+    $overlap = $needleBytes.Length - 1
+    $chunk = 1048576
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        $buffer = New-Object byte[] ($chunk + $overlap)
+        $carried = 0
+        while ($true) {
+            $read = $stream.Read($buffer, $carried, $chunk)
+            if ($read -le 0) { break }
+            $filled = $carried + $read
+            $text = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $filled)
+            if ($text.Contains($Needle)) { return $true }
+            if ($overlap -gt 0) {
+                $keep = [Math]::Min($overlap, $filled)
+                [System.Array]::Copy($buffer, $filled - $keep, $buffer, 0, $keep)
+                $carried = $keep
+            }
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    return $false
+}
+
+function Assert-Cycle4PanelBuildIdentity {
+    # Round F defect 6. -PanelExecutable is a cargo test binary
+    # (`deps\mtg_kernel-<hash>.exe`), and a preflight only hashed it, so a
+    # formal interval could be driven by a panel binary built from a
+    # DIFFERENT commit than the one the campaign launched on -- which is
+    # exactly what the first preflight attempt used: a binary that predated
+    # the launch commit.
+    #
+    # Round F review finding (P1): a commit alone is not provenance. A panel
+    # binary built from a DIRTY tree at commit X satisfies any commit-only
+    # check that a clean tree at X later performs, so the proof is bound to
+    # the Store build-capture's own `source_tree_sha256` instead. That digest
+    # covers the actual source bytes the compiler saw, so it differs the
+    # moment anything differs, committed or not. -LaunchSourceTreeSha256 is
+    # the arm executable's own, read from `cycle4_arm_v1 --print-build-identity`
+    # at launch, and the arm executable is already pinned to the run record's
+    # provenance at every launch.
+    #
+    # Two acceptable proofs, tried in that order:
+    #
+    #   embedded: BOTH the launch commit's 40-hex string and that source-tree
+    #             digest appear verbatim in the executable. A build carrying
+    #             the Store build-capture constants embeds both; a binary from
+    #             any other tree embeds neither.
+    #   receipt:  a `<panel executable><suffix>` JSON receipt written beside
+    #             the binary by the documented build step, which refuses to
+    #             write one from a dirty worktree. The receipt must name the
+    #             binary's actual hash, the launch commit, that same
+    #             source-tree digest, and an explicit clean-worktree
+    #             assertion. This is the normal path, because a test binary
+    #             built without the production feature carries no embedded
+    #             identity at all.
+    #
+    # Neither: hard failure. A panel binary of unknown provenance is not a
+    # thing a formal interval may run.
+    param(
+        [Parameter(Mandatory = $true)][string]$PanelExecutable,
+        [Parameter(Mandatory = $true)][string]$LaunchCommit,
+        [Parameter(Mandatory = $true)][string]$LaunchSourceTreeSha256
+    )
+    if ($LaunchCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "the launch commit must be a 40-character lowercase hex sha, got '$LaunchCommit'"
+    }
+    if ($LaunchSourceTreeSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "the launch source tree sha256 must be 64 lowercase hex characters, got '$LaunchSourceTreeSha256'"
+    }
+    $record = Get-Cycle4FileRecord -Path $PanelExecutable
+    if ((Test-Cycle4FileContainsAscii -Path $record.path -Needle $LaunchSourceTreeSha256) -and
+        (Test-Cycle4FileContainsAscii -Path $record.path -Needle $LaunchCommit)) {
+        return [ordered]@{
+            source = 'embedded'
+            panel_executable = $record
+            source_git_commit = $LaunchCommit
+            source_tree_sha256 = $LaunchSourceTreeSha256
+            receipt = $null
+        }
+    }
+    $receiptPath = "$($record.path)$($script:Cycle4PanelBuildReceiptSuffix)"
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        throw "the panel executable carries no embedded build identity for the launch commit $LaunchCommit and source tree $LaunchSourceTreeSha256, and no build receipt is present at $receiptPath. Build it with the README's documented panel build step, which writes that receipt."
+    }
+    $receipt = Read-Cycle4Json -Path $receiptPath
+    if ([string]$receipt.schema -cne $script:Cycle4PanelBuildReceiptSchema) {
+        throw "unexpected panel build receipt schema at $receiptPath`: '$($receipt.schema)', expected '$($script:Cycle4PanelBuildReceiptSchema)'. A pre-v2 receipt proves only a commit, which a dirty-tree build also satisfies; rebuild the panel executable with the README's build step."
+    }
+    $receiptExecutableSha256 = ([string]$receipt.panel_executable_sha256).ToLowerInvariant()
+    if ($receiptExecutableSha256 -cne $record.sha256) {
+        throw "the panel build receipt at $receiptPath describes a different binary: it names sha256 $receiptExecutableSha256, but $($record.path) hashes to $($record.sha256)"
+    }
+    $receiptCommit = ([string]$receipt.source_git_commit).ToLowerInvariant()
+    if ($receiptCommit -cne $LaunchCommit) {
+        throw "the panel executable was built from commit $receiptCommit, but this is a formal launch on commit $LaunchCommit; rebuild the panel executable at the launch commit"
+    }
+    # The clean-source proof, both halves. The assertion says the build step
+    # saw a clean worktree; the digest says WHICH source bytes it compiled,
+    # and must be the same ones this launch's arm executable was built from.
+    $cleanProperty = $receipt.PSObject.Properties['source_worktree_clean']
+    if ($null -eq $cleanProperty -or $cleanProperty.Value -isnot [bool] -or -not $cleanProperty.Value) {
+        $claimed = $(if ($null -eq $cleanProperty) { '<absent>' } else { [string]$cleanProperty.Value })
+        throw "the panel build receipt at $receiptPath does not assert a clean worktree at build time with JSON boolean true (source_worktree_clean is '$claimed'); a panel binary built from a dirty tree may not drive a formal interval"
+    }
+    $treeProperty = $receipt.PSObject.Properties['source_tree_sha256']
+    if ($null -eq $treeProperty) {
+        throw "the panel build receipt at $receiptPath carries no source_tree_sha256"
+    }
+    $receiptTree = ([string]$treeProperty.Value).ToLowerInvariant()
+    if ($receiptTree -notmatch '^[0-9a-f]{64}$') {
+        throw "the panel build receipt at $receiptPath carries no source_tree_sha256"
+    }
+    if ($receiptTree -cne $LaunchSourceTreeSha256) {
+        throw "the panel executable was built from source tree $receiptTree, but this launch's arm executable was built from $LaunchSourceTreeSha256; the two were compiled from different source bytes even if they name the same commit. Rebuild the panel executable from this launch's tree."
+    }
+    return [ordered]@{
+        source = 'receipt'
+        panel_executable = $record
+        source_git_commit = $receiptCommit
+        source_tree_sha256 = $receiptTree
+        receipt = (Get-Cycle4FileRecord -Path $receiptPath)
+    }
+}
+
+function Get-Cycle4ArmBuildIdentity {
+    # `cycle4_arm_v1 --print-build-identity`, decoded. A whole-command-line
+    # mode that reads nothing and touches no device, so it is safe to run in
+    # the inputs phase. Used for the launch's own source-tree digest, which
+    # the panel build receipt must match.
+    param(
+        [Parameter(Mandatory = $true)][string]$ArmExecutable,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+    $result = Invoke-Cycle4Process `
+        -FilePath $ArmExecutable `
+        -Arguments @('--print-build-identity') `
+        -WorkingDirectory $WorkingDirectory `
+        -StdoutPath $StdoutPath `
+        -StderrPath $StderrPath `
+        -Label 'arm-build-identity'
+    Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+    $identity = Read-Cycle4Json -Path $StdoutPath
+    if ([string]$identity.source_tree_sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "$ArmExecutable --print-build-identity carries no source_tree_sha256"
+    }
+    return [ordered]@{
+        command = $result
+        identity = $identity
+        source_git_commit = ([string]$identity.source_git_commit).ToLowerInvariant()
+        source_tree_sha256 = ([string]$identity.source_tree_sha256).ToLowerInvariant()
+    }
+}
+
 function Test-Cycle4ArmUsesBaselineChain {
     # Mirrors Cycle4ArmKindV1::uses_baseline_v4_v1: TREATMENT-RB and STATIC-RB
     # run terminal_reinforce_value/v4-candidate and therefore carry a baseline
@@ -698,6 +941,70 @@ function New-Cycle4BootstrapLocator {
     return Get-Cycle4FileRecord -Path $Path
 }
 
+function New-Cycle4InputsCheckLocator {
+    # Round F defect 3. The locator `cycle4_arm_v1 --check-slot-locator`
+    # reads during the INPUTS phase, before a single Store is bootstrapped.
+    #
+    # Same shape as the bootstrap locator (identical schema, the same eight
+    # roster identities, the same genesis parent), with one deliberate
+    # difference: the slot the manifest binds to the ARM's own run has no
+    # Store to name yet on a fresh campaign, because this launcher is what
+    # creates it. That slot is therefore pointed at the genesis PARENT Store
+    # -- a real, decodable record that this launch depends on anyway, and the
+    # one the arm's own genesis is copied from -- and the substitution is
+    # recorded in the returned record rather than hidden. Once the arm's own
+    # Store exists (every resumed attempt), its real root is used and the
+    # check covers it too.
+    #
+    # What this proves: every roster Store this launch will read as an
+    # opponent, and the parent, hold a `run.json` this build can decode. What
+    # it does NOT prove: identity binding, which needs a refresh manifest and
+    # stays where it has always been proven, at the slot resolver.
+    param(
+        [Parameter(Mandatory = $true)]$SlotTable,
+        [Parameter(Mandatory = $true)][string]$RosterPath,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot,
+        [string]$ArmStoreRoot
+    )
+    if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
+        throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+    }
+    # Round F review finding (P1): the same path rule the per-interval locator
+    # writer enforces, applied HERE, in the inputs phase. Without it a bad
+    # root -- a historical-1 rotation root the campaign only reaches at
+    # refresh 2, say -- is not refused until that interval's locator is
+    # written, which is after a genesis bootstrap and two trained intervals.
+    # In a dry run the arm bin never runs, so this is also the only place the
+    # rule is checked at all.
+    foreach ($entry in @($SlotTable)) {
+        $root = [string]$entry.store_root
+        if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Path]::IsPathRooted($root)) {
+            throw "slot $($entry.slot_index) store root must be a non-empty absolute path, got '$root'"
+        }
+    }
+    $ownRunRoot = $GenesisParentStoreRoot
+    $ownRunSubstituted = $true
+    if (-not [string]::IsNullOrWhiteSpace($ArmStoreRoot) -and
+        (Test-Path -LiteralPath (Join-Path $ArmStoreRoot 'run.json') -PathType Leaf)) {
+        $ownRunRoot = $ArmStoreRoot
+        $ownRunSubstituted = $false
+    }
+    $record = New-Cycle4BootstrapLocator `
+        -SlotTable $SlotTable `
+        -RosterPath $RosterPath `
+        -ArmStoreRoot $ownRunRoot `
+        -Path $Path `
+        -GenesisParentStoreRoot $GenesisParentStoreRoot
+    return [ordered]@{
+        locator = $record
+        own_run_slot_index = $script:Cycle4ArmOwnedSlotIndex
+        own_run_store_root = $ownRunRoot
+        own_run_slot_substituted_with_parent = $ownRunSubstituted
+        note = 'The own-run slot names the genesis parent Store until the arm''s own Store exists; this file is a decode check, never a training locator.'
+    }
+}
+
 function Read-Cycle4ArmOriginRecord {
     # The record the bin publishes at `--bootstrap-genesis`: the arm's run
     # identity and base seed, the parent it was seeded from, and the four
@@ -1201,15 +1508,31 @@ function Format-Cycle4CommandLine {
 }
 
 function Invoke-Cycle4Process {
-    # One child process, its exit code captured with the WaitForExit() then
-    # Refresh() double call.
+    # One child process, its exit code captured authoritatively.
     #
-    # Start-Process can leave ExitCode unset when the child exits before the
-    # caller observes HasExited; the g896 formal CONTROL run published a
-    # RUN_FAILED marker over exactly that unset property while every artifact
-    # verified. A parameterless WaitForExit() refreshes the native handle and a
-    # following Refresh() materializes the real code, so the exit code read
-    # below is always the process's own.
+    # Round F defect 2. The first CONTROL preflight ladder attempt recorded
+    # exit_code 0 for both rungs while the arm bin had in fact taken its
+    # contract-rejection path (empty stdout, the refusal on stderr, and
+    # `exit_code_v1()` maps Contract to 3). The cause is a Windows-specific
+    # Start-Process property, not the bin: under PowerShell 5.1 the
+    # Process object -PassThru returns may hold NO cached native handle, and
+    # once the child has exited and Windows has reaped it there is nothing
+    # left to read a code from, so `.ExitCode` answers $null forever no
+    # matter how many times WaitForExit() and Refresh() are called. The old
+    # body then wrote `[int]$exitCode`, and `[int]$null` is 0 in PowerShell:
+    # a silent, total inversion of the fail-closed contract, turning every
+    # child refusal into a recorded success.
+    #
+    # Two changes, both required:
+    #
+    #   1. `.Handle` is read IMMEDIATELY after the start, before the child
+    #      can exit. Touching that property makes System.Diagnostics.Process
+    #      duplicate and cache the native handle for the lifetime of the
+    #      object, which is what keeps the exit code readable after the
+    #      child is gone. This is the fix the S1 launcher family uses.
+    #   2. A $null ExitCode is a HARD FAILURE, never a cast. If the handle
+    #      trick somehow still leaves the code unreadable, the launcher must
+    #      say so and stop, not invent a zero.
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
@@ -1260,6 +1583,13 @@ function Invoke-Cycle4Process {
         $process = Start-Process -FilePath $FilePath -ArgumentList $argumentText `
             -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+        # Cache the native handle NOW, while the child is certainly still
+        # alive. See this function's header: without this the exit code of a
+        # short-lived child is unrecoverable. Best-effort on purpose -- if
+        # the handle cannot be taken this is not itself the failure; the
+        # unreadable exit code below is, and it is checked unconditionally.
+        try { $null = $process.Handle } catch { }
+        try { $processId = [int]$process.Id } catch { $processId = -1 }
         $process.WaitForExit()
         $process.Refresh()
         $exitCode = $process.ExitCode
@@ -1269,13 +1599,18 @@ function Invoke-Cycle4Process {
             [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
         }
     }
+    if ($null -eq $exitCode) {
+        # Never [int]$null (which is 0). An unreadable exit code is an
+        # unknown outcome, and an unknown outcome is a failure.
+        throw "$Label exit code could not be read from the child process (pid $processId); refusing to record an outcome. stdout=$StdoutPath stderr=$StderrPath"
+    }
     $finished = [DateTimeOffset]::UtcNow
     return [ordered]@{
         label = $Label
         command_line = $commandLine
         dry_run = $false
         exit_code = [int]$exitCode
-        process_id = [int]$process.Id
+        process_id = $processId
         started_utc = $started.ToString('O')
         completed_utc = $finished.ToString('O')
         wall_seconds = ($finished - $started).TotalSeconds
@@ -1286,6 +1621,13 @@ function Invoke-Cycle4Process {
 
 function Assert-Cycle4ProcessSucceeded {
     param([Parameter(Mandatory = $true)]$Result)
+    if ($null -eq $Result.exit_code) {
+        # The second line of defence for round F defect 2. Invoke-Cycle4Process
+        # already refuses an unreadable exit code at the source; this makes the
+        # same refusal true of any result document that reaches this gate,
+        # however it was produced.
+        throw "$($Result.label) exited with an unreadable exit code; an unknown outcome is never a success"
+    }
     if ($Result.exit_code -ne 0) {
         $detail = "$($Result.label) exited $($Result.exit_code)"
         if (-not $Result.dry_run) { $detail = "$detail; see $($Result.stderr)" }
@@ -1320,5 +1662,51 @@ function Write-Cycle4RunFailed {
     $path = Join-Path $Root 'RUN_FAILED'
     $line = "$([DateTimeOffset]::UtcNow.ToString('O')) phase=$Phase error=$Message"
     [System.IO.File]::WriteAllText($path, $line, [System.Text.UTF8Encoding]::new($false))
+    return $path
+}
+
+function Write-Cycle4FailureResult {
+    # Round F defect 5. The failure path used to write RUN_FAILED and
+    # rethrow, leaving the attempt root with NO result.json at all -- so the
+    # one file every reader of this evidence tree opens first was the one
+    # file a failed attempt did not have, and the commands that did run were
+    # recoverable only by re-deriving them from commands.jsonl by hand.
+    #
+    # A failed attempt now publishes the same document a successful one does,
+    # with status RUN_FAILED, the phase it died in, the error text, and the
+    # commands it had run up to that point. Best-effort by construction: it
+    # runs inside a catch block that is about to rethrow, so a failure to
+    # write the failure document must never replace the real error.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [Parameter(Mandatory = $true)][string]$Arm,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [bool]$DryRun = $false,
+        [string]$CommandLog
+    )
+    $commands = @()
+    if (-not [string]::IsNullOrWhiteSpace($CommandLog) -and (Test-Path -LiteralPath $CommandLog -PathType Leaf)) {
+        $commands = @(
+            foreach ($line in [System.IO.File]::ReadAllLines($CommandLog)) {
+                if (-not [string]::IsNullOrWhiteSpace($line)) { $line | ConvertFrom-Json }
+            }
+        )
+    }
+    $path = Join-Path $Root 'result.json'
+    Write-Cycle4JsonFile -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle4-arm-training-result/v1'
+        status = 'RUN_FAILED'
+        completed_utc = [DateTimeOffset]::UtcNow.ToString('O')
+        arm = $Arm
+        mode = $Mode
+        dry_run = $DryRun
+        failed_phase = $Phase
+        error = $Message
+        commands_run = @($commands)
+        command_log = $CommandLog
+        nonclaim = 'A failed attempt claims nothing about training, playing strength, or the campaign; it records only where it stopped and why.'
+    }) -Path $path
     return $path
 }

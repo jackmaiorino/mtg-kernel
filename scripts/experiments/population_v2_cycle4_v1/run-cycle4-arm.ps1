@@ -73,22 +73,32 @@ publishes neither marker: it writes result.json with status DRY_RUN_PLANNED,
 because a run that trained and compared nothing may not leave behind the file
 an operator reads as "this arm finished".
 #>
+[CmdletBinding(DefaultParameterSetName = 'Inline')]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('formal', 'preflight')][string]$Mode,
-    [Parameter(Mandatory = $true)][ValidateSet('control-r', 'static-rb', 'treatment-rb')][string]$Arm,
-    [Parameter(Mandatory = $true)][string]$EvidenceRoot,
-    [Parameter(Mandatory = $true)][string]$RunRecord,
-    [Parameter(Mandatory = $true)][string]$RefreshChainDir,
-    [Parameter(Mandatory = $true)][string]$SlotIdentitiesRosterDir,
-    [Parameter(Mandatory = $true)][string[]]$SlotStoreRoots,
+    # Round F defect 4: every parameter below can instead be given in one
+    # JSON file named by -ParameterFile. `powershell -NoProfile -File` cannot
+    # pass an array at all -- it hands the script flat strings, so
+    # `-SlotStoreRoots @('a','b')` arrives as the two tokens `@('a',` and
+    # `'b')` and the eight-root check refuses a command line that reads
+    # correctly in a README. A parameter file is the paste-able launch form;
+    # splatting a hashtable from inside a PowerShell session is the other,
+    # and both are documented in README.md.
+    [Parameter(Mandatory = $true, ParameterSetName = 'ParameterFile')][string]$ParameterFile,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][ValidateSet('formal', 'preflight')][string]$Mode,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][ValidateSet('control-r', 'static-rb', 'treatment-rb')][string]$Arm,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$EvidenceRoot,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$RunRecord,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$RefreshChainDir,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$SlotIdentitiesRosterDir,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string[]]$SlotStoreRoots,
     # historical-1 (slot 3) rotates over three Stores by refresh_index mod 3.
     # Supply them in rotation order; the entry -SlotStoreRoots carries at index
     # 3 is then only a fallback, and the locator writer proves the chosen root
     # against the manifest's slot-3 identity at every refresh either way.
     [string[]]$HistoricalOneStoreRoots,
-    [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot,
-    [Parameter(Mandatory = $true)][uint64]$GenesisParentGeneration,
-    [Parameter(Mandatory = $true)][string]$ArmExecutable,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$GenesisParentStoreRoot,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][uint64]$GenesisParentGeneration,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$ArmExecutable,
     # The run-record builder. Required unless -UseExistingRunRecord says the
     # operator is supplying a pre-existing record instead.
     [string]$RunRecordExecutable,
@@ -97,10 +107,10 @@ param(
     # the record from the pinned parent and fails closed if what is on disk
     # differs.
     [switch]$UseExistingRunRecord,
-    [Parameter(Mandatory = $true)][string]$RefreshBuilderExecutable,
-    [Parameter(Mandatory = $true)][string]$PanelExecutable,
-    [Parameter(Mandatory = $true)][string]$PythonExecutable,
-    [Parameter(Mandatory = $true)][uint64]$PanelBaseSeed,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$RefreshBuilderExecutable,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$PanelExecutable,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][string]$PythonExecutable,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Inline')][uint64]$PanelBaseSeed,
     # Formal mode only: the arm's own Store root. Its PARENT directory is the
     # Store prefix the arm bin's mode marker claims.
     [string]$StoreRoot,
@@ -121,6 +131,48 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'common.ps1')
+
+# The closed list of parameter names a parameter file may set. Derived from
+# this script's own parameter block, so it can never drift from it, minus
+# -ParameterFile itself and PowerShell's common parameters.
+$script:Cycle4WrapperParameterNames = @(
+    $MyInvocation.MyCommand.Parameters.Keys |
+        Where-Object { $_ -cne 'ParameterFile' -and $_ -notin [System.Management.Automation.Cmdlet]::CommonParameters }
+)
+
+if ($PSCmdlet.ParameterSetName -ceq 'ParameterFile') {
+    $loadedParameters = Read-Cycle4ParameterFile `
+        -Path $ParameterFile `
+        -KnownNames $script:Cycle4WrapperParameterNames
+    foreach ($name in @($loadedParameters.Keys)) {
+        $value = $loadedParameters[$name]
+        # PowerShell's own parameter type constraints still apply: the
+        # variables were declared in param() above, so an ill-typed value
+        # (a string where a uint64 belongs, a scalar where a string[]
+        # belongs) is refused here exactly as it would be on the command
+        # line.
+        if ($MyInvocation.MyCommand.Parameters[$name].ParameterType -eq [switch]) {
+            Set-Variable -Name $name -Value ([switch]([bool]$value))
+        }
+        else {
+            Set-Variable -Name $name -Value $value
+        }
+    }
+    Write-Host "inputs: -ParameterFile $ParameterFile supplied $($loadedParameters.Count) parameters"
+    # The Inline set's mandatory parameters are not mandatory in this set, so
+    # their presence is proven here instead, by name, all at once.
+    $missing = @(
+        foreach ($name in @('Mode', 'Arm', 'EvidenceRoot', 'RunRecord', 'RefreshChainDir',
+                'SlotIdentitiesRosterDir', 'SlotStoreRoots', 'GenesisParentStoreRoot',
+                'GenesisParentGeneration', 'ArmExecutable', 'RefreshBuilderExecutable',
+                'PanelExecutable', 'PythonExecutable', 'PanelBaseSeed')) {
+            if (-not $loadedParameters.Contains($name)) { $name }
+        }
+    )
+    if ($missing.Count -gt 0) {
+        throw "$ParameterFile does not name every required wrapper parameter; missing: $($missing -join ', ')"
+    }
+}
 
 if ($SkipHostAssertions -and -not $DryRun) {
     throw '-SkipHostAssertions is only accepted together with -DryRun; a real launch never skips the git, toolchain, and GPU assertions'
@@ -152,8 +204,13 @@ else {
 if (@($SlotStoreRoots).Count -ne $script:Cycle4SlotCount) {
     throw "-SlotStoreRoots must name exactly $($script:Cycle4SlotCount) store roots in slot order 0..7, got $(@($SlotStoreRoots).Count)"
 }
-if ($null -ne $HistoricalOneStoreRoots -and @($HistoricalOneStoreRoots).Count -ne 0 -and @($HistoricalOneStoreRoots).Count -ne [int]$script:Cycle4HistoricalRotationPeriod) {
-    throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)), got $(@($HistoricalOneStoreRoots).Count)"
+$historicalOneRootCount = @($HistoricalOneStoreRoots).Count
+$requiresHistoricalOneRotation = ($Mode -ceq 'formal' -and $Arm -cne 'static-rb' -and $ThroughRefreshIndex -ge [uint64]1)
+if ($requiresHistoricalOneRotation -and $historicalOneRootCount -ne [int]$script:Cycle4HistoricalRotationPeriod) {
+    throw "-HistoricalOneStoreRoots is required for formal $Arm through refresh $ThroughRefreshIndex and must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)); got $historicalOneRootCount"
+}
+if (-not $requiresHistoricalOneRotation -and $historicalOneRootCount -ne 0 -and $historicalOneRootCount -ne [int]$script:Cycle4HistoricalRotationPeriod) {
+    throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle4HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle4HistoricalRotationPeriod)), got $historicalOneRootCount"
 }
 if ($UseExistingRunRecord -and -not [string]::IsNullOrWhiteSpace($RunRecordExecutable)) {
     throw '-UseExistingRunRecord and -RunRecordExecutable are mutually exclusive: either the wrapper derives the run record or the operator supplies it, never both'
@@ -280,6 +337,7 @@ try {
     $gitRecord = $null
     $toolchainRecord = $null
     $gpuRecord = $null
+    $panelBuildIdentity = $null
     if (-not $SkipHostAssertions) {
         $gitRecord = Get-Cycle4GitRecord -RepoRoot $RepoRoot
         $toolchainRecord = Get-ToolchainRecord
@@ -287,6 +345,38 @@ try {
         if ($Device -eq 1) {
             Assert-Gpu1Idle | Out-Null
             Assert-NoForeignGpu1ComputeProcesses
+        }
+        # Round F defect 6. -PanelExecutable is a cargo TEST binary
+        # (`deps\mtg_kernel-<hash>.exe`) whose name says nothing about which
+        # commit produced it, and the inputs record only ever hashed it. The
+        # first preflight attempt was pointed at one that predated the launch
+        # commit. A FORMAL interval publishes campaign evidence, so its panel
+        # binary's build identity must match the commit this launch is on --
+        # proven from the binary's own embedded identity where it has one and
+        # from the build step's receipt beside it otherwise (see README.md,
+        # "Build the three bins and the panel test executable"). A preflight
+        # still only hashes it: the ladder proves determinism between two
+        # rungs of the same binary and publishes no panel.
+        if ($Mode -ceq 'formal' -and -not $DryRun) {
+            # The launch's own source-tree digest, from the arm executable
+            # this launch will publish the Store with. Round F review finding
+            # (P1): the panel binary is bound to these exact source bytes,
+            # not merely to a commit, because a dirty-tree build at the same
+            # commit is a different compiler input.
+            $armBuildIdentity = Get-Cycle4ArmBuildIdentity `
+                -ArmExecutable $ArmExecutable `
+                -StdoutPath (Join-Path $root 'arm-build-identity.stdout.log') `
+                -StderrPath (Join-Path $root 'arm-build-identity.stderr.log') `
+                -WorkingDirectory $RepoRoot
+            Add-Cycle4CommandRecord -Result $armBuildIdentity.command | Out-Null
+            if ($armBuildIdentity.source_git_commit -cne $gitRecord.commit) {
+                throw "the arm executable was built from commit $($armBuildIdentity.source_git_commit), but this launch is on commit $($gitRecord.commit)"
+            }
+            $panelBuildIdentity = Assert-Cycle4PanelBuildIdentity `
+                -PanelExecutable $PanelExecutable `
+                -LaunchCommit $gitRecord.commit `
+                -LaunchSourceTreeSha256 $armBuildIdentity.source_tree_sha256
+            Write-Host "inputs: panel executable build identity proven from its $($panelBuildIdentity.source) at commit $($panelBuildIdentity.source_git_commit), source tree $($panelBuildIdentity.source_tree_sha256)"
         }
     }
 
@@ -319,6 +409,8 @@ try {
         git = $gitRecord
         toolchain = $toolchainRecord
         gpu = $gpuRecord
+        panel_build_identity = $panelBuildIdentity
+        parameter_file = $(if ($PSCmdlet.ParameterSetName -ceq 'ParameterFile') { Get-Cycle4FileRecord -Path $ParameterFile } else { $null })
     }
     Write-Cycle4JsonFile -Value $launchManifest -Path (Join-Path $root 'launch-manifest.json')
 
@@ -356,6 +448,111 @@ try {
         -SlotStoreRoots $SlotStoreRoots `
         -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
         -RefreshIndex ([uint64]0)
+
+    # -------------------------------------------------------------------
+    # Inputs-phase decode check, BEFORE any bootstrap (round F defect 3)
+    # -------------------------------------------------------------------
+    # The first CONTROL preflight ladder attempt spent two full five-minute
+    # genesis bootstraps before either rung reached opponent-slot resolution
+    # and refused there, on a roster record that could not decode. Nothing
+    # about that refusal needed a Store to exist: the record was on disk,
+    # readable, and undecodable from the first second of the attempt.
+    #
+    # `cycle4_arm_v1 --check-slot-locator` is a read-only, device-free mode
+    # that decodes every slot Store's run.json and the genesis parent's
+    # through the same `decode_train_run_v2` entry point the slot resolver
+    # uses, and exits 0 or 3. Running it here turns that ten-minute discovery
+    # into a one-second one.
+    #
+    # Round F review finding (P1): ONE refresh-0 slot table is not the
+    # campaign's input set. historical-1 (slot 3) rotates over three Stores
+    # by `refresh_index mod 3`, so a refresh-0-only check proves rotation
+    # root 0 and leaves roots 1 and 2 -- which refreshes 1 and 2 will train
+    # against -- entirely unproven until the GPU is already busy. Slot 3 is
+    # the only slot that varies with the refresh index, so checking one
+    # representative refresh per rotation phase reached through
+    # -ThroughRefreshIndex covers every distinct root the campaign needs.
+    # The coverage is then asserted against the union computed directly,
+    # rather than assumed.
+    $phase = 'inputs-slot-decode'
+    $consumedRefreshIndices = @([uint64]0)
+    if ($Mode -ceq 'formal' -and $Arm -cne 'static-rb') {
+        $consumedRefreshIndices = @()
+        for ($refresh = [uint64]0; $refresh -le $ThroughRefreshIndex; $refresh++) {
+            $consumedRefreshIndices += $refresh
+        }
+    }
+    $requiredRoots = [ordered]@{}
+    foreach ($refresh in $consumedRefreshIndices) {
+        foreach ($entry in @(Get-Cycle4SlotTableForRefresh `
+                    -SlotStoreRoots $SlotStoreRoots `
+                    -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
+                    -RefreshIndex $refresh)) {
+            $requiredRoots[[string]$entry.store_root] = $true
+        }
+    }
+    # An array of pairs, not a hashtable: [ordered] indexes an INTEGER key
+    # positionally rather than by key, and the rotation phase is an integer.
+    $representatives = @()
+    $seenRotations = @()
+    foreach ($refresh in $consumedRefreshIndices) {
+        $rotation = Get-Cycle4HistoricalOneRotationIndex -RefreshIndex $refresh
+        if ($seenRotations -notcontains $rotation) {
+            $seenRotations += $rotation
+            $representatives += [ordered]@{ rotation_index = $rotation; refresh_index = $refresh }
+        }
+    }
+    $coveredRoots = [ordered]@{}
+    $inputsCheckBindings = @()
+    foreach ($representative in $representatives) {
+        $rotation = [int]$representative.rotation_index
+        $refresh = [uint64]$representative.refresh_index
+        $checkTable = Get-Cycle4SlotTableForRefresh `
+            -SlotStoreRoots $SlotStoreRoots `
+            -HistoricalOneStoreRoots $HistoricalOneStoreRoots `
+            -RefreshIndex $refresh
+        $checkLocatorPath = Join-Path $root ('inputs-check-slot-locator-rotation-{0}.json' -f $rotation)
+        $inputsCheckLocator = New-Cycle4InputsCheckLocator `
+            -SlotTable $checkTable `
+            -RosterPath $genesisRosterPath `
+            -Path $checkLocatorPath `
+            -GenesisParentStoreRoot $GenesisParentStoreRoot `
+            -ArmStoreRoot $StoreRoot
+        $inputsCheckLocator['rotation_index'] = $rotation
+        $inputsCheckLocator['representative_refresh_index'] = $refresh
+        $inputsCheckBindings += $inputsCheckLocator
+        foreach ($entry in @($checkTable)) { $coveredRoots[[string]$entry.store_root] = $true }
+        $coveredRoots[[string]$inputsCheckLocator.own_run_store_root] = $true
+        $result = Invoke-Cycle4Process `
+            -FilePath $ArmExecutable `
+            -Arguments @('--check-slot-locator', $checkLocatorPath) `
+            -WorkingDirectory $RepoRoot `
+            -StdoutPath (Join-Path $root ('inputs-slot-decode-rotation-{0}.stdout.log' -f $rotation)) `
+            -StderrPath (Join-Path $root ('inputs-slot-decode-rotation-{0}.stderr.log' -f $rotation)) `
+            -Label ('inputs-slot-decode-rotation-{0}' -f $rotation) `
+            -DryRun:$DryRun
+        Add-Cycle4CommandRecord -Result $result | Out-Null
+        Assert-Cycle4ProcessSucceeded -Result $result | Out-Null
+    }
+    # The own-run slot's table entry is a placeholder the wrapper always
+    # overrides (README, "Eight slot store roots"), so it is not part of the
+    # input set this check must prove.
+    $ownRunPlaceholder = [string]@($SlotStoreRoots)[$script:Cycle4ArmOwnedSlotIndex]
+    $uncovered = @($requiredRoots.Keys | Where-Object {
+            -not $coveredRoots.Contains($_) -and $_ -cne $ownRunPlaceholder
+        })
+    if ($uncovered.Count -gt 0) {
+        throw "the inputs decode check did not cover every store root this campaign needs through refresh $ThroughRefreshIndex; uncovered: $($uncovered -join ', ')"
+    }
+    Write-Cycle4JsonFile -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle4-inputs-check-binding/v1'
+        through_refresh_index = $ThroughRefreshIndex
+        rotation_phases_checked = @($seenRotations)
+        required_store_roots = @($requiredRoots.Keys)
+        covered_store_roots = @($coveredRoots.Keys)
+        own_run_slot_placeholder = $ownRunPlaceholder
+        locators = @($inputsCheckBindings)
+    }) -Path (Join-Path $root 'inputs-check-binding.json')
 
     # ---------------------------------------------------------------------
     # Genesis: seed the Store, then build the manifest that binds it.
@@ -1190,6 +1387,28 @@ try {
     }
 }
 catch {
-    Write-Cycle4RunFailed -Root $root -Phase $phase -Message $_.Exception.Message | Out-Null
-    throw
+    # Captured before anything else can run: the inner try/catch below
+    # rebinds $_, so a bare `throw` at the end would rethrow the WRONG error.
+    $originalError = $_
+    $failureMessage = $originalError.Exception.Message
+    Write-Cycle4RunFailed -Root $root -Phase $phase -Message $failureMessage | Out-Null
+    # Round F defect 5: a failed attempt publishes the same document a
+    # successful one does, with status RUN_FAILED, so the file every reader
+    # of this evidence tree opens first exists on both paths. Best-effort:
+    # the real error is what must reach the operator, so a failure to write
+    # the failure document is reported and swallowed, never substituted.
+    try {
+        Write-Cycle4FailureResult `
+            -Root $root `
+            -Phase $phase `
+            -Message $failureMessage `
+            -Arm $Arm `
+            -Mode $Mode `
+            -DryRun ([bool]$DryRun) `
+            -CommandLog $commandLog | Out-Null
+    }
+    catch {
+        Write-Host "WARNING: could not write the RUN_FAILED result document: $($_.Exception.Message)"
+    }
+    throw $originalError
 }
