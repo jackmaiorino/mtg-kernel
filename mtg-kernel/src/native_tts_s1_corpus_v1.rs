@@ -83,7 +83,16 @@ use std::fmt;
 use std::path::Path;
 
 /// Wire schema of the frozen corpus manifest.
-pub const TTS_S1_CORPUS_SCHEMA_V1: &str = "mtg-kernel-tts-s1-corpus-manifest/v1";
+///
+/// V2, and the version is not cosmetic: the body now states the
+/// CONTRIBUTING episode population directly
+/// ([`TtsS1CorpusBodyV1::contributing_episode_count`] and
+/// [`TtsS1CorpusBodyV1::contributing_episode_decisions`]), which is the
+/// population a per-tier replay actually searches and therefore the only
+/// honest input to a cost estimate stated before the replay starts. A V1
+/// manifest carries neither field, so it is refused rather than read with
+/// two counts silently missing.
+pub const TTS_S1_CORPUS_SCHEMA_V2: &str = "mtg-kernel-tts-s1-corpus-manifest/v2";
 
 /// The selection rule the manifest commits to, spelled out so a reader
 /// never has to infer it from the decision list.
@@ -557,6 +566,20 @@ pub struct TtsS1CorpusBodyV1 {
     /// decision count. The replay's compute-cap estimator costs each of
     /// them individually; see the type's own docs.
     pub all_episode_decisions: TtsS1AllEpisodeDecisionStatsV1,
+    /// How many episodes contribute at least one selected decision, which
+    /// is `episodes.len()`.
+    ///
+    /// Stated on the wire rather than left to be counted because it is what
+    /// SIZES a per-tier replay: the replay runs those episodes WHOLE, so
+    /// the work is this population, not the 512 stratified targets. A
+    /// launcher reads it to print the expected per-tier cost, and to size
+    /// the shard fan-out, BEFORE the first search runs.
+    pub contributing_episode_count: u64,
+    /// The decisions in those episodes, summed. This is exactly the
+    /// `searched_decisions` a whole-corpus replay will report, so the
+    /// expected per-tier cost is this number times the tier's measured
+    /// per-decision cost.
+    pub contributing_episode_decisions: u64,
     /// Every episode that contributes at least one selected decision, with
     /// its whole action sequence, so the replay can run it end to end.
     pub episodes: Vec<TtsS1CorpusEpisodeV1>,
@@ -582,7 +605,7 @@ impl TtsS1CorpusManifestV1 {
     pub fn seal_v1(body: TtsS1CorpusBodyV1) -> Result<Self, TtsS1CorpusErrorV1> {
         let digest = corpus_body_digest_v1(&body)?;
         Ok(Self {
-            schema: TTS_S1_CORPUS_SCHEMA_V1.to_owned(),
+            schema: TTS_S1_CORPUS_SCHEMA_V2.to_owned(),
             corpus_sha256: lower_hex_sha256_v4(digest),
             body,
         })
@@ -1268,6 +1291,10 @@ pub(crate) fn corpus_body_v1(
         truncated_episode_count: selection.truncated_episode_count,
         episode_decisions: selection.episode_decisions,
         all_episode_decisions: selection.all_episode_decisions,
+        contributing_episode_count: selection.episodes.len() as u64,
+        contributing_episode_decisions: selection.episodes.iter().fold(0u64, |running, episode| {
+            running.saturating_add(episode.decision_count)
+        }),
         episodes: selection.episodes,
         decisions: selection.decisions,
     }
@@ -1349,8 +1376,24 @@ pub fn decode_tts_s1_corpus_v1(bytes: &[u8]) -> Result<TtsS1CorpusManifestV1, Tt
             return Err(TtsS1CorpusErrorV1::InvalidManifest);
         }
     }
+    // The stated contributing population must be the one the episode list
+    // actually is. It sizes a per-tier replay and its shard fan-out before
+    // anything runs, so a manifest whose stated count disagrees with its own
+    // episodes would mis-size the run rather than merely mis-report it.
+    let contributing_decisions = manifest
+        .body
+        .episodes
+        .iter()
+        .fold(0u64, |running, episode| {
+            running.saturating_add(episode.decision_count)
+        });
+    if manifest.body.contributing_episode_count != manifest.body.episodes.len() as u64
+        || manifest.body.contributing_episode_decisions != contributing_decisions
+    {
+        return Err(TtsS1CorpusErrorV1::InvalidManifest);
+    }
     if reencoded != bytes
-        || manifest.schema != TTS_S1_CORPUS_SCHEMA_V1
+        || manifest.schema != TTS_S1_CORPUS_SCHEMA_V2
         || manifest.corpus_sha256 != lower_hex_sha256_v4(corpus_body_digest_v1(&manifest.body)?)
     {
         return Err(TtsS1CorpusErrorV1::InvalidManifest);
@@ -1664,6 +1707,32 @@ mod tests {
         ));
     }
 
+    /// The stated contributing population must be the episode list itself.
+    /// It sizes a per-tier replay and its shard fan-out before anything
+    /// runs, so a disagreement is a mis-sized run, not a cosmetic one.
+    #[test]
+    fn the_stated_contributing_population_must_match_the_episode_list_v1() {
+        let pool = synthetic_pool_v1();
+        let chosen = select_tts_s1_corpus_v1(&pool).unwrap();
+        let manifest = synthetic_manifest_v1(&pool, chosen);
+        assert_eq!(manifest.body.contributing_episode_count, 9);
+        assert_eq!(manifest.body.contributing_episode_decisions, 900);
+        assert!(decode_tts_s1_corpus_v1(&manifest.canonical_bytes_v1().unwrap()).is_ok());
+
+        for tamper in [
+            |body: &mut TtsS1CorpusBodyV1| body.contributing_episode_count += 1,
+            |body: &mut TtsS1CorpusBodyV1| body.contributing_episode_decisions += 1,
+        ] {
+            let mut tampered = manifest.clone();
+            tamper(&mut tampered.body);
+            let tampered = TtsS1CorpusManifestV1::seal_v1(tampered.body).unwrap();
+            assert!(matches!(
+                decode_tts_s1_corpus_v1(&tampered.canonical_bytes_v1().unwrap()),
+                Err(TtsS1CorpusErrorV1::InvalidManifest)
+            ));
+        }
+    }
+
     #[test]
     fn a_sealed_manifest_round_trips_and_rejects_a_tampered_digest_v1() {
         let pool = synthetic_pool_v1();
@@ -1723,6 +1792,8 @@ mod tests {
                 1,
             )
             .expect("ten episodes summarize"),
+            contributing_episode_count: 9,
+            contributing_episode_decisions: 900,
             // One record per episode the synthetic pool draws from, each
             // an all-zero sequence, which is exactly what the pool's own
             // candidates carry as their prefixes. The decode invariant

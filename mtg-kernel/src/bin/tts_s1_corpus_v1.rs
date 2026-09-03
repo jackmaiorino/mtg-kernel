@@ -122,7 +122,7 @@ fn main() {
         }
     };
     println!(
-        "TTS_S1_CORPUS_PUBLISHED path={} bytes={} corpus_sha256={} decisions={} candidates={} episodes={} natural_terminal_episodes={} seed_block_id={} seed_block_seed={}",
+        "TTS_S1_CORPUS_PUBLISHED path={} bytes={} corpus_sha256={} decisions={} candidates={} episodes={} natural_terminal_episodes={} contributing_episodes={} contributing_episode_decisions={} seed_block_id={} seed_block_seed={}",
         parsed.output.display(),
         bytes.len(),
         manifest.corpus_sha256,
@@ -130,6 +130,11 @@ fn main() {
         manifest.body.candidate_count,
         manifest.body.episode_count,
         manifest.body.natural_terminal_episode_count,
+        // THE REPLAY'S OWN SIZE. A per-tier replay runs the contributing
+        // episodes WHOLE, so this decision count, not the 512 stratified
+        // targets, is what a tier costs and what the launcher shards over.
+        manifest.body.contributing_episode_count,
+        manifest.body.contributing_episode_decisions,
         manifest.body.seed_block_id,
         manifest.body.seed_block_seed,
     );
