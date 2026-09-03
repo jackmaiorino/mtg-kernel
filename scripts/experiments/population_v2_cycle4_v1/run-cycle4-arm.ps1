@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Cycle-4 arm launcher wrapper (docs/native_cycle4_arm_launcher_v1.md Section 6).
 
@@ -249,6 +249,56 @@ try {
         throw "the genesis slot-identities roster is missing: $genesisRosterPath"
     }
 
+    # Formal output parents are launcher inputs, not child-process side effects.
+    # Ensure the complete campaign layout before the first child process so a
+    # fresh campaign cannot bootstrap a Store and then fail because a later
+    # output parent is absent. The launch manifest records the exact set.
+    $createdDirectories = @()
+    if ($Mode -ceq 'formal') {
+        # An advanced Store cannot legitimately lack its refresh chain: refresh 0
+        # is built right after genesis and every later manifest binds a panel.
+        # Creating the chain here would let the genesis path rebuild refresh 0
+        # from the existing Store and re-run formal panels, so a Store past
+        # generation 0 with no chain (or no genesis manifest) fails closed
+        # BEFORE anything is created; only a fresh campaign gets its layout.
+        $advancedGeneration = Get-Cycle4StoreLatestGeneration -StoreRoot $StoreRoot
+        if (($null -ne $advancedGeneration) -and ([uint64]$advancedGeneration -gt [uint64]0)) {
+            if (-not (Test-Path -LiteralPath $RefreshChainDir -PathType Container)) {
+                throw "$StoreRoot is at generation $advancedGeneration but its refresh chain directory is missing: $RefreshChainDir; refusing to create an empty chain for an advanced Store"
+            }
+            if (-not (Test-Path -LiteralPath $genesisManifestPath -PathType Leaf)) {
+                throw "$StoreRoot is at generation $advancedGeneration but the genesis refresh manifest is missing: $genesisManifestPath; an advanced Store cannot lack it"
+            }
+        }
+        $storePrefix = Split-Path -Parent $StoreRoot
+        $runRecordDirectory = Split-Path -Parent $RunRecord
+        $formalOutputDirectories = @(
+            $EvidenceRoot,
+            $gateRoot,
+            $root,
+            $runRecordDirectory,
+            $storePrefix,
+            $StoreRoot,
+            $ChainDir,
+            $RefreshChainDir
+        )
+        for ($intervalIndex = [uint64]0; $intervalIndex -lt $ThroughRefreshIndex; $intervalIndex++) {
+            $intervalDirectory = Join-Path $root ('interval-{0:d2}' -f $intervalIndex)
+            $formalOutputDirectories += $intervalDirectory
+            $formalOutputDirectories += (Join-Path $intervalDirectory 'panel')
+        }
+        foreach ($directoryPath in $formalOutputDirectories) {
+            if ([string]::IsNullOrWhiteSpace($directoryPath)) { continue }
+            $directory = New-Item -ItemType Directory -Force -Path $directoryPath
+            if (-not (Test-Path -LiteralPath $directory.FullName -PathType Container)) {
+                throw "failed creating formal output directory: $directoryPath"
+            }
+            if ($createdDirectories -cnotcontains $directory.FullName) {
+                $createdDirectories += $directory.FullName
+            }
+        }
+    }
+
     # -------------------------------------------------------------------
     # The run record is DERIVED, not supplied. cycle4_run_record_v1 builds
     # it from the arm kind, the pinned parent Store, and the compiled
@@ -405,6 +455,7 @@ try {
         slot_identities_roster_dir = $SlotIdentitiesRosterDir
         store_root = $StoreRoot
         chain_dir = $ChainDir
+        created_directories = @($createdDirectories)
         inputs = $inputRecords
         git = $gitRecord
         toolchain = $toolchainRecord
@@ -636,6 +687,11 @@ try {
         }
         else {
             throw "the bootstrap published no arm-origin record in $TargetChainDir"
+        }
+        $outputDirectory = Split-Path -Parent $OutputManifest
+        if ([string]::IsNullOrWhiteSpace($outputDirectory) -or
+            -not (Test-Path -LiteralPath $outputDirectory -PathType Container)) {
+            throw "the genesis manifest output parent does not exist before the builder command: $outputDirectory"
         }
         $result = Invoke-Cycle4Process `
             -FilePath $RefreshBuilderExecutable `
@@ -938,6 +994,7 @@ try {
         # answer; for static-rb, whose panel deliberately never enters the
         # chain and which never builds, only the journal can.
         $plan = @()
+        $candidateStates = @()
         for ($candidate = [uint64]0; $candidate -lt $ThroughRefreshIndex; $candidate++) {
             $candidateStop = ($candidate + [uint64]1) * $script:Cycle4RefreshInterval
             $recorded = Get-Cycle4IntervalPhase -Journals $journals -IntervalIndex $candidate
@@ -981,6 +1038,11 @@ try {
                 $panelDone = $false
                 $manifestDone = $false
             }
+            $candidateStates += [ordered]@{
+                interval = [uint64]$candidate
+                training_done = [bool]$trainingDone
+                work_needed = (-not ($trainingDone -and $panelDone -and $manifestDone))
+            }
             if ($trainingDone -and $panelDone -and $manifestDone) { continue }
             $plan += [ordered]@{
                 interval = [uint64]$candidate
@@ -992,13 +1054,18 @@ try {
                 resumed_from_phase = $recorded
             }
         }
-        # Only the frontier interval can still need training, and it has to be
-        # the last thing planned: a Store's generation is monotonic, so an
-        # untrained interval before a trained one means the Store and the
-        # refresh chain disagree about which campaign this is.
-        for ($index = 0; $index -lt $plan.Count; $index++) {
-            if ($plan[$index].train -and $index -ne ($plan.Count - 1)) {
-                $detail = "interval $($plan[$index].interval) still needs training while later intervals are planned after it"
+        # Campaign work is chronological. Once an interval still needs any
+        # work, no later interval can already be trained: that would mean the
+        # Store advanced past a hole in the refresh chain. On a fresh campaign
+        # every interval needs work and none is trained, which must plan cleanly.
+        for ($index = 0; $index -lt $candidateStates.Count; $index++) {
+            if (-not $candidateStates[$index].work_needed) { continue }
+            $laterTrained = $false
+            for ($later = $index + 1; $later -lt $candidateStates.Count; $later++) {
+                if ($candidateStates[$later].training_done) { $laterTrained = $true; break }
+            }
+            if ($laterTrained) {
+                $detail = "interval $($candidateStates[$index].interval) still needs training while later intervals are planned after it"
                 if (-not $DryRun) {
                     throw "$detail; the Store and $RefreshChainDir disagree"
                 }
@@ -1043,6 +1110,11 @@ try {
                 Write-Host "interval-$interval`: resuming an interrupted interval, last journalled phase '$($step.resumed_from_phase)'"
             }
             $manifestPath = Join-Path $RefreshChainDir (Get-Cycle4ChainManifestName -RefreshIndex $refreshIndex)
+            if ($DryRun -and -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                Write-Host "DRY-RUN interval-$interval`: the manifest a prior planned build would produce is not present yet; stopping detailed command expansion"
+                $dryRunStoppedAfter = "refresh-$refreshIndex-manifest"
+                break
+            }
             $manifest = Read-Cycle4Manifest -Path $manifestPath
             if ($manifest.refresh_index -ne $refreshIndex) {
                 throw "$manifestPath declares refresh index $($manifest.refresh_index), not $refreshIndex"
