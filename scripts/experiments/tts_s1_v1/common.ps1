@@ -242,11 +242,15 @@ function Read-TtsS1TierReport {
         [Parameter(Mandatory = $true)][string]$Path,
         # Set only for a run that could still carry feasibility standing.
         # See Assert-TtsS1TierReportContract.
-        [switch]$RequireFormalShardTopology
+        [switch]$RequireFormalShardTopology,
+        # A validated clock regression may demote an otherwise formal tier.
+        # Every other formal topology clause remains mandatory.
+        [switch]$PermitClockRegressionDemotion
     )
     $report = Read-TtsS1Json -Path $Path
     Assert-TtsS1TierReportContract -Tier $Tier -Report $report `
-        -RequireFormalShardTopology:$RequireFormalShardTopology
+        -RequireFormalShardTopology:$RequireFormalShardTopology `
+        -PermitClockRegressionDemotion:$PermitClockRegressionDemotion
     return $report
 }
 
@@ -298,11 +302,17 @@ function Assert-TtsS1TierReportContract {
     # standing" into "this run failed". The caller passes the switch exactly
     # when the run is still a candidate for TTS_S1_COMPLETE, so a report
     # that could be read as formal is never accepted at another topology.
+    # -PermitClockRegressionDemotion permits meets_formal_topology=false only
+    # when a validated clock regression is the sole failing formal clause.
     param(
         [Parameter(Mandatory = $true)][string]$Tier,
         [Parameter(Mandatory = $true)][AllowNull()]$Report,
-        [switch]$RequireFormalShardTopology
+        [switch]$RequireFormalShardTopology,
+        [switch]$PermitClockRegressionDemotion
     )
+    if ($PermitClockRegressionDemotion -and -not $RequireFormalShardTopology) {
+        throw '-PermitClockRegressionDemotion requires -RequireFormalShardTopology'
+    }
     $checks = @(
         @{ Path = 'body.verdict_view'; Expected = $script:TtsS1VerdictView; What = 'gating view' },
         @{ Path = 'body.compute_cap.rule'; Expected = $script:TtsS1ProjectionRule; What = 'compute-cap rule' },
@@ -331,7 +341,6 @@ function Assert-TtsS1TierReportContract {
         $checks += @{ Path = 'body.shard_topology.every_shard_announcement_observed_before_release'; Expected = $true; What = 'readiness digest handshake' }
         $checks += @{ Path = 'body.shard_topology.every_shard_reported_same_token'; Expected = $true; What = 'shared token digest' }
         $checks += @{ Path = 'body.shard_topology.every_shard_observed_token_before_first_decision'; Expected = $true; What = 'token observed before first search' }
-        $checks += @{ Path = 'body.shard_topology.meets_formal_topology'; Expected = $true; What = 'formal topology' }
     }
     foreach ($check in $checks) {
         $observed = Get-TtsS1ReportField -Report $Report -Path $check.Path
@@ -340,7 +349,29 @@ function Assert-TtsS1TierReportContract {
                 $Tier, $check.What, $observed, $check.Path, $check.Expected)
         }
     }
-    [void](Get-TtsS1ClockRegressionSmokeReason -Report $Report)
+    $clockRegressionReason = Get-TtsS1ClockRegressionSmokeReason -Report $Report
+    if ($RequireFormalShardTopology) {
+        $hostLogicalCpus = Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.host_logical_cpus'
+        $hostIsInteger = $hostLogicalCpus -is [int] -or $hostLogicalCpus -is [long] -or
+            $hostLogicalCpus -is [uint32] -or $hostLogicalCpus -is [uint64]
+        $requiredLogicalCpus = $script:TtsS1FormalShardCount * $script:TtsS1FormalLogicalCpusPerShard
+        if (-not $hostIsInteger -or $hostLogicalCpus -lt $requiredLogicalCpus) {
+            throw "tier $Tier declares formal host capacity '$hostLogicalCpus' at body.shard_topology.host_logical_cpus, below the pre-registered '$requiredLogicalCpus' logical CPUs"
+        }
+
+        $fullyConcurrentPermille = Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.fully_concurrent_permille'
+        $permilleIsInteger = $fullyConcurrentPermille -is [int] -or $fullyConcurrentPermille -is [long] -or
+            $fullyConcurrentPermille -is [uint32] -or $fullyConcurrentPermille -is [uint64]
+        if (-not $permilleIsInteger -or $fullyConcurrentPermille -lt $script:TtsS1FormalMinFullConcurrencyPermille) {
+            throw "tier $Tier declares full-concurrency overlap '$fullyConcurrentPermille' permille at body.shard_topology.fully_concurrent_permille, below the pre-registered '$script:TtsS1FormalMinFullConcurrencyPermille' permille"
+        }
+
+        $meetsFormalTopology = Get-TtsS1ReportField -Report $Report -Path 'body.shard_topology.meets_formal_topology'
+        $clockOnlyDemotion = $PermitClockRegressionDemotion -and $null -ne $clockRegressionReason
+        if (-not $clockOnlyDemotion -and $meetsFormalTopology -cne $true) {
+            throw "tier $Tier declares formal topology '$meetsFormalTopology' at body.shard_topology.meets_formal_topology, not the pre-registered 'True'"
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------

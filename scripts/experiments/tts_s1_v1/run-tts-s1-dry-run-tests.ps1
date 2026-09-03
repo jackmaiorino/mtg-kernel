@@ -235,11 +235,13 @@ function Get-TtsS1ContractRejection {
     # and the caller would receive an array instead of the message.
     param(
         [Parameter(Mandatory = $true)]$Report,
-        [switch]$RequireFormalShardTopology
+        [switch]$RequireFormalShardTopology,
+        [switch]$PermitClockRegressionDemotion
     )
     try {
         Assert-TtsS1TierReportContract -Tier 't512' -Report $Report `
-            -RequireFormalShardTopology:$RequireFormalShardTopology
+            -RequireFormalShardTopology:$RequireFormalShardTopology `
+            -PermitClockRegressionDemotion:$PermitClockRegressionDemotion
     }
     catch {
         return $_.Exception.Message
@@ -349,16 +351,32 @@ Assert-True ($message -like '*formal topology*') 'the refusal names the formal t
 # And the pinned topology, measured, is accepted with the switch on.
 Assert-True ($null -eq (Get-TtsS1ContractRejection -Report (New-TtsS1TestReport) -RequireFormalShardTopology)) 'a report measured at the pinned topology carries formal standing'
 
-# A named clock regression remains readable and becomes an operator-facing
-# smoke reason that instructs a restart. It may never still claim formality.
+# A clock regression may demote a formal candidate only when every other
+# topology clause passes. A second failure remains a tier failure, and the
+# tier catch writes RUN_FAILED with this rejection as its detail.
 $clockRegression = [pscustomobject]@{ shard_index = 3; decision_ordinal = 17 }
 $clockSmoke = New-TtsS1TestReport -MeetsFormalTopology $false `
     -ClockRegressionDetected $true -ClockRegressions @($clockRegression)
 Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $clockSmoke)) 'a clock-regressed report remains readable as a smoke'
+$message = Get-TtsS1ContractRejection -Report (New-TtsS1TestReport `
+    -MeetsFormalTopology $false -EveryShardAnnouncementObservedBeforeRelease $false `
+    -ClockRegressionDetected $true -ClockRegressions @($clockRegression)) `
+    -RequireFormalShardTopology -PermitClockRegressionDemotion
+Assert-True ($null -ne $message) 'a clock regression plus a missing handshake fails the formal tier'
+Assert-True ($message -like '*readiness digest handshake*') 'the combined failure names the missing handshake in RUN_FAILED detail'
+
+$message = Get-TtsS1ContractRejection -Report $clockSmoke `
+    -RequireFormalShardTopology -PermitClockRegressionDemotion
+Assert-True ($null -eq $message) 'a clock regression alone is accepted for smoke demotion'
 $clockSmokeReason = Get-TtsS1ClockRegressionSmokeReason -Report $clockSmoke
 Assert-True ($clockSmokeReason -like '*clock regression*') 'the smoke reason names the clock regression'
 Assert-True ($clockSmokeReason -like '*shard 3 decision ordinal 17*') 'the smoke reason names the shard and decision ordinal'
 Assert-True ($clockSmokeReason -like '*restart the run*') 'the smoke reason instructs the operator to restart the run'
+
+$formalWithoutRegression = New-TtsS1TestReport
+$message = Get-TtsS1ContractRejection -Report $formalWithoutRegression `
+    -RequireFormalShardTopology -PermitClockRegressionDemotion
+Assert-True ($null -eq $message) 'no regression with every topology clause good stays formal'
 Assert-True ($wrapperText -like '*$clockRegressionSmokeReasons*') 'the launcher accumulates clock regressions as smoke reasons'
 Assert-True ($wrapperText -like '*TTS_S1_SMOKE reason=$statusReason*') 'the launcher writes TTS_S1_SMOKE with its reason'
 
@@ -368,7 +386,7 @@ Assert-True ($wrapperText -like '*TTS_S1_SMOKE reason=$statusReason*') 'the laun
 foreach ($case in @(
     @{ Name = 'a run whose shards never waited on a barrier'; Report = (New-TtsS1TestReport -EveryShardWaitedOnTheBarrier $false -MeetsFormalTopology $false); Fragment = 'start barrier' },
     @{ Name = 'a run whose shard started before observing the token'; Report = (New-TtsS1TestReport -EveryShardObservedTokenBeforeFirstDecision $false -MeetsFormalTopology $false); Fragment = 'token observed before first search' },
-    @{ Name = 'a run that never overlapped'; Report = (New-TtsS1TestReport -FullyConcurrentPermille 0 -MeetsFormalTopology $false); Fragment = 'formal topology' },
+    @{ Name = 'a run that never overlapped'; Report = (New-TtsS1TestReport -FullyConcurrentPermille 0 -MeetsFormalTopology $false); Fragment = 'full-concurrency overlap' },
     @{ Name = 'a token missing a shard announcement digest'; Report = (New-TtsS1TestReport -EveryShardAnnouncementObservedBeforeRelease $false -MeetsFormalTopology $false); Fragment = 'readiness digest handshake' },
     @{ Name = 'shards reporting different token digests'; Report = (New-TtsS1TestReport -EveryShardReportedSameToken $false -MeetsFormalTopology $false); Fragment = 'shared token digest' }
 )) {
@@ -613,8 +631,8 @@ try {
     Assert-True ($wrapperText -like '*else {*') 'the refusal has a real-launch branch'
     Assert-True ($wrapperText -like '*$isFormalLadder = ($LimitEpisodes -eq 0)*') 'the formal ladder is still decided from the corpus and the tiers'
     Assert-True ($wrapperText -like '*-and ($ShardCount -eq $script:TtsS1FormalShardCount)*') 'the shard count is part of what makes a ladder formal'
-    Assert-True ($wrapperText -like '*$null -eq $clockRegressionReason*') 'the launcher keeps a clock-regressed report readable as smoke'
-    Assert-True ($wrapperText -like '*-RequireFormalShardTopology*') 'the launcher still demands formal topology when no clock regression was reported'
+    Assert-True ($wrapperText -like '*-RequireFormalShardTopology:$isFormalTopology*') 'the launcher validates formal topology for every formal candidate report'
+    Assert-True ($wrapperText -like '*-PermitClockRegressionDemotion:$isFormalTopology*') 'the launcher permits only a validated clock regression to demote a formal candidate'
     Assert-True ($wrapperText -like '*$everyTierFormalTopology*') 'the tier reports get the last word on the topology'
 
     # --- 1a3. THE SMOKE DEMOTION. Any other -ShardCount is a smoke, and

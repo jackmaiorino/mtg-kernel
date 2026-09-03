@@ -901,15 +901,14 @@ foreach ($plan in $tierPlans) {
         # dies with a bare strict-mode PropertyNotFoundException naming
         # neither the tier nor the field the contract required.
         #
-        # Read the complete report first. A clock regression is the one
-        # formal-topology failure that demotes an otherwise formal launch to
-        # readable smoke, because its timing diagnostics remain useful. All
-        # other topology failures still fail closed for a formal candidate.
-        $report = Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path
+        # A clock regression is the one formal-topology failure that demotes
+        # an otherwise formal launch to readable smoke, because its timing
+        # diagnostics remain useful. The formal contract still validates
+        # every other topology clause before allowing that demotion.
+        $report = Read-TtsS1TierReport -Tier $plan.tier -Path $plan.report_path `
+            -RequireFormalShardTopology:$isFormalTopology `
+            -PermitClockRegressionDemotion:$isFormalTopology
         $clockRegressionReason = Get-TtsS1ClockRegressionSmokeReason -Report $report
-        if ($isFormalTopology -and $null -eq $clockRegressionReason) {
-            Assert-TtsS1TierReportContract -Tier $plan.tier -Report $report -RequireFormalShardTopology
-        }
         if ($null -ne $clockRegressionReason) {
             $clockRegressionSmokeReasons += "tier $($plan.tier): $clockRegressionReason"
         }
