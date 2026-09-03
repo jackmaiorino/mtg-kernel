@@ -1117,6 +1117,19 @@ impl TtsS1WallClockBaseV1 {
                 .unwrap_or(u64::MAX),
         )
     }
+
+    /// NOW, on this base.
+    ///
+    /// THE ONE FUNCTION every instant the readiness clause compares comes
+    /// from: a shard's announcement and the start token alike. That is the
+    /// whole reason it exists. The clause is an exact `release >= ready`
+    /// with no tolerance, and two clocks in two runtimes do not have to
+    /// disagree by much to invert a comparison between instants a few
+    /// microseconds apart. Reading them through one function in one runtime
+    /// removes the question rather than bounding it.
+    pub fn micros_now_v1(&self) -> u64 {
+        self.micros_at_v1(Instant::now())
+    }
 }
 
 /// Where a shard waits, and for how long, before its first decision.
@@ -1173,6 +1186,162 @@ fn wait_for_start_barrier_v1(
     }
 }
 
+/// Reads one shard's announcement back, or `None` if it is not there yet.
+///
+/// A file that exists but does not parse counts as not there: the shard
+/// publishes by rename so that state should not be observable, and polling
+/// through it costs nothing if it ever is.
+fn read_shard_ready_announcement_v1(
+    barrier_directory: &Path,
+    shard_index: u64,
+) -> Option<TtsS1ShardReadinessV1> {
+    let text = std::fs::read_to_string(
+        barrier_directory.join(tts_s1_shard_ready_file_name_v1(shard_index)),
+    )
+    .ok()?;
+    let mut fields = text.split_whitespace();
+    let process_id = fields.next()?.parse::<u64>().ok()?;
+    let ready_unix_micros = fields.next()?.parse::<u64>().ok()?;
+    if fields.next().is_some() {
+        return None;
+    }
+    Some(TtsS1ShardReadinessV1 {
+        shard_index,
+        process_id,
+        ready_unix_micros,
+    })
+}
+
+/// Waits until every shard of the fan-out has announced itself ready.
+///
+/// Bounded, and fail-closed on the deadline naming the shards that never
+/// announced: a token published for a fan-out that is not all there is a
+/// token that releases the shards which ARE there onto a machine the
+/// missing ones are not yet on.
+fn wait_for_shard_readiness_v1(
+    barrier_directory: &Path,
+    shard_count: u64,
+    timeout_seconds: u64,
+) -> Result<Vec<TtsS1ShardReadinessV1>, TtsS1ReplayErrorV1> {
+    let started = Instant::now();
+    let deadline = std::time::Duration::from_secs(timeout_seconds);
+    loop {
+        let mut ready: Vec<TtsS1ShardReadinessV1> = Vec::new();
+        let mut missing: Vec<u64> = Vec::new();
+        for shard_index in 0..shard_count {
+            match read_shard_ready_announcement_v1(barrier_directory, shard_index) {
+                Some(announcement) => ready.push(announcement),
+                None => missing.push(shard_index),
+            }
+        }
+        if missing.is_empty() {
+            return Ok(ready);
+        }
+        if started.elapsed() >= deadline {
+            return Err(TtsS1ReplayErrorV1::ShardReadinessTimeout {
+                missing: missing
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                timeout_seconds,
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            TTS_S1_START_BARRIER_POLL_MILLIS_V1,
+        ));
+    }
+}
+
+/// What publishing the start token produced.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TtsS1PublishedBarrierV1 {
+    pub released_unix_micros: u64,
+    pub latest_ready_unix_micros: u64,
+    pub ready: Vec<TtsS1ShardReadinessV1>,
+    pub waited_micros: u64,
+}
+
+/// Waits for every shard's announcement and then publishes the start token.
+///
+/// # Why this is a mode of this bin and not three lines of the launcher
+///
+/// The readiness clause is an exact `release >= ready` with no tolerance,
+/// and it compares the token's instant against instants the SHARDS recorded
+/// through [`TtsS1WallClockBaseV1`]. A launcher that stamped the token from
+/// its own runtime's clock would be comparing two clocks, and two clocks in
+/// two runtimes do not have to disagree by much to invert a comparison
+/// between instants a few microseconds apart: PowerShell 5.1's
+/// `DateTimeOffset::UtcNow` can advance on a coarser cadence than the
+/// Windows clock behind `SystemTime::now()`, so a token genuinely published
+/// last could still be stamped first. Publishing here removes the question
+/// instead of bounding it: the token and every announcement it is compared
+/// against come from one function in one runtime.
+///
+/// The token is written by staged sibling then rename, so a shard polling
+/// for it never reads a half-written one.
+pub fn publish_start_barrier_v1(
+    token_path: &Path,
+    barrier_directory: &Path,
+    shard_count: u64,
+    readiness_timeout_seconds: u64,
+    base: &TtsS1WallClockBaseV1,
+) -> Result<TtsS1PublishedBarrierV1, TtsS1ReplayErrorV1> {
+    if shard_count == 0 || shard_count > TTS_S1_MAX_SHARD_COUNT_V1 {
+        return Err(TtsS1ReplayErrorV1::InvalidShardSelector {
+            shard_index: 0,
+            shard_count,
+        });
+    }
+    let started = Instant::now();
+    let ready =
+        wait_for_shard_readiness_v1(barrier_directory, shard_count, readiness_timeout_seconds)?;
+    let latest_ready_unix_micros = ready.iter().fold(0u64, |latest, announcement| {
+        latest.max(announcement.ready_unix_micros)
+    });
+
+    // EVERY ANNOUNCEMENT IS IN, so now, and only now.
+    let released_unix_micros = base.micros_now_v1();
+    // The invariant the merge will check, checked HERE, where it can still
+    // be acted on. Reading this clock after observing every announcement
+    // cannot honestly produce an earlier instant, so one that does is a
+    // clock anomaly and not a run: failing here costs a restart, while
+    // publishing anyway would cost the whole tier and only be discovered at
+    // the merge, hours later.
+    if released_unix_micros < latest_ready_unix_micros {
+        return Err(TtsS1ReplayErrorV1::StartBarrierClockAnomaly {
+            released_unix_micros,
+            latest_ready_unix_micros,
+        });
+    }
+
+    let parent = token_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let failed = |error: std::io::Error| TtsS1ReplayErrorV1::StartBarrierReady(error.to_string());
+    std::fs::create_dir_all(parent).map_err(failed)?;
+    let staged = parent.join(format!(
+        "{}.stage-{}",
+        token_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "start-barrier.token".to_owned()),
+        std::process::id()
+    ));
+    std::fs::write(&staged, format!("{released_unix_micros}\n")).map_err(failed)?;
+    if let Err(error) = std::fs::rename(&staged, token_path) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(failed(error));
+    }
+    Ok(TtsS1PublishedBarrierV1 {
+        released_unix_micros,
+        latest_ready_unix_micros,
+        ready,
+        waited_micros: elapsed_micros_v1(started),
+    })
+}
+
 /// Publishes this shard's ready file and returns what it announced.
 ///
 /// THE HANDSHAKE THIS HALF EXISTS FOR: the launcher can see when it STARTED
@@ -1202,8 +1371,10 @@ fn announce_shard_ready_v1(
     let failed = |error: std::io::Error| TtsS1ReplayErrorV1::StartBarrierReady(error.to_string());
     std::fs::create_dir_all(directory).map_err(failed)?;
     // The clock is read LAST before the write, so the announced instant is
-    // the one the file carries and not one the write then invalidated.
-    let ready_unix_micros = base.micros_at_v1(Instant::now());
+    // the one the file carries and not one the write then invalidated. It
+    // is the SAME function the start token is stamped with; see
+    // `TtsS1WallClockBaseV1::micros_now_v1`.
+    let ready_unix_micros = base.micros_now_v1();
     std::fs::write(&staged, format!("{process_id} {ready_unix_micros}\n")).map_err(failed)?;
     if let Err(error) = std::fs::rename(&staged, &published) {
         let _ = std::fs::remove_file(&staged);
@@ -1903,6 +2074,21 @@ pub enum TtsS1ReplayErrorV1 {
     /// The shard could not publish its readiness announcement, so the
     /// launcher could never have known it was loaded.
     StartBarrierReady(String),
+    /// The barrier publisher waited out its deadline: some shard never
+    /// announced itself, so the token was never written and no shard
+    /// searched.
+    ShardReadinessTimeout {
+        missing: String,
+        timeout_seconds: u64,
+    },
+    /// The clock ran backwards between the last announcement and the token.
+    /// Refused rather than published: a token stamped before an
+    /// announcement it demonstrably followed would strip the run of its
+    /// formal standing at the merge, hours later.
+    StartBarrierClockAnomaly {
+        released_unix_micros: u64,
+        latest_ready_unix_micros: u64,
+    },
     /// The shard waited out its start-barrier deadline. Never a shard that
     /// quietly went ahead alone: a shard that searched by itself measured
     /// an idle machine.
@@ -1954,6 +2140,8 @@ impl TtsS1ReplayErrorV1 {
             Self::EpisodeDidNotTerminate { .. } => "tts_s1_replay_episode_did_not_terminate",
             Self::EmptyShard { .. } => "tts_s1_replay_empty_shard",
             Self::StartBarrierReady(_) => "tts_s1_replay_start_barrier_ready_failed",
+            Self::ShardReadinessTimeout { .. } => "tts_s1_replay_shard_readiness_timeout",
+            Self::StartBarrierClockAnomaly { .. } => "tts_s1_replay_start_barrier_clock_anomaly",
             Self::StartBarrierTimeout { .. } => "tts_s1_replay_start_barrier_timeout",
             Self::InvalidShardSelector { .. } => "tts_s1_replay_invalid_shard_selector",
             Self::InvalidShardReport => "tts_s1_replay_shard_report_invalid",
@@ -2009,6 +2197,22 @@ impl fmt::Display for TtsS1ReplayErrorV1 {
             } => write!(
                 formatter,
                 "{}: shard {shard_index} of {shard_count} owns no episode, because the run plans only {planned_episodes}; size the fan-out from the corpus's contributing_episode_count",
+                self.code_v1()
+            ),
+            Self::ShardReadinessTimeout {
+                missing,
+                timeout_seconds,
+            } => write!(
+                formatter,
+                "{}: shards {missing} never announced themselves ready within {timeout_seconds} s; the start barrier was not released and no shard searched",
+                self.code_v1()
+            ),
+            Self::StartBarrierClockAnomaly {
+                released_unix_micros,
+                latest_ready_unix_micros,
+            } => write!(
+                formatter,
+                "{}: the clock read {released_unix_micros} micros for the start token, before the last announcement at {latest_ready_unix_micros}",
                 self.code_v1()
             ),
             Self::StartBarrierTimeout {
@@ -6004,6 +6208,180 @@ mod tests {
             .map(|body| TtsS1ReplayShardReportV1::seal_v1(body).unwrap())
             .collect();
         assert!(!shard_topology_evidence_v1(&silent).released_after_every_shard_ready);
+    }
+
+    /// THE TOKEN AND THE ANNOUNCEMENTS COME FROM ONE FUNCTION.
+    ///
+    /// The readiness clause is an exact `release >= ready` with no
+    /// tolerance, and it compares the token's instant against instants the
+    /// SHARDS recorded. A launcher that stamped the token from its own
+    /// runtime's clock would be comparing two clocks, and two clocks in two
+    /// runtimes do not have to disagree by much to invert a comparison
+    /// between instants a few microseconds apart.
+    ///
+    /// Passing ONE base to both sides is what makes this deterministic
+    /// rather than a race against the host: the announcement and the token
+    /// are then provably the same monotonic advance of the same launch
+    /// reading, so the ordering below cannot flake and cannot be satisfied
+    /// by two clocks that merely happened to agree.
+    #[test]
+    fn the_start_token_and_the_announcements_come_from_one_clock_v1() {
+        let directory = scratch_diagnostics_dir_v1("publish-one-clock");
+        let token = directory.join("start-barrier.token");
+        let clock = TtsS1WallClockBaseV1::now_v1();
+        let config = TtsS1StartBarrierConfigV1 {
+            path: token.clone(),
+            timeout_seconds: 30,
+        };
+
+        let before = clock.micros_now_v1();
+        let mut announced: Vec<u64> = Vec::new();
+        for shard_index in 0..3u64 {
+            let (process_id, ready) =
+                announce_shard_ready_v1(&config, shard_index, &clock).expect("a shard announces");
+            assert_eq!(process_id, u64::from(std::process::id()));
+            announced.push(ready);
+        }
+        let latest_announced = *announced.iter().max().expect("three announcements");
+
+        // THE SAME BASE, handed to the publisher.
+        let published = publish_start_barrier_v1(&token, &directory, 3, 30, &clock)
+            .expect("the token publishes");
+        let after = clock.micros_now_v1();
+
+        // Every instant is one monotonic advance of one launch reading, so
+        // the ordering is exact and not approximate.
+        assert!(before <= announced[0]);
+        assert!(announced[0] <= announced[1] && announced[1] <= announced[2]);
+        assert_eq!(published.latest_ready_unix_micros, latest_announced);
+        assert!(
+            published.released_unix_micros >= published.latest_ready_unix_micros,
+            "the token is stamped at or after the last announcement it waited for"
+        );
+        assert!(published.released_unix_micros <= after);
+        // The publisher saw every announcement, with the pid each carried.
+        assert_eq!(published.ready.len(), 3);
+        for (shard_index, announcement) in published.ready.iter().enumerate() {
+            assert_eq!(announcement.shard_index, shard_index as u64);
+            assert_eq!(announcement.process_id, u64::from(std::process::id()));
+            assert_eq!(announcement.ready_unix_micros, announced[shard_index]);
+        }
+
+        // The token on disk carries exactly what was returned, and a shard
+        // waiting on it reads exactly that back: one number, end to end.
+        let written = std::fs::read_to_string(&token).expect("the token reads");
+        assert_eq!(
+            written.trim().parse::<u64>().unwrap(),
+            published.released_unix_micros
+        );
+        let observed = wait_for_start_barrier_v1(&config, &clock).expect("the token is observed");
+        assert_eq!(
+            observed.released_unix_micros,
+            published.released_unix_micros
+        );
+        // No staging debris beside it.
+        assert!(!directory
+            .read_dir()
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().contains(".stage-")));
+
+        // AND THE WHOLE HANDSHAKE, evaluated as the merge would: this
+        // ordering is what grants a run its readiness clause.
+        let mut evidence = fully_concurrent_evidence_v1(TTS_S1_FORMAL_SHARD_COUNT_V1, 4);
+        evidence.barrier_released_unix_micros = published.released_unix_micros;
+        evidence.latest_ready_unix_micros = published.latest_ready_unix_micros;
+        evidence.released_after_every_shard_ready =
+            published.released_unix_micros >= published.latest_ready_unix_micros;
+        assert!(
+            TtsS1ShardTopologyV1::evaluate_v1(ample_host_v1(), &evidence).meets_formal_topology
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// The publisher waits for EVERY shard, and fails closed naming the
+    /// ones that never announced rather than releasing the shards that did.
+    #[test]
+    fn the_barrier_publisher_waits_for_every_shard_v1() {
+        let directory = scratch_diagnostics_dir_v1("publish-incomplete");
+        let token = directory.join("start-barrier.token");
+        let clock = TtsS1WallClockBaseV1::now_v1();
+        let config = TtsS1StartBarrierConfigV1 {
+            path: token.clone(),
+            timeout_seconds: 30,
+        };
+        // Only shard 0 of three announces.
+        announce_shard_ready_v1(&config, 0, &clock).expect("one shard announces");
+
+        let started = Instant::now();
+        let error = publish_start_barrier_v1(&token, &directory, 3, 1, &clock)
+            .expect_err("an incomplete fan-out must not be released");
+        assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+        match &error {
+            TtsS1ReplayErrorV1::ShardReadinessTimeout {
+                missing,
+                timeout_seconds,
+            } => {
+                assert_eq!(missing, "1,2");
+                assert_eq!(*timeout_seconds, 1);
+            }
+            other => panic!("expected a readiness timeout, got {other}"),
+        }
+        assert_eq!(error.code_v1(), "tts_s1_replay_shard_readiness_timeout");
+        assert!(error.to_string().contains("no shard searched"));
+        // AND NO TOKEN: the shard that did announce is still waiting, which
+        // is the whole point of refusing.
+        assert!(!token.exists());
+
+        // A shard count outside the ladder is refused before any wait.
+        for bad in [0u64, TTS_S1_MAX_SHARD_COUNT_V1 + 1] {
+            assert!(matches!(
+                publish_start_barrier_v1(&token, &directory, bad, 1, &clock),
+                Err(TtsS1ReplayErrorV1::InvalidShardSelector { .. })
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A half-written or malformed announcement counts as absent, so the
+    /// publisher never releases on one it could not read.
+    #[test]
+    fn a_malformed_announcement_is_not_a_ready_shard_v1() {
+        let directory = scratch_diagnostics_dir_v1("publish-malformed");
+        let token = directory.join("start-barrier.token");
+        let clock = TtsS1WallClockBaseV1::now_v1();
+        for (shard_index, content) in [(0u64, "4242"), (1, "not a pid 7"), (2, "1 2 3")] {
+            std::fs::write(
+                directory.join(tts_s1_shard_ready_file_name_v1(shard_index)),
+                content,
+            )
+            .expect("the malformed announcement writes");
+            assert!(
+                read_shard_ready_announcement_v1(&directory, shard_index).is_none(),
+                "{content:?} is not an announcement"
+            );
+        }
+        assert!(matches!(
+            publish_start_barrier_v1(&token, &directory, 3, 1, &clock),
+            Err(TtsS1ReplayErrorV1::ShardReadinessTimeout { .. })
+        ));
+        assert!(!token.exists());
+
+        // A well-formed one IS read, and read exactly.
+        std::fs::write(
+            directory.join(tts_s1_shard_ready_file_name_v1(0)),
+            "4242 1700000000000042\n",
+        )
+        .expect("the announcement writes");
+        assert_eq!(
+            read_shard_ready_announcement_v1(&directory, 0),
+            Some(TtsS1ShardReadinessV1 {
+                shard_index: 0,
+                process_id: 4_242,
+                ready_unix_micros: 1_700_000_000_000_042,
+            })
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// THE COMPARISON IS EXACT, AND THAT ONLY WORKS AT ONE RESOLUTION.

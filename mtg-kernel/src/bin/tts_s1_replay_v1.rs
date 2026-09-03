@@ -20,6 +20,16 @@
 //!    exactly those K shard reports and publishes the tier report the
 //!    unsharded run would have published, recomputing every statistic over
 //!    the union. It loads no checkpoint and searches nothing.
+//! 4. PUBLISH BARRIER (`--publish-start-barrier PATH --barrier-dir DIR
+//!    --shard-count K --readiness-timeout-seconds N`): waits for all K
+//!    shards to announce themselves ready and then writes the start token.
+//!    It exists because the token's instant is compared, EXACTLY and with
+//!    no tolerance, against instants the shards recorded through this
+//!    crate's own clock: a launcher that stamped the token from its own
+//!    runtime would be comparing two clocks, and two clocks in two runtimes
+//!    do not have to disagree by much to invert a comparison between
+//!    instants a few microseconds apart. It loads no checkpoint and
+//!    searches nothing, and exits 0 or 1.
 //!
 //! EXIT CODES. `0` the tier is FEASIBLE (or a shard finished), `4` the tier
 //! is INFEASIBLE (the report is published either way, and the verdict line
@@ -33,9 +43,10 @@
 use mtg_kernel::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
 use mtg_kernel::native_checkpoint_shadow_stdio_v1::ShadowCheckpointAuthorityV1;
 use mtg_kernel::native_tts_s1_replay_v1::{
-    merge_tts_s1_replay_shards_v1, parse_tts_s1_tier_v1, publish_tts_s1_replay_report_v1,
-    publish_tts_s1_replay_shard_report_v1, run_tts_s1_replay_shard_v1, run_tts_s1_replay_v1,
-    TtsS1ReplayConfigV1, TtsS1ShardSelectorV1, TtsS1StartBarrierConfigV1, TtsS1TierVerdictV1,
+    merge_tts_s1_replay_shards_v1, parse_tts_s1_tier_v1, publish_start_barrier_v1,
+    publish_tts_s1_replay_report_v1, publish_tts_s1_replay_shard_report_v1,
+    run_tts_s1_replay_shard_v1, run_tts_s1_replay_v1, TtsS1ReplayConfigV1, TtsS1ShardSelectorV1,
+    TtsS1StartBarrierConfigV1, TtsS1TierVerdictV1, TtsS1WallClockBaseV1, TTS_S1_MAX_SHARD_COUNT_V1,
 };
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -45,6 +56,9 @@ fn usage_v1() -> ! {
         "usage: tts_s1_replay_v1 (--original-store-root PATH [--generation N] | --population-store-root PATH --generation N | --portable-derivative-root PATH) --corpus PATH --tier (t512|t2048|t8192|t32768) --seed-block N --diagnostics-dir PATH --max-episodes N --output PATH [--limit-episodes N] [--shard-index N --shard-count K [--start-barrier PATH --start-barrier-timeout-seconds N]]"
     );
     eprintln!("   or: tts_s1_replay_v1 --merge-shards DIR --shard-count K --output PATH");
+    eprintln!(
+        "   or: tts_s1_replay_v1 --publish-start-barrier PATH --barrier-dir DIR --shard-count K --readiness-timeout-seconds N"
+    );
     std::process::exit(2);
 }
 
@@ -78,9 +92,18 @@ struct MergeArgsV1 {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+struct PublishBarrierArgsV1 {
+    token_path: PathBuf,
+    barrier_directory: PathBuf,
+    shard_count: u64,
+    readiness_timeout_seconds: u64,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 enum ParsedArgsV1 {
     Replay(ReplayArgsV1),
     Merge(MergeArgsV1),
+    PublishBarrier(PublishBarrierArgsV1),
 }
 
 fn parse_u64_v1(value: &OsString) -> Result<u64, ()> {
@@ -111,6 +134,9 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut merge_shards = None;
     let mut start_barrier_path = None;
     let mut start_barrier_timeout = None;
+    let mut publish_start_barrier = None;
+    let mut barrier_directory = None;
+    let mut readiness_timeout = None;
     for pair in raw.chunks_exact(2) {
         let flag = &pair[0];
         if flag == "--original-store-root" && authority_root.is_none() {
@@ -149,11 +175,61 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             start_barrier_path = Some(PathBuf::from(&pair[1]));
         } else if flag == "--start-barrier-timeout-seconds" && start_barrier_timeout.is_none() {
             start_barrier_timeout = Some(parse_u64_v1(&pair[1])?);
+        } else if flag == "--publish-start-barrier" && publish_start_barrier.is_none() {
+            publish_start_barrier = Some(PathBuf::from(&pair[1]));
+        } else if flag == "--barrier-dir" && barrier_directory.is_none() {
+            barrier_directory = Some(PathBuf::from(&pair[1]));
+        } else if flag == "--readiness-timeout-seconds" && readiness_timeout.is_none() {
+            readiness_timeout = Some(parse_u64_v1(&pair[1])?);
         } else if flag == "--merge-shards" && merge_shards.is_none() {
             merge_shards = Some(PathBuf::from(&pair[1]));
         } else {
             return Err(());
         }
+    }
+
+    // PUBLISH-BARRIER MODE. It loads no checkpoint, reads no corpus and
+    // publishes no report, so every other flag is rejected rather than
+    // ignored.
+    if let Some(token_path) = publish_start_barrier {
+        if authority_root.is_some()
+            || generation.is_some()
+            || corpus.is_some()
+            || tier.is_some()
+            || seed_block_id.is_some()
+            || diagnostics_dir.is_some()
+            || max_episodes.is_some()
+            || limit_episodes.is_some()
+            || shard_index.is_some()
+            || start_barrier_path.is_some()
+            || start_barrier_timeout.is_some()
+            || merge_shards.is_some()
+            || output.is_some()
+        {
+            return Err(());
+        }
+        let readiness_timeout_seconds = readiness_timeout.ok_or(())?;
+        if readiness_timeout_seconds == 0 {
+            return Err(());
+        }
+        // The fan-out size is range-checked HERE, at the flag surface, the
+        // same way every other mode checks it: a publisher told to wait for
+        // no shards, or for more than the ladder allows, is a usage error
+        // and not something to discover once it is already running.
+        let shard_count = shard_count.ok_or(())?;
+        if shard_count == 0 || shard_count > TTS_S1_MAX_SHARD_COUNT_V1 {
+            return Err(());
+        }
+        return Ok(ParsedArgsV1::PublishBarrier(PublishBarrierArgsV1 {
+            token_path,
+            barrier_directory: barrier_directory.ok_or(())?,
+            shard_count,
+            readiness_timeout_seconds,
+        }));
+    }
+    if barrier_directory.is_some() || readiness_timeout.is_some() {
+        // Only the publish mode has anything to do with either.
+        return Err(());
     }
 
     // MERGE MODE. It loads no checkpoint and reads no corpus, so every
@@ -243,6 +319,38 @@ fn fail_v1(error: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
+fn run_publish_barrier_v1(parsed: PublishBarrierArgsV1) -> ! {
+    // The base is fixed HERE, immediately before the wait, and the token is
+    // stamped from it through the same `micros_now_v1` a shard announces
+    // with. One clock, one runtime, one function.
+    let clock = TtsS1WallClockBaseV1::now_v1();
+    let published = match publish_start_barrier_v1(
+        &parsed.token_path,
+        &parsed.barrier_directory,
+        parsed.shard_count,
+        parsed.readiness_timeout_seconds,
+        &clock,
+    ) {
+        Ok(published) => published,
+        Err(error) => fail_v1(error),
+    };
+    println!(
+        "TTS_S1_BARRIER_PUBLISHED path={} shard_count={} released_unix_micros={} latest_ready_unix_micros={} waited_micros={}",
+        parsed.token_path.display(),
+        parsed.shard_count,
+        published.released_unix_micros,
+        published.latest_ready_unix_micros,
+        published.waited_micros,
+    );
+    for announcement in &published.ready {
+        println!(
+            "TTS_S1_SHARD_READY shard_index={} process_id={} ready_unix_micros={}",
+            announcement.shard_index, announcement.process_id, announcement.ready_unix_micros,
+        );
+    }
+    std::process::exit(0);
+}
+
 fn run_merge_v1(parsed: MergeArgsV1) -> ! {
     let report = match merge_tts_s1_replay_shards_v1(&parsed.shard_directory, parsed.shard_count) {
         Ok(report) => report,
@@ -317,6 +425,7 @@ fn main() {
     let parsed = parse_args_v1(raw).unwrap_or_else(|()| usage_v1());
     let parsed = match parsed {
         ParsedArgsV1::Merge(merge) => run_merge_v1(merge),
+        ParsedArgsV1::PublishBarrier(publish) => run_publish_barrier_v1(publish),
         ParsedArgsV1::Replay(replay) => replay,
     };
     let output = parsed.output.clone();
@@ -414,7 +523,123 @@ mod tests {
     fn replay_v1(raw: Vec<OsString>) -> Result<ReplayArgsV1, ()> {
         match parse_args_v1(raw)? {
             ParsedArgsV1::Replay(replay) => Ok(replay),
-            ParsedArgsV1::Merge(_) => Err(()),
+            ParsedArgsV1::Merge(_) | ParsedArgsV1::PublishBarrier(_) => Err(()),
+        }
+    }
+
+    fn publish_argv_v1() -> Vec<OsString> {
+        vec![
+            "--publish-start-barrier".into(),
+            "shards/start-barrier.token".into(),
+            "--barrier-dir".into(),
+            "shards".into(),
+            "--shard-count".into(),
+            "8".into(),
+            "--readiness-timeout-seconds".into(),
+            "900".into(),
+        ]
+    }
+
+    /// The publish mode is its own closed flag surface. It loads no
+    /// checkpoint, reads no corpus and publishes no report, so a flag from
+    /// any other mode is a usage error rather than something ignored.
+    #[test]
+    fn the_publish_barrier_mode_is_its_own_closed_flag_surface_v1() {
+        assert_eq!(
+            parse_args_v1(publish_argv_v1()).unwrap(),
+            ParsedArgsV1::PublishBarrier(PublishBarrierArgsV1 {
+                token_path: PathBuf::from("shards/start-barrier.token"),
+                barrier_directory: PathBuf::from("shards"),
+                shard_count: 8,
+                readiness_timeout_seconds: 900,
+            })
+        );
+
+        // Order independent, like every other invocation here.
+        let mut reordered = publish_argv_v1();
+        reordered.rotate_left(2);
+        assert_eq!(
+            parse_args_v1(reordered).unwrap(),
+            parse_args_v1(publish_argv_v1()).unwrap()
+        );
+
+        // Every one of the four is required.
+        for drop_pair in [0usize, 2, 4, 6] {
+            let mut partial = publish_argv_v1();
+            partial.drain(drop_pair..drop_pair + 2);
+            assert!(
+                parse_args_v1(partial).is_err(),
+                "dropping the publish pair at {drop_pair} must be a usage error"
+            );
+        }
+
+        // An unbounded wait is not a bounded one.
+        let mut zero = publish_argv_v1();
+        zero[7] = "0".into();
+        assert!(parse_args_v1(zero).is_err());
+        // And the shard count is range-checked like everywhere else.
+        for bad in ["0", "65"] {
+            let mut argv = publish_argv_v1();
+            argv[5] = bad.into();
+            assert!(
+                parse_args_v1(argv).is_err(),
+                "--shard-count {bad} must be rejected"
+            );
+        }
+
+        for extra in [
+            vec![OsString::from("--tier"), OsString::from("t512")],
+            vec![OsString::from("--corpus"), OsString::from("corpus.json")],
+            vec![OsString::from("--seed-block"), OsString::from("1")],
+            vec![OsString::from("--max-episodes"), OsString::from("64")],
+            vec![OsString::from("--output"), OsString::from("report.json")],
+            vec![OsString::from("--shard-index"), OsString::from("0")],
+            vec![OsString::from("--merge-shards"), OsString::from("shards")],
+            vec![
+                OsString::from("--start-barrier"),
+                OsString::from("barrier.token"),
+            ],
+            vec![
+                OsString::from("--diagnostics-dir"),
+                OsString::from("diagnostics"),
+            ],
+            vec![
+                OsString::from("--population-store-root"),
+                OsString::from("store"),
+            ],
+        ] {
+            let mut argv = publish_argv_v1();
+            argv.extend(extra);
+            assert!(
+                parse_args_v1(argv).is_err(),
+                "the publish mode must refuse a flag from another mode"
+            );
+        }
+
+        // And the publish-only flags are refused everywhere else.
+        for extra in [
+            vec![OsString::from("--barrier-dir"), OsString::from("shards")],
+            vec![
+                OsString::from("--readiness-timeout-seconds"),
+                OsString::from("900"),
+            ],
+        ] {
+            let mut argv = argv_v1();
+            argv.extend(extra.clone());
+            assert!(replay_v1(argv).is_err(), "a replay refuses a publish flag");
+            let mut argv = vec![
+                OsString::from("--merge-shards"),
+                OsString::from("shards"),
+                OsString::from("--shard-count"),
+                OsString::from("8"),
+                OsString::from("--output"),
+                OsString::from("report.json"),
+            ];
+            argv.extend(extra);
+            assert!(
+                parse_args_v1(argv).is_err(),
+                "a merge refuses a publish flag"
+            );
         }
     }
 
@@ -684,6 +909,10 @@ mod tests {
             vec![
                 OsString::from("--start-barrier-timeout-seconds"),
                 OsString::from("900"),
+            ],
+            vec![
+                OsString::from("--publish-start-barrier"),
+                OsString::from("token"),
             ],
             vec![
                 OsString::from("--population-store-root"),

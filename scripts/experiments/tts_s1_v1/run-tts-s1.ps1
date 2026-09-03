@@ -87,10 +87,15 @@ nobody asked for.
 AND THE PIN IS NOT TAKEN ON TRUST. A declared count of eight is satisfied
 just as well by eight processes run one after another, so the run has to
 prove the contention it claims. Each shard announces itself READY once its
-checkpoint is loaded and before it waits; this launcher publishes the tier's
-one start token only after every announcement is in, on its own bounded
-deadline, and a shard that never announces fails the tier closed after every
-started child has been reaped. Each shard then records the wall-clock window
+checkpoint is loaded and before it waits; a barrier-publisher process (the
+replay bin's --publish-start-barrier mode) waits for every announcement on a
+bounded deadline and only then stamps the tier's one start token, and a shard
+that never announces fails the tier closed after every started child has been
+reaped. The token is stamped by that process and not by this launcher on
+purpose: its instant is compared, exactly and with no tolerance, against
+instants the shards recorded through the crate's own clock, and this
+runtime's clock advances on a coarser cadence, so a second clock in that
+comparison could invert it. Each shard then records the wall-clock window
 of every decision on a shared time base, and the merge censuses how many
 shards were mid-work when each decision began. Formal standing needs the
 count, the host, the handshake and at least 950 permille of decisions
@@ -504,6 +509,12 @@ function New-TtsS1TierPlan {
             command_line = Format-TtsS1CommandLine -FilePath $ReplayExecutable -Arguments $shardArgs
         }
     }
+    $publishArgs = @(
+        '--publish-start-barrier', $barrierPath,
+        '--barrier-dir', $shardRoot,
+        '--shard-count', [string]$TierShardCount,
+        '--readiness-timeout-seconds', [string]$script:TtsS1ShardReadyTimeoutSeconds
+    )
     $mergeArgs = @(
         '--merge-shards', $shardRoot,
         '--shard-count', [string]$TierShardCount,
@@ -517,6 +528,10 @@ function New-TtsS1TierPlan {
         barrier_path = $barrierPath
         barrier_timeout_seconds = $script:TtsS1StartBarrierTimeoutSeconds
         ready_timeout_seconds = $script:TtsS1ShardReadyTimeoutSeconds
+        publish_arguments = $publishArgs
+        publish_command_line = Format-TtsS1CommandLine -FilePath $ReplayExecutable -Arguments $publishArgs
+        publish_stdout_path = Join-Path $attemptRoot ("tier-{0}.barrier.stdout.txt" -f $Tier)
+        publish_stderr_path = Join-Path $attemptRoot ("tier-{0}.barrier.stderr.txt" -f $Tier)
         diagnostics_root = $diagnosticsRoot
         shards = $shards
         merge_arguments = $mergeArgs
@@ -587,6 +602,10 @@ $provenance = [ordered]@{
     planned_corpus_command = Format-TtsS1CommandLine -FilePath $CorpusExecutable -Arguments $corpusArgs
     planned_tier_shard_commands = @($plannedTierPlans | ForEach-Object { $_.shards } | ForEach-Object { $_.command_line })
     planned_tier_merge_commands = @($plannedTierPlans | ForEach-Object { $_.merge_command_line })
+    # The barrier publisher, one per tier: it is the process that waits for
+    # every shard's announcement and stamps the token, so its invocation is
+    # part of what a reviewer has to be able to see.
+    planned_tier_barrier_commands = @($plannedTierPlans | ForEach-Object { $_.publish_command_line })
     # Every shard's invocation as a record of its own, each naming the bin
     # it runs and that bin's hash, so a reviewer reading the provenance
     # alone can see exactly which binary each of the K processes was to be,
@@ -613,6 +632,7 @@ if ($DryRun) {
     Write-Output "DRY RUN attempt_root=$attemptRoot shard_count_requested=$ShardCount"
     Write-Output $provenance.planned_corpus_command
     foreach ($line in $provenance.planned_tier_shard_commands) { Write-Output $line }
+    foreach ($line in $provenance.planned_tier_barrier_commands) { Write-Output $line }
     foreach ($line in $provenance.planned_tier_merge_commands) { Write-Output $line }
     Write-TtsS1JsonFile -Value ([ordered]@{
         schema = 'mtg-kernel-tts-s1-summary/v1'
@@ -623,6 +643,7 @@ if ($DryRun) {
         planned_corpus_command = $provenance.planned_corpus_command
         planned_tier_shard_commands = $provenance.planned_tier_shard_commands
         planned_tier_merge_commands = $provenance.planned_tier_merge_commands
+        planned_tier_barrier_commands = $provenance.planned_tier_barrier_commands
     }) -Path (Join-Path $attemptRoot 'result.json')
     exit 0
 }
@@ -798,21 +819,49 @@ foreach ($plan in $tierPlans) {
             # raises here, every started child is reaped, and the tier catch
             # writes RUN_FAILED naming both the silent shards and what it
             # killed.
-            $readiness = Wait-TtsS1ShardReadiness -Directory $plan.shard_root `
-                -ShardCount $plan.shard_count -TimeoutSeconds $plan.ready_timeout_seconds
-            $script:TtsS1LastShardReadiness = @($readiness.ready)
-            Write-Output ("TTS_S1_SHARDS_READY tier={0} shards={1} waited_seconds={2}" -f `
-                $plan.tier, $readiness.ready.Count, [math]::Round($readiness.waited_seconds, 2))
-            # ONLY NOW.
-            $script:TtsS1BarrierReleasedMicros = Write-TtsS1StartBarrier -Path $plan.barrier_path
+            # THE TOKEN IS NOT STAMPED HERE, and that is the point. Its
+            # instant is compared, exactly and with no tolerance, against
+            # instants the SHARDS recorded through the crate's own clock; a
+            # token stamped from THIS runtime would be a second clock in the
+            # comparison, and this runtime's DateTimeOffset::UtcNow can
+            # advance on a coarser cadence than the Windows clock behind
+            # Rust's SystemTime::now(). So the replay bin's publish mode
+            # does both halves: it waits for every announcement and stamps
+            # the token from the same function a shard announces with.
+            #
+            # It is a nested single-child fan-out, which is safe here: the
+            # outer fan-out reset the reaped-children channel when it
+            # started, has not reached its own finally, and overwrites the
+            # channel again when it does.
+            $publishExit = Invoke-TtsS1Process -FilePath $ReplayExecutable `
+                -Arguments $plan.publish_arguments `
+                -StdoutPath $plan.publish_stdout_path -StderrPath $plan.publish_stderr_path
+            if ($publishExit -ne 0) {
+                throw "tts_s1_replay_v1 --publish-start-barrier exited with $publishExit for tier $($plan.tier); the start barrier was not released; see tier-$($plan.tier).barrier.stderr.txt"
+            }
+            $script:TtsS1BarrierPublishExit = $publishExit
+            # Read back what the publisher stamped, so the launcher records
+            # the token it actually released rather than a number of its
+            # own.
+            $script:TtsS1BarrierReleasedMicros = [long](([System.IO.File]::ReadAllText($plan.barrier_path)).Trim())
+            $script:TtsS1LastShardReadiness = @(@(Get-Content -LiteralPath $plan.publish_stdout_path) |
+                Where-Object { $_ -like 'TTS_S1_SHARD_READY *' })
+            Write-Output ("TTS_S1_SHARDS_READY tier={0} shards={1} released_unix_micros={2}" -f `
+                $plan.tier, @($script:TtsS1LastShardReadiness).Count, $script:TtsS1BarrierReleasedMicros)
+            # DIAGNOSTIC ONLY, and labelled as such: how far this runtime's
+            # clock reads from the one that stamped the token. It gates
+            # nothing.
+            Write-Output ("TTS_S1_BARRIER_CLOCK_SKEW tier={0} launcher_micros={1} token_micros={2} skew_micros={3}" -f `
+                $plan.tier, (Get-TtsS1UnixMicros), $script:TtsS1BarrierReleasedMicros, `
+                ((Get-TtsS1UnixMicros) - $script:TtsS1BarrierReleasedMicros))
         }
         if (Test-Path -LiteralPath $plan.barrier_path) {
             $barrierReleasedMicros = $script:TtsS1BarrierReleasedMicros
         }
-        Write-Output ("TTS_S1_BARRIER tier={0} token={1} released_unix_micros={2} ready_shards={3} ready_timeout_seconds={4} shard_timeout_seconds={5}" -f `
+        Write-Output ("TTS_S1_BARRIER tier={0} token={1} released_unix_micros={2} ready_shards={3} publisher_exit={4} ready_timeout_seconds={5} shard_timeout_seconds={6}" -f `
             $plan.tier, $plan.barrier_path, $barrierReleasedMicros, `
-            @($script:TtsS1LastShardReadiness).Count, $plan.ready_timeout_seconds, `
-            $plan.barrier_timeout_seconds)
+            @($script:TtsS1LastShardReadiness).Count, $script:TtsS1BarrierPublishExit, `
+            $plan.ready_timeout_seconds, $plan.barrier_timeout_seconds)
         # EVERY SHARD IS WAITED ON BEFORE ANY FAILURE IS RAISED, so a
         # failing shard never leaves its siblings running unattended behind
         # a thrown launcher.
@@ -897,6 +946,10 @@ foreach ($plan in $tierPlans) {
             # THE MEASURED OVERLAP, which is what separates eight processes
             # run together from eight run one after another.
             barrier_path = $plan.barrier_path
+            barrier_publisher_command_line = $plan.publish_command_line
+            barrier_publisher_exit_code = $script:TtsS1BarrierPublishExit
+            barrier_token = Get-TtsS1FileRecord -Path $plan.barrier_path
+            barrier_token_micros = $barrierReleasedMicros
             barrier_released_unix_micros = $report.body.shard_topology.start_barrier_released_unix_micros
             shard_readiness = @($report.body.shard_topology.shard_readiness)
             latest_ready_unix_micros = $report.body.shard_topology.latest_ready_unix_micros

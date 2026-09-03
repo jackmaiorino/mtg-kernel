@@ -445,6 +445,11 @@ $script:TtsS1BarrierReleasedMicros = 0
 # after-start hook may not have reached.
 $script:TtsS1LastShardReadiness = @()
 
+# The barrier publisher's exit code, for the same strict-mode reason: the
+# launcher reports it after the fan-out returns, and the after-start hook
+# that sets it may not have been reached.
+$script:TtsS1BarrierPublishExit = 0
+
 # What the last Invoke-TtsS1ProcessFanOut had to stop, as records carrying a
 # label and a process id.
 #
@@ -552,96 +557,21 @@ function Invoke-TtsS1Process {
     return $fanOut.results[0].exit_code
 }
 
-function Get-TtsS1ShardReadyFileName {
-    # native_tts_s1_replay_v1::tts_s1_shard_ready_file_name_v1, restated so
-    # the launcher can name every file it is waiting for while knowing only
-    # how many shards it started.
-    param([Parameter(Mandatory = $true)][int]$ShardIndex)
-    return ("shard-ready-{0:0000}.token" -f $ShardIndex)
-}
-
-function Wait-TtsS1ShardReadiness {
-    <#
-    Waits until every shard has announced that it is LOADED, not merely
-    started.
-
-    THE HOLE THIS CLOSES: Start-Process returns when a process has been
-    created, which is nearly instant. Loading a checkpoint is not, and it
-    does not take the same time in every shard. A token released on process
-    creation lets a fast shard search while a slow sibling is still reading
-    weights, and those head decisions are exactly the cheap ones a p99 would
-    thank you for. So each shard publishes a ready file after its load and
-    before it waits, and the token may only go out once every one of them is
-    on disk.
-
-    BOUNDED, and fail-closed on the deadline: the caller is inside the
-    fan-out's try, so a throw here reaps every started child, and the
-    message names the shards that never announced.
-    #>
-    param(
-        [Parameter(Mandatory = $true)][string]$Directory,
-        [Parameter(Mandatory = $true)][int]$ShardCount,
-        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
-        [int]$PollMilliseconds = 100
-    )
-    $expected = @(0..($ShardCount - 1) | ForEach-Object {
-        [pscustomobject]@{
-            shard_index = $_
-            path = Join-Path $Directory (Get-TtsS1ShardReadyFileName -ShardIndex $_)
-        }
-    })
-    $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($true) {
-        $ready = @()
-        $missing = @()
-        foreach ($shard in $expected) {
-            $announcement = $null
-            if (Test-Path -LiteralPath $shard.path -PathType Leaf) {
-                # Parsed, not merely counted: a file that is present but
-                # unreadable is a shard that has not finished announcing.
-                # The shard publishes by rename so this should not be
-                # observable, and costs nothing if it ever is.
-                try {
-                    $fields = ([System.IO.File]::ReadAllText($shard.path)).Trim() -split '\s+'
-                    if ($fields.Count -eq 2) {
-                        $announcement = [pscustomobject]@{
-                            shard_index = $shard.shard_index
-                            process_id = [uint64]$fields[0]
-                            ready_unix_micros = [uint64]$fields[1]
-                        }
-                    }
-                }
-                catch { $announcement = $null }
-            }
-            if ($null -eq $announcement) { $missing += $shard.shard_index } else { $ready += $announcement }
-        }
-        if ($missing.Count -eq 0) {
-            $watch.Stop()
-            return [pscustomobject]@{
-                ready = @($ready)
-                waited_seconds = $watch.Elapsed.TotalSeconds
-            }
-        }
-        if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
-            $watch.Stop()
-            throw ("shards {0} never announced themselves ready within {1} s; the start barrier was not released and no shard searched" -f `
-                ($missing -join ','), $TimeoutSeconds)
-        }
-        Start-Sleep -Milliseconds $PollMilliseconds
-    }
-}
-
 function Get-TtsS1UnixMicros {
     <#
-    Whole microseconds since the UNIX epoch.
+    Whole microseconds since the UNIX epoch. DIAGNOSTICS ONLY.
 
-    NOT ToUnixTimeMilliseconds() times a thousand, and the difference is the
-    whole reason this function exists. The shards record their readiness in
-    whole microseconds and the merge compares `release >= ready` EXACTLY,
-    with no tolerance; a release truncated to the millisecond is up to 999
-    microseconds before the instant it means, so a token genuinely published
-    after the last announcement could read as published before it and strip
-    a correct run of its formal standing.
+    NOT ON THE FORMAL PATH, and deliberately. The start token is stamped by
+    tts_s1_replay_v1 --publish-start-barrier, from the same clock and the
+    same function the shards announce with, because the readiness clause is
+    an exact `release >= ready` with no tolerance and two clocks in two
+    runtimes do not have to disagree by much to invert a comparison between
+    instants a few microseconds apart: this runtime's DateTimeOffset::UtcNow
+    can advance on a coarser cadence than the Windows clock behind Rust's
+    SystemTime::now(). Nothing that gates formal standing may be read here.
+
+    What it is still good for is saying, in the run log, how far apart the
+    two runtimes' readings were, which is a diagnostic and never a gate.
 
     Computed in integer arithmetic throughout. The obvious form, dividing
     the tick count by ten, goes through a double: ticks since the epoch are
@@ -656,38 +586,6 @@ function Get-TtsS1UnixMicros {
     $milliseconds = [long]$offset.ToUnixTimeMilliseconds()
     $subMillisecondTicks = [long]($offset.UtcTicks % 10000)
     return ($milliseconds * 1000) + [long][System.Math]::Floor($subMillisecondTicks / 10)
-}
-
-function Write-TtsS1StartBarrier {
-    # Publishes the start token every shard of a tier is waiting on.
-    #
-    # THE TOKEN'S CONTENT IS ITS RELEASE TIME, in microseconds since the
-    # UNIX epoch, and that is the point of writing anything at all: every
-    # shard reports the same number back, so the merge can check that no
-    # shard's first decision began before the fan-out was complete. A token
-    # whose content were the reader's own clock would prove nothing.
-    #
-    # Published by staged sibling then move, so a shard polling for it can
-    # never read a half-written one.
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $directory = Split-Path -Parent $Path
-    if (-not [string]::IsNullOrWhiteSpace($directory)) {
-        New-Item -ItemType Directory -Force -Path $directory | Out-Null
-    }
-    # WHOLE MICROSECONDS. See Get-TtsS1UnixMicros: a millisecond-resolution
-    # release compares as up to 999 micros early against announcements the
-    # shards recorded in microseconds.
-    $micros = Get-TtsS1UnixMicros
-    $staged = "$Path.stage-$PID"
-    [System.IO.File]::WriteAllText($staged, "$micros`n", [System.Text.UTF8Encoding]::new($false))
-    try {
-        Move-Item -LiteralPath $staged -Destination $Path -Force
-    }
-    catch {
-        if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged -Force }
-        throw
-    }
-    return $micros
 }
 
 function Format-TtsS1StoppedChildren {

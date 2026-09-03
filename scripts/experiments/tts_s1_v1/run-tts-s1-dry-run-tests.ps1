@@ -178,6 +178,8 @@ function New-TtsS1TestReport {
         [bool]$MeetsFormalTopology = $true,
         [bool]$EveryShardWaitedOnTheBarrier = $true,
         [bool]$ReleasedAfterEveryShardReady = $true,
+        [long]$LatestReadyUnixMicros = 1699999999999000,
+        [long]$ReleasedUnixMicros = 1699999999999500,
         [bool]$EveryFirstDecisionAfterTheBarrier = $true,
         [int]$FullyConcurrentPermille = 1000,
         [switch]$OmitLatencyCurve,
@@ -200,12 +202,12 @@ function New-TtsS1TestReport {
             formal_logical_cpus_per_shard = $PinnedCpusPerShard
             host_logical_cpus = 32
             host_total_memory_bytes = 137438953472
-            start_barrier_released_unix_micros = 1700000000000000
+            start_barrier_released_unix_micros = $ReleasedUnixMicros
             every_shard_waited_on_the_barrier = $EveryShardWaitedOnTheBarrier
             shard_readiness = @(0..7 | ForEach-Object {
-                [pscustomobject]@{ shard_index = $_; process_id = (4000 + $_); ready_unix_micros = 1699999999999000 }
+                [pscustomobject]@{ shard_index = $_; process_id = (4000 + $_); ready_unix_micros = ($LatestReadyUnixMicros - 7 + $_) }
             })
-            latest_ready_unix_micros = 1699999999999000
+            latest_ready_unix_micros = $LatestReadyUnixMicros
             released_after_every_shard_ready = $ReleasedAfterEveryShardReady
             every_first_decision_after_the_barrier = $EveryFirstDecisionAfterTheBarrier
             censused_decisions = 1000
@@ -350,11 +352,39 @@ foreach ($case in @(
     Assert-True ($message -like "*$($case.Fragment)*") "the refusal of $($case.Name) names $($case.Fragment)"
 }
 
-# The ready-file name is derived from the shard index alone, and by the same
-# rule on both sides: native_tts_s1_replay_v1::tts_s1_shard_ready_file_name_v1.
-Assert-True ((Get-TtsS1ShardReadyFileName -ShardIndex 0) -ceq 'shard-ready-0000.token') 'the ready file name is zero-padded from the shard index'
-Assert-True ((Get-TtsS1ShardReadyFileName -ShardIndex 5) -ceq 'shard-ready-0005.token') 'the ready file name matches the Rust helper'
-Assert-True ((Get-TtsS1ShardReadyFileName -ShardIndex 63) -ceq 'shard-ready-0063.token') 'the ready file name pads the largest legal index'
+# THE ORDERING THE READINESS CLAUSE TURNS ON, over instants stated here
+# rather than read from a clock. Nothing below depends on any I/O landing
+# inside a millisecond: the instants are the fixture.
+#
+# The report carries the ordering as a boolean the crate computed, so what
+# the launcher contract can check is that it refuses a report whose boolean
+# says the token went out early, and accepts one whose boolean says it did
+# not. The instants are published beside it so a reviewer can see the case.
+foreach ($case in @(
+    @{ Name = 'a token stamped in the same microsecond as the last announcement'; Ready = 1700000000000000; Released = 1700000000000000; Ordered = $true },
+    @{ Name = 'a token stamped later in the same millisecond'; Ready = 1700000000000000; Released = 1700000000000999; Ordered = $true },
+    @{ Name = 'a token stamped a microsecond early'; Ready = 1700000000000000; Released = 1699999999999999; Ordered = $false },
+    @{ Name = 'a token stamped a whole millisecond early'; Ready = 1700000000000000; Released = 1699999999999000; Ordered = $false }
+)) {
+    $report = New-TtsS1TestReport -LatestReadyUnixMicros $case.Ready -ReleasedUnixMicros $case.Released `
+        -ReleasedAfterEveryShardReady $case.Ordered -MeetsFormalTopology $case.Ordered
+    $observedReady = Get-TtsS1ReportField -Report $report -Path 'body.shard_topology.latest_ready_unix_micros'
+    $observedRelease = Get-TtsS1ReportField -Report $report -Path 'body.shard_topology.start_barrier_released_unix_micros'
+    Assert-True ($observedReady -eq $case.Ready) "$($case.Name) publishes the announcement instant it was built from"
+    Assert-True ($observedRelease -eq $case.Released) "$($case.Name) publishes the release instant it was built from"
+    Assert-True (($observedRelease -ge $observedReady) -eq $case.Ordered) "$($case.Name) is ordered=$($case.Ordered) by exact comparison"
+    # Readable as a smoke either way; refused only when the run still
+    # claims formal standing.
+    Assert-True ($null -eq (Get-TtsS1ContractRejection -Report $report)) "$($case.Name) is readable as a smoke"
+    $message = Get-TtsS1ContractRejection -Report $report -RequireFormalShardTopology
+    if ($case.Ordered) {
+        Assert-True ($null -eq $message) "$($case.Name) carries formal standing"
+    }
+    else {
+        Assert-True ($null -ne $message) "a run claiming formal standing refuses $($case.Name)"
+        Assert-True ($message -like '*readiness handshake*') "the refusal of $($case.Name) names the readiness handshake"
+    }
+}
 
 # THE RULE ITSELF, as a pure function, evaluated at CPU counts this host
 # may not have. Both branches are covered without depending on the machine
@@ -464,6 +494,7 @@ try {
     $resultJson = Get-Content -LiteralPath (Join-Path $attempt 'result.json') -Raw | ConvertFrom-Json
     Assert-True ($resultJson.status -ceq 'DRY_RUN_PLANNED') 'result.json says DRY_RUN_PLANNED'
     Assert-True ($resultJson.planned_tier_merge_commands.Count -eq 4) 'the whole ladder is planned'
+    Assert-True ($resultJson.planned_tier_barrier_commands.Count -eq 4) 'every tier plans one barrier publisher'
     Assert-True ($resultJson.planned_tier_shard_commands.Count -eq 4 * $defaultShardCount) 'every tier plans one command per shard'
     Assert-True ($resultJson.shard_count_requested -eq $defaultShardCount) 'result.json records the requested shard count'
 
@@ -527,6 +558,18 @@ try {
             Assert-True ($line -like "*--start-barrier*tier-$tier.shards*start-barrier.token*") "tier $tier shard $shard waits on the tier start barrier"
             Assert-True ($line -like "*--start-barrier-timeout-seconds $($script:TtsS1StartBarrierTimeoutSeconds)*") "tier $tier shard $shard carries a bounded barrier deadline"
         }
+        # ONE barrier publisher per tier, naming the same token the shards
+        # wait on and the same directory they announce into, and carrying no
+        # replay flag: it loads no checkpoint and searches nothing.
+        $publish = $provenanceJson.planned_tier_barrier_commands[$index]
+        Assert-True ($publish -like "*--publish-start-barrier*tier-$tier.shards*start-barrier.token*") "tier $tier plans a publisher for its own token"
+        Assert-True ($publish -like "*--barrier-dir*tier-$tier.shards*") "tier $tier publisher watches its own shard directory"
+        Assert-True ($publish -like "*--shard-count $defaultShardCount*") "tier $tier publisher waits for every shard"
+        Assert-True ($publish -like "*--readiness-timeout-seconds $($script:TtsS1ShardReadyTimeoutSeconds)*") "tier $tier publisher carries a bounded readiness deadline"
+        foreach ($forbidden in @('--tier', '--corpus', '--seed-block', '--max-episodes', '--diagnostics-dir', '--shard-index', '--output', '--merge-shards')) {
+            Assert-True (-not ($publish -like "*$forbidden*")) "tier $tier publisher carries no $forbidden"
+        }
+
         $barrierTokens = @($tierShardCommands | ForEach-Object {
             if ($_ -match '--start-barrier ("[^"]+"|\S+)') { $Matches[1] } else { 'none' }
         })
@@ -602,6 +645,7 @@ try {
         Assert-True ($lines.Count -eq $count) "-ShardCount $count plans $count shard commands for one tier"
         Assert-True (@($shardJson.planned_tier_merge_commands).Count -eq 1) "-ShardCount $count still plans exactly one merge per tier"
         Assert-True ($shardJson.planned_tier_merge_commands[0] -like "*--shard-count $count*") "-ShardCount $count reaches the merge"
+        Assert-True ($shardJson.planned_tier_barrier_commands[0] -like "*--shard-count $count*") "-ShardCount $count reaches the barrier publisher"
         Assert-True ($lines[0] -like "*--shard-index 0 --shard-count $count*") "-ShardCount $count names shard 0"
         Assert-True ($lines[$count - 1] -like "*--shard-index $($count - 1) --shard-count $count*") "-ShardCount $count names its last shard"
     }
@@ -624,6 +668,7 @@ try {
     $attempt = Get-OnlyAttemptRoot -EvidenceRoot $evidence
     $provenanceJson = Get-Content -LiteralPath (Join-Path $attempt 'provenance.json') -Raw | ConvertFrom-Json
     Assert-True (@($provenanceJson.planned_tier_merge_commands).Count -eq 1) 'a tier subset plans only those tiers'
+    Assert-True (@($provenanceJson.planned_tier_barrier_commands).Count -eq 1) 'a tier subset plans one barrier publisher'
     Assert-True (@($provenanceJson.planned_tier_shard_commands).Count -eq $defaultShardCount) 'a tier subset still plans one command per shard'
     foreach ($line in $provenanceJson.planned_tier_shard_commands) {
         Assert-True ($line -like '*--limit-episodes 8*') 'the smoke bound reaches every shard command'
@@ -829,7 +874,18 @@ try {
     # moment at which it means anything. Written before the shards start it
     # would release each into a fan-out that did not yet exist.
     Assert-True ($wrapperText -like '*-AfterStart {*') 'the wrapper publishes the token through the after-start hook'
-    Assert-True ($wrapperText -like '*Write-TtsS1StartBarrier -Path $plan.barrier_path*') 'the wrapper publishes the tier start token'
+    # THE TOKEN IS STAMPED BY THE BIN, not by this runtime: its instant is
+    # compared exactly against instants the shards recorded through the
+    # crate's clock, and a second clock in that comparison is the bug.
+    Assert-True ($wrapperText -like '*--publish-start-barrier*') 'the wrapper plans the barrier publish mode'
+    Assert-True ($wrapperText -like '*-Arguments $plan.publish_arguments*') 'the wrapper runs the publisher with its planned arguments'
+    Assert-True ($wrapperText -like '*--publish-start-barrier exited with $publishExit*') 'the wrapper fails the tier closed when the publisher exits non-zero'
+    Assert-True (-not ($wrapperText -like '*Write-TtsS1StartBarrier*')) 'the wrapper no longer stamps the token in PowerShell'
+    Assert-True (-not ($commonText -like '*function Write-TtsS1StartBarrier*')) 'the PowerShell token writer is gone from the shared stack'
+    Assert-True (-not ($commonText -like '*function Wait-TtsS1ShardReadiness*')) 'the PowerShell readiness wait is gone from the shared stack'
+    # The launcher clock survives only as a diagnostic, and says so.
+    Assert-True ($commonText -like '*DIAGNOSTICS ONLY*') 'the PowerShell microsecond clock is labelled diagnostics only'
+    Assert-True ($wrapperText -like '*TTS_S1_BARRIER_CLOCK_SKEW*') 'the wrapper logs the observed cross-runtime skew'
     $hookIndex = $wrapperText.IndexOf('-AfterStart {')
     $jobsIndex = $wrapperText.IndexOf('Invoke-TtsS1ProcessFanOut -Jobs')
     Assert-True ($jobsIndex -gt 0 -and $hookIndex -gt $jobsIndex) 'the token hook belongs to the shard fan-out'
@@ -837,6 +893,7 @@ try {
     # Strict mode makes reading an undefined variable terminating, and the
     # launcher reads this one on a path the hook may not have taken.
     Assert-True ($commonText -like '*$script:TtsS1BarrierReleasedMicros = 0*') 'the barrier release variable is initialized before any read'
+    Assert-True ($commonText -like '*$script:TtsS1BarrierPublishExit = 0*') 'the publisher exit variable is initialized before any read'
     Assert-True ($script:TtsS1BarrierReleasedMicros -eq 0) 'the barrier release variable is defined for a caller that never published one'
     $startLoopIndex = $commonText.IndexOf('process = Start-TtsS1Process -FilePath $job.file_path')
     $hookRunIndex = $commonText.IndexOf('if ($null -ne $AfterStart) { & $AfterStart }')
@@ -918,157 +975,48 @@ try {
         Assert-True ($null -ne $unknownExit) 'an unreadable exit code is refused rather than cast to a success'
         Assert-True ($unknownExit -like '*never a success*') 'the refusal says why an unknown exit is not a pass'
 
-        # THE READINESS HANDSHAKE, with real children and deliberately
-        # UNEQUAL startup. Start-Process returns when a process has been
-        # CREATED, which is nearly instant; a shard is not ready until its
-        # checkpoint is loaded, which is neither instant nor equal across
-        # shards. Two children announce at once and a third only after a
-        # ping delay, standing in for the slow load. The token must not go
-        # out until the third is in.
-        $readyRoot = Join-Path $processSandbox 'ready'
-        New-Item -ItemType Directory -Force -Path $readyRoot | Out-Null
-        # The announcement's content is a pid and a ready instant, exactly
-        # as the shard writes it; the children copy a prepared file so the
-        # publication is one filesystem operation rather than an echo cmd
-        # would have to quote.
-        $announceSource = Join-Path $processSandbox 'announcement.txt'
-        [System.IO.File]::WriteAllText($announceSource, "4242 1700000000000000`n", [System.Text.UTF8Encoding]::new($false))
-        $announceJobs = @(0, 1, 2 | ForEach-Object {
-            $target = Join-Path $readyRoot (Get-TtsS1ShardReadyFileName -ShardIndex $_)
-            $arguments = @('/c', 'copy', '/y', $announceSource, $target, '>nul')
-            if ($_ -eq 2) {
-                # THE SLOW SHARD.
-                $arguments = @('/c', 'ping', '-n', '4', '127.0.0.1', '>nul', '&', 'copy', '/y', $announceSource, $target, '>nul')
-            }
-            [pscustomobject]@{
-                label = "ready-$_"
-                file_path = $comspec
-                arguments = $arguments
-                stdout_path = (Join-Path $processSandbox "ready-$_.out")
-                stderr_path = (Join-Path $processSandbox "ready-$_.err")
-            }
-        })
-        $releaseMicros = 0
-        $readySeen = $null
-        $readyWatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $readyFanOut = Invoke-TtsS1ProcessFanOut -Jobs $announceJobs -AfterStart {
-            # Every child is STARTED here, and the slow one has certainly
-            # not announced: this is precisely the moment a release on
-            # process creation would have fired.
-            $script:TtsS1ReadyTestEarly = @(0, 1, 2 | Where-Object {
-                Test-Path -LiteralPath (Join-Path $readyRoot (Get-TtsS1ShardReadyFileName -ShardIndex $_)) -PathType Leaf
-            })
-            $script:TtsS1ReadyTestSeen = Wait-TtsS1ShardReadiness -Directory $readyRoot -ShardCount 3 -TimeoutSeconds 30
-            $script:TtsS1ReadyTestRelease = Write-TtsS1StartBarrier -Path (Join-Path $readyRoot 'start-barrier.token')
-        }
-        $readyWatch.Stop()
-        $readySeen = $script:TtsS1ReadyTestSeen
-        $releaseMicros = $script:TtsS1ReadyTestRelease
-        Assert-True (@($script:TtsS1ReadyTestEarly).Count -lt 3) 'the slow shard had not announced when every child had merely started'
-        Assert-True (@($readySeen.ready).Count -eq 3) 'the wait returns only once every shard has announced'
-        Assert-True ($readyWatch.Elapsed.TotalSeconds -ge 2.0) "the token waited for the slow shard ($([math]::Round($readyWatch.Elapsed.TotalSeconds, 2)) s)"
-        Assert-True (Test-Path -LiteralPath (Join-Path $readyRoot 'start-barrier.token') -PathType Leaf) 'the token is published once every shard is ready'
-        Assert-True ($releaseMicros -gt 0) 'the token carries its own release instant'
-        foreach ($announcement in $readySeen.ready) {
-            Assert-True ($announcement.process_id -eq 4242) "shard $($announcement.shard_index) announcement carries its pid"
-            Assert-True ($announcement.ready_unix_micros -eq 1700000000000000) "shard $($announcement.shard_index) announcement carries its ready instant"
-        }
-        Assert-True (@($readyFanOut.results | Where-Object { $_.exit_code -ne 0 }).Count -eq 0) 'every announcing child exited cleanly'
-        Assert-True (@($script:TtsS1LastFanOutStopped).Count -eq 0) 'the readiness fan-out left nothing to reap'
-
-        # THE RESOLUTION OF THE RELEASE INSTANT, which is what makes the
-        # exact comparison mean anything.
+        # THE OBSERVED CROSS-RUNTIME SKEW, LOGGED AND NOT ASSERTED.
         #
-        # The shards record readiness in whole microseconds and the merge
-        # compares release >= ready with NO tolerance. A release recorded in
-        # milliseconds and multiplied by a thousand is up to 999 micros
-        # BEFORE the instant it means, so a token genuinely published after
-        # the last announcement would read as published before it and strip
-        # a correct run of its formal standing. The old form did exactly
-        # that; these cases would fail against it and pass against the
-        # microsecond one.
-        $microsA = Get-TtsS1UnixMicros
-        $microsB = Get-TtsS1UnixMicros
-        Assert-True ($microsA -gt 1600000000000000) 'the launcher clock reads microseconds since the epoch, not milliseconds'
-        Assert-True ($microsB -ge $microsA) 'the launcher clock does not go backwards'
-        Assert-True (($microsA - ([long]([System.DateTimeOffset]::UtcNow).ToUnixTimeMilliseconds() * 1000)) -lt 2000) 'the launcher clock agrees with the millisecond clock to under two milliseconds'
-        # Sub-millisecond resolution is REAL, not a multiplied millisecond:
-        # over a handful of reads at least one lands off a whole
-        # millisecond. A clock that only ever returned multiples of 1000
-        # would be the bug this closes.
-        $subMillisecond = $false
-        for ($i = 0; $i -lt 200; $i++) {
-            if (((Get-TtsS1UnixMicros) % 1000) -ne 0) { $subMillisecond = $true; break }
-        }
-        Assert-True $subMillisecond 'the launcher clock has real sub-millisecond resolution'
+        # This runtime's clock no longer gates anything: the token is
+        # stamped by the replay bin, from the same function the shards
+        # announce with. What is worth recording is how far apart the two
+        # runtimes read, because that is precisely the quantity that used to
+        # be able to invert an exact comparison. No assertion is made on it,
+        # deliberately: it is a property of the host, and a test that failed
+        # on it would be a test of the machine.
+        $skewSamples = @()
+        for ($i = 0; $i -lt 5; $i++) { $skewSamples += (Get-TtsS1UnixMicros) }
+        $skewDeltas = @()
+        for ($i = 1; $i -lt $skewSamples.Count; $i++) { $skewDeltas += ($skewSamples[$i] - $skewSamples[$i - 1]) }
+        $observedGranularity = 0
+        $nonZero = @($skewDeltas | Where-Object { $_ -gt 0 })
+        if ($nonZero.Count -gt 0) { $observedGranularity = ($nonZero | Measure-Object -Minimum).Minimum }
+        Write-Output ("smoke launcher clock: reads={0} smallest_non_zero_advance_micros={1} off_whole_millisecond={2} (diagnostic only, nothing asserted)" -f `
+            $skewSamples.Count, $observedGranularity, (@($skewSamples | Where-Object { ($_ % 1000) -ne 0 }).Count))
 
-        # AND END TO END, through the token writer: a release published
-        # immediately after an announcement is never recorded as earlier
-        # than it. Repeated, because the old millisecond form only failed
-        # when the announcement landed off a whole millisecond, which is
-        # almost always but not certainly on any single try.
-        $precisionRoot = Join-Path $processSandbox 'release-precision'
-        New-Item -ItemType Directory -Force -Path $precisionRoot | Out-Null
-        $precisionToken = Join-Path $precisionRoot 'start-barrier.token'
-        $orderHeld = $true
-        $sameMillisecondSeen = $false
-        for ($i = 0; $i -lt 25; $i++) {
-            $readyAt = Get-TtsS1UnixMicros
-            $releasedAt = Write-TtsS1StartBarrier -Path $precisionToken
-            if ($releasedAt -lt $readyAt) { $orderHeld = $false }
-            if ([math]::Floor($releasedAt / 1000) -eq [math]::Floor($readyAt / 1000)) { $sameMillisecondSeen = $true }
-            # The token on disk carries exactly what was returned.
-            $written = [long](([System.IO.File]::ReadAllText($precisionToken)).Trim())
-            if ($written -ne $releasedAt) { $orderHeld = $false }
-        }
-        Assert-True $orderHeld 'a token published after an announcement is never recorded before it'
-        Assert-True $sameMillisecondSeen 'the case really did arise inside one millisecond'
-        # The refusal side is unchanged: a release genuinely before an
-        # announcement is still out of order, with no tolerance added.
-        $lateReady = (Get-TtsS1UnixMicros) + 5000
-        $earlyRelease = Write-TtsS1StartBarrier -Path $precisionToken
-        Assert-True ($earlyRelease -lt $lateReady) 'a release genuinely before an announcement is still earlier than it'
-
-        # THE TIMEOUT PATH. A shard that never announces is not a shard the
-        # token may be released for: the wait fails closed, names the
-        # missing shards, and the token is never written.
-        $timeoutRoot = Join-Path $processSandbox 'ready-timeout'
-        New-Item -ItemType Directory -Force -Path $timeoutRoot | Out-Null
-        Copy-Item -LiteralPath $announceSource -Destination (Join-Path $timeoutRoot (Get-TtsS1ShardReadyFileName -ShardIndex 0)) -Force
-        $timeoutMessage = $null
-        $timeoutWatch = [System.Diagnostics.Stopwatch]::StartNew()
-        try { [void](Wait-TtsS1ShardReadiness -Directory $timeoutRoot -ShardCount 3 -TimeoutSeconds 1) }
-        catch { $timeoutMessage = $_.Exception.Message }
-        $timeoutWatch.Stop()
-        Assert-True ($null -ne $timeoutMessage) 'a shard that never announces fails the readiness wait closed'
-        Assert-True ($timeoutMessage -like '*shards 1,2*') 'the readiness timeout names the shards that never announced'
-        Assert-True ($timeoutMessage -like '*no shard searched*') 'the readiness timeout says the barrier was never released'
-        Assert-True ($timeoutWatch.Elapsed.TotalSeconds -ge 1.0) 'the readiness wait ran its full deadline'
-        Assert-True (-not (Test-Path -LiteralPath (Join-Path $timeoutRoot 'start-barrier.token'))) 'no token is published when a shard never announces'
-
-        # AND THE TIMEOUT REAPS: the wait runs inside the fan-out try, so a
-        # shard that never announces kills the ones that did rather than
-        # leaving them waiting on a token that will never come.
-        $reapRoot = Join-Path $processSandbox 'ready-reap'
-        New-Item -ItemType Directory -Force -Path $reapRoot | Out-Null
+        # A HOOK FAILURE STILL REAPS. The after-start hook now runs the
+        # replay bin's barrier publisher, and a publisher that fails is a
+        # tier that must not be left with shards waiting on a token that
+        # will never come. The hook is stood in for by one that throws,
+        # because what is under test is the fan-out's response to it.
         $reapFailure = $null
         try {
             [void](Invoke-TtsS1ProcessFanOut -Jobs @(
                     [pscustomobject]@{ label = 'silent-0'; file_path = $comspec; arguments = @('/c', 'ping', '-n', '30', '127.0.0.1', '>nul'); stdout_path = (Join-Path $processSandbox 'reap-0.out'); stderr_path = (Join-Path $processSandbox 'reap-0.err') },
                     [pscustomobject]@{ label = 'silent-1'; file_path = $comspec; arguments = @('/c', 'ping', '-n', '30', '127.0.0.1', '>nul'); stdout_path = (Join-Path $processSandbox 'reap-1.out'); stderr_path = (Join-Path $processSandbox 'reap-1.err') }
                 ) -AfterStart {
-                    [void](Wait-TtsS1ShardReadiness -Directory $reapRoot -ShardCount 2 -TimeoutSeconds 1)
+                    throw 'the barrier publisher exited non-zero'
                 })
         }
         catch { $reapFailure = $_.Exception.Message }
-        Assert-True ($null -ne $reapFailure) 'a readiness timeout raises out of the fan-out'
-        Assert-True ($reapFailure -like '*never announced themselves ready*') 'the raised failure is the readiness one'
+        Assert-True ($null -ne $reapFailure) 'a failing after-start hook raises out of the fan-out'
+        Assert-True ($reapFailure -like '*barrier publisher*') 'the raised failure is the hook one'
         $reaped = @($script:TtsS1LastFanOutStopped)
-        Assert-True ($reaped.Count -eq 2) 'a readiness timeout reaps every child it started'
+        Assert-True ($reaped.Count -eq 2) 'a failing hook reaps every child it started'
         foreach ($entry in $reaped) {
             $stillAlive = $null
             try { $stillAlive = Get-Process -Id $entry.process_id -ErrorAction Stop } catch { $stillAlive = $null }
-            Assert-True ($null -eq $stillAlive) "the reaped child $($entry.label) is gone after a readiness timeout"
+            Assert-True ($null -eq $stillAlive) "the reaped child $($entry.label) is gone after a hook failure"
         }
 
         # THE ORPHAN CASE, which is why the fan-out reaps in a finally.
