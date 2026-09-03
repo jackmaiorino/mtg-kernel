@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Cycle-4 arm launcher wrapper (docs/native_cycle4_arm_launcher_v1.md Section 6).
 
@@ -1033,12 +1033,18 @@ try {
                 resumed_from_phase = $recorded
             }
         }
-        # Only the frontier interval can still need training, and it has to be
-        # the last thing planned: a Store's generation is monotonic, so an
-        # untrained interval before a trained one means the Store and the
-        # refresh chain disagree about which campaign this is.
+        # A Store's generation is monotonic, so an interval that still needs
+        # training can only be followed by intervals that also need training:
+        # an untrained interval planned BEFORE an interval whose training is
+        # already done means the Store and the refresh chain disagree about
+        # which campaign this is. On a fresh campaign every remaining interval
+        # needs training, which is the ordinary case and must plan cleanly.
         for ($index = 0; $index -lt $plan.Count; $index++) {
-            if ($plan[$index].train -and $index -ne ($plan.Count - 1)) {
+            $laterTrained = $false
+            for ($later = $index + 1; $later -lt $plan.Count; $later++) {
+                if (-not $plan[$later].train) { $laterTrained = $true; break }
+            }
+            if ($plan[$index].train -and $laterTrained) {
                 $detail = "interval $($plan[$index].interval) still needs training while later intervals are planned after it"
                 if (-not $DryRun) {
                     throw "$detail; the Store and $RefreshChainDir disagree"
