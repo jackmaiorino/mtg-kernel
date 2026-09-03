@@ -42,7 +42,7 @@ use std::path::{Path, PathBuf};
 fn usage_v1() -> ! {
     eprintln!(
         "usage: cycle4_routing_v1 --m2-panel PATH --m3-report-static-rb PATH \
-         --m3-report-treatment-rb PATH --cp7-evidence-root PATH \
+         --m3-report-treatment-rb PATH --reference-document PATH --cp7-evidence-root PATH \
          --cycle3-g2048-run-sha256 HEX64 --cycle3-g2048-checkpoint-manifest-sha256 HEX64 \
          --output PATH"
     );
@@ -53,6 +53,7 @@ struct ParsedArgsV1 {
     m2_panel: PathBuf,
     m3_report_static_rb: PathBuf,
     m3_report_treatment_rb: PathBuf,
+    reference_document: PathBuf,
     cp7_evidence_root: PathBuf,
     cycle3_g2048_run_sha256: String,
     cycle3_g2048_checkpoint_manifest_sha256: String,
@@ -66,6 +67,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
     let mut m2_panel: Option<PathBuf> = None;
     let mut m3_report_static_rb: Option<PathBuf> = None;
     let mut m3_report_treatment_rb: Option<PathBuf> = None;
+    let mut reference_document: Option<PathBuf> = None;
     let mut cp7_evidence_root: Option<PathBuf> = None;
     let mut cycle3_run: Option<String> = None;
     let mut cycle3_checkpoint: Option<String> = None;
@@ -82,6 +84,9 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             }
             "--m3-report-treatment-rb" if m3_report_treatment_rb.is_none() => {
                 m3_report_treatment_rb = Some(PathBuf::from(value));
+            }
+            "--reference-document" if reference_document.is_none() => {
+                reference_document = Some(PathBuf::from(value));
             }
             "--cp7-evidence-root" if cp7_evidence_root.is_none() => {
                 cp7_evidence_root = Some(PathBuf::from(value));
@@ -102,6 +107,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         m2_panel: m2_panel.ok_or(())?,
         m3_report_static_rb: m3_report_static_rb.ok_or(())?,
         m3_report_treatment_rb: m3_report_treatment_rb.ok_or(())?,
+        reference_document: reference_document.ok_or(())?,
         cp7_evidence_root: cp7_evidence_root.ok_or(())?,
         cycle3_g2048_run_sha256: cycle3_run.ok_or(())?,
         cycle3_g2048_checkpoint_manifest_sha256: cycle3_checkpoint.ok_or(())?,
@@ -187,6 +193,7 @@ fn main() {
         m2_panel_bytes: panel_bytes,
         m3_static_rb_bytes: read_or_exit_v1(&args.m3_report_static_rb),
         m3_treatment_rb_bytes: read_or_exit_v1(&args.m3_report_treatment_rb),
+        reference_document_bytes: read_or_exit_v1(&args.reference_document),
         cycle3_g2048_run_sha256: args.cycle3_g2048_run_sha256.clone(),
         cycle3_g2048_checkpoint_manifest_sha256: args
             .cycle3_g2048_checkpoint_manifest_sha256
@@ -228,6 +235,8 @@ mod tests {
             "m3-static.json",
             "--m3-report-treatment-rb",
             "m3-treatment.json",
+            "--reference-document",
+            "m3-reference.json",
             "--cp7-evidence-root",
             "E:\\cycle4\\cp7-evidence",
             "--cycle3-g2048-run-sha256",
@@ -244,6 +253,10 @@ mod tests {
         let parsed =
             parse_args_v1(args_v1(&required_flags_v1())).expect("well-formed command line parses");
         assert_eq!(parsed.m2_panel, PathBuf::from("m2.json"));
+        assert_eq!(
+            parsed.reference_document,
+            PathBuf::from("m3-reference.json")
+        );
         assert_eq!(parsed.cycle3_g2048_run_sha256, "aa");
         assert_eq!(parsed.output, PathBuf::from("routing.json"));
     }
@@ -276,6 +289,7 @@ mod tests {
             "--m2-panel",
             "--m3-report-static-rb",
             "--m3-report-treatment-rb",
+            "--reference-document",
             "--cycle3-g2048-run-sha256",
             "--cycle3-g2048-checkpoint-manifest-sha256",
             "--output",

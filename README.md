@@ -26,6 +26,14 @@ cargo test --release --locked --workspace --all-targets
 
 `bash scripts/verify_all.sh` runs the full local gate: formatting, Clippy, Rust tests, and the Python test suite together. CUDA-backed training paths (for example the `cuda-flat-training-capacity-v1` feature) are opt-in Cargo features that require a CUDA toolchain and are not built by default.
 
+## Cycle-4 routing refusals
+
+| Tool | Refusal |
+| --- | --- |
+| `cycle4_routing_v1` | `--reference-document` is required. Each M3 report must bind its canonical SHA-256, run, tip checkpoint, exact update 1537 through 2048 window, audit-note SHA-256, reference statistic bits, and derived dispersion allowance bits. |
+| `cycle4_routing_v1` and the M3 reference decoder | The reference window must declare first update 1537, last update 2048, update count 512, and a count equal to `last - first + 1`. |
+| `run_m2_common_root_panel_v1.py` | The immutable panel is published only by hard link from its complete staged file. An identical existing panel is a no-op, a different existing panel is refused, and unavailable or unsupported hard linking fails closed. |
+
 ## Research status
 
 Work is ongoing on self-play population training over a fixed deck pool, with periodic external anchoring against XMage's CP7 AI as a reference point. This is early-stage research: there is no claim of professional- or expert-level play, and results here are engineering evidence, not competitive benchmarks.

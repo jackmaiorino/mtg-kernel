@@ -347,18 +347,10 @@ def commit_staged_file(temp_path: Path, final_path: Path) -> None:
     The existence check below is a courtesy that gives the replay case its
     no-op and a differing panel a clear message; it is NOT what makes the
     commit safe, because a panel can appear between the check and the commit.
-    Safety comes from using only primitives that fail when the destination
-    already exists:
-
-      * `os.link`, which raises FileExistsError rather than replacing, on both
-        Windows and POSIX; and
-      * where the filesystem refuses hard links, an exclusive create
-        (`O_CREAT | O_EXCL`) of the final name, written and fsynced in place.
-
-    `os.rename` is deliberately NOT used as a fallback: on POSIX it replaces
-    the destination silently, so a panel created after the check would be
-    overwritten and a freeze re-keyed under whoever had already read it. If
-    neither primitive is available the commit fails rather than guessing."""
+    Safety comes from `os.link`, which raises FileExistsError rather than
+    replacing on both Windows and POSIX. Hard linking is the only publication
+    primitive because it makes the complete staged bytes visible atomically.
+    If hard links are unavailable, publication fails closed."""
     encoded = temp_path.read_bytes()
     if final_path.exists():
         if final_path.read_bytes() == encoded:
@@ -377,24 +369,11 @@ def commit_staged_file(temp_path: Path, final_path: Path) -> None:
         os.link(temp_path, final_path)
     except FileExistsError:
         raise raced from None
-    except OSError:
-        # No hard-link support: create the final name exclusively instead.
-        try:
-            descriptor = os.open(
-                final_path,
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0),
-            )
-        except FileExistsError:
-            raise raced from None
-        except OSError as error:
-            raise M2PanelError(
-                f"{final_path} cannot be published create-new: neither os.link nor an "
-                f"exclusive create is available on this filesystem ({error})"
-            ) from error
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
+    except (AttributeError, OSError) as error:
+        raise M2PanelError(
+            f"{final_path} cannot be published immutably: hard-link publication "
+            f"is required and os.link is unavailable or failed ({error})"
+        ) from error
     remove_stray(temp_path)
 
 

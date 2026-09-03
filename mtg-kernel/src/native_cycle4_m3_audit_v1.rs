@@ -100,6 +100,9 @@ pub const CYCLE4_M3_REFERENCE_SCHEMA_V1: &str = "mtg-kernel-cycle4-m3-reference/
 
 /// Amendment section A: "the FINAL 512 updates".
 pub const CYCLE4_M3_WINDOW_UPDATES_V1: u64 = 512;
+/// The cycle-3 focal reference window is pinned to updates 1537 through 2048.
+pub const CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1: u64 = 1_537;
+pub const CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1: u64 = 2_048;
 /// Amendment section A: "A cell QUALIFIES if it holds at least 1,000 learner
 /// decisions in the window."
 pub const CYCLE4_M3_QUALIFYING_MIN_DECISIONS_V1: u64 = 1_000;
@@ -1766,6 +1769,39 @@ pub fn decode_cycle4_m3_reference_document_v1(bytes: &[u8]) -> Result<Cycle4M3Re
             "the reference statistic must be the RAW residual",
         ));
     }
+    let internally_consistent_count = document
+        .window
+        .last_update_index
+        .checked_sub(document.window.first_update_index)
+        .and_then(|span| span.checked_add(1));
+    if internally_consistent_count != Some(document.window.update_count) {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_window",
+            format!(
+                "the reference window declares {} updates for bounds {} through {}",
+                document.window.update_count,
+                document.window.first_update_index,
+                document.window.last_update_index
+            ),
+        ));
+    }
+    if document.window.first_update_index != CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1
+        || document.window.last_update_index != CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1
+        || document.window.update_count != CYCLE4_M3_WINDOW_UPDATES_V1
+    {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_window",
+            format!(
+                "the reference window must be updates {} through {} with count {}, not {} through {} with count {}",
+                CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1,
+                CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1,
+                CYCLE4_M3_WINDOW_UPDATES_V1,
+                document.window.first_update_index,
+                document.window.last_update_index,
+                document.window.update_count
+            ),
+        ));
+    }
     if document.audit_note_sha256.len() != 64 {
         return Err(Cycle4M3AuditErrorV1::new(
             "cycle4_m3_audit_v1_reference_audit_note",
@@ -2317,6 +2353,53 @@ mod tests {
                 .expect_err("centered window must be refused")
                 .code(),
             "cycle4_m3_audit_v1_reference_mode"
+        );
+    }
+
+    #[test]
+    fn a_1024_update_reference_window_is_refused_v1() {
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Raw,
+            vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+            10_000,
+            identity_v1(7),
+            identity_v1(8),
+        );
+        let bytes = build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
+            .expect("reference document");
+        let mut document = decode_cycle4_m3_reference_document_v1(&bytes).expect("decode");
+        document.window.first_update_index = 1_025;
+        document.window.update_count = 1_024;
+        let encoded = to_canonical_json_bytes_v1(&document, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("re-encode");
+        assert_eq!(
+            decode_cycle4_m3_reference_document_v1(&encoded)
+                .expect_err("a 1024-update reference window must be refused")
+                .code(),
+            "cycle4_m3_audit_v1_reference_window"
+        );
+    }
+
+    #[test]
+    fn an_internally_inconsistent_reference_window_count_is_refused_v1() {
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Raw,
+            vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+            10_000,
+            identity_v1(7),
+            identity_v1(8),
+        );
+        let bytes = build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
+            .expect("reference document");
+        let mut document = decode_cycle4_m3_reference_document_v1(&bytes).expect("decode");
+        document.window.update_count = 511;
+        let encoded = to_canonical_json_bytes_v1(&document, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("re-encode");
+        assert_eq!(
+            decode_cycle4_m3_reference_document_v1(&encoded)
+                .expect_err("an inconsistent reference window count must be refused")
+                .code(),
+            "cycle4_m3_audit_v1_reference_window"
         );
     }
 

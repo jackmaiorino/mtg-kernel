@@ -60,8 +60,11 @@ use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
 };
 use crate::native_cycle4_m3_audit_v1::{
-    decode_cycle4_m3_audit_report_v1, f64_bits_hex_v1, Cycle4M3AuditReportV1, RealV1,
-    CYCLE4_M3_VERDICT_PASS_V1,
+    decode_cycle4_m3_audit_report_v1, decode_cycle4_m3_reference_document_v1, f64_bits_hex_v1,
+    Cycle4M3AuditReportV1, Cycle4M3WindowWireV1, RealV1, CYCLE4_M3_DISPERSION_RATIO_MAX_V1,
+    CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1,
+    CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1, CYCLE4_M3_VERDICT_PASS_V1,
+    CYCLE4_M3_WINDOW_UPDATES_V1,
 };
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
 use serde::{Deserialize, Serialize};
@@ -680,11 +683,38 @@ pub struct Cycle4RoutingInputsV1 {
     pub m2_panel_bytes: Vec<u8>,
     pub m3_static_rb_bytes: Vec<u8>,
     pub m3_treatment_rb_bytes: Vec<u8>,
+    pub reference_document_bytes: Vec<u8>,
     /// The cycle-3 focal Store's own generation-2048 checkpoint manifest
     /// SHA-256 and run SHA-256: the NO CARRY parent. Recorded on every
     /// branch so the record always states what the fallback would have been.
     pub cycle3_g2048_run_sha256: String,
     pub cycle3_g2048_checkpoint_manifest_sha256: String,
+}
+
+fn validate_reference_window_v1(window: &Cycle4M3WindowWireV1) -> Result<()> {
+    let internally_consistent_count = window
+        .last_update_index
+        .checked_sub(window.first_update_index)
+        .and_then(|span| span.checked_add(1));
+    if internally_consistent_count != Some(window.update_count)
+        || window.first_update_index != CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1
+        || window.last_update_index != CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1
+        || window.update_count != CYCLE4_M3_WINDOW_UPDATES_V1
+    {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_reference_window",
+            format!(
+                "the M3 reference window must be updates {} through {} with count {}, not {} through {} with count {}",
+                CYCLE4_M3_REFERENCE_WINDOW_FIRST_UPDATE_INDEX_V1,
+                CYCLE4_M3_REFERENCE_WINDOW_LAST_UPDATE_INDEX_V1,
+                CYCLE4_M3_WINDOW_UPDATES_V1,
+                window.first_update_index,
+                window.last_update_index,
+                window.update_count
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn recipe_for_v1(arm_kind: &str) -> Result<Cycle4RoutingRecipeWireV1> {
@@ -832,6 +862,18 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
         &inputs.m3_treatment_rb_bytes,
         panel_endpoint_v1(&panel, "treatment-rb")?,
     )?;
+    let static_statistics = static_report.statistics.as_ref().ok_or_else(|| {
+        Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_reference_statistic",
+            "the static-rb report carries no reference statistic",
+        )
+    })?;
+    let treatment_statistics = treatment_report.statistics.as_ref().ok_or_else(|| {
+        Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_m3_reference_statistic",
+            "the treatment-rb report carries no reference statistic",
+        )
+    })?;
     // Both v4 arms must be judged against ONE reference statistic, or their
     // dispersion verdicts are not comparable and the ranking is not the
     // amendment's.
@@ -847,11 +889,78 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
         || static_report.inputs.reference_window != treatment_report.inputs.reference_window
         || static_report.inputs.reference_audit_note_sha256
             != treatment_report.inputs.reference_audit_note_sha256
+        || static_statistics
+            .reference_decision_weighted_mean_standard_deviation
+            .f64_bits
+            != treatment_statistics
+                .reference_decision_weighted_mean_standard_deviation
+                .f64_bits
+        || static_statistics.dispersion_allowance.f64_bits
+            != treatment_statistics.dispersion_allowance.f64_bits
     {
         return Err(Cycle4RoutingErrorV1::new(
             "cycle4_routing_v1_m3_reference_drift",
             "the two v4 arms' M3 reports bind different reference documents",
         ));
+    }
+    validate_reference_window_v1(&static_report.inputs.reference_window)?;
+
+    // Decoding recomputes the document's reference statistic from its cell
+    // table and requires bit equality before the selector binds either arm.
+    let reference = decode_cycle4_m3_reference_document_v1(&inputs.reference_document_bytes)
+        .map_err(|error| {
+            Cycle4RoutingErrorV1::new("cycle4_routing_v1_m3_reference_document", error.to_string())
+        })?;
+    let reference_document_sha256 = lower_hex_raw32_v1(sha256_v1(&inputs.reference_document_bytes));
+    for (arm_kind, report, statistics) in [
+        ("static-rb", &static_report, static_statistics),
+        ("treatment-rb", &treatment_report, treatment_statistics),
+    ] {
+        if report.inputs.reference_document_sha256 != reference_document_sha256
+            || report.inputs.reference_run_sha256 != reference.run_sha256
+            || report.inputs.reference_tip_checkpoint_manifest_sha256
+                != reference.tip_checkpoint_manifest_sha256
+            || report.inputs.reference_window != reference.window
+            || report.inputs.reference_audit_note_sha256 != reference.audit_note_sha256
+        {
+            return Err(Cycle4RoutingErrorV1::new(
+                "cycle4_routing_v1_m3_reference_document_binding",
+                format!(
+                    "the {arm_kind} report does not bind the supplied reference document's hash, run, tip, window, and audit-note hash"
+                ),
+            ));
+        }
+        if statistics
+            .reference_decision_weighted_mean_standard_deviation
+            .f64_bits
+            != reference.decision_weighted_mean_standard_deviation.f64_bits
+        {
+            return Err(Cycle4RoutingErrorV1::new(
+                "cycle4_routing_v1_m3_reference_statistic",
+                format!(
+                    "the {arm_kind} report's reference statistic differs from the supplied reference document"
+                ),
+            ));
+        }
+        let reference_dispersion = reference
+            .decision_weighted_mean_standard_deviation
+            .to_f64_v1()
+            .map_err(|error| {
+                Cycle4RoutingErrorV1::new(
+                    "cycle4_routing_v1_m3_reference_document",
+                    error.to_string(),
+                )
+            })?;
+        let expected_allowance =
+            RealV1::from_f64_v1(CYCLE4_M3_DISPERSION_RATIO_MAX_V1 * reference_dispersion);
+        if statistics.dispersion_allowance.f64_bits != expected_allowance.f64_bits {
+            return Err(Cycle4RoutingErrorV1::new(
+                "cycle4_routing_v1_m3_reference_allowance",
+                format!(
+                    "the {arm_kind} report's dispersion allowance differs from the supplied reference document"
+                ),
+            ));
+        }
     }
     // The reference statistic must have been computed from the cycle-3 focal
     // Store this invocation names as the NO CARRY parent, not from some other
@@ -885,18 +994,6 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
                     .inputs
                     .reference_tip_checkpoint_manifest_sha256,
                 inputs.cycle3_g2048_checkpoint_manifest_sha256
-            ),
-        ));
-    }
-    if static_report.inputs.reference_window.last_update_index
-        != CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1
-    {
-        return Err(Cycle4RoutingErrorV1::new(
-            "cycle4_routing_v1_m3_reference_window",
-            format!(
-                "the M3 reference window ends at update {}, not the pinned {}",
-                static_report.inputs.reference_window.last_update_index,
-                CYCLE4_ARM_ENDPOINT_STORE_GENERATION_V1
             ),
         ));
     }
@@ -1488,6 +1585,36 @@ mod tests {
         bytes
     }
 
+    fn report_with_reference_values_v1(
+        bytes: Vec<u8>,
+        reference_dispersion: f64,
+        dispersion_allowance: f64,
+    ) -> Vec<u8> {
+        let mut report = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode report");
+        let statistics = report.statistics.as_mut().expect("report statistics");
+        statistics.reference_decision_weighted_mean_standard_deviation =
+            RealV1::from_f64_v1(reference_dispersion);
+        statistics.dispersion_allowance = RealV1::from_f64_v1(dispersion_allowance);
+        to_canonical_json_bytes_v1(&report, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("encode report")
+    }
+
+    fn report_with_reference_window_v1(
+        bytes: Vec<u8>,
+        first_update_index: u64,
+        last_update_index: u64,
+        update_count: u64,
+    ) -> Vec<u8> {
+        let mut report = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode report");
+        report.inputs.reference_window = Cycle4M3WindowWireV1 {
+            first_update_index,
+            last_update_index,
+            update_count,
+        };
+        to_canonical_json_bytes_v1(&report, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("encode report")
+    }
+
     // ---- M2 panel fixtures --------------------------------------------
 
     /// Builds a panel where every root's legs come from `plan`, a closure
@@ -1612,10 +1739,24 @@ mod tests {
         static_pass: bool,
         treatment_pass: bool,
     ) -> Cycle4RoutingInputsV1 {
+        let reference_document_bytes = reference_bytes_v1();
         Cycle4RoutingInputsV1 {
             m2_panel_bytes: panel,
-            m3_static_rb_bytes: m3_report_bytes_v1("static-rb", static_pass),
-            m3_treatment_rb_bytes: m3_report_bytes_v1("treatment-rb", treatment_pass),
+            m3_static_rb_bytes: m3_report_bytes_bound_v1(
+                "static-rb",
+                static_pass,
+                endpoint_identity_v1("static-rb").0,
+                endpoint_identity_v1("static-rb").1,
+                reference_document_bytes.clone(),
+            ),
+            m3_treatment_rb_bytes: m3_report_bytes_bound_v1(
+                "treatment-rb",
+                treatment_pass,
+                endpoint_identity_v1("treatment-rb").0,
+                endpoint_identity_v1("treatment-rb").1,
+                reference_document_bytes.clone(),
+            ),
+            reference_document_bytes,
             cycle3_g2048_run_sha256: hex_v1(0xc1),
             cycle3_g2048_checkpoint_manifest_sha256: hex_v1(0xc2),
         }
@@ -1802,31 +1943,54 @@ mod tests {
 
     /// The two v4 arms must be judged against ONE reference statistic.
     #[test]
-    fn m3_reports_binding_different_references_are_refused_v1() {
+    fn m3_reports_with_different_reference_statistics_are_refused_v1() {
         let plan = win_fraction_plan_v1(&[]);
-        let reference = decode_cycle4_m3_reference_document_v1(&reference_bytes_v1())
-            .expect("decode reference");
-        let (run_sha256, checkpoint_sha256) = endpoint_identity_v1("treatment-rb");
-        let window = crate::native_cycle4_m3_audit_v1::test_support_window_v1(
-            crate::native_cycle4_m3_audit_v1::Cycle4M3ResidualModeV1::Centered,
-            vec![test_cell_v1(1, "p0", 10_000, 0.001, 1.05)],
-            10_000,
-            run_sha256,
-            checkpoint_sha256,
-        );
-        let (other, _) =
-            build_cycle4_m3_audit_report_v1("treatment-rb", &window, &reference, &hex_v1(0xee))
-                .expect("report");
-        let inputs = Cycle4RoutingInputsV1 {
-            m3_treatment_rb_bytes: other,
-            ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
-        };
+        let mut inputs = routing_inputs_v1(panel_bytes_v1(&plan), true, true);
+        inputs.m3_treatment_rb_bytes =
+            report_with_reference_values_v1(inputs.m3_treatment_rb_bytes, 2.0, 2.2);
         assert_eq!(
             decide_cycle4_routing_v1(&inputs)
-                .expect_err("reference drift must be refused")
+                .expect_err("reference statistic drift must be refused")
                 .code(),
             "cycle4_routing_v1_m3_reference_drift"
         );
+    }
+
+    #[test]
+    fn m3_reports_with_different_dispersion_allowances_are_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let mut inputs = routing_inputs_v1(panel_bytes_v1(&plan), true, true);
+        inputs.m3_treatment_rb_bytes =
+            report_with_reference_values_v1(inputs.m3_treatment_rb_bytes, 1.0, 9.0);
+        assert_eq!(
+            decide_cycle4_routing_v1(&inputs)
+                .expect_err("dispersion allowance drift must be refused")
+                .code(),
+            "cycle4_routing_v1_m3_reference_drift"
+        );
+    }
+
+    #[test]
+    fn a_report_statistic_that_differs_from_the_document_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let mut inputs = routing_inputs_v1(panel_bytes_v1(&plan), true, true);
+        inputs.m3_static_rb_bytes =
+            report_with_reference_values_v1(inputs.m3_static_rb_bytes, 2.0, 2.2);
+        inputs.m3_treatment_rb_bytes =
+            report_with_reference_values_v1(inputs.m3_treatment_rb_bytes, 2.0, 2.2);
+        assert_eq!(
+            decide_cycle4_routing_v1(&inputs)
+                .expect_err("document statistic mismatch must be refused")
+                .code(),
+            "cycle4_routing_v1_m3_reference_statistic"
+        );
+    }
+
+    #[test]
+    fn reports_matching_the_supplied_reference_document_pass_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        decide_cycle4_routing_v1(&routing_inputs_v1(panel_bytes_v1(&plan), true, true))
+            .expect("matching reports and reference document must pass");
     }
 
     /// A report from another training run cannot set eligibility for the
@@ -1898,8 +2062,9 @@ mod tests {
                 true,
                 treatment_run,
                 treatment_checkpoint,
-                foreign,
+                foreign.clone(),
             ),
+            reference_document_bytes: foreign,
             ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
         };
         assert_eq!(
@@ -1933,8 +2098,9 @@ mod tests {
                     true,
                     treatment_run,
                     treatment_checkpoint,
-                    reference,
+                    reference.clone(),
                 ),
+                reference_document_bytes: reference,
                 ..routing_inputs_v1(panel_bytes_v1(&plan), true, true)
             }
         };
@@ -1951,19 +2117,25 @@ mod tests {
             .code(),
             "cycle4_routing_v1_m3_reference_tip"
         );
+    }
 
-        // Same run, same declared tip, but a window ending at 1536: the final
-        // 512 updates of a shorter store are not the final 512 of this one.
-        assert_eq!(
-            decide_cycle4_routing_v1(&bind(reference_bytes_for_snapshot_v1(
-                cycle3_run_v1(),
-                hex_v1(0xc2),
-                1_536,
-            )))
-            .expect_err("a reference over the wrong window must be refused")
-            .code(),
-            "cycle4_routing_v1_m3_reference_window"
-        );
+    #[test]
+    fn invalid_report_reference_windows_are_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        for (first, last, count) in [(1_025, 2_048, 1_024), (1_537, 2_048, 511)] {
+            let mut inputs = routing_inputs_v1(panel_bytes_v1(&plan), true, true);
+            inputs.m3_static_rb_bytes =
+                report_with_reference_window_v1(inputs.m3_static_rb_bytes, first, last, count);
+            inputs.m3_treatment_rb_bytes =
+                report_with_reference_window_v1(inputs.m3_treatment_rb_bytes, first, last, count);
+            assert_eq!(
+                decide_cycle4_routing_v1(&inputs)
+                    .expect_err("an invalid report reference window must be refused")
+                    .code(),
+                "cycle4_routing_v1_m3_reference_window",
+                "{first} through {last} with count {count}"
+            );
+        }
     }
 
     /// The endpoints are pinned: a panel that played anything but update 2048
@@ -2186,6 +2358,7 @@ mod tests {
             m2_panel_bytes: panel_bytes,
             m3_static_rb_bytes: bound("static-rb"),
             m3_treatment_rb_bytes: bound("treatment-rb"),
+            reference_document_bytes: reference_bytes_v1(),
             cycle3_g2048_run_sha256: cycle3_run_v1(),
             cycle3_g2048_checkpoint_manifest_sha256: hex_v1(0xc2),
         });
