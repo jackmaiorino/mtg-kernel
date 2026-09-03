@@ -255,6 +255,21 @@ try {
     # output parent is absent. The launch manifest records the exact set.
     $createdDirectories = @()
     if ($Mode -ceq 'formal') {
+        # An advanced Store cannot legitimately lack its refresh chain: refresh 0
+        # is built right after genesis and every later manifest binds a panel.
+        # Creating the chain here would let the genesis path rebuild refresh 0
+        # from the existing Store and re-run formal panels, so a Store past
+        # generation 0 with no chain (or no genesis manifest) fails closed
+        # BEFORE anything is created; only a fresh campaign gets its layout.
+        $advancedGeneration = Get-Cycle4StoreLatestGeneration -StoreRoot $StoreRoot
+        if (($null -ne $advancedGeneration) -and ([uint64]$advancedGeneration -gt [uint64]0)) {
+            if (-not (Test-Path -LiteralPath $RefreshChainDir -PathType Container)) {
+                throw "$StoreRoot is at generation $advancedGeneration but its refresh chain directory is missing: $RefreshChainDir; refusing to create an empty chain for an advanced Store"
+            }
+            if (-not (Test-Path -LiteralPath $genesisManifestPath -PathType Leaf)) {
+                throw "$StoreRoot is at generation $advancedGeneration but the genesis refresh manifest is missing: $genesisManifestPath; an advanced Store cannot lack it"
+            }
+        }
         $storePrefix = Split-Path -Parent $StoreRoot
         $runRecordDirectory = Split-Path -Parent $RunRecord
         $formalOutputDirectories = @(
