@@ -6,7 +6,7 @@
 //!
 //! `--mode reference` walks the cycle-3 focal Store's final 512 updates on
 //! the RAW residual `target - value` and publishes the reference dispersion
-//! statistic as `mtg-kernel-cycle4-m3-reference/v1`. This mode exists
+//! statistic as `mtg-kernel-cycle4-m3-reference/v2`. This mode exists
 //! because the ratified audit artifact the amendment cites
 //! (`OX_ADVANTAGE_BY_ROLE_AUDIT_RESULT_V1.md`) records per-role and
 //! per-slot MEANS and winrates and no per-cell standard deviation at all, so
@@ -19,7 +19,7 @@
 //! `--mode audit` walks one v4 arm's Store and baseline chain over the same
 //! window on the CENTERED residual `(target - value) - c_t`, applies the
 //! amendment's total function against a reference document, and publishes
-//! `mtg-kernel-cycle4-m3-audit/v1` carrying every number, every input hash,
+//! `mtg-kernel-cycle4-m3-audit/v2` carrying every number, every input hash,
 //! and the verdict.
 //!
 //! Strict flag parsing follows `cycle4_run_record_v1.rs`: order-independent

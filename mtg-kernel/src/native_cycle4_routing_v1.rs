@@ -77,7 +77,8 @@ use std::path::Path;
 /// Schema of the M2 panel this selector consumes.
 pub const CYCLE4_M2_PANEL_SCHEMA_V1: &str = "mtg-kernel-cycle4-m2-common-root-panel/v1";
 /// Schema of the routing record this selector publishes.
-pub const CYCLE4_ROUTING_RECORD_SCHEMA_V1: &str = "mtg-kernel-cycle4-routing-record/v1";
+pub const CYCLE4_ROUTING_RECORD_SCHEMA_V2: &str = "mtg-kernel-cycle4-routing-record/v2";
+const CYCLE4_ROUTING_RECORD_SCHEMA_LEGACY_V1: &str = "mtg-kernel-cycle4-routing-record/v1";
 
 /// Amendment section B: "N = 1,024 common roots per pair."
 pub const CYCLE4_ROUTING_ROOT_COUNT_V1: u64 = 1_024;
@@ -1210,7 +1211,7 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
         };
 
     let record = Cycle4RoutingRecordV1 {
-        schema: CYCLE4_ROUTING_RECORD_SCHEMA_V1.to_owned(),
+        schema: CYCLE4_ROUTING_RECORD_SCHEMA_V2.to_owned(),
         outcome: outcome.to_owned(),
         carried_endpoint_id,
         parent_run_sha256: parent_run,
@@ -1270,18 +1271,43 @@ pub fn decide_cycle4_routing_v1(inputs: &Cycle4RoutingInputsV1) -> Result<Vec<u8
 /// Decodes a published routing record (for a reader, and for the round-trip
 /// test).
 pub fn decode_cycle4_routing_record_v1(bytes: &[u8]) -> Result<Cycle4RoutingRecordV1> {
+    let document: serde_json::Value =
+        from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).map_err(
+            |error| {
+                Cycle4RoutingErrorV1::new("cycle4_routing_v1_canonical_json", error.to_string())
+            },
+        )?;
+    let schema = document
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            Cycle4RoutingErrorV1::new(
+                "cycle4_routing_v1_record_schema",
+                "the routing-record schema must be a string",
+            )
+        })?;
+    if schema == CYCLE4_ROUTING_RECORD_SCHEMA_LEGACY_V1 {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_record_schema_v1_unsupported",
+            format!(
+                "schema {schema} records the obsolete M3 artifact identities; expected {}",
+                CYCLE4_ROUTING_RECORD_SCHEMA_V2
+            ),
+        ));
+    }
+    if schema != CYCLE4_ROUTING_RECORD_SCHEMA_V2 {
+        return Err(Cycle4RoutingErrorV1::new(
+            "cycle4_routing_v1_record_schema",
+            format!("unexpected schema {schema}"),
+        ));
+    }
     let record: Cycle4RoutingRecordV1 =
         from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).map_err(
             |error| {
                 Cycle4RoutingErrorV1::new("cycle4_routing_v1_canonical_json", error.to_string())
             },
         )?;
-    if record.schema != CYCLE4_ROUTING_RECORD_SCHEMA_V1 {
-        return Err(Cycle4RoutingErrorV1::new(
-            "cycle4_routing_v1_record_schema",
-            format!("unexpected schema {}", record.schema),
-        ));
-    }
+    debug_assert_eq!(record.schema, CYCLE4_ROUTING_RECORD_SCHEMA_V2);
     Ok(record)
 }
 
@@ -1786,6 +1812,7 @@ mod tests {
     fn inseparable_arms_tie_toward_control_r_and_carry_v1() {
         let plan = win_fraction_plan_v1(&[]);
         let record = decide_v1(&routing_inputs_v1(panel_bytes_v1(&plan), true, true));
+        assert_eq!(record.schema, CYCLE4_ROUTING_RECORD_SCHEMA_V2);
         assert_eq!(record.outcome, CYCLE4_ROUTING_OUTCOME_CARRY_V1);
         assert_eq!(record.carried_endpoint_id.as_deref(), Some("control-r"));
         assert_eq!(
@@ -1802,6 +1829,25 @@ mod tests {
             assert!(comparison.winner.is_empty());
         }
         assert_eq!(record.parent_store_generation, 2_048);
+    }
+
+    #[test]
+    fn the_legacy_v1_routing_record_identity_is_refused_v1() {
+        let plan = win_fraction_plan_v1(&[]);
+        let bytes = decide_cycle4_routing_v1(&routing_inputs_v1(panel_bytes_v1(&plan), true, true))
+            .expect("routing decision");
+        let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON value");
+        legacy["schema"] =
+            serde_json::Value::String(CYCLE4_ROUTING_RECORD_SCHEMA_LEGACY_V1.to_owned());
+        let legacy_bytes = to_canonical_json_bytes_v1(&legacy, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("legacy canonical bytes");
+        let error = decode_cycle4_routing_record_v1(&legacy_bytes)
+            .expect_err("the legacy routing-record identity must be refused");
+        assert_eq!(
+            error.code(),
+            "cycle4_routing_v1_record_schema_v1_unsupported"
+        );
+        assert!(error.detail().contains(CYCLE4_ROUTING_RECORD_SCHEMA_V2));
     }
 
     /// TREATMENT-RB clearly best: it separates from both other arms, takes

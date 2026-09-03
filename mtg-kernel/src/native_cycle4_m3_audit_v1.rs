@@ -94,9 +94,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Schema of the audit report this module publishes.
-pub const CYCLE4_M3_AUDIT_SCHEMA_V1: &str = "mtg-kernel-cycle4-m3-audit/v1";
+pub const CYCLE4_M3_AUDIT_SCHEMA_V2: &str = "mtg-kernel-cycle4-m3-audit/v2";
 /// Schema of the reference-statistic document the audit consumes.
-pub const CYCLE4_M3_REFERENCE_SCHEMA_V1: &str = "mtg-kernel-cycle4-m3-reference/v1";
+pub const CYCLE4_M3_REFERENCE_SCHEMA_V2: &str = "mtg-kernel-cycle4-m3-reference/v2";
+const CYCLE4_M3_AUDIT_SCHEMA_LEGACY_V1: &str = "mtg-kernel-cycle4-m3-audit/v1";
+const CYCLE4_M3_REFERENCE_SCHEMA_LEGACY_V1: &str = "mtg-kernel-cycle4-m3-reference/v1";
 
 /// Amendment section A: "the FINAL 512 updates".
 pub const CYCLE4_M3_WINDOW_UPDATES_V1: u64 = 512;
@@ -1739,7 +1741,7 @@ pub fn build_cycle4_m3_reference_document_v1(
         ));
     }
     let document = Cycle4M3ReferenceDocumentV1 {
-        schema: CYCLE4_M3_REFERENCE_SCHEMA_V1.to_owned(),
+        schema: CYCLE4_M3_REFERENCE_SCHEMA_V2.to_owned(),
         residual_mode: window.residual_mode.wire_v1().to_owned(),
         run_sha256: window.run_sha256.clone(),
         window: reference_window,
@@ -1798,18 +1800,29 @@ fn recompute_totals_v1(
 
 /// Decodes and structurally validates a reference document.
 pub fn decode_cycle4_m3_reference_document_v1(bytes: &[u8]) -> Result<Cycle4M3ReferenceDocumentV1> {
+    let schema = decode_cycle4_m3_schema_identity_v1(bytes, "cycle4_m3_audit_v1_reference_schema")?;
+    if schema == CYCLE4_M3_REFERENCE_SCHEMA_LEGACY_V1 {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_schema_v1_unsupported",
+            format!(
+                "schema {schema} names the obsolete reference-document layout; expected {}",
+                CYCLE4_M3_REFERENCE_SCHEMA_V2
+            ),
+        ));
+    }
+    if schema != CYCLE4_M3_REFERENCE_SCHEMA_V2 {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_reference_schema",
+            format!("unexpected schema {schema}"),
+        ));
+    }
     let document: Cycle4M3ReferenceDocumentV1 =
         from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).map_err(
             |error| {
                 Cycle4M3AuditErrorV1::new("cycle4_m3_audit_v1_canonical_json", error.to_string())
             },
         )?;
-    if document.schema != CYCLE4_M3_REFERENCE_SCHEMA_V1 {
-        return Err(Cycle4M3AuditErrorV1::new(
-            "cycle4_m3_audit_v1_reference_schema",
-            format!("unexpected schema {}", document.schema),
-        ));
-    }
+    debug_assert_eq!(document.schema, CYCLE4_M3_REFERENCE_SCHEMA_V2);
     if Cycle4M3ResidualModeV1::from_wire_v1(&document.residual_mode)? != Cycle4M3ResidualModeV1::Raw
     {
         return Err(Cycle4M3AuditErrorV1::new(
@@ -1942,6 +1955,22 @@ pub struct Cycle4M3AuditReportV1 {
 pub const CYCLE4_M3_VERDICT_PASS_V1: &str = "PASS";
 pub const CYCLE4_M3_VERDICT_FAIL_V1: &str = "FAIL";
 
+fn decode_cycle4_m3_schema_identity_v1(bytes: &[u8], missing_code: &'static str) -> Result<String> {
+    let document: serde_json::Value =
+        from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).map_err(
+            |error| {
+                Cycle4M3AuditErrorV1::new("cycle4_m3_audit_v1_canonical_json", error.to_string())
+            },
+        )?;
+    document
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            Cycle4M3AuditErrorV1::new(missing_code, "the document schema must be a string")
+        })
+}
+
 /// Builds the audit report's canonical bytes from a CENTERED window plus a
 /// decoded reference document (and that document's own SHA-256).
 pub fn build_cycle4_m3_audit_report_v1(
@@ -1980,7 +2009,7 @@ pub fn build_cycle4_m3_audit_report_v1(
         _ => None,
     };
     let report = Cycle4M3AuditReportV1 {
-        schema: CYCLE4_M3_AUDIT_SCHEMA_V1.to_owned(),
+        schema: CYCLE4_M3_AUDIT_SCHEMA_V2.to_owned(),
         arm_kind: arm_kind.to_owned(),
         residual_mode: window.residual_mode.wire_v1().to_owned(),
         window: Cycle4M3WindowWireV1 {
@@ -2046,18 +2075,29 @@ pub fn build_cycle4_m3_audit_report_v1(
 /// Decodes and structurally validates an audit report (the routing
 /// selector's input).
 pub fn decode_cycle4_m3_audit_report_v1(bytes: &[u8]) -> Result<Cycle4M3AuditReportV1> {
+    let schema = decode_cycle4_m3_schema_identity_v1(bytes, "cycle4_m3_audit_v1_report_schema")?;
+    if schema == CYCLE4_M3_AUDIT_SCHEMA_LEGACY_V1 {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_report_schema_v1_unsupported",
+            format!(
+                "schema {schema} names the obsolete report layout without the required reference block; expected {}",
+                CYCLE4_M3_AUDIT_SCHEMA_V2
+            ),
+        ));
+    }
+    if schema != CYCLE4_M3_AUDIT_SCHEMA_V2 {
+        return Err(Cycle4M3AuditErrorV1::new(
+            "cycle4_m3_audit_v1_report_schema",
+            format!("unexpected schema {schema}"),
+        ));
+    }
     let report: Cycle4M3AuditReportV1 =
         from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid).map_err(
             |error| {
                 Cycle4M3AuditErrorV1::new("cycle4_m3_audit_v1_canonical_json", error.to_string())
             },
         )?;
-    if report.schema != CYCLE4_M3_AUDIT_SCHEMA_V1 {
-        return Err(Cycle4M3AuditErrorV1::new(
-            "cycle4_m3_audit_v1_report_schema",
-            format!("unexpected schema {}", report.schema),
-        ));
-    }
+    debug_assert_eq!(report.schema, CYCLE4_M3_AUDIT_SCHEMA_V2);
     if Cycle4M3ResidualModeV1::from_wire_v1(&report.residual_mode)?
         != Cycle4M3ResidualModeV1::Centered
     {
@@ -2356,6 +2396,7 @@ mod tests {
         let bytes = build_cycle4_m3_reference_document_v1(&window, identity_v1(0x0a))
             .expect("reference document");
         let decoded = decode_cycle4_m3_reference_document_v1(&bytes).expect("decode");
+        assert_eq!(decoded.schema, CYCLE4_M3_REFERENCE_SCHEMA_V2);
         assert_eq!(decoded.window.update_count, 512);
         assert_eq!(decoded.audit_note_sha256, identity_v1(0x0a));
         assert_eq!(decoded.tip_checkpoint_manifest_sha256, identity_v1(8));
@@ -2376,6 +2417,37 @@ mod tests {
                 .code(),
             "cycle4_m3_audit_v1_reference_mode"
         );
+    }
+
+    #[test]
+    fn the_legacy_v1_reference_identity_is_refused_before_layout_decode_v1() {
+        let bytes = build_cycle4_m3_reference_document_v1(
+            &test_support_window_v1(
+                Cycle4M3ResidualModeV1::Raw,
+                vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+                10_000,
+                identity_v1(7),
+                identity_v1(8),
+            ),
+            identity_v1(0x0a),
+        )
+        .expect("reference document");
+        let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON value");
+        legacy["schema"] =
+            serde_json::Value::String(CYCLE4_M3_REFERENCE_SCHEMA_LEGACY_V1.to_owned());
+        legacy
+            .as_object_mut()
+            .expect("reference object")
+            .remove("tip_checkpoint_manifest_sha256");
+        let legacy_bytes = to_canonical_json_bytes_v1(&legacy, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("legacy canonical bytes");
+        let error = decode_cycle4_m3_reference_document_v1(&legacy_bytes)
+            .expect_err("the legacy reference identity must be refused");
+        assert_eq!(
+            error.code(),
+            "cycle4_m3_audit_v1_reference_schema_v1_unsupported"
+        );
+        assert!(error.detail().contains(CYCLE4_M3_REFERENCE_SCHEMA_V2));
     }
 
     #[test]
@@ -2578,6 +2650,7 @@ mod tests {
         .expect("report");
         assert!(pass);
         let decoded = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode report");
+        assert_eq!(decoded.schema, CYCLE4_M3_AUDIT_SCHEMA_V2);
         assert_eq!(decoded.verdict, CYCLE4_M3_VERDICT_PASS_V1);
         assert_eq!(decoded.arm_kind, "treatment-rb");
         assert_eq!(decoded.inputs.reference_document_sha256, identity_v1(0x0d));
@@ -2596,6 +2669,58 @@ mod tests {
         let decoded = decode_cycle4_m3_audit_report_v1(&bytes).expect("decode report");
         assert_eq!(decoded.verdict, CYCLE4_M3_VERDICT_FAIL_V1);
         assert_eq!(decoded.failures, vec!["dispersion_above_allowance"]);
+    }
+
+    #[test]
+    fn the_legacy_v1_report_identity_is_refused_before_layout_decode_v1() {
+        let reference_bytes = build_cycle4_m3_reference_document_v1(
+            &test_support_window_v1(
+                Cycle4M3ResidualModeV1::Raw,
+                vec![cell_v1(1, "p0", 10_000, -0.008, 1.0)],
+                10_000,
+                identity_v1(7),
+                identity_v1(8),
+            ),
+            identity_v1(0x0a),
+        )
+        .expect("reference");
+        let reference =
+            decode_cycle4_m3_reference_document_v1(&reference_bytes).expect("decode reference");
+        let window = test_support_window_v1(
+            Cycle4M3ResidualModeV1::Centered,
+            vec![cell_v1(1, "p0", 10_000, 0.001, 1.05)],
+            10_000,
+            identity_v1(3),
+            identity_v1(4),
+        );
+        let (bytes, _) =
+            build_cycle4_m3_audit_report_v1("static-rb", &window, &reference, &identity_v1(0x0d))
+                .expect("report");
+        let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON value");
+        legacy["schema"] = serde_json::Value::String(CYCLE4_M3_AUDIT_SCHEMA_LEGACY_V1.to_owned());
+        let report = legacy.as_object_mut().expect("report object");
+        let reference = report.remove("reference").expect("reference block");
+        let statistics = report
+            .get_mut("statistics")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("statistics block");
+        statistics.insert(
+            "reference_decision_weighted_mean_standard_deviation".to_owned(),
+            reference["decision_weighted_mean_standard_deviation"].clone(),
+        );
+        statistics.insert(
+            "dispersion_allowance".to_owned(),
+            reference["dispersion_allowance"].clone(),
+        );
+        let legacy_bytes = to_canonical_json_bytes_v1(&legacy, CanonicalJsonNullPolicyV1::Forbid)
+            .expect("legacy canonical bytes");
+        let error = decode_cycle4_m3_audit_report_v1(&legacy_bytes)
+            .expect_err("the legacy report identity must be refused");
+        assert_eq!(
+            error.code(),
+            "cycle4_m3_audit_v1_report_schema_v1_unsupported"
+        );
+        assert!(error.detail().contains(CYCLE4_M3_AUDIT_SCHEMA_V2));
     }
 
     #[test]

@@ -269,9 +269,9 @@ implement it, and nothing else in the campaign may alter what they record.
 
 | Tool | What it is |
 | --- | --- |
-| `cycle4_m3_audit_v1` | Section A. The M3 centering audit over one arm's final 512 updates, plus the cycle-3 reference statistic it is measured against. |
+| `cycle4_m3_audit_v1` | Section A. The M3 centering audit over one arm's final 512 updates. It publishes `mtg-kernel-cycle4-m3-reference/v2` and `mtg-kernel-cycle4-m3-audit/v2`. |
 | `run_m2_common_root_panel_v1.py` | Section B's measurement. Four endpoints against the frozen genesis pool on N = 1,024 COMMON roots. |
-| `cycle4_routing_v1` | Sections B, C and D. The selector and the immutable routing record. |
+| `cycle4_routing_v1` | Sections B, C and D. The selector and the immutable `mtg-kernel-cycle4-routing-record/v2` record. |
 
 ### Freeze order (binding)
 
@@ -423,6 +423,7 @@ Nothing in this chain accepts a document on its say-so.
 
 | Check | Where | Why |
 | --- | --- | --- |
+| The M3 reference and audit decoders inspect the canonical schema identity before decoding the current layout, and refuse either obsolete `/v1` identity with a specific error code. | `cycle4_m3_audit_v1`, `cycle4_routing_v1` | The old and current layouts must not share an identity or be interpreted as one another. |
 | Each window update's `update_evidence_sha256` is recomputed over the evidence's own canonical bytes, and the declared chain is walked from the genesis anchor. | `cycle4_m3_audit_v1` | The sidecar pins each cell's residual SUM and counts, so two equal-policy-weight values moved in opposite directions leave every sidecar quantity intact while changing the cell's sample standard deviation. Only the digest catches that. |
 | Reference mode requires the computed window to be exactly updates 1537 through 2048 with count 512 before it serializes or publishes the document. | `cycle4_m3_audit_v1` | A Store ending at update 1536 would otherwise publish a document the decoder and routing selector must refuse. |
 | The reference statistic and its totals are recomputed from the reference document's own cell table. | `cycle4_m3_audit_v1`, `cycle4_routing_v1` | An inflated reference would loosen the whole dispersion clause. |
