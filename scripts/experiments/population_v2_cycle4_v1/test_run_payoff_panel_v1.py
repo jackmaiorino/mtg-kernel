@@ -1209,21 +1209,43 @@ class MatchupWorkersTests(unittest.TestCase):
 
         - spec 1 does not fail until BOTH spec 0 and spec 1 have been
           launched (`both_launched`), so spec 0 can never be skipped;
-        - spec 0 is released only after spec 1 has signalled its failure
-          (`spec1_failed`), from the test's own thread.
+        - spec 0 is released only after the POOL has recorded the abort:
+          the pool cancels its tracked futures only after raising the abort
+          flag under the admission lock, so the first observed `cancel()` on
+          a tracked future (seen through the injected executor) is a
+          synchronization point that happens-after the abort is recorded
+          (CODEX review of 176c0337: an event set just before raising was
+          not, and let spec 0's worker admit spec 2 first).
 
-        The property under test is the pool's: once a failure is signalled,
+        The property under test is the pool's: once a failure is recorded,
         no further matchup is launched, whichever worker becomes free. So
         exactly two launches ever happen, spec 0's clean result is accepted,
         and the error names spec 1."""
+        import concurrent.futures
         import threading
 
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
         both_launched = threading.Event()
         spec1_failed = threading.Event()
+        abort_recorded = threading.Event()
         release = threading.Event()
         lock = threading.Lock()
         launched: list[str] = []
+
+        class ObservingExecutor(concurrent.futures.ThreadPoolExecutor):
+            """Wraps each tracked future's `cancel` so the test can observe
+            the pool's abort, which precedes every cancel."""
+
+            def submit(self, fn, *args, **kwargs):
+                future = super().submit(fn, *args, **kwargs)
+                original_cancel = future.cancel
+
+                def cancel():
+                    abort_recorded.set()
+                    return original_cancel()
+
+                future.cancel = cancel
+                return future
 
         def launch(spec):
             with lock:
@@ -1250,14 +1272,23 @@ class MatchupWorkersTests(unittest.TestCase):
             return result
 
         def releaser():
-            spec1_failed.wait(timeout=10)
+            abort_recorded.wait(timeout=10)
             release.set()
 
         threading.Thread(target=releaser, daemon=True).start()
         accepted: list[str] = []
         with self.assertRaises(PanelRunnerError) as ctx:
-            _pool(specs, 2, finish, lambda spec, result: accepted.append(spec.label), launch=launch, validate=validate)
+            _pool(
+                specs,
+                2,
+                finish,
+                lambda spec, result: accepted.append(spec.label),
+                launch=launch,
+                validate=validate,
+                executor_factory=ObservingExecutor,
+            )
         self.assertTrue(spec1_failed.is_set())
+        self.assertTrue(abort_recorded.is_set())
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
         self.assertEqual(accepted, [specs[0].label])
