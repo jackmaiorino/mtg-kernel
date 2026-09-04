@@ -851,7 +851,7 @@ def build_bt_input_document(slots: list[dict], panel: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run_matchup(
+def launch_matchup(
     executable: Path,
     repo_root: Path,
     output_dir: Path,
@@ -859,6 +859,10 @@ def run_matchup(
     locator: dict[int, Path],
     spec: MatchupSpec,
 ) -> dict:
+    """Creates the matchup's directory and STARTS its engine process, nothing
+    more. Kept minimal on purpose: the pool calls it under its admission
+    lock, so a failing matchup and a starting one are serialized at the
+    point where the engine process actually comes into existence."""
     arm_root = output_dir / spec.label
     arm_root.mkdir(parents=True)
     outcome_path = arm_root / "outcome.json"
@@ -869,22 +873,67 @@ def run_matchup(
         environment.pop(key, None)
     environment.update(matchup_environment(slots, locator, spec, outcome_path))
     command = matchup_command(executable)
-    started = time.perf_counter()
-    with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
-        completed = subprocess.run(
+    stdout = stdout_path.open("xb")
+    try:
+        stderr = stderr_path.open("xb")
+    except BaseException:
+        stdout.close()
+        raise
+    try:
+        started = time.perf_counter()
+        process = subprocess.Popen(
             command, cwd=repo_root, env=environment, stdout=stdout, stderr=stderr
         )
-    wall_seconds = time.perf_counter() - started
-    if completed.returncode != 0 or not outcome_path.is_file():
+    except BaseException:
+        stdout.close()
+        stderr.close()
+        raise
+    return {
+        "spec": spec,
+        "process": process,
+        "stdout": stdout,
+        "stderr": stderr,
+        "outcome_path": outcome_path,
+        "stdout_path": stdout_path,
+        "stderr_path": stderr_path,
+        "started": started,
+    }
+
+
+def finish_matchup(handle: dict) -> dict:
+    """Waits for a launched matchup's engine, closes its logs, and checks
+    its exit; fail-closed on a nonzero exit or a missing outcome file."""
+    try:
+        returncode = handle["process"].wait()
+    finally:
+        handle["stdout"].close()
+        handle["stderr"].close()
+    wall_seconds = time.perf_counter() - handle["started"]
+    spec = handle["spec"]
+    outcome_path = handle["outcome_path"]
+    if returncode != 0 or not outcome_path.is_file():
         raise PanelRunnerError(
-            f"{spec.label} failed: exit_code={completed.returncode} "
-            f"stderr={stderr_path} stdout={stdout_path}"
+            f"{spec.label} failed: exit_code={returncode} "
+            f"stderr={handle['stderr_path']} stdout={handle['stdout_path']}"
         )
     return {
         "outcome_path": outcome_path,
         "wall_seconds": wall_seconds,
         "outcome_sha256": sha256_file(outcome_path),
     }
+
+
+def run_matchup(
+    executable: Path,
+    repo_root: Path,
+    output_dir: Path,
+    slots: list[dict],
+    locator: dict[int, Path],
+    spec: MatchupSpec,
+) -> dict:
+    """One matchup from launch to checked exit: the sequential composition of
+    `launch_matchup` and `finish_matchup`."""
+    return finish_matchup(launch_matchup(executable, repo_root, output_dir, slots, locator, spec))
 
 
 class _MatchupAbortedBeforeStartV1(Exception):
@@ -896,35 +945,42 @@ class _MatchupAbortedBeforeStartV1(Exception):
 def run_matchups_in_spec_order(
     specs: list[MatchupSpec],
     workers: int,
-    run_one: Callable[[MatchupSpec], dict],
-    consume: Callable[[MatchupSpec, dict], None],
+    *,
+    launch_one: Callable[[MatchupSpec], object],
+    finish_one: Callable[[object], dict],
+    validate: Callable[[MatchupSpec, dict], object],
+    accept: Callable[[MatchupSpec, object], None],
 ) -> None:
-    """Runs every matchup and hands `(spec, result)` to `consume` in SPEC
-    order regardless of completion order, so everything downstream (the
-    summaries, the seed-reuse check, the outcome hashes, the panel document)
+    """Runs every matchup as launch -> finish -> validate, and hands the
+    validated value of each to `accept` in SPEC order regardless of
+    completion order, so everything downstream (the summaries, the
+    cross-matchup seed-reuse check, the outcome hashes, the panel document)
     is independent of `workers`.
 
+    `launch_one` starts a matchup's engine and returns a handle; `finish_one`
+    waits for it and checks its exit; `validate` is the PURE per-matchup
+    check of the produced outcome (it may raise, it must not touch shared
+    state); `accept` applies the ordered, shared side effects.
+
     `workers == 1` is the plain sequential loop: no thread pool at all, one
-    subprocess at a time, each consumed before the next starts.
+    subprocess at a time, each accepted before the next is launched.
 
     `workers > 1` submits every matchup to a bounded thread pool (the threads
     only wait on subprocesses; each engine is its own process with
-    `--test-threads=1`) and consumes completed results in spec order as they
-    become available. Failure is fail-closed and PROMPT:
+    `--test-threads=1`). Failure is fail-closed and PROMPT:
 
+    - a worker runs `validate` on its own matchup as soon as the engine
+      exits, so a malformed outcome is a failure the moment it exists, not
+      when its turn to be accepted arrives;
     - the coordinator waits on the first completed future, whatever its
-      index, so a failure is observed as soon as it happens;
-    - admission is serialized under one lock with the abort flag, so a
-      matchup either starts before the failure was signalled or never
-      starts: the failing worker sets the flag under that lock before it
-      returns, and a worker about to start re-checks it under the same lock;
+      index, so any failure (process or validation) is observed at once;
+    - admission and `launch_one` run under ONE lock, the same lock a failing
+      worker takes to raise the abort flag, so a matchup's engine process
+      either exists before the failure was signalled or is never created;
     - every queued future is then cancelled, every running one is waited
       for, and the failure reported is the FIRST IN SPEC ORDER among real
-      failures, where a real failure is either a subprocess error or an
-      outcome that `consume` rejects. Completed lower-index outcomes are
-      validated before any higher-index error is chosen, so the reported
-      failure does not depend on completion timing. Abort markers from
-      skipped matchups are never reported.
+      failures (process or validation), independent of completion timing;
+      abort markers from skipped matchups are never reported.
 
     No orphaned engine keeps writing under the output directory after the
     runner has reported failure."""
@@ -934,18 +990,23 @@ def run_matchups_in_spec_order(
         )
     if workers == 1:
         for spec in specs:
-            consume(spec, run_one(spec))
+            accept(spec, validate(spec, finish_one(launch_one(spec))))
         return
 
     admission = threading.Lock()
     state = {"aborted": False}
 
-    def guarded(spec: MatchupSpec) -> dict:
+    def worker(spec: MatchupSpec) -> object:
         with admission:
             if state["aborted"]:
                 raise _MatchupAbortedBeforeStartV1(spec.label)
+            try:
+                handle = launch_one(spec)
+            except BaseException:
+                state["aborted"] = True
+                raise
         try:
-            return run_one(spec)
+            return validate(spec, finish_one(handle))
         except BaseException:
             with admission:
                 state["aborted"] = True
@@ -964,11 +1025,10 @@ def run_matchups_in_spec_order(
         return not future.cancelled() and future.exception() is not None
 
     def resolve_in_spec_order(stop_on_pending: bool) -> None:
-        """Walks futures from the next unconsumed index in spec order:
-        validates and consumes finished successes, raises the first real
-        failure (subprocess error or `consume` rejection), skips abort
-        markers and cancelled futures. With `stop_on_pending` it returns at
-        the first future that is not done yet."""
+        """Walks futures from the next unaccepted index in spec order:
+        accepts finished successes, raises the first real failure (process
+        or validation), skips abort markers and cancelled futures. With
+        `stop_on_pending` it returns at the first future not done yet."""
         while position["next"] < len(futures):
             future = futures[position["next"]]
             if not future.done():
@@ -978,13 +1038,13 @@ def run_matchups_in_spec_order(
             if not future.cancelled():
                 error = future.exception()
                 if error is None:
-                    consume(specs[position["next"]], future.result())
+                    accept(specs[position["next"]], future.result())
                 elif not isinstance(error, _MatchupAbortedBeforeStartV1):
                     raise error
             position["next"] += 1
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures.extend(executor.submit(guarded, spec) for spec in specs)
+        futures.extend(executor.submit(worker, spec) for spec in specs)
         pending = set(futures)
         try:
             while pending:
@@ -1001,8 +1061,8 @@ def run_matchups_in_spec_order(
             signal_abort()
             raise
         # A matchup failed. Wait for whatever is still running, then walk the
-        # futures in spec order: lower-index outcomes are validated first, so
-        # the first real failure in spec order is the one raised.
+        # futures in spec order: every completed future is already validated,
+        # so the first exception met is the first real failure in spec order.
         concurrent.futures.wait([future for future in futures if not future.cancelled()])
         resolve_in_spec_order(stop_on_pending=False)
         raise PanelRunnerError("a matchup failed but no failure was recorded")
@@ -1041,23 +1101,33 @@ def run(args: argparse.Namespace) -> Path | None:
     outcome_hashes = []
     all_seeds: set[int] = set()
 
-    def consume(spec: MatchupSpec, result: dict) -> None:
+    def validate(spec: MatchupSpec, result: dict) -> dict:
+        # Pure per-matchup validation; runs in the worker the moment its
+        # engine exits, so a malformed outcome fails the panel promptly.
         outcome = load_json(result["outcome_path"])
         summary = summarize_outcome(
             outcome, spec, slots[spec.lower_slot], slots[spec.higher_slot]
         )
-        for seed in summary["pair_environment_seeds"]:
+        return {"summary": summary, "outcome_sha256": result["outcome_sha256"]}
+
+    def accept(spec: MatchupSpec, validated: dict) -> None:
+        # Cross-matchup state, applied strictly in spec order.
+        for seed in validated["summary"]["pair_environment_seeds"]:
             if seed in all_seeds:
                 raise PanelRunnerError(f"pair environment seed {seed} reused across matchups")
             all_seeds.add(seed)
-        summaries.append(summary)
-        outcome_hashes.append(result["outcome_sha256"])
+        summaries.append(validated["summary"])
+        outcome_hashes.append(validated["outcome_sha256"])
 
     run_matchups_in_spec_order(
         specs,
         args.matchup_workers,
-        lambda matchup: run_matchup(executable, repo_root, output_dir, slots, locator, matchup),
-        consume,
+        launch_one=lambda matchup: launch_matchup(
+            executable, repo_root, output_dir, slots, locator, matchup
+        ),
+        finish_one=finish_matchup,
+        validate=validate,
+        accept=accept,
     )
 
     expected_pair_count = sum(spec.pair_count for spec in specs)

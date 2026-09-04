@@ -984,6 +984,20 @@ class OutputDirResolutionTests(unittest.TestCase):
             self.assertNotIn("H2H_OUTCOME_JSON=relative-output", buffer.getvalue())
 
 
+def _pool(specs, workers, run_one, consume, launch=None, validate=None):
+    """Adapter for run_one-style fakes: by default the handle is the spec
+    itself, `run_one` plays finish, validation is the identity, and
+    `consume` plays accept."""
+    return run_matchups_in_spec_order(
+        specs,
+        workers,
+        launch_one=launch or (lambda spec: spec),
+        finish_one=run_one,
+        validate=validate or (lambda spec, result: result),
+        accept=consume,
+    )
+
+
 class MatchupWorkersTests(unittest.TestCase):
     """Matchups are independent engine processes, so running several at once
     may change nothing but wall time. The ordering helper is exercised with
@@ -1029,7 +1043,7 @@ class MatchupWorkersTests(unittest.TestCase):
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
         for workers in (0, MAX_MATCHUP_WORKERS + 1):
             with self.assertRaises(PanelRunnerError):
-                run_matchups_in_spec_order(specs, workers, lambda spec: {}, lambda spec, result: None)
+                _pool(specs, workers, lambda spec: {}, lambda spec, result: None)
 
     def test_results_are_consumed_in_spec_order_for_any_worker_count(self):
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
@@ -1043,8 +1057,7 @@ class MatchupWorkersTests(unittest.TestCase):
             started: list[str] = []
             run_one, completion_order = self._fake_runner(delays, started)
             consumed: list[tuple[str, str]] = []
-            run_matchups_in_spec_order(
-                specs, workers, run_one, lambda spec, result: consumed.append((spec.label, result["outcome_sha256"]))
+            _pool(specs, workers, run_one, lambda spec, result: consumed.append((spec.label, result["outcome_sha256"]))
             )
             self.assertEqual([label for label, _ in consumed], expected_order)
             self.assertEqual(sorted(started), sorted(expected_order))
@@ -1062,28 +1075,30 @@ class MatchupWorkersTests(unittest.TestCase):
         run_one, _ = self._fake_runner(delays, started, fail_label=specs[2].label)
         consumed: list[str] = []
         with self.assertRaises(PanelRunnerError) as ctx:
-            run_matchups_in_spec_order(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
+            _pool(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
         self.assertIn(specs[2].label, str(ctx.exception))
         # Whatever was consumed is a prefix of the spec order.
         self.assertEqual(consumed, [spec.label for spec in specs[: len(consumed)]])
         self.assertLess(len(started), len(specs))
 
     def test_no_queued_matchup_starts_after_a_failure_signal(self):
-        """CODEX #59: spec 0 blocks, spec 1 fails at once, two workers. The
-        failure must be detected while spec 0 is still running, and the
-        worker freed by spec 1 must not pick up spec 2 (or anything else)
-        from the queue. Only the two matchups that were already running when
-        the failure happened may ever have started."""
+        """CODEX #59 / #66: spec 0 blocks, spec 1 fails at once, two workers.
+        "Start" is `launch_one`, which the pool calls under its admission
+        lock. The failure must be observed while spec 0 is still running, and
+        the worker freed by spec 1 must never launch spec 2 or anything else.
+        Only the two matchups already launched when the failure happened may
+        ever have been launched."""
         import threading
 
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
         release = threading.Event()
-        lock = threading.Lock()
-        started: list[str] = []
+        launched: list[str] = []
 
-        def run_one(spec):
-            with lock:
-                started.append(spec.label)
+        def launch(spec):
+            launched.append(spec.label)  # under the pool's admission lock
+            return spec
+
+        def finish(spec):
             if spec.matchup_index == 0:
                 release.wait(timeout=10)
                 return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(0)}
@@ -1091,17 +1106,47 @@ class MatchupWorkersTests(unittest.TestCase):
                 raise PanelRunnerError(f"{spec.label} failed: synthetic")
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
-        # Release spec 0 only after the failure has had ample time to be
-        # observed and acted on; if cancellation were not prompt, the freed
-        # worker would drain the queue during this window.
         threading.Timer(0.5, release.set).start()
         consumed: list[str] = []
         with self.assertRaises(PanelRunnerError) as ctx:
-            run_matchups_in_spec_order(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
+            _pool(specs, 2, finish, lambda spec, result: consumed.append(spec.label), launch=launch)
         self.assertIn(specs[1].label, str(ctx.exception))
-        self.assertEqual(sorted(started), sorted([specs[0].label, specs[1].label]))
-        # Spec 0 finished cleanly and is validated before spec 1's error is chosen.
+        self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
+        # Spec 0 finished cleanly and is accepted before spec 1's error is chosen.
         self.assertEqual(consumed, [specs[0].label])
+
+    def test_a_malformed_outcome_is_detected_promptly_and_stops_launches(self):
+        """CODEX #66: spec 0 blocks, spec 1's engine exits cleanly but its
+        outcome fails validation, two workers. Validation runs in the worker
+        as soon as the engine exits, so the failure is observed while spec 0
+        is still running and nothing beyond specs 0 and 1 is ever launched."""
+        import threading
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        release = threading.Event()
+        launched: list[str] = []
+
+        def launch(spec):
+            launched.append(spec.label)
+            return spec
+
+        def finish(spec):
+            if spec.matchup_index == 0:
+                release.wait(timeout=10)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def validate(spec, result):
+            if spec.matchup_index == 1:
+                raise PanelRunnerError(f"{spec.label}: outcome header mismatch (synthetic)")
+            return result
+
+        threading.Timer(0.5, release.set).start()
+        accepted: list[str] = []
+        with self.assertRaises(PanelRunnerError) as ctx:
+            _pool(specs, 2, finish, lambda spec, result: accepted.append(spec.label), launch=launch, validate=validate)
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
+        self.assertEqual(accepted, [specs[0].label])
 
     def test_lowest_index_failure_wins_when_a_later_matchup_fails_first(self):
         """Two failures: spec 3 fails immediately, spec 1 fails after a
@@ -1123,7 +1168,7 @@ class MatchupWorkersTests(unittest.TestCase):
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
         with self.assertRaises(PanelRunnerError) as ctx:
-            run_matchups_in_spec_order(specs, 4, run_one, lambda spec, result: None)
+            _pool(specs, 4, run_one, lambda spec, result: None)
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertNotIn(specs[3].label, str(ctx.exception))
 
@@ -1150,7 +1195,7 @@ class MatchupWorkersTests(unittest.TestCase):
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
         with self.assertRaises(PanelRunnerError) as ctx:
-            run_matchups_in_spec_order(specs, 4, run_one, lambda spec, result: None)
+            _pool(specs, 4, run_one, lambda spec, result: None)
         self.assertIn(specs[3].label, str(ctx.exception))
         self.assertNotIsInstance(ctx.exception, _MatchupAbortedBeforeStartV1)
 
@@ -1169,12 +1214,13 @@ class MatchupWorkersTests(unittest.TestCase):
             time.sleep(0.2 if spec.matchup_index in (0, 2) else 0.01)
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
-        def consume(spec, result):
+        def validate(spec, result):
             if spec.matchup_index == 1:
                 raise PanelRunnerError(f"{spec.label}: outcome header mismatch (synthetic)")
+            return result
 
         with self.assertRaises(PanelRunnerError) as ctx:
-            run_matchups_in_spec_order(specs, 4, run_one, consume)
+            _pool(specs, 4, run_one, lambda spec, result: None, validate=validate)
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertNotIn(specs[3].label, str(ctx.exception))
 
@@ -1186,7 +1232,7 @@ class MatchupWorkersTests(unittest.TestCase):
             events.append(f"run {spec.label}")
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
-        run_matchups_in_spec_order(specs, 1, run_one, lambda spec, result: events.append(f"consume {spec.label}"))
+        _pool(specs, 1, run_one, lambda spec, result: events.append(f"consume {spec.label}"))
         expected = []
         for spec in specs:
             expected.extend([f"run {spec.label}", f"consume {spec.label}"])
