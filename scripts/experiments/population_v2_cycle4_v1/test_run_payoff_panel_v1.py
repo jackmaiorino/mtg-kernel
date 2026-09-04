@@ -1081,21 +1081,36 @@ class MatchupWorkersTests(unittest.TestCase):
         self.assertEqual(consumed, [spec.label for spec in specs[: len(consumed)]])
         self.assertLess(len(started), len(specs))
 
-    def test_no_queued_matchup_starts_after_a_failure_signal(self):
-        """CODEX #59 / #66: spec 0 blocks, spec 1 fails at once, two workers.
-        "Start" is `launch_one`, which the pool calls under its admission
-        lock. The failure must be observed while spec 0 is still running, and
-        the worker freed by spec 1 must never launch spec 2 or anything else.
-        Only the two matchups already launched when the failure happened may
-        ever have been launched."""
+    def _two_worker_failure_case(self, fail_in_validate: bool) -> None:
+        """Shared body for the two prompt-failure regressions (CODEX #59, #66).
+        Two workers; spec 0 launches and blocks; spec 1 launches and then
+        fails, either as a process failure (`finish`) or as a malformed
+        outcome (`validate`). Ordering is coordinated with events, never with
+        elapsed time:
+
+        - spec 1 does not fail until BOTH spec 0 and spec 1 have been
+          launched (`both_launched`), so spec 0 can never be skipped;
+        - spec 0 is released only after spec 1 has signalled its failure
+          (`spec1_failed`), from the test's own thread.
+
+        The property under test is the pool's: once a failure is signalled,
+        no further matchup is launched, whichever worker becomes free. So
+        exactly two launches ever happen, spec 0's clean result is accepted,
+        and the error names spec 1."""
         import threading
 
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        both_launched = threading.Event()
+        spec1_failed = threading.Event()
         release = threading.Event()
+        lock = threading.Lock()
         launched: list[str] = []
 
         def launch(spec):
-            launched.append(spec.label)  # under the pool's admission lock
+            with lock:
+                launched.append(spec.label)
+                if specs[0].label in launched and specs[1].label in launched:
+                    both_launched.set()
             return spec
 
         def finish(spec):
@@ -1103,50 +1118,36 @@ class MatchupWorkersTests(unittest.TestCase):
                 release.wait(timeout=10)
                 return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(0)}
             if spec.matchup_index == 1:
-                raise PanelRunnerError(f"{spec.label} failed: synthetic")
-            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
-
-        threading.Timer(0.5, release.set).start()
-        consumed: list[str] = []
-        with self.assertRaises(PanelRunnerError) as ctx:
-            _pool(specs, 2, finish, lambda spec, result: consumed.append(spec.label), launch=launch)
-        self.assertIn(specs[1].label, str(ctx.exception))
-        self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
-        # Spec 0 finished cleanly and is accepted before spec 1's error is chosen.
-        self.assertEqual(consumed, [specs[0].label])
-
-    def test_a_malformed_outcome_is_detected_promptly_and_stops_launches(self):
-        """CODEX #66: spec 0 blocks, spec 1's engine exits cleanly but its
-        outcome fails validation, two workers. Validation runs in the worker
-        as soon as the engine exits, so the failure is observed while spec 0
-        is still running and nothing beyond specs 0 and 1 is ever launched."""
-        import threading
-
-        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
-        release = threading.Event()
-        launched: list[str] = []
-
-        def launch(spec):
-            launched.append(spec.label)
-            return spec
-
-        def finish(spec):
-            if spec.matchup_index == 0:
-                release.wait(timeout=10)
+                both_launched.wait(timeout=10)
+                if not fail_in_validate:
+                    spec1_failed.set()
+                    raise PanelRunnerError(f"{spec.label} failed: synthetic process failure")
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
         def validate(spec, result):
-            if spec.matchup_index == 1:
+            if fail_in_validate and spec.matchup_index == 1:
+                spec1_failed.set()
                 raise PanelRunnerError(f"{spec.label}: outcome header mismatch (synthetic)")
             return result
 
-        threading.Timer(0.5, release.set).start()
+        def releaser():
+            spec1_failed.wait(timeout=10)
+            release.set()
+
+        threading.Thread(target=releaser, daemon=True).start()
         accepted: list[str] = []
         with self.assertRaises(PanelRunnerError) as ctx:
             _pool(specs, 2, finish, lambda spec, result: accepted.append(spec.label), launch=launch, validate=validate)
+        self.assertTrue(spec1_failed.is_set())
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
         self.assertEqual(accepted, [specs[0].label])
+
+    def test_no_queued_matchup_starts_after_a_process_failure_signal(self):
+        self._two_worker_failure_case(fail_in_validate=False)
+
+    def test_a_malformed_outcome_is_detected_promptly_and_stops_launches(self):
+        self._two_worker_failure_case(fail_in_validate=True)
 
     def test_lowest_index_failure_wins_when_a_later_matchup_fails_first(self):
         """Two failures: spec 3 fails immediately, spec 1 fails after a

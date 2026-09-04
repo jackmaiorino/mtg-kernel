@@ -902,9 +902,18 @@ def launch_matchup(
 
 def finish_matchup(handle: dict) -> dict:
     """Waits for a launched matchup's engine, closes its logs, and checks
-    its exit; fail-closed on a nonzero exit or a missing outcome file."""
+    its exit; fail-closed on a nonzero exit or a missing outcome file. If the
+    wait itself is interrupted (KeyboardInterrupt, a signal), the engine is
+    killed and reaped before the interruption propagates, exactly as
+    `subprocess.run` did, so no engine outlives the runner."""
+    process = handle["process"]
     try:
-        returncode = handle["process"].wait()
+        try:
+            returncode = process.wait()
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
     finally:
         handle["stdout"].close()
         handle["stderr"].close()
