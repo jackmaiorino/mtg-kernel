@@ -889,7 +889,8 @@ def run_matchup(
 
 class _MatchupAbortedBeforeStartV1(Exception):
     """Internal marker: a queued matchup was skipped because an earlier
-    matchup had already failed. Never reported as the failure itself."""
+    matchup had already failed. Never reported as the failure itself and
+    never allowed to escape this module."""
 
 
 def run_matchups_in_spec_order(
@@ -909,14 +910,22 @@ def run_matchups_in_spec_order(
     `workers > 1` submits every matchup to a bounded thread pool (the threads
     only wait on subprocesses; each engine is its own process with
     `--test-threads=1`) and consumes completed results in spec order as they
-    become available. Failure is fail-closed and PROMPT: the coordinator
-    watches for the first completed future, whatever its index, so a failure
-    is observed as soon as it happens rather than when its turn to be
-    consumed arrives; a failing matchup also raises a shared abort flag from
-    its own worker thread before it returns, so no queued matchup starts
-    after a failure even if the coordinator has not woken yet. Every queued
-    future is then cancelled, every running one is waited for, and the
-    failure with the LOWEST spec index is the one reported, deterministically.
+    become available. Failure is fail-closed and PROMPT:
+
+    - the coordinator waits on the first completed future, whatever its
+      index, so a failure is observed as soon as it happens;
+    - admission is serialized under one lock with the abort flag, so a
+      matchup either starts before the failure was signalled or never
+      starts: the failing worker sets the flag under that lock before it
+      returns, and a worker about to start re-checks it under the same lock;
+    - every queued future is then cancelled, every running one is waited
+      for, and the failure reported is the FIRST IN SPEC ORDER among real
+      failures, where a real failure is either a subprocess error or an
+      outcome that `consume` rejects. Completed lower-index outcomes are
+      validated before any higher-index error is chosen, so the reported
+      failure does not depend on completion timing. Abort markers from
+      skipped matchups are never reported.
+
     No orphaned engine keeps writing under the output directory after the
     runner has reported failure."""
     if workers < 1 or workers > MAX_MATCHUP_WORKERS:
@@ -928,54 +937,74 @@ def run_matchups_in_spec_order(
             consume(spec, run_one(spec))
         return
 
-    abort = threading.Event()
+    admission = threading.Lock()
+    state = {"aborted": False}
 
     def guarded(spec: MatchupSpec) -> dict:
-        if abort.is_set():
-            raise _MatchupAbortedBeforeStartV1(spec.label)
+        with admission:
+            if state["aborted"]:
+                raise _MatchupAbortedBeforeStartV1(spec.label)
         try:
             return run_one(spec)
         except BaseException:
-            abort.set()
+            with admission:
+                state["aborted"] = True
             raise
+
+    futures: list[concurrent.futures.Future] = []
+    position = {"next": 0}
+
+    def signal_abort() -> None:
+        with admission:
+            state["aborted"] = True
+        for future in futures:
+            future.cancel()
 
     def failed(future: concurrent.futures.Future) -> bool:
         return not future.cancelled() and future.exception() is not None
 
+    def resolve_in_spec_order(stop_on_pending: bool) -> None:
+        """Walks futures from the next unconsumed index in spec order:
+        validates and consumes finished successes, raises the first real
+        failure (subprocess error or `consume` rejection), skips abort
+        markers and cancelled futures. With `stop_on_pending` it returns at
+        the first future that is not done yet."""
+        while position["next"] < len(futures):
+            future = futures[position["next"]]
+            if not future.done():
+                if stop_on_pending:
+                    return
+                raise PanelRunnerError("internal: unfinished matchup during failure resolution")
+            if not future.cancelled():
+                error = future.exception()
+                if error is None:
+                    consume(specs[position["next"]], future.result())
+                elif not isinstance(error, _MatchupAbortedBeforeStartV1):
+                    raise error
+            position["next"] += 1
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(guarded, spec) for spec in specs]
+        futures.extend(executor.submit(guarded, spec) for spec in specs)
         pending = set(futures)
-        next_index = 0
         try:
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, return_when=concurrent.futures.FIRST_COMPLETED
                 )
                 if any(failed(future) for future in done):
-                    abort.set()
-                    for future in futures:
-                        future.cancel()
+                    signal_abort()
                     break
-                while next_index < len(futures) and futures[next_index].done():
-                    consume(specs[next_index], futures[next_index].result())
-                    next_index += 1
+                resolve_in_spec_order(stop_on_pending=True)
             else:
                 return
         except BaseException:
-            abort.set()
-            for future in futures:
-                future.cancel()
+            signal_abort()
             raise
-        # A matchup failed. Wait for whatever is still running, then report
-        # the lowest-index real failure; skipped-before-start markers are not
-        # failures.
+        # A matchup failed. Wait for whatever is still running, then walk the
+        # futures in spec order: lower-index outcomes are validated first, so
+        # the first real failure in spec order is the one raised.
         concurrent.futures.wait([future for future in futures if not future.cancelled()])
-        for future in futures:
-            if future.cancelled():
-                continue
-            error = future.exception()
-            if error is not None and not isinstance(error, _MatchupAbortedBeforeStartV1):
-                raise error
+        resolve_in_spec_order(stop_on_pending=False)
         raise PanelRunnerError("a matchup failed but no failure was recorded")
 
 

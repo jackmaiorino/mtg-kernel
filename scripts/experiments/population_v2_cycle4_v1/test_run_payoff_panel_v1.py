@@ -1100,7 +1100,8 @@ class MatchupWorkersTests(unittest.TestCase):
             run_matchups_in_spec_order(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertEqual(sorted(started), sorted([specs[0].label, specs[1].label]))
-        self.assertEqual(consumed, [])
+        # Spec 0 finished cleanly and is validated before spec 1's error is chosen.
+        self.assertEqual(consumed, [specs[0].label])
 
     def test_lowest_index_failure_wins_when_a_later_matchup_fails_first(self):
         """Two failures: spec 3 fails immediately, spec 1 fails after a
@@ -1123,6 +1124,57 @@ class MatchupWorkersTests(unittest.TestCase):
 
         with self.assertRaises(PanelRunnerError) as ctx:
             run_matchups_in_spec_order(specs, 4, run_one, lambda spec, result: None)
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertNotIn(specs[3].label, str(ctx.exception))
+
+    def test_an_abort_marker_never_escapes_and_the_real_failure_is_reported(self):
+        """CODEX P2 (round 2): a skipped matchup finishes as the internal
+        abort marker. Whatever the interleaving, the error raised is the real
+        failure, never the marker, and it is a PanelRunnerError."""
+        from run_payoff_panel_v1 import _MatchupAbortedBeforeStartV1
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+
+        def run_one(spec):
+            import time
+
+            # All four workers admit specs 0..3 at once; the delays only order
+            # their completions, never their admission.
+            if spec.matchup_index == 2:
+                time.sleep(0.02)
+                raise _MatchupAbortedBeforeStartV1(spec.label)
+            if spec.matchup_index == 3:
+                time.sleep(0.05)
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            time.sleep(0.05)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        with self.assertRaises(PanelRunnerError) as ctx:
+            run_matchups_in_spec_order(specs, 4, run_one, lambda spec, result: None)
+        self.assertIn(specs[3].label, str(ctx.exception))
+        self.assertNotIsInstance(ctx.exception, _MatchupAbortedBeforeStartV1)
+
+    def test_a_lower_index_validation_failure_beats_a_faster_higher_index_process_failure(self):
+        """CODEX P2 (round 2): spec 1's engine exits cleanly but its outcome is
+        rejected by `consume`; spec 3's engine fails first. The reported
+        failure is spec 1's validation error, because lower-index outcomes are
+        validated before any higher-index error is chosen."""
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+
+        def run_one(spec):
+            import time
+
+            if spec.matchup_index == 3:
+                raise PanelRunnerError(f"{spec.label} failed: fast synthetic process error")
+            time.sleep(0.2 if spec.matchup_index in (0, 2) else 0.01)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def consume(spec, result):
+            if spec.matchup_index == 1:
+                raise PanelRunnerError(f"{spec.label}: outcome header mismatch (synthetic)")
+
+        with self.assertRaises(PanelRunnerError) as ctx:
+            run_matchups_in_spec_order(specs, 4, run_one, consume)
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertNotIn(specs[3].label, str(ctx.exception))
 
