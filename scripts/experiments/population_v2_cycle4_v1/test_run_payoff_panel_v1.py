@@ -1485,10 +1485,22 @@ class MatchupWorkersTests(unittest.TestCase):
                 raise PanelRunnerError(f"{spec.label} failed: synthetic")
             return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
 
+        abandoned: list[str] = []
         with self.assertRaises(PanelRunnerError) as ctx:
-            _pool(specs, 4, run_one, lambda spec, result: None, launch=launch)
+            _pool(
+                specs,
+                4,
+                run_one,
+                lambda spec, result: None,
+                launch=launch,
+                abandon_one=lambda handle: abandoned.append(handle.label),
+            )
         self.assertIn(specs[3].label, str(ctx.exception))
         self.assertNotIsInstance(ctx.exception, _MatchupAbortedBeforeStartV1)
+        # CODEX #70: a sentinel raised by a callback AFTER registration still
+        # abandons its handle, exactly like any other failure.
+        self.assertIn(specs[2].label, abandoned)
+        self.assertIn(specs[3].label, abandoned)
 
     def test_a_lower_index_validation_failure_beats_a_faster_higher_index_process_failure(self):
         """CODEX P2 (round 2): spec 1's engine exits cleanly but its outcome is

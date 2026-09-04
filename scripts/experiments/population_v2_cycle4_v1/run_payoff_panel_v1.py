@@ -1135,9 +1135,12 @@ def run_matchups_in_spec_order(
                     state["aborted"] = True
                     raise
             result = finish_one(handle)
-        except _MatchupAbortedBeforeStartV1:
-            raise
         except BaseException:
+            # The abort sentinel takes this path too: a legitimate
+            # pre-admission sentinel has an empty owned list and an abort
+            # state that is already true, so the cleanup is a no-op for it,
+            # while a sentinel raised by a callback after registration still
+            # abandons its handle and records the abort (CODEX #70).
             abandon_all(owned)
             with admission:
                 state["aborted"] = True
