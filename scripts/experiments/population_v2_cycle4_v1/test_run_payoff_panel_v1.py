@@ -1093,6 +1093,24 @@ class EngineLifecycleTests(unittest.TestCase):
         self.assertTrue(handle["stderr"].closed)
         self.assertTrue(handle["finished"])
 
+    def test_a_close_failure_on_a_clean_wait_fails_the_matchup(self):
+        """CODEX #69 item 2: a clean wait followed by a failing stdout close
+        is a real failure (an unflushed engine log must not precede canonical
+        publication): both closes are attempted and the close error is the
+        one raised. While an exception is already propagating, close failures
+        stay suppressed (covered by the exact-exception test)."""
+        from run_payoff_panel_v1 import finish_matchup
+
+        process = _FakeEngineProcess()
+        handle = _fake_handle(process, stdout=_FakeLog(close_error=OSError("stdout flush failed")))
+        with self.assertRaises(OSError) as ctx:
+            finish_matchup(handle)
+        self.assertIn("stdout flush failed", str(ctx.exception))
+        self.assertTrue(handle["stdout"].closed)
+        self.assertTrue(handle["stderr"].closed)
+        self.assertTrue(handle["finished"])
+        self.assertFalse(process.killed)
+
     def test_abandon_is_no_throw_whatever_the_handle_holds(self):
         from run_payoff_panel_v1 import abandon_matchup
 

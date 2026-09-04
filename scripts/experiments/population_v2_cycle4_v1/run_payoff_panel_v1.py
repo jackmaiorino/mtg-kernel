@@ -876,11 +876,16 @@ def launch_matchup(
     its admission lock, so a failing matchup and a starting one are
     serialized at the point where the engine process comes into existence.
 
-    Ownership has no gap: the handle is built and handed to `register`
-    before any log is opened or any process created, the logs are stored
-    into it as they open, and the process registers itself into it at the
-    start of its constructor. From then on `abandon_matchup(handle)` can
-    dispose of everything, whatever interrupts the caller and wherever."""
+    Caller-visible ownership has no gap: the handle is built and handed to
+    `register` before any log is opened or any process created, the logs are
+    stored into it as they open, and the process object registers itself
+    into it at the start of its constructor. From then on
+    `abandon_matchup(handle)` disposes of everything the interpreter has
+    given us, whatever interrupts the caller and wherever. The one boundary
+    left is CPython's own: on Windows the OS child is created inside
+    `_winapi.CreateProcess` before `Popen.__init__` stores its handle and
+    pid, and an interruption in that window is beyond any Python caller's
+    reach (`subprocess.run` shares it). Documented, not engineered around."""
     arm_root = output_dir / spec.label
     arm_root.mkdir(parents=True)
     handle: dict = {
@@ -931,17 +936,24 @@ def _terminate_engine_v1(process) -> None:
         pass
 
 
-def _close_engine_logs_v1(handle: dict) -> None:
-    """Closes both log streams; never raises, and a failing first close never
-    prevents the second."""
+def _close_engine_logs_v1(handle: dict) -> BaseException | None:
+    """Closes both log streams, always attempting the second even if the
+    first fails, and RETURNS the first close failure instead of raising it.
+    The caller decides: on a clean finish a close failure is a real failure
+    (an unflushed engine log must not precede canonical publication); while
+    another exception is already propagating, or during abandon, it is
+    suppressed so the original exception is preserved."""
+    first_error: BaseException | None = None
     for key in ("stdout", "stderr"):
         stream = handle.get(key)
         if stream is None:
             continue
         try:
             stream.close()
-        except BaseException:
-            pass
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+    return first_error
 
 
 def finish_matchup(handle: dict) -> dict:
@@ -950,20 +962,25 @@ def finish_matchup(handle: dict) -> dict:
 
     If the wait itself raises (KeyboardInterrupt, a signal, anything), the
     engine is killed and reaped before the original exception propagates,
-    exactly as `subprocess.run` did, so no engine outlives the runner. Every
-    cleanup step (kill, reap, both closes) is no-throw, so the exception
-    that escapes is always the original one. The handle is marked finished
-    either way, so `abandon_matchup` becomes a no-op for it."""
+    exactly as `subprocess.run` did, so no engine outlives the runner. On
+    that path every cleanup step (kill, reap, both closes) is suppressed, so
+    the exception that escapes is always the original one. On a CLEAN wait,
+    a failing log close is a real failure of the matchup: both closes are
+    still attempted, and the first failure is raised, so an unflushed engine
+    log can never precede canonical publication. The handle is marked
+    finished either way, so `abandon_matchup` becomes a no-op for it."""
     process = handle["process"]
     try:
-        try:
-            returncode = process.wait()
-        except BaseException:
-            _terminate_engine_v1(process)
-            raise
-    finally:
+        returncode = process.wait()
+    except BaseException:
         handle["finished"] = True
+        _terminate_engine_v1(process)
         _close_engine_logs_v1(handle)
+        raise
+    handle["finished"] = True
+    close_error = _close_engine_logs_v1(handle)
+    if close_error is not None:
+        raise close_error
     wall_seconds = time.perf_counter() - handle["started"]
     spec = handle["spec"]
     outcome_path = handle["outcome_path"]
@@ -1104,17 +1121,22 @@ def run_matchups_in_spec_order(
 
     def worker(spec: MatchupSpec) -> object:
         owned: list[object] = []
-        with admission:
-            if state["aborted"]:
-                raise _MatchupAbortedBeforeStartV1(spec.label)
-            try:
-                handle = launch_one(spec, owned.append)
-            except BaseException:
-                state["aborted"] = True
-                abandon_all(owned)
-                raise
+        # One ownership scope covers launch through finish, so an exception
+        # anywhere in that interval (including between the admission block
+        # and the finish call) abandons every registered handle; the inner
+        # admission handler additionally records the abort before unlocking.
         try:
+            with admission:
+                if state["aborted"]:
+                    raise _MatchupAbortedBeforeStartV1(spec.label)
+                try:
+                    handle = launch_one(spec, owned.append)
+                except BaseException:
+                    state["aborted"] = True
+                    raise
             result = finish_one(handle)
+        except _MatchupAbortedBeforeStartV1:
+            raise
         except BaseException:
             abandon_all(owned)
             with admission:
@@ -1172,11 +1194,13 @@ def run_matchups_in_spec_order(
             for spec in specs:
                 with admission:
                     try:
-                        future = executor.submit(worker, spec)
+                        futures.append(executor.submit(worker, spec))
                     except BaseException:
+                        # Submit OR the append after it: either way the item
+                        # may be enqueued and untracked, so abort before the
+                        # lock is released.
                         state["aborted"] = True
                         raise
-                    futures.append(future)
             pending = set(futures)
             while pending:
                 done, pending = concurrent.futures.wait(
