@@ -1054,7 +1054,7 @@ class MatchupWorkersTests(unittest.TestCase):
         self.assertEqual(consumed_by_workers[1], consumed_by_workers[4])
         self.assertEqual(consumed_by_workers[1], consumed_by_workers[len(specs)])
 
-    def test_failure_propagates_in_spec_order_and_cancels_pending_matchups(self):
+    def test_failure_is_reported_at_the_lowest_spec_index_and_cancels_pending_matchups(self):
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
         started: list[str] = []
         delays = {index: 0.05 for index in range(len(specs))}
@@ -1064,8 +1064,67 @@ class MatchupWorkersTests(unittest.TestCase):
         with self.assertRaises(PanelRunnerError) as ctx:
             run_matchups_in_spec_order(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
         self.assertIn(specs[2].label, str(ctx.exception))
-        self.assertEqual(consumed, [specs[0].label, specs[1].label])
+        # Whatever was consumed is a prefix of the spec order.
+        self.assertEqual(consumed, [spec.label for spec in specs[: len(consumed)]])
         self.assertLess(len(started), len(specs))
+
+    def test_no_queued_matchup_starts_after_a_failure_signal(self):
+        """CODEX #59: spec 0 blocks, spec 1 fails at once, two workers. The
+        failure must be detected while spec 0 is still running, and the
+        worker freed by spec 1 must not pick up spec 2 (or anything else)
+        from the queue. Only the two matchups that were already running when
+        the failure happened may ever have started."""
+        import threading
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        release = threading.Event()
+        lock = threading.Lock()
+        started: list[str] = []
+
+        def run_one(spec):
+            with lock:
+                started.append(spec.label)
+            if spec.matchup_index == 0:
+                release.wait(timeout=10)
+                return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(0)}
+            if spec.matchup_index == 1:
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        # Release spec 0 only after the failure has had ample time to be
+        # observed and acted on; if cancellation were not prompt, the freed
+        # worker would drain the queue during this window.
+        threading.Timer(0.5, release.set).start()
+        consumed: list[str] = []
+        with self.assertRaises(PanelRunnerError) as ctx:
+            run_matchups_in_spec_order(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertEqual(sorted(started), sorted([specs[0].label, specs[1].label]))
+        self.assertEqual(consumed, [])
+
+    def test_lowest_index_failure_wins_when_a_later_matchup_fails_first(self):
+        """Two failures: spec 3 fails immediately, spec 1 fails after a
+        delay. The reported failure is spec 1's, the lower index, once every
+        running matchup has finished."""
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        started: list[str] = []
+
+        def run_one(spec):
+            import time
+
+            started.append(spec.label)
+            if spec.matchup_index == 1:
+                time.sleep(0.2)
+                raise PanelRunnerError(f"{spec.label} failed: slow synthetic")
+            if spec.matchup_index == 3:
+                raise PanelRunnerError(f"{spec.label} failed: fast synthetic")
+            time.sleep(0.05)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        with self.assertRaises(PanelRunnerError) as ctx:
+            run_matchups_in_spec_order(specs, 4, run_one, lambda spec, result: None)
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertNotIn(specs[3].label, str(ctx.exception))
 
     def test_sequential_path_consumes_each_matchup_before_starting_the_next(self):
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
