@@ -131,23 +131,33 @@ child process is launched, since matchup subprocesses run with
 environment, and evaluation seed without touching a process or the
 filesystem -- safe to run without the executable, store roots, or output
 directory actually existing.
+
+Concurrency. Every matchup is its own engine process with its own
+environment, seed band, and outcome file, so `--matchup-workers N` runs N
+of them at once (default 1, the original one-at-a-time loop). Results are
+consumed in matchup order whatever the completion order, so `panel.json`
+and `bt-rating-input.json` are byte-identical for any N; the worker count
+is an operator setting the wrapper records in its launch manifest and is
+never written into a hashed artifact.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import concurrent.futures
 import itertools
 import json
 import os
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 TEST_NAME = (
     "native_science_loop_v1::windows_science_loop_tests::"
@@ -168,6 +178,12 @@ DEFAULT_GAMES_PER_MATCHUP = 256
 # warning.
 CANONICAL_GAMES_PER_MATCHUP = 256
 MATCHUP_COUNT = 28
+# Matchup subprocesses are independent (own environment, own seed band, own
+# outcome file), so they may run concurrently; the panel document is a pure
+# function of the per-matchup outcomes and is byte-identical for any worker
+# count. Bounded so a typo can never fork hundreds of engines.
+DEFAULT_MATCHUP_WORKERS = 1
+MAX_MATCHUP_WORKERS = 64
 # Matches the Rust contract's own constant (`CYCLE4_REFRESH_MAX_INDEX_V1`):
 # the highest refresh index the campaign ever chains to.
 MAX_REFRESH_INDEX = 16
@@ -835,6 +851,166 @@ def build_bt_input_document(slots: list[dict], panel: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+class _OwnedPopenV1(subprocess.Popen):
+    """A `Popen` that registers itself in its owner's handle at the very
+    start of its own constructor, BEFORE the child is created. Whatever
+    interrupts construction or the caller afterwards, the handle already
+    names the process object, so `abandon_matchup` can kill and reap it."""
+
+    def __init__(self, owner_handle: dict, *args, **kwargs):
+        owner_handle["process"] = self
+        super().__init__(*args, **kwargs)
+
+
+def launch_matchup(
+    executable: Path,
+    repo_root: Path,
+    output_dir: Path,
+    slots: list[dict],
+    locator: dict[int, Path],
+    spec: MatchupSpec,
+    register: Callable[[dict], None] | None = None,
+) -> dict:
+    """Creates the matchup's directory, opens its logs, and STARTS its engine
+    process, nothing more. Kept minimal on purpose: the pool calls it under
+    its admission lock, so a failing matchup and a starting one are
+    serialized at the point where the engine process comes into existence.
+
+    Caller-visible ownership has no gap: the handle is built and handed to
+    `register` before any log is opened or any process created, the logs are
+    stored into it as they open, and the process object registers itself
+    into it at the start of its constructor. From then on
+    `abandon_matchup(handle)` disposes of everything the interpreter has
+    given us, whatever interrupts the caller and wherever. The one boundary
+    left is CPython's own: on Windows the OS child is created inside
+    `_winapi.CreateProcess` before `Popen.__init__` stores its handle and
+    pid, and an interruption in that window is beyond any Python caller's
+    reach (`subprocess.run` shares it). Documented, not engineered around."""
+    arm_root = output_dir / spec.label
+    arm_root.mkdir(parents=True)
+    handle: dict = {
+        "spec": spec,
+        "process": None,
+        "stdout": None,
+        "stderr": None,
+        "outcome_path": arm_root / "outcome.json",
+        "stdout_path": arm_root / "stdout.log",
+        "stderr_path": arm_root / "stderr.log",
+        "started": None,
+        "finished": False,
+    }
+    if register is not None:
+        register(handle)
+    environment = os.environ.copy()
+    for key in H2H_ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    environment.update(matchup_environment(slots, locator, spec, handle["outcome_path"]))
+    command = matchup_command(executable)
+    handle["stdout"] = handle["stdout_path"].open("xb")
+    handle["stderr"] = handle["stderr_path"].open("xb")
+    handle["started"] = time.perf_counter()
+    _OwnedPopenV1(
+        handle,
+        command,
+        cwd=repo_root,
+        env=environment,
+        stdout=handle["stdout"],
+        stderr=handle["stderr"],
+    )
+    return handle
+
+
+def _terminate_engine_v1(process) -> None:
+    """Kills and reaps an engine whose normal wait did not complete. Never
+    raises, whatever the process object's state: the caller is propagating
+    the real exception and nothing here may replace it."""
+    if process is None:
+        return
+    try:
+        process.kill()
+    except BaseException:
+        pass
+    try:
+        process.wait()
+    except BaseException:
+        pass
+
+
+def _close_engine_logs_v1(handle: dict) -> BaseException | None:
+    """Closes both log streams, always attempting the second even if the
+    first fails, and RETURNS the first close failure instead of raising it.
+    The caller decides: on a clean finish a close failure is a real failure
+    (an unflushed engine log must not precede canonical publication); while
+    another exception is already propagating, or during abandon, it is
+    suppressed so the original exception is preserved."""
+    first_error: BaseException | None = None
+    for key in ("stdout", "stderr"):
+        stream = handle.get(key)
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+    return first_error
+
+
+def finish_matchup(handle: dict) -> dict:
+    """Waits for a launched matchup's engine, closes its logs, and checks
+    its exit; fail-closed on a nonzero exit or a missing outcome file.
+
+    If the wait itself raises (KeyboardInterrupt, a signal, anything), the
+    engine is killed and reaped before the original exception propagates,
+    exactly as `subprocess.run` did, so no engine outlives the runner. On
+    that path every cleanup step (kill, reap, both closes) is suppressed, so
+    the exception that escapes is always the original one. On a CLEAN wait,
+    a failing log close is a real failure of the matchup: both closes are
+    still attempted, and the first failure is raised, so an unflushed engine
+    log can never precede canonical publication. The handle is marked
+    finished either way, so `abandon_matchup` becomes a no-op for it."""
+    process = handle["process"]
+    try:
+        returncode = process.wait()
+    except BaseException:
+        handle["finished"] = True
+        _terminate_engine_v1(process)
+        _close_engine_logs_v1(handle)
+        raise
+    handle["finished"] = True
+    close_error = _close_engine_logs_v1(handle)
+    if close_error is not None:
+        raise close_error
+    wall_seconds = time.perf_counter() - handle["started"]
+    spec = handle["spec"]
+    outcome_path = handle["outcome_path"]
+    if returncode != 0 or not outcome_path.is_file():
+        raise PanelRunnerError(
+            f"{spec.label} failed: exit_code={returncode} "
+            f"stderr={handle['stderr_path']} stdout={handle['stdout_path']}"
+        )
+    return {
+        "outcome_path": outcome_path,
+        "wall_seconds": wall_seconds,
+        "outcome_sha256": sha256_file(outcome_path),
+    }
+
+
+def abandon_matchup(handle: dict) -> None:
+    """Disposes of a registered matchup handle that `finish_matchup` never
+    completed for: kill and reap whatever process registered itself, close
+    whatever logs opened. Idempotent and genuinely no-throw; a finished
+    handle is left alone."""
+    try:
+        if handle.get("finished"):
+            return
+        handle["finished"] = True
+        _terminate_engine_v1(handle.get("process"))
+        _close_engine_logs_v1(handle)
+    except BaseException:
+        pass
+
+
 def run_matchup(
     executable: Path,
     repo_root: Path,
@@ -843,32 +1019,213 @@ def run_matchup(
     locator: dict[int, Path],
     spec: MatchupSpec,
 ) -> dict:
-    arm_root = output_dir / spec.label
-    arm_root.mkdir(parents=True)
-    outcome_path = arm_root / "outcome.json"
-    stdout_path = arm_root / "stdout.log"
-    stderr_path = arm_root / "stderr.log"
-    environment = os.environ.copy()
-    for key in H2H_ENVIRONMENT_KEYS:
-        environment.pop(key, None)
-    environment.update(matchup_environment(slots, locator, spec, outcome_path))
-    command = matchup_command(executable)
-    started = time.perf_counter()
-    with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
-        completed = subprocess.run(
-            command, cwd=repo_root, env=environment, stdout=stdout, stderr=stderr
+    """One matchup from launch to checked exit: the sequential composition of
+    `launch_matchup` and `finish_matchup`, with every registered handle
+    abandoned if anything interrupts the composition."""
+    owned: list[dict] = []
+    try:
+        handle = launch_matchup(
+            executable, repo_root, output_dir, slots, locator, spec, register=owned.append
         )
-    wall_seconds = time.perf_counter() - started
-    if completed.returncode != 0 or not outcome_path.is_file():
+        return finish_matchup(handle)
+    except BaseException:
+        for handle in owned:
+            abandon_matchup(handle)
+        raise
+
+
+class _MatchupAbortedBeforeStartV1(Exception):
+    """Internal marker: a queued matchup was skipped because an earlier
+    matchup had already failed. Never reported as the failure itself and
+    never allowed to escape this module."""
+
+
+def run_matchups_in_spec_order(
+    specs: list[MatchupSpec],
+    workers: int,
+    *,
+    launch_one: Callable[[MatchupSpec, Callable[[object], None]], object],
+    finish_one: Callable[[object], dict],
+    validate: Callable[[MatchupSpec, dict], object],
+    accept: Callable[[MatchupSpec, object], None],
+    abandon_one: Callable[[object], None] | None = None,
+    executor_factory: Callable[[int], concurrent.futures.Executor] | None = None,
+) -> None:
+    """Runs every matchup as launch -> finish -> validate, and hands the
+    validated value of each to `accept` in SPEC order regardless of
+    completion order, so everything downstream (the summaries, the
+    cross-matchup seed-reuse check, the outcome hashes, the panel document)
+    is independent of `workers`.
+
+    `launch_one(spec, register)` starts a matchup's engine and returns a
+    handle; it must call `register(handle)` as soon as a disposable handle
+    exists, BEFORE creating the process, so that ownership has no gap.
+    `finish_one` waits for the engine and checks its exit; `validate` is the
+    PURE per-matchup check of the produced outcome (it may raise, it must
+    not touch shared state); `accept` applies the ordered, shared side
+    effects; `abandon_one` (optional, no-throw) disposes of every registered
+    handle if anything raises from inside `launch_one` after registration
+    through the end of `finish_one`; `executor_factory` (optional, tests)
+    builds the thread pool.
+
+    `workers == 1` is the plain sequential loop: no thread pool at all, one
+    subprocess at a time, each accepted before the next is launched.
+
+    `workers > 1` submits every matchup to a bounded thread pool (the threads
+    only wait on subprocesses; each engine is its own process with
+    `--test-threads=1`). Failure is fail-closed and PROMPT:
+
+    - a worker runs `validate` on its own matchup as soon as the engine
+      exits, so a malformed outcome is a failure the moment it exists, not
+      when its turn to be accepted arrives;
+    - the coordinator waits on the first completed future, whatever its
+      index, so any failure (process or validation) is observed at once;
+    - admission and `launch_one` run under ONE lock, the same lock a failing
+      worker takes to raise the abort flag, so a matchup's engine process
+      either exists before the failure was signalled or is never created;
+    - `executor.submit` runs under that same lock, and a failing submit
+      raises the abort flag before the lock is released, so a work item the
+      executor enqueued but whose future it never returned cannot pass
+      admission and is skipped exactly like a cancelled one;
+    - every queued future is then cancelled, every running one is waited
+      for, and the failure reported is the FIRST IN SPEC ORDER among real
+      failures (process or validation), independent of completion timing;
+      abort markers from skipped matchups are never reported.
+
+    No orphaned engine keeps writing under the output directory after the
+    runner has reported failure."""
+    if workers < 1 or workers > MAX_MATCHUP_WORKERS:
         raise PanelRunnerError(
-            f"{spec.label} failed: exit_code={completed.returncode} "
-            f"stderr={stderr_path} stdout={stdout_path}"
+            f"matchup workers must be within 1..{MAX_MATCHUP_WORKERS}, got {workers}"
         )
-    return {
-        "outcome_path": outcome_path,
-        "wall_seconds": wall_seconds,
-        "outcome_sha256": sha256_file(outcome_path),
-    }
+    abandon = abandon_one or (lambda handle: None)
+
+    def abandon_all(owned: list[object]) -> None:
+        for handle in owned:
+            abandon(handle)
+
+    if workers == 1:
+        for spec in specs:
+            owned: list[object] = []
+            try:
+                handle = launch_one(spec, owned.append)
+                result = finish_one(handle)
+            except BaseException:
+                abandon_all(owned)
+                raise
+            accept(spec, validate(spec, result))
+        return
+
+    admission = threading.Lock()
+    state = {"aborted": False}
+
+    def worker(spec: MatchupSpec) -> object:
+        owned: list[object] = []
+        # One ownership scope covers launch through finish, so an exception
+        # anywhere in that interval (including between the admission block
+        # and the finish call) abandons every registered handle; the inner
+        # admission handler additionally records the abort before unlocking.
+        try:
+            with admission:
+                if state["aborted"]:
+                    raise _MatchupAbortedBeforeStartV1(spec.label)
+                try:
+                    handle = launch_one(spec, owned.append)
+                except BaseException:
+                    state["aborted"] = True
+                    raise
+            result = finish_one(handle)
+        except BaseException:
+            # Record the abort FIRST, so no other worker can pass admission
+            # while a slow kill or reap runs below; then abandon. The abort
+            # sentinel takes this path too: a legitimate pre-admission
+            # sentinel has an empty owned list and an abort state that is
+            # already true, so the cleanup is a no-op for it, while a sentinel
+            # raised by a callback after registration still abandons its
+            # handle and records the abort (CODEX #70).
+            with admission:
+                state["aborted"] = True
+            abandon_all(owned)
+            raise
+        try:
+            return validate(spec, result)
+        except BaseException:
+            with admission:
+                state["aborted"] = True
+            raise
+
+    futures: list[concurrent.futures.Future] = []
+    position = {"next": 0}
+
+    def signal_abort() -> None:
+        with admission:
+            state["aborted"] = True
+        for future in futures:
+            future.cancel()
+
+    def failed(future: concurrent.futures.Future) -> bool:
+        return not future.cancelled() and future.exception() is not None
+
+    def resolve_in_spec_order(stop_on_pending: bool) -> None:
+        """Walks futures from the next unaccepted index in spec order:
+        accepts finished successes, raises the first real failure (process
+        or validation), skips abort markers and cancelled futures. With
+        `stop_on_pending` it returns at the first future not done yet."""
+        while position["next"] < len(futures):
+            future = futures[position["next"]]
+            if not future.done():
+                if stop_on_pending:
+                    return
+                raise PanelRunnerError("internal: unfinished matchup during failure resolution")
+            if not future.cancelled():
+                error = future.exception()
+                if error is None:
+                    accept(specs[position["next"]], future.result())
+                elif not isinstance(error, _MatchupAbortedBeforeStartV1):
+                    raise error
+            position["next"] += 1
+
+    make_executor = executor_factory or concurrent.futures.ThreadPoolExecutor
+    with make_executor(workers) as executor:
+        try:
+            # Submission is inside the fail-closed path AND serialized with
+            # admission: each submit holds the admission lock, so a work item
+            # the executor enqueued cannot pass admission until the submit
+            # has returned its future; if the submit raises instead, the
+            # abort flag is raised before the lock is released, so that
+            # unreturned item is skipped exactly like a cancelled one. Every
+            # tracked future is then cancelled, running work is waited for by
+            # the executor's exit, and the scheduling error propagates.
+            for spec in specs:
+                with admission:
+                    try:
+                        futures.append(executor.submit(worker, spec))
+                    except BaseException:
+                        # Submit OR the append after it: either way the item
+                        # may be enqueued and untracked, so abort before the
+                        # lock is released.
+                        state["aborted"] = True
+                        raise
+            pending = set(futures)
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                if any(failed(future) for future in done):
+                    signal_abort()
+                    break
+                resolve_in_spec_order(stop_on_pending=True)
+            else:
+                return
+        except BaseException:
+            signal_abort()
+            raise
+        # A matchup failed. Wait for whatever is still running, then walk the
+        # futures in spec order: every completed future is already validated,
+        # so the first exception met is the first real failure in spec order.
+        concurrent.futures.wait([future for future in futures if not future.cancelled()])
+        resolve_in_spec_order(stop_on_pending=False)
+        raise PanelRunnerError("a matchup failed but no failure was recorded")
 
 
 def run(args: argparse.Namespace) -> Path | None:
@@ -898,28 +1255,41 @@ def run(args: argparse.Namespace) -> Path | None:
         return None
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    executable = args.executable.resolve()
+    repo_root = args.repo_root.resolve()
     summaries = []
     outcome_hashes = []
     all_seeds: set[int] = set()
-    for spec in specs:
-        result = run_matchup(
-            args.executable.resolve(),
-            args.repo_root.resolve(),
-            output_dir,
-            slots,
-            locator,
-            spec,
-        )
+
+    def validate(spec: MatchupSpec, result: dict) -> dict:
+        # Pure per-matchup validation; runs in the worker the moment its
+        # engine exits, so a malformed outcome fails the panel promptly.
         outcome = load_json(result["outcome_path"])
         summary = summarize_outcome(
             outcome, spec, slots[spec.lower_slot], slots[spec.higher_slot]
         )
-        for seed in summary["pair_environment_seeds"]:
+        return {"summary": summary, "outcome_sha256": result["outcome_sha256"]}
+
+    def accept(spec: MatchupSpec, validated: dict) -> None:
+        # Cross-matchup state, applied strictly in spec order.
+        for seed in validated["summary"]["pair_environment_seeds"]:
             if seed in all_seeds:
                 raise PanelRunnerError(f"pair environment seed {seed} reused across matchups")
             all_seeds.add(seed)
-        summaries.append(summary)
-        outcome_hashes.append(result["outcome_sha256"])
+        summaries.append(validated["summary"])
+        outcome_hashes.append(validated["outcome_sha256"])
+
+    run_matchups_in_spec_order(
+        specs,
+        args.matchup_workers,
+        launch_one=lambda matchup, register: launch_matchup(
+            executable, repo_root, output_dir, slots, locator, matchup, register=register
+        ),
+        finish_one=finish_matchup,
+        validate=validate,
+        accept=accept,
+        abandon_one=abandon_matchup,
+    )
 
     expected_pair_count = sum(spec.pair_count for spec in specs)
     if len(all_seeds) != expected_pair_count:
@@ -977,12 +1347,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument(
+        "--matchup-workers",
+        type=int,
+        default=DEFAULT_MATCHUP_WORKERS,
+        help="how many matchup subprocesses run at once (1..64; default 1). "
+        "Matchups are independent processes, so the panel document is "
+        "byte-identical for any value; the wrapper records the value in its "
+        "launch manifest, never in the panel",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print every matchup's exact command/environment/seed and exit "
         "without touching a process or the filesystem",
     )
     args = parser.parse_args(argv)
+    if not 1 <= args.matchup_workers <= MAX_MATCHUP_WORKERS:
+        parser.error(
+            f"--matchup-workers={args.matchup_workers} is outside 1..{MAX_MATCHUP_WORKERS}"
+        )
     if not args.dry_run and args.games_per_matchup != CANONICAL_GAMES_PER_MATCHUP:
         parser.error(
             f"--games-per-matchup={args.games_per_matchup} is not allowed outside "

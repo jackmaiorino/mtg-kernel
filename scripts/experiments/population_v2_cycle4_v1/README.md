@@ -12,7 +12,7 @@ Files here:
 | `run-cycle4-arm.ps1` | The wrapper. One invocation drives one arm through the interval loop, or runs the CONTROL preflight ladder. |
 | `common.ps1` | Shared helpers. Dot-sources `../regularized_continuation_retest_v1/common.ps1` and shadows `Get-FileHash` with a self-contained .NET SHA-256. |
 | `run-cycle4-arm-tests.ps1` | Dry-run tests over a synthetic campaign. Launches nothing. |
-| `run_payoff_panel_v1.py` | Round C: the 28-matchup payoff panel runner. |
+| `run_payoff_panel_v1.py` | Round C: the 28-matchup payoff panel runner. Each matchup is its own engine process; `--matchup-workers N` (wrapper `-PanelMatchupWorkers`, default 1) runs N at once, and the panel bytes are the same for any N. |
 | `bt_rating_v1.py` | Round C: the BT rating derived metric. |
 
 ## Operator inputs

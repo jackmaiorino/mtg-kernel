@@ -20,6 +20,9 @@ import unittest
 from pathlib import Path
 
 from run_payoff_panel_v1 import (
+    DEFAULT_MATCHUP_WORKERS,
+    MAX_MATCHUP_WORKERS,
+    run_matchups_in_spec_order,
     MANIFEST_SCHEMA,
     OUTCOME_SCHEMA,
     SLOT_COUNT,
@@ -979,6 +982,694 @@ class OutputDirResolutionTests(unittest.TestCase):
             expected_absolute_fragment = str(tmp_path / "relative-output")
             self.assertIn(expected_absolute_fragment, buffer.getvalue())
             self.assertNotIn("H2H_OUTCOME_JSON=relative-output", buffer.getvalue())
+
+
+def _pool(specs, workers, run_one, consume, launch=None, validate=None, **extra):
+    """Adapter for run_one-style fakes: by default the handle is the spec
+    itself, `run_one` plays finish, validation is the identity, and
+    `consume` plays accept. Extra keywords reach the helper unchanged."""
+    one_argument_launch = launch or (lambda spec: spec)
+
+    def launch_one(spec, register):
+        handle = one_argument_launch(spec)
+        register(handle)
+        return handle
+
+    return run_matchups_in_spec_order(
+        specs,
+        workers,
+        launch_one=launch_one,
+        finish_one=run_one,
+        validate=validate or (lambda spec, result: result),
+        accept=consume,
+        **extra,
+    )
+
+
+class _FakeEngineProcess:
+    """A stand-in for `subprocess.Popen` whose first wait raises the given
+    exception and which records kill and wait calls."""
+
+    def __init__(self, wait_error: BaseException | None = None, kill_error: BaseException | None = None):
+        self.wait_error = wait_error
+        self.kill_error = kill_error
+        self.wait_calls = 0
+        self.killed = False
+
+    def wait(self):
+        self.wait_calls += 1
+        if self.wait_calls == 1 and self.wait_error is not None:
+            raise self.wait_error
+        return 0
+
+    def kill(self):
+        self.killed = True
+        if self.kill_error is not None:
+            raise self.kill_error
+
+
+class _FakeLog:
+    def __init__(self, close_error: BaseException | None = None):
+        self.closed = False
+        self.close_error = close_error
+
+    def close(self):
+        self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
+
+
+def _fake_handle(process, stdout=None, stderr=None):
+    from run_payoff_panel_v1 import build_matchup_specs as _specs
+
+    spec = _specs(base_seed=42, games_per_matchup=8)[0]
+    return {
+        "spec": spec,
+        "process": process,
+        "stdout": stdout or _FakeLog(),
+        "stderr": stderr or _FakeLog(),
+        "outcome_path": Path("never-written.json"),
+        "stdout_path": Path("stdout.log"),
+        "stderr_path": Path("stderr.log"),
+        "started": 0.0,
+        "finished": False,
+    }
+
+
+class EngineLifecycleTests(unittest.TestCase):
+    """CODEX #67: an interrupted wait must kill and reap the engine without
+    replacing the original exception, and both logs must close even if the
+    first close raises; a launched engine that `finish_matchup` never owned
+    is disposed of by `abandon_matchup`."""
+
+    def test_interrupted_wait_kills_reaps_and_closes_both_logs(self):
+        from run_payoff_panel_v1 import finish_matchup
+
+        process = _FakeEngineProcess(wait_error=KeyboardInterrupt())
+        handle = _fake_handle(process)
+        with self.assertRaises(KeyboardInterrupt):
+            finish_matchup(handle)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, 2)
+        self.assertTrue(handle["stdout"].closed)
+        self.assertTrue(handle["stderr"].closed)
+        self.assertTrue(handle["finished"])
+
+    def test_cleanup_failures_never_replace_the_original_exception(self):
+        """CODEX #68 item 2: wait raises KeyboardInterrupt, kill raises a
+        non-OSError, and the first close raises. The exception that escapes
+        is EXACTLY the interrupt; the reap still happens; both logs close."""
+        from run_payoff_panel_v1 import finish_matchup
+
+        interrupt = KeyboardInterrupt("original")
+        process = _FakeEngineProcess(wait_error=interrupt, kill_error=RuntimeError("kill exploded"))
+        handle = _fake_handle(process, stdout=_FakeLog(close_error=OSError("stdout close failed")))
+        with self.assertRaises(KeyboardInterrupt) as ctx:
+            finish_matchup(handle)
+        self.assertIs(ctx.exception, interrupt)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, 2)
+        self.assertTrue(handle["stdout"].closed)
+        self.assertTrue(handle["stderr"].closed)
+        self.assertTrue(handle["finished"])
+
+    def test_a_close_failure_on_a_clean_wait_fails_the_matchup(self):
+        """CODEX #69 item 2: a clean wait followed by a failing stdout close
+        is a real failure (an unflushed engine log must not precede canonical
+        publication): both closes are attempted and the close error is the
+        one raised. While an exception is already propagating, close failures
+        stay suppressed (covered by the exact-exception test)."""
+        from run_payoff_panel_v1 import finish_matchup
+
+        process = _FakeEngineProcess()
+        handle = _fake_handle(process, stdout=_FakeLog(close_error=OSError("stdout flush failed")))
+        with self.assertRaises(OSError) as ctx:
+            finish_matchup(handle)
+        self.assertIn("stdout flush failed", str(ctx.exception))
+        self.assertTrue(handle["stdout"].closed)
+        self.assertTrue(handle["stderr"].closed)
+        self.assertTrue(handle["finished"])
+        self.assertFalse(process.killed)
+
+    def test_abandon_is_no_throw_whatever_the_handle_holds(self):
+        from run_payoff_panel_v1 import abandon_matchup
+
+        # Nothing launched yet: only the dict exists.
+        bare = {"finished": False}
+        abandon_matchup(bare)
+        self.assertTrue(bare["finished"])
+        # Process and logs that all explode on cleanup.
+        process = _FakeEngineProcess(wait_error=RuntimeError("wait exploded"), kill_error=RuntimeError("kill exploded"))
+        handle = _fake_handle(
+            process,
+            stdout=_FakeLog(close_error=OSError("a")),
+            stderr=_FakeLog(close_error=OSError("b")),
+        )
+        abandon_matchup(handle)  # must not raise
+        self.assertTrue(process.killed)
+        self.assertTrue(handle["stdout"].closed and handle["stderr"].closed)
+
+    def test_a_failed_real_launch_leaves_a_registered_disposable_handle(self):
+        """CODEX #68 item 1: the handle is registered before any log opens or
+        any process is created, and the process registers itself at the start
+        of its constructor. A launch whose Popen fails therefore still leaves
+        a registered handle whose logs are open and whose process slot names
+        the failed object; `abandon_matchup` disposes of it without raising."""
+        from run_payoff_panel_v1 import abandon_matchup, launch_matchup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            slots = synthetic_slots()
+            locator = {index: tmp_path / f"slot-{index}" for index in range(SLOT_COUNT)}
+            spec = build_matchup_specs(base_seed=42, games_per_matchup=8)[0]
+            registered: list[dict] = []
+            import unittest.mock
+            import run_payoff_panel_v1 as module
+
+            with unittest.mock.patch.object(module, "matchup_environment", lambda *args: {}):
+                with self.assertRaises(OSError):
+                    launch_matchup(
+                        tmp_path / "no-such-engine.exe",
+                        tmp_path,
+                        tmp_path / "out",
+                        slots,
+                        locator,
+                        spec,
+                        register=registered.append,
+                    )
+            self.assertEqual(len(registered), 1)
+            handle = registered[0]
+            self.assertIsNotNone(handle["process"])
+            self.assertFalse(handle["stdout"].closed)
+            abandon_matchup(handle)
+            self.assertTrue(handle["stdout"].closed)
+            self.assertTrue(handle["stderr"].closed)
+            self.assertTrue(handle["finished"])
+            abandon_matchup(handle)  # idempotent
+
+    def test_pool_abandons_a_handle_registered_by_a_launch_that_then_raises(self):
+        """The ownership interval inside launch_one after registration: the
+        fake registers a handle (as if the process were created) and then
+        raises. The pool abandons that handle, on both paths."""
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+
+        def launch_one(spec, register):
+            handle = {"label": spec.label}
+            register(handle)
+            if spec.matchup_index == 1:
+                raise MemoryError("synthetic interruption after the process was created")
+            return handle
+
+        def finish_one(handle):
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(0)}
+
+        for workers in (1, 3):
+            abandoned: list[str] = []
+            with self.assertRaises(MemoryError):
+                run_matchups_in_spec_order(
+                    specs,
+                    workers,
+                    launch_one=launch_one,
+                    finish_one=finish_one,
+                    validate=lambda spec, result: result,
+                    accept=lambda spec, value: None,
+                    abandon_one=lambda handle: abandoned.append(handle["label"]),
+                )
+            self.assertIn(specs[1].label, abandoned)
+
+    def test_abandon_disposes_an_unfinished_engine_once(self):
+        from run_payoff_panel_v1 import abandon_matchup, finish_matchup
+
+        process = _FakeEngineProcess()
+        handle = _fake_handle(process)
+        abandon_matchup(handle)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, 1)
+        self.assertTrue(handle["stdout"].closed and handle["stderr"].closed)
+        abandon_matchup(handle)  # idempotent
+        self.assertEqual(process.wait_calls, 1)
+        # A finished handle is left alone.
+        finished = _fake_handle(_FakeEngineProcess())
+        finished["finished"] = True
+        abandon_matchup(finished)
+        self.assertFalse(finished["process"].killed)
+
+    def test_pool_abandons_a_handle_when_finish_raises(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        abandoned: list[str] = []
+
+        def finish(spec):
+            if spec.matchup_index == 1:
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        for workers in (1, 3):
+            abandoned.clear()
+            with self.assertRaises(PanelRunnerError):
+                _pool(specs, workers, finish, lambda spec, result: None, abandon_one=lambda handle: abandoned.append(handle.label))
+            self.assertIn(specs[1].label, abandoned)
+
+
+class MatchupWorkersTests(unittest.TestCase):
+    """Matchups are independent engine processes, so running several at once
+    may change nothing but wall time. The ordering helper is exercised with
+    fake matchups whose completion order is deliberately scrambled, so the
+    order-independence claim is tested rather than assumed."""
+
+    @staticmethod
+    def _fake_runner(delays: dict[int, float], started: list[str], fail_label: str | None = None):
+        import threading
+        import time
+
+        lock = threading.Lock()
+        completion_order: list[str] = []
+
+        def run_one(spec):
+            with lock:
+                started.append(spec.label)
+            time.sleep(delays.get(spec.matchup_index, 0.0))
+            if spec.label == fail_label:
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            with lock:
+                completion_order.append(spec.label)
+            return {
+                "outcome_path": None,
+                "wall_seconds": 0.0,
+                "outcome_sha256": hash_tag(spec.matchup_index),
+            }
+
+        return run_one, completion_order
+
+    def test_parse_args_default_and_bounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(parse_args(_base_cli_args(tmp)).matchup_workers, DEFAULT_MATCHUP_WORKERS)
+            self.assertEqual(DEFAULT_MATCHUP_WORKERS, 1)
+            args = parse_args(_base_cli_args(tmp) + ["--matchup-workers", "12"])
+            self.assertEqual(args.matchup_workers, 12)
+            for bad in ("0", str(MAX_MATCHUP_WORKERS + 1), "-3"):
+                with self.assertRaises(SystemExit) as ctx:
+                    parse_args(_base_cli_args(tmp) + ["--matchup-workers", bad])
+                self.assertEqual(ctx.exception.code, 2)
+
+    def test_helper_rejects_out_of_range_workers(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        for workers in (0, MAX_MATCHUP_WORKERS + 1):
+            with self.assertRaises(PanelRunnerError):
+                _pool(specs, workers, lambda spec: {}, lambda spec, result: None)
+
+    def test_results_are_consumed_in_spec_order_for_any_worker_count(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        expected_order = [spec.label for spec in specs]
+        consumed_by_workers: dict[int, list[tuple[str, str]]] = {}
+        # Reverse delays under a pool as wide as the panel: the LAST matchup
+        # finishes first, so consumption order is only right if the helper
+        # orders by spec, not by completion.
+        reverse_delays = {spec.matchup_index: (len(specs) - spec.matchup_index) * 0.02 for spec in specs}
+        for workers, delays in ((1, {}), (4, {index: 0.005 * (index % 3) for index in range(len(specs))}), (len(specs), reverse_delays)):
+            started: list[str] = []
+            run_one, completion_order = self._fake_runner(delays, started)
+            consumed: list[tuple[str, str]] = []
+            _pool(specs, workers, run_one, lambda spec, result: consumed.append((spec.label, result["outcome_sha256"]))
+            )
+            self.assertEqual([label for label, _ in consumed], expected_order)
+            self.assertEqual(sorted(started), sorted(expected_order))
+            consumed_by_workers[workers] = consumed
+            if workers == len(specs):
+                self.assertNotEqual(completion_order, expected_order)
+        self.assertEqual(consumed_by_workers[1], consumed_by_workers[4])
+        self.assertEqual(consumed_by_workers[1], consumed_by_workers[len(specs)])
+
+    def test_failure_is_reported_at_the_lowest_spec_index_and_cancels_pending_matchups(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        started: list[str] = []
+        delays = {index: 0.05 for index in range(len(specs))}
+        delays[2] = 0.0
+        run_one, _ = self._fake_runner(delays, started, fail_label=specs[2].label)
+        consumed: list[str] = []
+        with self.assertRaises(PanelRunnerError) as ctx:
+            _pool(specs, 2, run_one, lambda spec, result: consumed.append(spec.label))
+        self.assertIn(specs[2].label, str(ctx.exception))
+        # Whatever was consumed is a prefix of the spec order.
+        self.assertEqual(consumed, [spec.label for spec in specs[: len(consumed)]])
+        self.assertLess(len(started), len(specs))
+
+    def _two_worker_failure_case(self, fail_in_validate: bool) -> None:
+        """Shared body for the two prompt-failure regressions (CODEX #59, #66).
+        Two workers; spec 0 launches and blocks; spec 1 launches and then
+        fails, either as a process failure (`finish`) or as a malformed
+        outcome (`validate`). Ordering is coordinated with events, never with
+        elapsed time:
+
+        - spec 1 does not fail until BOTH spec 0 and spec 1 have been
+          launched (`both_launched`), so spec 0 can never be skipped;
+        - spec 0 is released only after the POOL has recorded the abort:
+          the pool cancels its tracked futures only after raising the abort
+          flag under the admission lock, so the first observed `cancel()` on
+          a tracked future (seen through the injected executor) is a
+          synchronization point that happens-after the abort is recorded
+          (CODEX review of 176c0337: an event set just before raising was
+          not, and let spec 0's worker admit spec 2 first).
+
+        The property under test is the pool's: once a failure is recorded,
+        no further matchup is launched, whichever worker becomes free. So
+        exactly two launches ever happen, spec 0's clean result is accepted,
+        and the error names spec 1."""
+        import concurrent.futures
+        import threading
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        both_launched = threading.Event()
+        spec1_failed = threading.Event()
+        abort_recorded = threading.Event()
+        release = threading.Event()
+        lock = threading.Lock()
+        launched: list[str] = []
+        waits: dict[str, bool] = {}
+
+        class ObservingExecutor(concurrent.futures.ThreadPoolExecutor):
+            """Wraps each tracked future's `cancel` so the test can observe
+            the pool's abort, which precedes every cancel."""
+
+            def submit(self, fn, *args, **kwargs):
+                future = super().submit(fn, *args, **kwargs)
+                original_cancel = future.cancel
+
+                def cancel():
+                    abort_recorded.set()
+                    return original_cancel()
+
+                future.cancel = cancel
+                return future
+
+        def launch(spec):
+            with lock:
+                launched.append(spec.label)
+                if specs[0].label in launched and specs[1].label in launched:
+                    both_launched.set()
+            return spec
+
+        def finish(spec):
+            if spec.matchup_index == 0:
+                release.wait(timeout=10)
+                return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(0)}
+            if spec.matchup_index == 1:
+                waits["both_launched_before_failure"] = both_launched.wait(timeout=10)
+                if not fail_in_validate:
+                    spec1_failed.set()
+                    raise PanelRunnerError(f"{spec.label} failed: synthetic process failure")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def validate(spec, result):
+            if fail_in_validate and spec.matchup_index == 1:
+                spec1_failed.set()
+                raise PanelRunnerError(f"{spec.label}: outcome header mismatch (synthetic)")
+            return result
+
+        def releaser():
+            # The release condition IS the observed abort: a timed-out wait
+            # must fail the test, never release spec 0 (a later cancel could
+            # otherwise set the event before the final assertion).
+            waits["abort_recorded_before_release"] = abort_recorded.wait(timeout=10)
+            release.set()
+
+        releaser_thread = threading.Thread(target=releaser, daemon=True)
+        releaser_thread.start()
+        accepted: list[str] = []
+        with self.assertRaises(PanelRunnerError) as ctx:
+            _pool(
+                specs,
+                2,
+                finish,
+                lambda spec, result: accepted.append(spec.label),
+                launch=launch,
+                validate=validate,
+                executor_factory=ObservingExecutor,
+            )
+        releaser_thread.join(timeout=10)
+        self.assertTrue(waits.get("both_launched_before_failure"), "spec 1 failed before both matchups had launched")
+        self.assertTrue(waits.get("abort_recorded_before_release"), "spec 0 was released before the pool recorded the abort")
+        self.assertTrue(spec1_failed.is_set())
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
+        self.assertEqual(accepted, [specs[0].label])
+
+    def test_no_queued_matchup_starts_after_a_process_failure_signal(self):
+        self._two_worker_failure_case(fail_in_validate=False)
+
+    def test_a_malformed_outcome_is_detected_promptly_and_stops_launches(self):
+        self._two_worker_failure_case(fail_in_validate=True)
+
+    def test_lowest_index_failure_wins_when_a_later_matchup_fails_first(self):
+        """Two failures: spec 3 fails immediately, spec 1 fails after a
+        delay. The reported failure is spec 1's, the lower index, once every
+        running matchup has finished."""
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        started: list[str] = []
+
+        import threading
+
+        spec1_launched = threading.Event()
+
+        def launch(spec):
+            started.append(spec.label)
+            if spec.matchup_index == 1:
+                spec1_launched.set()
+            return spec
+
+        def run_one(spec):
+            import time
+
+            if spec.matchup_index == 1:
+                time.sleep(0.2)
+                raise PanelRunnerError(f"{spec.label} failed: slow synthetic")
+            if spec.matchup_index == 3:
+                # Fail only once spec 1 is launched, so both are real failures.
+                spec1_launched.wait(timeout=10)
+                raise PanelRunnerError(f"{spec.label} failed: fast synthetic")
+            time.sleep(0.05)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        with self.assertRaises(PanelRunnerError) as ctx:
+            _pool(specs, 4, run_one, lambda spec, result: None, launch=launch)
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertNotIn(specs[3].label, str(ctx.exception))
+
+    def test_an_abort_marker_never_escapes_and_the_real_failure_is_reported(self):
+        """CODEX P2 (round 2): a skipped matchup finishes as the internal
+        abort marker. Whatever the interleaving, the error raised is the real
+        failure, never the marker, and it is a PanelRunnerError."""
+        from run_payoff_panel_v1 import _MatchupAbortedBeforeStartV1
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+
+        import threading
+
+        four_launched = threading.Event()
+        launched: list[str] = []
+        lock = threading.Lock()
+
+        def launch(spec):
+            with lock:
+                launched.append(spec.label)
+                if len(launched) == 4:
+                    four_launched.set()
+            return spec
+
+        def run_one(spec):
+            # Nothing fails until all four workers hold a launched matchup, so
+            # the marker at spec 2 and the real failure at spec 3 both exist.
+            four_launched.wait(timeout=10)
+            if spec.matchup_index == 2:
+                raise _MatchupAbortedBeforeStartV1(spec.label)
+            if spec.matchup_index == 3:
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        abandoned: list[str] = []
+        with self.assertRaises(PanelRunnerError) as ctx:
+            _pool(
+                specs,
+                4,
+                run_one,
+                lambda spec, result: None,
+                launch=launch,
+                abandon_one=lambda handle: abandoned.append(handle.label),
+            )
+        self.assertIn(specs[3].label, str(ctx.exception))
+        self.assertNotIsInstance(ctx.exception, _MatchupAbortedBeforeStartV1)
+        # CODEX #70: a sentinel raised by a callback AFTER registration still
+        # abandons its handle, exactly like any other failure.
+        self.assertIn(specs[2].label, abandoned)
+        self.assertIn(specs[3].label, abandoned)
+
+    def test_a_lower_index_validation_failure_beats_a_faster_higher_index_process_failure(self):
+        """CODEX P2 (round 2): spec 1's engine exits cleanly but its outcome is
+        rejected by `consume`; spec 3's engine fails first. The reported
+        failure is spec 1's validation error, because lower-index outcomes are
+        validated before any higher-index error is chosen."""
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+
+        import threading
+
+        spec1_launched = threading.Event()
+
+        def launch(spec):
+            if spec.matchup_index == 1:
+                spec1_launched.set()
+            return spec
+
+        def run_one(spec):
+            import time
+
+            if spec.matchup_index == 3:
+                spec1_launched.wait(timeout=10)
+                raise PanelRunnerError(f"{spec.label} failed: fast synthetic process error")
+            time.sleep(0.2 if spec.matchup_index in (0, 2) else 0.01)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def validate(spec, result):
+            if spec.matchup_index == 1:
+                raise PanelRunnerError(f"{spec.label}: outcome header mismatch (synthetic)")
+            return result
+
+        with self.assertRaises(PanelRunnerError) as ctx:
+            _pool(specs, 4, run_one, lambda spec, result: None, validate=validate, launch=launch)
+        self.assertIn(specs[1].label, str(ctx.exception))
+        self.assertNotIn(specs[3].label, str(ctx.exception))
+
+    def test_a_failing_submit_is_fail_closed_and_launches_nothing_further(self):
+        """CODEX #67: the executor refuses the sixth submit after enqueuing its
+        work item (so that item's future is never returned to the pool). Two
+        workers; specs 0 and 1 block once launched. Submission runs under the
+        admission lock, so the refusal cannot wait for launches; the assertion
+        is exactly the pool's guarantee: whatever launched before the refusal
+        is a subset of the returned items {0, 1}, the unreturned item (spec 5)
+        and the cancelled items (specs 2 to 4) never launch, running work is
+        waited for (specs 0 and 1 are released only once shutdown has begun),
+        and the scheduling error propagates."""
+        import concurrent.futures
+        import threading
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        both_launched = threading.Event()
+        shutdown_started = threading.Event()
+        release = threading.Event()
+        lock = threading.Lock()
+        launched: list[str] = []
+        waits: dict[str, bool] = {}
+
+        class RefusingExecutor(concurrent.futures.ThreadPoolExecutor):
+            submits = 0
+
+            def submit(self, fn, *args, **kwargs):
+                RefusingExecutor.submits += 1
+                future = super().submit(fn, *args, **kwargs)
+                if RefusingExecutor.submits == 6:
+                    raise RuntimeError("synthetic scheduling failure on submit 6")
+                return future
+
+            def shutdown(self, wait=True, *, cancel_futures=False):
+                shutdown_started.set()
+                super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+        def launch(spec):
+            with lock:
+                launched.append(spec.label)
+                if specs[0].label in launched and specs[1].label in launched:
+                    both_launched.set()
+            return spec
+
+        def finish(spec):
+            if spec.matchup_index in (0, 1):
+                release.wait(timeout=10)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def releaser():
+            waits["shutdown_started_before_release"] = shutdown_started.wait(timeout=10)
+            release.set()
+
+        releaser_thread = threading.Thread(target=releaser, daemon=True)
+        releaser_thread.start()
+        with self.assertRaises(RuntimeError) as ctx:
+            _pool(specs, 2, finish, lambda spec, result: None, launch=launch, executor_factory=RefusingExecutor)
+        releaser_thread.join(timeout=10)
+        self.assertIn("submit 6", str(ctx.exception))
+        self.assertTrue(waits.get("shutdown_started_before_release"), "the matchups were released before shutdown began")
+        self.assertTrue(set(launched) <= {specs[0].label, specs[1].label}, launched)
+        for index in range(2, 6):
+            self.assertNotIn(specs[index].label, launched)
+
+    def test_an_unreturned_work_item_never_launches_even_with_a_free_worker(self):
+        """CODEX #68 item 3: the executor enqueues the SECOND work item onto a
+        free worker and then raises without returning its future. Because
+        submit runs under the admission lock and the abort flag is raised
+        before that lock is released, the free worker cannot pass admission
+        for the unreturned item: it is skipped like a cancelled one. Spec 0
+        is released only once shutdown has begun."""
+        import concurrent.futures
+        import threading
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        shutdown_started = threading.Event()
+        release = threading.Event()
+        lock = threading.Lock()
+        launched: list[str] = []
+        waits: dict[str, bool] = {}
+
+        class RefusingSecondSubmit(concurrent.futures.ThreadPoolExecutor):
+            submits = 0
+
+            def submit(self, fn, *args, **kwargs):
+                RefusingSecondSubmit.submits += 1
+                future = super().submit(fn, *args, **kwargs)
+                if RefusingSecondSubmit.submits == 2:
+                    raise RuntimeError("synthetic scheduling failure on submit 2")
+                return future
+
+            def shutdown(self, wait=True, *, cancel_futures=False):
+                shutdown_started.set()
+                super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+        def launch(spec):
+            with lock:
+                launched.append(spec.label)
+            return spec
+
+        def finish(spec):
+            if spec.matchup_index == 0:
+                release.wait(timeout=10)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def releaser():
+            waits["shutdown_started_before_release"] = shutdown_started.wait(timeout=10)
+            release.set()
+
+        releaser_thread = threading.Thread(target=releaser, daemon=True)
+        releaser_thread.start()
+        with self.assertRaises(RuntimeError) as ctx:
+            _pool(specs, 2, finish, lambda spec, result: None, launch=launch, executor_factory=RefusingSecondSubmit)
+        releaser_thread.join(timeout=10)
+        self.assertIn("submit 2", str(ctx.exception))
+        self.assertTrue(waits.get("shutdown_started_before_release"))
+        # Spec 0 may or may not have launched before the refusal (its worker
+        # needs the admission lock the submitter holds); spec 1, the
+        # unreturned item, must never have launched.
+        self.assertNotIn(specs[1].label, launched)
+        self.assertTrue(set(launched) <= {specs[0].label})
+
+    def test_sequential_path_consumes_each_matchup_before_starting_the_next(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        events: list[str] = []
+
+        def run_one(spec):
+            events.append(f"run {spec.label}")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        _pool(specs, 1, run_one, lambda spec, result: events.append(f"consume {spec.label}"))
+        expected = []
+        for spec in specs:
+            expected.extend([f"run {spec.label}", f"consume {spec.label}"])
+        self.assertEqual(events, expected)
 
 
 if __name__ == "__main__":
