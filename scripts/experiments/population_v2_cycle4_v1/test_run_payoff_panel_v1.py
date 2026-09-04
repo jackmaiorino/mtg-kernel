@@ -984,10 +984,10 @@ class OutputDirResolutionTests(unittest.TestCase):
             self.assertNotIn("H2H_OUTCOME_JSON=relative-output", buffer.getvalue())
 
 
-def _pool(specs, workers, run_one, consume, launch=None, validate=None):
+def _pool(specs, workers, run_one, consume, launch=None, validate=None, **extra):
     """Adapter for run_one-style fakes: by default the handle is the spec
     itself, `run_one` plays finish, validation is the identity, and
-    `consume` plays accept."""
+    `consume` plays accept. Extra keywords reach the helper unchanged."""
     return run_matchups_in_spec_order(
         specs,
         workers,
@@ -995,7 +995,126 @@ def _pool(specs, workers, run_one, consume, launch=None, validate=None):
         finish_one=run_one,
         validate=validate or (lambda spec, result: result),
         accept=consume,
+        **extra,
     )
+
+
+class _FakeEngineProcess:
+    """A stand-in for `subprocess.Popen` whose first wait raises the given
+    exception and which records kill and wait calls."""
+
+    def __init__(self, wait_error: BaseException | None = None, kill_error: BaseException | None = None):
+        self.wait_error = wait_error
+        self.kill_error = kill_error
+        self.wait_calls = 0
+        self.killed = False
+
+    def wait(self):
+        self.wait_calls += 1
+        if self.wait_calls == 1 and self.wait_error is not None:
+            raise self.wait_error
+        return 0
+
+    def kill(self):
+        self.killed = True
+        if self.kill_error is not None:
+            raise self.kill_error
+
+
+class _FakeLog:
+    def __init__(self, close_error: BaseException | None = None):
+        self.closed = False
+        self.close_error = close_error
+
+    def close(self):
+        self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
+
+
+def _fake_handle(process, stdout=None, stderr=None):
+    from run_payoff_panel_v1 import build_matchup_specs as _specs
+
+    spec = _specs(base_seed=42, games_per_matchup=8)[0]
+    return {
+        "spec": spec,
+        "process": process,
+        "stdout": stdout or _FakeLog(),
+        "stderr": stderr or _FakeLog(),
+        "outcome_path": Path("never-written.json"),
+        "stdout_path": Path("stdout.log"),
+        "stderr_path": Path("stderr.log"),
+        "started": 0.0,
+    }
+
+
+class EngineLifecycleTests(unittest.TestCase):
+    """CODEX #67: an interrupted wait must kill and reap the engine without
+    replacing the original exception, and both logs must close even if the
+    first close raises; a launched engine that `finish_matchup` never owned
+    is disposed of by `abandon_matchup`."""
+
+    def test_interrupted_wait_kills_reaps_and_closes_both_logs(self):
+        from run_payoff_panel_v1 import finish_matchup
+
+        process = _FakeEngineProcess(wait_error=KeyboardInterrupt())
+        handle = _fake_handle(process)
+        with self.assertRaises(KeyboardInterrupt):
+            finish_matchup(handle)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, 2)
+        self.assertTrue(handle["stdout"].closed)
+        self.assertTrue(handle["stderr"].closed)
+        self.assertTrue(handle["finished"])
+
+    def test_cleanup_failures_never_replace_the_original_exception(self):
+        from run_payoff_panel_v1 import finish_matchup
+
+        process = _FakeEngineProcess(wait_error=KeyboardInterrupt(), kill_error=OSError("already gone"))
+        handle = _fake_handle(process, stdout=_FakeLog(close_error=OSError("stdout close failed")))
+        with self.assertRaises((KeyboardInterrupt, OSError)) as ctx:
+            finish_matchup(handle)
+        # The kill error is swallowed; the reap still happens; stderr closes
+        # even though stdout's close raised.
+        self.assertEqual(process.wait_calls, 2)
+        self.assertTrue(handle["stderr"].closed)
+        self.assertTrue(handle["stdout"].closed)
+        # A stream-close failure is the one cleanup error that may surface
+        # (it is chained onto the interrupt by the finally clause); the kill
+        # and reap never do.
+        self.assertNotIn("already gone", str(ctx.exception))
+
+    def test_abandon_disposes_an_unfinished_engine_once(self):
+        from run_payoff_panel_v1 import abandon_matchup, finish_matchup
+
+        process = _FakeEngineProcess()
+        handle = _fake_handle(process)
+        abandon_matchup(handle)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, 1)
+        self.assertTrue(handle["stdout"].closed and handle["stderr"].closed)
+        abandon_matchup(handle)  # idempotent
+        self.assertEqual(process.wait_calls, 1)
+        # A finished handle is left alone.
+        finished = _fake_handle(_FakeEngineProcess())
+        finished["finished"] = True
+        abandon_matchup(finished)
+        self.assertFalse(finished["process"].killed)
+
+    def test_pool_abandons_a_handle_when_finish_raises(self):
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        abandoned: list[str] = []
+
+        def finish(spec):
+            if spec.matchup_index == 1:
+                raise PanelRunnerError(f"{spec.label} failed: synthetic")
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        for workers in (1, 3):
+            abandoned.clear()
+            with self.assertRaises(PanelRunnerError):
+                _pool(specs, workers, finish, lambda spec, result: None, abandon_one=lambda handle: abandoned.append(handle.label))
+            self.assertIn(specs[1].label, abandoned)
 
 
 class MatchupWorkersTests(unittest.TestCase):
@@ -1224,6 +1343,64 @@ class MatchupWorkersTests(unittest.TestCase):
             _pool(specs, 4, run_one, lambda spec, result: None, validate=validate)
         self.assertIn(specs[1].label, str(ctx.exception))
         self.assertNotIn(specs[3].label, str(ctx.exception))
+
+    def test_a_failing_submit_is_fail_closed_and_launches_nothing_further(self):
+        """CODEX #67: the executor refuses the sixth submit after enqueuing its
+        work item (so that item's future is never returned to the pool). Two
+        workers hold specs 0 and 1 launched and blocked. Ordering is by
+        events: the sixth submit fails only after both are launched, and they
+        are released only once the executor's shutdown has begun, which the
+        pool reaches after it has raised the abort flag and cancelled every
+        tracked future. So the orphaned item and the cancelled items never
+        launch, running work is waited for, and the scheduling error is the
+        one that propagates."""
+        import concurrent.futures
+        import threading
+
+        specs = build_matchup_specs(base_seed=42, games_per_matchup=8)
+        both_launched = threading.Event()
+        shutdown_started = threading.Event()
+        release = threading.Event()
+        lock = threading.Lock()
+        launched: list[str] = []
+
+        class RefusingExecutor(concurrent.futures.ThreadPoolExecutor):
+            submits = 0
+
+            def submit(self, fn, *args, **kwargs):
+                RefusingExecutor.submits += 1
+                future = super().submit(fn, *args, **kwargs)
+                if RefusingExecutor.submits == 6:
+                    both_launched.wait(timeout=10)
+                    raise RuntimeError("synthetic scheduling failure on submit 6")
+                return future
+
+            def shutdown(self, wait=True, *, cancel_futures=False):
+                shutdown_started.set()
+                super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+        def launch(spec):
+            with lock:
+                launched.append(spec.label)
+                if specs[0].label in launched and specs[1].label in launched:
+                    both_launched.set()
+            return spec
+
+        def finish(spec):
+            if spec.matchup_index in (0, 1):
+                release.wait(timeout=10)
+            return {"outcome_path": None, "wall_seconds": 0.0, "outcome_sha256": hash_tag(spec.matchup_index)}
+
+        def releaser():
+            shutdown_started.wait(timeout=10)
+            release.set()
+
+        threading.Thread(target=releaser, daemon=True).start()
+        with self.assertRaises(RuntimeError) as ctx:
+            _pool(specs, 2, finish, lambda spec, result: None, launch=launch, executor_factory=RefusingExecutor)
+        self.assertIn("submit 6", str(ctx.exception))
+        self.assertTrue(shutdown_started.is_set())
+        self.assertEqual(sorted(launched), sorted([specs[0].label, specs[1].label]))
 
     def test_sequential_path_consumes_each_matchup_before_starting_the_next(self):
         specs = build_matchup_specs(base_seed=42, games_per_matchup=8)

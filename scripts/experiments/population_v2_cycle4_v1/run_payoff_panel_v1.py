@@ -900,23 +900,48 @@ def launch_matchup(
     }
 
 
+def _terminate_engine_v1(process: subprocess.Popen) -> None:
+    """Kills and reaps an engine whose normal wait was interrupted. Never
+    raises: the caller is propagating the real exception and nothing here
+    may replace it."""
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait()
+    except BaseException:
+        pass
+
+
+def _close_engine_logs_v1(handle: dict) -> None:
+    """Closes both log streams even if the first close raises."""
+    try:
+        handle["stdout"].close()
+    finally:
+        handle["stderr"].close()
+
+
 def finish_matchup(handle: dict) -> dict:
     """Waits for a launched matchup's engine, closes its logs, and checks
-    its exit; fail-closed on a nonzero exit or a missing outcome file. If the
-    wait itself is interrupted (KeyboardInterrupt, a signal), the engine is
-    killed and reaped before the interruption propagates, exactly as
-    `subprocess.run` did, so no engine outlives the runner."""
+    its exit; fail-closed on a nonzero exit or a missing outcome file.
+
+    If the wait itself raises (KeyboardInterrupt, a signal, anything), the
+    engine is killed and reaped before the original exception propagates,
+    exactly as `subprocess.run` did, so no engine outlives the runner; the
+    kill and reap never replace that exception, and both log streams are
+    closed with nested cleanup. The handle is marked finished either way, so
+    `abandon_matchup` becomes a no-op for it."""
     process = handle["process"]
     try:
         try:
             returncode = process.wait()
         except BaseException:
-            process.kill()
-            process.wait()
+            _terminate_engine_v1(process)
             raise
     finally:
-        handle["stdout"].close()
-        handle["stderr"].close()
+        handle["finished"] = True
+        _close_engine_logs_v1(handle)
     wall_seconds = time.perf_counter() - handle["started"]
     spec = handle["spec"]
     outcome_path = handle["outcome_path"]
@@ -930,6 +955,22 @@ def finish_matchup(handle: dict) -> dict:
         "wall_seconds": wall_seconds,
         "outcome_sha256": sha256_file(outcome_path),
     }
+
+
+def abandon_matchup(handle: dict) -> None:
+    """Disposes of a launched engine that `finish_matchup` never got to own
+    (an exception between launch and finish): kill, reap, close both logs.
+    Idempotent and never raises; a finished handle is left alone."""
+    if handle.get("finished"):
+        return
+    handle["finished"] = True
+    try:
+        _terminate_engine_v1(handle["process"])
+    finally:
+        try:
+            _close_engine_logs_v1(handle)
+        except OSError:
+            pass
 
 
 def run_matchup(
@@ -959,6 +1000,8 @@ def run_matchups_in_spec_order(
     finish_one: Callable[[object], dict],
     validate: Callable[[MatchupSpec, dict], object],
     accept: Callable[[MatchupSpec, object], None],
+    abandon_one: Callable[[object], None] | None = None,
+    executor_factory: Callable[[int], concurrent.futures.Executor] | None = None,
 ) -> None:
     """Runs every matchup as launch -> finish -> validate, and hands the
     validated value of each to `accept` in SPEC order regardless of
@@ -969,7 +1012,10 @@ def run_matchups_in_spec_order(
     `launch_one` starts a matchup's engine and returns a handle; `finish_one`
     waits for it and checks its exit; `validate` is the PURE per-matchup
     check of the produced outcome (it may raise, it must not touch shared
-    state); `accept` applies the ordered, shared side effects.
+    state); `accept` applies the ordered, shared side effects; `abandon_one`
+    (optional) disposes of a launched handle if anything raises between
+    launch and the end of finish, so the engine ownership interval has no
+    gap; `executor_factory` (optional, tests) builds the thread pool.
 
     `workers == 1` is the plain sequential loop: no thread pool at all, one
     subprocess at a time, each accepted before the next is launched.
@@ -997,9 +1043,18 @@ def run_matchups_in_spec_order(
         raise PanelRunnerError(
             f"matchup workers must be within 1..{MAX_MATCHUP_WORKERS}, got {workers}"
         )
+    abandon = abandon_one or (lambda handle: None)
+
+    def finish_owned(handle: object) -> dict:
+        try:
+            return finish_one(handle)
+        except BaseException:
+            abandon(handle)
+            raise
+
     if workers == 1:
         for spec in specs:
-            accept(spec, validate(spec, finish_one(launch_one(spec))))
+            accept(spec, validate(spec, finish_owned(launch_one(spec))))
         return
 
     admission = threading.Lock()
@@ -1015,7 +1070,7 @@ def run_matchups_in_spec_order(
                 state["aborted"] = True
                 raise
         try:
-            return validate(spec, finish_one(handle))
+            return validate(spec, finish_owned(handle))
         except BaseException:
             with admission:
                 state["aborted"] = True
@@ -1052,10 +1107,18 @@ def run_matchups_in_spec_order(
                     raise error
             position["next"] += 1
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures.extend(executor.submit(worker, spec) for spec in specs)
-        pending = set(futures)
+    make_executor = executor_factory or concurrent.futures.ThreadPoolExecutor
+    with make_executor(workers) as executor:
         try:
+            # Submission is inside the fail-closed path: if the executor
+            # refuses the Nth submit, the abort flag is raised (so a work item
+            # that was enqueued by the failing submit but whose future was
+            # never returned is skipped at admission), every tracked future
+            # is cancelled, running work is waited for by the executor's
+            # exit, and the scheduling error propagates.
+            for spec in specs:
+                futures.append(executor.submit(worker, spec))
+            pending = set(futures)
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, return_when=concurrent.futures.FIRST_COMPLETED
@@ -1137,6 +1200,7 @@ def run(args: argparse.Namespace) -> Path | None:
         finish_one=finish_matchup,
         validate=validate,
         accept=accept,
+        abandon_one=abandon_matchup,
     )
 
     expected_pair_count = sum(spec.pair_count for spec in specs)
