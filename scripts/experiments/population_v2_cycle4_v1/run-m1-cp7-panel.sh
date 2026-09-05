@@ -44,11 +44,16 @@ CYCLE3='E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store'
 expected_scorer=137b3d0a3ccc93fea92567200494ce2cd5f097be74c68fab28977ab7a44a0677
 expected_runner=7c0c0fb68c814dcda20086caf9201550c5ae0b35e78e6d8d7feb5716927fc9dd
 expected_mage=72a08a3b2654df26bba7bcd7c716885a1fb89174
-[ "$(sha256sum "$SCORER" | cut -c1-64)" = "$expected_scorer" ] || { echo "scorer hash mismatch"; exit 3; }
-[ "$(sha256sum "$RUNNER" | cut -c1-64)" = "$expected_runner" ] || { echo "runner hash mismatch"; exit 3; }
-[ "$(git -C "$MAGE" rev-parse HEAD)" = "$expected_mage" ] || { echo "mage commit mismatch"; exit 3; }
-[ -z "$(git -C "$MAGE" status --porcelain)" ] || { echo "mage worktree dirty"; exit 3; }
-[ -f "$CARDDB" ] || { echo "card database missing"; exit 3; }
+# The runner takes Windows-form paths; the shell-side guards need POSIX form.
+posix() { cygpath -u "$1"; }
+actual_scorer=$(sha256sum "$(posix "$SCORER")" | cut -c1-64)
+actual_runner=$(sha256sum "$(posix "$RUNNER")" | cut -c1-64)
+[ "$actual_scorer" = "$expected_scorer" ] || { echo "scorer hash mismatch: $actual_scorer"; exit 3; }
+[ "$actual_runner" = "$expected_runner" ] || { echo "runner hash mismatch: $actual_runner"; exit 3; }
+[ "$(git -C "$(posix "$MAGE")" rev-parse HEAD)" = "$expected_mage" ] || { echo "mage commit mismatch"; exit 3; }
+[ -z "$(git -C "$(posix "$MAGE")" status --porcelain)" ] || { echo "mage worktree dirty"; exit 3; }
+[ -f "$(posix "$CARDDB")" ] || { echo "card database missing"; exit 3; }
+echo "harness of record verified: scorer $actual_scorer runner $actual_runner mage $expected_mage"
 
 A=( --model "treatment-rb=population:2048:$ARMS\\treatment-rb\\store"
     --model "control-r=population:2048:$ARMS\\control-r\\store"
