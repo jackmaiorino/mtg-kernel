@@ -83,7 +83,7 @@ run_group() {
       --base-seed "$M1_BASE_SEED" \
       --pair-start "$pair_start" \
       --pairs "$SHARD_PAIRS" \
-      --read-pairs "$SHARD_PAIRS" \
+      --read-pairs "$PAIRS_TOTAL" \
       --void-cap-mode report \
       --workers 8 \
       --task-pairs 32 \
