@@ -3034,6 +3034,47 @@ fn genesis_identity_from_store_v1(
     Ok(genesis_identity_from_checkpoint_v1(boundary.checkpoint()))
 }
 
+/// Read-only binding check for a consumer that resolves a `trainer_v4_candidate`
+/// Store through its baseline chain without owning it (the shadow scorer):
+/// the chain directory's origin record must exist, decode, and name this
+/// run. Every field the run alone determines is compared (schema, arm kind
+/// when the run declares one, run hash, base seed, and the declared parent
+/// checkpoint pin); the genesis checkpoint fields need the walk this check
+/// precedes and are left to the baseline recompute. Publishes nothing.
+pub(crate) fn verify_origin_record_binds_run_v1(
+    chain_dir: &Path,
+    run: &ValidatedTrainRunV2,
+) -> std::result::Result<(), &'static str> {
+    let path = chain_dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+    let bytes = std::fs::read(&path).map_err(|_| "cycle4_arm_v1_origin_record_missing")?;
+    let decoded: Cycle4ArmOriginRecordV1 =
+        from_canonical_json_bytes_v1(&bytes, CanonicalJsonNullPolicyV1::Forbid)
+            .map_err(|_| "cycle4_arm_v1_origin_record_undecodable")?;
+    let contracts = run.record().contracts();
+    let declared_arm = contracts
+        .population_program_v2_cycle4
+        .as_ref()
+        .map(|program| program.arm_kind.as_str());
+    let Some(declared) = contracts.opponent_ladder_initialization.as_ref() else {
+        return Err("cycle4_arm_v1_origin_record_run_declares_no_parent");
+    };
+    let binds = decoded.schema == CYCLE4_ARM_ORIGIN_RECORD_SCHEMA_V1
+        && declared_arm.is_none_or(|arm| decoded.arm_kind == arm)
+        && decoded.run_sha256 == run.run_sha256()
+        && decoded.base_seed == run.record().schedule().base_seed
+        && decoded.init_generation == declared.generation
+        && decoded.parent_source_run_sha256 == declared.source_run_sha256
+        && decoded.parent_checkpoint_sha256 == declared.checkpoint_sha256
+        && decoded.parent_sidecar_sha256 == declared.sidecar_sha256
+        && decoded.parent_state_sha256 == declared.state_sha256
+        && decoded.derived_model_parameter_sha256 == declared.derived_model_parameter_sha256;
+    if binds {
+        Ok(())
+    } else {
+        Err("cycle4_arm_v1_origin_record_binds_another_run")
+    }
+}
+
 /// Publishes the launcher's hashed origin record if the chain directory has
 /// none, and otherwise decodes the existing one and requires it to equal the
 /// record this run, arm, and genesis checkpoint imply (review finding P2).
