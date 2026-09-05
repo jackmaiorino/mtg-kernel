@@ -5,6 +5,11 @@
 //! output accessors are crate-private so an external binary cannot construct a
 //! second, weaker scoring path. The companion binary only selects an explicit
 //! checkpoint authority and delegates stdin/stdout here.
+//!
+//! A population Store written by a `trainer_v4_candidate` run resolves through
+//! its baseline chain, found at the Store root's sibling `baseline-chain`
+//! directory (see `resolve_shadow_checkpoint_authority_v1`); every other
+//! authority resolves exactly as before.
 
 use crate::async_flat_scored_rollout_v1::{FlatScoredFamilyCore, NativeLaneScheduleStateV1};
 use crate::async_flat_scored_rollout_v2::{FlatScoredFamilyV2, OwnedFlatScoringDecisionV2};
@@ -29,10 +34,9 @@ use crate::model_guided_search_outcome_v4::{
 };
 use crate::model_guided_search_value_quantization_v1::ModelGuidedSearchValueHeadDomainV1;
 use crate::native_checkpoint_inference_v1::{
-    load_native_checkpoint_inference_v1, NativeCheckpointInferenceOutputV1,
-    NativeCheckpointInferenceV1,
+    NativeCheckpointInferenceOutputV1, NativeCheckpointInferenceV1,
 };
-use crate::native_cycle4_arm_v1::Cycle4BaselineChainAccessV1;
+use crate::native_cycle4_arm_v1::{verify_origin_record_binds_run_v1, Cycle4BaselineChainAccessV1};
 use crate::native_flat_tensorizer_v2::{
     NativeFlatDecisionTensorV2, NativeFlatTensorizerV2, NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2,
     NATIVE_FLAT_ACTION_FEATURE_DIM_V2, NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
@@ -40,8 +44,8 @@ use crate::native_flat_tensorizer_v2::{
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_ladder_pool_resolution_v1::{
-    resolve_ladder_checkpoint_authority_v1, resolve_ladder_pool_v1, stage_ladder_checkpoint_ref_v1,
-    LadderCheckpointAuthorityV1,
+    resolve_ladder_checkpoint_authority_baseline_v4_v1, resolve_ladder_checkpoint_authority_v1,
+    resolve_ladder_pool_v1, stage_ladder_checkpoint_ref_v1, LadderCheckpointAuthorityV1,
 };
 use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
 use crate::native_policy_value_net_v1::{
@@ -57,14 +61,9 @@ use crate::native_train_state_payload_v1::{
 };
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
 use crate::native_trainer_schedule_v2::OpponentLadderPoolMemberV2;
-use crate::native_training_store_checkpoint_v3::CheckpointManifestV3;
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
-use crate::native_training_store_resume_v2::{
-    load_native_training_boundary_baseline_v4_v2, LoadedNativeTrainingBoundaryV2,
-};
-use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::{
     decode_train_run_v2, NativeRunEnvironmentTrajectoryContractV1, OpponentLadderCheckpointRefV1,
     OpponentLadderPoolContractV1, TrainerLossIdentityV2, ValidatedTrainRunV2,
@@ -300,46 +299,6 @@ pub(crate) struct LoadedShadowCheckpointV1 {
     pub(crate) max_policy_steps: u64,
 }
 
-enum ResolvedShadowCheckpointAuthorityV1 {
-    Standard(LadderCheckpointAuthorityV1),
-    BaselineV4 {
-        run: ValidatedTrainRunV2,
-        boundary: LoadedNativeTrainingBoundaryV2,
-    },
-}
-
-impl ResolvedShadowCheckpointAuthorityV1 {
-    fn run(&self) -> &ValidatedTrainRunV2 {
-        match self {
-            Self::Standard(authority) => authority.run(),
-            Self::BaselineV4 { run, .. } => run,
-        }
-    }
-
-    fn checkpoint(&self) -> &CheckpointManifestV3 {
-        match self {
-            Self::Standard(authority) => authority.checkpoint(),
-            Self::BaselineV4 { boundary, .. } => boundary.checkpoint(),
-        }
-    }
-
-    fn load_handle_v1(&self) -> Result<NativeCheckpointInferenceV1, ShadowScorerStartupErrorV1> {
-        match self {
-            Self::Standard(authority) => authority.load_handle_v1().map_err(|_| {
-                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
-            }),
-            Self::BaselineV4 { run, boundary } => {
-                load_native_checkpoint_inference_v1(run, boundary.checkpoint(), boundary.payload())
-                    .map_err(|_| {
-                        ShadowScorerStartupErrorV1::new(
-                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
-                        )
-                    })
-            }
-        }
-    }
-}
-
 fn checkpoint_ref_v1(
     authority: &ShadowCheckpointAuthorityV1,
 ) -> Result<OpponentLadderCheckpointRefV1, ShadowScorerStartupErrorV1> {
@@ -496,76 +455,7 @@ pub(crate) fn load_checkpoint_v1(
         ));
     }
     let checkpoint_ref = checkpoint_ref_v1(&requested)?;
-    let baseline_v4 = match &requested {
-        ShadowCheckpointAuthorityV1::PopulationStoreGeneration { root, .. } => {
-            let run_bytes = fs::read(root.join("run.json")).map_err(|_| {
-                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
-            })?;
-            let run = decode_train_run_v2(&run_bytes).map_err(|_| {
-                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
-            })?;
-            if run.record().contracts().trainer_loss_identity_v2()
-                == TrainerLossIdentityV2::V4Candidate
-            {
-                let chain_dir = root
-                    .parent()
-                    .ok_or_else(|| {
-                        ShadowScorerStartupErrorV1::new(
-                            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
-                        )
-                    })?
-                    .join("baseline-chain");
-                let access = Cycle4BaselineChainAccessV1::new_v1(
-                    chain_dir,
-                    run.checkpoint_segment_updates(),
-                );
-                Some((run, access))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
-    let authority = match baseline_v4 {
-        Some((run, access)) => {
-            let root = ValidatedNativeTrainingStoreRootV2::open_v2(authority_root_v1(&requested))
-                .map_err(|_| {
-                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
-            })?;
-            let boundary = load_native_training_boundary_baseline_v4_v2(
-                &root,
-                &run,
-                checkpoint_ref.generation,
-                &access,
-            )
-            .map_err(|_| {
-                ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
-            })?;
-            let checkpoint = boundary.checkpoint();
-            if run.run_sha256() != checkpoint_ref.source_run_sha256
-                || boundary.generation_index() != checkpoint_ref.generation
-                || lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256())
-                    != checkpoint_ref.checkpoint_sha256
-                || lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256())
-                    != checkpoint_ref.state_sha256
-            {
-                return Err(ShadowScorerStartupErrorV1::new(
-                    ShadowScorerStartupErrorKindV1::CheckpointAuthority,
-                ));
-            }
-            ResolvedShadowCheckpointAuthorityV1::BaselineV4 { run, boundary }
-        }
-        None => ResolvedShadowCheckpointAuthorityV1::Standard(
-            resolve_ladder_checkpoint_authority_v1(authority_root_v1(&requested), &checkpoint_ref)
-                .map_err(|_error| {
-                    #[cfg(test)]
-                    eprintln!("shadow checkpoint authority resolution failed: {_error:?}");
-                    ShadowScorerStartupErrorV1::new(
-                        ShadowScorerStartupErrorKindV1::CheckpointAuthority,
-                    )
-                })?,
-        ),
-    };
+    let authority = resolve_shadow_checkpoint_authority_v1(&requested, &checkpoint_ref)?;
     validate_run_limits_v1(authority.run())?;
     let expected_environment_contract = expected_environment_contract_v1(&requested);
     if authority.run().environment_trajectory_contract_v1() != expected_environment_contract {
@@ -618,7 +508,9 @@ pub(crate) fn load_checkpoint_v1(
     // rejects a run whose architecture, feature encoding, tensorizer
     // contract, parameter layout, or checkpoint payload bindings drift from
     // the compiled scorer, including for an explicitly selected generation.
-    let inference = authority.load_handle_v1()?;
+    let inference = authority.load_handle_v1().map_err(|_| {
+        ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority)
+    })?;
     require_inference_identity_v1(
         &inference,
         &checkpoint_ref.source_run_sha256,
@@ -685,6 +577,70 @@ pub(crate) fn load_checkpoint_v1(
         identity,
         max_physical_decisions: FIXED_MAX_PHYSICAL_DECISIONS_V1,
         max_policy_steps: FIXED_MAX_POLICY_STEPS_V1,
+    })
+}
+
+/// The Store root's sibling directory holding a cycle-4 arm's baseline chain
+/// (`<arm>/store` beside `<arm>/baseline-chain`: the layout the arm launcher
+/// writes and the M3 audit reads).
+const POPULATION_STORE_BASELINE_CHAIN_DIRNAME_V1: &str = "baseline-chain";
+
+/// Resolves the requested authority to its validated (run, checkpoint) pair.
+///
+/// A population Store whose run declares `trainer_v4_candidate` carries v4
+/// update evidence that the frozen v3 walk refuses past genesis, so it
+/// resolves through the baseline-aware walk against the arm's chain
+/// directory. Mage builds the scorer command from an allow-list carrying only
+/// the Store root and generation, so the chain's location is the arm layout
+/// convention above rather than an operator input; the chain must exist and
+/// its origin record must name this run before the walk starts, and the
+/// walk's own recompute binds every update to it. A v3 run resolves exactly
+/// as before. Every failure is `CheckpointAuthority`.
+fn resolve_shadow_checkpoint_authority_v1(
+    requested: &ShadowCheckpointAuthorityV1,
+    checkpoint_ref: &OpponentLadderCheckpointRefV1,
+) -> Result<LadderCheckpointAuthorityV1, ShadowScorerStartupErrorV1> {
+    let authority_error =
+        || ShadowScorerStartupErrorV1::new(ShadowScorerStartupErrorKindV1::CheckpointAuthority);
+    let root = authority_root_v1(requested);
+    let baseline_chain = match requested {
+        ShadowCheckpointAuthorityV1::PopulationStoreGeneration { .. } => {
+            let run_bytes = fs::read(root.join("run.json")).map_err(|_| authority_error())?;
+            let run = decode_train_run_v2(&run_bytes).map_err(|_| authority_error())?;
+            match run.record().contracts().trainer_loss_identity_v2() {
+                TrainerLossIdentityV2::V3 => None,
+                TrainerLossIdentityV2::V4Candidate => {
+                    let chain_dir = root
+                        .parent()
+                        .ok_or_else(authority_error)?
+                        .join(POPULATION_STORE_BASELINE_CHAIN_DIRNAME_V1);
+                    if !chain_dir.is_dir() {
+                        return Err(authority_error());
+                    }
+                    verify_origin_record_binds_run_v1(&chain_dir, &run).map_err(|_code| {
+                        #[cfg(test)]
+                        eprintln!("shadow baseline chain origin check failed: {_code}");
+                        authority_error()
+                    })?;
+                    Some(Cycle4BaselineChainAccessV1::new_v1(
+                        chain_dir,
+                        run.checkpoint_segment_updates(),
+                    ))
+                }
+            }
+        }
+        _ => None,
+    };
+    match baseline_chain.as_ref() {
+        Some(access) => {
+            resolve_ladder_checkpoint_authority_baseline_v4_v1(root, checkpoint_ref, access)
+        }
+        None => resolve_ladder_checkpoint_authority_v1(root, checkpoint_ref),
+    }
+    .map_err(|_error| {
+        #[cfg(test)]
+        eprintln!("shadow checkpoint authority resolution failed: {_error:?}");
+        authority_error()
     })
 }
 
@@ -5282,6 +5238,87 @@ fn run_jsonl_v1(
 mod tests {
     use super::*;
     use crate::model_guided_search_outcome_v4::verify_episode_chain_v4;
+
+    fn shadow_temp_dir_v1(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static ORDINAL: AtomicU64 = AtomicU64::new(0);
+        let ordinal = ORDINAL.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "mtg-kernel-shadow-stdio-v1-{}-{label}-{ordinal}",
+            std::process::id()
+        ))
+    }
+
+    /// A `trainer_v4_candidate` population Store shaped like a cycle-4 arm's
+    /// (`<arm>/store` with run.json and generation-4 checkpoint files), written
+    /// with no `<arm>/baseline-chain` beside it.
+    fn write_v4_store_without_chain_v1(arm_dir: &Path) -> PathBuf {
+        use crate::native_training_store_layout_v2::NativeTrainingStoreFinalNameV2;
+        let store = arm_dir.join("store");
+        fs::create_dir_all(store.join("checkpoints")).unwrap();
+        fs::write(
+            store.join("run.json"),
+            crate::native_training_store_run_v2::test_fixture_bytes_trainer_v4_candidate_v1(),
+        )
+        .unwrap();
+        for (name, bytes) in [
+            (
+                NativeTrainingStoreFinalNameV2::CheckpointManifest {
+                    generation_index: 4,
+                },
+                b"checkpoint".as_slice(),
+            ),
+            (
+                NativeTrainingStoreFinalNameV2::CheckpointSidecar {
+                    generation_index: 4,
+                },
+                b"sidecar".as_slice(),
+            ),
+            (
+                NativeTrainingStoreFinalNameV2::StatePayload {
+                    generation_index: 4,
+                },
+                b"state".as_slice(),
+            ),
+        ] {
+            fs::write(
+                store
+                    .join("checkpoints")
+                    .join(name.final_basename().unwrap()),
+                bytes,
+            )
+            .unwrap();
+        }
+        store
+    }
+
+    #[test]
+    fn trainer_v4_candidate_population_store_without_a_sibling_baseline_chain_is_refused() {
+        let arm_dir = shadow_temp_dir_v1("v4-no-chain");
+        let store = write_v4_store_without_chain_v1(&arm_dir);
+        let authority = ShadowCheckpointAuthorityV1::PopulationStoreGeneration {
+            root: store,
+            generation: 4,
+        };
+        let error = load_checkpoint_v1(authority.clone())
+            .err()
+            .expect("refused");
+        assert_eq!(
+            error.kind(),
+            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+            "no sibling baseline-chain directory"
+        );
+        // An empty chain directory carries no origin record naming this run:
+        // refused before any walk.
+        fs::create_dir_all(arm_dir.join(POPULATION_STORE_BASELINE_CHAIN_DIRNAME_V1)).unwrap();
+        let error = load_checkpoint_v1(authority).err().expect("refused");
+        assert_eq!(
+            error.kind(),
+            ShadowScorerStartupErrorKindV1::CheckpointAuthority,
+            "chain directory without an origin record"
+        );
+        fs::remove_dir_all(&arm_dir).ok();
+    }
     use std::sync::{Arc, Mutex};
 
     #[test]

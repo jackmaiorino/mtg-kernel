@@ -65,16 +65,17 @@ use crate::native_training_store_checkpoint_v3::{
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
 use crate::native_training_store_layout_v2::NativeTrainingStoreFinalNameV2;
 use crate::native_training_store_resume_v2::{
-    load_native_training_boundary_v2, LoadedNativeTrainingBoundaryV2,
-    NativeTrainingStoreResumeV2Error,
+    load_native_training_boundary_baseline_v4_v2, load_native_training_boundary_v2,
+    LoadedNativeTrainingBoundaryV2, NativeTrainingStoreResumeV2Error,
 };
 use crate::native_training_store_root_v2::{
     NativeTrainingStoreRootV2Error, ValidatedNativeTrainingStoreRootV2,
 };
 use crate::native_training_store_run_v2::{
     decode_train_run_v2, OpponentLadderCheckpointRefV1, OpponentLadderInitializationContractV1,
-    OpponentLadderPoolContractV1, TrainRunV2Error, ValidatedTrainRunV2,
+    OpponentLadderPoolContractV1, TrainRunV2Error, TrainerLossIdentityV2, ValidatedTrainRunV2,
 };
+use crate::native_training_store_update_group_v4::BaselineChainAccessV4;
 use core::fmt;
 use std::path::Path;
 
@@ -121,6 +122,15 @@ pub(crate) enum LadderPoolResolutionErrorV1 {
     StoreRootOpen,
     /// The validated Store walk to the requested generation failed.
     StoreWalk,
+    /// The run declares `trainer_v4_candidate` and the ref names a trained
+    /// generation, but no baseline chain access was supplied. Such a Store
+    /// carries v4 update evidence the frozen v3 walk refuses, so it can only
+    /// resolve through `resolve_ladder_checkpoint_authority_baseline_v4_v1`.
+    BaselineChainRequired,
+    /// A baseline chain access was supplied for a run that does not declare
+    /// `trainer_v4_candidate`. The v3 walk would ignore it, so it is refused
+    /// rather than accepted as a no-op.
+    BaselineChainRefused,
     /// Decoding the genesis (generation 0) checkpoint manifest failed.
     GenesisDecode,
     /// `load_native_checkpoint_inference_v1` rejected the validated
@@ -150,6 +160,11 @@ impl fmt::Display for LadderPoolResolutionErrorV1 {
             Self::StoreWalk => {
                 formatter.write_str("validated Store walk to the requested generation failed")
             }
+            Self::BaselineChainRequired => formatter.write_str(
+                "a trainer_v4_candidate Store past genesis requires its baseline chain to resolve",
+            ),
+            Self::BaselineChainRefused => formatter
+                .write_str("a baseline chain was supplied for a run that does not declare trainer_v4_candidate"),
             Self::GenesisDecode => formatter.write_str("genesis checkpoint manifest decode failed"),
             Self::Inference => {
                 formatter.write_str("load_native_checkpoint_inference_v1 rejected the authority")
@@ -426,6 +441,30 @@ pub(crate) fn resolve_ladder_checkpoint_authority_v1(
     base_dir: &Path,
     checkpoint_ref: &OpponentLadderCheckpointRefV1,
 ) -> Result<LadderCheckpointAuthorityV1, LadderPoolResolutionErrorV1> {
+    resolve_ladder_checkpoint_authority_dispatch_v1(base_dir, checkpoint_ref, None)
+}
+
+/// [`resolve_ladder_checkpoint_authority_v1`] for a Store whose run declares
+/// `trainer_v4_candidate`: the identical digest gate, run identity check and
+/// genesis decode, with a trained generation walked through
+/// `load_native_training_boundary_baseline_v4_v2` against `access` (the
+/// arm's baseline chain) instead of the frozen v3 walk, which refuses v4
+/// update evidence by design. The run's own declaration decides which walk
+/// is legal: a v4 run past genesis without a chain and a v3 run with one are
+/// both refused, mirroring the cycle-4 head-to-head probe's rule.
+pub(crate) fn resolve_ladder_checkpoint_authority_baseline_v4_v1(
+    base_dir: &Path,
+    checkpoint_ref: &OpponentLadderCheckpointRefV1,
+    access: &dyn BaselineChainAccessV4,
+) -> Result<LadderCheckpointAuthorityV1, LadderPoolResolutionErrorV1> {
+    resolve_ladder_checkpoint_authority_dispatch_v1(base_dir, checkpoint_ref, Some(access))
+}
+
+fn resolve_ladder_checkpoint_authority_dispatch_v1(
+    base_dir: &Path,
+    checkpoint_ref: &OpponentLadderCheckpointRefV1,
+    baseline_v4: Option<&dyn BaselineChainAccessV4>,
+) -> Result<LadderCheckpointAuthorityV1, LadderPoolResolutionErrorV1> {
     // 1. Fast, independent digest gate on exactly the three pinned files,
     //    strictly before any parsing.
     let checkpoint_bytes = read_and_gate_v1(
@@ -466,7 +505,19 @@ pub(crate) fn resolve_ladder_checkpoint_authority_v1(
     }
 
     // 3. The validated checkpoint authority: direct genesis decode, or the
-    //    complete chain-proven walk for any nonzero generation.
+    //    complete chain-proven walk for any nonzero generation. The walk is
+    //    the one the run's own trainer declaration makes legal: a
+    //    `trainer_v4_candidate` Store carries v4 update evidence that the
+    //    frozen v3 walk refuses, so past genesis it needs its baseline chain;
+    //    a chain handed to a v3 run would be silently ignored, so it is
+    //    refused outright (at genesis too, where no walk runs at all).
+    let declares_trainer_v4 = matches!(
+        run.record().contracts().trainer_loss_identity_v2(),
+        TrainerLossIdentityV2::V4Candidate
+    );
+    if !declares_trainer_v4 && baseline_v4.is_some() {
+        return Err(LadderPoolResolutionErrorV1::BaselineChainRefused);
+    }
     let checkpoint = if checkpoint_ref.generation == 0 {
         // Design directive slice 3 (closing the narrower gap slice 2's STOP
         // report noted here): `run` is the ref's OWN source run, resolved
@@ -489,8 +540,21 @@ pub(crate) fn resolve_ladder_checkpoint_authority_v1(
             payload: state_bytes,
         }
     } else {
+        if declares_trainer_v4 && baseline_v4.is_none() {
+            return Err(LadderPoolResolutionErrorV1::BaselineChainRequired);
+        }
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(base_dir)?;
-        let boundary = load_native_training_boundary_v2(&root, &run, checkpoint_ref.generation)?;
+        // `Some` here implies a `trainer_v4_candidate` run: the v3 pairing was
+        // refused above.
+        let boundary = match baseline_v4 {
+            Some(access) => load_native_training_boundary_baseline_v4_v2(
+                &root,
+                &run,
+                checkpoint_ref.generation,
+                access,
+            )?,
+            None => load_native_training_boundary_v2(&root, &run, checkpoint_ref.generation)?,
+        };
         LadderCheckpointManifestSourceV1::Trained(boundary)
     };
 
@@ -844,6 +908,73 @@ mod tests {
     /// a different mechanism (the pool-staging process that authored that
     /// file) rather than by this function itself, so agreement is real
     /// evidence, not tautology. Read-only real evidence, not a fixture.
+    /// A baseline chain access that holds nothing; the dispatch decision under
+    /// test is taken from the run's declaration before any chain read.
+    struct EmptyChainAccessV1;
+
+    impl crate::native_training_store_update_group_v4::BaselineSidecarSourceV4 for EmptyChainAccessV1 {
+        fn sidecar_record_bytes_v4(&self, _update_index: u64) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    impl BaselineChainAccessV4 for EmptyChainAccessV1 {
+        fn committed_state_for_generation_v4(
+            &self,
+            _generation_index: u64,
+        ) -> Option<crate::native_policy_baseline_state_v4::NativeBaselineStateV4> {
+            None
+        }
+
+        fn stage_sidecar_record_v4(&self, _update_index: u64, _record_bytes: &[u8]) -> bool {
+            false
+        }
+    }
+
+    fn write_run_json_v1(dir: &std::path::Path, bytes: &[u8]) -> String {
+        fs::write(dir.join("run.json"), bytes).unwrap();
+        decode_train_run_v2(bytes).unwrap().run_sha256().to_owned()
+    }
+
+    #[test]
+    fn trainer_v4_candidate_store_past_genesis_requires_a_baseline_chain() {
+        let dir = temp_dir_v1("v4-requires-chain");
+        let mut checkpoint_ref = write_gate_fixture_v1(&dir, 4);
+        checkpoint_ref.source_run_sha256 = write_run_json_v1(
+            &dir,
+            &crate::native_training_store_run_v2::test_fixture_bytes_trainer_v4_candidate_v1(),
+        );
+        let error = resolve_ladder_checkpoint_authority_v1(&dir, &checkpoint_ref).unwrap_err();
+        assert!(
+            matches!(error, LadderPoolResolutionErrorV1::BaselineChainRequired),
+            "{error:?}"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plain_run_refuses_a_baseline_chain_at_any_generation() {
+        for generation in [0_u64, 4] {
+            let dir = temp_dir_v1("v3-refuses-chain");
+            let mut checkpoint_ref = write_gate_fixture_v1(&dir, generation);
+            checkpoint_ref.source_run_sha256 = write_run_json_v1(
+                &dir,
+                &crate::native_training_store_run_v2::test_fixture_bytes_v2(),
+            );
+            let error = resolve_ladder_checkpoint_authority_baseline_v4_v1(
+                &dir,
+                &checkpoint_ref,
+                &EmptyChainAccessV1,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, LadderPoolResolutionErrorV1::BaselineChainRefused),
+                "generation {generation}: {error:?}"
+            );
+            fs::remove_dir_all(&dir).ok();
+        }
+    }
+
     #[test]
     fn stage_ladder_checkpoint_ref_v1_matches_the_real_pilot_pool_json_primary_entry() {
         const POOL_PRIMARY_STORE_ROOT: &str = r"D:\mtg-kernel-ladder-pilot-20260725\pool\primary";

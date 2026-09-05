@@ -72,6 +72,16 @@ Z_ONE_SIDED_95 = 1.6448536269514722
 POINT_FLOOR_PP = 2.0
 HOLM_ALPHA = 0.05
 
+ADMITTED = {
+    # label: (loaded_generation, loaded_run_sha256, loaded_checkpoint_sha256), from the
+    # routing record's endpoint list (f9ad13e9...) and the cycle-3 focal store.
+    "control-r": (2048, "21dd8635828af50e2de4deac91898682f98a8a2e2d156562e2e78809355ab904", "258307a6bec61a44ee674a07cef18eed49bdca6be74b81c875b544abb176dd52"),
+    "static-rb": (2048, "280733572207156515287d09f07de9fdef95b55e6ef634c70d14f7d2ce3413b8", "959df772eba0f6e7616f02eca3b241ab33af1d5ed47f16923e758ee68e8d1fc6"),
+    "treatment-rb": (2048, "d3666c7a054946dfc9c85dac60cf91ba9af8cea38adb6b68ab81a8bc5560625b", "ec23cd71e9af373830f9c210c619d02d3ae9c68dced67aac1381232d61c7ea58"),
+    "g896": (896, "f25a63d0a2968016c2d44220b02d46b642fad5c4d524cd7ed82d699dbfda83a1", "5bdebb31fa9e916121c8138f1a1b854a514c491f3398f4f2a13b9333d3df7545"),
+    "cycle3-g2048": (2048, "f25a63d0a2968016c2d44220b02d46b642fad5c4d524cd7ed82d699dbfda83a1", "8d038f7b67ec2f2c8106e916c9d0490c05943e08fe89dfa963cc53ff6f975951"),
+}
+
 REGISTERED = {
     "summary_schema": "mtg-kernel-population-store-cp7-panel/v3",
     "plan_schema": "mtg-kernel-population-store-cp7-panel-plan/v2",
@@ -81,6 +91,7 @@ REGISTERED = {
     "scorer_sha256": "137b3d0a3ccc93fea92567200494ce2cd5f097be74c68fab28977ab7a44a0677",
     "runner_sha256": "7c0c0fb68c814dcda20086caf9201550c5ae0b35e78e6d8d7feb5716927fc9dd",
     "mage_commit": "72a08a3b2654df26bba7bcd7c716885a1fb89174",
+    "admitted": ADMITTED,
 }
 
 
@@ -147,18 +158,32 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
     models: dict[str, dict[int, dict]] = {}
     voids: dict[str, set[int]] = {}
     identities: dict[str, dict] = {}
+    summary_sha256: dict[str, str] = {}
     for index, shard in enumerate(shard_dirs):
         if os.path.basename(shard) != f"shard-{index:02d}":
             raise M1AnalysisError(f"{shard}: shard directories must be shard-00 .. shard-{expected_shards - 1:02d} without gaps")
         summary, plan = bind_shard(shard, index, registered)
+        summary_sha256[os.path.basename(shard)] = sha256_file(os.path.join(shard, "panel-summary.json"))
         plan_models = (plan.get("inputs") or {}).get("models") or {}
+        admitted = registered.get("admitted") or {}
         for label, spec in plan_models.items():
             identity = spec.get("checkpoint") if isinstance(spec, dict) else None
             if not isinstance(identity, dict):
                 raise M1AnalysisError(f"{shard}: model {label} has no checkpoint identity in the plan")
+            if label not in admitted:
+                raise M1AnalysisError(f"{shard}: model label {label!r} is not an admitted endpoint")
+            gen, run, ckpt = admitted[label]
+            actual = (identity.get("loaded_generation"), identity.get("loaded_run_sha256"), identity.get("loaded_checkpoint_sha256"))
+            if actual != (gen, run, ckpt):
+                raise M1AnalysisError(f"{shard}: {label} loaded identity {actual} is not the admitted {(gen, run, ckpt)}")
             if label in identities and identities[label] != identity:
                 raise M1AnalysisError(f"{label}: checkpoint identity differs between shards")
             identities.setdefault(label, identity)
+        planned_tasks = {}
+        for t in (plan.get("panel") or {}).get("tasks") or []:
+            planned_tasks[(t.get("label"), t.get("first_pair"), t.get("pair_count"))] = t.get("stem")
+        if not planned_tasks:
+            raise M1AnalysisError(f"{shard}: the plan names no tasks")
         per_model_voids = (summary.get("voids") or {}).get("per_model")
         if not isinstance(per_model_voids, dict):
             raise M1AnalysisError(f"{shard}: panel-summary.json carries no voids.per_model map")
@@ -170,40 +195,105 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
             shard_voids[label] = set(int(p) for p in indices)
             voids.setdefault(label, set()).update(shard_voids[label])
         # Consume only the task outcome files the summary names, at the bytes it recorded.
+        consumed_tasks = set()
         for task in summary.get("tasks") or []:
             label = task.get("label")
-            for segment in task.get("segments") or []:
+            key = (label, task.get("first_pair"), task.get("pair_count"))
+            stem = planned_tasks.get(key)
+            if stem is None:
+                raise M1AnalysisError(f"{shard}: summary task {key} is not in the plan's task list")
+            consumed_tasks.add(key)
+            if label not in identities:
+                raise M1AnalysisError(f"{shard}: summary task label {label!r} is not a planned model")
+            task_first, task_count = key[1], key[2]
+            if not isinstance(task_first, int) or not isinstance(task_count, int) or task_count < 1:
+                raise M1AnalysisError(f"{shard}: task {key} has a malformed pair range")
+            segments = task.get("segments") or []
+            if not segments:
+                raise M1AnalysisError(f"{shard}: task {key} records no segments")
+            # The runner of record splits a task at every tolerated void: segment k
+            # covers a contiguous run of pairs that ends at the voided pair (or at the
+            # end of the task), and continuation k is named <stem>-void0k. The
+            # segments must partition the planned range in order, and the voids they
+            # record must be exactly the shard's voids for this model in that range.
+            next_first = task_first
+            task_voids: set[int] = set()
+            for attempt, segment in enumerate(segments):
+                seg_first, seg_count = segment.get("first_pair"), segment.get("pair_count")
+                if (segment.get("label") != label or not isinstance(seg_first, int)
+                        or not isinstance(seg_count, int) or seg_count < 1):
+                    raise M1AnalysisError(f"{shard}: task {key} has a segment whose label or range is malformed")
+                if segment.get("attempt") != attempt:
+                    raise M1AnalysisError(f"{shard}: task {key} segments are not numbered 0..n in order")
+                if seg_first != next_first or seg_first + seg_count > task_first + task_count:
+                    raise M1AnalysisError(f"{shard}: task {key} segments do not partition the planned range"
+                                          f" (segment {attempt} covers {seg_first}+{seg_count})")
+                next_first = seg_first + seg_count
+                voided = segment.get("voided_pairs")
+                if not isinstance(voided, list) or any(not isinstance(p, int) for p in voided):
+                    raise M1AnalysisError(f"{shard}: task {key} segment {attempt} lacks a voided_pairs list")
+                last_segment = attempt == len(segments) - 1
+                if voided not in ([], [seg_first + seg_count - 1]) or (not last_segment and not voided):
+                    raise M1AnalysisError(f"{shard}: task {key} segment {attempt} must end at its voided pair, got {voided}")
+                task_voids.update(voided)
                 outcome_path = segment.get("outcome")
                 recorded = segment.get("outcome_sha256")
                 if not outcome_path or not recorded:
                     raise M1AnalysisError(f"{shard}: task {label} segment lacks an outcome path or hash")
-                local = os.path.join(shard, "tasks", os.path.basename(outcome_path))
+                basename = os.path.basename(outcome_path.replace("\\", "/"))  # the runner records Windows paths
+                expected_name = (stem if attempt == 0 else f"{stem}-void{attempt:02d}") + ".outcome.jsonl"
+                if basename != expected_name:
+                    raise M1AnalysisError(f"{shard}: outcome file {basename} is not the runner's segment file {expected_name}")
+                local = os.path.join(shard, "tasks", basename)
                 if not os.path.isfile(local):
-                    raise M1AnalysisError(f"{shard}: recorded outcome file missing: {os.path.basename(outcome_path)}")
+                    raise M1AnalysisError(f"{shard}: recorded outcome file missing: {basename}")
                 if sha256_file(local) != recorded:
-                    raise M1AnalysisError(f"{shard}: {os.path.basename(outcome_path)} does not match its recorded SHA-256")
+                    raise M1AnalysisError(f"{shard}: {basename} does not match its recorded SHA-256")
                 per = models.setdefault(label, {})
                 skip = shard_voids.get(label, set())
+                header_bound = False
                 with open(local, encoding="utf-8") as handle:
                     for line in handle:
                         rec = json.loads(line)
+                        if rec.get("record_type") == "header":
+                            if rec.get("checkpoint") != identities[label]:
+                                raise M1AnalysisError(f"{basename}: outcome header checkpoint is not exactly the planned model {label} identity")
+                            header_bound = True
+                            continue
                         if rec.get("record_type") != "terminal":
                             continue
+                        if not header_bound:
+                            raise M1AnalysisError(f"{basename}: terminal record before a bound header")
                         pair = int(rec["pair_index"])
+                        if not seg_first <= pair < seg_first + seg_count:
+                            raise M1AnalysisError(f"{basename}: terminal row for root {pair} lies outside the segment range {seg_first}+{seg_count}")
                         if pair in skip:
                             continue  # the runner keeps a completed first leg of a voided pair
                         seat = rec["candidate_seat"]
+                        if seat not in ("p0", "p1"):
+                            raise M1AnalysisError(f"{basename}: root {pair} carries an unknown candidate seat {seat!r}")
                         reward = int(rec["candidate_terminal_reward"])
+                        if reward not in (-1, 0, 1):
+                            raise M1AnalysisError(f"{basename}: root {pair} seat {seat} carries a terminal reward outside -1, 0, 1")
                         entry = per.setdefault(pair, {"seed": rec["pair_environment_seed_u64_hex"], "legs": {}})
                         if entry["seed"] != rec["pair_environment_seed_u64_hex"]:
                             raise M1AnalysisError(f"{label}: root {pair} carries two environment seeds")
                         if seat in entry["legs"]:
                             raise M1AnalysisError(f"{label}: root {pair} seat {seat} recorded twice")
                         entry["legs"][seat] = reward
+            if next_first != task_first + task_count:
+                raise M1AnalysisError(f"{shard}: task {key} segments stop at pair {next_first},"
+                                      f" before the planned end {task_first + task_count}")
+            in_range = {p for p in shard_voids.get(label, set()) if task_first <= p < task_first + task_count}
+            if task_voids != in_range:
+                raise M1AnalysisError(f"{shard}: task {key} segment voids {sorted(task_voids)} differ from"
+                                      f" the summary's per-model voids {sorted(in_range)}")
+        if set(planned_tasks) != consumed_tasks:
+            raise M1AnalysisError(f"{shard}: summary tasks {sorted(consumed_tasks)} do not cover the plan's tasks {sorted(planned_tasks)}")
     for label in models:
         voids.setdefault(label, set())
     return {"models": models, "voids": voids, "identities": identities,
-            "shards": [os.path.basename(s) for s in shard_dirs]}
+            "shards": [os.path.basename(s) for s in shard_dirs], "summary_sha256": summary_sha256}
 
 
 def validate_universe(models: dict, voids: dict, registered_roots: int) -> dict:
@@ -307,16 +397,22 @@ def contrast(models: dict, voids: dict, endpoint: str, reference: str, registere
         # endpoint losing both legs and the reference winning both.
         worst = summarize(deltas + [-1.0] * len(excluded))
         result["worst_case_bound"] = {"roots": worst["roots"], "point_pp": worst["point_pp"],
-                                      "one_sided_lcb95_pp": worst["one_sided_lcb95_pp"]}
+                                      "one_sided_lcb95_pp": worst["one_sided_lcb95_pp"], "p_one_sided": worst["p_one_sided"]}
+    # The statistic Holm ranks and tests: the conservative (larger) one-sided
+    # p-value when a worst-case bound exists, else the complete-case one.
+    result["p_for_holm"] = max(result["p_one_sided"], result.get("worst_case_bound", {}).get("p_one_sided", 0.0))
     return result
 
 
 def gate(c: dict) -> bool:
-    passes = bool(c["one_sided_lcb95_pp"] > 0.0 and c["point_pp"] >= POINT_FLOOR_PP)
+    """Milestone gate; also records the two component gates on the contrast so a
+    report-only reading of the worst-case rule can be taken from the same output."""
+    complete = bool(c["one_sided_lcb95_pp"] > 0.0 and c["point_pp"] >= POINT_FLOOR_PP)
     worst = c.get("worst_case_bound")
-    if worst is not None:
-        passes = passes and bool(worst["one_sided_lcb95_pp"] > 0.0 and worst["point_pp"] >= POINT_FLOOR_PP)
-    return passes
+    worst_gate = None if worst is None else bool(worst["one_sided_lcb95_pp"] > 0.0 and worst["point_pp"] >= POINT_FLOOR_PP)
+    c["gate_complete_case"] = complete
+    c["gate_worst_case"] = worst_gate
+    return complete and (worst_gate is None or worst_gate)
 
 
 def winrate(models: dict, voids: dict, label: str) -> dict:
@@ -345,12 +441,12 @@ def analyze(group_a_root: str, group_b_root: str, registered_roots: int = REGIST
     primary = contrast(models, voids, *PRIMARY, registered_roots)
     primary["milestone"] = gate(primary)
     secondaries = [contrast(models, voids, e, r, registered_roots) for e, r in SECONDARIES]
-    ranked = sorted(secondaries, key=lambda c: c["p_one_sided"])
+    ranked = sorted(secondaries, key=lambda c: c["p_for_holm"])
     still_significant = True
     for i, c in enumerate(ranked):
         threshold = HOLM_ALPHA / (len(ranked) - i)
         c["holm_threshold"] = threshold
-        c["holm_significant"] = bool(still_significant and c["p_one_sided"] <= threshold)
+        c["holm_significant"] = bool(still_significant and c["p_for_holm"] <= threshold)
         if not c["holm_significant"]:
             still_significant = False
         c["milestone_under_holm"] = bool(c["holm_significant"] and gate(c))
@@ -359,7 +455,8 @@ def analyze(group_a_root: str, group_b_root: str, registered_roots: int = REGIST
         "schema": "mtg-kernel-cycle4-m1-cp7-analysis/v1",
         "registered": {**registered, "roots": registered_roots, "shard_pairs": SHARD_PAIRS,
                        "void_cap_fraction": VOID_CAP_FRACTION, "point_floor_pp": POINT_FLOOR_PP},
-        "shards": {"group_a": a["shards"], "group_b": b["shards"]},
+        "shards": {"group_a": a["shards"], "group_b": b["shards"],
+                   "summary_sha256": {"group_a": a["summary_sha256"], "group_b": b["summary_sha256"]}},
         "checks": checks,
         "winrates_vs_cp7": {m: winrate(models, voids, m) for m in sorted(models)},
         "primary": primary,
@@ -377,36 +474,54 @@ def self_test() -> None:
     registered["base_seed"] = 7
     n, sp = 256, SHARD_PAIRS
 
+    def identity_of(label):
+        return {"loaded_generation": 2048, "loaded_run_sha256": label, "loaded_checkpoint_sha256": label + "-ckpt"}
+
     def write_group(root, labels, shift, void=None, corrupt_task=False):
         for s in range(n // sp):
             shard = os.path.join(root, f"shard-{s:02d}")
             os.makedirs(os.path.join(shard, "tasks"))
             per_model, tasks = {}, []
             for label in labels:
-                voided = [p for p in (void or {}).get(label, []) if s * sp <= p < (s + 1) * sp]
+                voided = sorted(p for p in (void or {}).get(label, []) if s * sp <= p < (s + 1) * sp)
                 per_model[label] = {"voided_pair_indices": voided}
-                name = f"{label}-p{s * sp:06d}-n{sp:03d}.outcome.jsonl"
-                path = os.path.join(shard, "tasks", name)
-                with open(path, "w", encoding="utf-8") as h:
-                    h.write(json.dumps({"record_type": "header"}) + "\n")
-                    for p in range(s * sp, (s + 1) * sp):
-                        seed = format(p * 7919 + 17, "016x")
-                        legs = ("p0",) if p in voided else ("p0", "p1")  # a voided pair keeps its first leg
-                        for seat in legs:
-                            draw = random.Random(f"{label}:{p}:{seat}").random()
-                            reward = 1 if draw < 0.5 + shift.get(label, 0.0) else -1
-                            h.write(json.dumps({"record_type": "terminal", "pair_index": p, "candidate_seat": seat,
-                                                "candidate_terminal_reward": reward,
-                                                "pair_environment_seed_u64_hex": seed}) + "\n")
-                if corrupt_task and label == labels[0] and s == 0:
-                    with open(path, "a", encoding="utf-8") as h:
-                        h.write("\n")
-                tasks.append({"label": label, "segments": [{"outcome": path, "outcome_sha256": sha256_file(path) if not (corrupt_task and label == labels[0] and s == 0) else "0" * 64}]})
+                stem = f"{label}-p{s * sp:06d}-n{sp:03d}"
+                # The runner ends a segment at each voided pair and continues in <stem>-voidNN.
+                ranges, start = [], s * sp
+                for v in voided:
+                    ranges.append((start, v - start + 1, [v]))
+                    start = v + 1
+                if start < (s + 1) * sp:
+                    ranges.append((start, (s + 1) * sp - start, []))
+                segments = []
+                for attempt, (first, count, seg_voids) in enumerate(ranges):
+                    name = (stem if attempt == 0 else f"{stem}-void{attempt:02d}") + ".outcome.jsonl"
+                    path = os.path.join(shard, "tasks", name)
+                    with open(path, "w", encoding="utf-8") as h:
+                        h.write(json.dumps({"record_type": "header", "checkpoint": identity_of(label)}) + "\n")
+                        for p in range(first, first + count):
+                            seed = format(p * 7919 + 17, "016x")
+                            legs = ("p0",) if p in seg_voids else ("p0", "p1")  # a voided pair keeps its first leg
+                            for seat in legs:
+                                draw = random.Random(f"{label}:{p}:{seat}").random()
+                                reward = 1 if draw < 0.5 + shift.get(label, 0.0) else -1
+                                h.write(json.dumps({"record_type": "terminal", "pair_index": p, "candidate_seat": seat,
+                                                    "candidate_terminal_reward": reward,
+                                                    "pair_environment_seed_u64_hex": seed}) + "\n")
+                    corrupted = corrupt_task and label == labels[0] and s == 0 and attempt == 0
+                    if corrupted:
+                        with open(path, "a", encoding="utf-8") as h:
+                            h.write("\n")
+                    segments.append({"label": label, "first_pair": first, "pair_count": count, "attempt": attempt,
+                                     "voided_pairs": seg_voids, "outcome": path,
+                                     "outcome_sha256": "0" * 64 if corrupted else sha256_file(path)})
+                tasks.append({"label": label, "first_pair": s * sp, "pair_count": sp, "segments": segments})
             plan = {"schema": registered["plan_schema"],
-                    "panel": {"pair_start": s * sp, "pair_count": sp, "read_pairs": n, "mode": "formal", "base_seed": 7},
+                    "panel": {"pair_start": s * sp, "pair_count": sp, "read_pairs": n, "mode": "formal", "base_seed": 7,
+                              "tasks": [{"label": label, "first_pair": s * sp, "pair_count": sp, "stem": f"{label}-p{s * sp:06d}-n{sp:03d}"} for label in labels]},
                     "inputs": {"scorer_sha256": registered["scorer_sha256"], "runner_sha256": registered["runner_sha256"],
                                "mage_commit": registered["mage_commit"],
-                               "models": {label: {"checkpoint": {"loaded_generation": 2048, "loaded_run_sha256": label}} for label in labels}}}
+                               "models": {label: {"checkpoint": identity_of(label)} for label in labels}}}
             plan_path = os.path.join(shard, "panel-plan.json")
             json.dump(plan, open(plan_path, "w"))
             json.dump({"schema": registered["summary_schema"], "mode": "formal", "base_seed": 7, "pair_start": s * sp, "pairs": sp,
@@ -415,6 +530,7 @@ def self_test() -> None:
 
     registered_local = dict(registered)
     registered_local["read_pairs"] = n
+    registered_local["admitted"] = {label: (2048, label, label + "-ckpt") for label in ("treatment-rb", "control-r", "g896", "static-rb", "cycle3-g2048")}
     shift = {"treatment-rb": 0.2}
     A = ["treatment-rb", "control-r", "g896"]; B = ["static-rb", "cycle3-g2048", "treatment-rb"]
     with tempfile.TemporaryDirectory() as tmp:
@@ -454,6 +570,65 @@ def self_test() -> None:
     expect_refusal("repeat mismatch", repeat_mismatch, "differ between groups")
     expect_refusal("corrupt task", corrupt, "recorded SHA-256")
     expect_refusal("wrong seed", wrong_seed, "base_seed")
+
+    def swapped_labels(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p))
+        for t in d["tasks"]:
+            if t["label"] == "control-r":
+                t["label"] = "g896"
+                for seg in t["segments"]:
+                    seg["label"] = "g896"
+        json.dump(d, open(p, "w"))
+    expect_refusal("swapped labels", swapped_labels, "is not the runner's segment file")
+
+    def wrong_identity(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-plan.json"); d = json.load(open(p))
+        d["inputs"]["models"]["g896"]["checkpoint"]["loaded_generation"] = 896
+        json.dump(d, open(p, "w"))
+        sp_ = os.path.join(a, "shard-00", "panel-summary.json"); sd = json.load(open(sp_)); sd["plan"]["sha256"] = sha256_file(p); json.dump(sd, open(sp_, "w"))
+    expect_refusal("wrong identity", wrong_identity, "not the admitted")
+
+    def short_partition(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p))
+        seg = d["tasks"][0]["segments"][-1]
+        seg["pair_count"] -= 1
+        dropped_root = seg["first_pair"] + seg["pair_count"]
+        rows = [l for l in open(seg["outcome"], encoding="utf-8").read().split("\n") if l]
+        kept = [l for l in rows if json.loads(l).get("record_type") != "terminal" or int(json.loads(l)["pair_index"]) != dropped_root]
+        open(seg["outcome"], "w", encoding="utf-8").write("\n".join(kept) + "\n")
+        seg["outcome_sha256"] = sha256_file(seg["outcome"])
+        json.dump(d, open(p, "w"))
+    expect_refusal("short partition", short_partition, "segments stop at pair")
+
+    def row_outside_segment(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p))
+        d["tasks"][0]["segments"][-1]["pair_count"] -= 1
+        json.dump(d, open(p, "w"))
+    expect_refusal("row outside segment", row_outside_segment, "outside the segment range")
+
+    def misnamed_retry(a, b):
+        write_group(a, A, shift, void={"control-r": [5]}); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p))
+        task = next(t for t in d["tasks"] if t["label"] == "control-r")
+        assert len(task["segments"]) == 2 and os.path.basename(task["segments"][1]["outcome"]).endswith("-void01.outcome.jsonl")
+        task["segments"][1]["attempt"] = 0
+        json.dump(d, open(p, "w"))
+    expect_refusal("misnamed retry", misnamed_retry, "not numbered")
+
+    def reduced_header(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        sp_ = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(sp_))
+        seg = d["tasks"][0]["segments"][0]
+        lines = open(seg["outcome"], encoding="utf-8").read().split("\n")
+        lines[0] = json.dumps({"record_type": "header", "checkpoint": {"loaded_generation": 2048}})
+        open(seg["outcome"], "w", encoding="utf-8").write("\n".join(lines))
+        seg["outcome_sha256"] = sha256_file(seg["outcome"])
+        json.dump(d, open(sp_, "w"))
+    expect_refusal("reduced header", reduced_header, "not exactly the planned")
     print("self-test ok")
 
 
