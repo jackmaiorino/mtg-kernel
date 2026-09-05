@@ -158,10 +158,12 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
     models: dict[str, dict[int, dict]] = {}
     voids: dict[str, set[int]] = {}
     identities: dict[str, dict] = {}
+    summary_sha256: dict[str, str] = {}
     for index, shard in enumerate(shard_dirs):
         if os.path.basename(shard) != f"shard-{index:02d}":
             raise M1AnalysisError(f"{shard}: shard directories must be shard-00 .. shard-{expected_shards - 1:02d} without gaps")
         summary, plan = bind_shard(shard, index, registered)
+        summary_sha256[os.path.basename(shard)] = sha256_file(os.path.join(shard, "panel-summary.json"))
         plan_models = (plan.get("inputs") or {}).get("models") or {}
         admitted = registered.get("admitted") or {}
         for label, spec in plan_models.items():
@@ -201,6 +203,8 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
             if stem is None:
                 raise M1AnalysisError(f"{shard}: summary task {key} is not in the plan's task list")
             consumed_tasks.add(key)
+            if label not in identities:
+                raise M1AnalysisError(f"{shard}: summary task label {label!r} is not a planned model")
             task_first, task_count = key[1], key[2]
             if not isinstance(task_first, int) or not isinstance(task_count, int) or task_count < 1:
                 raise M1AnalysisError(f"{shard}: task {key} has a malformed pair range")
@@ -236,7 +240,7 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
                 recorded = segment.get("outcome_sha256")
                 if not outcome_path or not recorded:
                     raise M1AnalysisError(f"{shard}: task {label} segment lacks an outcome path or hash")
-                basename = os.path.basename(outcome_path)
+                basename = os.path.basename(outcome_path.replace("\\", "/"))  # the runner records Windows paths
                 expected_name = (stem if attempt == 0 else f"{stem}-void{attempt:02d}") + ".outcome.jsonl"
                 if basename != expected_name:
                     raise M1AnalysisError(f"{shard}: outcome file {basename} is not the runner's segment file {expected_name}")
@@ -261,10 +265,16 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
                         if not header_bound:
                             raise M1AnalysisError(f"{basename}: terminal record before a bound header")
                         pair = int(rec["pair_index"])
+                        if not seg_first <= pair < seg_first + seg_count:
+                            raise M1AnalysisError(f"{basename}: terminal row for root {pair} lies outside the segment range {seg_first}+{seg_count}")
                         if pair in skip:
                             continue  # the runner keeps a completed first leg of a voided pair
                         seat = rec["candidate_seat"]
+                        if seat not in ("p0", "p1"):
+                            raise M1AnalysisError(f"{basename}: root {pair} carries an unknown candidate seat {seat!r}")
                         reward = int(rec["candidate_terminal_reward"])
+                        if reward not in (-1, 0, 1):
+                            raise M1AnalysisError(f"{basename}: root {pair} seat {seat} carries a terminal reward outside -1, 0, 1")
                         entry = per.setdefault(pair, {"seed": rec["pair_environment_seed_u64_hex"], "legs": {}})
                         if entry["seed"] != rec["pair_environment_seed_u64_hex"]:
                             raise M1AnalysisError(f"{label}: root {pair} carries two environment seeds")
@@ -283,7 +293,7 @@ def read_group(group_root: str, registered: dict, registered_roots: int) -> dict
     for label in models:
         voids.setdefault(label, set())
     return {"models": models, "voids": voids, "identities": identities,
-            "shards": [os.path.basename(s) for s in shard_dirs]}
+            "shards": [os.path.basename(s) for s in shard_dirs], "summary_sha256": summary_sha256}
 
 
 def validate_universe(models: dict, voids: dict, registered_roots: int) -> dict:
@@ -395,11 +405,14 @@ def contrast(models: dict, voids: dict, endpoint: str, reference: str, registere
 
 
 def gate(c: dict) -> bool:
-    passes = bool(c["one_sided_lcb95_pp"] > 0.0 and c["point_pp"] >= POINT_FLOOR_PP)
+    """Milestone gate; also records the two component gates on the contrast so a
+    report-only reading of the worst-case rule can be taken from the same output."""
+    complete = bool(c["one_sided_lcb95_pp"] > 0.0 and c["point_pp"] >= POINT_FLOOR_PP)
     worst = c.get("worst_case_bound")
-    if worst is not None:
-        passes = passes and bool(worst["one_sided_lcb95_pp"] > 0.0 and worst["point_pp"] >= POINT_FLOOR_PP)
-    return passes
+    worst_gate = None if worst is None else bool(worst["one_sided_lcb95_pp"] > 0.0 and worst["point_pp"] >= POINT_FLOOR_PP)
+    c["gate_complete_case"] = complete
+    c["gate_worst_case"] = worst_gate
+    return complete and (worst_gate is None or worst_gate)
 
 
 def winrate(models: dict, voids: dict, label: str) -> dict:
@@ -442,7 +455,8 @@ def analyze(group_a_root: str, group_b_root: str, registered_roots: int = REGIST
         "schema": "mtg-kernel-cycle4-m1-cp7-analysis/v1",
         "registered": {**registered, "roots": registered_roots, "shard_pairs": SHARD_PAIRS,
                        "void_cap_fraction": VOID_CAP_FRACTION, "point_floor_pp": POINT_FLOOR_PP},
-        "shards": {"group_a": a["shards"], "group_b": b["shards"]},
+        "shards": {"group_a": a["shards"], "group_b": b["shards"],
+                   "summary_sha256": {"group_a": a["summary_sha256"], "group_b": b["summary_sha256"]}},
         "checks": checks,
         "winrates_vs_cp7": {m: winrate(models, voids, m) for m in sorted(models)},
         "primary": primary,

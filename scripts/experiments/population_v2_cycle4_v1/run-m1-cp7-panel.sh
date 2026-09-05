@@ -24,8 +24,9 @@
 #
 #   usage: run-m1-cp7-panel.sh <a|b|both>
 # Fail-closed: any shard exiting nonzero stops the launcher; a shard root that
-# already exists stops the launcher before anything runs (move it aside by
-# hand and record why before retrying).
+# already exists stops the launcher before anything runs (move it outside the
+# group root by hand and record why before retrying; the analyzer counts every
+# shard-* directory it finds).
 set -euo pipefail
 WHICH="${1:-both}"
 M1_BASE_SEED=2026090501
