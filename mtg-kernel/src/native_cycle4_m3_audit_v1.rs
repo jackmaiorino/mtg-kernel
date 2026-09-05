@@ -634,24 +634,58 @@ pub fn search_occupant_cell_identity_v1(authority_sha256: &str, tier: &str) -> S
     format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
+/// The search tiers the Store contract registers for a search occupant.
+pub const CYCLE4_M3_SEARCH_OCCUPANT_TIERS_V1: [&str; 4] = ["t512", "t2048", "t8192", "t32768"];
+
+fn is_sha256_lower_hex_v1(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// How an episode names its opponent for the M3 cell.
+enum EpisodeCellIdentityV1 {
+    /// A checkpoint manifest SHA-256, or a well-formed search-occupant identity.
+    Identity(String),
+    /// Neither a checkpoint manifest nor both search fields: no cell.
+    Absent,
+    /// Search fields present but malformed (authority not 64 lower hex, or a
+    /// tier outside the registered set): refused, never hashed into a key.
+    MalformedSearchOccupant(String),
+}
+
 /// The cell identity an episode contributes to: its opponent's checkpoint
-/// manifest SHA-256 when it carries one, otherwise the search-occupant
-/// identity when it carries both search fields, otherwise none (the audit
-/// then fails closed rather than inventing a cell).
-fn episode_cell_identity_v1(episode: &EpisodeReadV1) -> Option<String> {
+/// manifest SHA-256 when it carries one; otherwise the search-occupant
+/// identity when it carries a 64-lower-hex authority AND a registered tier
+/// (both validated BEFORE hashing, so a malformed authority or an unknown
+/// tier can never become a plausible key, and the `:`-joined payload is
+/// injective because a validated authority contains no `:`); otherwise
+/// absent, and the audit fails closed rather than inventing a cell.
+fn episode_cell_identity_v1(episode: &EpisodeReadV1) -> EpisodeCellIdentityV1 {
     if let Some(manifest) = &episode.opponent_checkpoint_manifest_sha256 {
         if !manifest.is_empty() {
-            return Some(manifest.clone());
+            return EpisodeCellIdentityV1::Identity(manifest.clone());
         }
     }
     match (
         &episode.opponent_search_authority_sha256,
         &episode.opponent_search_tier,
     ) {
-        (Some(authority), Some(tier)) if !authority.is_empty() && !tier.is_empty() => {
-            Some(search_occupant_cell_identity_v1(authority, tier))
+        (Some(authority), Some(tier)) => {
+            if !is_sha256_lower_hex_v1(authority) {
+                return EpisodeCellIdentityV1::MalformedSearchOccupant(format!(
+                    "opponent_search_authority_sha256 {authority:?} is not 64 lower hex"
+                ));
+            }
+            if !CYCLE4_M3_SEARCH_OCCUPANT_TIERS_V1.contains(&tier.as_str()) {
+                return EpisodeCellIdentityV1::MalformedSearchOccupant(format!(
+                    "opponent_search_tier {tier:?} is not a registered tier"
+                ));
+            }
+            EpisodeCellIdentityV1::Identity(search_occupant_cell_identity_v1(authority, tier))
         }
-        _ => None,
+        _ => EpisodeCellIdentityV1::Absent,
     }
 }
 
@@ -860,19 +894,33 @@ fn adapt_update_v1(path: &Path, evidence: &EvidenceReadV1) -> Result<AdaptedUpda
                 format!("unexpected episode schema {}", episode.schema),
             ));
         }
-        let identity = episode_cell_identity_v1(episode).ok_or_else(|| {
-            Cycle4M3AuditErrorV1::new(
-                "cycle4_m3_audit_v1_episode_without_opponent_identity",
-                format!(
-                    "{}: update {} has an episode with neither opponent_checkpoint_manifest_sha256 \
-                     nor a search occupant identity (opponent_search_authority_sha256 plus \
-                     opponent_search_tier); the M3 cell is (opponent identity, learner role) and \
-                     cannot be formed for it",
-                    path.display(),
-                    evidence.update_index
-                ),
-            )
-        })?;
+        let identity = match episode_cell_identity_v1(episode) {
+            EpisodeCellIdentityV1::Identity(identity) => identity,
+            EpisodeCellIdentityV1::Absent => {
+                return Err(Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_episode_without_opponent_identity",
+                    format!(
+                        "{}: update {} has an episode with neither opponent_checkpoint_manifest_sha256 \
+                         nor a search occupant identity (opponent_search_authority_sha256 plus \
+                         opponent_search_tier); the M3 cell is (opponent identity, learner role) and \
+                         cannot be formed for it",
+                        path.display(),
+                        evidence.update_index
+                    ),
+                ));
+            }
+            EpisodeCellIdentityV1::MalformedSearchOccupant(reason) => {
+                return Err(Cycle4M3AuditErrorV1::new(
+                    "cycle4_m3_audit_v1_malformed_search_occupant_identity",
+                    format!(
+                        "{}: update {} has a search-occupant episode whose identity fields are \
+                         malformed ({reason}); refused rather than hashed into a cell key",
+                        path.display(),
+                        evidence.update_index
+                    ),
+                ));
+            }
+        };
         let count = usize::try_from(episode.learner_physical_decision_count).map_err(|_| {
             decode_error_v1(
                 path,
@@ -3660,6 +3708,38 @@ mod tests {
             search_occupant_cell_identity_v1(&authority, "t512"),
             expected
         );
+    }
+
+    /// A search occupant with a malformed authority (not 64 lower hex) or an
+    /// unregistered tier is refused before anything is hashed, with its own
+    /// error code, so malformed evidence can never merge or invent cells.
+    #[test]
+    fn a_malformed_search_occupant_identity_is_refused_not_hashed_v1() {
+        for (label, authority, tier) in [
+            ("colon in authority", format!("{}:{}", identity_v1(0x66), "t2048"), "t512"),
+            ("upper hex authority", format!("A{}", &identity_v1(0x66)[1..]), "t2048"),
+            ("short authority", identity_v1(0x66)[..63].to_owned(), "t2048"),
+            ("unregistered tier", identity_v1(0x66), "t1024"),
+            ("colon in tier", identity_v1(0x66), "t2048:extra"),
+        ] {
+            let store = TestStoreV1::new_v1(&format!("malformed-{}", label.replace(' ', "-")));
+            let run_sha256 = identity_v1(0x5c);
+            let mut update = two_cell_update_v1(&[0.2], &[0.1]);
+            update[0].search_occupant = Some((authority.clone(), tier.to_owned()));
+            write_synthetic_store_v1(&store, &run_sha256, &[update], false);
+            assert_eq!(
+                compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+                    store_root: store.store_root_v1(),
+                    chain_dir: None,
+                    residual_mode: Cycle4M3ResidualModeV1::Raw,
+                    window_updates: 1,
+                })
+                .expect_err(label)
+                .code(),
+                "cycle4_m3_audit_v1_malformed_search_occupant_identity",
+                "{label}"
+            );
+        }
     }
 
     /// A search authority without a tier is not an identity: the audit still
