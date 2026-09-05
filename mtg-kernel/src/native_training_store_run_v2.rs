@@ -8916,6 +8916,7 @@ mod tests {
             numerical_backend:
                 crate::native_training_executor_v1::NativeTrainingNumericalBackendV1::Sequential,
             backward_worker_limit: 1,
+            searcher_active_v1: false,
         }
     }
 

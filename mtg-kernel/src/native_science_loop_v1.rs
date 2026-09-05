@@ -274,6 +274,45 @@ const fn response_exploiter_runtime_requirements_satisfied_v1(
         && !population_authority_enabled
 }
 
+/// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4, A4.4: the new
+/// cross-check between the cycle-3 tranche-refresh manifest chain and the
+/// run-level `population_program_v2_cycle3` contract, "so the manifest
+/// chain and the trainee contract authenticate each other." Neither
+/// `contracts.population_program_v2_cycle3.global_generation_offset`
+/// (2,304, the parent's terminal `global_generation`) nor
+/// `.local_updates_total` (2,048) says anything by itself about which
+/// chain link a given launch resolved; this asserts the chain's own first-
+/// owned and terminal `global_generation` values are exactly
+/// `offset + 128` and `offset + local_updates_total` respectively -- in
+/// addition to, not instead of, the existing launcher-env-var check
+/// (`MULTIRUN_EXPECT_RESUME_GENERATION`/`MULTIRUN_STOP_AFTER_GENERATION`,
+/// immediately above the one call site below) which reads what the
+/// launcher was TOLD to expect, not what the run's own decoded contract
+/// independently states; both must agree, mirroring Amendment 2's own
+/// two-layer (in-code contract, launcher env) discipline rather than
+/// trusting either alone. Extracted as a pure, `const fn` boolean check
+/// (mirroring `response_exploiter_runtime_requirements_satisfied_v1`
+/// immediately above) so it is unit-testable without a decoded record, a
+/// real manifest chain, or a device.
+#[cfg(test)]
+const fn population_v2_cycle3_manifest_chain_binds_contract_v1(
+    contract_global_generation_offset: u64,
+    contract_local_updates_total: u64,
+    first_owned_global_generation: u64,
+    terminal_global_generation: u64,
+) -> bool {
+    let expected_first = contract_global_generation_offset.checked_add(128);
+    let expected_terminal =
+        contract_global_generation_offset.checked_add(contract_local_updates_total);
+    match (expected_first, expected_terminal) {
+        (Some(expected_first), Some(expected_terminal)) => {
+            first_owned_global_generation == expected_first
+                && terminal_global_generation == expected_terminal
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 fn validate_response_exploiter_runtime_bindings_v1(
     run: &ValidatedTrainRunV2,
@@ -475,7 +514,33 @@ pub fn run_native_science_loop_with_population_v1(
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
-    if population_opponent.is_none() || run.record().contracts().population_program_v1.is_none() {
+    // FIX (caught 2026-08-26 on the first real cycle-3 population-runtime
+    // launch to ever reach this far: every earlier real attempt failed
+    // upstream, in the manifest chain/resolver, before this function was
+    // ever called): this is the SOLE call site for every population-
+    // runtime dispatch -- v1's own tranche-1 mechanism, the ported v2
+    // cycle-2 mechanism, and cycle-3's own v2 mechanism alike -- but the
+    // gate below required `population_program_v1` specifically, which
+    // cycle-3's own genesis-stamping deliberately does NOT set (it stamps
+    // `population_program_v2_cycle3` instead; see
+    // `fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2`'s
+    // own doc comment: "Deliberately does not reuse
+    // population_program_fixture_for_seed... that stamping stays
+    // hard-locked to tranche-1 parameters"). This made every real cycle-3
+    // population-runtime launch fail here unconditionally, regardless of
+    // whether the manifest chain/resolver were otherwise correct. Widened
+    // to accept any of the three recognized population-program contract
+    // flavors (v1, v2 cycle-2, v2 cycle-3) -- purely additive: v1's own
+    // existing callers are unaffected (population_program_v1.is_some()
+    // still accepted first), and this does not relax anything else this
+    // function's caller already gates on population_runtime_enabled/the
+    // resolved population_opponent itself.
+    let contracts = run.record().contracts();
+    if population_opponent.is_none()
+        || (contracts.population_program_v1.is_none()
+            && contracts.population_program_v2_cycle2.is_none()
+            && contracts.population_program_v2_cycle3.is_none())
+    {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
     match run_native_science_loop_with_opponents_v1(
@@ -726,6 +791,14 @@ fn run_native_science_loop_with_opponents_v1(
             execution_config.clone(),
             continuation_session.take(),
         )
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!(
+                "science-loop resume failure: kind={:?} code={}",
+                _error.kind(),
+                _error.code()
+            );
+        })
         .map_err(map_busy_v1(
             NativeScienceLoopV1ErrorKind::TrainFailed,
             |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
@@ -739,6 +812,9 @@ fn run_native_science_loop_with_opponents_v1(
             } => {
                 #[cfg(test)]
                 if let Some(expected) = expected_resume_generation {
+                    eprintln!(
+                        "science-loop resume Complete: latest_generation_index={latest_generation_index} expected={expected} resume_generation_checked={resume_generation_checked}"
+                    );
                     if !resume_generation_checked && latest_generation_index != expected {
                         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
                     }
@@ -752,6 +828,9 @@ fn run_native_science_loop_with_opponents_v1(
                 {
                     let parent_generation = continuation.parent_checkpoint.generation_index();
                     if let Some(expected) = expected_resume_generation {
+                        eprintln!(
+                            "science-loop resume Continue: parent_generation={parent_generation} expected={expected} resume_generation_checked={resume_generation_checked} stop_after_generation={stop_after_generation:?}"
+                        );
                         if !resume_generation_checked {
                             if parent_generation != expected {
                                 return Err(loop_error_v1(
@@ -843,6 +922,9 @@ fn run_native_science_loop_with_opponents_v1(
     };
     #[cfg(test)]
     if !resume_generation_checked {
+        eprintln!(
+            "science-loop post-loop: resume_generation_checked=false latest_generation_index={latest_generation_index} expected_resume_generation={expected_resume_generation:?}"
+        );
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
 
@@ -1106,6 +1188,41 @@ mod policy_anchor_parse_tests {
         // the de-novo arm.
         assert!(!response_exploiter_runtime_requirements_satisfied_v1(
             true, true, false, true, 511, false,
+        ));
+    }
+
+    /// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4, A4.4: the
+    /// cycle-3 manifest-chain/contract binding, at the pinned real values
+    /// (offset 2,304, local_updates_total 2,048): the first cycle-3-owned
+    /// link is 2,432, the terminal link is 4,352.
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_at_the_pinned_values() {
+        assert!(population_v2_cycle3_manifest_chain_binds_contract_v1(
+            2_304, 2_048, 2_432, 4_352,
+        ));
+    }
+
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_rejects_wrong_first_link() {
+        assert!(!population_v2_cycle3_manifest_chain_binds_contract_v1(
+            2_304, 2_048, 2_431, 4_352,
+        ));
+    }
+
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_rejects_wrong_terminal_link() {
+        assert!(!population_v2_cycle3_manifest_chain_binds_contract_v1(
+            2_304, 2_048, 2_432, 4_351,
+        ));
+    }
+
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_rejects_overflow() {
+        assert!(!population_v2_cycle3_manifest_chain_binds_contract_v1(
+            u64::MAX,
+            2_048,
+            2_432,
+            4_352,
         ));
     }
 }
@@ -1373,6 +1490,7 @@ mod windows_science_loop_tests {
     fn multirun_pilot_v1() {
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
         use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2,
             test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2,
             test_fixture_bytes_with_schedule_and_base_seed_v2,
         };
@@ -1425,7 +1543,51 @@ mod windows_science_loop_tests {
         // unset) is completely untouched.
         let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
         let population_authority_enabled = env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
+        // Cycle-3 sheet Amendment 2 A2.2: a separate stamping knob, since
+        // MULTIRUN_POPULATION_AUTHORITY stays hard-locked to tranche-1
+        // parameters (the assert below requires updates == 1_536) and is not
+        // reused. Stamps `population_program_v2_cycle3` instead of
+        // `population_program_v1`; shares the same generic
+        // MULTIRUN_POPULATION_RUNTIME pool-resolution machinery, which is not
+        // tranche-1-specific.
+        let population_cycle3_authority_enabled =
+            env_knob_v1("MULTIRUN_POPULATION_CYCLE3_AUTHORITY", 0) != 0;
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
+        // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4 (countersigned
+        // 00affe6a), A4.3: routes the population-engine RESOLUTION dispatch
+        // (below) to the ported v2 tranche-refresh chain
+        // (decode_population_tranche_refresh_manifest_v2 /
+        // resolve_population_tranche_refresh_opponent_v2) instead of the
+        // base program's v1 chain, mirroring the cycle-2-era branch's own
+        // MULTIRUN_POPULATION_V2_CYCLE2 dispatch idiom (commit 8c8d645):
+        // automatic base_seed membership plus an explicit, bidirectionally
+        // asserted knob, rather than either alone. This is a distinct knob
+        // from MULTIRUN_POPULATION_CYCLE3_AUTHORITY (Task 2's genesis-
+        // stamping knob, which governs record CONSTRUCTION, not pool
+        // RESOLUTION); a cycle-3 launch sets both.
+        const POPULATION_V2_CYCLE3_ACTIVE_BASE_SEEDS_V1: [u64; 1] = [977_002];
+        // R7's standing local/global split (commit d1a11e3): the store's
+        // own generation counter is local (0..2,048); global = local +
+        // this offset (2,304, the parent's terminal global_generation, per
+        // population_program_v2_cycle3_contract_for_launch_v1's own
+        // global_generation_offset field). Named here, matching the
+        // cycle-2-era branch's own population_v2_cycle2_global_generation_v1
+        // pattern, so the manifest chain's own global-scale
+        // global_generation and the launcher's own local-scale
+        // MULTIRUN_EXPECT_RESUME_GENERATION/MULTIRUN_STOP_AFTER_GENERATION
+        // are never compared directly against each other.
+        const POPULATION_V2_CYCLE3_GLOBAL_GENERATION_OFFSET_V1: u64 = 2_304;
+        let population_v2_cycle3_enabled = env_knob_v1("MULTIRUN_POPULATION_V2_CYCLE3", 0) != 0;
+        let population_v2_cycle3_active_dispatch = population_runtime_enabled
+            && POPULATION_V2_CYCLE3_ACTIVE_BASE_SEEDS_V1.contains(&base_seed);
+        assert!(
+            !population_v2_cycle3_enabled || population_v2_cycle3_active_dispatch,
+            "MULTIRUN_POPULATION_V2_CYCLE3=1 requires a cycle-3 base_seed (977002) under MULTIRUN_POPULATION_RUNTIME=1"
+        );
+        assert!(
+            !population_v2_cycle3_active_dispatch || population_v2_cycle3_enabled,
+            "a cycle-3 base_seed (977002) under MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_V2_CYCLE3=1"
+        );
         let response_exploiter_runtime_enabled =
             env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
         // De-novo response screen (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): an
@@ -1558,8 +1720,14 @@ mod windows_science_loop_tests {
             "MULTIRUN_POPULATION_AUTHORITY=1 requires the exact ladder, envrand-v2, parent-init, and global-1536 Run"
         );
         assert!(
-            !population_runtime_enabled || population_authority_enabled,
-            "MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_AUTHORITY=1"
+            !(population_authority_enabled && population_cycle3_authority_enabled),
+            "MULTIRUN_POPULATION_AUTHORITY and MULTIRUN_POPULATION_CYCLE3_AUTHORITY are mutually exclusive stamping knobs"
+        );
+        assert!(
+            !population_runtime_enabled
+                || population_authority_enabled
+                || population_cycle3_authority_enabled,
+            "MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_AUTHORITY=1 or MULTIRUN_POPULATION_CYCLE3_AUTHORITY=1"
         );
         assert!(
             !(population_runtime_enabled && response_exploiter_runtime_enabled),
@@ -1584,8 +1752,200 @@ mod windows_science_loop_tests {
              and exactly one of parent init (warm-start build/screen) or \
              MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 (fresh-init denovo-screen)"
         );
-        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled
-        {
+        let population_engine = if population_v2_cycle3_active_dispatch {
+            // Amendment 4 A4.3: the ported v2 tranche-refresh chain, not
+            // the base program's v1 chain immediately below (unedited by
+            // this branch's addition).
+            let chain_paths: Vec<std::path::PathBuf> = std::env::var(
+                "MULTIRUN_POPULATION_REFRESH_CHAIN",
+            )
+            .unwrap_or_else(|_| {
+                panic!("v2-cycle3 population runtime requires MULTIRUN_POPULATION_REFRESH_CHAIN")
+            })
+            .split(';')
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+            assert!(
+                !chain_paths.is_empty(),
+                "cycle-3 population refresh chain is empty"
+            );
+            // Captured before the chain-build loop below consumes
+            // chain_paths by value; used further down (A4.4) to reach
+            // sibling manifest files beyond whatever this launch's own
+            // runtime resume chain currently spans.
+            let manifest_dir = chain_paths
+                .last()
+                .expect("cycle-3 population refresh chain is nonempty")
+                .parent()
+                .expect("cycle-3 population refresh manifest path must have a parent directory")
+                .to_path_buf();
+            let mut chain = Vec::with_capacity(chain_paths.len());
+            for path in chain_paths {
+                let bytes =
+                    fs::read(&path).expect("cycle-3 population refresh manifest must be readable");
+                let manifest = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(
+                    &bytes,
+                    chain.last(),
+                )
+                .expect("cycle-3 population refresh chain must validate");
+                chain.push(manifest);
+            }
+            let first = chain
+                .first()
+                .expect("cycle-3 population refresh chain is nonempty");
+            let active = chain
+                .last()
+                .expect("cycle-3 population refresh chain is nonempty");
+            // FIX (caught before this was ever run for real): the manifest
+            // chain speaks GLOBAL generation (2,432-4,352 for cycle-3's own
+            // 16 links), but MULTIRUN_EXPECT_RESUME_GENERATION/
+            // MULTIRUN_STOP_AFTER_GENERATION are LOCAL (0-2,048, the
+            // store's own counter, per R7's standing convention) -- the
+            // SAME local/global split the cycle-2-era branch's own
+            // analogous arm (population_v2_cycle2_global_generation_v1)
+            // already had to bridge. Comparing the manifest's global value
+            // directly against a local env-var value, as an earlier draft
+            // of this arm did, would have failed this assert on every real
+            // launch; caught here before any real run was attempted.
+            // Amendment 7 (collab/CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md,
+            // A7.1/A7.2): the manifest chain's own anchor is a CHAIN fact,
+            // fixed for this refresh regardless of how far training has
+            // actually progressed within the interval; the launch's own
+            // resume expectation is a STORE fact, which legitimately
+            // differs from the anchor on any launch resuming a
+            // partially-completed interval. The two are checked separately
+            // rather than conflated into one assertion -- the pre-A7
+            // defect (`active.global_generation_v2() ==
+            // expected_start_local + OFFSET`) rejected every honest
+            // mid-interval resume as if it were a corrupt input
+            // (refresh-21's real 328 resume: left 2_560, right 2_632).
+            let anchor_global = active.global_generation_v2();
+            let anchor_local = anchor_global
+                .checked_sub(POPULATION_V2_CYCLE3_GLOBAL_GENERATION_OFFSET_V1)
+                .expect("cycle-3 generation offset underflow");
+            let expected_start_local = expected_resume_generation
+                .expect("v2-cycle3 population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
+            // Checks 1 and 2 of 3 (A7.2 item 2: interval-range, then
+            // checkpoint-segment alignment) plus expected_stop_local
+            // (A7.2 item 3: always anchor_local + 128) are extracted to
+            // [`cycle3_population_dispatch_resume_expectation_v1`] just
+            // below `multirun_pilot_v1`, so Amendment 7's A7.3 unit tests
+            // (gates 1-5) can exercise this exact arithmetic directly,
+            // without a live store or a GPU/CUDA feature.
+            //
+            // `4` here is the same checkpoint_segment_updates literal
+            // every fixture-constructor call in this function's
+            // per-ordinal closure below already passes
+            // (test_fixture_bytes_with_schedule_and_base_seed_*_v2, ~10
+            // call sites, all `64, 4, updates, ...`) -- named here rather
+            // than left a second, disconnected literal. It is not
+            // threaded from a live decoded `run` object: no such object
+            // exists yet at this point in the dispatch -- `run` is
+            // decoded per-ordinal, inside the very closures that already
+            // hardcode this same `4`, roughly 250 lines below.
+            // Reconstructing a run record this early, before the
+            // per-ordinal loop, to read the value dynamically would be a
+            // materially larger restructuring than Amendment 7
+            // authorizes; flagged here rather than done silently.
+            const CYCLE3_CHECKPOINT_SEGMENT_UPDATES_V1: u64 = 4;
+            let expected_stop_local = cycle3_population_dispatch_resume_expectation_v1(
+                anchor_local,
+                expected_start_local,
+                CYCLE3_CHECKPOINT_SEGMENT_UPDATES_V1,
+            );
+            // Check 3 of 3 (A7.2 item 2, cited not duplicated): that the
+            // store's actual generation_index equals expected_start_local
+            // is already enforced by the existing resume-generation guard
+            // in run_native_science_loop_with_opponents_v1
+            // (native_science_loop_v1.rs:814-843, the Complete/Continue
+            // match arms' own resume_generation_checked logic) -- untouched
+            // by this amendment. A7.3 gate 6 exercises it directly.
+            assert_eq!(stop_after_generation, Some(expected_stop_local));
+            // Amendment 4 A4.4: the manifest chain and the run-level
+            // population_program_v2_cycle3 contract authenticate each
+            // other. The contract is deterministic/side-effect-free
+            // (population_program_v2_cycle3_contract_for_launch_v1, Task
+            // 2's genesis-stamping function, native_training_store_run_v2.rs)
+            // so it is called directly here rather than requiring a
+            // decoded TrainRunV2 record at this point in the dispatch.
+            let contract =
+                crate::native_training_store_run_v2::population_program_v2_cycle3_contract_for_launch_v1(
+                    base_seed,
+                );
+            // FIX (caught 2026-08-26 on the first real refresh-19 launch,
+            // after the chain-length fix above): `first`/`active` here are
+            // the RUNTIME RESUME chain's own boundary links (ending at
+            // this launch's resume parent, per Check 1 just above) --
+            // their global_generation values move with
+            // expected_start_local at every one of the 16 launches, so
+            // they can never equal the contract's FIXED plan bounds
+            // (global_generation_offset+128 / +local_updates_total)
+            // except by coincidence. A4.4 authenticates the FULL cycle-3
+            // DESIGN PLAN (refresh_index 19-34, the whole lineage the
+            // contract describes) against the contract, independent of
+            // how far the runtime resume chain above has progressed.
+            // Decoded fresh here from the same manifest directory,
+            // chained onward from the real cycle-2 terminal link
+            // (refresh_index 18, always present in the runtime chain
+            // since every cycle-3 launch's resume chain starts at 0).
+            let historical_link_18 = chain
+                .iter()
+                .find(|manifest| manifest.refresh_index_v2() == 18)
+                .expect(
+                    "cycle-3 population refresh chain must include the real cycle-2 \
+                     terminal link (refresh_index 18)",
+                );
+            let mut plan_chain = Vec::with_capacity(16);
+            for plan_idx in 19_u64..=34 {
+                let plan_path =
+                    manifest_dir.join(format!("population-v3-refresh-{plan_idx:03}.json"));
+                let plan_bytes = fs::read(&plan_path)
+                    .expect("cycle-3 full design-plan manifest must be readable");
+                let predecessor = plan_chain.last().unwrap_or(historical_link_18);
+                let plan_decoded = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(
+                    &plan_bytes,
+                    Some(predecessor),
+                )
+                .expect("cycle-3 full design-plan manifest must chain-decode");
+                plan_chain.push(plan_decoded);
+            }
+            let plan_first_owned_global_generation = plan_chain
+                .first()
+                .expect("cycle-3 full design-plan chain is nonempty")
+                .global_generation_v2();
+            let plan_terminal_global_generation = plan_chain
+                .last()
+                .expect("cycle-3 full design-plan chain is nonempty")
+                .global_generation_v2();
+            assert!(
+                population_v2_cycle3_manifest_chain_binds_contract_v1(
+                    contract.global_generation_offset,
+                    contract.local_updates_total,
+                    plan_first_owned_global_generation,
+                    plan_terminal_global_generation,
+                ),
+                "cycle-3 manifest chain's own global_generation bounds must match \
+                 population_program_v2_cycle3's global_generation_offset/local_updates_total"
+            );
+            let slot_roots: Vec<std::path::PathBuf> =
+                std::env::var("MULTIRUN_POPULATION_SLOT_ROOTS")
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "v2-cycle3 population runtime requires MULTIRUN_POPULATION_SLOT_ROOTS"
+                        )
+                    })
+                    .split(';')
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect();
+            let engine = crate::native_population_runtime_resolution_v1::resolve_population_tranche_refresh_opponent_v2(
+                active,
+                &slot_roots,
+            )
+            .expect("cycle-3 population runtime slots must resolve through Store authority");
+            Some(Arc::new(engine))
+        } else if population_runtime_enabled || response_exploiter_runtime_enabled {
             let (chain_name, roots_name) = if response_exploiter_runtime_enabled {
                 (
                     "MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN",
@@ -1688,12 +2048,17 @@ mod windows_science_loop_tests {
             !(wide_enabled && population_authority_enabled),
             "population authority is fixed to the narrow Net8 runtime"
         );
+        assert!(
+            !(wide_enabled && population_cycle3_authority_enabled),
+            "population authority is fixed to the narrow Net8 runtime"
+        );
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
              record_only={record_only} ladder={ladder_enabled} \
              ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2} \
              population_authority={population_authority_enabled} \
+             population_cycle3_authority={population_cycle3_authority_enabled} \
              population_runtime={population_runtime_enabled} \
              response_exploiter_runtime={response_exploiter_runtime_enabled} \
              response_exploiter_denovo={response_exploiter_denovo_enabled} \
@@ -1783,6 +2148,27 @@ mod windows_science_loop_tests {
                             ladder_init_section
                                 .as_ref()
                                 .expect("population Run requires parent initialization")
+                                .clone(),
+                        )
+                    } else if population_cycle3_authority_enabled {
+                        test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2(
+                            NativeTrainingNumericalBackendV1::CudaBurnDense,
+                            64,
+                            4,
+                            updates,
+                            workers,
+                            sessions,
+                            broker_target,
+                            1_024,
+                            2_048,
+                            run_seed,
+                            ladder_pool
+                                .as_ref()
+                                .expect("population cycle-3 Run requires ladder pool")
+                                .clone(),
+                            ladder_init_section
+                                .as_ref()
+                                .expect("population cycle-3 Run requires parent initialization")
                                 .clone(),
                         )
                     } else if wide_enabled {
@@ -1984,6 +2370,35 @@ mod windows_science_loop_tests {
                     let mut execution_config = test_execution_config_v2(&run);
                     execution_config.numerical_backend =
                         NativeTrainingNumericalBackendV1::CudaBurnDense;
+                    // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 6
+                    // (v2, countersigned 394699e7): the ONLY site that ever
+                    // sets `searcher_active_v1`/widens `scheduler_timeout`,
+                    // derived directly from the active population manifest's
+                    // own slot 6 (exploiter-0) occupant class -- never from
+                    // an operator-supplied value. Every other launch path
+                    // (v1, response-exploiter, non-cycle-3) leaves
+                    // `searcher_active_v1` at its default `false`, so
+                    // `scheduler_timeout` stays the frozen recorded value.
+                    let searcher_active = population_engine
+                        .as_ref()
+                        .and_then(|engine| {
+                            crate::native_population_opponent_v1::PopulationSlotV1::from_index_v1(
+                                6,
+                            )
+                            .map(|slot| {
+                                engine.slot_kind_v1(slot)
+                                    == crate::native_population_opponent_v1::PopulationSlotKindV1::Search
+                            })
+                        })
+                        .unwrap_or(false);
+                    execution_config.searcher_active_v1 = searcher_active;
+                    execution_config.scheduler_timeout = if searcher_active {
+                        std::time::Duration::from_millis(
+                            crate::native_training_executor_v1::SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1,
+                        )
+                    } else {
+                        std::time::Duration::from_millis(run.record().topology.scheduler_timeout_ms)
+                    };
                     let (parent_path, _ephemeral_guard) = match durable_parent {
                         Some(dir) => {
                             let path = std::path::PathBuf::from(dir)
@@ -2105,6 +2520,162 @@ mod windows_science_loop_tests {
             "MULTIRUN AGGREGATE runs={run_count} episodes={total_episodes} \
              wall={aggregate_wall:.1}s eps_per_s={:.2} (non-evidence){wide_label}",
             total_episodes as f64 / aggregate_wall
+        );
+    }
+
+    /// Amendment 7 (collab/CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md, A7.2):
+    /// the cycle-3 population dispatch's mid-interval resume arithmetic,
+    /// extracted to a pure function so A7.3's unit tests can exercise it
+    /// directly, without a live store, GPU/CUDA feature, or the
+    /// `multirun_pilot_v1` env-var surface. Called from the real dispatch
+    /// (`multirun_pilot_v1`'s `population_v2_cycle3_active_dispatch`
+    /// branch) with the same three values it computes there.
+    ///
+    /// Panics via `assert!`/`assert_eq!` on the two invalid-input gates
+    /// (this dispatch arm's own pre-existing idiom); returns
+    /// `expected_stop_local` (always `anchor_local + 128`, A7.2 item 3) on
+    /// success. The store-position check -- whether the store's actual
+    /// `generation_index` equals `expected_start_local` -- is deliberately
+    /// NOT part of this function: it is the existing, unmodified guard in
+    /// `run_native_science_loop_with_opponents_v1`
+    /// (`native_science_loop_v1.rs:814-843`, the `Complete`/`Continue`
+    /// match arms' own `resume_generation_checked` logic), cited here
+    /// rather than duplicated (A7.2 item 2; A7.3 gate 6 exercises it
+    /// directly).
+    fn cycle3_population_dispatch_resume_expectation_v1(
+        anchor_local: u64,
+        expected_start_local: u64,
+        checkpoint_segment_updates: u64,
+    ) -> u64 {
+        assert!(
+            expected_start_local >= anchor_local && expected_start_local < anchor_local + 128,
+            "resume point must fall within this interval's own \
+             128-generation window (anchor_local={anchor_local}, \
+             expected_start_local={expected_start_local})"
+        );
+        assert_eq!(
+            expected_start_local % checkpoint_segment_updates,
+            0,
+            "resume point must land on a checkpoint-segment boundary \
+             (expected_start_local={expected_start_local}, \
+             checkpoint_segment_updates={checkpoint_segment_updates})"
+        );
+        anchor_local
+            .checked_add(128)
+            .expect("population interval generation overflow")
+    }
+
+    /// A7.3 gate 1: a fresh interval start (`expected_start_local ==
+    /// anchor_local`, true of every real cycle-3 launch to date except the
+    /// refresh-21 328 resume) validates and reduces to bit-for-bit the
+    /// pre-Amendment-7 behavior -- A7.2 item 5's explicit acceptance gate.
+    #[test]
+    fn cycle3_resume_expectation_fresh_start_reduces_to_pre_amendment7_behavior_v1() {
+        assert_eq!(
+            cycle3_population_dispatch_resume_expectation_v1(256, 256, 4),
+            384
+        );
+    }
+
+    /// A7.3 gate 2: the real refresh-21 case -- resuming at local
+    /// generation 328 within the 256-anchored interval -- validates and
+    /// produces the same `expected_stop_local = 384` a fresh 256-start
+    /// would (not 456, the pre-Amendment-7 defect's answer).
+    #[test]
+    fn cycle3_resume_expectation_valid_mid_interval_resume_passes_v1() {
+        assert_eq!(
+            cycle3_population_dispatch_resume_expectation_v1(256, 328, 4),
+            384
+        );
+    }
+
+    /// A7.3 gate 3: a resume point below the interval's own anchor fails
+    /// closed on the range check's lower bound.
+    #[test]
+    #[should_panic(expected = "resume point must fall within this interval's own")]
+    fn cycle3_resume_expectation_start_below_anchor_rejects_v1() {
+        let _ = cycle3_population_dispatch_resume_expectation_v1(256, 255, 4);
+    }
+
+    /// A7.3 gate 4: a resume point at (or past) the *next* interval's own
+    /// anchor fails closed on the range check's upper bound -- `384` is
+    /// the next interval's anchor, not a valid resume point for this one.
+    #[test]
+    #[should_panic(expected = "resume point must fall within this interval's own")]
+    fn cycle3_resume_expectation_start_at_next_interval_rejects_v1() {
+        let _ = cycle3_population_dispatch_resume_expectation_v1(256, 384, 4);
+    }
+
+    /// A7.3 gate 5: a resume point otherwise within range but not
+    /// checkpoint-segment-aligned fails closed on the alignment check --
+    /// a distinct panic site from gates 3/4's range check.
+    #[test]
+    #[should_panic(expected = "resume point must land on a checkpoint-segment boundary")]
+    fn cycle3_resume_expectation_non_segment_aligned_start_rejects_v1() {
+        let _ = cycle3_population_dispatch_resume_expectation_v1(256, 329, 4);
+    }
+
+    /// A7.3 gate 6: the store-position guard this amendment cites rather
+    /// than duplicates (native_science_loop_v1.rs:814-843, the
+    /// `Complete`/`Continue` match arms' `resume_generation_checked`
+    /// logic) still fails closed -- a `Result`, not a panic -- when the
+    /// launch's expected resume point disagrees with the store's actual
+    /// `generation_index`. Uses the same Sequential/no-CUDA lightweight
+    /// run as `historical_catalog_profile_is_rejected_before_bootstrap`:
+    /// the first call trains the run to its own completion with no resume
+    /// expectation set (establishing real store state); the second call,
+    /// same store, asserts an impossible `expected_resume_generation`
+    /// (`u64::MAX`) and must fail closed with `InputInvalid` via the cited
+    /// guard. `MULTIRUN_EXPECT_RESUME_GENERATION` is process-global (read
+    /// via `std::env::var`, not threaded as a parameter); no other
+    /// non-`#[ignore]`d test in this module reads it, so this does not
+    /// race concurrently-running tests under default `cargo test`
+    /// parallelism, and it is removed immediately after use on every exit
+    /// path (including a panic in the call itself, via `catch_unwind`).
+    #[test]
+    fn cycle3_store_position_resume_mismatch_is_rejected_by_the_existing_guard_v1() {
+        let run = one_segment_run_v1();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("a7-gate6-store-position-mismatch");
+
+        let first = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            None,
+        );
+        assert!(
+            first.is_ok(),
+            "setup call must reach real store state: {first:?}"
+        );
+
+        std::env::set_var("MULTIRUN_EXPECT_RESUME_GENERATION", u64::MAX.to_string());
+        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_native_science_loop_v1(
+                &parent.parent,
+                "store",
+                &run,
+                test_execution_config_v2(&run),
+                &snapshot_manifest,
+                &snapshot_payload,
+                runner_config_v1(),
+                None,
+                None,
+            )
+        }));
+        std::env::remove_var("MULTIRUN_EXPECT_RESUME_GENERATION");
+        let second = second.expect("resume-mismatch call must not panic, only Err");
+
+        assert_eq!(
+            second.unwrap_err().kind(),
+            NativeScienceLoopV1ErrorKind::InputInvalid,
+            "an impossible expected_resume_generation must fail closed via the \
+             existing, unmodified resume-generation guard"
         );
     }
 
@@ -4828,6 +5399,7 @@ mod live_c2_genesis_tests {
             learning_rate_bits: parse_bits(&record.optimization.learning_rate_f32_bits),
             numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
             backward_worker_limit: 1,
+            searcher_active_v1: false,
         }
     }
 

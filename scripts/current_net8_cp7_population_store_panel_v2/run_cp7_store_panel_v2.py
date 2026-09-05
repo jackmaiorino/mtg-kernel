@@ -52,14 +52,64 @@ from typing import Any
 # TRAJECTORY_CONTRACT_V1 / SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1) so the
 # outcome-jsonl "checkpoint" field's exact-match validation in
 # validate_outcome_shard agrees with what the binary actually emits.
-MODEL_AUTHORITY_MODES = ("population", "original")
+MODEL_AUTHORITY_MODES = ("population", "original", "fixedstate")
 AUTHORITY_KIND = "population-store-validated-generation"
 AUTHORITY_KIND_ORIGINAL = "original-promoted2-validated-store-generation"
 ENVIRONMENT_CONTRACT = "environment-randomization-v2"
 ENVIRONMENT_CONTRACT_ORIGINAL = "legacy-v1"
+
+# Third authority mode: checkpoint_shadow_stdio_v1's XmageCp7OutcomeDerivative
+# "fixed native state" sub-path (--xmage-cp7-outcome-root PATH, no --generation).
+# Unlike population/original, this does not read a population-Store layout at
+# all: PATH is a staging directory containing exactly two files, a canonical
+# fixed_native_state.json manifest and a checkpoint.state.f32le payload copy
+# (see stage_fixed_native_state.py-style staging, done once, out of band).
+# Every field name/value below is read verbatim from
+# native_checkpoint_shadow_stdio_v1.rs's XmageCp7OutcomeDerivative dispatch
+# (checkpoint_shadow_stdio_v1, mtg-kernel-composed-factorial-v1-codex,
+# read-only reference): the six FIXED_NATIVE_STATE_SOURCE_* constants below are
+# what that dispatch unconditionally reports as source_run_sha256 /
+# source_generation / source_checkpoint_sha256 / source_sidecar_sha256 /
+# source_payload_sha256 / source_train_state_sha256 / loaded_run_sha256 for
+# EVERY fixed-native-state load, regardless of which state was actually
+# loaded -- they are the promoted(2) g384 anchor's own identity (independently
+# cross-checked here: they match promoted(2)'s own run.json-embedded
+# opponent_ladder_initialization block byte for byte).
+FIXED_NATIVE_STATE_SCHEMA = "mtg-kernel-xmage-fixed-native-state/v1"
+FIXED_NATIVE_STATE_PAYLOAD_FILENAME = "checkpoint.state.f32le"
+FIXED_NATIVE_STATE_MANIFEST_FILENAME = "fixed_native_state.json"
+FIXED_NATIVE_STATE_NON_CLAIMS = [
+    "external software anchor is not professional-level evidence",
+    "terminal win/loss/draw is the only playing-strength outcome",
+]
+FIXED_NATIVE_STATE_SOURCE_RUN_SHA256 = \
+    "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae"
+FIXED_NATIVE_STATE_SOURCE_GENERATION = 384
+FIXED_NATIVE_STATE_SOURCE_CHECKPOINT_SHA256 = \
+    "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8"
+FIXED_NATIVE_STATE_SOURCE_SIDECAR_SHA256 = \
+    "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb"
+FIXED_NATIVE_STATE_SOURCE_PAYLOAD_SHA256 = \
+    "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99"
+FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256 = \
+    "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8"
+FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT = "environment-randomization-v2"
 SAMPLER_IDENTITY = "f32-q8-expq63-hamilton-splitmix64-v1"
 SAMPLER_CONTRACT = "276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6"
 OUTCOME_CONTRACT = "mtg-kernel-xmage-cp7-outcome-jsonl/v2"
+# checkpoint_shadow_stdio_v1's outcome-jsonl writer emits schema v1 instead of
+# v2 whenever a loaded checkpoint's identity matches the promoted(2) g384
+# anchor exactly, field for field (exact_g384, native_checkpoint_shadow_
+# stdio_v1.rs) -- which is exactly what --store-root --generation 384
+# (original mode) always resolves to in this harness. v1 rows are v2's rows
+# minus the per-row "checkpoint" block (confirmed field-for-field against a
+# real promoted2 outcome export): the header still carries checkpoint once,
+# but decision/terminal rows do not repeat it, since v1 has no other
+# checkpoint it could ever be. Schema v1 is therefore accepted ONLY for
+# models bound via original mode; population and fixedstate models must
+# still carry the full v2 per-row checkpoint block, strictly, with no v1
+# fallback -- see validate_outcome_shard.
+OUTCOME_CONTRACT_V1 = "mtg-kernel-xmage-cp7-outcome-jsonl/v1"
 CARD_DB_HASH = "b833d6a7b44ad1f7bd6aef9a21d1f2498136ef61e44db0e48e60e5ec471ce09d"
 HEX_16 = re.compile(r"[0-9a-f]{16}\Z")
 HEX_32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -75,6 +125,7 @@ DECISION_KEYS = {
     "tensor", "model_input_sha256", "old_policy_logits_f32_bits",
     "old_value_f32_bits", "checkpoint",
 }
+DECISION_KEYS_V1 = DECISION_KEYS - {"checkpoint"}
 TERMINAL_KEYS = {
     "record_type", "schema_version", "record_ordinal", "pair_index", "episode_id",
     "candidate_seat", "base_seed_u64_hex", "pair_environment_seed_u64_hex",
@@ -82,6 +133,7 @@ TERMINAL_KEYS = {
     "diagnostic_state_hash_u64_hex", "first_outcome_decision_ordinal",
     "outcome_decision_count", "terminal", "candidate_terminal_reward", "checkpoint",
 }
+TERMINAL_KEYS_V1 = TERMINAL_KEYS - {"checkpoint"}
 
 # Structured stdout markers emitted by XMageRallyAnchorSpike (mage-kernel-anchor-
 # spike-v1). PAIR_VOID_MARKER/SPIKE_VOID_STOP_MARKER only ever appear when the
@@ -96,6 +148,30 @@ VOID_CAP_FRACTION_DENOMINATOR = 100
 
 def fail(message: str) -> None:
     raise ValueError(message)
+
+
+def void_cap_breaches(
+    model_void_counts: dict[str, int], total_pairs: int,
+) -> list[tuple[str, int]]:
+    """Every model whose void count exceeds the 2% cap over `total_pairs`.
+
+    Checks every model unconditionally and returns every breach, not just
+    the first found (Amendment 4's own loop-order fix: an earlier caller
+    that `fail()`ed on the first breach in dict order could mask a worse
+    breach in a model checked later). `total_pairs` is the accounting
+    scope: a single shard's own `--pairs` for the historical per-shard
+    cap, or a `--read-pairs`-supplied full-read total for the per-shard
+    sanity ceiling introduced in Amendment 4 A4.2 (the wrapper's own
+    cross-shard accumulation, not this function, is what enforces the
+    real read-level cap; this function only ever sees one shard's own
+    void counts). The arithmetic itself
+    (`VOID_CAP_FRACTION_NUMERATOR`/`_DENOMINATOR`) is unchanged either
+    way -- only what `total_pairs` means differs by caller.
+    """
+    return [
+        (label, voided) for label, voided in model_void_counts.items()
+        if voided * VOID_CAP_FRACTION_DENOMINATOR > total_pairs * VOID_CAP_FRACTION_NUMERATOR
+    ]
 
 
 def sha256(path: Path) -> str:
@@ -161,10 +237,81 @@ def _git_commit(repo: Path) -> str:
                      "rev-parse", "HEAD"])
 
 
+def load_fixed_native_state_identity(root: Path, generation: int) -> dict[str, Any]:
+    if generation < 0 or not root.is_dir():
+        fail("fixed native state root or generation is invalid")
+    root = root.resolve()
+    manifest_path = root / FIXED_NATIVE_STATE_MANIFEST_FILENAME
+    payload_path = root / FIXED_NATIVE_STATE_PAYLOAD_FILENAME
+    entries = sorted(entry.name for entry in root.iterdir() if entry.is_file())
+    if entries != sorted((FIXED_NATIVE_STATE_MANIFEST_FILENAME, FIXED_NATIVE_STATE_PAYLOAD_FILENAME)):
+        fail(f"fixed native state directory must contain exactly the manifest and payload: {root}")
+    manifest = load_canonical_json(manifest_path)
+    if (
+        manifest.get("schema") != FIXED_NATIVE_STATE_SCHEMA
+        or not isinstance(manifest.get("authority_kind"), str) or not manifest["authority_kind"]
+        or manifest.get("non_claims") != FIXED_NATIVE_STATE_NON_CLAIMS
+    ):
+        fail(f"fixed native state manifest schema, authority_kind, or non_claims mismatch: {manifest_path}")
+    payload = manifest.get("payload")
+    if not isinstance(payload, dict) or payload.get("filename") != FIXED_NATIVE_STATE_PAYLOAD_FILENAME:
+        fail(f"fixed native state payload block is invalid: {manifest_path}")
+    require_sha(manifest.get("source_result_sha256"), "fixed native state source result")
+    payload_sha = require_sha(payload.get("payload_sha256"), "fixed native state payload")
+    require_sha(payload.get("parameters_sha256"), "fixed native state parameters")
+    require_sha(payload.get("first_moments_sha256"), "fixed native state first moments")
+    require_sha(payload.get("second_moments_sha256"), "fixed native state second moments")
+    model_parameter_sha = require_sha(payload.get("model_parameter_sha256"),
+                                       "fixed native state model parameter")
+    native_state_sha = require_sha(payload.get("native_state_sha256"), "fixed native state native state")
+    if not _plain_int(payload.get("adam_step")) or payload["adam_step"] != generation:
+        fail(f"fixed native state adam_step does not match the requested generation: {manifest_path}")
+    if not _plain_int(payload.get("byte_count")) or payload["byte_count"] != payload_path.stat().st_size:
+        fail(f"fixed native state payload byte_count mismatch: {payload_path}")
+    if sha256(payload_path) != payload_sha:
+        fail(f"fixed native state payload sha256 mismatch: {payload_path}")
+    manifest_sha = sha256(manifest_path)
+    identity = {
+        "authority_kind": manifest["authority_kind"],
+        "source_run_sha256": FIXED_NATIVE_STATE_SOURCE_RUN_SHA256,
+        "source_generation": FIXED_NATIVE_STATE_SOURCE_GENERATION,
+        "source_checkpoint_sha256": FIXED_NATIVE_STATE_SOURCE_CHECKPOINT_SHA256,
+        "source_sidecar_sha256": FIXED_NATIVE_STATE_SOURCE_SIDECAR_SHA256,
+        "source_payload_sha256": FIXED_NATIVE_STATE_SOURCE_PAYLOAD_SHA256,
+        "source_train_state_sha256": FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256,
+        "loaded_run_sha256": FIXED_NATIVE_STATE_SOURCE_RUN_SHA256,
+        "loaded_generation": generation,
+        "loaded_checkpoint_sha256": manifest_sha,
+        "loaded_payload_sha256": payload_sha,
+        "loaded_train_state_sha256": native_state_sha,
+        "model_parameter_sha256": model_parameter_sha,
+        "environment_trajectory_contract": FIXED_NATIVE_STATE_ENVIRONMENT_CONTRACT,
+        "sampler_identity": SAMPLER_IDENTITY,
+        "sampler_contract_sha256": SAMPLER_CONTRACT,
+    }
+    return {
+        "root": str(root), "generation": generation, "mode": "fixedstate", "checkpoint": identity,
+        "store_files": {
+            "manifest_sha256": manifest_sha, "payload_sha256": payload_sha,
+            "parameters_sha256": payload["parameters_sha256"],
+            "first_moments_sha256": payload["first_moments_sha256"],
+            "second_moments_sha256": payload["second_moments_sha256"],
+        },
+        "payload": {
+            "byte_count": payload["byte_count"],
+            "parameters_sha256": payload["parameters_sha256"],
+            "first_moments_sha256": payload["first_moments_sha256"],
+            "second_moments_sha256": payload["second_moments_sha256"],
+        },
+    }
+
+
 def load_store_identity(root: Path, generation: int, *,
                         mode: str = "population") -> dict[str, Any]:
     if mode not in MODEL_AUTHORITY_MODES:
         fail(f"invalid model authority mode: {mode}")
+    if mode == "fixedstate":
+        return load_fixed_native_state_identity(root, generation)
     if generation < 0 or not root.is_dir():
         fail("population Store root or generation is invalid")
     root = root.resolve()
@@ -276,6 +423,23 @@ def maven_opts(identity: dict[str, Any]) -> str:
     return " ".join(prefix + key + "=" + str(identity[value]) for key, value in names.items())
 
 
+def xmage_cp7_outcome_maven_opts(identity: dict[str, Any]) -> str:
+    # Names and required set verified against XMageCp7OutcomeExpectation.
+    # fromSystemProperties() (XMageRallyBridgeProcessClient.java): a smaller
+    # set than population-store's, since source_run_sha256 and friends are
+    # always the fixed promoted(2) anchor for this authority and Java does
+    # not ask Python to assert them separately.
+    prefix = "-Dxmage.rally.cp7Outcome."
+    names = {
+        "authorityKind": "authority_kind", "adamStep": "loaded_generation",
+        "manifestSha256": "loaded_checkpoint_sha256", "payloadSha256": "loaded_payload_sha256",
+        "trainStateSha256": "loaded_train_state_sha256",
+        "modelParameterSha256": "model_parameter_sha256",
+        "environmentTrajectoryContract": "environment_trajectory_contract",
+    }
+    return " ".join(prefix + key + "=" + str(identity[value]) for key, value in names.items())
+
+
 def chunk_ranges(pair_start: int, pairs: int, task_pairs: int) -> list[tuple[int, int]]:
     if pair_start < 0 or pairs < 1 or task_pairs < 1:
         fail("invalid shard range")
@@ -314,10 +478,31 @@ def anchor_command(args: argparse.Namespace, model: dict[str, Any], first_pair: 
     # canonical promoted(2) store. --population-store-root (population)
     # issues PopulationStoreGeneration: any environment-randomization-v2
     # store, generation required either way.
-    root_flag = "--population-store-root" if mode == "population" else "--store-root"
+    # population -> --population-store-root ROOT --generation N
+    # original   -> --store-root ROOT --generation N (Java's own flag name;
+    #               Java itself translates this to --original-store-root when
+    #               it builds the Rust bridge command)
+    # fixedstate -> --outcome-root ROOT, no --generation at all: Java rejects
+    #               --generation alongside --outcome-root (Args.parse), and
+    #               the Rust CLI rejects --generation alongside
+    #               --xmage-cp7-outcome-root the same way (parse_args_v1,
+    #               bin/checkpoint_shadow_stdio_v1.rs). ROOT is the staging
+    #               directory, not a population-Store layout.
+    # Per-model generation (model["generation"], set by load_store_identity):
+    # every model in a group shares one panel-level --generation in the
+    # common case, but a group built from per-spec GENERATION values (see
+    # parse_model_spec / main()'s mixing check) can legitimately differ
+    # model to model, so this must never read the shared args.generation
+    # directly.
+    if mode == "population":
+        root_args = ["--population-store-root", model["root"], "--generation", str(model["generation"])]
+    elif mode == "original":
+        root_args = ["--store-root", model["root"], "--generation", str(model["generation"])]
+    else:
+        root_args = ["--outcome-root", model["root"]]
     execution_args = _exec_argument_string([
         "--repo-root", str(args.mage_repo), "--scorer-exe", str(args.scorer_exe),
-        root_flag, model["root"], "--generation", str(args.generation),
+        *root_args,
         "--base-seed", str(args.base_seed), "--first-episode", str(first_pair * 2),
         "--pairs", str(pair_count), "--opponent", "cp7", "--cp7-skill", "7",
         "--outcome-export", str(outcome),
@@ -334,20 +519,24 @@ def environment(database_root: Path, model: dict[str, Any], *,
                   "AI_DETERMINISTIC_TIEBREAKS": "true", "AI_DETERMINISTIC_SEARCH": "true",
                   "AI_DETERMINISTIC_MAX_NODES": "5000", "AI_MAX_THREADS_FOR_SIMULATIONS": "1",
                   "CUDA_VISIBLE_DEVICES": "1"})
-    # The xmage.rally.populationStore.* system properties are only read by
-    # the Java bridge client when it selects population-store mode
-    # (XMageRallyBridgeProcessClient.fromSystemProperties, gated on
-    # selectsPopulationStore); an --original-store-root model never reads
-    # them, so MAVEN_OPTS is left unset rather than asserting properties the
-    # loaded authority mode does not use.
-    if model.get("mode", "population") == "population":
+    # The xmage.rally.populationStore.* / xmage.rally.cp7Outcome.* system
+    # properties are only read by the Java bridge client when it selects the
+    # matching mode (XMageRallyBridgeProcessClient.fromSystemProperties,
+    # gated on selectsPopulationStore / selectsXMageCp7Outcome respectively);
+    # an --original-store-root model reads neither, so MAVEN_OPTS is left
+    # unset rather than asserting properties the loaded authority mode does
+    # not use.
+    mode = model.get("mode", "population")
+    if mode == "population":
         value["MAVEN_OPTS"] = maven_opts(model["checkpoint"])
+    elif mode == "fixedstate":
+        value["MAVEN_OPTS"] = xmage_cp7_outcome_maven_opts(model["checkpoint"])
     if tolerate_engine_faults:
         value["AI_ANCHOR_TOLERATE_ENGINE_FAULTS"] = "1"
     return value
 
 
-def expected_header(checkpoint: dict[str, Any]) -> dict[str, Any]:
+def expected_header(checkpoint: dict[str, Any], schema_version: int = 2) -> dict[str, Any]:
     # Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235):
     # this panel drives a freshly built checkpoint binary each run and
     # validates its own freshly produced outcome-jsonl headers, so this is
@@ -360,9 +549,11 @@ def expected_header(checkpoint: dict[str, Any]) -> dict[str, Any]:
     # Codex confirmed this branch's reconstruction as the intended change
     # and ratified this literal as the CURRENT-profile pin (collab CLAUDE
     # #239).
+    if schema_version not in (1, 2):
+        fail(f"invalid outcome schema version: {schema_version}")
     return {
-        "record_type": "header", "schema_version": 2, "record_ordinal": 0,
-        "export_contract": OUTCOME_CONTRACT,
+        "record_type": "header", "schema_version": schema_version, "record_ordinal": 0,
+        "export_contract": OUTCOME_CONTRACT if schema_version == 2 else OUTCOME_CONTRACT_V1,
         "selection_source": "candidate_checkpoint_policy",
         "tensorizer_identity": "mtg-kernel-python-encoded-decision-tensor-contract-v2",
         "tensorizer_features_source_sha256":
@@ -396,10 +587,12 @@ def _plain_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _validate_decision(path: Path, row: dict[str, Any], ordinal: int) -> None:
+def _validate_decision(path: Path, row: dict[str, Any], ordinal: int,
+                       schema_version: int) -> None:
+    expected_keys = DECISION_KEYS if schema_version == 2 else DECISION_KEYS_V1
     legal_count, selected = row.get("legal_action_count"), row.get("selected_index")
     semantics, logits = row.get("action_semantics"), row.get("old_policy_logits_f32_bits")
-    if (set(row) != DECISION_KEYS or row.get("record_type") != "decision"
+    if (set(row) != expected_keys or row.get("record_type") != "decision"
             or row.get("selection_source") != "candidate_checkpoint_policy"
             or not _plain_int(row.get("outcome_decision_ordinal"))
             or not _plain_int(legal_count) or legal_count < 1
@@ -420,10 +613,12 @@ def _validate_decision(path: Path, row: dict[str, Any], ordinal: int) -> None:
             or not _plain_int(row.get("substep_index"))
             or not _plain_int(row.get("substep_count")) or row["substep_count"] < 1
             or not 0 <= row["substep_index"] < row["substep_count"]):
-        fail(f"{path}: malformed outcome-v2 decision at record {ordinal}")
+        fail(f"{path}: malformed outcome-v{schema_version} decision at record {ordinal}")
 
 
-def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
+def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int,
+                       schema_version: int) -> str:
+    expected_keys = TERMINAL_KEYS if schema_version == 2 else TERMINAL_KEYS_V1
     terminal, reward = row.get("terminal"), row.get("candidate_terminal_reward")
     if not isinstance(terminal, dict):
         fail(f"{path}: terminal payload missing at record {ordinal}")
@@ -431,7 +626,7 @@ def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
     expected = {"p0_win": ("p0", [1, -1]), "p1_win": ("p1", [-1, 1]),
                 "draw": (None, [0, 0])}.get(outcome)
     seat_index = 0 if row.get("candidate_seat") == "p0" else 1
-    if (set(row) != TERMINAL_KEYS or row.get("record_type") != "terminal"
+    if (set(row) != expected_keys or row.get("record_type") != "terminal"
             or terminal.get("schema_version") != 5
             or terminal.get("episode_id") != row.get("episode_id")
             or terminal.get("terminal_classification") != "natural"
@@ -442,7 +637,7 @@ def _validate_terminal(path: Path, row: dict[str, Any], ordinal: int) -> str:
             or reward not in (-1, 0, 1) or expected[1][seat_index] != reward
             or not _plain_int(row.get("outcome_decision_count"))
             or row["outcome_decision_count"] < 0):
-        fail(f"{path}: terminal is not an exact natural outcome at record {ordinal}")
+        fail(f"{path}: terminal is not an exact outcome-v{schema_version} outcome at record {ordinal}")
     return "win" if reward == 1 else "draw" if reward == 0 else "loss"
 
 
@@ -455,7 +650,13 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
     if not set(voided_pairs) <= set(task_pairs):
         fail(f"{path}: voided pair outside the task range")
     expected_checkpoint = model["checkpoint"]
-    exact_header = expected_header(expected_checkpoint)
+    # Schema v1 (no per-row checkpoint block -- see the OUTCOME_CONTRACT_V1
+    # comment above) is accepted ONLY for models bound via original mode.
+    # population and fixedstate models always require the full v2 shape;
+    # a v1 row from either is rejected outright, never silently accepted
+    # under a looser check.
+    expected_schema_version = 1 if model.get("mode", "population") == "original" else 2
+    exact_header = expected_header(expected_checkpoint, schema_version=expected_schema_version)
     # Only non-voided pairs must appear, in full, in order. Rows that belong to
     # a voided pair are still fully schema-validated below (evidence, not
     # noise) but are never required to close with a terminal -- the engine
@@ -489,12 +690,15 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
             record_count += 1
             if ordinal == 0:
                 if row != exact_header:
-                    fail(f"{path}: first row is not the exact population outcome-v2 header")
+                    fail(f"{path}: first row is not the exact population "
+                         f"outcome-v{expected_schema_version} header")
                 continue
             if row.get("record_type") == "header":
                 fail(f"{path}: duplicate header at record {ordinal}")
-            if (row.get("schema_version") != 2 or row.get("record_ordinal") != ordinal
-                    or row.get("checkpoint") != expected_checkpoint):
+            if (row.get("schema_version") != expected_schema_version
+                    or row.get("record_ordinal") != ordinal
+                    or (expected_schema_version == 2
+                        and row.get("checkpoint") != expected_checkpoint)):
                 fail(f"{path}: schema, ordinal, or checkpoint mismatch at record {ordinal}")
             pair, episode, seat = row.get("pair_index"), row.get("episode_id"), row.get("candidate_seat")
             if (not _plain_int(pair) or pair not in task_pairs
@@ -513,7 +717,7 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
                 fail(f"{path}: pair environment seed changed for pair {pair}")
             environment_seeds[pair] = environment_seed
             if row.get("record_type") == "decision":
-                _validate_decision(path, row, ordinal)
+                _validate_decision(path, row, ordinal, expected_schema_version)
                 if active_episode is None:
                     active_episode, active_episode_voided = episode, pair_voided
                     active_first_decision = decision_ordinal
@@ -525,7 +729,7 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
                 decision_ordinal += 1
                 active_decision_count += 1
             elif row.get("record_type") == "terminal":
-                result = _validate_terminal(path, row, ordinal)
+                result = _validate_terminal(path, row, ordinal, expected_schema_version)
                 if active_episode is None:
                     active_episode, active_episode_voided = episode, pair_voided
                     active_first_decision = None
@@ -560,7 +764,8 @@ def validate_outcome_shard(path: Path, model: dict[str, Any], *, base_seed: int,
             "first_pair": first_pair, "pair_count": pair_count,
             "record_count": record_count, "decision_count": decision_ordinal,
             "outcomes": outcomes, "environment_seeds": environment_seeds,
-            "voided_pairs": sorted(voided_pairs)}
+            "voided_pairs": sorted(voided_pairs),
+            "schema_version": expected_schema_version}
 
 
 class DatabaseLeasePool:
@@ -816,11 +1021,28 @@ def build_launch_plan(args: argparse.Namespace, identities: dict[str, dict[str, 
             "mode": args.mode, "opponent": "xmage-cp7", "cp7_skill": 7,
             "base_seed": args.base_seed, "pair_start": args.pair_start,
             "pair_count": args.pairs, "episode_count": args.pairs * 2,
-            "generation": args.generation, "workers": args.workers,
+            # args.generation is the single shared panel-level value, or null
+            # when every model instead carries its own --model spec
+            # GENERATION (see parse_model_spec / main()'s mixing check). The
+            # per-model value actually used for each model, either way, is
+            # always in inputs.models[label].generation above.
+            "generation": args.generation,
+            "model_generations": {label: identity["generation"]
+                                  for label, identity in identities.items()},
+            "workers": args.workers,
             "task_pairs": args.task_pairs, "task_count": len(tasks),
             "task_timeout_seconds": args.task_timeout_seconds,
             "tolerate_engine_faults": args.tolerate_engine_faults,
             "void_cap_fraction": VOID_CAP_FRACTION_NUMERATOR / VOID_CAP_FRACTION_DENOMINATOR,
+            # Amendment 4 A4.2: the full read's total pair count this
+            # shard's own per-shard sanity ceiling is scoped against
+            # (null when omitted, reducing to the historical per-shard
+            # cap). The real per-read cap is enforced by the wrapper.
+            "read_pairs": args.read_pairs,
+            # Jack's ruling (relayed, this session): "report" waives
+            # enforcement for the three registered CP7 reads under full
+            # disclosure; "enforce" (default) is Amendment 4 A4.2 unchanged.
+            "void_cap_mode": args.void_cap_mode,
             "tasks": tasks,
         },
         "toolchain": {
@@ -842,9 +1064,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         fail("smoke requires one pair and formal requires 128 pairs")
     if sha256(args.source_database) != CARD_DB_HASH:
         fail("card database hash mismatch")
-    models = {label: (mode, root) for label, mode, root in args.models}
-    identities = {label: load_store_identity(root, args.generation, mode=mode)
-                  for label, (mode, root) in models.items()}
+    models = {label: (mode, generation, root) for label, mode, generation, root in args.models}
+    identities = {label: load_store_identity(root, generation, mode=mode)
+                  for label, (mode, generation, root) in models.items()}
     chunks = chunk_ranges(args.pair_start, args.pairs, args.task_pairs)
     task_plan = planned_tasks(list(identities), chunks)
     args.evidence_root.mkdir(parents=True)
@@ -880,6 +1102,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     pair_results: dict[tuple[str, int], dict[str, Any]] = {}
     all_voids: list[dict[str, Any]] = []
     model_void_counts = {label: 0 for label in identities}
+    model_schema_versions: dict[str, set[int]] = {label: set() for label in identities}
     for result in results:
         for segment in result["segments"]:
             voided_pairs = frozenset(segment["voided_pairs"])
@@ -888,6 +1111,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 base_seed=args.base_seed, first_pair=segment["first_pair"],
                 pair_count=segment["pair_count"], voided_pairs=voided_pairs,
             )
+            model_schema_versions[result["label"]].add(validation["schema_version"])
             segment["validation"] = {
                 key: value for key, value in validation.items()
                 if key not in {"outcomes", "environment_seeds"}
@@ -906,11 +1130,48 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             all_voids.append(void_record)
             model_void_counts[result["label"]] += 1
 
-    for label in identities:
-        voided = model_void_counts[label]
-        if voided * VOID_CAP_FRACTION_DENOMINATOR > args.pairs * VOID_CAP_FRACTION_NUMERATOR:
-            fail(f"void rate for model {label} exceeds the "
-                 f"{VOID_CAP_FRACTION_NUMERATOR}% cap: {voided}/{args.pairs} pairs voided")
+    # Amendment 4 A4.2: the real per-read cap (2% of the full multi-shard
+    # read, not this one shard) is enforced by the wrapper, which
+    # accumulates each shard's own model_void_counts across the whole
+    # read (see run_cp7_cycle_end_4shard_v1.ps1). This check is the
+    # per-shard SANITY CEILING only: a fail-fast guard for the case where
+    # a single shard alone already exceeds the read-level cap, so the
+    # remaining shards are never launched needlessly. `--read-pairs`
+    # (the full read's total pair count) sets the scope; when omitted,
+    # this reduces exactly to the historical per-shard-only cap
+    # (read_pairs == args.pairs), unchanged from before this amendment.
+    read_pairs = args.read_pairs if args.read_pairs is not None else args.pairs
+    breaches = void_cap_breaches(model_void_counts, read_pairs)
+    if breaches:
+        detail = "; ".join(
+            f"{label} {voided}/{read_pairs}" for label, voided in breaches)
+        message = (f"void rate exceeds the {VOID_CAP_FRACTION_NUMERATOR}% "
+                   f"per-shard sanity ceiling (scope: {read_pairs} read pairs): {detail}")
+        # Jack's ruling (relayed by the coordinator, this session; no
+        # independently located written record in collab at amendment
+        # time -- cited as relayed, not verified against a source
+        # document): "the void cap is waived for the three registered CP7
+        # reads under full disclosure; accounting and reporting stay
+        # mandatory, enforcement becomes report-only for these reads."
+        # --void-cap-mode report keeps every count/record/breach computed
+        # and recorded exactly as in enforce mode (nothing above this
+        # point changes); only whether a breach raises differs.
+        if args.void_cap_mode == "enforce":
+            fail(message)
+        print(f"void-cap-mode={args.void_cap_mode}: {message}"
+             + ("" if args.void_cap_mode == "enforce" else " (NOT enforced, recorded only)"),
+             file=sys.stderr)
+
+    # Every segment's outcome rows for a given model are validated against the
+    # same mode-derived expected_schema_version (original -> v1, population and
+    # fixedstate -> v2), so a model can never carry a mix of schema versions
+    # across its segments; this is a defensive cross-check of that invariant,
+    # not a new source of truth.
+    outcome_schema_versions: dict[str, int] = {}
+    for label, versions in model_schema_versions.items():
+        if len(versions) != 1:
+            fail(f"model {label} outcome rows carried inconsistent schema versions: {sorted(versions)}")
+        outcome_schema_versions[label] = next(iter(versions))
 
     pairs = list(range(args.pair_start, args.pair_start + args.pairs))
     voided_pair_keys = {(record["label"], record["pair_index"]) for record in all_voids}
@@ -947,9 +1208,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "tolerate_engine_faults": args.tolerate_engine_faults,
         "plan": {"path": str(plan_path.resolve()), "sha256": sha256(plan_path)},
         "tasks": results, "terminal_wdl": summary,
+        "outcome_schema_versions": outcome_schema_versions,
         "voids": {
             "schema": "mtg-kernel-cp7-panel-pair-void/v1",
             "cap_fraction": VOID_CAP_FRACTION_NUMERATOR / VOID_CAP_FRACTION_DENOMINATOR,
+            # Amendment 4 A4.2: the full read's total pair count this
+            # shard's own sanity ceiling was scoped against (null when
+            # --read-pairs was omitted). The real per-read cap accounting
+            # lives in the wrapper, not this per-shard manifest.
+            "read_pairs": read_pairs,
+            "void_cap_mode": args.void_cap_mode,
+            # Recorded regardless of mode ("accounting and reporting stay
+            # mandatory" per Jack's ruling): the sanity-ceiling breach this
+            # shard's own void counts would trigger, whether or not
+            # --void-cap-mode actually enforced it. Empty when clean.
+            "sanity_ceiling_breaches": [
+                {"label": label, "voided": voided, "read_pairs": read_pairs}
+                for label, voided in breaches
+            ],
             "per_model": void_summary,
             "records": all_voids,
             "bias_caveat": (
@@ -959,7 +1235,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "of a voided pair counts as a win, loss, or draw for any model. If "
                 "per_model voided_pairs counts are asymmetric across models, that "
                 "asymmetry is a bias caveat on this panel and any near-margin "
-                "cross-model comparison should be treated with additional scrutiny."
+                "cross-model comparison should be treated with additional scrutiny. "
+                "Amendment 4 A4.3: the great majority of observed voids trace to a "
+                "single, pre-existing, XMage-side engine defect in Chain Lightning's "
+                "own spell-copy resolution, unrelated to the Rust kernel. Voided "
+                "pairs therefore correlate with games that reach a Chain-Lightning-"
+                "copy decision state, which is not a uniformly random subset of a "
+                "read's games -- a model whose own policy more often triggers that "
+                "decision will show a higher void rate under this same external "
+                "defect, independent of underlying play quality. Per-model void-rate "
+                "differences must not be read as a playing-strength signal on their "
+                "own."
             ),
         },
         "non_claims": ["terminal win/loss/draw is the only playing-strength outcome",
@@ -1040,6 +1326,22 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--base-seed", type=int)
     value.add_argument("--pair-start", type=int, default=0)
     value.add_argument("--pairs", type=int)
+    value.add_argument("--read-pairs", type=int, default=None,
+                       help="Amendment 4 A4.2: the full multi-shard read's"
+                            " total pair count, scoping this shard's own"
+                            " void-cap sanity ceiling. Omit for the"
+                            " historical per-shard-only cap (unchanged"
+                            " behavior); the real per-read cap is enforced"
+                            " by the wrapper across all shards.")
+    value.add_argument("--void-cap-mode", choices=("enforce", "report"), default="enforce",
+                       help="'enforce' (default) fails this shard if the"
+                            " per-shard sanity ceiling is breached (Amendment"
+                            " 4 A4.2). 'report' still computes and records"
+                            " the identical breach data but never fails the"
+                            " run on it -- Jack's ruling waiving the void cap"
+                            " for the three registered CP7 reads under full"
+                            " disclosure; accounting and reporting stay"
+                            " mandatory either way.")
     value.add_argument("--workers", type=int, choices=(1, 8), default=8)
     value.add_argument("--task-pairs", type=int, default=32)
     value.add_argument("--task-timeout-seconds", type=int, default=1800)
@@ -1055,20 +1357,33 @@ def parser() -> argparse.ArgumentParser:
     return value
 
 
-def parse_model_spec(spec: str) -> tuple[str, str, Path]:
-    """Parses one --model spec: label=[MODE:]STORE_ROOT.
+GENERATION_PREFIX = re.compile(r"^([0-9]+):")
 
-    MODE is one of MODEL_AUTHORITY_MODES ("population" or "original"),
-    defaulting to "population" when no recognized MODE: prefix is present --
-    this is the exact bareword label=STORE_ROOT shape every existing
-    invocation (and the running cells 1/2 driver) already uses, so it keeps
-    working unchanged. Matching is a literal startswith check against the
-    two known prefixes, never a blind split on the first colon, because a
-    Windows store root routinely starts with its own drive-letter colon
-    (e.g. "D:\\...") that must not be mistaken for a mode prefix.
+
+def parse_model_spec(spec: str) -> tuple[str, str, int | None, Path]:
+    """Parses one --model spec: label=[MODE:][GENERATION:]STORE_ROOT.
+
+    MODE is one of MODEL_AUTHORITY_MODES ("population", "original", or
+    "fixedstate"), defaulting to "population" when no recognized MODE: prefix
+    is present -- this is the exact bareword label=STORE_ROOT shape every
+    existing invocation already uses, so it keeps working unchanged. Matching
+    is a literal startswith check against the known prefixes, never a blind
+    split on the first colon, because a Windows store root routinely starts
+    with its own drive-letter colon (e.g. "D:\\...") that must not be
+    mistaken for a mode prefix.
+
+    GENERATION, if present, is a decimal run immediately followed by a colon,
+    checked after the mode prefix is stripped. This can never collide with a
+    real store root either: Windows drive letters are always a single ASCII
+    letter, never a digit, so a path can never start with digits-then-colon.
+    Returns None for GENERATION when the spec does not carry one -- the
+    caller (main()) decides whether that is allowed, since whether a
+    per-spec generation is required, forbidden, or optional depends on
+    whether --generation was also given and on what every OTHER --model spec
+    in the same invocation did (see main()'s mixing check).
     """
     if spec.count("=") != 1:
-        fail("model must be label=[MODE:]STORE_ROOT")
+        fail("model must be label=[MODE:][GENERATION:]STORE_ROOT")
     label, raw_root = spec.split("=", 1)
     if not label or not label.replace("-", "").replace("_", "").isalnum():
         fail("model label is invalid")
@@ -1080,28 +1395,62 @@ def parse_model_spec(spec: str) -> tuple[str, str, Path]:
             mode = candidate
             remainder = raw_root[len(prefix):]
             break
+    generation: int | None = None
+    generation_match = GENERATION_PREFIX.match(remainder)
+    if generation_match is not None:
+        generation = int(generation_match.group(1))
+        remainder = remainder[generation_match.end():]
     if not remainder:
         fail("model store root is empty")
-    return label, mode, Path(remainder)
+    return label, mode, generation, Path(remainder)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.self_test:
         return self_test()
-    required = (args.evidence_root, args.generation, args.mode, args.base_seed,
+    # --generation is no longer unconditionally required here: it becomes
+    # optional exactly when every --model spec carries its own GENERATION
+    # (see the mixing check below). Every other panel argument is still
+    # mandatory as before.
+    required = (args.evidence_root, args.mode, args.base_seed,
                 args.pairs, args.scorer_exe, args.mage_repo, args.source_database, args.maven)
     if (any(value is None for value in required)
             or not 0 <= args.base_seed <= 0x7FFF_FFFF_FFFF_FFFF
             or args.pair_start < 0 or not 1 <= args.task_pairs <= 128
-            or args.task_timeout_seconds < 60):
+            or args.task_timeout_seconds < 60
+            or (args.read_pairs is not None and args.read_pairs < args.pairs)):
         fail("missing or invalid panel arguments")
-    parsed: list[tuple[str, str, Path]] = [parse_model_spec(spec) for spec in args.model_specs]
-    if len(parsed) != 3 or len({label for label, _, _ in parsed}) != 3:
+    parsed: list[tuple[str, str, int | None, Path]] = [
+        parse_model_spec(spec) for spec in args.model_specs]
+    if len(parsed) != 3 or len({label for label, _, _, _ in parsed}) != 3:
         fail("exactly three uniquely labelled models are required")
-    if len({root.resolve() for _, _, root in parsed}) != 3:
+    if len({root.resolve() for _, _, _, root in parsed}) != 3:
         fail("three distinct population Store roots are required")
-    args.models = parsed
+    # Exactly two valid forms, no mixing, fail-closed on any ambiguity:
+    #   (a) shared form: --generation N given at the panel level, and every
+    #       --model spec omits GENERATION (relies on the shared value).
+    #   (b) per-model form: --generation omitted at the panel level, and
+    #       every --model spec carries its own GENERATION.
+    # A spec-level GENERATION together with a panel-level --generation is
+    # rejected even if the two values would happen to agree: which one is
+    # authoritative must never be a judgment call at read time. Likewise,
+    # some specs carrying GENERATION while others do not is rejected outright
+    # rather than silently falling back to the panel-level value for the
+    # ones missing it.
+    per_spec_generations = [generation for _, _, generation, _ in parsed]
+    all_have_generation = all(value is not None for value in per_spec_generations)
+    any_have_generation = any(value is not None for value in per_spec_generations)
+    if any_have_generation and not all_have_generation:
+        fail("either every --model spec carries its own GENERATION or none do")
+    if all_have_generation and args.generation is not None:
+        fail("--generation must be omitted when every --model spec carries its own GENERATION")
+    if not all_have_generation and args.generation is None:
+        fail("--generation is required when no --model spec carries its own GENERATION")
+    args.models = [
+        (label, mode, generation if generation is not None else args.generation, root)
+        for label, mode, generation, root in parsed
+    ]
     run(args)
     return 0
 

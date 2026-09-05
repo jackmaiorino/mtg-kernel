@@ -1868,6 +1868,7 @@ fn execution_config_from_run_v1(
         learning_rate_bits,
         numerical_backend: backend,
         backward_worker_limit: 1,
+        searcher_active_v1: false,
     })
 }
 

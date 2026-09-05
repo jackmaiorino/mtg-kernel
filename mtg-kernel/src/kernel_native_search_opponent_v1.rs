@@ -54,15 +54,14 @@ pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1: [u64; 4] =
 /// `..._DENOVO_512_SEEDS_V1` (`native_training_store_run_v2.rs`), never
 /// merged into the calibration-only array above.
 ///
-/// PLACEHOLDER, per the sheet's own Section 13 open item: this literal is
-/// NOT the real cycle-3 launch base_seed. That value is Jack's own
-/// launch-parameter decision and is not assigned by the countersigned
-/// sheet. This placeholder exists only so the rest of the pool-registration
-/// mechanism (this file's `validate`, the manifest schema, resolution, and
-/// every acceptance-gate test) can be built and exercised now; replace it
-/// with the real, separately authorized value before any real cycle-3
-/// training run is launched.
-pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1: [u64; 1] = [2_001_001];
+/// Real cycle-3 launch value, per Jack's own launch-parameter decision
+/// (CLAUDE #345, dated-convention selection matching the 2026082519-style
+/// screen seeds; superseded the `2_001_001` build-time placeholder this
+/// constant previously held so the pool-registration mechanism could be
+/// built and exercised before the real value was assigned). Verified
+/// (this commit) to collide with no other authorized/diagnostic seed
+/// array in the crate.
+pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1: [u64; 1] = [2_026_082_601];
 
 /// Diagnostic candidate-generation allowlist for the throughput screen and
 /// calibration panels (design "Calibration after implementation"): the

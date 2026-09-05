@@ -1237,6 +1237,24 @@ pub(crate) fn validate_prepared_execution_config_v1(
         parse_f32_hex_v1(&record.optimization.value_coefficient_f32_bits)?.to_bits();
     let expected_learning_rate =
         parse_f32_hex_v1(&record.optimization.learning_rate_f32_bits)?.to_bits();
+    // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 6 (v2, countersigned
+    // 394699e7): exactly two legal `scheduler_timeout` values, never an
+    // operator-suppliable magnitude. `config.searcher_active_v1` is set ONCE,
+    // at the single real cycle-3 dispatch site, from the active population
+    // manifest's own slot-6 occupant class (`native_science_loop_v1.rs`), and
+    // carried unchanged on this same config value into every validation call
+    // -- this check reads that field directly off the config it is already
+    // validating, not a separately-trusted claim. `false` (every non-cycle-3
+    // and non-searcher-occupied launch) permits only the frozen recorded
+    // value, unchanged from before this amendment; `true` permits only the
+    // one frozen constant, never anything else.
+    let expected_scheduler_timeout = if config.searcher_active_v1 {
+        std::time::Duration::from_millis(
+            crate::native_training_executor_v1::SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1,
+        )
+    } else {
+        std::time::Duration::from_millis(record.topology.scheduler_timeout_ms)
+    };
     if config.run_base_seed != record.schedule.base_seed
         || config.batch_episodes != run.batch_episodes()
         || config.deck_ids != record.environment.deck_ids
@@ -1246,8 +1264,7 @@ pub(crate) fn validate_prepared_execution_config_v1(
         || sessions_per_worker != record.topology.sessions_per_worker
         || logical_actor_count != record.topology.logical_actor_count
         || broker_batch_target != record.topology.broker_batch_target
-        || config.scheduler_timeout
-            != std::time::Duration::from_millis(record.topology.scheduler_timeout_ms)
+        || config.scheduler_timeout != expected_scheduler_timeout
         || config.measure_broker_service_time != record.topology.measure_broker_service_time
         || config.value_coefficient_bits != expected_value_coefficient
         || config.learning_rate_bits != expected_learning_rate
@@ -3456,6 +3473,7 @@ mod tests {
                 .to_bits(),
             numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
             backward_worker_limit: 1,
+            searcher_active_v1: false,
         }
     }
 
@@ -3827,6 +3845,87 @@ mod tests {
             .kind(),
             UpdateGroupV1ErrorKind::RunBinding,
             "compact evidence must use the sealed config that produced its transition"
+        );
+    }
+
+    /// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 6 (v2, countersigned
+    /// 394699e7), acceptance gate: with `searcher_active_v1` true (a real
+    /// searcher-occupied launch), the ONLY legal `scheduler_timeout` is
+    /// exactly the frozen `SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1`
+    /// (210,000ms) -- the positive case (exact value validates) and the
+    /// negative case (any other magnitude, even close ones, fails closed
+    /// with `RunBinding`) are both proven directly against the real
+    /// validator, not merely asserted.
+    #[test]
+    fn searcher_active_scheduler_timeout_accepts_only_the_frozen_override_value() {
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let mut searcher_config = execution_config_v1(&run);
+        searcher_config.searcher_active_v1 = true;
+        searcher_config.scheduler_timeout = Duration::from_millis(
+            crate::native_training_executor_v1::SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1,
+        );
+        validate_prepared_execution_config_v1(&run, &searcher_config).expect(
+            "exactly the frozen override value must validate when searcher_active_v1 is true",
+        );
+
+        for wrong_ms in [209_999_u64, 210_001, 300_000, 30_000, 0] {
+            let mut wrong = searcher_config.clone();
+            wrong.scheduler_timeout = Duration::from_millis(wrong_ms);
+            assert_eq!(
+                validate_prepared_execution_config_v1(&run, &wrong)
+                    .unwrap_err()
+                    .kind(),
+                UpdateGroupV1ErrorKind::RunBinding,
+                "scheduler_timeout={wrong_ms}ms must fail closed even with the searcher gate held"
+            );
+        }
+    }
+
+    /// Amendment 6 acceptance gate: the override refuses to apply to a
+    /// non-searcher manifest. A config claiming the frozen override value
+    /// while `searcher_active_v1` is false (the default for every launch
+    /// outside the one real cycle-3 dispatch site) must still be rejected --
+    /// the 210,000ms value is only ever legal when `searcher_active_v1` is
+    /// independently true of the same config the validator inspects, never
+    /// merely because the constant happens to appear in it.
+    #[test]
+    fn searcher_override_value_is_rejected_when_searcher_is_not_active() {
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let mut config = execution_config_v1(&run);
+        assert!(!config.searcher_active_v1);
+        config.scheduler_timeout = Duration::from_millis(
+            crate::native_training_executor_v1::SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1,
+        );
+        assert_eq!(
+            validate_prepared_execution_config_v1(&run, &config)
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::RunBinding,
+            "the searcher override value must never validate for a non-searcher-active config"
+        );
+    }
+
+    /// Amendment 6 regression gate: an all-neural (non-searcher) launch
+    /// keeps the frozen recorded `scheduler_timeout_ms` (30,000 for the real
+    /// fixture) unchanged -- the widened validator is additive, not a
+    /// blanket relaxation.
+    #[test]
+    fn non_searcher_launch_still_requires_exactly_the_frozen_recorded_timeout() {
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let config = execution_config_v1(&run);
+        assert!(!config.searcher_active_v1);
+        assert_eq!(config.scheduler_timeout, Duration::from_secs(30));
+        validate_prepared_execution_config_v1(&run, &config).expect(
+            "the frozen recorded 30,000ms value must still validate for an all-neural launch",
+        );
+        let mut widened = config;
+        widened.scheduler_timeout = Duration::from_millis(30_001);
+        assert_eq!(
+            validate_prepared_execution_config_v1(&run, &widened)
+                .unwrap_err()
+                .kind(),
+            UpdateGroupV1ErrorKind::RunBinding,
+            "an all-neural launch must not tolerate any drift from the frozen recorded value"
         );
     }
 

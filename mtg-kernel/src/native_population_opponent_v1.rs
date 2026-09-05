@@ -404,6 +404,7 @@ pub(crate) fn checkpoint_inference_handles_for_test_v1<const N: usize>(
         learning_rate_bits: 0.001_f32.to_bits(),
         numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
         backward_worker_limit: 1,
+        searcher_active_v1: false,
     };
     let (snapshot_manifest, snapshot_payload) =
         crate::common_model_snapshot_v1::common_model_snapshot_paths_v1();

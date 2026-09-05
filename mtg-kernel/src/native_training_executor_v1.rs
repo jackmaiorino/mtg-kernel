@@ -226,7 +226,37 @@ pub struct NativeTrainingExecutionConfigV1 {
     pub learning_rate_bits: u32,
     pub numerical_backend: NativeTrainingNumericalBackendV1,
     pub backward_worker_limit: usize,
+    /// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 6 (v2,
+    /// countersigned 394699e7): true if and only if this launch's active
+    /// population-tranche-refresh manifest's slot 6 (exploiter-0) is
+    /// search-occupied, derived ONCE from that manifest's own
+    /// `occupant_class_v2()` at the single real dispatch site
+    /// (`native_science_loop_v1.rs`'s `population_v2_cycle3_active_dispatch`
+    /// branch) and carried unchanged through the rest of the pipeline on
+    /// this same config value. Never set from an operator-supplied value;
+    /// every construction site outside that one dispatch point sets this
+    /// `false`. Gates the ONLY two legal `scheduler_timeout` values
+    /// `validate_prepared_execution_config_v1` accepts: the frozen recorded
+    /// `record.topology.scheduler_timeout_ms` (always legal), or exactly
+    /// `SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1` when this field is true
+    /// -- never an operator-suppliable magnitude.
+    pub searcher_active_v1: bool,
 }
+
+/// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 6 (v2, countersigned
+/// 394699e7): the frozen, compiled-in `scheduler_timeout_ms` used for a
+/// searcher-occupied cycle-3 refresh, derived (not guessed) from two real
+/// banked all-neural refreshes' own measured baseline (~5.8s/update, 64
+/// logical actors, zero searcher draws, never tripped the unwidened
+/// 30,000ms) plus the measured `tau_s(T2048) = 12-16.1s` per searcher
+/// episode plus a Binomial(32, 0.08) worst-case per-worker searcher-count
+/// bound (exact tail P(X>=9) = 0.00069) plus a stated 40% margin:
+/// `9 * 16.1s + 4.2s baseline = 149.1s`, `* 1.4 ~= 208.7s`, rounded to
+/// 210,000ms. The ONLY value `validate_prepared_execution_config_v1` ever
+/// accepts in place of the frozen recorded value, and only when
+/// `NativeTrainingExecutionConfigV1::searcher_active_v1` is true for that
+/// same config -- see that field's own doc comment.
+pub(crate) const SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1: u64 = 210_000;
 
 /// Public read-only projection of the frozen production seed/seat schedule.
 ///
@@ -2373,6 +2403,7 @@ mod tests {
             learning_rate_bits: 0.001f32.to_bits(),
             numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
             backward_worker_limit: 1,
+            searcher_active_v1: false,
         }
     }
 
@@ -3203,6 +3234,7 @@ mod tests {
             learning_rate_bits: parse_bits(&record.optimization.learning_rate_f32_bits),
             numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
             backward_worker_limit: 1,
+            searcher_active_v1: false,
         }
     }
 
