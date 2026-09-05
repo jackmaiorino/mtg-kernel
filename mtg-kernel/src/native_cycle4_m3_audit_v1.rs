@@ -616,7 +616,6 @@ impl CellAccumulatorV1 {
     }
 }
 
-
 /// Domain prefix of the search-occupant cell identity (clarification V2.2 of
 /// the section-6 amendment, ratified 2026-09-05).
 pub const CYCLE4_M3_SEARCH_OCCUPANT_IDENTITY_PREFIX_V1: &str =
@@ -630,7 +629,8 @@ pub const CYCLE4_M3_SEARCH_OCCUPANT_IDENTITY_PREFIX_V1: &str =
 /// consumer's identity handling unchanged while never colliding with a
 /// checkpoint manifest hash.
 pub fn search_occupant_cell_identity_v1(authority_sha256: &str, tier: &str) -> String {
-    let payload = format!("{CYCLE4_M3_SEARCH_OCCUPANT_IDENTITY_PREFIX_V1}:{authority_sha256}:{tier}");
+    let payload =
+        format!("{CYCLE4_M3_SEARCH_OCCUPANT_IDENTITY_PREFIX_V1}:{authority_sha256}:{tier}");
     format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
@@ -3716,9 +3716,21 @@ mod tests {
     #[test]
     fn a_malformed_search_occupant_identity_is_refused_not_hashed_v1() {
         for (label, authority, tier) in [
-            ("colon in authority", format!("{}:{}", identity_v1(0x66), "t2048"), "t512"),
-            ("upper hex authority", format!("A{}", &identity_v1(0x66)[1..]), "t2048"),
-            ("short authority", identity_v1(0x66)[..63].to_owned(), "t2048"),
+            (
+                "colon in authority",
+                format!("{}:{}", identity_v1(0x66), "t2048"),
+                "t512",
+            ),
+            (
+                "upper hex authority",
+                format!("A{}", &identity_v1(0x66)[1..]),
+                "t2048",
+            ),
+            (
+                "short authority",
+                identity_v1(0x66)[..63].to_owned(),
+                "t2048",
+            ),
             ("unregistered tier", identity_v1(0x66), "t1024"),
             ("colon in tier", identity_v1(0x66), "t2048:extra"),
         ] {
