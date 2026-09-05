@@ -593,9 +593,22 @@ def self_test() -> None:
     def short_partition(a, b):
         write_group(a, A, shift); write_group(b, B, shift)
         p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p))
-        d["tasks"][0]["segments"][-1]["pair_count"] -= 1
+        seg = d["tasks"][0]["segments"][-1]
+        seg["pair_count"] -= 1
+        dropped_root = seg["first_pair"] + seg["pair_count"]
+        rows = [l for l in open(seg["outcome"], encoding="utf-8").read().split("\n") if l]
+        kept = [l for l in rows if json.loads(l).get("record_type") != "terminal" or int(json.loads(l)["pair_index"]) != dropped_root]
+        open(seg["outcome"], "w", encoding="utf-8").write("\n".join(kept) + "\n")
+        seg["outcome_sha256"] = sha256_file(seg["outcome"])
         json.dump(d, open(p, "w"))
     expect_refusal("short partition", short_partition, "segments stop at pair")
+
+    def row_outside_segment(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p))
+        d["tasks"][0]["segments"][-1]["pair_count"] -= 1
+        json.dump(d, open(p, "w"))
+    expect_refusal("row outside segment", row_outside_segment, "outside the segment range")
 
     def misnamed_retry(a, b):
         write_group(a, A, shift, void={"control-r": [5]}); write_group(b, B, shift)
