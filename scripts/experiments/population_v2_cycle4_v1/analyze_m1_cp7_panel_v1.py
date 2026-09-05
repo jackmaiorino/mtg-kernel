@@ -1,10 +1,10 @@
 """Cycle-4 M1 CP7 transfer analysis (pre-registration sections M1, 4 and 7).
 
 Reads the M1 CP7 panel written by run-m1-cp7-panel.sh: two model groups (A and
-B), each 16 disjoint 128-pair shards of run_cp7_store_panel_v2.py on ONE base
-seed, so every model has the same 2,048 roots. It then computes the
-pre-registered within-panel CRN-paired contrasts with the fixed-N root-cluster
-estimator:
+B), each 16 disjoint 128-pair shards of run_cp7_store_panel_v2.py (runner of
+record) on ONE base seed, so every model has the same 2,048 roots, and computes
+the pre-registered within-panel CRN-paired contrasts with the fixed-N
+root-cluster estimator:
 
   one inferential unit = one root = both seat-swapped legs;
   root score of a model = mean over its two legs of (win 1, draw 0.5, loss 0);
@@ -18,23 +18,36 @@ Secondaries under Holm (alpha 0.05, one-sided p-values): CONTROL-R vs g896 and
 STATIC-RB vs g896; a secondary's milestone is assigned only after the Holm
 step. The cycle-3 g2048 contrasts are co-measured context and carry no gate.
 
-Fail-closed rules, all checked before any statistic is computed:
-  - every shard directory holds a published panel-summary.json (a shard the
-    runner did not complete is refused);
-  - voids come from summary["voids"]["per_model"][label]["voided_pair_indices"]
-    and are accumulated across shards; a model with more than 2 percent of the
-    registered roots voided (41 or more of 2,048) fails the registered cap and
-    the analysis refuses;
-  - every model's root universe must be exactly range(2048): the pairs with
-    outcomes plus its voided pairs, with no outcome counted for a voided pair;
-  - the repeated model across groups must be exactly treatment-rb, with
-    identical root coverage, identical voids, identical environment seeds and
-    identical outcomes in both groups;
-  - both groups must agree on every root's environment seed.
-Contrast N is the number of roots not voided for either model of the pair.
+Registered N and voids. The frame pins 2,048 non-voided common roots. A root
+voided for either model of a gated contrast is dropped from the estimate,
+and the contrast is then ALSO evaluated under the pre-registration's
+worst-case missing-outcome bound: every dropped root scored as the endpoint
+losing both legs and the reference winning both (delta -1). With any voided
+root present, the milestone requires BOTH the complete-case gate and the
+worst-case gate (this rule is submitted to Jack for ratification; with zero
+voids, the expected case after the bridge fault fix, the two coincide).
 
-Written and reviewed BEFORE any M1 outcome existed (the routing record
-f9ad13e9... precedes it).
+Provenance, all checked before any statistic is computed (fail-closed):
+  - every shard directory holds a published panel-summary.json and
+    panel-plan.json of the registered schemas, formal mode, the registered base
+    seed, the shard's pair range (pair_start = 128 * index, pairs = 128,
+    read_pairs = 2048), the registered scorer, runner and Mage identities and
+    the harness's plan SHA-256 recorded by the summary;
+  - each model's checkpoint identity (loaded generation, run and checkpoint
+    hashes) is identical across every shard that names it;
+  - every consumed task outcome file matches the SHA-256 the summary recorded
+    for it; files the summary does not name are ignored;
+  - voids come from summary["voids"]["per_model"][label]["voided_pair_indices"]
+    and are accumulated; terminal rows of voided pairs (the runner keeps a
+    completed first leg) are skipped; a model with more than 2 percent of the
+    registered roots voided (41 or more of 2,048) fails the registered cap;
+  - every model's root universe is exactly range(2048) as outcomes plus voids,
+    both legs present on every non-voided root;
+  - the repeated model across groups is exactly treatment-rb, with identical
+    roots, voids, environment seeds and outcomes; both groups agree on every
+    root's environment seed.
+
+Written and reviewed BEFORE any M1 outcome was read.
 usage: analyze_m1_cp7_panel_v1.py --group-a <root of m1-a> --group-b <root of m1-b> --output <json>
        analyze_m1_cp7_panel_v1.py --self-test
 """
@@ -42,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import math
 import os
@@ -52,64 +66,147 @@ COMEASURED = (("treatment-rb", "cycle3-g2048"), ("control-r", "cycle3-g2048"), (
 REQUIRED_MODELS = frozenset({"treatment-rb", "control-r", "static-rb", "g896", "cycle3-g2048"})
 REPEATED_MODEL = "treatment-rb"
 REGISTERED_ROOTS = 2048
+SHARD_PAIRS = 128
 VOID_CAP_FRACTION = 0.02
 Z_ONE_SIDED_95 = 1.6448536269514722
 POINT_FLOOR_PP = 2.0
 HOLM_ALPHA = 0.05
+
+REGISTERED = {
+    "summary_schema": "mtg-kernel-population-store-cp7-panel/v3",
+    "plan_schema": "mtg-kernel-population-store-cp7-panel-plan/v2",
+    "mode": "formal",
+    "base_seed": 2026090501,
+    "read_pairs": REGISTERED_ROOTS,
+    "scorer_sha256": "137b3d0a3ccc93fea92567200494ce2cd5f097be74c68fab28977ab7a44a0677",
+    "runner_sha256": "7c0c0fb68c814dcda20086caf9201550c5ae0b35e78e6d8d7feb5716927fc9dd",
+    "mage_commit": "72a08a3b2654df26bba7bcd7c716885a1fb89174",
+}
 
 
 class M1AnalysisError(Exception):
     pass
 
 
-def read_group(group_root: str) -> dict:
-    """Reads every shard under a group root.
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def bind_shard(shard: str, index: int, registered: dict) -> tuple[dict, dict]:
+    """Validates one shard's published summary and plan against the registered
+    contract and returns (summary, plan)."""
+    summary_path = os.path.join(shard, "panel-summary.json")
+    plan_path = os.path.join(shard, "panel-plan.json")
+    if not os.path.isfile(summary_path):
+        raise M1AnalysisError(f"{shard}: no published panel-summary.json (shard not completed by the runner)")
+    if not os.path.isfile(plan_path):
+        raise M1AnalysisError(f"{shard}: no panel-plan.json")
+    summary = json.load(open(summary_path, encoding="utf-8"))
+    plan = json.load(open(plan_path, encoding="utf-8"))
+    checks = {
+        "summary schema": (summary.get("schema"), registered["summary_schema"]),
+        "plan schema": (plan.get("schema"), registered["plan_schema"]),
+        "mode": (summary.get("mode"), registered["mode"]),
+        "base_seed": (summary.get("base_seed"), registered["base_seed"]),
+        "pair_start": (summary.get("pair_start"), index * SHARD_PAIRS),
+        "pairs": (summary.get("pairs"), SHARD_PAIRS),
+        "plan pair_start": ((plan.get("panel") or {}).get("pair_start"), index * SHARD_PAIRS),
+        "plan pair_count": ((plan.get("panel") or {}).get("pair_count"), SHARD_PAIRS),
+        "plan read_pairs": ((plan.get("panel") or {}).get("read_pairs"), registered["read_pairs"]),
+        "plan mode": ((plan.get("panel") or {}).get("mode"), registered["mode"]),
+        "plan base_seed": ((plan.get("panel") or {}).get("base_seed"), registered["base_seed"]),
+        "scorer": ((plan.get("inputs") or {}).get("scorer_sha256"), registered["scorer_sha256"]),
+        "runner": ((plan.get("inputs") or {}).get("runner_sha256"), registered["runner_sha256"]),
+        "mage": ((plan.get("inputs") or {}).get("mage_commit"), registered["mage_commit"]),
+    }
+    for what, (actual, expected) in checks.items():
+        if actual != expected:
+            raise M1AnalysisError(f"{shard}: {what} is {actual!r}, registered {expected!r}")
+    recorded_plan = summary.get("plan") or {}
+    if recorded_plan.get("sha256") != sha256_file(plan_path):
+        raise M1AnalysisError(f"{shard}: panel-plan.json does not match the SHA-256 the summary recorded")
+    if summary.get("tolerate_engine_faults") is not True:
+        raise M1AnalysisError(f"{shard}: tolerate_engine_faults is not recorded as true")
+    return summary, plan
+
+
+def read_group(group_root: str, registered: dict, registered_roots: int) -> dict:
+    """Reads and binds every shard under a group root.
 
     Returns {"models": {label: {pair: {"seed": hex, "legs": {seat: reward}}}},
-             "voids": {label: set(pair)}, "shards": [shard dirs]}."""
+             "voids": {label: set(pair)}, "identities": {label: identity},
+             "shards": [names]}."""
     shard_dirs = sorted(d for d in glob.glob(os.path.join(group_root, "shard-*")) if os.path.isdir(d))
-    if not shard_dirs:
-        raise M1AnalysisError(f"{group_root}: no shard directories")
+    expected_shards = registered_roots // SHARD_PAIRS
+    if len(shard_dirs) != expected_shards:
+        raise M1AnalysisError(f"{group_root}: {len(shard_dirs)} shard directories, registered {expected_shards}")
     models: dict[str, dict[int, dict]] = {}
     voids: dict[str, set[int]] = {}
-    for shard in shard_dirs:
-        summary_path = os.path.join(shard, "panel-summary.json")
-        if not os.path.isfile(summary_path):
-            raise M1AnalysisError(f"{shard}: no published panel-summary.json (shard not completed by the runner)")
-        summary = json.load(open(summary_path, encoding="utf-8"))
-        per_model = (summary.get("voids") or {}).get("per_model")
-        if not isinstance(per_model, dict):
+    identities: dict[str, dict] = {}
+    for index, shard in enumerate(shard_dirs):
+        if os.path.basename(shard) != f"shard-{index:02d}":
+            raise M1AnalysisError(f"{shard}: shard directories must be shard-00 .. shard-{expected_shards - 1:02d} without gaps")
+        summary, plan = bind_shard(shard, index, registered)
+        plan_models = (plan.get("inputs") or {}).get("models") or {}
+        for label, spec in plan_models.items():
+            identity = spec.get("checkpoint") if isinstance(spec, dict) else None
+            if not isinstance(identity, dict):
+                raise M1AnalysisError(f"{shard}: model {label} has no checkpoint identity in the plan")
+            if label in identities and identities[label] != identity:
+                raise M1AnalysisError(f"{label}: checkpoint identity differs between shards")
+            identities.setdefault(label, identity)
+        per_model_voids = (summary.get("voids") or {}).get("per_model")
+        if not isinstance(per_model_voids, dict):
             raise M1AnalysisError(f"{shard}: panel-summary.json carries no voids.per_model map")
-        for label, info in per_model.items():
-            indices = info.get("voided_pair_indices")
+        shard_voids: dict[str, set[int]] = {}
+        for label, info in per_model_voids.items():
+            indices = info.get("voided_pair_indices") if isinstance(info, dict) else None
             if not isinstance(indices, list):
                 raise M1AnalysisError(f"{shard}: {label} voids carry no voided_pair_indices list")
-            voids.setdefault(label, set()).update(int(p) for p in indices)
-        for path in sorted(glob.glob(os.path.join(shard, "tasks", "*.outcome.jsonl"))):
-            label = os.path.basename(path).split("-p")[0]
-            per = models.setdefault(label, {})
-            with open(path, encoding="utf-8") as handle:
-                for line in handle:
-                    rec = json.loads(line)
-                    if rec.get("record_type") != "terminal":
-                        continue
-                    pair = int(rec["pair_index"])
-                    seat = rec["candidate_seat"]
-                    reward = int(rec["candidate_terminal_reward"])
-                    entry = per.setdefault(pair, {"seed": rec["pair_environment_seed_u64_hex"], "legs": {}})
-                    if entry["seed"] != rec["pair_environment_seed_u64_hex"]:
-                        raise M1AnalysisError(f"{label}: root {pair} carries two environment seeds")
-                    if seat in entry["legs"]:
-                        raise M1AnalysisError(f"{label}: root {pair} seat {seat} recorded twice")
-                    entry["legs"][seat] = reward
+            shard_voids[label] = set(int(p) for p in indices)
+            voids.setdefault(label, set()).update(shard_voids[label])
+        # Consume only the task outcome files the summary names, at the bytes it recorded.
+        for task in summary.get("tasks") or []:
+            label = task.get("label")
+            for segment in task.get("segments") or []:
+                outcome_path = segment.get("outcome")
+                recorded = segment.get("outcome_sha256")
+                if not outcome_path or not recorded:
+                    raise M1AnalysisError(f"{shard}: task {label} segment lacks an outcome path or hash")
+                local = os.path.join(shard, "tasks", os.path.basename(outcome_path))
+                if not os.path.isfile(local):
+                    raise M1AnalysisError(f"{shard}: recorded outcome file missing: {os.path.basename(outcome_path)}")
+                if sha256_file(local) != recorded:
+                    raise M1AnalysisError(f"{shard}: {os.path.basename(outcome_path)} does not match its recorded SHA-256")
+                per = models.setdefault(label, {})
+                skip = shard_voids.get(label, set())
+                with open(local, encoding="utf-8") as handle:
+                    for line in handle:
+                        rec = json.loads(line)
+                        if rec.get("record_type") != "terminal":
+                            continue
+                        pair = int(rec["pair_index"])
+                        if pair in skip:
+                            continue  # the runner keeps a completed first leg of a voided pair
+                        seat = rec["candidate_seat"]
+                        reward = int(rec["candidate_terminal_reward"])
+                        entry = per.setdefault(pair, {"seed": rec["pair_environment_seed_u64_hex"], "legs": {}})
+                        if entry["seed"] != rec["pair_environment_seed_u64_hex"]:
+                            raise M1AnalysisError(f"{label}: root {pair} carries two environment seeds")
+                        if seat in entry["legs"]:
+                            raise M1AnalysisError(f"{label}: root {pair} seat {seat} recorded twice")
+                        entry["legs"][seat] = reward
     for label in models:
         voids.setdefault(label, set())
-    return {"models": models, "voids": voids, "shards": shard_dirs}
+    return {"models": models, "voids": voids, "identities": identities,
+            "shards": [os.path.basename(s) for s in shard_dirs]}
 
 
 def validate_universe(models: dict, voids: dict, registered_roots: int) -> dict:
-    """Every model: outcomes on exactly the non-voided roots of range(N), both
-    legs present, void count within the registered cap."""
     cap = int(math.floor(VOID_CAP_FRACTION * registered_roots))
     report = {}
     universe = set(range(registered_roots))
@@ -129,7 +226,7 @@ def validate_universe(models: dict, voids: dict, registered_roots: int) -> dict:
             raise M1AnalysisError(f"{label}: roots without both legs {sorted(incomplete)[:5]}")
         if len(voided) > cap:
             raise M1AnalysisError(f"{label}: {len(voided)} voided roots exceed the registered cap of {cap} ({VOID_CAP_FRACTION:.0%} of {registered_roots})")
-        report[label] = {"roots_with_outcomes": len(with_outcomes), "voided_roots": len(voided), "void_cap": cap, "void_cap_ok": True}
+        report[label] = {"roots_with_outcomes": len(with_outcomes), "voided_roots": len(voided), "void_cap": cap}
     return report
 
 
@@ -138,6 +235,8 @@ def merge_groups(a: dict, b: dict, registered_roots: int) -> tuple[dict, dict, d
     if repeated != {REPEATED_MODEL}:
         raise M1AnalysisError(f"repeated model set must be exactly {{{REPEATED_MODEL}}}, got {sorted(repeated)}")
     ra, rb = a["models"][REPEATED_MODEL], b["models"][REPEATED_MODEL]
+    if a["identities"].get(REPEATED_MODEL) != b["identities"].get(REPEATED_MODEL):
+        raise M1AnalysisError(f"{REPEATED_MODEL}: checkpoint identity differs between groups")
     if set(ra) != set(rb):
         raise M1AnalysisError(f"{REPEATED_MODEL}: root coverage differs between groups")
     if a["voids"][REPEATED_MODEL] != b["voids"][REPEATED_MODEL]:
@@ -145,16 +244,12 @@ def merge_groups(a: dict, b: dict, registered_roots: int) -> tuple[dict, dict, d
     for p in ra:
         if ra[p] != rb[p]:
             raise M1AnalysisError(f"{REPEATED_MODEL}: outcomes differ between groups at root {p}")
-    seeds_a = {}
-    for per in a["models"].values():
-        for p, e in per.items():
-            seeds_a.setdefault(p, e["seed"])
-            if seeds_a[p] != e["seed"]:
-                raise M1AnalysisError(f"group A models disagree on root {p} environment seed")
-    for per in b["models"].values():
-        for p, e in per.items():
-            if p in seeds_a and seeds_a[p] != e["seed"]:
-                raise M1AnalysisError(f"groups disagree on root {p} environment seed")
+    seeds: dict[int, str] = {}
+    for group in (a, b):
+        for per in group["models"].values():
+            for p, e in per.items():
+                if seeds.setdefault(p, e["seed"]) != e["seed"]:
+                    raise M1AnalysisError(f"models disagree on root {p} environment seed")
     models = dict(a["models"])
     voids = dict(a["voids"])
     for label, per in b["models"].items():
@@ -167,43 +262,61 @@ def merge_groups(a: dict, b: dict, registered_roots: int) -> tuple[dict, dict, d
     if extra:
         raise M1AnalysisError(f"unexpected models: {sorted(extra)}")
     universe = validate_universe(models, voids, registered_roots)
-    return models, voids, {"repeated_model": REPEATED_MODEL, "repeated_roots_identical": len(ra), "universe": universe}
+    identities = dict(a["identities"])
+    identities.update({k: v for k, v in b["identities"].items() if k not in identities})
+    return models, voids, {"repeated_model": REPEATED_MODEL, "repeated_roots_identical": len(ra),
+                           "universe": universe, "identities": identities}
 
 
 def root_score(legs: dict[str, int]) -> float:
     return sum((r + 1) / 2.0 for r in legs.values()) / 2.0
 
 
-def contrast(models: dict, voids: dict, endpoint: str, reference: str) -> dict:
-    a, b = models[endpoint], models[reference]
-    excluded = voids[endpoint] | voids[reference]
-    roots = sorted((set(a) & set(b)) - excluded)
-    deltas = []
-    for p in roots:
-        if a[p]["seed"] != b[p]["seed"]:
-            raise M1AnalysisError(f"{endpoint} vs {reference}: root {p} environment seeds differ")
-        deltas.append(root_score(a[p]["legs"]) - root_score(b[p]["legs"]))
+def summarize(deltas: list[float]) -> dict:
     n = len(deltas)
     if n < 2:
-        raise M1AnalysisError(f"{endpoint} vs {reference}: too few paired roots ({n})")
+        raise M1AnalysisError(f"too few paired roots ({n})")
     mean = sum(deltas) / n
     var = sum((d - mean) ** 2 for d in deltas) / (n - 1)
     se = math.sqrt(var / n)
     point_pp, se_pp = 100.0 * mean, 100.0 * se
     lcb_pp = point_pp - Z_ONE_SIDED_95 * se_pp
     if se_pp > 0:
-        z = point_pp / se_pp
-        p_one_sided = 0.5 * math.erfc(z / math.sqrt(2))
+        p_one_sided = 0.5 * math.erfc((point_pp / se_pp) / math.sqrt(2))
     else:
         p_one_sided = 0.0 if point_pp > 0 else 1.0
-    return {
-        "endpoint": endpoint, "reference": reference, "paired_roots": n, "excluded_voided_roots": len(excluded),
-        "point_pp": point_pp, "se_pp": se_pp, "one_sided_lcb95_pp": lcb_pp, "p_one_sided": p_one_sided,
-    }
+    return {"roots": n, "point_pp": point_pp, "se_pp": se_pp, "one_sided_lcb95_pp": lcb_pp, "p_one_sided": p_one_sided}
+
+
+def contrast(models: dict, voids: dict, endpoint: str, reference: str, registered_roots: int) -> dict:
+    a, b = models[endpoint], models[reference]
+    excluded = sorted(voids[endpoint] | voids[reference])
+    roots = sorted((set(a) & set(b)) - set(excluded))
+    deltas = []
+    for p in roots:
+        if a[p]["seed"] != b[p]["seed"]:
+            raise M1AnalysisError(f"{endpoint} vs {reference}: root {p} environment seeds differ")
+        deltas.append(root_score(a[p]["legs"]) - root_score(b[p]["legs"]))
+    complete = summarize(deltas)
+    result = {"endpoint": endpoint, "reference": reference, "registered_roots": registered_roots,
+              "paired_roots": complete["roots"], "excluded_voided_roots": len(excluded),
+              "point_pp": complete["point_pp"], "se_pp": complete["se_pp"],
+              "one_sided_lcb95_pp": complete["one_sided_lcb95_pp"], "p_one_sided": complete["p_one_sided"]}
+    if excluded:
+        # Worst-case missing-outcome bound: every excluded root scored as the
+        # endpoint losing both legs and the reference winning both.
+        worst = summarize(deltas + [-1.0] * len(excluded))
+        result["worst_case_bound"] = {"roots": worst["roots"], "point_pp": worst["point_pp"],
+                                      "one_sided_lcb95_pp": worst["one_sided_lcb95_pp"]}
+    return result
 
 
 def gate(c: dict) -> bool:
-    return bool(c["one_sided_lcb95_pp"] > 0.0 and c["point_pp"] >= POINT_FLOOR_PP)
+    passes = bool(c["one_sided_lcb95_pp"] > 0.0 and c["point_pp"] >= POINT_FLOOR_PP)
+    worst = c.get("worst_case_bound")
+    if worst is not None:
+        passes = passes and bool(worst["one_sided_lcb95_pp"] > 0.0 and worst["point_pp"] >= POINT_FLOOR_PP)
+    return passes
 
 
 def winrate(models: dict, voids: dict, label: str) -> dict:
@@ -223,13 +336,15 @@ def winrate(models: dict, voids: dict, label: str) -> dict:
             "winrate_half_credit_draws": (wins + 0.5 * draws) / games if games else None}
 
 
-def analyze(group_a_root: str, group_b_root: str, registered_roots: int = REGISTERED_ROOTS) -> dict:
-    a = read_group(group_a_root)
-    b = read_group(group_b_root)
+def analyze(group_a_root: str, group_b_root: str, registered_roots: int = REGISTERED_ROOTS,
+            registered: dict | None = None) -> dict:
+    registered = registered or REGISTERED
+    a = read_group(group_a_root, registered, registered_roots)
+    b = read_group(group_b_root, registered, registered_roots)
     models, voids, checks = merge_groups(a, b, registered_roots)
-    primary = contrast(models, voids, *PRIMARY)
+    primary = contrast(models, voids, *PRIMARY, registered_roots)
     primary["milestone"] = gate(primary)
-    secondaries = [contrast(models, voids, e, r) for e, r in SECONDARIES]
+    secondaries = [contrast(models, voids, e, r, registered_roots) for e, r in SECONDARIES]
     ranked = sorted(secondaries, key=lambda c: c["p_one_sided"])
     still_significant = True
     for i, c in enumerate(ranked):
@@ -238,12 +353,13 @@ def analyze(group_a_root: str, group_b_root: str, registered_roots: int = REGIST
         c["holm_significant"] = bool(still_significant and c["p_one_sided"] <= threshold)
         if not c["holm_significant"]:
             still_significant = False
-        c["milestone_under_holm"] = bool(c["holm_significant"] and c["point_pp"] >= POINT_FLOOR_PP)
-    comeasured = [contrast(models, voids, e, r) for e, r in COMEASURED]
+        c["milestone_under_holm"] = bool(c["holm_significant"] and gate(c))
+    comeasured = [contrast(models, voids, e, r, registered_roots) for e, r in COMEASURED]
     return {
         "schema": "mtg-kernel-cycle4-m1-cp7-analysis/v1",
-        "registered_roots": registered_roots,
-        "shards": {"group_a": [os.path.basename(s) for s in a["shards"]], "group_b": [os.path.basename(s) for s in b["shards"]]},
+        "registered": {**registered, "roots": registered_roots, "shard_pairs": SHARD_PAIRS,
+                       "void_cap_fraction": VOID_CAP_FRACTION, "point_floor_pp": POINT_FLOOR_PP},
+        "shards": {"group_a": a["shards"], "group_b": b["shards"]},
         "checks": checks,
         "winrates_vs_cp7": {m: winrate(models, voids, m) for m in sorted(models)},
         "primary": primary,
@@ -257,66 +373,87 @@ def self_test() -> None:
     import random
     import tempfile
 
-    def write_group(root, labels, roots, shard_pairs, shift, void=None):
-        for s in range(roots // shard_pairs):
+    registered = dict(REGISTERED)
+    registered["base_seed"] = 7
+    n, sp = 256, SHARD_PAIRS
+
+    def write_group(root, labels, shift, void=None, corrupt_task=False):
+        for s in range(n // sp):
             shard = os.path.join(root, f"shard-{s:02d}")
             os.makedirs(os.path.join(shard, "tasks"))
-            per_model = {}
+            per_model, tasks = {}, []
             for label in labels:
-                voided = [p for p in (void or {}).get(label, []) if s * shard_pairs <= p < (s + 1) * shard_pairs]
+                voided = [p for p in (void or {}).get(label, []) if s * sp <= p < (s + 1) * sp]
                 per_model[label] = {"voided_pair_indices": voided}
-                with open(os.path.join(shard, "tasks", f"{label}-p{s * shard_pairs:06d}-n{shard_pairs:03d}.outcome.jsonl"), "w", encoding="utf-8") as h:
+                name = f"{label}-p{s * sp:06d}-n{sp:03d}.outcome.jsonl"
+                path = os.path.join(shard, "tasks", name)
+                with open(path, "w", encoding="utf-8") as h:
                     h.write(json.dumps({"record_type": "header"}) + "\n")
-                    for p in range(s * shard_pairs, (s + 1) * shard_pairs):
-                        if p in voided:
-                            continue
+                    for p in range(s * sp, (s + 1) * sp):
                         seed = format(p * 7919 + 17, "016x")
-                        for seat in ("p0", "p1"):
+                        legs = ("p0",) if p in voided else ("p0", "p1")  # a voided pair keeps its first leg
+                        for seat in legs:
                             draw = random.Random(f"{label}:{p}:{seat}").random()
                             reward = 1 if draw < 0.5 + shift.get(label, 0.0) else -1
                             h.write(json.dumps({"record_type": "terminal", "pair_index": p, "candidate_seat": seat,
                                                 "candidate_terminal_reward": reward,
                                                 "pair_environment_seed_u64_hex": seed}) + "\n")
-            json.dump({"voids": {"per_model": per_model}}, open(os.path.join(shard, "panel-summary.json"), "w"))
+                if corrupt_task and label == labels[0] and s == 0:
+                    with open(path, "a", encoding="utf-8") as h:
+                        h.write("\n")
+                tasks.append({"label": label, "segments": [{"outcome": path, "outcome_sha256": sha256_file(path) if not (corrupt_task and label == labels[0] and s == 0) else "0" * 64}]})
+            plan = {"schema": registered["plan_schema"],
+                    "panel": {"pair_start": s * sp, "pair_count": sp, "read_pairs": n, "mode": "formal", "base_seed": 7},
+                    "inputs": {"scorer_sha256": registered["scorer_sha256"], "runner_sha256": registered["runner_sha256"],
+                               "mage_commit": registered["mage_commit"],
+                               "models": {label: {"checkpoint": {"loaded_generation": 2048, "loaded_run_sha256": label}} for label in labels}}}
+            plan_path = os.path.join(shard, "panel-plan.json")
+            json.dump(plan, open(plan_path, "w"))
+            json.dump({"schema": registered["summary_schema"], "mode": "formal", "base_seed": 7, "pair_start": s * sp, "pairs": sp,
+                       "tolerate_engine_faults": True, "plan": {"sha256": sha256_file(plan_path)},
+                       "voids": {"per_model": per_model}, "tasks": tasks}, open(os.path.join(shard, "panel-summary.json"), "w"))
 
-    n, sp = 256, 128
+    registered_local = dict(registered)
+    registered_local["read_pairs"] = n
     shift = {"treatment-rb": 0.2}
+    A = ["treatment-rb", "control-r", "g896"]; B = ["static-rb", "cycle3-g2048", "treatment-rb"]
     with tempfile.TemporaryDirectory() as tmp:
         a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
-        write_group(a, ["treatment-rb", "control-r", "g896"], n, sp, shift, void={"g896": [3]})
-        write_group(b, ["static-rb", "cycle3-g2048", "treatment-rb"], n, sp, shift)
-        out = analyze(a, b, registered_roots=n)
-        assert out["primary"]["paired_roots"] == n - 1, out["primary"]
+        write_group(a, A, shift, void={"g896": [3]}); write_group(b, B, shift)
+        out = analyze(a, b, registered_roots=n, registered=registered_local)
+        assert out["primary"]["paired_roots"] == n - 1 and out["primary"]["excluded_voided_roots"] == 1
+        assert "worst_case_bound" in out["primary"] and out["primary"]["worst_case_bound"]["roots"] == n
         assert out["primary"]["point_pp"] > 0
-        assert "milestone" in out["primary"] and all("milestone" not in c for c in out["comeasured_vs_cycle3_g2048"])
+        assert all("milestone" not in c for c in out["comeasured_vs_cycle3_g2048"])
         assert all("milestone_under_holm" in c and "milestone" not in c for c in out["secondaries"])
         assert out["winrates_vs_cp7"]["g896"]["games"] == 2 * (n - 1)
-    # Refusals: a missing summary, a void over the cap, a repeated-model mismatch.
-    with tempfile.TemporaryDirectory() as tmp:
-        a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
-        write_group(a, ["treatment-rb", "control-r", "g896"], n, sp, shift)
-        write_group(b, ["static-rb", "cycle3-g2048", "treatment-rb"], n, sp, shift)
-        os.remove(os.path.join(b, "shard-01", "panel-summary.json"))
-        try:
-            analyze(a, b, registered_roots=n); raise AssertionError("missing summary must refuse")
-        except M1AnalysisError:
-            pass
-    with tempfile.TemporaryDirectory() as tmp:
-        a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
-        write_group(a, ["treatment-rb", "control-r", "g896"], n, sp, shift, void={"control-r": list(range(6))})
-        write_group(b, ["static-rb", "cycle3-g2048", "treatment-rb"], n, sp, shift)
-        try:
-            analyze(a, b, registered_roots=n); raise AssertionError("void cap must refuse")
-        except M1AnalysisError as error:
-            assert "cap" in str(error)
-    with tempfile.TemporaryDirectory() as tmp:
-        a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
-        write_group(a, ["treatment-rb", "control-r", "g896"], n, sp, shift)
-        write_group(b, ["static-rb", "cycle3-g2048", "treatment-rb"], n, sp, {"treatment-rb": 0.1})
-        try:
-            analyze(a, b, registered_roots=n); raise AssertionError("repeat mismatch must refuse")
-        except M1AnalysisError as error:
-            assert "differ between groups" in str(error)
+        assert out["checks"]["identities"]["treatment-rb"]["loaded_run_sha256"] == "treatment-rb"
+    def expect_refusal(label, build, needle):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
+            build(a, b)
+            try:
+                analyze(a, b, registered_roots=n, registered=registered_local)
+            except M1AnalysisError as error:
+                assert needle in str(error), (label, str(error))
+                return
+            raise AssertionError(f"{label}: must refuse")
+    def missing_summary(a, b):
+        write_group(a, A, shift); write_group(b, B, shift); os.remove(os.path.join(b, "shard-01", "panel-summary.json"))
+    def void_cap(a, b):
+        write_group(a, A, shift, void={"control-r": list(range(6))}); write_group(b, B, shift)
+    def repeat_mismatch(a, b):
+        write_group(a, A, shift); write_group(b, B, {"treatment-rb": 0.1})
+    def corrupt(a, b):
+        write_group(a, A, shift, corrupt_task=True); write_group(b, B, shift)
+    def wrong_seed(a, b):
+        write_group(a, A, shift); write_group(b, B, shift)
+        p = os.path.join(a, "shard-00", "panel-summary.json"); d = json.load(open(p)); d["base_seed"] = 8; json.dump(d, open(p, "w"))
+    expect_refusal("missing summary", missing_summary, "not completed")
+    expect_refusal("void cap", void_cap, "cap")
+    expect_refusal("repeat mismatch", repeat_mismatch, "differ between groups")
+    expect_refusal("corrupt task", corrupt, "recorded SHA-256")
+    expect_refusal("wrong seed", wrong_seed, "base_seed")
     print("self-test ok")
 
 
