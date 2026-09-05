@@ -593,9 +593,11 @@ const POPULATION_STORE_BASELINE_CHAIN_DIRNAME_V1: &str = "baseline-chain";
 /// directory. Mage builds the scorer command from an allow-list carrying only
 /// the Store root and generation, so the chain's location is the arm layout
 /// convention above rather than an operator input; the chain must exist and
-/// its origin record must name this run before the walk starts, and the
-/// walk's own recompute binds every update to it. A v3 run resolves exactly
-/// as before. Every failure is `CheckpointAuthority`.
+/// its origin record must name this run and this Store's genesis checkpoint
+/// before the walk starts (generation 0 resolves through the genesis decode
+/// path, so that binding costs one checkpoint read, not a second walk), and
+/// the walk's own recompute binds every update to it. A v3 run resolves
+/// exactly as before. Every failure is `CheckpointAuthority`.
 fn resolve_shadow_checkpoint_authority_v1(
     requested: &ShadowCheckpointAuthorityV1,
     checkpoint_ref: &OpponentLadderCheckpointRefV1,
@@ -617,11 +619,16 @@ fn resolve_shadow_checkpoint_authority_v1(
                     if !chain_dir.is_dir() {
                         return Err(authority_error());
                     }
-                    verify_origin_record_binds_run_v1(&chain_dir, &run).map_err(|_code| {
-                        #[cfg(test)]
-                        eprintln!("shadow baseline chain origin check failed: {_code}");
-                        authority_error()
-                    })?;
+                    let genesis_ref =
+                        stage_ladder_checkpoint_ref_v1(root, 0).map_err(|_| authority_error())?;
+                    let genesis = resolve_ladder_checkpoint_authority_v1(root, &genesis_ref)
+                        .map_err(|_| authority_error())?;
+                    verify_origin_record_binds_run_v1(&chain_dir, &run, genesis.checkpoint())
+                        .map_err(|_code| {
+                            #[cfg(test)]
+                            eprintln!("shadow baseline chain origin check failed: {_code}");
+                            authority_error()
+                        })?;
                     Some(Cycle4BaselineChainAccessV1::new_v1(
                         chain_dir,
                         run.checkpoint_segment_updates(),
