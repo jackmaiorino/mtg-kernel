@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cycle-4 M1 CP7 transfer panel (pre-registration section M1): five models on
 # the same 2,048 common roots, both seat-swapped legs, harness of record
-# (scorer v4 137b3d0a..., Mage lead/protocol-v2-reset-pin-v1 @ 72a08a3b,
+# (scorer v5 b51cd03a..., Mage lead/protocol-v2-reset-pin-v1 @ 72a08a3b,
 # runner of record 7c0c0fb6... from the scorer-v3 worktree).
 #
 # The runner of record takes exactly three models with three DISTINCT Store
@@ -35,14 +35,14 @@ SHARD_PAIRS=128
 ARMS='E:\mtg-kernel-cycle4-arms-lead'
 EVIDENCE="$ARMS\\cp7-evidence"
 RUNNER='C:\Users\Jack\IdeaProjects\mtg-kernel-cp7-scorer-v3\scripts\current_net8_cp7_population_store_panel_v2\run_cp7_store_panel_v2.py'
-SCORER='D:\cargo-target-cp7-scorer-v4\release\checkpoint_shadow_stdio_v1.exe'
+SCORER='D:\cargo-target-cp7-scorer-v5\release\checkpoint_shadow_stdio_v1-b51cd03a.exe'
 MAGE='C:\Users\Jack\IdeaProjects\mage-cycle4-lead'
 CARDDB='E:\mtg-kernel-population-v2-cycle3-cp7-anchor-reads\carddb-staging\cards.h2.mv.db'
 MAVEN='C:\Program Files\apache-maven-3.9.8\bin\mvn.cmd'
 PY='C:\Users\Jack\AppData\Local\Programs\Python\Python311\python.exe'
 CYCLE3='E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store'
 
-expected_scorer=137b3d0a3ccc93fea92567200494ce2cd5f097be74c68fab28977ab7a44a0677
+expected_scorer=b51cd03a4d5564bf9b6687f1e911d638d1cc951ef87f36788ff8e7365d457665
 expected_runner=7c0c0fb68c814dcda20086caf9201550c5ae0b35e78e6d8d7feb5716927fc9dd
 expected_mage=72a08a3b2654df26bba7bcd7c716885a1fb89174
 # The runner takes Windows-form paths; the shell-side guards need POSIX form.
