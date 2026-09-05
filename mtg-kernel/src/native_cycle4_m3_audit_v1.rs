@@ -87,6 +87,7 @@ use crate::native_training_store_update_group_v4::{
     UpdateBaselineTermViewV4,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -395,10 +396,8 @@ struct EpisodeReadV1 {
     #[serde(default)]
     opponent_checkpoint_manifest_sha256: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     opponent_search_tier: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     opponent_search_authority_sha256: Option<String>,
     #[serde(default)]
     #[allow(dead_code)]
@@ -617,6 +616,45 @@ impl CellAccumulatorV1 {
     }
 }
 
+
+/// Domain prefix of the search-occupant cell identity (clarification V2.2 of
+/// the section-6 amendment, ratified 2026-09-05).
+pub const CYCLE4_M3_SEARCH_OCCUPANT_IDENTITY_PREFIX_V1: &str =
+    "cycle4-m3-search-occupant-identity-v1";
+
+/// The M3 cell identity of a search occupant: SHA-256 (64 lower hex) over the
+/// UTF-8 string `cycle4-m3-search-occupant-identity-v1:<authority>:<tier>`.
+/// A search occupant's episode record carries `opponent_search_authority_sha256`
+/// and `opponent_search_tier` instead of a checkpoint manifest (cycle-3's pool
+/// slot 6 is the case in the record); hashing both to 64 hex keeps every
+/// consumer's identity handling unchanged while never colliding with a
+/// checkpoint manifest hash.
+pub fn search_occupant_cell_identity_v1(authority_sha256: &str, tier: &str) -> String {
+    let payload = format!("{CYCLE4_M3_SEARCH_OCCUPANT_IDENTITY_PREFIX_V1}:{authority_sha256}:{tier}");
+    format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
+/// The cell identity an episode contributes to: its opponent's checkpoint
+/// manifest SHA-256 when it carries one, otherwise the search-occupant
+/// identity when it carries both search fields, otherwise none (the audit
+/// then fails closed rather than inventing a cell).
+fn episode_cell_identity_v1(episode: &EpisodeReadV1) -> Option<String> {
+    if let Some(manifest) = &episode.opponent_checkpoint_manifest_sha256 {
+        if !manifest.is_empty() {
+            return Some(manifest.clone());
+        }
+    }
+    match (
+        &episode.opponent_search_authority_sha256,
+        &episode.opponent_search_tier,
+    ) {
+        (Some(authority), Some(tier)) if !authority.is_empty() && !tier.is_empty() => {
+            Some(search_occupant_cell_identity_v1(authority, tier))
+        }
+        _ => None,
+    }
+}
+
 /// One cell's audited statistics.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -822,21 +860,19 @@ fn adapt_update_v1(path: &Path, evidence: &EvidenceReadV1) -> Result<AdaptedUpda
                 format!("unexpected episode schema {}", episode.schema),
             ));
         }
-        let identity = episode
-            .opponent_checkpoint_manifest_sha256
-            .clone()
-            .ok_or_else(|| {
-                Cycle4M3AuditErrorV1::new(
-                    "cycle4_m3_audit_v1_episode_without_opponent_identity",
-                    format!(
-                        "{}: update {} has an episode with no opponent_checkpoint_manifest_sha256; \
-                         the M3 cell is (opponent checkpoint identity, learner role) and cannot be \
-                         formed for it",
-                        path.display(),
-                        evidence.update_index
-                    ),
-                )
-            })?;
+        let identity = episode_cell_identity_v1(episode).ok_or_else(|| {
+            Cycle4M3AuditErrorV1::new(
+                "cycle4_m3_audit_v1_episode_without_opponent_identity",
+                format!(
+                    "{}: update {} has an episode with neither opponent_checkpoint_manifest_sha256 \
+                     nor a search occupant identity (opponent_search_authority_sha256 plus \
+                     opponent_search_tier); the M3 cell is (opponent identity, learner role) and \
+                     cannot be formed for it",
+                    path.display(),
+                    evidence.update_index
+                ),
+            )
+        })?;
         let count = usize::try_from(episode.learner_physical_decision_count).map_err(|_| {
             decode_error_v1(
                 path,
@@ -2820,6 +2856,9 @@ mod tests {
         role: BaselineRoleV4,
         learner_return: i8,
         values: Vec<f32>,
+        /// `Some((authority sha256, tier))` emits a search-occupant episode:
+        /// no checkpoint manifest, the two search fields instead.
+        search_occupant: Option<(String, String)>,
     }
 
     fn synthetic_episode_v1(
@@ -2833,6 +2872,7 @@ mod tests {
             role,
             learner_return,
             values: values.to_vec(),
+            search_occupant: None,
         }
     }
 
@@ -2855,7 +2895,7 @@ mod tests {
                     "substep_count": 1,
                 }));
             }
-            episode_rows.push(serde_json::json!({
+            let mut row = serde_json::json!({
                 "schema": EPISODE_SCHEMA_V1,
                 "episode_index": ordinal as u64,
                 "environment_seed_u64_hex": "0000000000000001",
@@ -2878,7 +2918,25 @@ mod tests {
                 "opponent_occupant_class": "policy",
                 "opponent_run_sha256": identity_v1(0x78),
                 "opponent_checkpoint_manifest_sha256": episode.identity,
-            }));
+            });
+            if let Some((authority, tier)) = &episode.search_occupant {
+                let object = row.as_object_mut().expect("episode row object");
+                object.remove("opponent_checkpoint_manifest_sha256");
+                object.remove("opponent_run_sha256");
+                object.insert(
+                    "opponent_occupant_class".to_owned(),
+                    serde_json::Value::String("kernel-native-search".to_owned()),
+                );
+                object.insert(
+                    "opponent_search_authority_sha256".to_owned(),
+                    serde_json::Value::String(authority.clone()),
+                );
+                object.insert(
+                    "opponent_search_tier".to_owned(),
+                    serde_json::Value::String(tier.clone()),
+                );
+            }
+            episode_rows.push(row);
         }
         serde_json::json!({
             "schema": UPDATE_EVIDENCE_SCHEMA_V1,
@@ -3554,6 +3612,86 @@ mod tests {
             .expect_err("raw with a chain must fail closed")
             .code(),
             "cycle4_m3_audit_v1_chain_dir_refused"
+        );
+    }
+
+    /// Clarification V2.2 (2026-09-05): a search occupant carries no checkpoint
+    /// manifest but a search authority and tier; its cell identity is the
+    /// documented SHA-256 over both, so every episode has a cell and the
+    /// consumers' 64-hex identity handling is unchanged.
+    #[test]
+    fn a_search_occupant_episode_forms_a_cell_from_its_authority_and_tier_v1() {
+        let store = TestStoreV1::new_v1("search-occupant");
+        let run_sha256 = identity_v1(0x5f);
+        let authority = identity_v1(0x66);
+        let mut update = two_cell_update_v1(&[0.2], &[0.1]);
+        update[0].search_occupant = Some((authority.clone(), "t2048".to_owned()));
+        write_synthetic_store_v1(&store, &run_sha256, &[update], false);
+
+        let window = compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+            store_root: store.store_root_v1(),
+            chain_dir: None,
+            residual_mode: Cycle4M3ResidualModeV1::Raw,
+            window_updates: 1,
+        })
+        .expect("a search occupant has a cell");
+        let expected = search_occupant_cell_identity_v1(&authority, "t2048");
+        assert_eq!(expected.len(), 64);
+        assert!(expected
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            window
+                .cells()
+                .iter()
+                .any(|cell| cell.opponent_checkpoint_manifest_sha256 == expected),
+            "the derived identity must appear as a cell"
+        );
+        assert!(
+            window
+                .cells()
+                .iter()
+                .all(|cell| cell.opponent_checkpoint_manifest_sha256 != authority),
+            "the raw authority hash is never used as the identity"
+        );
+        // The identity is a pure function of (authority, tier): a different
+        // tier is a different cell identity.
+        assert_ne!(
+            search_occupant_cell_identity_v1(&authority, "t512"),
+            expected
+        );
+    }
+
+    /// A search authority without a tier is not an identity: the audit still
+    /// fails closed, with the same code the missing-manifest case reports.
+    #[test]
+    fn a_search_authority_without_a_tier_still_fails_closed_v1() {
+        let store = TestStoreV1::new_v1("search-authority-only");
+        let run_sha256 = identity_v1(0x5d);
+        let updates = vec![two_cell_update_v1(&[0.2], &[0.1])];
+        write_synthetic_store_v1(&store, &run_sha256, &updates, false);
+
+        edit_continuation_v1(&store, |document| {
+            let episode = document["update_groups"][0]["evidence"]["episodes"][0]
+                .as_object_mut()
+                .expect("episode object");
+            episode.remove("opponent_checkpoint_manifest_sha256");
+            episode.insert(
+                "opponent_search_authority_sha256".to_owned(),
+                serde_json::Value::String(identity_v1(0x66)),
+            );
+        });
+
+        assert_eq!(
+            compute_cycle4_m3_window_v1(&Cycle4M3WindowRequestV1 {
+                store_root: store.store_root_v1(),
+                chain_dir: None,
+                residual_mode: Cycle4M3ResidualModeV1::Raw,
+                window_updates: 1,
+            })
+            .expect_err("an authority without a tier has no cell")
+            .code(),
+            "cycle4_m3_audit_v1_episode_without_opponent_identity"
         );
     }
 
