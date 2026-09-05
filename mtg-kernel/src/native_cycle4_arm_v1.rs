@@ -3038,13 +3038,27 @@ fn genesis_identity_from_store_v1(
 /// Read-only binding check for a consumer that resolves a `trainer_v4_candidate`
 /// Store through its baseline chain without owning it (the shadow scorer):
 /// the chain directory's origin record must exist, decode, and name this
-/// run. Every field the run alone determines is compared (schema, arm kind
-/// when the run declares one, run hash, base seed, and the declared parent
-/// checkpoint pin); the genesis checkpoint fields need the walk this check
-/// precedes and are left to the baseline recompute. Publishes nothing.
+/// run and this Store's genesis checkpoint. Every field is compared: schema,
+/// arm kind when the run declares one, run hash, base seed, the declared
+/// parent checkpoint pin, and the four genesis hashes against `genesis`, the
+/// Store's generation-0 manifest, which the caller resolves through the
+/// genesis decode path (no Store walk). Publishes nothing.
 pub(crate) fn verify_origin_record_binds_run_v1(
     chain_dir: &Path,
     run: &ValidatedTrainRunV2,
+    genesis: &CheckpointManifestV3,
+) -> std::result::Result<(), &'static str> {
+    verify_origin_record_binds_v1(
+        chain_dir,
+        run,
+        &genesis_identity_from_checkpoint_v1(genesis),
+    )
+}
+
+fn verify_origin_record_binds_v1(
+    chain_dir: &Path,
+    run: &ValidatedTrainRunV2,
+    genesis: &Cycle4ArmGenesisIdentityV1,
 ) -> std::result::Result<(), &'static str> {
     let path = chain_dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
     let bytes = std::fs::read(&path).map_err(|_| "cycle4_arm_v1_origin_record_missing")?;
@@ -3068,7 +3082,11 @@ pub(crate) fn verify_origin_record_binds_run_v1(
         && decoded.parent_checkpoint_sha256 == declared.checkpoint_sha256
         && decoded.parent_sidecar_sha256 == declared.sidecar_sha256
         && decoded.parent_state_sha256 == declared.state_sha256
-        && decoded.derived_model_parameter_sha256 == declared.derived_model_parameter_sha256;
+        && decoded.derived_model_parameter_sha256 == declared.derived_model_parameter_sha256
+        && decoded.genesis_checkpoint_manifest_sha256 == genesis.checkpoint_manifest_sha256
+        && decoded.genesis_checkpoint_payload_sha256 == genesis.checkpoint_payload_sha256
+        && decoded.genesis_model_parameter_sha256 == genesis.model_parameter_sha256
+        && decoded.genesis_train_state_sha256 == genesis.train_state_sha256;
     if binds {
         Ok(())
     } else {
@@ -3598,6 +3616,54 @@ mod tests {
     // ------------------------------------------------------------------
     // Origin record: verify-or-publish, and the bootstrap adopt rule
     // ------------------------------------------------------------------
+
+    #[test]
+    fn a_read_only_consumer_requires_the_origin_record_to_bind_run_and_genesis_v1() {
+        let dir = fresh_temp_dir_v1("origin-verify-readonly");
+        let run = seeded_run_for_arm_v1(Cycle4ArmKindV1::TreatmentRb);
+        let identity = genesis_identity_fixture_v1(1);
+        assert_eq!(
+            verify_origin_record_binds_v1(&dir, &run, &identity),
+            Err("cycle4_arm_v1_origin_record_missing")
+        );
+        ensure_origin_record_v1(&dir, Cycle4ArmKindV1::TreatmentRb, &run, &identity)
+            .expect("publish");
+        verify_origin_record_binds_v1(&dir, &run, &identity)
+            .expect("the published record binds its own run and genesis");
+        // The same record against a genesis whose payload hash differs is refused.
+        let mut other_genesis = identity.clone();
+        other_genesis.checkpoint_payload_sha256 =
+            genesis_identity_fixture_v1(2).checkpoint_payload_sha256;
+        assert_eq!(
+            verify_origin_record_binds_v1(&dir, &run, &other_genesis),
+            Err("cycle4_arm_v1_origin_record_binds_another_run")
+        );
+        // Another run against the same record is refused.
+        let other_run = seeded_run_for_arm_v1(Cycle4ArmKindV1::StaticRb);
+        assert_eq!(
+            verify_origin_record_binds_v1(&dir, &other_run, &identity),
+            Err("cycle4_arm_v1_origin_record_binds_another_run")
+        );
+        // A record whose stored genesis train-state hash was tampered is refused.
+        let path = dir.join(CYCLE4_ARM_ORIGIN_RECORD_FILENAME_V1);
+        let mut decoded: Cycle4ArmOriginRecordV1 = from_canonical_json_bytes_v1(
+            &std::fs::read(&path).expect("read"),
+            CanonicalJsonNullPolicyV1::Forbid,
+        )
+        .expect("decode");
+        decoded.genesis_train_state_sha256 = genesis_identity_fixture_v1(2).train_state_sha256;
+        std::fs::write(
+            &path,
+            to_canonical_json_bytes_v1(&decoded, CanonicalJsonNullPolicyV1::Forbid)
+                .expect("encode"),
+        )
+        .expect("write");
+        assert_eq!(
+            verify_origin_record_binds_v1(&dir, &run, &identity),
+            Err("cycle4_arm_v1_origin_record_binds_another_run")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_origin_record_is_published_when_the_chain_has_none_v1() {
