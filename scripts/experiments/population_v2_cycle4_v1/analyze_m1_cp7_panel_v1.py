@@ -88,7 +88,7 @@ REGISTERED = {
     "mode": "formal",
     "base_seed": 2026090501,
     "read_pairs": REGISTERED_ROOTS,
-    "scorer_sha256": "b51cd03a4d5564bf9b6687f1e911d638d1cc951ef87f36788ff8e7365d457665",
+    "scorer_sha256": "f5a9a0aa95f9a4f823d23a5e06f29b8c1626e427f51b15c7769c2aaed6d3de6d",
     "runner_sha256": "7c0c0fb68c814dcda20086caf9201550c5ae0b35e78e6d8d7feb5716927fc9dd",
     "mage_commit": "72a08a3b2654df26bba7bcd7c716885a1fb89174",
     "admitted": ADMITTED,
