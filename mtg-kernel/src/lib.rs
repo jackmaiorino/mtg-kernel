@@ -234,6 +234,13 @@ pub(crate) mod native_population_refresh_manifest_cycle4_v1;
 // manifest module's `pub(crate)` types.
 #[allow(dead_code)]
 pub mod native_population_refresh_builder_cycle4_v1;
+// Cycle-5 mirrors of the two modules above (routed parent cycle-3 g2048,
+// roster and pre-registration literals gated as unratified until the owner
+// rules; see `native_training_store_run_v2`'s cycle-5 block).
+#[allow(dead_code)]
+pub(crate) mod native_population_refresh_manifest_cycle5_v1;
+#[allow(dead_code)]
+pub mod native_population_refresh_builder_cycle5_v1;
 // Canonical hash-linked authority for each eight-slot population refresh.
 #[allow(dead_code)]
 pub(crate) mod native_population_refresh_manifest_v1;
@@ -334,6 +341,10 @@ pub mod native_training_store_bootstrap_v2;
 // package, calls it directly; its public surface names only its own plain
 // types.
 pub mod native_cycle4_arm_v1;
+// Cycle-5 arm launcher: the cycle-4 launcher's v3 path continued from the
+// routed parent, with the centered-v5 arm declared but refused until the v5
+// trainer contract is ratified. `pub` for `src/bin/cycle5_arm_v1.rs`.
+pub mod native_cycle5_arm_v1;
 // Cycle-4 arm run-record builder (round E): assembles one arm's `run.json`
 // from the arm kind, the pinned parent Store, and the compiled cycle-4
 // literals, then proves it against both the V2 record validator and the arm
@@ -348,6 +359,17 @@ pub mod native_cycle4_arm_v1;
     not(debug_assertions)
 ))]
 pub mod native_cycle4_run_record_v1;
+// Cycle-5 run-record builder, bound by content hash to the immutable cycle-4
+// routing record that names cycle 5's parent. Same gating as the cycle-4
+// builder above; `pub` for `src/bin/cycle5_run_record_v1.rs`.
+#[cfg(all(
+    feature = "native-training-store-v2-production",
+    target_os = "windows",
+    target_env = "msvc",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(debug_assertions)
+))]
+pub mod native_cycle5_run_record_v1;
 // Cycle-4 M3 centering audit (section-6 amendment V2, section A): the
 // per-cell centered-residual statistics over one v4 arm's final 512 updates
 // and the eligibility gate over them. `pub` for the same reason as the two

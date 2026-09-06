@@ -61,6 +61,24 @@ required-features = [
     "experimental-burn-net8-packed-cuda-v1",
 ]
 
+# Cycle-5 arm launcher and run-record builder: the same two-feature gate as
+# the cycle-4 pair above, for the same reasons.
+[[bin]]
+name = "cycle5_arm_v1"
+path = "src/bin/cycle5_arm_v1.rs"
+required-features = [
+    "native-training-store-v2-production",
+    "experimental-burn-net8-packed-cuda-v1",
+]
+
+[[bin]]
+name = "cycle5_run_record_v1"
+path = "src/bin/cycle5_run_record_v1.rs"
+required-features = [
+    "native-training-store-v2-production",
+    "experimental-burn-net8-packed-cuda-v1",
+]
+
 [[example]]
 name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]

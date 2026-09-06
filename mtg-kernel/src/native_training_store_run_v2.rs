@@ -493,6 +493,65 @@ pub(crate) const CYCLE4_ARM_KIND_CONTROL_R_V1: &str = "control-r";
 pub(crate) const CYCLE4_ARM_KIND_STATIC_RB_V1: &str = "static-rb";
 pub(crate) const CYCLE4_ARM_KIND_TREATMENT_RB_V1: &str = "treatment-rb";
 
+// Cycle-5 population-program successor authority (mirrors the cycle-4
+// block above; `mtg-kernel-gae-lane/cycle5-prep/OX_CYCLE5_PREREG_SKETCH_V1.md`,
+// an UNRATIFIED draft). Every literal the owner has not yet ratified is a
+// sentinel that `cycle5_literal_is_ratified_v1` rejects, so a production
+// build cannot validate, and therefore cannot launch, a cycle-5 record until
+// the sentinel is replaced by the ratified value. The `cfg(test)` twins let
+// the unit tests exercise the whole path with clearly fictitious values.
+//
+// Owner decisions still open (each marked ASSUMPTION where a value is
+// needed to compile): the pre-registration hash, the trainee stop
+// generation (assumed 2048 + 2048, the cycle-4 per-arm scope), the refresh
+// interval (assumed 128, carried from cycle 4), the v5 trainer contract
+// document, and the arm roster.
+#[cfg(not(test))]
+pub(crate) const CYCLE5_PREREG_SHA256_V1: &str = "UNRATIFIED:cycle5-prereg-sketch";
+#[cfg(test)]
+pub(crate) const CYCLE5_PREREG_SHA256_V1: &str =
+    "5555555555555555555555555555555555555555555555555555555555555555";
+pub(crate) const CYCLE5_REFRESH_MANIFEST_SCHEMA_V1: &str =
+    "mtg-kernel-population-refresh-manifest-cycle5/v1";
+/// The routing record's parent generation (`parent_store_generation` in
+/// `routing-record.json`, SHA-256 `CYCLE5_ROUTING_RECORD_SHA256_V1`): the
+/// cycle-3 lineage run at its own generation 2048.
+pub(crate) const CYCLE5_TRAINEE_START_GENERATION_V1: u64 = 2_048;
+/// ASSUMPTION: the cycle-4 per-arm scope (2,048 successful updates) carried
+/// forward; the sketch lists it as an open decision (item 5).
+pub(crate) const CYCLE5_TRAINEE_STOP_GENERATION_V1: u64 = 4_096;
+/// ASSUMPTION: carried from cycle 4.
+pub(crate) const CYCLE5_REFRESH_INTERVAL_V1: u64 = 128;
+pub(crate) const CYCLE5_TOTAL_SUCCESSFUL_UPDATES_V1: u64 =
+    CYCLE5_TRAINEE_STOP_GENERATION_V1 - CYCLE5_TRAINEE_START_GENERATION_V1;
+pub(crate) const CYCLE5_ARM_LAUNCHER_BINARY_NAME_V1: &str = "cycle5_arm_v1.exe";
+/// The frozen v3 recipe continued from the routing record's parent: no
+/// baseline chain, refresh machinery on.
+pub(crate) const CYCLE5_ARM_KIND_CONTROL_V3_V1: &str = "control-v3";
+/// The centered-baseline candidate arm. Declared so a record can name it,
+/// but `validate_trainer_v5_candidate_v1` refuses every record that carries
+/// the `trainer_v5_candidate` section until the v5 contract document is
+/// ratified, so this arm cannot launch yet.
+pub(crate) const CYCLE5_ARM_KIND_CENTERED_V5_V1: &str = "centered-v5";
+/// ASSUMPTION: the loss identity the v5 contract draft proposes.
+pub(crate) const CYCLE5_TRAINER_V5_LOSS_IDENTITY_V1: &str = "terminal_reinforce_value/v5-candidate";
+pub(crate) const CYCLE5_TRAINER_V5_CONTRACT_DOCUMENT_SHA256_V1: &str =
+    "UNRATIFIED:trainer-v5-contract-draft";
+/// SHA-256 of `E:/mtg-kernel-cycle4-arms-lead/routing/routing-record.json`
+/// (schema `mtg-kernel-cycle4-routing-record/v2`, outcome NO_CARRY), the
+/// immutable record that names cycle 5's parent. The cycle-5 run-record
+/// builder refuses any routing record whose bytes hash differently.
+pub(crate) const CYCLE5_ROUTING_RECORD_SHA256_V1: &str =
+    "f9ad13e99d3040f50bff66f1d49c4a7288d226d42186c767b58e7902870f5b2f";
+pub(crate) const CYCLE5_ROUTING_RECORD_SCHEMA_V1: &str = "mtg-kernel-cycle4-routing-record/v2";
+
+/// A cycle-5 literal is ratified when it is a real lowercase SHA-256, never
+/// while it is an `UNRATIFIED:` sentinel.
+#[must_use]
+pub(crate) fn cycle5_literal_is_ratified_v1(value: &str) -> bool {
+    is_sha256(value)
+}
+
 const RESPONSE_EXPLOITER_IDENTITY_V1: &str =
     "mtg-kernel-native-scaled-selfplay-response-exploiter/v1";
 const RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1: &str =
@@ -1041,6 +1100,19 @@ pub struct TrainRunContractsV2 {
     /// [`PopulationProgramContractV2Cycle4`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) population_program_v2_cycle4: Option<PopulationProgramContractV2Cycle4>,
+    /// Cycle-5 v5-candidate trainer authority (shape only until the v5
+    /// contract document is ratified). Present if and only if the run is the
+    /// cycle-5 centered-baseline arm; `validate_trainer_v5_candidate_v1`
+    /// refuses every present section while the contract is unratified.
+    /// Mutually exclusive with `trainer_v4_candidate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) trainer_v5_candidate: Option<TrainerV5CandidateContractV1>,
+    /// Cycle-5 population-program successor authority. Present if and only
+    /// if this run is a cycle-5 arm; absent for every earlier record, so their
+    /// canonical bytes are unchanged. Mutually exclusive with every other
+    /// program section, including `population_program_v2_cycle4`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle5: Option<PopulationProgramContractV2Cycle5>,
 }
 
 /// Cycle-4 v4-candidate trainer authority. See
@@ -1064,6 +1136,37 @@ pub struct TrainerV4CandidateContractV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PopulationProgramContractV2Cycle4 {
+    pub(crate) prereg_sha256: String,
+    pub(crate) refresh_manifest_schema: String,
+    pub(crate) arm_kind: String,
+    pub(crate) trainee_start_generation: u64,
+    pub(crate) trainee_stop_generation: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) static_pool: bool,
+}
+
+/// Cycle-5 v5-candidate trainer authority, shape only. Field set follows
+/// `mtg-kernel-gae-lane/cycle5-prep/TRAINER_V5_CONTRACT_DRAFT_V1.md`
+/// (unratified): the declared estimator kind and its window, the baseline
+/// state schema, the contract document digest and the numerical backend.
+/// See [`TrainRunContractsV2::trainer_v5_candidate`].
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainerV5CandidateContractV1 {
+    pub(crate) loss_identity: String,
+    pub(crate) baseline_schema: String,
+    pub(crate) estimator_kind: String,
+    pub(crate) window_updates: u64,
+    pub(crate) contract_document_sha256: String,
+    pub(crate) numerical_backend: String,
+}
+
+/// Cycle-5 population-program successor authority, the cycle-4 shape with
+/// cycle-5 literals. See [`TrainRunContractsV2::population_program_v2_cycle5`]
+/// and `validate_population_program_v2_cycle5`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle5 {
     pub(crate) prereg_sha256: String,
     pub(crate) refresh_manifest_schema: String,
     pub(crate) arm_kind: String,
@@ -2106,6 +2209,7 @@ fn validate_decoded_train_run_v2(
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
     validate_population_program_v1(&record)?;
     validate_population_program_v2_cycle4(&record)?;
+    validate_population_program_v2_cycle5(&record)?;
     validate_response_exploiter_v1(&record)?;
     validate_limits_v2(&record.limits)?;
     validate_topology_v2(&record.topology)?;
@@ -2629,7 +2733,9 @@ fn validate_source_v2(source: &TrainRunSourceV2) -> Result<()> {
         // the binary that actually publishes a cycle-4 arm's Store.
         || !matches!(
             source.binary_name.as_str(),
-            LEGACY_LAUNCHER_BINARY_NAME_V2 | CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
+            LEGACY_LAUNCHER_BINARY_NAME_V2
+                | CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
+                | CYCLE5_ARM_LAUNCHER_BINARY_NAME_V1
         )
         || !is_sha256(&source.binary_sha256)
         || !is_positive_u63(source.binary_byte_len)
@@ -2933,9 +3039,17 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
     // equality with the v4-candidate literal; absent, the v3 check below is
     // byte-for-byte the same comparison every pre-cycle-4 record already
     // passes.
-    let expected_loss_identity = match &contracts.trainer_v4_candidate {
-        Some(_) => CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1,
-        None => FROZEN_LOSS_IDENTITY_V2,
+    let expected_loss_identity = match (
+        &contracts.trainer_v4_candidate,
+        &contracts.trainer_v5_candidate,
+    ) {
+        (Some(_), None) => CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1,
+        (None, Some(_)) => CYCLE5_TRAINER_V5_LOSS_IDENTITY_V1,
+        (None, None) => FROZEN_LOSS_IDENTITY_V2,
+        // Two candidate trainers at once is not a run anything can execute.
+        (Some(_), Some(_)) => {
+            return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+        }
     };
     if contracts.trainer_identity != FROZEN_TRAINER_IDENTITY_V2
         || contracts.identity_bundle_identity != IDENTITY_BUNDLE_IDENTITY_V2
@@ -3026,6 +3140,7 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
     validate_opponent_policy_and_ladder_pool_v2(contracts)?;
     if contracts.trainer_v4_candidate.is_some() {
         validate_trainer_v4_candidate_v1(contracts)?;
+        validate_trainer_v5_candidate_v1(contracts)?;
     }
     Ok(())
 }
@@ -3069,6 +3184,78 @@ fn validate_trainer_v4_candidate_v1(contracts: &TrainRunContractsV2) -> Result<(
     Ok(())
 }
 
+/// Validator for [`TrainerV5CandidateContractV1`]. Until the v5 contract
+/// document is ratified (`CYCLE5_TRAINER_V5_CONTRACT_DOCUMENT_SHA256_V1` is
+/// a sentinel) every record that carries the section is refused: the shape
+/// exists so records can be authored and reviewed, not so an arm can run.
+/// Once ratified this becomes the literal-pin check the v4 validator is.
+fn validate_trainer_v5_candidate_v1(contracts: &TrainRunContractsV2) -> Result<()> {
+    let Some(trainer) = contracts.trainer_v5_candidate.as_ref() else {
+        return Ok(());
+    };
+    if !cycle5_literal_is_ratified_v1(CYCLE5_TRAINER_V5_CONTRACT_DOCUMENT_SHA256_V1)
+        || trainer.loss_identity != CYCLE5_TRAINER_V5_LOSS_IDENTITY_V1
+        || trainer.contract_document_sha256 != CYCLE5_TRAINER_V5_CONTRACT_DOCUMENT_SHA256_V1
+        || trainer.window_updates == 0
+        || trainer.numerical_backend != CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1
+        || contracts.train_step.numerical_backend_identity
+            != crate::native_policy_train_step_v1::CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1
+        || contracts.trainer_v4_candidate.is_some()
+        || contracts.wide_model_experiment_v1.is_some()
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    Ok(())
+}
+
+/// Validator for [`PopulationProgramContractV2Cycle5`]: the cycle-4 rules
+/// with cycle-5 literals. `control-v3` requires no candidate trainer and no
+/// static pool; `centered-v5` requires `trainer_v5_candidate` (which is
+/// itself refused until ratified). The section is mutually exclusive with
+/// every other program section, cycle 4 included: a cycle-5 arm record that
+/// carried its parent lineage's section would claim two programs at once.
+/// The pre-registration digest must be ratified before any record passes.
+fn validate_population_program_v2_cycle5(record: &TrainRunV2) -> Result<()> {
+    let contracts = &record.contracts;
+    let Some(program) = contracts.population_program_v2_cycle5.as_ref() else {
+        return Ok(());
+    };
+    if !cycle5_literal_is_ratified_v1(CYCLE5_PREREG_SHA256_V1)
+        || program.prereg_sha256 != CYCLE5_PREREG_SHA256_V1
+        || program.refresh_manifest_schema != CYCLE5_REFRESH_MANIFEST_SCHEMA_V1
+        || program.trainee_start_generation != CYCLE5_TRAINEE_START_GENERATION_V1
+        || program.trainee_stop_generation != CYCLE5_TRAINEE_STOP_GENERATION_V1
+        || program.refresh_interval != CYCLE5_REFRESH_INTERVAL_V1
+        || program.static_pool
+        || contracts.population_program_v1.is_some()
+        || contracts.response_exploiter_v1.is_some()
+        || contracts.population_program_v2_cycle2.is_some()
+        || contracts.population_program_v2_cycle3.is_some()
+        || contracts.population_program_v2_cycle4.is_some()
+        || contracts.trainer_v4_candidate.is_some()
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    let arm_kind_consistent = match program.arm_kind.as_str() {
+        CYCLE5_ARM_KIND_CONTROL_V3_V1 => contracts.trainer_v5_candidate.is_none(),
+        CYCLE5_ARM_KIND_CENTERED_V5_V1 => contracts.trainer_v5_candidate.is_some(),
+        _ => false,
+    };
+    if !arm_kind_consistent {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
+    }
+    if program
+        .trainee_stop_generation
+        .checked_sub(program.trainee_start_generation)
+        != Some(CYCLE5_TOTAL_SUCCESSFUL_UPDATES_V1)
+        || record.schedule.requested_successful_updates != CYCLE5_TOTAL_SUCCESSFUL_UPDATES_V1
+        || !CYCLE5_TOTAL_SUCCESSFUL_UPDATES_V1.is_multiple_of(program.refresh_interval)
+    {
+        return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding));
+    }
+    Ok(())
+}
+
 /// Real validator for [`PopulationProgramContractV2Cycle4`]
 /// (`docs/native_cycle4_arm_launcher_v1.md` Section 1). Literal pins, plus:
 /// `static_pool` is true if and only if `arm_kind` is `"static-rb"`;
@@ -3097,6 +3284,9 @@ fn validate_population_program_v2_cycle4(record: &TrainRunV2) -> Result<()> {
         // arm record that carried its PARENT's cycle-3 section would be
         // claiming to run two programs at once.
         || contracts.population_program_v2_cycle3.is_some()
+        // Cycle 5 is the successor program; a cycle-4 record never carries it.
+        || contracts.population_program_v2_cycle5.is_some()
+        || contracts.trainer_v5_candidate.is_some()
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
@@ -3748,6 +3938,8 @@ fn validate_cross_bindings_v2(record: &TrainRunV2) -> Result<()> {
     // two-name widening was introduced to avoid.
     let expected_binary_name = if contracts.population_program_v2_cycle4.is_some() {
         CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1
+    } else if contracts.population_program_v2_cycle5.is_some() {
+        CYCLE5_ARM_LAUNCHER_BINARY_NAME_V1
     } else {
         LEGACY_LAUNCHER_BINARY_NAME_V2
     };
@@ -4216,6 +4408,29 @@ pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_v1(arm_kind: &str)
 pub(crate) fn test_fixture_bytes_population_program_v2_cycle4_seeded_v1(arm_kind: &str) -> Vec<u8> {
     to_canonical_json_bytes_v1(
         &tests::population_program_v2_cycle4_seeded_record(arm_kind),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
+}
+
+/// Cycle-5 twin of the cycle-4 helper above: a coherent record carrying
+/// `population_program_v2_cycle5` for one arm kind (`control-v3` or
+/// `centered-v5`), under the `cfg(test)` literals.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_population_program_v2_cycle5_v1(arm_kind: &str) -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::population_program_v2_cycle5_record(arm_kind),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
+}
+
+/// The same cycle-5 arm record with the ladder tuple and the pinned parent
+/// initialization a real arm run declares.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_population_program_v2_cycle5_seeded_v1(arm_kind: &str) -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::population_program_v2_cycle5_seeded_record(arm_kind),
         CanonicalJsonNullPolicyV1::Forbid,
     )
     .unwrap()
@@ -10135,6 +10350,167 @@ mod tests {
             Some(population_parent_initialization_fixture());
         refresh_derived(&mut record);
         record
+    }
+
+    // ------------------------------------------------------------------
+    // Cycle-5 run-contract widening (mirrors the cycle-4 block above; the
+    // cycle-5 literals are the `cfg(test)` twins, so these tests exercise
+    // the path a production build refuses until ratification)
+    // ------------------------------------------------------------------
+
+    fn trainer_v5_candidate_fixture_v1() -> TrainerV5CandidateContractV1 {
+        TrainerV5CandidateContractV1 {
+            loss_identity: CYCLE5_TRAINER_V5_LOSS_IDENTITY_V1.to_owned(),
+            baseline_schema: "mtg-kernel-native-baseline-state/v5-draft".to_owned(),
+            estimator_kind: "windowed-decision-weighted-mean".to_owned(),
+            window_updates: 16,
+            contract_document_sha256: CYCLE5_TRAINER_V5_CONTRACT_DOCUMENT_SHA256_V1.to_owned(),
+            numerical_backend: CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1.to_owned(),
+        }
+    }
+
+    fn population_program_v2_cycle5_fixture_v1(arm_kind: &str) -> PopulationProgramContractV2Cycle5 {
+        PopulationProgramContractV2Cycle5 {
+            prereg_sha256: CYCLE5_PREREG_SHA256_V1.to_owned(),
+            refresh_manifest_schema: CYCLE5_REFRESH_MANIFEST_SCHEMA_V1.to_owned(),
+            arm_kind: arm_kind.to_owned(),
+            trainee_start_generation: CYCLE5_TRAINEE_START_GENERATION_V1,
+            trainee_stop_generation: CYCLE5_TRAINEE_STOP_GENERATION_V1,
+            refresh_interval: CYCLE5_REFRESH_INTERVAL_V1,
+            static_pool: false,
+        }
+    }
+
+    /// A coherent record carrying `population_program_v2_cycle5` for the
+    /// requested arm kind: `control-v3` carries no candidate trainer;
+    /// `centered-v5` carries `trainer_v5_candidate` (and is therefore refused
+    /// by `validate_trainer_v5_candidate_v1` until the contract is ratified).
+    pub(super) fn population_program_v2_cycle5_record(arm_kind: &str) -> TrainRunV2 {
+        let mut record = coherent_v2_record();
+        if arm_kind == CYCLE5_ARM_KIND_CENTERED_V5_V1 {
+            record.contracts.loss.identity = CYCLE5_TRAINER_V5_LOSS_IDENTITY_V1.to_owned();
+            record.contracts.trainer_v5_candidate = Some(trainer_v5_candidate_fixture_v1());
+            apply_backend_pair(
+                &mut record,
+                crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1::CudaBurnDense,
+            );
+        }
+        record.contracts.population_program_v2_cycle5 =
+            Some(population_program_v2_cycle5_fixture_v1(arm_kind));
+        record.schedule.requested_successful_updates = CYCLE5_TOTAL_SUCCESSFUL_UPDATES_V1;
+        record.schedule.base_seed = crate::native_cycle5_arm_v1::Cycle5ArmKindV1::from_wire_v1(arm_kind)
+            .expect("the cycle-5 fixture is built for a real arm kind")
+            .formal_base_seed_v1();
+        record.source.binary_name = CYCLE5_ARM_LAUNCHER_BINARY_NAME_V1.to_owned();
+        refresh_derived(&mut record);
+        record
+    }
+
+    pub(super) fn population_program_v2_cycle5_seeded_record(arm_kind: &str) -> TrainRunV2 {
+        let mut record = population_program_v2_cycle5_record(arm_kind);
+        record.contracts.opponent_policy.identity =
+            FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2.to_owned();
+        record.contracts.opponent_policy.model_rule =
+            FROZEN_LADDER_OPPONENT_POLICY_MODEL_RULE_V2.to_owned();
+        record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
+        record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn population_program_v2_cycle5_control_v3_seeded_record_validates() {
+        let record = population_program_v2_cycle5_seeded_record(CYCLE5_ARM_KIND_CONTROL_V3_V1);
+        let validated = validate_train_run_record_v2(record)
+            .unwrap_or_else(|error| panic!("control-v3 seeded record: {error:?}"));
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle5
+            .is_some());
+        assert_eq!(
+            validated.record().contracts().trainer_loss_identity_v2(),
+            TrainerLossIdentityV2::V3
+        );
+    }
+
+    #[test]
+    fn population_program_v2_cycle5_centered_v5_is_refused_until_ratified() {
+        assert!(
+            !cycle5_literal_is_ratified_v1(CYCLE5_TRAINER_V5_CONTRACT_DOCUMENT_SHA256_V1),
+            "this test documents the unratified state; retire it when the v5 contract is ratified"
+        );
+        let record = population_program_v2_cycle5_seeded_record(CYCLE5_ARM_KIND_CENTERED_V5_V1);
+        let error = validate_train_run_record_v2(record).expect_err("centered-v5 must fail closed");
+        assert_eq!(error.kind(), TrainRunV2ErrorKind::InvalidLiteral);
+    }
+
+    #[test]
+    fn population_program_v2_cycle5_is_exclusive_with_cycle4_and_v4() {
+        let mut both = population_program_v2_cycle5_seeded_record(CYCLE5_ARM_KIND_CONTROL_V3_V1);
+        both.contracts.population_program_v2_cycle4 =
+            Some(population_program_v2_cycle4_fixture_v1(CYCLE4_ARM_KIND_CONTROL_R_V1, false));
+        refresh_derived(&mut both);
+        assert_eq!(
+            validate_train_run_record_v2(both).expect_err("two programs").kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+        let mut v4 = population_program_v2_cycle5_seeded_record(CYCLE5_ARM_KIND_CONTROL_V3_V1);
+        v4.contracts.trainer_v4_candidate = Some(trainer_v4_candidate_fixture_v1());
+        refresh_derived(&mut v4);
+        assert!(validate_train_run_record_v2(v4).is_err());
+        let mut cycle4_with_cycle5 =
+            population_program_v2_cycle4_seeded_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        cycle4_with_cycle5.contracts.population_program_v2_cycle5 =
+            Some(population_program_v2_cycle5_fixture_v1(CYCLE5_ARM_KIND_CONTROL_V3_V1));
+        refresh_derived(&mut cycle4_with_cycle5);
+        assert_eq!(
+            validate_train_run_record_v2(cycle4_with_cycle5)
+                .expect_err("a cycle-4 record never carries cycle 5")
+                .kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    #[test]
+    fn population_program_v2_cycle5_literal_violations_fail_closed() {
+        let mutations: &[fn(&mut PopulationProgramContractV2Cycle5)] = &[
+            |p| p.prereg_sha256 = "0".repeat(64),
+            |p| p.refresh_manifest_schema = CYCLE4_REFRESH_MANIFEST_SCHEMA_V1.to_owned(),
+            |p| p.trainee_start_generation = CYCLE4_TRAINEE_START_GENERATION_V1,
+            |p| p.trainee_stop_generation += CYCLE5_REFRESH_INTERVAL_V1,
+            |p| p.refresh_interval = 64,
+            |p| p.static_pool = true,
+            |p| p.arm_kind = CYCLE4_ARM_KIND_CONTROL_R_V1.to_owned(),
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut record = population_program_v2_cycle5_seeded_record(CYCLE5_ARM_KIND_CONTROL_V3_V1);
+            mutate(
+                record
+                    .contracts
+                    .population_program_v2_cycle5
+                    .as_mut()
+                    .expect("fixture carries the section"),
+            );
+            refresh_derived(&mut record);
+            assert!(
+                validate_train_run_record_v2(record).is_err(),
+                "mutation {index} must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn population_program_v2_cycle5_names_the_cycle5_launcher() {
+        let mut record = population_program_v2_cycle5_seeded_record(CYCLE5_ARM_KIND_CONTROL_V3_V1);
+        record.source.binary_name = CYCLE4_ARM_LAUNCHER_BINARY_NAME_V1.to_owned();
+        refresh_derived(&mut record);
+        assert_eq!(
+            validate_train_run_record_v2(record).expect_err("wrong launcher").kind(),
+            TrainRunV2ErrorKind::CrossBinding
+        );
     }
 
     #[test]
