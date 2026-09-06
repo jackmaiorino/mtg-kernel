@@ -1,0 +1,1712 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# Cycle-5 launch stack, shared helpers (docs/native_cycle5_arm_launcher_v1.md
+# Section 6). Dot-sources the regularized_continuation_retest_v1 chain so
+# every lower-level helper the contract names is REUSED unchanged rather than
+# reimplemented: Get-ToolchainRecord, Assert-GpuIdentity, Assert-Gpu1Idle,
+# Assert-NoForeignGpu1ComputeProcesses, Get-StoreTreeHash,
+# Get-StoreFileInventory, New-UniqueAttemptRoot, Write-JsonFile,
+# Write-Utf8NoBomJsonFile, Assert-LastExitCode, Get-TextSha256, Stop-ProcessTree.
+#
+# What this file adds is only what is cycle-5's own: the pre-registered
+# constants, manifest/locator/identity documents, the Store-position and
+# checkpoint-identity readers, the child-process runner with the
+# WaitForExit()+Refresh() double call, and the terminal markers.
+#
+# Everything here is PowerShell 5.1 compatible: no `&&`, no ternary, no
+# null-coalescing, and no reliance on Get-FileHash (see the shadow below).
+
+. (Join-Path $PSScriptRoot '..\regularized_continuation_retest_v1\common.ps1')
+
+# ---------------------------------------------------------------------------
+# Self-contained .NET SHA-256 (ported from the g896 formal wrapper family).
+#
+# A detached PowerShell host does not reliably have the Microsoft.PowerShell
+# .Utility cmdlet Get-FileHash available, and the g896 formal CONTROL run lost
+# a wrapper verdict to exactly that class of host-provided-cmdlet surprise.
+# Defining a function of the same name AFTER the dot-source above makes every
+# call in this whole stack -- including the precedent's own Get-StoreTreeHash
+# and Get-StoreFileInventory -- resolve to this implementation, which depends
+# on nothing but the .NET base class library.
+# ---------------------------------------------------------------------------
+function Get-FileHash {
+    param(
+        [Parameter(Mandatory = $true)][string]$Algorithm,
+        [Parameter(Mandatory = $true)][string]$LiteralPath
+    )
+    if ($Algorithm -cne 'SHA256') { throw "unsupported hash algorithm: $Algorithm" }
+    $resolved = (Resolve-Path -LiteralPath $LiteralPath).Path
+    $stream = [System.IO.File]::OpenRead($resolved)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash($stream) }
+    finally {
+        $sha.Dispose()
+        $stream.Dispose()
+    }
+    return [pscustomobject]@{
+        Algorithm = 'SHA256'
+        Hash = ([System.BitConverter]::ToString($digest)).Replace('-', '')
+        Path = $resolved
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Pre-registered constants (OX_CYCLE5_PREREG_SKETCH_V2 through the ratified
+# defaults). Every one of these is also a compiled constant on the Rust side
+# (native_population_refresh_manifest_cycle5_v1.rs); they are restated here
+# only so the wrapper can reject a mismatch BEFORE spending GPU time, never as
+# an independent source of truth.
+# ---------------------------------------------------------------------------
+$script:Cycle5Arms = @('control-v3', 'centered-v5')
+$script:Cycle5RefreshInterval = [uint64]128
+$script:Cycle5MaxRefreshIndex = [uint64]16
+$script:Cycle5SlotCount = 8
+$script:Cycle5PanelGamesPerMatchup = [uint64]256
+$script:Cycle5TraineeStartLocalGeneration = [uint64]2048
+$script:Cycle5HistoricalLag = [uint64]512
+$script:Cycle5StoreGenerationTotal = [uint64]2048
+$script:Cycle5PreflightMaxUpdates = [uint64]8
+$script:Cycle5ExpectedRoles = @(
+    'anchor-0', 'anchor-1', 'historical-0', 'historical-1',
+    'current-0', 'current-1', 'exploiter-0', 'exploiter-1'
+)
+# Slots the ARM's own Store occupies, and therefore the only slot identities
+# this wrapper ever derives rather than reads from the operator's roster.
+# Slot 5 (current-1) at EVERY refresh including genesis, where it binds the
+# arm's own generation-0 checkpoint; slot 2 (historical-0) from refresh 4,
+# before which historical-0 is still the cycle-3 lineage.
+$script:Cycle5ArmOwnedSlotIndex = 5
+$script:Cycle5HistoricalArmSlotIndex = 2
+$script:Cycle5HistoricalArmFirstRefreshIndex = [uint64]4
+# historical-1 (slot 3) is not one frozen occupant but a THREE-phase rotation
+# over the program-v1 endpoints 970001/970002/970003, all at generation 1024,
+# selected by `refresh_index % 3` -- the same arithmetic
+# validate_slot_assignment_cycle5_v1 performs against
+# CYCLE5_HISTORICAL_1_ROTATION_V1. One fixed slot-root table therefore cannot
+# express the campaign: two thirds of the refreshes would name the wrong
+# Store. -HistoricalOneStoreRoots supplies the three roots in rotation order
+# and Get-Cycle5SlotTableForRefresh picks the phase.
+$script:Cycle5HistoricalRotationSlotIndex = 3
+$script:Cycle5HistoricalRotationPeriod = [uint64]3
+$script:Cycle5ArmOriginRecordSchema = 'mtg-kernel-cycle5-arm-origin/v1'
+$script:Cycle5IntervalPhaseSchema = 'mtg-kernel-cycle5-interval-phase/v1'
+# The four transitions one interval passes through, in order. Every one of
+# them is a point an interrupted attempt can stop at, and each is durable
+# before the next begins, so the phase a journal last recorded plus the Store
+# and chain contents determine exactly what is left to do.
+$script:Cycle5IntervalPhases = @('training-started', 'training-complete', 'panel-complete', 'manifest-complete')
+$script:Cycle5PhaseChainGenesisParent = ('0' * 64)
+
+$script:Cycle5ManifestSchema = 'mtg-kernel-population-refresh-manifest-cycle5/v1'
+$script:Cycle5ArmLocatorSchema = 'mtg-kernel-cycle5-arm-slot-locator/v1'
+$script:Cycle5PanelLocatorSchema = 'mtg-kernel-cycle5-slot-locator/v1'
+$script:Cycle5SlotIdentitiesSchema = 'mtg-kernel-cycle5-slot-identities/v1'
+$script:Cycle5GenesisAuthoritySchema = 'mtg-kernel-cycle5-genesis-authority/v1'
+$script:Cycle5ArmOriginRecordFileName = 'arm-origin.record.json'
+$script:Cycle5ModeMarkerFileName = 'cycle5-arm-mode.marker.json'
+
+# The panel runner's own EVAL_SEED_STRIDE is 1,000,000 per matchup and it runs
+# 28 matchups, so one panel consumes [base, base + 28,000,000). Striding a
+# clean 32,000,000 per refresh keeps every panel's seed window disjoint from
+# every other panel's across the whole campaign, which is the contract's "no
+# reused pair seeds" requirement at campaign scope rather than panel scope.
+$script:Cycle5PanelSeedStridePerRefresh = [uint64]32000000
+
+# ---------------------------------------------------------------------------
+# Small file/JSON helpers
+# ---------------------------------------------------------------------------
+
+function Get-Cycle5Sha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "required file is missing: $Path"
+    }
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function Get-Cycle5FileRecord {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "required file is missing: $Path"
+    }
+    $item = Get-Item -LiteralPath $Path
+    return [ordered]@{
+        path = $item.FullName
+        bytes = [uint64]$item.Length
+        sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()
+    }
+}
+
+function Read-Cycle5Json {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "required JSON document is missing: $Path"
+    }
+    $text = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    # Strip a UTF-8 BOM if the producer wrote one; the Rust side reads bytes.
+    if ($text.Length -gt 0 -and [int][char]$text[0] -eq 65279) { $text = $text.Substring(1) }
+    return $text | ConvertFrom-Json
+}
+
+function Write-Cycle5JsonFile {
+    # Atomic publication: a staged sibling written, flushed to disk, then moved
+    # into place, so a killed wrapper never leaves a half-written record or
+    # locator behind for the next process to read as authoritative.
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $directory = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
+    $json = $Value | ConvertTo-Json -Depth 12
+    $staged = "$Path.stage-$PID"
+    [System.IO.File]::WriteAllText($staged, $json, [System.Text.UTF8Encoding]::new($false))
+    try {
+        Move-Item -LiteralPath $staged -Destination $Path -Force
+    }
+    catch {
+        if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged -Force }
+        throw
+    }
+}
+
+$script:Cycle5ParameterFileSchema = 'mtg-kernel-cycle5-arm-parameters/v1'
+# v2, not v1: round F review finding (P1). A v1 receipt recorded only the
+# launch commit and the binary's hash, which a binary built from a DIRTY tree
+# at commit X satisfies just as well as one built from the clean tree at X.
+# v2 additionally carries the Store build-capture's own `source_tree_sha256`
+# (which differs the moment any tracked source byte differs, committed or not)
+# and an explicit clean-worktree assertion made at build time. A v1 receipt is
+# refused rather than read leniently: it cannot answer the question v2 exists
+# to ask.
+$script:Cycle5PanelBuildReceiptSchema = 'mtg-kernel-cycle5-panel-build/v2'
+$script:Cycle5PanelBuildReceiptSuffix = '.cycle5-panel-build.json'
+
+function Read-Cycle5ParameterFile {
+    # Round F defect 4. `powershell -NoProfile -File run-cycle5-arm.ps1
+    # -SlotStoreRoots @('a','b')` does NOT pass an array: -File hands the
+    # script a flat list of strings, so the array literal arrives as the
+    # separate tokens `@('a',` and `'b')`, and the eight-root check then
+    # rejects a command line that looks correct in a README. Splatting from
+    # inside PowerShell works, but a launch that has to be typed into a
+    # running session is not a launch an operator can paste from a
+    # pre-registered document.
+    #
+    # This is the paste-able form: one JSON file, read with the same
+    # deny-unknown-keys discipline every other artifact in this stack uses.
+    # Every key must be a real wrapper parameter, spelled exactly (parameter
+    # names are matched case-sensitively here even though PowerShell's own
+    # binder is not, so a typo is a refusal rather than a silent miss), and
+    # no key may be null. `ParameterFile` itself is refused: a parameter file
+    # never names another parameter file.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string[]]$KnownNames
+    )
+    $document = Read-Cycle5Json -Path $Path
+    # Round F review finding (P1). Deny unknown keys at the DOCUMENT root as
+    # well as inside `parameters`. Without this, a safety flag written one
+    # level too high -- `"DryRun": true` beside `parameters` rather than
+    # inside it, the easiest possible mistake in a hand-written launch file
+    # -- is silently dropped and the launch runs for real. Only `schema` and
+    # `parameters` may appear at the root, and nothing is ever ignored.
+    foreach ($property in @($document.PSObject.Properties)) {
+        $name = [string]$property.Name
+        if ($name -cne 'schema' -and $name -cne 'parameters') {
+            throw "$Path carries an unexpected top-level property '$name'; a parameter file has exactly two: 'schema' and 'parameters'. Every wrapper parameter belongs inside 'parameters'."
+        }
+    }
+    if ([string]$document.schema -cne $script:Cycle5ParameterFileSchema) {
+        throw "unexpected parameter-file schema at $Path`: '$($document.schema)', expected '$($script:Cycle5ParameterFileSchema)'"
+    }
+    if ($null -eq $document.parameters) {
+        throw "$Path carries no 'parameters' object"
+    }
+    if ($document.parameters -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "$Path`: 'parameters' must be a JSON object naming wrapper parameters"
+    }
+    $values = [ordered]@{}
+    foreach ($property in @($document.parameters.PSObject.Properties)) {
+        $name = [string]$property.Name
+        if ($name -ceq 'ParameterFile') {
+            throw "$Path names ParameterFile; a parameter file never names another parameter file"
+        }
+        $match = @($KnownNames | Where-Object { $_ -ceq $name })
+        if ($match.Count -ne 1) {
+            throw "$Path names an unknown wrapper parameter: '$name'. Known parameters: $($KnownNames -join ', ')"
+        }
+        if ($null -eq $property.Value) {
+            throw "$Path sets '$name' to null; every parameter it names must carry a value"
+        }
+        $values[$name] = $property.Value
+    }
+    if ($values.Count -eq 0) {
+        throw "$Path names no parameters"
+    }
+    return $values
+}
+
+function Test-Cycle5FileContainsAscii {
+    # Streams a file in overlapping chunks looking for one ASCII needle.
+    # Used to probe a large executable for an embedded build identity without
+    # reading the whole thing into memory at once.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Needle
+    )
+    if ([string]::IsNullOrEmpty($Needle)) { throw 'Test-Cycle5FileContainsAscii needs a non-empty needle' }
+    $needleBytes = [System.Text.Encoding]::ASCII.GetBytes($Needle)
+    $overlap = $needleBytes.Length - 1
+    $chunk = 1048576
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        $buffer = New-Object byte[] ($chunk + $overlap)
+        $carried = 0
+        while ($true) {
+            $read = $stream.Read($buffer, $carried, $chunk)
+            if ($read -le 0) { break }
+            $filled = $carried + $read
+            $text = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $filled)
+            if ($text.Contains($Needle)) { return $true }
+            if ($overlap -gt 0) {
+                $keep = [Math]::Min($overlap, $filled)
+                [System.Array]::Copy($buffer, $filled - $keep, $buffer, 0, $keep)
+                $carried = $keep
+            }
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    return $false
+}
+
+function Assert-Cycle5PanelBuildIdentity {
+    # Round F defect 6. -PanelExecutable is a cargo test binary
+    # (`deps\mtg_kernel-<hash>.exe`), and a preflight only hashed it, so a
+    # formal interval could be driven by a panel binary built from a
+    # DIFFERENT commit than the one the campaign launched on -- which is
+    # exactly what the first preflight attempt used: a binary that predated
+    # the launch commit.
+    #
+    # Round F review finding (P1): a commit alone is not provenance. A panel
+    # binary built from a DIRTY tree at commit X satisfies any commit-only
+    # check that a clean tree at X later performs, so the proof is bound to
+    # the Store build-capture's own `source_tree_sha256` instead. That digest
+    # covers the actual source bytes the compiler saw, so it differs the
+    # moment anything differs, committed or not. -LaunchSourceTreeSha256 is
+    # the arm executable's own, read from `cycle5_arm_v1 --print-build-identity`
+    # at launch, and the arm executable is already pinned to the run record's
+    # provenance at every launch.
+    #
+    # Two acceptable proofs, tried in that order:
+    #
+    #   embedded: BOTH the launch commit's 40-hex string and that source-tree
+    #             digest appear verbatim in the executable. A build carrying
+    #             the Store build-capture constants embeds both; a binary from
+    #             any other tree embeds neither.
+    #   receipt:  a `<panel executable><suffix>` JSON receipt written beside
+    #             the binary by the documented build step, which refuses to
+    #             write one from a dirty worktree. The receipt must name the
+    #             binary's actual hash, the launch commit, that same
+    #             source-tree digest, and an explicit clean-worktree
+    #             assertion. This is the normal path, because a test binary
+    #             built without the production feature carries no embedded
+    #             identity at all.
+    #
+    # Neither: hard failure. A panel binary of unknown provenance is not a
+    # thing a formal interval may run.
+    param(
+        [Parameter(Mandatory = $true)][string]$PanelExecutable,
+        [Parameter(Mandatory = $true)][string]$LaunchCommit,
+        [Parameter(Mandatory = $true)][string]$LaunchSourceTreeSha256
+    )
+    if ($LaunchCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "the launch commit must be a 40-character lowercase hex sha, got '$LaunchCommit'"
+    }
+    if ($LaunchSourceTreeSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "the launch source tree sha256 must be 64 lowercase hex characters, got '$LaunchSourceTreeSha256'"
+    }
+    $record = Get-Cycle5FileRecord -Path $PanelExecutable
+    if ((Test-Cycle5FileContainsAscii -Path $record.path -Needle $LaunchSourceTreeSha256) -and
+        (Test-Cycle5FileContainsAscii -Path $record.path -Needle $LaunchCommit)) {
+        return [ordered]@{
+            source = 'embedded'
+            panel_executable = $record
+            source_git_commit = $LaunchCommit
+            source_tree_sha256 = $LaunchSourceTreeSha256
+            receipt = $null
+        }
+    }
+    $receiptPath = "$($record.path)$($script:Cycle5PanelBuildReceiptSuffix)"
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        throw "the panel executable carries no embedded build identity for the launch commit $LaunchCommit and source tree $LaunchSourceTreeSha256, and no build receipt is present at $receiptPath. Build it with the README's documented panel build step, which writes that receipt."
+    }
+    $receipt = Read-Cycle5Json -Path $receiptPath
+    if ([string]$receipt.schema -cne $script:Cycle5PanelBuildReceiptSchema) {
+        throw "unexpected panel build receipt schema at $receiptPath`: '$($receipt.schema)', expected '$($script:Cycle5PanelBuildReceiptSchema)'. A pre-v2 receipt proves only a commit, which a dirty-tree build also satisfies; rebuild the panel executable with the README's build step."
+    }
+    $receiptExecutableSha256 = ([string]$receipt.panel_executable_sha256).ToLowerInvariant()
+    if ($receiptExecutableSha256 -cne $record.sha256) {
+        throw "the panel build receipt at $receiptPath describes a different binary: it names sha256 $receiptExecutableSha256, but $($record.path) hashes to $($record.sha256)"
+    }
+    $receiptCommit = ([string]$receipt.source_git_commit).ToLowerInvariant()
+    if ($receiptCommit -cne $LaunchCommit) {
+        throw "the panel executable was built from commit $receiptCommit, but this is a formal launch on commit $LaunchCommit; rebuild the panel executable at the launch commit"
+    }
+    # The clean-source proof, both halves. The assertion says the build step
+    # saw a clean worktree; the digest says WHICH source bytes it compiled,
+    # and must be the same ones this launch's arm executable was built from.
+    $cleanProperty = $receipt.PSObject.Properties['source_worktree_clean']
+    if ($null -eq $cleanProperty -or $cleanProperty.Value -isnot [bool] -or -not $cleanProperty.Value) {
+        $claimed = $(if ($null -eq $cleanProperty) { '<absent>' } else { [string]$cleanProperty.Value })
+        throw "the panel build receipt at $receiptPath does not assert a clean worktree at build time with JSON boolean true (source_worktree_clean is '$claimed'); a panel binary built from a dirty tree may not drive a formal interval"
+    }
+    $treeProperty = $receipt.PSObject.Properties['source_tree_sha256']
+    if ($null -eq $treeProperty) {
+        throw "the panel build receipt at $receiptPath carries no source_tree_sha256"
+    }
+    $receiptTree = ([string]$treeProperty.Value).ToLowerInvariant()
+    if ($receiptTree -notmatch '^[0-9a-f]{64}$') {
+        throw "the panel build receipt at $receiptPath carries no source_tree_sha256"
+    }
+    if ($receiptTree -cne $LaunchSourceTreeSha256) {
+        throw "the panel executable was built from source tree $receiptTree, but this launch's arm executable was built from $LaunchSourceTreeSha256; the two were compiled from different source bytes even if they name the same commit. Rebuild the panel executable from this launch's tree."
+    }
+    return [ordered]@{
+        source = 'receipt'
+        panel_executable = $record
+        source_git_commit = $receiptCommit
+        source_tree_sha256 = $receiptTree
+        receipt = (Get-Cycle5FileRecord -Path $receiptPath)
+    }
+}
+
+function Get-Cycle5ArmBuildIdentity {
+    # `cycle5_arm_v1 --print-build-identity`, decoded. A whole-command-line
+    # mode that reads nothing and touches no device, so it is safe to run in
+    # the inputs phase. Used for the launch's own source-tree digest, which
+    # the panel build receipt must match.
+    param(
+        [Parameter(Mandatory = $true)][string]$ArmExecutable,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+    $result = Invoke-Cycle5Process `
+        -FilePath $ArmExecutable `
+        -Arguments @('--print-build-identity') `
+        -WorkingDirectory $WorkingDirectory `
+        -StdoutPath $StdoutPath `
+        -StderrPath $StderrPath `
+        -Label 'arm-build-identity'
+    Assert-Cycle5ProcessSucceeded -Result $result | Out-Null
+    $identity = Read-Cycle5Json -Path $StdoutPath
+    if ([string]$identity.source_tree_sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw "$ArmExecutable --print-build-identity carries no source_tree_sha256"
+    }
+    return [ordered]@{
+        command = $result
+        identity = $identity
+        source_git_commit = ([string]$identity.source_git_commit).ToLowerInvariant()
+        source_tree_sha256 = ([string]$identity.source_tree_sha256).ToLowerInvariant()
+    }
+}
+
+function Test-Cycle5ArmUsesBaselineChain {
+    # Mirrors Cycle5ArmKindV1::uses_baseline_v4_v1: TREATMENT-RB and STATIC-RB
+    # run terminal_reinforce_value/v4-candidate and therefore carry a baseline
+    # chain, and their trained own-run checkpoints only load through the
+    # baseline-aware loader. CONTROL-R runs the frozen v3 path and has no
+    # chain at all.
+    param([Parameter(Mandatory = $true)][string]$Arm)
+    return (@('centered-v5') -contains $Arm)
+}
+
+function Assert-Cycle5Arm {
+    param([Parameter(Mandatory = $true)][string]$Arm)
+    if ($script:Cycle5Arms -notcontains $Arm) {
+        throw "unknown arm: $Arm; expected one of $($script:Cycle5Arms -join ', ')"
+    }
+    return $Arm
+}
+
+function Get-Cycle5ChainManifestName {
+    param([Parameter(Mandatory = $true)][uint64]$RefreshIndex)
+    return ('refresh-{0:d2}.manifest.json' -f $RefreshIndex)
+}
+
+function Get-Cycle5ChainPanelName {
+    param([Parameter(Mandatory = $true)][uint64]$RefreshIndex)
+    return ('refresh-{0:d2}.panel.json' -f $RefreshIndex)
+}
+
+# ---------------------------------------------------------------------------
+# Provenance records
+# ---------------------------------------------------------------------------
+
+function Get-Cycle5GitRecord {
+    # A cycle-5-owned git record rather than the precedent's Get-GitRecord: the
+    # latter pins an ancestry check against the regularized-continuation base
+    # commit, which is a cycle-1 fact and not a cycle-5 launch condition. What
+    # carries over unchanged is the substance -- exact HEAD, a clean-worktree
+    # requirement, and hashes of the status and diff so a later reviewer can
+    # prove the tree that ran.
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $safe = $RepoRoot.Replace('\', '/')
+    $status = @(& git -c "safe.directory=$safe" -C $RepoRoot status --porcelain 2>&1)
+    Assert-LastExitCode $LASTEXITCODE 'git status'
+    $head = (@(& git -c "safe.directory=$safe" -C $RepoRoot rev-parse HEAD 2>&1) -join "`n").Trim()
+    Assert-LastExitCode $LASTEXITCODE 'git rev-parse'
+    if ($status.Count -ne 0) {
+        throw "a cycle-5 launch requires a clean worktree at $RepoRoot"
+    }
+    $diff = @(& git -c "safe.directory=$safe" -C $RepoRoot diff --binary HEAD 2>&1)
+    Assert-LastExitCode $LASTEXITCODE 'git diff'
+    return [ordered]@{
+        repo_root = $RepoRoot
+        commit = $head
+        dirty = $false
+        status_sha256 = Get-TextSha256 (($status -join "`n"))
+        worktree_diff_sha256 = Get-TextSha256 (($diff -join "`n"))
+    }
+}
+
+function New-Cycle5AttemptRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$EvidenceRoot,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9-]+$')][string]$GateName
+    )
+    New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
+    return New-UniqueAttemptRoot -EvidenceRoot $EvidenceRoot -GateName $GateName
+}
+
+# ---------------------------------------------------------------------------
+# Store readers (native training Store V2 on-disk layout:
+# native_training_store_layout_v2.rs owns these names)
+# ---------------------------------------------------------------------------
+
+function Get-Cycle5StoreLatestGeneration {
+    # $null when the Store has no latest.json yet, which is exactly the
+    # "genesis has not been authored" state the launcher bootstraps from.
+    param([Parameter(Mandatory = $true)][string]$StoreRoot)
+    $latestPath = Join-Path $StoreRoot 'latest.json'
+    if (-not (Test-Path -LiteralPath $latestPath -PathType Leaf)) { return $null }
+    $latest = Read-Cycle5Json -Path $latestPath
+    return [uint64]$latest.generation_index
+}
+
+function Assert-Cycle5ResumePosition {
+    # Launcher-side mirror of the in-library resume check: read the Store's own
+    # latest.json and hard-stop BEFORE dispatching a process that would only
+    # discover the disagreement after paying for a CUDA context.
+    param(
+        [Parameter(Mandatory = $true)][string]$StoreRoot,
+        [Parameter(Mandatory = $true)][uint64]$ExpectedGeneration
+    )
+    $actual = Get-Cycle5StoreLatestGeneration -StoreRoot $StoreRoot
+    if ($null -eq $actual) {
+        if ($ExpectedGeneration -ne [uint64]0) {
+            throw "resume assertion FAILED: $StoreRoot has no latest.json, so it can only resume at generation 0, not $ExpectedGeneration"
+        }
+        return [ordered]@{ store_root = $StoreRoot; generation_index = $null; genesis_pending = $true }
+    }
+    if ($actual -ne $ExpectedGeneration) {
+        throw "resume assertion FAILED: $StoreRoot is at generation $actual, not the expected $ExpectedGeneration"
+    }
+    return [ordered]@{ store_root = $StoreRoot; generation_index = $actual; genesis_pending = $false }
+}
+
+function Get-Cycle5CheckpointIdentity {
+    # The five-hash occupant identity of one Store generation, in the exact
+    # shape mtg-kernel-cycle5-slot-identities/v1 wants.
+    #
+    # checkpoint_manifest_sha256 is the SHA-256 of the checkpoint record's own
+    # bytes. That is exact, not an approximation: the decoder computes it as
+    # sha256(canonical manifest bytes) (native_training_store_checkpoint_v3.rs)
+    # and the Store writes exactly those bytes to this file. The other three
+    # are the record's own declared bindings, each of which the decoder
+    # re-derives from the payload and rejects on mismatch. The genesis
+    # boundary cross-checks this whole derivation against the bin's own
+    # arm-origin record, which reports the same four values from memory.
+    param(
+        [Parameter(Mandatory = $true)][string]$StoreRoot,
+        [Parameter(Mandatory = $true)][uint64]$StoreGeneration
+    )
+    $leaf = ('update-{0:d8}.checkpoint.json' -f $StoreGeneration)
+    $path = Join-Path (Join-Path $StoreRoot 'checkpoints') $leaf
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Store $StoreRoot has no checkpoint record for generation $StoreGeneration ($path)"
+    }
+    $record = Read-Cycle5Json -Path $path
+    if ([uint64]$record.generation_index -ne $StoreGeneration) {
+        throw "checkpoint record at $path declares generation $($record.generation_index), not $StoreGeneration"
+    }
+    return [ordered]@{
+        store_generation = $StoreGeneration
+        checkpoint_manifest_sha256 = Get-Cycle5Sha256 -Path $path
+        checkpoint_payload_sha256 = [string]$record.payload.sha256
+        model_parameter_sha256 = [string]$record.train_state.model_parameter_sha256
+        train_state_sha256 = [string]$record.train_state.state_sha256
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Refresh manifest
+# ---------------------------------------------------------------------------
+
+function Read-Cycle5Manifest {
+    # Structural read only: schema tag, exactly eight slots in index order with
+    # the pre-registered roles, and the identity fields the locators key on.
+    # The manifest's full semantic contract is the Rust builder's and the arm
+    # launcher's job, and is deliberately not re-derived here.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $document = Read-Cycle5Json -Path $Path
+    if ([string]$document.schema -cne $script:Cycle5ManifestSchema) {
+        throw "unexpected manifest schema at $Path`: $($document.schema)"
+    }
+    $slots = @($document.slots)
+    if ($slots.Count -ne $script:Cycle5SlotCount) {
+        throw "manifest at $Path must carry exactly $($script:Cycle5SlotCount) slots, found $($slots.Count)"
+    }
+    $ordered = New-Object object[] $script:Cycle5SlotCount
+    foreach ($slot in $slots) {
+        $index = [int]$slot.slot_index
+        if ($index -lt 0 -or $index -ge $script:Cycle5SlotCount) {
+            throw "manifest at $Path has an out-of-range slot_index: $index"
+        }
+        if ($null -ne $ordered[$index]) {
+            throw "manifest at $Path has a duplicate slot_index: $index"
+        }
+        if ([string]$slot.role -cne $script:Cycle5ExpectedRoles[$index]) {
+            throw "manifest at $Path slot $index role is $($slot.role), expected $($script:Cycle5ExpectedRoles[$index])"
+        }
+        $ordered[$index] = $slot
+    }
+    foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+        if ($null -eq $ordered[$index]) { throw "manifest at $Path is missing slot $index" }
+    }
+    return [ordered]@{
+        path = (Resolve-Path -LiteralPath $Path).Path
+        sha256 = Get-Cycle5Sha256 -Path $Path
+        refresh_index = [uint64]$document.refresh_index
+        trainee_local_generation = [uint64]$document.trainee_local_generation
+        trainee_run_sha256 = [string]$document.trainee_run_sha256
+        trainee_base_seed = [uint64]$document.trainee_base_seed
+        slots = $ordered
+    }
+}
+
+# ---------------------------------------------------------------------------
+# The machine-local slot table, per refresh boundary
+# ---------------------------------------------------------------------------
+
+function Get-Cycle5HistoricalOneRotationIndex {
+    # The rotation phase historical-1 occupies at one refresh. Mirrors
+    # `usize::try_from(wire.refresh_index % 3)` in
+    # validate_slot_assignment_cycle5_v1; restated here only so the wrapper can
+    # pick the right Store BEFORE the manifest validator would reject it.
+    param([Parameter(Mandatory = $true)][uint64]$RefreshIndex)
+    return [int]($RefreshIndex % $script:Cycle5HistoricalRotationPeriod)
+}
+
+function Get-Cycle5SlotTableForRefresh {
+    # ONE boundary's eight machine-local store roots, in slot order 0..7.
+    #
+    # Seven of them are the operator's fixed -SlotStoreRoots entries. Slot 3
+    # (historical-1) is not fixed: it rotates over three Stores by
+    # `refresh_index % 3`, so it comes from the rotation triple instead.
+    #
+    # An operator who supplies no triple gets the fixed table's slot-3 entry at
+    # every phase. That is deliberately NOT silently accepted as correct: the
+    # locator writer verifies the chosen root's four content hashes against the
+    # manifest's slot-3 identity, so a single-Store table fails closed at the
+    # first refresh whose rotation phase names a different Store rather than
+    # training an interval against the wrong opponent.
+    param(
+        [Parameter(Mandatory = $true)][string[]]$SlotStoreRoots,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [string[]]$HistoricalOneStoreRoots
+    )
+    if (@($SlotStoreRoots).Count -ne $script:Cycle5SlotCount) {
+        throw "the slot store root table must name exactly $($script:Cycle5SlotCount) store roots in slot order 0..7, got $(@($SlotStoreRoots).Count)"
+    }
+    $roots = @($SlotStoreRoots)
+    if ($null -ne $HistoricalOneStoreRoots -and @($HistoricalOneStoreRoots).Count -ne 0) {
+        if (@($HistoricalOneStoreRoots).Count -ne [int]$script:Cycle5HistoricalRotationPeriod) {
+            throw "-HistoricalOneStoreRoots must name exactly $($script:Cycle5HistoricalRotationPeriod) store roots in rotation order (refresh_index mod $($script:Cycle5HistoricalRotationPeriod)), got $(@($HistoricalOneStoreRoots).Count)"
+        }
+        $rotation = Get-Cycle5HistoricalOneRotationIndex -RefreshIndex $RefreshIndex
+        $roots[$script:Cycle5HistoricalRotationSlotIndex] = [string]@($HistoricalOneStoreRoots)[$rotation]
+    }
+    return @(
+        foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+            [ordered]@{ slot_index = $index; store_root = [string]$roots[$index] }
+        }
+    )
+}
+
+function Assert-Cycle5FrozenSlotContentHashes {
+    # Proves one FOREIGN slot's Store really holds the checkpoint the manifest
+    # pins it to, by recomputing all four content hashes at the slot's own
+    # pinned generation.
+    #
+    # This is a genuinely independent check for two slots the manifest
+    # validator does not fully pin against a Store:
+    #
+    #  * slot 3 (historical-1) -- the validator pins the rotation identity by
+    #    refresh index, but nothing on the launcher side proves the ROOT the
+    #    operator handed it is the Store that identity belongs to; without this
+    #    a mis-ordered rotation triple would only surface as a wrong opponent.
+    #  * slot 2 (historical-0) before refresh 4 -- the validator pins only the
+    #    cycle-3 lineage's run sha, base seed and lagged generation there, NOT
+    #    the four content hashes (they are read from that Store's roster entry),
+    #    so this is the only place they are proven against the Store.
+    #
+    # Only ever called for slots whose pinned `source_generation` is a STORE
+    # generation. The arm's own slots are excluded by the caller: their
+    # manifest generation is trainee-local (store generation plus 2048).
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)][int]$SlotIndex,
+        [Parameter(Mandatory = $true)][string]$StoreRoot,
+        [switch]$AllowMissingStore
+    )
+    $slot = $Manifest.slots[$SlotIndex]
+    $role = $script:Cycle5ExpectedRoles[$SlotIndex]
+    $generation = [uint64]$slot.source_generation
+    $checkpointPath = Join-Path (Join-Path $StoreRoot 'checkpoints') ('update-{0:d8}.checkpoint.json' -f $generation)
+    if ($AllowMissingStore -and -not (Test-Path -LiteralPath $checkpointPath -PathType Leaf)) {
+        Write-Host "DRY-RUN slot-$SlotIndex ($role): would verify $checkpointPath against the manifest's four content hashes"
+        return $null
+    }
+    $identity = Get-Cycle5CheckpointIdentity -StoreRoot $StoreRoot -StoreGeneration $generation
+    foreach ($field in @('checkpoint_manifest_sha256', 'checkpoint_payload_sha256', 'model_parameter_sha256', 'train_state_sha256')) {
+        if ([string]$slot.$field -cne [string]$identity.$field) {
+            throw "slot $SlotIndex ($role) at $StoreRoot generation $generation does not match the manifest identity at refresh $($Manifest.refresh_index): $field is $($identity.$field), the manifest declares $([string]$slot.$field)"
+        }
+    }
+    return $identity
+}
+
+# ---------------------------------------------------------------------------
+# The two locator files, written from ONE machine-local slot table
+# ---------------------------------------------------------------------------
+
+function New-Cycle5SlotLocatorPair {
+    # The arm launcher keys its locator by occupant IDENTITY (a wrong store
+    # cannot occupy a right slot) and the payoff panel runner keys its own by
+    # slot INDEX. Both are machine-local, neither ever enters a hashed
+    # artifact, and both are written here from a single slot table so the two
+    # files can never disagree about which store is in which slot.
+    #
+    # The table is cross-checked against the manifest roster first: eight
+    # entries, indexes 0..7 exactly once, absolute paths, no duplicate store
+    # root, and eight DISTINCT roster identities (a repeated identity would
+    # make the identity-keyed file ambiguous, and the Rust decoder rejects it).
+    #
+    # One slot root is never the operator's to supply: whichever slots the
+    # manifest binds to the ARM's OWN run are the arm's own Store, at
+    # different generations. The manifest itself says which those are
+    # (source_run_sha256 == the arm's run), so they are substituted here
+    # rather than trusted from the table -- which is also why two slots
+    # sharing the arm's Store root is admissible while any other repeated
+    # root is a typo.
+    param(
+        [Parameter(Mandatory = $true)]$SlotTable,
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)][string]$ArmLocatorPath,
+        [Parameter(Mandatory = $true)][string]$PanelLocatorPath,
+        [Parameter(Mandatory = $true)][string]$ArmRunSha256,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot,
+        [string]$ArmBaselineChainDir,
+        [string]$GenesisParentStoreRoot,
+        [switch]$AllowMissingStores
+    )
+    if (-not [System.IO.Path]::IsPathRooted($ArmStoreRoot)) {
+        throw "the arm store root must be an absolute path: $ArmStoreRoot"
+    }
+    $baselineChainDir = $null
+    if (-not [string]::IsNullOrWhiteSpace($ArmBaselineChainDir)) {
+        if (-not [System.IO.Path]::IsPathRooted($ArmBaselineChainDir)) {
+            throw "the arm baseline chain directory must be an absolute path: $ArmBaselineChainDir"
+        }
+        # Normalized rather than resolved: the chain directory legitimately
+        # does not exist yet the first time a locator is written.
+        $baselineChainDir = [System.IO.Path]::GetFullPath($ArmBaselineChainDir)
+    }
+    $entries = @($SlotTable)
+    if ($entries.Count -ne $script:Cycle5SlotCount) {
+        throw "the slot table must carry exactly $($script:Cycle5SlotCount) entries, found $($entries.Count)"
+    }
+    $byIndex = New-Object object[] $script:Cycle5SlotCount
+    foreach ($entry in $entries) {
+        $index = [int]$entry.slot_index
+        if ($index -lt 0 -or $index -ge $script:Cycle5SlotCount) {
+            throw "slot table has an out-of-range slot_index: $index"
+        }
+        if ($null -ne $byIndex[$index]) { throw "slot table has a duplicate slot_index: $index" }
+        $root = [string]$entry.store_root
+        if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Path]::IsPathRooted($root)) {
+            throw "slot $index store root must be a non-empty absolute path, got '$root'"
+        }
+        $byIndex[$index] = [ordered]@{ slot_index = $index; store_root = $root }
+    }
+    foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+        if ($null -eq $byIndex[$index]) { throw "slot table is missing slot $index" }
+    }
+
+    $armSlots = @()
+    foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+        if ([string]$Manifest.slots[$index].source_run_sha256 -ceq $ArmRunSha256) {
+            $byIndex[$index].store_root = $ArmStoreRoot
+            $armSlots += $index
+        }
+    }
+    # Two slots may legitimately name the SAME Store at different pinned
+    # generations -- anchor-1 is 970002 at 1536 and historical-1's middle
+    # rotation phase is 970002 at 1024, one physical Store occupying two slots
+    # as two different frozen occupants. What must be distinct is the OCCUPANT
+    # IDENTITY, not the path, and the roster identity check below enforces
+    # exactly that. So the duplicate rule keys on (root, pinned generation):
+    # the same Store at the same generation in two slots is still a typo,
+    # because it would be one occupant claiming two slots.
+    $foreignRoots = @(
+        foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+            if ($armSlots -notcontains $index) { $byIndex[$index].store_root.ToLowerInvariant() }
+        }
+    )
+    $foreignKeys = @(
+        foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+            if ($armSlots -notcontains $index) {
+                '{0}@{1}' -f $byIndex[$index].store_root.ToLowerInvariant(), [uint64]$Manifest.slots[$index].source_generation
+            }
+        }
+    )
+    if (@($foreignKeys | Sort-Object -Unique).Count -ne $foreignKeys.Count) {
+        throw 'the slot table maps two slots to the same store root at the same pinned generation'
+    }
+    if ($foreignRoots -contains $ArmStoreRoot.ToLowerInvariant()) {
+        throw "a slot the manifest does not bind to the arm's own run names the arm's Store root: $ArmStoreRoot"
+    }
+    if (-not $AllowMissingStores) {
+        foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+            $root = $byIndex[$index].store_root
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+                throw "slot $index store root does not exist: $root"
+            }
+        }
+    }
+
+    # The two foreign slots whose ROOT the manifest cannot vouch for: the
+    # rotating historical-1, and historical-0 while it is still the cycle-3
+    # lineage. Both are checked against the Store itself.
+    $verifiedSlots = @($script:Cycle5HistoricalRotationSlotIndex)
+    if ($armSlots -notcontains $script:Cycle5HistoricalArmSlotIndex) {
+        $verifiedSlots += $script:Cycle5HistoricalArmSlotIndex
+    }
+    $slotIdentityChecks = [ordered]@{}
+    foreach ($index in @($verifiedSlots | Sort-Object)) {
+        $checked = Assert-Cycle5FrozenSlotContentHashes `
+            -Manifest $Manifest `
+            -SlotIndex $index `
+            -StoreRoot $byIndex[$index].store_root `
+            -AllowMissingStore:$AllowMissingStores
+        $slotIdentityChecks["$index"] = $(if ($null -eq $checked) { 'deferred-dry-run' } else { $checked.checkpoint_manifest_sha256 })
+    }
+
+    $identities = @($Manifest.slots | ForEach-Object { [string]$_.checkpoint_manifest_sha256 })
+    $distinctIdentities = @($identities | Sort-Object -Unique)
+    if ($distinctIdentities.Count -ne $script:Cycle5SlotCount) {
+        throw 'the manifest roster repeats a checkpoint_manifest_sha256; an identity-keyed locator cannot be built from it'
+    }
+    foreach ($identity in $identities) {
+        if ($identity -notmatch '^[0-9a-f]{64}$') {
+            throw "manifest roster identity is not a lowercase SHA-256: $identity"
+        }
+    }
+
+    $armLocator = [ordered]@{
+        schema = $script:Cycle5ArmLocatorSchema
+        stores = @(
+            foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+                [ordered]@{
+                    checkpoint_manifest_sha256 = $identities[$index]
+                    store_root = $byIndex[$index].store_root
+                }
+            }
+        )
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GenesisParentStoreRoot)) {
+        if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
+            throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+        }
+        $armLocator['genesis_parent_store_root'] = $GenesisParentStoreRoot
+    }
+
+    # The panel runner's slot entry is a bare store-root string, and stays one
+    # for every slot that needs nothing more. A slot bound to the ARM's own run
+    # on a v4 arm needs one thing more: its trained checkpoints only load
+    # through the baseline-aware loader, which needs the arm's chain directory.
+    # Those slots carry an object instead, `store_root` plus the optional
+    # `baseline_chain_dir`. The addition is deliberately additive, so a
+    # CONTROL-R locator is byte-identical to what this wrote before the field
+    # existed and a reader that only understands strings still reads every
+    # slot a v3 arm ever produces.
+    $panelStores = [ordered]@{}
+    foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+        $root = $byIndex[$index].store_root
+        if (($armSlots -contains $index) -and $null -ne $baselineChainDir) {
+            $panelStores["$index"] = [ordered]@{
+                store_root = $root
+                baseline_chain_dir = $baselineChainDir
+            }
+        }
+        else {
+            $panelStores["$index"] = $root
+        }
+    }
+    $panelLocator = [ordered]@{
+        schema = $script:Cycle5PanelLocatorSchema
+        stores = $panelStores
+    }
+
+    Write-Cycle5JsonFile -Value $armLocator -Path $ArmLocatorPath
+    Write-Cycle5JsonFile -Value $panelLocator -Path $PanelLocatorPath
+    return [ordered]@{
+        arm_locator = Get-Cycle5FileRecord -Path $ArmLocatorPath
+        panel_locator = Get-Cycle5FileRecord -Path $PanelLocatorPath
+        manifest_sha256 = $Manifest.sha256
+        manifest_refresh_index = $Manifest.refresh_index
+        arm_owned_slot_indexes = @($armSlots)
+        arm_baseline_chain_dir = $baselineChainDir
+        verified_slot_identities = $slotIdentityChecks
+    }
+}
+
+function New-Cycle5BootstrapLocator {
+    # The locator a `--bootstrap-genesis` invocation takes. Only its
+    # `genesis_parent_store_root` is used by that mode -- there is no manifest
+    # yet, so no roster to match identities against -- but the bin still
+    # decodes and structurally validates the eight entries, so they are filled
+    # from the operator's pinned roster (with the arm's own Store substituted
+    # for the own-run slot) rather than invented. Written into the attempt
+    # root, never reused as a training locator.
+    param(
+        [Parameter(Mandatory = $true)]$SlotTable,
+        [Parameter(Mandatory = $true)][string]$RosterPath,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot
+    )
+    $roster = Read-Cycle5Json -Path $RosterPath
+    if ([string]$roster.schema -cne $script:Cycle5SlotIdentitiesSchema) {
+        throw "unexpected slot-identities schema at $RosterPath`: $($roster.schema)"
+    }
+    $identities = New-Object object[] $script:Cycle5SlotCount
+    foreach ($slot in @($roster.slots)) {
+        $index = [int]$slot.slot_index
+        if ($index -lt 0 -or $index -ge $script:Cycle5SlotCount) {
+            throw "slot-identities roster has an out-of-range slot_index: $index"
+        }
+        $identities[$index] = [string]$slot.checkpoint_manifest_sha256
+    }
+    $roots = New-Object object[] $script:Cycle5SlotCount
+    foreach ($entry in @($SlotTable)) {
+        $roots[[int]$entry.slot_index] = [string]$entry.store_root
+    }
+    $roots[$script:Cycle5ArmOwnedSlotIndex] = $ArmStoreRoot
+    $stores = @(
+        foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+            if ($null -eq $identities[$index] -or $identities[$index] -notmatch '^[0-9a-f]{64}$') {
+                throw "slot-identities roster slot $index carries no lowercase SHA-256 identity"
+            }
+            [ordered]@{
+                checkpoint_manifest_sha256 = $identities[$index]
+                store_root = $roots[$index]
+            }
+        }
+    )
+    if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
+        throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+    }
+    Write-Cycle5JsonFile -Value ([ordered]@{
+        schema = $script:Cycle5ArmLocatorSchema
+        stores = $stores
+        genesis_parent_store_root = $GenesisParentStoreRoot
+    }) -Path $Path
+    return Get-Cycle5FileRecord -Path $Path
+}
+
+function New-Cycle5InputsCheckLocator {
+    # Round F defect 3. The locator `cycle5_arm_v1 --check-slot-locator`
+    # reads during the INPUTS phase, before a single Store is bootstrapped.
+    #
+    # Same shape as the bootstrap locator (identical schema, the same eight
+    # roster identities, the same genesis parent), with one deliberate
+    # difference: the slot the manifest binds to the ARM's own run has no
+    # Store to name yet on a fresh campaign, because this launcher is what
+    # creates it. That slot is therefore pointed at the genesis PARENT Store
+    # -- a real, decodable record that this launch depends on anyway, and the
+    # one the arm's own genesis is copied from -- and the substitution is
+    # recorded in the returned record rather than hidden. Once the arm's own
+    # Store exists (every resumed attempt), its real root is used and the
+    # check covers it too.
+    #
+    # What this proves: every roster Store this launch will read as an
+    # opponent, and the parent, hold a `run.json` this build can decode. What
+    # it does NOT prove: identity binding, which needs a refresh manifest and
+    # stays where it has always been proven, at the slot resolver.
+    param(
+        [Parameter(Mandatory = $true)]$SlotTable,
+        [Parameter(Mandatory = $true)][string]$RosterPath,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$GenesisParentStoreRoot,
+        [string]$ArmStoreRoot
+    )
+    if (-not [System.IO.Path]::IsPathRooted($GenesisParentStoreRoot)) {
+        throw "genesis parent store root must be absolute: $GenesisParentStoreRoot"
+    }
+    # Round F review finding (P1): the same path rule the per-interval locator
+    # writer enforces, applied HERE, in the inputs phase. Without it a bad
+    # root -- a historical-1 rotation root the campaign only reaches at
+    # refresh 2, say -- is not refused until that interval's locator is
+    # written, which is after a genesis bootstrap and two trained intervals.
+    # In a dry run the arm bin never runs, so this is also the only place the
+    # rule is checked at all.
+    foreach ($entry in @($SlotTable)) {
+        $root = [string]$entry.store_root
+        if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Path]::IsPathRooted($root)) {
+            throw "slot $($entry.slot_index) store root must be a non-empty absolute path, got '$root'"
+        }
+    }
+    $ownRunRoot = $GenesisParentStoreRoot
+    $ownRunSubstituted = $true
+    if (-not [string]::IsNullOrWhiteSpace($ArmStoreRoot) -and
+        (Test-Path -LiteralPath (Join-Path $ArmStoreRoot 'run.json') -PathType Leaf)) {
+        $ownRunRoot = $ArmStoreRoot
+        $ownRunSubstituted = $false
+    }
+    $record = New-Cycle5BootstrapLocator `
+        -SlotTable $SlotTable `
+        -RosterPath $RosterPath `
+        -ArmStoreRoot $ownRunRoot `
+        -Path $Path `
+        -GenesisParentStoreRoot $GenesisParentStoreRoot
+    return [ordered]@{
+        locator = $record
+        own_run_slot_index = $script:Cycle5ArmOwnedSlotIndex
+        own_run_store_root = $ownRunRoot
+        own_run_slot_substituted_with_parent = $ownRunSubstituted
+        note = 'The own-run slot names the genesis parent Store until the arm''s own Store exists; this file is a decode check, never a training locator.'
+    }
+}
+
+function Read-Cycle5ArmOriginRecord {
+    # The record the bin publishes at `--bootstrap-genesis`: the arm's run
+    # identity and base seed, the parent it was seeded from, and the four
+    # hashes of the genesis checkpoint the Store actually published. It is the
+    # authoritative source for all of those -- nothing else on disk carries the
+    # arm's own generation-0 identity before the genesis manifest exists.
+    param([Parameter(Mandatory = $true)][string]$ChainDir)
+    $path = Join-Path $ChainDir $script:Cycle5ArmOriginRecordFileName
+    $record = Read-Cycle5Json -Path $path
+    if ([string]$record.schema -cne $script:Cycle5ArmOriginRecordSchema) {
+        throw "unexpected arm-origin schema at $path`: $($record.schema)"
+    }
+    return [ordered]@{
+        path = (Resolve-Path -LiteralPath $path).Path
+        sha256 = Get-Cycle5Sha256 -Path $path
+        arm_kind = [string]$record.arm_kind
+        run_sha256 = [string]$record.run_sha256
+        base_seed = [uint64]$record.base_seed
+        init_generation = [uint64]$record.init_generation
+        genesis = [ordered]@{
+            store_generation = [uint64]0
+            checkpoint_manifest_sha256 = [string]$record.genesis_checkpoint_manifest_sha256
+            checkpoint_payload_sha256 = [string]$record.genesis_checkpoint_payload_sha256
+            model_parameter_sha256 = [string]$record.genesis_model_parameter_sha256
+            train_state_sha256 = [string]$record.genesis_train_state_sha256
+        }
+    }
+}
+
+function Assert-Cycle5GenesisManifestBinding {
+    # The genesis manifest is only trustworthy if its own-run slot binds the
+    # checkpoint the Store actually published. Three independent derivations
+    # of the same four hashes must agree: the manifest the builder just wrote,
+    # the bin's own arm-origin record (reported from memory at publication),
+    # and this wrapper's own read of the Store's generation-0 checkpoint file.
+    # Agreement also proves the wrapper's file-hash derivation is the same one
+    # the Rust decoder performs, which is what licenses using it unchecked at
+    # every later boundary.
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)]$Origin,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot
+    )
+    if ($Manifest.refresh_index -ne [uint64]0) {
+        throw "the genesis binding check wants refresh 0, got $($Manifest.refresh_index)"
+    }
+    if ($Manifest.trainee_run_sha256 -cne $Origin.run_sha256 -or $Manifest.trainee_base_seed -ne $Origin.base_seed) {
+        throw 'the genesis manifest binds a different trainee identity than the arm-origin record'
+    }
+    $slot = $Manifest.slots[$script:Cycle5ArmOwnedSlotIndex]
+    $expectedGeneration = $script:Cycle5TraineeStartLocalGeneration
+    if ([uint64]$slot.source_generation -ne $expectedGeneration) {
+        throw "the genesis manifest own-run slot declares generation $($slot.source_generation), not the trainee-local $expectedGeneration"
+    }
+    if ([string]$slot.source_run_sha256 -cne $Origin.run_sha256) {
+        throw 'the genesis manifest own-run slot is not bound to the arm run'
+    }
+    $fromStore = Get-Cycle5CheckpointIdentity -StoreRoot $ArmStoreRoot -StoreGeneration ([uint64]0)
+    foreach ($field in @('checkpoint_manifest_sha256', 'checkpoint_payload_sha256', 'model_parameter_sha256', 'train_state_sha256')) {
+        $manifestValue = [string]$slot.$field
+        if ($manifestValue -cne [string]$Origin.genesis.$field) {
+            throw "the genesis manifest own-run slot $field ($manifestValue) does not equal the arm-origin record's ($($Origin.genesis.$field))"
+        }
+        if ($manifestValue -cne [string]$fromStore.$field) {
+            throw "the genesis manifest own-run slot $field ($manifestValue) does not equal the Store's own generation-0 checkpoint ($($fromStore.$field))"
+        }
+    }
+    return [ordered]@{
+        manifest_sha256 = $Manifest.sha256
+        own_run_slot_index = $script:Cycle5ArmOwnedSlotIndex
+        trainee_local_generation = $expectedGeneration
+        arm_origin_record_sha256 = $Origin.sha256
+        genesis_checkpoint_manifest_sha256 = [string]$slot.checkpoint_manifest_sha256
+        genesis_checkpoint_payload_sha256 = [string]$slot.checkpoint_payload_sha256
+        genesis_model_parameter_sha256 = [string]$slot.model_parameter_sha256
+        genesis_train_state_sha256 = [string]$slot.train_state_sha256
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Genesis authority (the cycle-5 sibling of the precedent's denovo/policy
+# anchor authority records; a launcher-level companion to the arm bin's own
+# arm-origin.record.json, never a substitute for it)
+# ---------------------------------------------------------------------------
+
+function Get-Cycle5GenesisAuthorityRecord {
+    #
+    # It binds the SEEDING facts only. The genesis manifest is no longer an
+    # input to the campaign (the wrapper builds it from the bootstrapped
+    # Store), so binding its hash here would only record something this same
+    # wrapper produced a moment later; Assert-Cycle5GenesisManifestBinding
+    # checks that relationship directly instead.
+    param(
+        [Parameter(Mandatory = $true)][string]$Arm,
+        [Parameter(Mandatory = $true)][string]$ParentStoreRoot,
+        [Parameter(Mandatory = $true)][uint64]$ParentGeneration,
+        [Parameter(Mandatory = $true)][string]$RunRecordPath
+    )
+    $checkpoints = Join-Path $ParentStoreRoot 'checkpoints'
+    $checkpoint = Join-Path $checkpoints ('update-{0:d8}.checkpoint.json' -f $ParentGeneration)
+    $sidecar = Join-Path $checkpoints ('update-{0:d8}.sidecar.json' -f $ParentGeneration)
+    $state = Join-Path $checkpoints ('update-{0:d8}.state.f32le' -f $ParentGeneration)
+    foreach ($path in @($checkpoint, $sidecar, $state)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "genesis authority: parent artifact is missing: $path"
+        }
+    }
+    $parentRun = Join-Path $ParentStoreRoot 'run.json'
+    return [ordered]@{
+        schema = $script:Cycle5GenesisAuthoritySchema
+        arm_kind = $Arm
+        parent_store_root = $ParentStoreRoot
+        parent_generation = $ParentGeneration
+        parent_run_sha256 = Get-Cycle5Sha256 -Path $parentRun
+        parent_checkpoint_sha256 = Get-Cycle5Sha256 -Path $checkpoint
+        parent_sidecar_sha256 = Get-Cycle5Sha256 -Path $sidecar
+        parent_state_sha256 = Get-Cycle5Sha256 -Path $state
+        arm_run_record_sha256 = Get-Cycle5Sha256 -Path $RunRecordPath
+    }
+}
+
+function Assert-Cycle5GenesisParentBinding {
+    # -GenesisParentStoreRoot and -GenesisParentGeneration are machine-local
+    # operator inputs, but WHICH parent an arm is seeded from is not: the run
+    # record pins it in `contracts.opponent_ladder_initialization`, and the arm
+    # bin refuses to author genesis unless the parent Store reproduces that
+    # pin exactly. Checking the same equality here means a wrapper pointed at
+    # the wrong parent, or at the right parent with the wrong generation,
+    # fails at phase=inputs instead of after a Store prefix has been claimed.
+    #
+    # The five fields compared are the ones a launcher can recompute from
+    # plain files. `derived_model_parameter_sha256` is deliberately not among
+    # them: deriving it needs the genesis weights-only payload surgery, which
+    # is the bin's, and the bin does check it.
+    param(
+        [Parameter(Mandatory = $true)]$RunRecordDocument,
+        [Parameter(Mandatory = $true)]$GenesisAuthority,
+        [Parameter(Mandatory = $true)][uint64]$ParentGeneration,
+        [Parameter(Mandatory = $true)][string]$RunRecordPath
+    )
+    # Property existence is tested rather than dereferenced: Set-StrictMode
+    # turns a missing property into an opaque PropertyNotFound error, and this
+    # is a case an operator has to be able to read.
+    if ($RunRecordDocument.PSObject.Properties.Name -notcontains 'contracts') {
+        throw "$RunRecordPath declares no contracts section; it is not a cycle-5 arm run record"
+    }
+    $contracts = $RunRecordDocument.contracts
+    if ($null -eq $contracts -or ($contracts.PSObject.Properties.Name -notcontains 'opponent_ladder_initialization')) {
+        throw "$RunRecordPath declares no contracts.opponent_ladder_initialization; a cycle-5 arm's genesis parent is pinned there, not on the command line"
+    }
+    $declared = $contracts.opponent_ladder_initialization
+    if ([uint64]$declared.generation -ne $ParentGeneration) {
+        throw "-GenesisParentGeneration $ParentGeneration disagrees with the run record's pinned origin generation $($declared.generation) ($RunRecordPath); the correct cycle-5 value is the cycle-3 focal run's store generation $($script:Cycle5TraineeStartLocalGeneration)"
+    }
+    $pairs = @(
+        @('source_run_sha256', 'parent_run_sha256'),
+        @('checkpoint_sha256', 'parent_checkpoint_sha256'),
+        @('sidecar_sha256', 'parent_sidecar_sha256'),
+        @('state_sha256', 'parent_state_sha256')
+    )
+    foreach ($pair in $pairs) {
+        $expected = [string]$declared.($pair[0])
+        $actual = [string]$GenesisAuthority.($pair[1])
+        if ($expected -cne $actual) {
+            throw "the genesis parent store does not reproduce the run record's pinned origin: $($pair[0]) is $expected in $RunRecordPath but the parent store hashes to $actual"
+        }
+    }
+    return [ordered]@{
+        parent_generation = $ParentGeneration
+        parent_run_sha256 = [string]$declared.source_run_sha256
+        parent_checkpoint_sha256 = [string]$declared.checkpoint_sha256
+        parent_sidecar_sha256 = [string]$declared.sidecar_sha256
+        parent_state_sha256 = [string]$declared.state_sha256
+        derived_model_parameter_sha256 = [string]$declared.derived_model_parameter_sha256
+    }
+}
+
+function Assert-OrCreateCycle5GenesisAuthority {
+    # Written once, then re-verified field by field on every later launch: a
+    # parent checkpoint, run record, or genesis manifest that changed under a
+    # running campaign stops the campaign here rather than surfacing later as
+    # an uninterpretable training anomaly.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)]$Record
+    )
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $actual = Read-Cycle5Json -Path $Path
+        foreach ($field in $Record.Keys) {
+            if ([string]$actual.$field -cne [string]$Record[$field]) {
+                throw "genesis authority mismatch for '$field' at $Path`: recorded '$($actual.$field)', current '$($Record[$field])'"
+            }
+        }
+    }
+    else {
+        Write-Cycle5JsonFile -Value $Record -Path $Path
+    }
+    return Get-Cycle5FileRecord -Path $Path
+}
+
+# ---------------------------------------------------------------------------
+# Slot identities for the next boundary
+# ---------------------------------------------------------------------------
+
+function New-Cycle5SlotIdentitiesFile {
+    # The builder bin's --slot-identities input for ONE boundary. The frozen
+    # occupants (and, before refresh 4, the cycle-3 historical-0) come from the
+    # operator's pinned roster, because their identities are compiled Rust
+    # constants this wrapper has no independent claim on. The slots the ARM
+    # itself occupies are DERIVED here from the arm's own Store head, which is
+    # the only place their identity exists -- this is what the builder module
+    # means by "as produced by the wrapper from the Store heads".
+    #
+    # Refresh 0 is derived like every other boundary now: `--bootstrap-genesis`
+    # publishes the arm's Store before any manifest exists, so slot 5's
+    # genesis identity is read from that Store's generation-0 checkpoint.
+    param(
+        [Parameter(Mandatory = $true)][string]$RosterPath,
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [Parameter(Mandatory = $true)][string]$ArmStoreRoot,
+        [Parameter(Mandatory = $true)][string]$ArmRunSha256,
+        [Parameter(Mandatory = $true)][uint64]$ArmBaseSeed
+    )
+    $roster = Read-Cycle5Json -Path $RosterPath
+    if ([string]$roster.schema -cne $script:Cycle5SlotIdentitiesSchema) {
+        throw "unexpected slot-identities schema at $RosterPath`: $($roster.schema)"
+    }
+    $slots = @($roster.slots)
+    if ($slots.Count -ne $script:Cycle5SlotCount) {
+        throw "slot-identities roster at $RosterPath must carry exactly $($script:Cycle5SlotCount) slots"
+    }
+    $ordered = New-Object object[] $script:Cycle5SlotCount
+    foreach ($slot in $slots) {
+        $index = [int]$slot.slot_index
+        if ($index -lt 0 -or $index -ge $script:Cycle5SlotCount) {
+            throw "slot-identities roster has an out-of-range slot_index: $index"
+        }
+        if ($null -ne $ordered[$index]) {
+            throw "slot-identities roster has a duplicate slot_index: $index"
+        }
+        $ordered[$index] = [ordered]@{
+            slot_index = [uint64]$index
+            source_base_seed = [uint64]$slot.source_base_seed
+            source_run_sha256 = [string]$slot.source_run_sha256
+            source_generation = [uint64]$slot.source_generation
+            checkpoint_manifest_sha256 = [string]$slot.checkpoint_manifest_sha256
+            checkpoint_payload_sha256 = [string]$slot.checkpoint_payload_sha256
+            model_parameter_sha256 = [string]$slot.model_parameter_sha256
+            train_state_sha256 = [string]$slot.train_state_sha256
+        }
+    }
+    foreach ($index in 0..($script:Cycle5SlotCount - 1)) {
+        if ($null -eq $ordered[$index]) { throw "slot-identities roster is missing slot $index" }
+    }
+
+    $traineeLocal = $script:Cycle5TraineeStartLocalGeneration + ($RefreshIndex * $script:Cycle5RefreshInterval)
+    $derived = @()
+    $derived += [ordered]@{
+        slot_index = $script:Cycle5ArmOwnedSlotIndex
+        trainee_local_generation = $traineeLocal
+    }
+    if ($RefreshIndex -ge $script:Cycle5HistoricalArmFirstRefreshIndex) {
+        $derived += [ordered]@{
+            slot_index = $script:Cycle5HistoricalArmSlotIndex
+            trainee_local_generation = ($traineeLocal - $script:Cycle5HistoricalLag)
+        }
+    }
+    foreach ($target in $derived) {
+        $storeGeneration = $target.trainee_local_generation - $script:Cycle5TraineeStartLocalGeneration
+        $identity = Get-Cycle5CheckpointIdentity -StoreRoot $ArmStoreRoot -StoreGeneration $storeGeneration
+        $ordered[$target.slot_index] = [ordered]@{
+            slot_index = [uint64]$target.slot_index
+            source_base_seed = $ArmBaseSeed
+            source_run_sha256 = $ArmRunSha256
+            # The manifest validator pins slots 2 and 5 to TRAINEE-LOCAL
+            # generations, so that is what is written here, while the hashes
+            # above were read at the corresponding STORE generation
+            # (trainee-local minus 2048). See the README's known-issue note.
+            source_generation = [uint64]$target.trainee_local_generation
+            checkpoint_manifest_sha256 = $identity.checkpoint_manifest_sha256
+            checkpoint_payload_sha256 = $identity.checkpoint_payload_sha256
+            model_parameter_sha256 = $identity.model_parameter_sha256
+            train_state_sha256 = $identity.train_state_sha256
+        }
+    }
+
+    $document = [ordered]@{
+        schema = $script:Cycle5SlotIdentitiesSchema
+        slots = @($ordered)
+    }
+    Write-Cycle5JsonFile -Value $document -Path $OutputPath
+    return [ordered]@{
+        record = Get-Cycle5FileRecord -Path $OutputPath
+        derived_slot_indexes = @($derived | ForEach-Object { $_.slot_index })
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Interval phase journal
+#
+# An attempt can be interrupted anywhere, and the Store alone cannot say where:
+# a latest.json at a refresh boundary means either "this interval finished and
+# its panel and next manifest are done" or "training finished and neither is",
+# and a latest.json inside an interval means training is mid-flight at a stop
+# generation only the launching attempt knew. So each interval keeps a small
+# hash-chained journal, one file per interval under the attempt root, written
+# atomically at every transition. Resume reads the journals of every attempt
+# under the gate root (newest wins per interval, dry runs ignored), verifies
+# the chain, and reconstructs the pending work from it plus the Store and the
+# refresh chain.
+# ---------------------------------------------------------------------------
+
+function Get-Cycle5IntervalPhaseFileName {
+    param([Parameter(Mandatory = $true)][uint64]$IntervalIndex)
+    return ('interval-{0:d2}.phase.json' -f $IntervalIndex)
+}
+
+function Get-Cycle5PhaseRecordSha256 {
+    # Deterministic framing over every field of one record plus its parent
+    # hash. LF-joined and never reordered, so two readers of the same journal
+    # compute the same digest.
+    param(
+        [Parameter(Mandatory = $true)]$Record,
+        [Parameter(Mandatory = $true)][uint64]$IntervalIndex,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [Parameter(Mandatory = $true)][uint64]$StopGeneration
+    )
+    $frame = @(
+        [string]$Record.phase
+        [string]$Record.utc
+        [string]$Record.attempt_root
+        [string]$IntervalIndex
+        [string]$RefreshIndex
+        [string]$StopGeneration
+        [string]$Record.parent_sha256
+    ) -join "`n"
+    return Get-TextSha256 $frame
+}
+
+function Assert-Cycle5IntervalJournal {
+    # Recomputes every record's digest and every link, including the link from
+    # the previous interval's terminal record. A truncated, reordered or edited
+    # journal fails here rather than producing a plausible-looking plan.
+    param(
+        [Parameter(Mandatory = $true)]$Journal,
+        [string]$PreviousIntervalTipSha256
+    )
+    $records = @($Journal.records)
+    if ($records.Count -eq 0) {
+        throw "interval $($Journal.interval_index) journal carries no records"
+    }
+    $expectedParent = $script:Cycle5PhaseChainGenesisParent
+    if (-not [string]::IsNullOrWhiteSpace($PreviousIntervalTipSha256)) {
+        $expectedParent = $PreviousIntervalTipSha256
+    }
+    $seen = 0
+    foreach ($record in $records) {
+        if ([string]$record.parent_sha256 -cne $expectedParent) {
+            throw "interval $($Journal.interval_index) journal record '$($record.phase)' is not chained to its predecessor"
+        }
+        $computed = Get-Cycle5PhaseRecordSha256 `
+            -Record $record `
+            -IntervalIndex ([uint64]$Journal.interval_index) `
+            -RefreshIndex ([uint64]$Journal.refresh_index) `
+            -StopGeneration ([uint64]$Journal.stop_generation)
+        if ($computed -cne [string]$record.record_sha256) {
+            throw "interval $($Journal.interval_index) journal record '$($record.phase)' does not match its own digest"
+        }
+        $position = [array]::IndexOf($script:Cycle5IntervalPhases, [string]$record.phase)
+        if ($position -lt 0) {
+            throw "interval $($Journal.interval_index) journal carries an unknown phase: $($record.phase)"
+        }
+        if ($position -ne $seen) {
+            throw "interval $($Journal.interval_index) journal reaches '$($record.phase)' out of order"
+        }
+        $seen++
+        $expectedParent = [string]$record.record_sha256
+    }
+    return $expectedParent
+}
+
+function Read-Cycle5IntervalJournals {
+    # Every attempt under the gate root, oldest to newest; the newest copy of
+    # each interval's journal wins, because an attempt that touched an interval
+    # carries that interval's whole history forward. Dry-run attempts are
+    # skipped outright: they plan work rather than performing it, and their
+    # records must never be mistaken for progress.
+    param([Parameter(Mandatory = $true)][string]$GateRoot)
+    $journals = @{}
+    if (-not (Test-Path -LiteralPath $GateRoot -PathType Container)) { return $journals }
+    foreach ($attempt in @(Get-ChildItem -LiteralPath $GateRoot -Directory | Sort-Object Name)) {
+        $launch = Join-Path $attempt.FullName 'launch-manifest.json'
+        if (Test-Path -LiteralPath $launch -PathType Leaf) {
+            $manifest = Read-Cycle5Json -Path $launch
+            # Property-existence checked rather than dereferenced: a launch
+            # manifest that predates a field must not crash a resume.
+            if (($manifest.PSObject.Properties.Name -contains 'dry_run') -and [bool]$manifest.dry_run) {
+                continue
+            }
+        }
+        foreach ($file in @(Get-ChildItem -LiteralPath $attempt.FullName -Filter 'interval-*.phase.json' -File)) {
+            $journal = Read-Cycle5Json -Path $file.FullName
+            if ([string]$journal.schema -cne $script:Cycle5IntervalPhaseSchema) {
+                throw "unexpected interval-phase schema at $($file.FullName): $($journal.schema)"
+            }
+            $journals[[uint64]$journal.interval_index] = $journal
+        }
+    }
+    # Verify the whole chain in interval order once every file is in hand.
+    $tip = $null
+    foreach ($index in @($journals.Keys | Sort-Object)) {
+        $tip = Assert-Cycle5IntervalJournal -Journal $journals[$index] -PreviousIntervalTipSha256 $tip
+    }
+    return $journals
+}
+
+function Get-Cycle5IntervalPhase {
+    # The last phase recorded for one interval, or $null when the interval has
+    # no journal at all (a campaign that predates the journal, or an interval
+    # that has never been started).
+    param(
+        [Parameter(Mandatory = $true)]$Journals,
+        [Parameter(Mandatory = $true)][uint64]$IntervalIndex
+    )
+    if (-not $Journals.ContainsKey($IntervalIndex)) { return $null }
+    $records = @($Journals[$IntervalIndex].records)
+    return [string]$records[$records.Count - 1].phase
+}
+
+function Add-Cycle5IntervalPhase {
+    # Appends one transition and rewrites that interval's journal atomically
+    # into the CURRENT attempt root, carrying every earlier record forward so
+    # the newest copy is always the complete history. Returns the updated
+    # journal.
+    param(
+        [Parameter(Mandatory = $true)]$Journals,
+        [Parameter(Mandatory = $true)][string]$AttemptRoot,
+        [Parameter(Mandatory = $true)][string]$Arm,
+        [Parameter(Mandatory = $true)][uint64]$IntervalIndex,
+        [Parameter(Mandatory = $true)][uint64]$RefreshIndex,
+        [Parameter(Mandatory = $true)][uint64]$StopGeneration,
+        [Parameter(Mandatory = $true)][ValidateSet('training-started', 'training-complete', 'panel-complete', 'manifest-complete')][string]$Phase
+    )
+    if ($Journals.ContainsKey($IntervalIndex)) {
+        $journal = $Journals[$IntervalIndex]
+        if ([uint64]$journal.stop_generation -ne $StopGeneration -or [uint64]$journal.refresh_index -ne $RefreshIndex) {
+            throw "interval $IntervalIndex was journalled with stop generation $($journal.stop_generation) at refresh $($journal.refresh_index), but this attempt is using $StopGeneration at refresh $RefreshIndex"
+        }
+        $records = @($journal.records)
+        $parent = [string]$records[$records.Count - 1].record_sha256
+    }
+    else {
+        $records = @()
+        $parent = $script:Cycle5PhaseChainGenesisParent
+        if ($IntervalIndex -gt [uint64]0 -and $Journals.ContainsKey($IntervalIndex - [uint64]1)) {
+            $previous = @($Journals[$IntervalIndex - [uint64]1].records)
+            $parent = [string]$previous[$previous.Count - 1].record_sha256
+        }
+    }
+    $record = [ordered]@{
+        phase = $Phase
+        utc = [DateTimeOffset]::UtcNow.ToString('O')
+        attempt_root = $AttemptRoot
+        parent_sha256 = $parent
+    }
+    $record['record_sha256'] = Get-Cycle5PhaseRecordSha256 `
+        -Record $record `
+        -IntervalIndex $IntervalIndex `
+        -RefreshIndex $RefreshIndex `
+        -StopGeneration $StopGeneration
+    $updated = [ordered]@{
+        schema = $script:Cycle5IntervalPhaseSchema
+        arm = $Arm
+        interval_index = $IntervalIndex
+        refresh_index = $RefreshIndex
+        stop_generation = $StopGeneration
+        records = @($records + $record)
+    }
+    Write-Cycle5JsonFile -Value $updated -Path (Join-Path $AttemptRoot (Get-Cycle5IntervalPhaseFileName -IntervalIndex $IntervalIndex))
+    $Journals[$IntervalIndex] = $updated
+    return $updated
+}
+
+# ---------------------------------------------------------------------------
+# Child processes
+# ---------------------------------------------------------------------------
+
+function Format-Cycle5CommandLine {
+    # The exact command line, quoted the way Start-Process receives it, so a
+    # dry run prints something an operator can paste and a reviewer can diff.
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $parts = @('"' + $FilePath + '"')
+    foreach ($argument in $Arguments) {
+        $parts += '"' + ([string]$argument).Replace('"', '\"') + '"'
+    }
+    return ($parts -join ' ')
+}
+
+function Invoke-Cycle5Process {
+    # One child process, its exit code captured authoritatively.
+    #
+    # Round F defect 2. The first CONTROL preflight ladder attempt recorded
+    # exit_code 0 for both rungs while the arm bin had in fact taken its
+    # contract-rejection path (empty stdout, the refusal on stderr, and
+    # `exit_code_v1()` maps Contract to 3). The cause is a Windows-specific
+    # Start-Process property, not the bin: under PowerShell 5.1 the
+    # Process object -PassThru returns may hold NO cached native handle, and
+    # once the child has exited and Windows has reaped it there is nothing
+    # left to read a code from, so `.ExitCode` answers $null forever no
+    # matter how many times WaitForExit() and Refresh() are called. The old
+    # body then wrote `[int]$exitCode`, and `[int]$null` is 0 in PowerShell:
+    # a silent, total inversion of the fail-closed contract, turning every
+    # child refusal into a recorded success.
+    #
+    # Two changes, both required:
+    #
+    #   1. `.Handle` is read IMMEDIATELY after the start, before the child
+    #      can exit. Touching that property makes System.Diagnostics.Process
+    #      duplicate and cache the native handle for the lifetime of the
+    #      object, which is what keeps the exit code readable after the
+    #      child is gone. This is the fix the S1 launcher family uses.
+    #   2. A $null ExitCode is a HARD FAILURE, never a cast. If the handle
+    #      trick somehow still leaves the code unreadable, the launcher must
+    #      say so and stop, not invent a zero.
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [Parameter(Mandatory = $true)][string]$StderrPath,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [hashtable]$Environment,
+        [switch]$DryRun
+    )
+    $commandLine = Format-Cycle5CommandLine -FilePath $FilePath -Arguments $Arguments
+    if ($DryRun) {
+        Write-Host "DRY-RUN $Label`: $commandLine"
+        if ($null -ne $Environment) {
+            foreach ($name in @($Environment.Keys | Sort-Object)) {
+                Write-Host "DRY-RUN $Label env: $name=$($Environment[$name])"
+            }
+        }
+        return [ordered]@{
+            label = $Label
+            command_line = $commandLine
+            dry_run = $true
+            exit_code = 0
+        }
+    }
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+        throw "$Label executable is missing: $FilePath"
+    }
+    foreach ($path in @($StdoutPath, $StderrPath)) {
+        $directory = Split-Path -Parent $path
+        if (-not [string]::IsNullOrWhiteSpace($directory)) {
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        }
+    }
+    $saved = @{}
+    if ($null -ne $Environment) {
+        foreach ($name in $Environment.Keys) {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, [string]$Environment[$name], 'Process')
+        }
+    }
+    # PowerShell 5.1's -ArgumentList does not quote array elements on its own,
+    # so a path with a space would silently split into two arguments. Pass the
+    # already-quoted text instead (the precedent's own Start-NativeLane shape).
+    $argumentText = (@($Arguments | ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }) -join ' ')
+    $started = [DateTimeOffset]::UtcNow
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $argumentText `
+            -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+        # Cache the native handle NOW, while the child is certainly still
+        # alive. See this function's header: without this the exit code of a
+        # short-lived child is unrecoverable. Best-effort on purpose -- if
+        # the handle cannot be taken this is not itself the failure; the
+        # unreadable exit code below is, and it is checked unconditionally.
+        try { $null = $process.Handle } catch { }
+        try { $processId = [int]$process.Id } catch { $processId = -1 }
+        $process.WaitForExit()
+        $process.Refresh()
+        $exitCode = $process.ExitCode
+    }
+    finally {
+        foreach ($name in $saved.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+        }
+    }
+    if ($null -eq $exitCode) {
+        # Never [int]$null (which is 0). An unreadable exit code is an
+        # unknown outcome, and an unknown outcome is a failure.
+        throw "$Label exit code could not be read from the child process (pid $processId); refusing to record an outcome. stdout=$StdoutPath stderr=$StderrPath"
+    }
+    $finished = [DateTimeOffset]::UtcNow
+    return [ordered]@{
+        label = $Label
+        command_line = $commandLine
+        dry_run = $false
+        exit_code = [int]$exitCode
+        process_id = $processId
+        started_utc = $started.ToString('O')
+        completed_utc = $finished.ToString('O')
+        wall_seconds = ($finished - $started).TotalSeconds
+        stdout = $StdoutPath
+        stderr = $StderrPath
+    }
+}
+
+function Assert-Cycle5ProcessSucceeded {
+    param([Parameter(Mandatory = $true)]$Result)
+    if ($null -eq $Result.exit_code) {
+        # The second line of defence for round F defect 2. Invoke-Cycle5Process
+        # already refuses an unreadable exit code at the source; this makes the
+        # same refusal true of any result document that reaches this gate,
+        # however it was produced.
+        throw "$($Result.label) exited with an unreadable exit code; an unknown outcome is never a success"
+    }
+    if ($Result.exit_code -ne 0) {
+        $detail = "$($Result.label) exited $($Result.exit_code)"
+        if (-not $Result.dry_run) { $detail = "$detail; see $($Result.stderr)" }
+        throw $detail
+    }
+    return $Result
+}
+
+# ---------------------------------------------------------------------------
+# Terminal markers (the g896 family's shape: gate-specific empty markers plus
+# one plain-text RUN_FAILED naming the failing step)
+# ---------------------------------------------------------------------------
+
+function Write-Cycle5Marker {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][ValidateSet('PREFLIGHT_COMPLETE', 'TRAINING_COMPLETE')][string]$Name
+    )
+    $path = Join-Path $Root $Name
+    if (-not (Test-Path -LiteralPath $path)) {
+        New-Item -ItemType File -Path $path | Out-Null
+    }
+    return $path
+}
+
+function Write-Cycle5RunFailed {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+    $path = Join-Path $Root 'RUN_FAILED'
+    $line = "$([DateTimeOffset]::UtcNow.ToString('O')) phase=$Phase error=$Message"
+    [System.IO.File]::WriteAllText($path, $line, [System.Text.UTF8Encoding]::new($false))
+    return $path
+}
+
+function Write-Cycle5FailureResult {
+    # Round F defect 5. The failure path used to write RUN_FAILED and
+    # rethrow, leaving the attempt root with NO result.json at all -- so the
+    # one file every reader of this evidence tree opens first was the one
+    # file a failed attempt did not have, and the commands that did run were
+    # recoverable only by re-deriving them from commands.jsonl by hand.
+    #
+    # A failed attempt now publishes the same document a successful one does,
+    # with status RUN_FAILED, the phase it died in, the error text, and the
+    # commands it had run up to that point. Best-effort by construction: it
+    # runs inside a catch block that is about to rethrow, so a failure to
+    # write the failure document must never replace the real error.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [Parameter(Mandatory = $true)][string]$Arm,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [bool]$DryRun = $false,
+        [string]$CommandLog
+    )
+    $commands = @()
+    if (-not [string]::IsNullOrWhiteSpace($CommandLog) -and (Test-Path -LiteralPath $CommandLog -PathType Leaf)) {
+        $commands = @(
+            foreach ($line in [System.IO.File]::ReadAllLines($CommandLog)) {
+                if (-not [string]::IsNullOrWhiteSpace($line)) { $line | ConvertFrom-Json }
+            }
+        )
+    }
+    $path = Join-Path $Root 'result.json'
+    Write-Cycle5JsonFile -Value ([ordered]@{
+        schema = 'mtg-kernel-cycle5-arm-training-result/v1'
+        status = 'RUN_FAILED'
+        completed_utc = [DateTimeOffset]::UtcNow.ToString('O')
+        arm = $Arm
+        mode = $Mode
+        dry_run = $DryRun
+        failed_phase = $Phase
+        error = $Message
+        commands_run = @($commands)
+        command_log = $CommandLog
+        nonclaim = 'A failed attempt claims nothing about training, playing strength, or the campaign; it records only where it stopped and why.'
+    }) -Path $path
+    return $path
+}

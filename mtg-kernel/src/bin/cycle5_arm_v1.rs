@@ -64,7 +64,7 @@ use std::path::PathBuf;
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle5_arm_v1 --arm (control-r|static-rb|treatment-rb) --store-root PATH --run-record PATH --chain-dir PATH --slot-locator PATH --device N (--bootstrap-genesis | --refresh-manifest PATH [--payoff-panel PATH] --stop-generation N [--preflight --preflight-updates N])\n   or: cycle5_arm_v1 --check-slot-locator PATH\n   or: cycle5_arm_v1 --print-build-identity"
+        "usage: cycle5_arm_v1 --arm (control-v3|centered-v5) --store-root PATH --run-record PATH --chain-dir PATH --slot-locator PATH --device N (--bootstrap-genesis | --refresh-manifest PATH [--payoff-panel PATH] --stop-generation N [--preflight --preflight-updates N])\n   or: cycle5_arm_v1 --check-slot-locator PATH\n   or: cycle5_arm_v1 --print-build-identity"
     );
     std::process::exit(2);
 }
@@ -341,7 +341,7 @@ mod tests {
     fn complete_v1() -> Vec<&'static str> {
         vec![
             "--arm",
-            "treatment-rb",
+            "control-v3",
             "--store-root",
             "D:/arm/store",
             "--run-record",
@@ -386,7 +386,7 @@ mod tests {
     fn bootstrap_v1() -> Vec<&'static str> {
         vec![
             "--arm",
-            "control-r",
+            "control-v3",
             "--store-root",
             "D:/arm/store",
             "--run-record",

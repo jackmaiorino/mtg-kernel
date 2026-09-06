@@ -49,13 +49,14 @@ use std::path::{Path, PathBuf};
 
 fn usage_v1() -> ! {
     eprintln!(
-        "usage: cycle5_run_record_v1 --arm (control-r|static-rb|treatment-rb) --parent-store-root PATH --parent-generation N --arm-executable PATH --output PATH [--force]"
+        "usage: cycle5_run_record_v1 --arm (control-v3|centered-v5) --routing-record PATH --parent-store-root PATH --parent-generation N --arm-executable PATH --output PATH [--force]"
     );
     std::process::exit(2);
 }
 
 struct ParsedArgsV1 {
     arm: Cycle5ArmKindV1,
+    routing_record: PathBuf,
     parent_store_root: PathBuf,
     parent_generation: u64,
     arm_executable: PathBuf,
@@ -68,6 +69,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
         return Err(());
     }
     let mut arm: Option<Cycle5ArmKindV1> = None;
+    let mut routing_record: Option<PathBuf> = None;
     let mut parent_store_root: Option<PathBuf> = None;
     let mut parent_generation: Option<u64> = None;
     let mut arm_executable: Option<PathBuf> = None;
@@ -90,6 +92,9 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
             "--arm" if arm.is_none() => {
                 arm = Some(Cycle5ArmKindV1::from_wire_v1(value.to_str().ok_or(())?).ok_or(())?);
             }
+            "--routing-record" if routing_record.is_none() => {
+                routing_record = Some(PathBuf::from(value));
+            }
             "--parent-store-root" if parent_store_root.is_none() => {
                 parent_store_root = Some(PathBuf::from(value));
             }
@@ -109,6 +114,7 @@ fn parse_args_v1(raw: Vec<OsString>) -> Result<ParsedArgsV1, ()> {
 
     Ok(ParsedArgsV1 {
         arm: arm.ok_or(())?,
+        routing_record: routing_record.ok_or(())?,
         parent_store_root: parent_store_root.ok_or(())?,
         parent_generation: parent_generation.ok_or(())?,
         arm_executable: arm_executable.ok_or(())?,
@@ -192,6 +198,7 @@ fn main() {
 
     let outcome = build_cycle5_arm_run_record_v1(&Cycle5RunRecordRequestV1 {
         arm: args.arm,
+        routing_record_path: args.routing_record.clone(),
         parent_store_root: args.parent_store_root.clone(),
         parent_generation: args.parent_generation,
         arm_executable: args.arm_executable.clone(),
@@ -217,12 +224,14 @@ fn main() {
     }
 
     println!(
-        "arm={} base_seed={} run_sha256={} parent_run_sha256={} parent_generation={}",
+        "arm={} base_seed={} run_sha256={} parent_run_sha256={} parent_checkpoint_manifest_sha256={} parent_generation={} routing_record_sha256={}",
         outcome.arm_kind,
         outcome.base_seed,
         outcome.run_sha256,
         outcome.parent_run_sha256,
-        outcome.parent_generation
+        outcome.parent_checkpoint_manifest_sha256,
+        outcome.parent_generation,
+        outcome.routing_record_sha256
     );
 }
 
@@ -237,11 +246,13 @@ mod tests {
     fn required_flags_v1() -> Vec<&'static str> {
         vec![
             "--arm",
-            "treatment-rb",
+            "control-v3",
+            "--routing-record",
+            "E:\\routing\\routing-record.json",
             "--parent-store-root",
             "E:\\parent\\store",
             "--parent-generation",
-            "896",
+            "2048",
             "--arm-executable",
             "D:\\release\\cycle5_arm_v1.exe",
             "--output",
@@ -253,8 +264,12 @@ mod tests {
     fn parses_every_required_flag_v1() {
         let parsed =
             parse_args_v1(args_v1(&required_flags_v1())).expect("well-formed command line parses");
-        assert_eq!(parsed.arm, Cycle5ArmKindV1::TreatmentRb);
-        assert_eq!(parsed.parent_generation, 896);
+        assert_eq!(parsed.arm, Cycle5ArmKindV1::ControlV3);
+        assert_eq!(parsed.parent_generation, 2048);
+        assert_eq!(
+            parsed.routing_record,
+            PathBuf::from("E:\\routing\\routing-record.json")
+        );
         assert!(!parsed.force);
         assert_eq!(
             parsed.arm_executable,
@@ -338,9 +353,9 @@ mod tests {
         // Duplicated flag.
         assert!(parse_args_v1(args_v1(&[
             "--arm",
-            "control-r",
+            "control-v3",
             "--arm",
-            "static-rb",
+            "centered-v5",
             "--parent-store-root",
             "p",
             "--parent-generation",
@@ -354,7 +369,9 @@ mod tests {
             "--force",
             "--force",
             "--arm",
-            "control-r",
+            "control-v3",
+            "--routing-record",
+            "E:\\routing\\routing-record.json",
             "--parent-store-root",
             "p",
             "--parent-generation",
@@ -366,7 +383,7 @@ mod tests {
         // Unknown flag.
         assert!(parse_args_v1(args_v1(&[
             "--arm",
-            "control-r",
+            "control-v3",
             "--not-a-flag",
             "x",
             "--parent-store-root",
@@ -380,7 +397,9 @@ mod tests {
         // Unparseable generation.
         assert!(parse_args_v1(args_v1(&[
             "--arm",
-            "control-r",
+            "control-v3",
+            "--routing-record",
+            "E:\\routing\\routing-record.json",
             "--parent-store-root",
             "p",
             "--parent-generation",
@@ -390,7 +409,7 @@ mod tests {
         ]))
         .is_err());
         // Missing required flag, truncated command line, and no arguments.
-        assert!(parse_args_v1(args_v1(&["--arm", "control-r"])).is_err());
+        assert!(parse_args_v1(args_v1(&["--arm", "control-v3"])).is_err());
         assert!(parse_args_v1(args_v1(&["--arm"])).is_err());
         assert!(parse_args_v1(args_v1(&[])).is_err());
     }

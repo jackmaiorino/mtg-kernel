@@ -1,0 +1,1390 @@
+#!/usr/bin/env python3
+"""Cycle-5 payoff panel runner: the 28-matchup round robin over the eight
+identities bound in a cycle-5 population refresh manifest.
+
+Ports `scaled_selfplay_population_v1/run_payoff_evaluation.py`'s game
+mechanism verbatim rather than reinventing it: the SAME ignored Rust test,
+`native_science_loop_v1::windows_science_loop_tests::ladder_head_to_head_eval_v1`,
+driven through the SAME `H2H_*` environment-variable protocol (seat-swapped
+pairs, `H2H_ENVIRONMENT_RANDOMIZATION_V2=1`, one create-new
+`H2H_OUTCOME_JSON` file per matchup, schema
+`mtg-kernel-head-to-head-terminal-stream/v1`). Two things differ from v1,
+both because cycle-5's Store and manifest schema are newer than v1's:
+
+  1. Slot->store resolution: v1 mapped five fixed program-v1 SEEDS to store
+     roots and re-derived on-disk checkpoint/sidecar/state file paths itself,
+     verifying their SHA-256 against the bindings document before trusting
+     them. Cycle-5's eight slots are looked up directly by SLOT INDEX in a
+     machine-local locator (`--slot-locator`; absolute paths only, never
+     hashed into any artifact this script writes), and identity binding is
+     verified POST-hoc instead of pre-hoc: `H2H_CANDIDATE_USE_STORE_RUN=1`
+     hands the whole store root to the same validated V2/V4 Store boundary
+     walk (`ValidatedNativeTrainingStoreRootV2::open_v2` +
+     `load_native_training_boundary_v2`) the ignored test already performs
+     internally -- which fails closed on corruption on its own -- and this
+     script then cross-checks the outcome document's self-reported
+     `run_sha256`/`generation`/`checkpoint_manifest_sha256`/
+     `checkpoint_payload_sha256`/`model_parameter_sha256` against the
+     manifest's declared identity for that slot (see `summarize_outcome`).
+     v1's on-disk file layout (`checkpoint.json`/`sidecar.json`/
+     `state.f32le` with a four-hash identity) does not describe the V2/V4
+     Store cycle-5 targets, so porting v1's pre-hoc file-hash walk verbatim
+     would not even be meaningful here; the post-hoc check achieves the same
+     "never trust an unverified identity" guarantee against the SAME wire
+     document v1 itself also cross-checked in `validate_outcome`.
+  1b. Own-run generation translation: the manifest labels every slot in the
+     contract's trainee-local numbering, but a cycle-5 arm is a NEW run
+     identity seeded from the cycle-3 g896 checkpoint, so its own Store
+     restarts at generation 0 and counts 0..=2048 for 2048..=4096. Any slot
+     whose `source_run_sha256` is the manifest's own `trainee_run_sha256`
+     (current-1 always, historical-0 from refresh index 4) is therefore
+     loaded at `source_generation - 2048`, and the outcome document's
+     self-reported generation is checked against that translated value. This
+     mirrors the launcher's `store_generation_for_slot_v1`
+     (`native_cycle5_arm_v1.rs`) exactly; the two must never drift. Slots
+     naming other runs keep their labels verbatim, since those runs number
+     their own Stores.
+
+  1c. Per-side baseline chain directories: a centered-v5 arm's
+     own Store is a `trainer_v4_candidate` Store, and once it has trained
+     past genesis its update evidence only validates through the v4
+     recompute. The probe's plain boundary walk rejects it, so every slot
+     bound to such an arm's own run must be loaded through that arm's
+     baseline chain directory. The index-keyed slot locator carries it: a
+     slot entry is either a bare store-root string (as before) or an object
+     `{"store_root": "<abs>", "baseline_chain_dir": "<abs>"}`, and the object
+     form is passed to the probe as `H2H_CANDIDATE_CHAIN_DIR` /
+     `H2H_OPPONENT_CHAIN_DIR`. `--arm` says which rule applies: a v4 arm
+     REQUIRES the object form on its own-run slots, and every other slot
+     (and every control-v3 slot) must be the bare string, so a wrapper that
+     forgets the directory is rejected here rather than panicking mid-panel.
+
+  2. No concurrency screen: v1 first measured whether N parallel replicas of
+     one arm were bit-identical and fast enough before committing to
+     parallel execution across the full matrix. Cycle-5's round-C contract
+     does not ask for that apparatus, so this runner executes the 28
+     matchups sequentially. The per-matchup mechanism, outcome schema, and
+     validation are otherwise identical, so a concurrency screen could be
+     layered on top later without changing anything below it.
+
+Build command for `--executable` (mirrors every existing wrapper in this
+family -- see `scripts/experiments/regularized_continuation_retest_v1/
+common.ps1`'s `Get-ReleaseTestExecutable`, which this script deliberately
+does NOT reimplement; a caller builds the executable once and passes its
+path in):
+
+    cargo test -p mtg-kernel --release \
+        --features experimental-burn-net8-packed-cuda-v1 \
+        --lib --no-run --message-format=json
+
+Parse the JSON lines; the executable is the `executable` field of the LAST
+line with `reason == "compiler-artifact"`, `target.name == "mtg_kernel"`,
+and `"lib" in target.kind`.
+
+Inputs: the current cycle-5 refresh manifest (its eight slots are the panel
+roster; its own `refresh_index` picks this run's output filename, see
+below; its own SHA-256 is recorded in the panel document as the content the
+next manifest binds against), a slot-locator JSON, `G` games per matchup
+(default 256 -- MUST equal `CYCLE5_PANEL_GAMES_PER_MATCHUP_V1` in
+`native_population_refresh_manifest_cycle5_v1.rs` for the panel to be valid
+input to the Rust builder; a different `G` is accepted ONLY under
+`--dry-run`, for local smoke testing -- passing a non-canonical `G` outside
+`--dry-run` is a hard usage error, since the Rust side's rank-sum bound is
+FIXED at `7*256=1792` regardless of what `G` this runner used and the
+production panel schema is only ever emitted for `G=256`), a base-seed
+literal (the caller is responsible for using a fresh literal per refresh so
+no pair environment seed is ever reused across the whole campaign; this
+script only guarantees no reuse WITHIN one panel run), and an output
+directory.
+
+Outputs, all under `--output-dir` (resolved to an absolute path before any
+child process is launched, since matchup subprocesses run with
+`cwd=repo_root`, not `cwd=output_dir`):
+  - `<matchup-label>/{outcome.json,stdout.log,stderr.log}` per matchup (28
+    directories), each `outcome.json` the ignored test's own create-new
+    terminal-stream artifact.
+  - `refresh-NN.panel.json` (`NN` = the loaded manifest's own
+    `refresh_index + 1`, zero-padded to two digits -- `panel_filename`):
+    ONE canonical document (sorted keys, LF -- see `canonical_bytes`),
+    schema `mtg-kernel-cycle5-payoff-panel/v1`. Its exact bytes are what
+    refresh `NN`'s manifest binds by SHA-256
+    (`build_cycle5_next_refresh_v1`'s `panel_bytes` argument); nothing in
+    this script's own JSON encoding path may drift from the canonical form
+    the Rust builder re-derives independently. This filename is the SAME
+    fixed chain-directory naming scheme the Rust builder module documents
+    (`cycle5_chain_panel_filename_v1` in
+    `native_population_refresh_builder_cycle5_v1.rs`) -- both sides must
+    never drift from it. Staged to a temporary name and committed (renamed
+    into place) LAST, after `bt-rating-input.json`, so its presence at this
+    path is the single signal that the whole run succeeded; any exception
+    during staging or committing removes every temporary file so a failed
+    run never leaves a consumable panel document.
+  - `bt-rating-input.json`: schema `mtg-kernel-bt-rating-input/v1`, ready for
+    `bt_rating_v1.py <this file> <result.json>`. Scoped to this one panel's
+    28 pairs only; a later aggregator, not this script, is responsible for
+    folding in cross-panel history across refreshes (the derived-metric
+    module's own docstring anticipates that as a separate step). Committed
+    BEFORE the panel document (it is downstream analysis input, not content
+    any manifest binds by hash).
+
+`--dry-run` computes and prints every matchup's exact command line, H2H_*
+environment, and evaluation seed without touching a process or the
+filesystem -- safe to run without the executable, store roots, or output
+directory actually existing.
+
+Concurrency. Every matchup is its own engine process with its own
+environment, seed band, and outcome file, so `--matchup-workers N` runs N
+of them at once (default 1, the original one-at-a-time loop). Results are
+consumed in matchup order whatever the completion order, so `panel.json`
+and `bt-rating-input.json` are byte-identical for any N; the worker count
+is an operator setting the wrapper records in its launch manifest and is
+never written into a hashed artifact.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import concurrent.futures
+import itertools
+import json
+import os
+import shlex
+import subprocess
+import sys
+import threading
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, NamedTuple
+
+TEST_NAME = (
+    "native_science_loop_v1::windows_science_loop_tests::"
+    "ladder_head_to_head_eval_v1"
+)
+
+MANIFEST_SCHEMA = "mtg-kernel-population-refresh-manifest-cycle5/v1"
+SLOT_LOCATOR_SCHEMA = "mtg-kernel-cycle5-slot-locator/v1"
+PANEL_SCHEMA = "mtg-kernel-cycle5-payoff-panel/v1"
+BT_INPUT_SCHEMA = "mtg-kernel-bt-rating-input/v1"
+OUTCOME_SCHEMA = "mtg-kernel-head-to-head-terminal-stream/v1"
+
+SLOT_COUNT = 8
+DEFAULT_GAMES_PER_MATCHUP = 256
+# Matches the Rust contract's own constant
+# (`CYCLE5_PANEL_GAMES_PER_MATCHUP_V1`); see the module docstring's note on
+# --games-per-matchup -- outside --dry-run this is a hard requirement, not a
+# warning.
+CANONICAL_GAMES_PER_MATCHUP = 256
+MATCHUP_COUNT = 28
+# Matchup subprocesses are independent (own environment, own seed band, own
+# outcome file), so they may run concurrently; the panel document is a pure
+# function of the per-matchup outcomes and is byte-identical for any worker
+# count. Bounded so a typo can never fork hundreds of engines.
+DEFAULT_MATCHUP_WORKERS = 1
+MAX_MATCHUP_WORKERS = 64
+# Matches the Rust contract's own constant (`CYCLE5_REFRESH_MAX_INDEX_V1`):
+# the highest refresh index the campaign ever chains to.
+MAX_REFRESH_INDEX = 16
+# Ported from v1's MATRIX_EVAL_SEED_STRIDE: generously larger than any
+# plausible per-matchup pair count, so the per-matchup evaluation seeds
+# cannot plausibly collide before the explicit global uniqueness check below
+# even runs.
+EVAL_SEED_STRIDE = 1_000_000
+
+# Every H2H_* (and WIDE) knob the ignored test reads, cleared before each
+# matchup so no ambient value from the calling shell leaks in silently.
+H2H_ENVIRONMENT_KEYS = (
+    "H2H_CANDIDATE_STORE_ROOT",
+    "H2H_CANDIDATE_GEN",
+    "H2H_CANDIDATE_USE_STORE_RUN",
+    "H2H_CANDIDATE_BASE_SEED",
+    "H2H_CANDIDATE_POOL_JSON",
+    # Set only for a side whose locator entry carries one. They MUST be
+    # scrubbed: an inherited value would reach a side that has none, and the
+    # probe's pairing gate then rejects the whole matchup for a chain
+    # directory this runner never asked for.
+    "H2H_CANDIDATE_CHAIN_DIR",
+    "H2H_OPPONENT_CHAIN_DIR",
+    "H2H_UPDATES",
+    "H2H_INIT_STORE",
+    "H2H_INIT_GEN",
+    "H2H_OPPONENT_STORE_ROOT",
+    "H2H_OPPONENT_GEN",
+    "H2H_PAIRS",
+    "H2H_EVAL_SEED",
+    "H2H_ENVIRONMENT_RANDOMIZATION_V2",
+    "H2H_OUTCOME_JSON",
+    "H2H_STARTING_PLAYER",
+    "WIDE",
+)
+
+REQUIRED_SLOT_FIELDS = (
+    "slot_index",
+    "role",
+    "occupant_class",
+    "source_base_seed",
+    "source_run_sha256",
+    "source_generation",
+    "checkpoint_manifest_sha256",
+    "checkpoint_payload_sha256",
+    "model_parameter_sha256",
+    "train_state_sha256",
+    "weight_units",
+)
+
+EXPECTED_ROLES = (
+    "anchor-0",
+    "anchor-1",
+    "historical-0",
+    "historical-1",
+    "current-0",
+    "current-1",
+    "exploiter-0",
+    "exploiter-1",
+)
+
+
+# Arm kinds, matching the launcher's own wire values. The two rb arms train
+# through the v4 trainer, so their own Store needs a baseline chain directory
+# to be read back at all.
+ARM_KINDS = ("control-v3", "centered-v5")
+BASELINE_V4_ARM_KINDS = ("centered-v5",)
+
+# The contract's trainee-local start generation. An own-run slot's manifest
+# label is this many generations above the arm Store's own numbering; see the
+# module docstring and `store_generation_for_slot`.
+TRAINEE_START_LOCAL_GENERATION = 2048
+
+
+class PanelRunnerError(ValueError):
+    """Any fail-closed rejection: malformed input, an outcome that does not
+    match its spec or the manifest's declared identity, or a reused pair
+    seed. Never caught silently -- `main` reports it and exits non-zero."""
+
+
+@dataclass(frozen=True)
+class MatchupSpec:
+    """One of the 28 unordered slot pairs. `lower_slot` is always the
+    smaller index and plays the H2H "candidate" role; `higher_slot` plays
+    "opponent" -- matching v1's own `itertools.combinations` convention
+    exactly, so a reader already familiar with v1's panel output recognizes
+    the same role split here."""
+
+    matchup_index: int
+    lower_slot: int
+    higher_slot: int
+    evaluation_seed: int
+    pair_count: int
+    game_count: int
+    label: str
+
+
+# ---------------------------------------------------------------------------
+# Small canonical-JSON and hashing helpers (byte-identical to v1's).
+# ---------------------------------------------------------------------------
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def load_json(path: Path) -> dict:
+    with path.open("r", encoding="utf-8-sig") as stream:
+        return json.load(stream)
+
+
+def canonical_bytes(value: dict) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+
+
+def write_new_json(path: Path, value: dict) -> bytes:
+    """Writes `value` as canonical JSON to a NEW file (never overwrites), so
+    an interrupted or repeated run can never silently replace an earlier
+    panel or BT-input document. Returns the exact bytes written."""
+    encoded = canonical_bytes(value)
+    with path.open("xb") as stream:
+        stream.write(encoded)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return encoded
+
+
+def staged_temp_path(final_path: Path) -> Path:
+    """The create-new temporary name `write_new_json` stages `final_path`'s
+    content to before the atomic commit (`commit_staged_file`) renames it
+    into place. Computed as pure path arithmetic (no I/O) so a caller always
+    knows this path for cleanup, even if staging itself never got far enough
+    to create the file."""
+    return final_path.with_name(f"{final_path.name}.tmp-{os.getpid()}")
+
+
+def commit_staged_file(temp_path: Path, final_path: Path) -> None:
+    """The atomic commit: renames a file staged by `write_new_json` (at
+    `staged_temp_path(final_path)`) into its final name. Whichever staged
+    file a caller commits LAST is the one whose presence at its final name
+    is the signal that the whole batch of commits succeeded."""
+    os.replace(temp_path, final_path)
+
+
+def remove_stray(path: Path) -> None:
+    """Best-effort cleanup of a staged-but-not-committed (or partially
+    written) temporary file; a no-op if it was never created or was already
+    committed away."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Manifest and slot-locator loading.
+# ---------------------------------------------------------------------------
+
+
+def panel_filename(refresh_index: int) -> str:
+    """Fixed on-disk name for the payoff panel that will be bound into
+    refresh `refresh_index`'s manifest, matching the Rust chain builder's
+    `cycle5_chain_panel_filename_v1` exactly
+    (`native_population_refresh_builder_cycle5_v1.rs`); both sides must
+    never drift from this scheme."""
+    return f"refresh-{refresh_index:02d}.panel.json"
+
+
+def store_generation_for_slot(slot: dict, trainee_run_sha256: str) -> int:
+    """The generation this slot is actually loaded at in ITS OWN Store.
+
+    Slots bound to the arm's own run carry trainee-local labels that sit 2048
+    above that Store's numbering (the arm restarts at generation 0), so they
+    translate; slots naming other runs are returned unchanged. A label below
+    2048 on an own-run slot names no Store generation at all and fails closed,
+    matching the launcher's `store_generation_for_slot_v1`."""
+    generation = slot["source_generation"]
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+        raise PanelRunnerError(
+            f"slot {slot.get('slot_index')!r} source_generation must be a "
+            f"non-negative int: {generation!r}"
+        )
+    if slot["source_run_sha256"] != trainee_run_sha256:
+        return generation
+    if generation < TRAINEE_START_LOCAL_GENERATION:
+        raise PanelRunnerError(
+            f"slot {slot.get('slot_index')!r} names the arm's own run at trainee-local "
+            f"generation {generation}, below the program start "
+            f"{TRAINEE_START_LOCAL_GENERATION}"
+        )
+    return generation - TRAINEE_START_LOCAL_GENERATION
+
+
+def load_manifest(path: Path) -> tuple[bytes, str, int, list[dict]]:
+    """Reads the manifest's exact bytes, its own SHA-256, its own
+    `refresh_index` (the panel this run produces evaluates THIS index's
+    roster and is bound into refresh `refresh_index + 1`'s manifest, so the
+    panel's own output filename is derived from this field -- see
+    `panel_filename`), and its eight slot records ordered 0..7. Only a
+    STRUCTURAL check runs here (schema tag, exactly eight slots, expected
+    roles, required fields present); the manifest's full semantic contract
+    -- roster identities, weight arithmetic, chain linkage against its
+    predecessor -- was already the Rust builder's job when this file was
+    constructed, and is not re-verified here.
+
+    Each returned slot additionally carries a derived `store_generation`: the
+    generation that slot is loaded at in its own Store, translated by the 2048
+    offset for slots bound to the arm's own run (`store_generation_for_slot`).
+    It is a local convenience only and never reaches any emitted document."""
+    raw = path.read_bytes()
+    manifest_sha256 = sha256_bytes(raw)
+    document = json.loads(raw.decode("utf-8-sig"))
+    if document.get("schema") != MANIFEST_SCHEMA:
+        raise PanelRunnerError(f"unexpected manifest schema: {document.get('schema')!r}")
+    refresh_index = document.get("refresh_index")
+    if (
+        not isinstance(refresh_index, int)
+        or isinstance(refresh_index, bool)
+        or refresh_index < 0
+    ):
+        raise PanelRunnerError(
+            f"manifest refresh_index must be a non-negative int: {refresh_index!r}"
+        )
+    slots = document.get("slots")
+    if not isinstance(slots, list) or len(slots) != SLOT_COUNT:
+        raise PanelRunnerError("manifest must carry exactly eight slots")
+    ordered: list[dict | None] = [None] * SLOT_COUNT
+    for entry in slots:
+        if not isinstance(entry, dict) or not all(
+            field in entry for field in REQUIRED_SLOT_FIELDS
+        ):
+            raise PanelRunnerError("malformed slot record")
+        index = entry["slot_index"]
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or not 0 <= index < SLOT_COUNT
+            or ordered[index] is not None
+        ):
+            raise PanelRunnerError("slot indexes must be 0..7 with no duplicates")
+        if entry["role"] != EXPECTED_ROLES[index]:
+            raise PanelRunnerError(f"slot {index} role mismatch: {entry['role']!r}")
+        ordered[index] = entry
+    if any(slot is None for slot in ordered):
+        raise PanelRunnerError("manifest is missing a slot")
+    trainee_run_sha256 = document.get("trainee_run_sha256")
+    if not isinstance(trainee_run_sha256, str):
+        raise PanelRunnerError("manifest must carry a trainee_run_sha256 string")
+    for slot in ordered:
+        slot["store_generation"] = store_generation_for_slot(slot, trainee_run_sha256)
+    return raw, manifest_sha256, refresh_index, ordered
+
+
+class SlotLocation(NamedTuple):
+    """One slot's machine-local location: its Store root, and for a slot
+    bound to a v4 arm's own run, that arm's baseline chain directory."""
+
+    store_root: Path
+    baseline_chain_dir: Path | None
+
+
+def _absolute_path_or_reject(value: object, what: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise PanelRunnerError(f"{what} must be a non-empty string")
+    resolved = Path(value)
+    if not resolved.is_absolute():
+        raise PanelRunnerError(f"{what} must be an absolute path: {value!r}")
+    return resolved
+
+
+def parse_slot_location(index: int, value: object) -> SlotLocation:
+    """One `stores` entry, in either admissible form.
+
+    A bare string is a Store root with no chain directory, exactly as before.
+    An object is `{"store_root", "baseline_chain_dir"}` and must carry both:
+    the wrapper writes the object form only for a slot that NEEDS the chain
+    directory, so an object without one is a wrapper bug, not a slot that
+    happens to lack it. Unknown keys inside the object are rejected."""
+    if isinstance(value, str):
+        return SlotLocation(
+            _absolute_path_or_reject(value, f"slot locator store root for slot {index}"),
+            None,
+        )
+    if not isinstance(value, dict):
+        raise PanelRunnerError(
+            f"slot locator value for slot {index} must be a string or an object: {value!r}"
+        )
+    unknown = set(value) - {"store_root", "baseline_chain_dir"}
+    if unknown:
+        raise PanelRunnerError(
+            f"slot locator entry for slot {index} has unknown keys: {sorted(unknown)}"
+        )
+    missing = {"store_root", "baseline_chain_dir"} - set(value)
+    if missing:
+        raise PanelRunnerError(
+            f"slot locator entry for slot {index} is missing {sorted(missing)}; "
+            "the object form carries both"
+        )
+    return SlotLocation(
+        _absolute_path_or_reject(
+            value["store_root"], f"slot locator store root for slot {index}"
+        ),
+        _absolute_path_or_reject(
+            value["baseline_chain_dir"],
+            f"slot locator baseline_chain_dir for slot {index}",
+        ),
+    )
+
+
+def load_slot_locator(path: Path) -> dict[int, SlotLocation]:
+    """Machine-local slot index -> location mapping. Absolute paths only
+    (the manifest's own "no absolute paths in hashed contracts" rule extends
+    here: this file is never read by the Rust builder and its bytes never
+    enter any hashed artifact).
+
+    Each `stores` entry is either a bare store-root string or the additive
+    object form `{"store_root", "baseline_chain_dir"}`; see
+    `parse_slot_location`. Which slots must carry which form is decided
+    against the arm kind and the roster in `validate_slot_chain_dirs`."""
+    document = load_json(path)
+    if document.get("schema") != SLOT_LOCATOR_SCHEMA:
+        raise PanelRunnerError(
+            f"unexpected slot-locator schema: {document.get('schema')!r}"
+        )
+    stores = document.get("stores")
+    if not isinstance(stores, dict) or len(stores) != SLOT_COUNT:
+        raise PanelRunnerError("slot locator must map exactly eight slot indexes")
+    resolved: dict[int, SlotLocation] = {}
+    for key, value in stores.items():
+        try:
+            index = int(key)
+        except (TypeError, ValueError) as error:
+            raise PanelRunnerError(f"slot locator key is not an integer: {key!r}") from error
+        if not 0 <= index < SLOT_COUNT or index in resolved:
+            raise PanelRunnerError(
+                f"slot locator has an out-of-range or duplicate index: {key!r}"
+            )
+        resolved[index] = parse_slot_location(index, value)
+    if set(resolved) != set(range(SLOT_COUNT)):
+        raise PanelRunnerError("slot locator must cover slots 0..7 exactly once")
+    return resolved
+
+
+def validate_slot_chain_dirs(
+    arm: str,
+    slots: list[dict],
+    locator: dict[int, SlotLocation],
+    trainee_run_sha256: str,
+) -> None:
+    """Every slot bound to a v4 arm's OWN run must carry a baseline chain
+    directory, and no other slot may.
+
+    A missing one would send the probe down the plain boundary walk, which
+    rejects trained v4 evidence outright: the panel would panic partway
+    through instead of failing here. A superfluous one would be silently
+    ignored by the probe, so it is refused rather than accepted as a no-op."""
+    if arm not in ARM_KINDS:
+        raise PanelRunnerError(f"unknown arm kind: {arm!r}")
+    for index, slot in enumerate(slots):
+        own_run = slot["source_run_sha256"] == trainee_run_sha256
+        needs_chain_dir = own_run and arm in BASELINE_V4_ARM_KINDS
+        has_chain_dir = locator[index].baseline_chain_dir is not None
+        if needs_chain_dir and not has_chain_dir:
+            raise PanelRunnerError(
+                f"slot {index} ({slot['role']}) is bound to the {arm} arm's own run, so its "
+                "locator entry must carry baseline_chain_dir"
+            )
+        if has_chain_dir and not needs_chain_dir:
+            raise PanelRunnerError(
+                f"slot {index} ({slot['role']}) carries baseline_chain_dir but is not an "
+                f"own-run slot of a v4 arm ({arm})"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Matchup planning: pure, deterministic given (base_seed, games_per_matchup).
+# ---------------------------------------------------------------------------
+
+
+def build_matchup_specs(base_seed: int, games_per_matchup: int) -> list[MatchupSpec]:
+    if games_per_matchup <= 0 or games_per_matchup % 2 != 0:
+        raise PanelRunnerError("--games-per-matchup must be a positive even integer")
+    pair_count = games_per_matchup // 2
+    specs = [
+        MatchupSpec(
+            matchup_index=matchup_index,
+            lower_slot=lower,
+            higher_slot=higher,
+            evaluation_seed=base_seed + matchup_index * EVAL_SEED_STRIDE,
+            pair_count=pair_count,
+            game_count=games_per_matchup,
+            label=f"matchup-{lower}-{higher}",
+        )
+        for matchup_index, (lower, higher) in enumerate(
+            itertools.combinations(range(SLOT_COUNT), 2)
+        )
+    ]
+    assert len(specs) == MATCHUP_COUNT
+    return specs
+
+
+def matchup_environment(
+    slots: list[dict],
+    locator: dict[int, Path],
+    spec: MatchupSpec,
+    outcome_path: Path,
+) -> dict[str, str]:
+    candidate = slots[spec.lower_slot]
+    opponent = slots[spec.higher_slot]
+    candidate_location = locator[spec.lower_slot]
+    opponent_location = locator[spec.higher_slot]
+    environment = {
+        "H2H_CANDIDATE_STORE_ROOT": str(candidate_location.store_root),
+        # STORE generations, translated by `store_generation_for_slot`: an
+        # own-run slot's trainee-local label does not exist in the arm's own
+        # Store, which restarted at generation 0.
+        "H2H_CANDIDATE_GEN": str(candidate["store_generation"]),
+        "H2H_CANDIDATE_USE_STORE_RUN": "1",
+        "H2H_OPPONENT_STORE_ROOT": str(opponent_location.store_root),
+        "H2H_OPPONENT_GEN": str(opponent["store_generation"]),
+        "H2H_PAIRS": str(spec.pair_count),
+        "H2H_EVAL_SEED": str(spec.evaluation_seed),
+        "H2H_ENVIRONMENT_RANDOMIZATION_V2": "1",
+        "H2H_OUTCOME_JSON": str(outcome_path),
+    }
+    # Only a side whose Store is a v4 arm's own carries one; the probe
+    # rejects the pairing either way round, so this is never a hint.
+    if candidate_location.baseline_chain_dir is not None:
+        environment["H2H_CANDIDATE_CHAIN_DIR"] = str(candidate_location.baseline_chain_dir)
+    if opponent_location.baseline_chain_dir is not None:
+        environment["H2H_OPPONENT_CHAIN_DIR"] = str(opponent_location.baseline_chain_dir)
+    return environment
+
+
+def matchup_command(executable: Path) -> list[str]:
+    return [
+        str(executable),
+        TEST_NAME,
+        "--ignored",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1",
+    ]
+
+
+def render_dry_run_lines(
+    specs: list[MatchupSpec],
+    slots: list[dict],
+    locator: dict[int, Path],
+    executable: Path,
+    output_dir: Path,
+) -> list[str]:
+    """Pure rendering of the exact command and environment each matchup
+    would run, with no process or filesystem access -- deterministic given
+    identical inputs, which is exactly what the dry-run-determinism tests
+    exercise."""
+    lines = []
+    for spec in specs:
+        outcome_path = output_dir / spec.label / "outcome.json"
+        environment = matchup_environment(slots, locator, spec, outcome_path)
+        command = matchup_command(executable)
+        env_str = " ".join(
+            f"{key}={shlex.quote(value)}" for key, value in environment.items()
+        )
+        cmd_str = " ".join(shlex.quote(part) for part in command)
+        lines.append(
+            f"[{spec.matchup_index:02d}] {spec.label} "
+            f"seed={spec.evaluation_seed} pairs={spec.pair_count} "
+            f"games={spec.game_count} :: {env_str} {cmd_str}"
+        )
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Outcome validation and tabulation -- pure given an already-parsed outcome
+# document, so directly testable against synthetic outcomes (no games).
+# ---------------------------------------------------------------------------
+
+
+def summarize_outcome(outcome: dict, spec: MatchupSpec, candidate: dict, opponent: dict) -> dict:
+    """Validates one matchup's outcome document against its spec and the
+    manifest's declared candidate/opponent identity (the post-hoc identity
+    check described in the module docstring), then tabulates W/D/L from the
+    lower slot's (candidate's) perspective and collects this matchup's pair
+    environment seeds. Raises `PanelRunnerError` on any mismatch -- fail
+    closed, matching v1's `validate_outcome`."""
+    if (
+        outcome.get("schema") != OUTCOME_SCHEMA
+        or outcome.get("evaluation_base_seed") != spec.evaluation_seed
+        or outcome.get("pair_count") != spec.pair_count
+        or outcome.get("episode_count") != spec.pair_count * 2
+    ):
+        raise PanelRunnerError(f"{spec.label}: outcome header mismatch")
+    runtime = outcome.get("runtime")
+    if not isinstance(runtime, dict) or (
+        runtime.get("all_natural") is not True
+        or runtime.get("environment_randomization_v2") is not True
+    ):
+        raise PanelRunnerError(f"{spec.label}: outcome runtime flags mismatch")
+    for side, slot in (("candidate", candidate), ("opponent", opponent)):
+        identity = outcome.get(side)
+        if not isinstance(identity, dict) or (
+            identity.get("run_sha256") != slot["source_run_sha256"]
+            # The outcome reports the generation the Store actually loaded,
+            # which for an own-run slot is the translated one.
+            or identity.get("generation") != slot["store_generation"]
+            or identity.get("checkpoint_manifest_sha256") != slot["checkpoint_manifest_sha256"]
+            or identity.get("checkpoint_payload_sha256") != slot["checkpoint_payload_sha256"]
+            or identity.get("model_parameter_sha256") != slot["model_parameter_sha256"]
+        ):
+            raise PanelRunnerError(
+                f"{spec.label}: {side} identity does not match the manifest slot"
+            )
+    episodes = outcome.get("episodes")
+    if not isinstance(episodes, list) or len(episodes) != spec.pair_count * 2:
+        raise PanelRunnerError(f"{spec.label}: episode count mismatch")
+    by_pair: dict[int, list[dict]] = defaultdict(list)
+    counts = {-1: 0, 0: 0, 1: 0}
+    for episode in episodes:
+        rank = episode.get("terminal_order_rank")
+        if rank not in counts:
+            raise PanelRunnerError(f"{spec.label}: nonterminal rank entered the payoff panel")
+        counts[rank] += 1
+        by_pair[int(episode["pair_index"])].append(episode)
+    pair_seeds: list[int] = []
+    for pair_index in range(spec.pair_count):
+        pair = by_pair.get(pair_index, [])
+        if (
+            len(pair) != 2
+            or {row.get("learner_seat") for row in pair} != {"P0", "P1"}
+            or len({row.get("environment_seed") for row in pair}) != 1
+        ):
+            raise PanelRunnerError(f"{spec.label}: seat-swap binding mismatch at pair {pair_index}")
+        pair_seeds.append(int(pair[0]["environment_seed"]))
+    if len(set(pair_seeds)) != len(pair_seeds):
+        raise PanelRunnerError(f"{spec.label}: duplicate pair seeds within one matchup")
+    overall = outcome.get("learner_outcomes", {}).get("overall", {})
+    if (
+        overall.get("wins") != counts[1]
+        or overall.get("losses") != counts[-1]
+        or overall.get("draws") != counts[0]
+    ):
+        raise PanelRunnerError(f"{spec.label}: W/L/D summary mismatch")
+    return {
+        "lower_wins": counts[1],
+        "lower_draws": counts[0],
+        "lower_losses": counts[-1],
+        "pair_environment_seeds": pair_seeds,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Panel and BT-input document assembly -- pure given the per-matchup
+# summaries, so directly testable without games.
+# ---------------------------------------------------------------------------
+
+
+def build_panel_document(
+    manifest_sha256: str,
+    base_seed: int,
+    games_per_matchup: int,
+    slots: list[dict],
+    specs: list[MatchupSpec],
+    summaries: list[dict],
+    outcome_hashes: list[str],
+) -> dict:
+    """Assembles the one canonical panel document. `rank_sums` is exactly
+    the shape `native_population_refresh_builder_cycle5_v1.rs`'s
+    `ordered_panel_rank_sums_v1` parses: `{"slot_index": int, "u_i": int}`
+    per slot, `u_i` the signed terminal-rank sum over that slot's seven
+    matchups (win +1, draw 0, loss -1 per game, matching
+    `mw_update_cycle5_v1`'s documented convention)."""
+    matchup_rows = []
+    contributions = [0] * SLOT_COUNT
+    for spec, summary, outcome_sha256 in zip(specs, summaries, outcome_hashes, strict=True):
+        lower_wins = summary["lower_wins"]
+        lower_draws = summary["lower_draws"]
+        lower_losses = summary["lower_losses"]
+        # Zero-sum: the higher slot's record is exactly the lower slot's
+        # record with wins and losses swapped. Stated explicitly (both
+        # orderings) rather than left for a consumer to derive by sign flip.
+        higher_wins = lower_losses
+        higher_draws = lower_draws
+        higher_losses = lower_wins
+        contributions[spec.lower_slot] += lower_wins - lower_losses
+        contributions[spec.higher_slot] += higher_wins - higher_losses
+        matchup_rows.append(
+            {
+                "matchup_index": spec.matchup_index,
+                "lower_slot_index": spec.lower_slot,
+                "higher_slot_index": spec.higher_slot,
+                "lower_role": slots[spec.lower_slot]["role"],
+                "higher_role": slots[spec.higher_slot]["role"],
+                "evaluation_seed": spec.evaluation_seed,
+                "pair_count": spec.pair_count,
+                "game_count": spec.game_count,
+                "lower_wins": lower_wins,
+                "lower_draws": lower_draws,
+                "lower_losses": lower_losses,
+                "higher_wins": higher_wins,
+                "higher_draws": higher_draws,
+                "higher_losses": higher_losses,
+                "outcome_sha256": outcome_sha256,
+            }
+        )
+    rank_sums = [
+        {
+            "slot_index": index,
+            "role": slots[index]["role"],
+            "u_i": contributions[index],
+        }
+        for index in range(SLOT_COUNT)
+    ]
+    return {
+        "schema": PANEL_SCHEMA,
+        "manifest_sha256": manifest_sha256,
+        "base_seed": base_seed,
+        "games_per_matchup": games_per_matchup,
+        "matchups": matchup_rows,
+        "rank_sums": rank_sums,
+    }
+
+
+def build_bt_input_document(slots: list[dict], panel: dict) -> dict:
+    """Assembles the BT-rating input document straight from the panel's own
+    matchup rows, so it can never disagree with `panel.json` about what
+    happened. `reference_id` is anchor-0's `model_parameter_sha256` --
+    anchor-0 is the one slot whose identity is frozen across every refresh
+    (`promoted(2)@384`), which is exactly why it is the fixed reference the
+    derived metric's docstring calls for. Model ids are every OTHER slot's
+    `model_parameter_sha256` too: content-addressed, so a slot whose
+    occupant changes next refresh (current-1, historical-0) is correctly
+    treated as a different model, never conflated with its predecessor."""
+    anchor_zero = next(slot for slot in slots if slot["role"] == "anchor-0")
+    pairs = [
+        {
+            "a_id": slots[row["lower_slot_index"]]["model_parameter_sha256"],
+            "b_id": slots[row["higher_slot_index"]]["model_parameter_sha256"],
+            "a_wins": row["lower_wins"],
+            "b_wins": row["higher_wins"],
+            "draws": row["lower_draws"],
+        }
+        for row in panel["matchups"]
+    ]
+    return {
+        "schema": BT_INPUT_SCHEMA,
+        "reference_id": anchor_zero["model_parameter_sha256"],
+        "pairs": pairs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Execution.
+# ---------------------------------------------------------------------------
+
+
+class _OwnedPopenV1(subprocess.Popen):
+    """A `Popen` that registers itself in its owner's handle at the very
+    start of its own constructor, BEFORE the child is created. Whatever
+    interrupts construction or the caller afterwards, the handle already
+    names the process object, so `abandon_matchup` can kill and reap it."""
+
+    def __init__(self, owner_handle: dict, *args, **kwargs):
+        owner_handle["process"] = self
+        super().__init__(*args, **kwargs)
+
+
+def launch_matchup(
+    executable: Path,
+    repo_root: Path,
+    output_dir: Path,
+    slots: list[dict],
+    locator: dict[int, Path],
+    spec: MatchupSpec,
+    register: Callable[[dict], None] | None = None,
+) -> dict:
+    """Creates the matchup's directory, opens its logs, and STARTS its engine
+    process, nothing more. Kept minimal on purpose: the pool calls it under
+    its admission lock, so a failing matchup and a starting one are
+    serialized at the point where the engine process comes into existence.
+
+    Caller-visible ownership has no gap: the handle is built and handed to
+    `register` before any log is opened or any process created, the logs are
+    stored into it as they open, and the process object registers itself
+    into it at the start of its constructor. From then on
+    `abandon_matchup(handle)` disposes of everything the interpreter has
+    given us, whatever interrupts the caller and wherever. The one boundary
+    left is CPython's own: on Windows the OS child is created inside
+    `_winapi.CreateProcess` before `Popen.__init__` stores its handle and
+    pid, and an interruption in that window is beyond any Python caller's
+    reach (`subprocess.run` shares it). Documented, not engineered around."""
+    arm_root = output_dir / spec.label
+    arm_root.mkdir(parents=True)
+    handle: dict = {
+        "spec": spec,
+        "process": None,
+        "stdout": None,
+        "stderr": None,
+        "outcome_path": arm_root / "outcome.json",
+        "stdout_path": arm_root / "stdout.log",
+        "stderr_path": arm_root / "stderr.log",
+        "started": None,
+        "finished": False,
+    }
+    if register is not None:
+        register(handle)
+    environment = os.environ.copy()
+    for key in H2H_ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    environment.update(matchup_environment(slots, locator, spec, handle["outcome_path"]))
+    command = matchup_command(executable)
+    handle["stdout"] = handle["stdout_path"].open("xb")
+    handle["stderr"] = handle["stderr_path"].open("xb")
+    handle["started"] = time.perf_counter()
+    _OwnedPopenV1(
+        handle,
+        command,
+        cwd=repo_root,
+        env=environment,
+        stdout=handle["stdout"],
+        stderr=handle["stderr"],
+    )
+    return handle
+
+
+def _terminate_engine_v1(process) -> None:
+    """Kills and reaps an engine whose normal wait did not complete. Never
+    raises, whatever the process object's state: the caller is propagating
+    the real exception and nothing here may replace it."""
+    if process is None:
+        return
+    try:
+        process.kill()
+    except BaseException:
+        pass
+    try:
+        process.wait()
+    except BaseException:
+        pass
+
+
+def _close_engine_logs_v1(handle: dict) -> BaseException | None:
+    """Closes both log streams, always attempting the second even if the
+    first fails, and RETURNS the first close failure instead of raising it.
+    The caller decides: on a clean finish a close failure is a real failure
+    (an unflushed engine log must not precede canonical publication); while
+    another exception is already propagating, or during abandon, it is
+    suppressed so the original exception is preserved."""
+    first_error: BaseException | None = None
+    for key in ("stdout", "stderr"):
+        stream = handle.get(key)
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+    return first_error
+
+
+def finish_matchup(handle: dict) -> dict:
+    """Waits for a launched matchup's engine, closes its logs, and checks
+    its exit; fail-closed on a nonzero exit or a missing outcome file.
+
+    If the wait itself raises (KeyboardInterrupt, a signal, anything), the
+    engine is killed and reaped before the original exception propagates,
+    exactly as `subprocess.run` did, so no engine outlives the runner. On
+    that path every cleanup step (kill, reap, both closes) is suppressed, so
+    the exception that escapes is always the original one. On a CLEAN wait,
+    a failing log close is a real failure of the matchup: both closes are
+    still attempted, and the first failure is raised, so an unflushed engine
+    log can never precede canonical publication. The handle is marked
+    finished either way, so `abandon_matchup` becomes a no-op for it."""
+    process = handle["process"]
+    try:
+        returncode = process.wait()
+    except BaseException:
+        handle["finished"] = True
+        _terminate_engine_v1(process)
+        _close_engine_logs_v1(handle)
+        raise
+    handle["finished"] = True
+    close_error = _close_engine_logs_v1(handle)
+    if close_error is not None:
+        raise close_error
+    wall_seconds = time.perf_counter() - handle["started"]
+    spec = handle["spec"]
+    outcome_path = handle["outcome_path"]
+    if returncode != 0 or not outcome_path.is_file():
+        raise PanelRunnerError(
+            f"{spec.label} failed: exit_code={returncode} "
+            f"stderr={handle['stderr_path']} stdout={handle['stdout_path']}"
+        )
+    return {
+        "outcome_path": outcome_path,
+        "wall_seconds": wall_seconds,
+        "outcome_sha256": sha256_file(outcome_path),
+    }
+
+
+def abandon_matchup(handle: dict) -> None:
+    """Disposes of a registered matchup handle that `finish_matchup` never
+    completed for: kill and reap whatever process registered itself, close
+    whatever logs opened. Idempotent and genuinely no-throw; a finished
+    handle is left alone."""
+    try:
+        if handle.get("finished"):
+            return
+        handle["finished"] = True
+        _terminate_engine_v1(handle.get("process"))
+        _close_engine_logs_v1(handle)
+    except BaseException:
+        pass
+
+
+def run_matchup(
+    executable: Path,
+    repo_root: Path,
+    output_dir: Path,
+    slots: list[dict],
+    locator: dict[int, Path],
+    spec: MatchupSpec,
+) -> dict:
+    """One matchup from launch to checked exit: the sequential composition of
+    `launch_matchup` and `finish_matchup`, with every registered handle
+    abandoned if anything interrupts the composition."""
+    owned: list[dict] = []
+    try:
+        handle = launch_matchup(
+            executable, repo_root, output_dir, slots, locator, spec, register=owned.append
+        )
+        return finish_matchup(handle)
+    except BaseException:
+        for handle in owned:
+            abandon_matchup(handle)
+        raise
+
+
+class _MatchupAbortedBeforeStartV1(Exception):
+    """Internal marker: a queued matchup was skipped because an earlier
+    matchup had already failed. Never reported as the failure itself and
+    never allowed to escape this module."""
+
+
+def run_matchups_in_spec_order(
+    specs: list[MatchupSpec],
+    workers: int,
+    *,
+    launch_one: Callable[[MatchupSpec, Callable[[object], None]], object],
+    finish_one: Callable[[object], dict],
+    validate: Callable[[MatchupSpec, dict], object],
+    accept: Callable[[MatchupSpec, object], None],
+    abandon_one: Callable[[object], None] | None = None,
+    executor_factory: Callable[[int], concurrent.futures.Executor] | None = None,
+) -> None:
+    """Runs every matchup as launch -> finish -> validate, and hands the
+    validated value of each to `accept` in SPEC order regardless of
+    completion order, so everything downstream (the summaries, the
+    cross-matchup seed-reuse check, the outcome hashes, the panel document)
+    is independent of `workers`.
+
+    `launch_one(spec, register)` starts a matchup's engine and returns a
+    handle; it must call `register(handle)` as soon as a disposable handle
+    exists, BEFORE creating the process, so that ownership has no gap.
+    `finish_one` waits for the engine and checks its exit; `validate` is the
+    PURE per-matchup check of the produced outcome (it may raise, it must
+    not touch shared state); `accept` applies the ordered, shared side
+    effects; `abandon_one` (optional, no-throw) disposes of every registered
+    handle if anything raises from inside `launch_one` after registration
+    through the end of `finish_one`; `executor_factory` (optional, tests)
+    builds the thread pool.
+
+    `workers == 1` is the plain sequential loop: no thread pool at all, one
+    subprocess at a time, each accepted before the next is launched.
+
+    `workers > 1` submits every matchup to a bounded thread pool (the threads
+    only wait on subprocesses; each engine is its own process with
+    `--test-threads=1`). Failure is fail-closed and PROMPT:
+
+    - a worker runs `validate` on its own matchup as soon as the engine
+      exits, so a malformed outcome is a failure the moment it exists, not
+      when its turn to be accepted arrives;
+    - the coordinator waits on the first completed future, whatever its
+      index, so any failure (process or validation) is observed at once;
+    - admission and `launch_one` run under ONE lock, the same lock a failing
+      worker takes to raise the abort flag, so a matchup's engine process
+      either exists before the failure was signalled or is never created;
+    - `executor.submit` runs under that same lock, and a failing submit
+      raises the abort flag before the lock is released, so a work item the
+      executor enqueued but whose future it never returned cannot pass
+      admission and is skipped exactly like a cancelled one;
+    - every queued future is then cancelled, every running one is waited
+      for, and the failure reported is the FIRST IN SPEC ORDER among real
+      failures (process or validation), independent of completion timing;
+      abort markers from skipped matchups are never reported.
+
+    No orphaned engine keeps writing under the output directory after the
+    runner has reported failure."""
+    if workers < 1 or workers > MAX_MATCHUP_WORKERS:
+        raise PanelRunnerError(
+            f"matchup workers must be within 1..{MAX_MATCHUP_WORKERS}, got {workers}"
+        )
+    abandon = abandon_one or (lambda handle: None)
+
+    def abandon_all(owned: list[object]) -> None:
+        for handle in owned:
+            abandon(handle)
+
+    if workers == 1:
+        for spec in specs:
+            owned: list[object] = []
+            try:
+                handle = launch_one(spec, owned.append)
+                result = finish_one(handle)
+            except BaseException:
+                abandon_all(owned)
+                raise
+            accept(spec, validate(spec, result))
+        return
+
+    admission = threading.Lock()
+    state = {"aborted": False}
+
+    def worker(spec: MatchupSpec) -> object:
+        owned: list[object] = []
+        # One ownership scope covers launch through finish, so an exception
+        # anywhere in that interval (including between the admission block
+        # and the finish call) abandons every registered handle; the inner
+        # admission handler additionally records the abort before unlocking.
+        try:
+            with admission:
+                if state["aborted"]:
+                    raise _MatchupAbortedBeforeStartV1(spec.label)
+                try:
+                    handle = launch_one(spec, owned.append)
+                except BaseException:
+                    state["aborted"] = True
+                    raise
+            result = finish_one(handle)
+        except BaseException:
+            # Record the abort FIRST, so no other worker can pass admission
+            # while a slow kill or reap runs below; then abandon. The abort
+            # sentinel takes this path too: a legitimate pre-admission
+            # sentinel has an empty owned list and an abort state that is
+            # already true, so the cleanup is a no-op for it, while a sentinel
+            # raised by a callback after registration still abandons its
+            # handle and records the abort (CODEX #70).
+            with admission:
+                state["aborted"] = True
+            abandon_all(owned)
+            raise
+        try:
+            return validate(spec, result)
+        except BaseException:
+            with admission:
+                state["aborted"] = True
+            raise
+
+    futures: list[concurrent.futures.Future] = []
+    position = {"next": 0}
+
+    def signal_abort() -> None:
+        with admission:
+            state["aborted"] = True
+        for future in futures:
+            future.cancel()
+
+    def failed(future: concurrent.futures.Future) -> bool:
+        return not future.cancelled() and future.exception() is not None
+
+    def resolve_in_spec_order(stop_on_pending: bool) -> None:
+        """Walks futures from the next unaccepted index in spec order:
+        accepts finished successes, raises the first real failure (process
+        or validation), skips abort markers and cancelled futures. With
+        `stop_on_pending` it returns at the first future not done yet."""
+        while position["next"] < len(futures):
+            future = futures[position["next"]]
+            if not future.done():
+                if stop_on_pending:
+                    return
+                raise PanelRunnerError("internal: unfinished matchup during failure resolution")
+            if not future.cancelled():
+                error = future.exception()
+                if error is None:
+                    accept(specs[position["next"]], future.result())
+                elif not isinstance(error, _MatchupAbortedBeforeStartV1):
+                    raise error
+            position["next"] += 1
+
+    make_executor = executor_factory or concurrent.futures.ThreadPoolExecutor
+    with make_executor(workers) as executor:
+        try:
+            # Submission is inside the fail-closed path AND serialized with
+            # admission: each submit holds the admission lock, so a work item
+            # the executor enqueued cannot pass admission until the submit
+            # has returned its future; if the submit raises instead, the
+            # abort flag is raised before the lock is released, so that
+            # unreturned item is skipped exactly like a cancelled one. Every
+            # tracked future is then cancelled, running work is waited for by
+            # the executor's exit, and the scheduling error propagates.
+            for spec in specs:
+                with admission:
+                    try:
+                        futures.append(executor.submit(worker, spec))
+                    except BaseException:
+                        # Submit OR the append after it: either way the item
+                        # may be enqueued and untracked, so abort before the
+                        # lock is released.
+                        state["aborted"] = True
+                        raise
+            pending = set(futures)
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                if any(failed(future) for future in done):
+                    signal_abort()
+                    break
+                resolve_in_spec_order(stop_on_pending=True)
+            else:
+                return
+        except BaseException:
+            signal_abort()
+            raise
+        # A matchup failed. Wait for whatever is still running, then walk the
+        # futures in spec order: every completed future is already validated,
+        # so the first exception met is the first real failure in spec order.
+        concurrent.futures.wait([future for future in futures if not future.cancelled()])
+        resolve_in_spec_order(stop_on_pending=False)
+        raise PanelRunnerError("a matchup failed but no failure was recorded")
+
+
+def run(args: argparse.Namespace) -> Path | None:
+    manifest_bytes, manifest_sha256, refresh_index, slots = load_manifest(args.manifest)
+    del manifest_bytes  # only its hash (and refresh_index) is needed once loaded
+    locator = load_slot_locator(args.slot_locator)
+    validate_slot_chain_dirs(
+        args.arm, slots, locator, load_json(args.manifest)["trainee_run_sha256"]
+    )
+    next_refresh_index = refresh_index + 1
+    if next_refresh_index > MAX_REFRESH_INDEX:
+        raise PanelRunnerError(
+            f"manifest refresh_index={refresh_index} is already at the campaign's "
+            f"max ({MAX_REFRESH_INDEX}); there is no next boundary to panel"
+        )
+    specs = build_matchup_specs(args.base_seed, args.games_per_matchup)
+    # Resolved once, up front: every matchup path derived from this (the
+    # per-matchup outcome directories AND H2H_OUTCOME_JSON) must be absolute,
+    # since `run_matchup` launches its subprocess with `cwd=repo_root`, not
+    # `cwd=output_dir` -- a relative --output-dir would otherwise resolve
+    # against the WRONG directory inside the child process.
+    output_dir = args.output_dir.resolve()
+
+    if args.dry_run:
+        for line in render_dry_run_lines(specs, slots, locator, args.executable, output_dir):
+            print(line)
+        return None
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    executable = args.executable.resolve()
+    repo_root = args.repo_root.resolve()
+    summaries = []
+    outcome_hashes = []
+    all_seeds: set[int] = set()
+
+    def validate(spec: MatchupSpec, result: dict) -> dict:
+        # Pure per-matchup validation; runs in the worker the moment its
+        # engine exits, so a malformed outcome fails the panel promptly.
+        outcome = load_json(result["outcome_path"])
+        summary = summarize_outcome(
+            outcome, spec, slots[spec.lower_slot], slots[spec.higher_slot]
+        )
+        return {"summary": summary, "outcome_sha256": result["outcome_sha256"]}
+
+    def accept(spec: MatchupSpec, validated: dict) -> None:
+        # Cross-matchup state, applied strictly in spec order.
+        for seed in validated["summary"]["pair_environment_seeds"]:
+            if seed in all_seeds:
+                raise PanelRunnerError(f"pair environment seed {seed} reused across matchups")
+            all_seeds.add(seed)
+        summaries.append(validated["summary"])
+        outcome_hashes.append(validated["outcome_sha256"])
+
+    run_matchups_in_spec_order(
+        specs,
+        args.matchup_workers,
+        launch_one=lambda matchup, register: launch_matchup(
+            executable, repo_root, output_dir, slots, locator, matchup, register=register
+        ),
+        finish_one=finish_matchup,
+        validate=validate,
+        accept=accept,
+        abandon_one=abandon_matchup,
+    )
+
+    expected_pair_count = sum(spec.pair_count for spec in specs)
+    if len(all_seeds) != expected_pair_count:
+        raise PanelRunnerError(
+            "payoff panel does not contain the expected number of fresh pair seeds"
+        )
+
+    panel = build_panel_document(
+        manifest_sha256,
+        args.base_seed,
+        args.games_per_matchup,
+        slots,
+        specs,
+        summaries,
+        outcome_hashes,
+    )
+    bt_input = build_bt_input_document(slots, panel)
+
+    panel_path = output_dir / panel_filename(next_refresh_index)
+    bt_input_path = output_dir / "bt-rating-input.json"
+    panel_temp = staged_temp_path(panel_path)
+    bt_input_temp = staged_temp_path(bt_input_path)
+    try:
+        write_new_json(panel_temp, panel)
+        write_new_json(bt_input_temp, bt_input)
+        # bt-rating-input.json is downstream analysis input; panel_path is
+        # the content the NEXT manifest binds by SHA-256, so it is committed
+        # LAST -- its presence there is the single signal this whole run
+        # succeeded.
+        commit_staged_file(bt_input_temp, bt_input_path)
+        commit_staged_file(panel_temp, panel_path)
+    except BaseException:
+        remove_stray(panel_temp)
+        remove_stray(bt_input_temp)
+        raise
+
+    print(panel_path)
+    print(bt_input_path)
+    return panel_path
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--slot-locator", required=True, type=Path)
+    # Which locator shape each slot must carry is a function of the arm kind,
+    # and the manifest does not carry one (it is the same roster for all
+    # three arms), so the caller states it.
+    parser.add_argument("--arm", required=True, choices=list(ARM_KINDS))
+    parser.add_argument(
+        "--games-per-matchup", type=int, default=DEFAULT_GAMES_PER_MATCHUP
+    )
+    parser.add_argument("--base-seed", required=True, type=int)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--executable", required=True, type=Path)
+    parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument(
+        "--matchup-workers",
+        type=int,
+        default=DEFAULT_MATCHUP_WORKERS,
+        help="how many matchup subprocesses run at once (1..64; default 1). "
+        "Matchups are independent processes, so the panel document is "
+        "byte-identical for any value; the wrapper records the value in its "
+        "launch manifest, never in the panel",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print every matchup's exact command/environment/seed and exit "
+        "without touching a process or the filesystem",
+    )
+    args = parser.parse_args(argv)
+    if not 1 <= args.matchup_workers <= MAX_MATCHUP_WORKERS:
+        parser.error(
+            f"--matchup-workers={args.matchup_workers} is outside 1..{MAX_MATCHUP_WORKERS}"
+        )
+    if not args.dry_run and args.games_per_matchup != CANONICAL_GAMES_PER_MATCHUP:
+        parser.error(
+            f"--games-per-matchup={args.games_per_matchup} is not allowed outside "
+            f"--dry-run: the production panel schema is only ever emitted for "
+            f"G={CANONICAL_GAMES_PER_MATCHUP} (pass --dry-run for local smoke "
+            "testing with a different game count)"
+        )
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        run(args)
+    except PanelRunnerError as error:
+        print(f"run_payoff_panel_v1: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
