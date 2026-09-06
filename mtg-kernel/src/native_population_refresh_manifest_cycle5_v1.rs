@@ -986,7 +986,7 @@ mod tests {
             .expect("decode");
         assert_eq!(decoded.manifest_sha256_v1(), manifest.manifest_sha256_v1());
         assert_eq!(decoded.refresh_index_v1(), 0);
-        assert_eq!(decoded.trainee_local_generation_v1(), 896);
+        assert_eq!(decoded.trainee_local_generation_v1(), 2048);
     }
 
     #[test]
@@ -1113,7 +1113,7 @@ mod tests {
         assert_eq!(previous.refresh_index_v1(), 4);
         assert_eq!(
             previous.slots_v1()[2].source_generation,
-            896 + 4 * 128 - 512
+            2048 + 4 * 128 - 512
         );
     }
 

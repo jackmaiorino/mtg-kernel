@@ -17,11 +17,11 @@
 //! - The arm's own Store therefore counts `0 ..= 2048`, exactly as
 //!   `docs/native_population_refresh_manifest_cycle5_v1.md` states ("the
 //!   arm's own store counts updates 0..=2048").
-//! - Trainee-local numbering is `896 + store_generation`, so the contract's
-//!   start 896 maps to store generation 0 and its stop 2944 maps to store
+//! - Trainee-local numbering is `2048 + store_generation`, so the contract's
+//!   start 2048 maps to store generation 0 and its stop 4096 maps to store
 //!   generation 2048. The refresh manifest carries both: `program_update`
 //!   IS the store generation and `trainee_local_generation` is
-//!   `896 + program_update`.
+//!   `2048 + program_update`.
 //! - `--stop-generation` and [`Cycle5ArmRequestV1::stop_generation`] are
 //!   STORE generations (0..=2048), never trainee-local. The launcher proves
 //!   `stop_generation` names a whole interval (a multiple of 128 at or below
@@ -33,13 +33,13 @@
 //!   (`current-1` always, `historical-0` from refresh index 4). Translation
 //!   is this launcher's job, not the manifest's: an own-run slot's
 //!   `source_generation` is read from the arm's Store at
-//!   `source_generation - 896` (see `store_generation_for_slot_v1`). A label
-//!   below 896, a translated generation the Store does not contain, and a
+//!   `source_generation - 2048` (see `store_generation_for_slot_v1`). A label
+//!   below 2048, a translated generation the Store does not contain, and a
 //!   loaded checkpoint whose identity hashes differ from the roster's all
 //!   fail closed. Slots bound to OTHER runs are read at their labels
 //!   verbatim, since those runs number their own stores.
 //! - The origin binding (parent run, parent checkpoint/sidecar/state
-//!   SHA-256s, init generation 896) lives in the hashed run record's
+//!   SHA-256s, init generation 2048) lives in the hashed run record's
 //!   `contracts.opponent_ladder_initialization`, and is additionally
 //!   restated in this launcher's own hashed origin record published into the
 //!   chain directory at genesis.
@@ -72,19 +72,16 @@ use crate::native_training_store_checkpoint_v3::{
     build_genesis_checkpoint_manifest_v2_v3, derive_genesis_weights_only_payload_v2_v3,
     CheckpointManifestV3,
 };
-use crate::native_training_store_checkpoint_v4::{
-    checkpoint_manifest_parts_v4_from_v3, decode_checkpoint_manifest_v4,
-};
-use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
+use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_training_store_layout_v2::NativeTrainingStoreFinalNameV2;
 use crate::native_training_store_prepared_segment_v2::prepare_segment_v2;
 use crate::native_training_store_reference_latest_v2::{
     build_checkpoint_reference_v2, build_latest_v2,
 };
 use crate::native_training_store_resume_v2::{
-    load_native_training_boundary_v2, peek_latest_generation_index_from_store_v2,
-    resume_native_training_store_with_session_v2, validate_native_training_store_v2,
-    NativeTrainingStoreContinuationSessionV2, NativeTrainingStoreResumeV2,
+    load_native_training_boundary_v2, resume_native_training_store_with_session_v2,
+    validate_native_training_store_v2, NativeTrainingStoreContinuationSessionV2,
+    NativeTrainingStoreResumeV2,
 };
 use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::{
@@ -97,7 +94,6 @@ use crate::native_training_store_v2::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -141,7 +137,7 @@ pub const CYCLE5_ARM_MODE_MARKER_FILENAME_V1: &str = "cycle5-arm-mode.marker.jso
 pub const CYCLE5_ARM_PREFLIGHT_MAX_UPDATES_V1: u64 = 8;
 
 /// Total Store generations the whole cycle-5 program runs (16 intervals of
-/// 128), i.e. trainee-local 896 through 2944.
+/// 128), i.e. trainee-local 2048 through 4096.
 const CYCLE5_ARM_STORE_GENERATION_TOTAL_V1: u64 =
     CYCLE5_REFRESH_MAX_INDEX_V1 * CYCLE5_REFRESH_INTERVAL_V1;
 
@@ -795,7 +791,7 @@ struct Cycle5ArmContractV1 {
     refresh_index: u64,
     /// The Store generation this manifest opens: `refresh_index * 128`.
     program_update: u64,
-    /// `896 + program_update`, the same number in the contract's
+    /// `2048 + program_update`, the same number in the contract's
     /// trainee-local numbering. Kept so the mapping is proven, not assumed.
     #[allow(dead_code)]
     trainee_local_generation: u64,
@@ -1243,7 +1239,7 @@ fn validate_manifest_against_run_v1(
     if manifest.trainee_local_generation_v1() != trainee_local_generation {
         return Err(Cycle5ArmErrorV1::contract(
             "cycle5_arm_v1_manifest_generation",
-            "the manifest's trainee-local generation is not 896 plus its program update",
+            "the manifest's trainee-local generation is not 2048 plus its program update",
         ));
     }
     Ok(Cycle5ArmContractV1 {

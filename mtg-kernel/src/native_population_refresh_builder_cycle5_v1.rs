@@ -747,7 +747,7 @@ mod tests {
             build_cycle5_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &identities)
                 .expect("genesis build");
         assert_eq!(result.refresh_index, 0);
-        assert_eq!(result.trainee_local_generation, 896);
+        assert_eq!(result.trainee_local_generation, 2048);
         assert_eq!(
             result.weight_units,
             [CYCLE5_GENESIS_SLOT_WEIGHT_UNITS_V1; CYCLE5_SLOT_COUNT_V1]
@@ -812,7 +812,7 @@ mod tests {
         )
         .expect("next refresh build");
         assert_eq!(next.refresh_index, 1);
-        assert_eq!(next.trainee_local_generation, 896 + 128);
+        assert_eq!(next.trainee_local_generation, 2048 + 128);
         assert!(next.weight_units[0] > genesis.weight_units[0]);
         assert!(next.weight_units[1] < genesis.weight_units[1]);
         assert_eq!(
@@ -864,7 +864,7 @@ mod tests {
         )
         .expect("refresh 2 walks the whole chain from genesis");
         assert_eq!(refresh_two.refresh_index, 2);
-        assert_eq!(refresh_two.trainee_local_generation, 896 + 256);
+        assert_eq!(refresh_two.trainee_local_generation, 2048 + 256);
     }
 
     #[test]
