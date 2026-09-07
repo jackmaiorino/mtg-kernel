@@ -5,12 +5,19 @@
 //! local `DRIVE_FIXED` NTFS volume with stable `FILE_ID_INFO` identity on
 //! every recapture. Mutators take a nonblocking exclusive `LockFileEx` range
 //! lock and readers take a nonblocking shared range lock over offset zero,
-//! length one. On non-Windows platforms every path-backed entry point returns
-//! the stable unsupported-platform error before touching the filesystem. This
-//! module owns no staging, publication, receipt, recovery, or record claim.
+//! length one. On 64-bit Linux the same authority is provided by
+//! `linux_store_root_v2`: no-follow directory descriptors, `(st_dev, st_ino)`
+//! identity on every recapture, and nonblocking `flock(2)` shared or exclusive
+//! locks on the zero-byte lock leaf, the whole-file analog of the offset-zero
+//! range lock. The Linux authority does not require a local fixed volume: it
+//! exists so a read-only CP7 scorer can walk a Store copied onto a Linux host,
+//! and no Store is ever bootstrapped or written there. On every other
+//! platform every path-backed entry point returns the stable
+//! unsupported-platform error before touching the filesystem. This module owns
+//! no staging, publication, receipt, recovery, or record claim.
 
 use crate::native_training_store_layout_v2::NativeTrainingStoreDirectoryV2;
-#[cfg(windows)]
+#[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
 use crate::native_training_store_layout_v2::{
     NATIVE_TRAINING_STORE_LOCK_LEAF_V2, NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2,
 };
@@ -77,12 +84,21 @@ const fn root_error_v2(kind: NativeTrainingStoreRootV2ErrorKind) -> NativeTraini
     NativeTrainingStoreRootV2Error { kind }
 }
 
+#[cfg(windows)]
+type PlatformStoreRootV2 = windows_store_root_v2::WindowsStoreRootV2;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+type PlatformStoreRootV2 = linux_store_root_v2::LinuxStoreRootV2;
+#[cfg(windows)]
+type PlatformHeldRangeLockV2<'root> = windows_store_root_v2::HeldRangeLockV2<'root>;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+type PlatformHeldRangeLockV2<'root> = linux_store_root_v2::HeldRangeLockV2<'root>;
+
 /// A validated Store root with retained no-follow handles.
 #[derive(Debug)]
 pub struct ValidatedNativeTrainingStoreRootV2 {
-    #[cfg(windows)]
-    inner: windows_store_root_v2::WindowsStoreRootV2,
-    #[cfg(not(windows))]
+    #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
+    inner: PlatformStoreRootV2,
+    #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
     never: std::convert::Infallible,
 }
 
@@ -90,11 +106,11 @@ pub struct ValidatedNativeTrainingStoreRootV2 {
 #[must_use = "dropping the exclusive store lock releases mutator exclusivity"]
 #[derive(Debug)]
 pub struct NativeTrainingStoreExclusiveLockV2<'root> {
-    #[cfg(windows)]
-    _held: windows_store_root_v2::HeldRangeLockV2<'root>,
-    #[cfg(not(windows))]
+    #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
+    _held: PlatformHeldRangeLockV2<'root>,
+    #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
     _never: std::convert::Infallible,
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
     _lifetime: std::marker::PhantomData<&'root ()>,
 }
 
@@ -102,27 +118,27 @@ pub struct NativeTrainingStoreExclusiveLockV2<'root> {
 #[must_use = "dropping the shared store lock releases reader protection"]
 #[derive(Debug)]
 pub struct NativeTrainingStoreSharedLockV2<'root> {
-    #[cfg(windows)]
-    _held: windows_store_root_v2::HeldRangeLockV2<'root>,
-    #[cfg(not(windows))]
+    #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
+    _held: PlatformHeldRangeLockV2<'root>,
+    #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
     _never: std::convert::Infallible,
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
     _lifetime: std::marker::PhantomData<&'root ()>,
 }
 
 impl ValidatedNativeTrainingStoreRootV2 {
     /// Open and validate an existing Store root.
     ///
-    /// On non-Windows platforms this returns the stable unsupported-platform
-    /// error before any filesystem access.
+    /// Outside Windows and 64-bit Linux this returns the stable
+    /// unsupported-platform error before any filesystem access.
     pub fn open_v2(root: impl AsRef<Path>) -> Result<Self> {
-        #[cfg(windows)]
+        #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
         {
             Ok(Self {
-                inner: windows_store_root_v2::WindowsStoreRootV2::open_v2(root.as_ref())?,
+                inner: PlatformStoreRootV2::open_v2(root.as_ref())?,
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
         {
             let _ = root;
             Err(root_error_v2(
@@ -133,11 +149,11 @@ impl ValidatedNativeTrainingStoreRootV2 {
 
     /// Canonical validated root path.
     pub fn root_path(&self) -> &Path {
-        #[cfg(windows)]
+        #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
         {
             self.inner.root_path()
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
         {
             match self.never {}
         }
@@ -145,11 +161,11 @@ impl ValidatedNativeTrainingStoreRootV2 {
 
     /// Canonical path of one authoritative Store directory.
     pub fn directory_path_v2(&self, directory: NativeTrainingStoreDirectoryV2) -> &Path {
-        #[cfg(windows)]
+        #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
         {
             self.inner.directory_path_v2(directory)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
         {
             let _ = directory;
             match self.never {}
@@ -158,11 +174,11 @@ impl ValidatedNativeTrainingStoreRootV2 {
 
     /// Re-resolve every retained path and require identity stability.
     pub fn recapture_v2(&self) -> Result<()> {
-        #[cfg(windows)]
+        #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
         {
             self.inner.recapture_v2()
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
         {
             match self.never {}
         }
@@ -170,13 +186,13 @@ impl ValidatedNativeTrainingStoreRootV2 {
 
     /// Take the nonblocking exclusive mutator range lock.
     pub fn lock_exclusive_v2(&self) -> Result<NativeTrainingStoreExclusiveLockV2<'_>> {
-        #[cfg(windows)]
+        #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
         {
             Ok(NativeTrainingStoreExclusiveLockV2 {
                 _held: self.inner.lock_range_v2(true)?,
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
         {
             match self.never {}
         }
@@ -184,19 +200,18 @@ impl ValidatedNativeTrainingStoreRootV2 {
 
     /// Take the nonblocking shared reader range lock.
     pub fn lock_shared_v2(&self) -> Result<NativeTrainingStoreSharedLockV2<'_>> {
-        #[cfg(windows)]
+        #[cfg(any(windows, all(target_os = "linux", target_pointer_width = "64")))]
         {
             Ok(NativeTrainingStoreSharedLockV2 {
                 _held: self.inner.lock_range_v2(false)?,
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
         {
             match self.never {}
         }
     }
 }
-
 #[cfg(windows)]
 pub(crate) mod windows_store_root_v2 {
     use super::{
@@ -813,6 +828,318 @@ pub(crate) mod windows_store_root_v2 {
     }
 }
 
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub(crate) mod linux_store_root_v2 {
+    use super::{
+        root_error_v2, NativeTrainingStoreDirectoryV2, NativeTrainingStoreRootV2ErrorKind, Result,
+        NATIVE_TRAINING_STORE_LOCK_LEAF_V2, NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2,
+    };
+    use std::fs::{self, File, Metadata, OpenOptions};
+    use std::os::fd::AsRawFd;
+    use std::os::raw::c_int;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    // Linux `open(2)` and `flock(2)` constants. The crate carries no libc
+    // dependency, so the frozen ABI values are pinned here exactly like the
+    // Windows module pins its kernel32 constants.
+    const O_NOFOLLOW_V2: c_int = 0o400000;
+    const O_DIRECTORY_V2: c_int = 0o200000;
+    const O_CLOEXEC_V2: c_int = 0o2000000;
+    const LOCK_SH_V2: c_int = 1;
+    const LOCK_EX_V2: c_int = 2;
+    const LOCK_NB_V2: c_int = 4;
+    const LOCK_UN_V2: c_int = 8;
+    const EWOULDBLOCK_V2: i32 = 11;
+
+    extern "C" {
+        fn flock(fd: c_int, operation: c_int) -> c_int;
+    }
+
+    /// Stable `(st_dev, st_ino)` identity of one filesystem object.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) struct ObjectIdentityV2 {
+        pub(crate) device: u64,
+        pub(crate) inode: u64,
+    }
+
+    impl ObjectIdentityV2 {
+        fn of_v2(metadata: &Metadata) -> Self {
+            Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            }
+        }
+    }
+
+    /// One retained no-follow descriptor plus its captured identity.
+    #[derive(Debug)]
+    struct RetainedObjectV2 {
+        file: File,
+        path: PathBuf,
+        identity: ObjectIdentityV2,
+    }
+
+    /// In-process view of the lock leaf: `flock(2)` locks belong to the open
+    /// file description, so a second shared acquisition on the retained
+    /// descriptor is a no-op and one release would drop every holder. The
+    /// counter keeps the Windows range-lock contract: shared holders nest and
+    /// release one at a time, and an exclusive acquisition fails busy while
+    /// any holder remains.
+    #[derive(Debug)]
+    struct LockHoldersV2 {
+        shared: usize,
+        exclusive: bool,
+    }
+
+    #[derive(Debug)]
+    pub(super) struct LinuxStoreRootV2 {
+        root: RetainedObjectV2,
+        segments: RetainedObjectV2,
+        checkpoints: RetainedObjectV2,
+        heads: RetainedObjectV2,
+        refs: RetainedObjectV2,
+        lock: RetainedObjectV2,
+        holders: Mutex<LockHoldersV2>,
+    }
+
+    /// A held `flock(2)` lock released exactly once on drop.
+    #[derive(Debug)]
+    pub(super) struct HeldRangeLockV2<'root> {
+        root: &'root LinuxStoreRootV2,
+        exclusive: bool,
+    }
+
+    impl Drop for HeldRangeLockV2<'_> {
+        fn drop(&mut self) {
+            let mut holders = self
+                .root
+                .holders
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.exclusive {
+                holders.exclusive = false;
+            } else {
+                holders.shared = holders.shared.saturating_sub(1);
+            }
+            if !holders.exclusive && holders.shared == 0 {
+                // SAFETY: the descriptor is live for the borrow lifetime and
+                // LOCK_UN releases exactly the lock this description holds.
+                let _ = unsafe { flock(self.root.lock.file.as_raw_fd(), LOCK_UN_V2) };
+            }
+        }
+    }
+
+    fn open_no_follow_v2(
+        path: &Path,
+        directory: bool,
+        kind: NativeTrainingStoreRootV2ErrorKind,
+    ) -> Result<File> {
+        let mut flags = O_NOFOLLOW_V2 | O_CLOEXEC_V2;
+        if directory {
+            flags |= O_DIRECTORY_V2;
+        }
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(flags)
+            .open(path)
+            .map_err(|_| root_error_v2(kind))
+    }
+
+    /// Resolve a directory path to its canonical form while refusing a
+    /// symbolic link in the final component, mirroring the Windows no-follow
+    /// open followed by the final-path query.
+    fn canonical_directory_path_v2(
+        path: &Path,
+        kind: NativeTrainingStoreRootV2ErrorKind,
+    ) -> Result<PathBuf> {
+        let leaf = fs::symlink_metadata(path).map_err(|_| root_error_v2(kind))?;
+        if leaf.file_type().is_symlink() || !leaf.is_dir() {
+            return Err(root_error_v2(kind));
+        }
+        fs::canonicalize(path).map_err(|_| root_error_v2(kind))
+    }
+
+    fn open_retained_directory_v2(
+        path: &Path,
+        expected_path: Option<&Path>,
+        kind: NativeTrainingStoreRootV2ErrorKind,
+    ) -> Result<RetainedObjectV2> {
+        let resolved = canonical_directory_path_v2(path, kind)?;
+        if let Some(expected) = expected_path {
+            if resolved != expected {
+                return Err(root_error_v2(kind));
+            }
+        }
+        let file = open_no_follow_v2(&resolved, true, kind)?;
+        let metadata = file.metadata().map_err(|_| root_error_v2(kind))?;
+        if !metadata.is_dir() {
+            return Err(root_error_v2(kind));
+        }
+        let by_path = fs::symlink_metadata(&resolved).map_err(|_| root_error_v2(kind))?;
+        let identity = ObjectIdentityV2::of_v2(&metadata);
+        if by_path.file_type().is_symlink() || identity != ObjectIdentityV2::of_v2(&by_path) {
+            return Err(root_error_v2(kind));
+        }
+        Ok(RetainedObjectV2 {
+            file,
+            path: resolved,
+            identity,
+        })
+    }
+
+    fn open_retained_lock_v2(path: &Path, device: u64) -> Result<RetainedObjectV2> {
+        let kind = NativeTrainingStoreRootV2ErrorKind::LockInvalid;
+        let leaf = fs::symlink_metadata(path).map_err(|_| root_error_v2(kind))?;
+        if leaf.file_type().is_symlink() || !leaf.is_file() {
+            return Err(root_error_v2(kind));
+        }
+        let file = open_no_follow_v2(path, false, kind)?;
+        let metadata = file.metadata().map_err(|_| root_error_v2(kind))?;
+        if !metadata.is_file() || metadata.len() != 0 || metadata.nlink() != 1 {
+            return Err(root_error_v2(kind));
+        }
+        let identity = ObjectIdentityV2::of_v2(&metadata);
+        if identity != ObjectIdentityV2::of_v2(&leaf) || identity.device != device {
+            return Err(root_error_v2(kind));
+        }
+        Ok(RetainedObjectV2 {
+            file,
+            path: path.to_path_buf(),
+            identity,
+        })
+    }
+
+    impl LinuxStoreRootV2 {
+        pub(super) fn open_v2(root: &Path) -> Result<Self> {
+            let root_retained = open_retained_directory_v2(
+                root,
+                None,
+                NativeTrainingStoreRootV2ErrorKind::RootInvalid,
+            )?;
+            let device = root_retained.identity.device;
+            let mut subdirectories = NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2
+                .iter()
+                .map(|directory| {
+                    let kind = NativeTrainingStoreRootV2ErrorKind::SubdirectoryInvalid;
+                    let basename = directory.basename().ok_or(root_error_v2(kind))?;
+                    let expected = root_retained.path.join(basename);
+                    let retained = open_retained_directory_v2(&expected, Some(&expected), kind)?;
+                    if retained.identity.device != device {
+                        return Err(root_error_v2(
+                            NativeTrainingStoreRootV2ErrorKind::VolumeInvalid,
+                        ));
+                    }
+                    Ok(retained)
+                })
+                .collect::<Result<Vec<RetainedObjectV2>>>()?
+                .into_iter();
+            let segments = subdirectories.next().ok_or(root_error_v2(
+                NativeTrainingStoreRootV2ErrorKind::SubdirectoryInvalid,
+            ))?;
+            let checkpoints = subdirectories.next().ok_or(root_error_v2(
+                NativeTrainingStoreRootV2ErrorKind::SubdirectoryInvalid,
+            ))?;
+            let heads = subdirectories.next().ok_or(root_error_v2(
+                NativeTrainingStoreRootV2ErrorKind::SubdirectoryInvalid,
+            ))?;
+            let refs = subdirectories.next().ok_or(root_error_v2(
+                NativeTrainingStoreRootV2ErrorKind::SubdirectoryInvalid,
+            ))?;
+            let lock = open_retained_lock_v2(
+                &root_retained.path.join(NATIVE_TRAINING_STORE_LOCK_LEAF_V2),
+                device,
+            )?;
+            Ok(Self {
+                root: root_retained,
+                segments,
+                checkpoints,
+                heads,
+                refs,
+                lock,
+                holders: Mutex::new(LockHoldersV2 {
+                    shared: 0,
+                    exclusive: false,
+                }),
+            })
+        }
+
+        pub(super) fn root_path(&self) -> &Path {
+            &self.root.path
+        }
+
+        pub(super) fn directory_path_v2(&self, directory: NativeTrainingStoreDirectoryV2) -> &Path {
+            match directory {
+                NativeTrainingStoreDirectoryV2::Root => &self.root.path,
+                NativeTrainingStoreDirectoryV2::Segments => &self.segments.path,
+                NativeTrainingStoreDirectoryV2::Checkpoints => &self.checkpoints.path,
+                NativeTrainingStoreDirectoryV2::Heads => &self.heads.path,
+                NativeTrainingStoreDirectoryV2::Refs => &self.refs.path,
+            }
+        }
+
+        pub(super) fn recapture_v2(&self) -> Result<()> {
+            let kind = NativeTrainingStoreRootV2ErrorKind::IdentityChanged;
+            for (retained, directory) in [
+                (&self.root, true),
+                (&self.segments, true),
+                (&self.checkpoints, true),
+                (&self.heads, true),
+                (&self.refs, true),
+                (&self.lock, false),
+            ] {
+                let current =
+                    fs::symlink_metadata(&retained.path).map_err(|_| root_error_v2(kind))?;
+                if current.file_type().is_symlink()
+                    || current.is_dir() != directory
+                    || ObjectIdentityV2::of_v2(&current) != retained.identity
+                {
+                    return Err(root_error_v2(kind));
+                }
+                let held = retained.file.metadata().map_err(|_| root_error_v2(kind))?;
+                if ObjectIdentityV2::of_v2(&held) != retained.identity {
+                    return Err(root_error_v2(kind));
+                }
+            }
+            Ok(())
+        }
+
+        pub(super) fn lock_range_v2(&self, exclusive: bool) -> Result<HeldRangeLockV2<'_>> {
+            let mut holders = self
+                .holders
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if holders.exclusive || (exclusive && holders.shared != 0) {
+                return Err(root_error_v2(NativeTrainingStoreRootV2ErrorKind::StoreBusy));
+            }
+            if holders.shared == 0 {
+                let operation = if exclusive { LOCK_EX_V2 } else { LOCK_SH_V2 } | LOCK_NB_V2;
+                // SAFETY: the lock descriptor is live and the operation is a
+                // documented nonblocking flock(2) request.
+                let outcome = unsafe { flock(self.lock.file.as_raw_fd(), operation) };
+                if outcome != 0 {
+                    let raw = std::io::Error::last_os_error().raw_os_error();
+                    return Err(root_error_v2(if raw == Some(EWOULDBLOCK_V2) {
+                        NativeTrainingStoreRootV2ErrorKind::StoreBusy
+                    } else {
+                        NativeTrainingStoreRootV2ErrorKind::LockInvalid
+                    }));
+                }
+            }
+            if exclusive {
+                holders.exclusive = true;
+            } else {
+                holders.shared += 1;
+            }
+            Ok(HeldRangeLockV2 {
+                root: self,
+                exclusive,
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
@@ -1074,7 +1401,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
     mod non_windows_tests {
         use super::super::{
             NativeTrainingStoreRootV2ErrorKind, ValidatedNativeTrainingStoreRootV2,
@@ -1097,6 +1424,149 @@ mod tests {
                 !probe.exists(),
                 "the unsupported-platform gate must precede any filesystem mutation"
             );
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    mod linux_tests {
+        use super::super::{
+            NativeTrainingStoreRootV2ErrorKind, ValidatedNativeTrainingStoreRootV2,
+            NATIVE_TRAINING_STORE_LOCK_LEAF_V2, NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2,
+        };
+        use crate::native_training_store_layout_v2::NativeTrainingStoreDirectoryV2;
+        use std::fs;
+        use std::path::{Path, PathBuf};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct TestStoreV2 {
+            root: PathBuf,
+        }
+
+        impl TestStoreV2 {
+            fn new(label: &str) -> Self {
+                static ORDINAL: AtomicU64 = AtomicU64::new(0);
+                let ordinal = ORDINAL.fetch_add(1, Ordering::Relaxed);
+                let root = std::env::temp_dir().join(format!(
+                    "mtg-kernel-store-root-v2-linux-{label}-{}-{ordinal}",
+                    std::process::id()
+                ));
+                let _ = fs::remove_dir_all(&root);
+                fs::create_dir_all(&root).unwrap();
+                for directory in NATIVE_TRAINING_STORE_SUBDIRECTORY_ORDER_V2 {
+                    fs::create_dir(root.join(directory.basename().unwrap())).unwrap();
+                }
+                fs::write(root.join(NATIVE_TRAINING_STORE_LOCK_LEAF_V2), b"").unwrap();
+                Self { root }
+            }
+
+            fn path(&self) -> &Path {
+                &self.root
+            }
+        }
+
+        impl Drop for TestStoreV2 {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.root);
+            }
+        }
+
+        #[test]
+        fn opens_a_hand_built_layout_with_canonical_paths_and_stable_recapture() {
+            let store = TestStoreV2::new("open");
+            let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+            let canonical = fs::canonicalize(store.path()).unwrap();
+            assert_eq!(root.root_path(), canonical);
+            assert_eq!(
+                root.directory_path_v2(NativeTrainingStoreDirectoryV2::Segments),
+                canonical.join("segments")
+            );
+            assert_eq!(
+                root.directory_path_v2(NativeTrainingStoreDirectoryV2::Refs),
+                canonical.join("refs")
+            );
+            root.recapture_v2().unwrap();
+        }
+
+        #[test]
+        fn shared_locks_nest_and_release_one_at_a_time() {
+            let store = TestStoreV2::new("shared-nest");
+            let reader = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+            let writer = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+            let outer = reader.lock_shared_v2().unwrap();
+            let inner = reader.lock_shared_v2().unwrap();
+            drop(inner);
+            assert_eq!(
+                writer.lock_exclusive_v2().unwrap_err().kind(),
+                NativeTrainingStoreRootV2ErrorKind::StoreBusy,
+                "releasing the inner shared holder must keep the outer holder"
+            );
+            drop(outer);
+            let exclusive = writer.lock_exclusive_v2().unwrap();
+            assert_eq!(
+                reader.lock_shared_v2().unwrap_err().kind(),
+                NativeTrainingStoreRootV2ErrorKind::StoreBusy
+            );
+            assert_eq!(
+                writer.lock_shared_v2().unwrap_err().kind(),
+                NativeTrainingStoreRootV2ErrorKind::StoreBusy,
+                "the same root must not take a shared lock over its own exclusive lock"
+            );
+            drop(exclusive);
+            let _shared = reader.lock_shared_v2().unwrap();
+        }
+
+        #[test]
+        fn rejects_symlinked_root_missing_subdirectory_and_nonempty_lock_leaf() {
+            let store = TestStoreV2::new("reject");
+            let link = store.path().with_extension("link");
+            let _ = fs::remove_file(&link);
+            std::os::unix::fs::symlink(store.path(), &link).unwrap();
+            assert_eq!(
+                ValidatedNativeTrainingStoreRootV2::open_v2(&link)
+                    .unwrap_err()
+                    .kind(),
+                NativeTrainingStoreRootV2ErrorKind::RootInvalid
+            );
+            fs::remove_file(&link).unwrap();
+
+            let heads = store.path().join("heads");
+            let moved = store.path().join("heads-moved");
+            fs::rename(&heads, &moved).unwrap();
+            assert_eq!(
+                ValidatedNativeTrainingStoreRootV2::open_v2(store.path())
+                    .unwrap_err()
+                    .kind(),
+                NativeTrainingStoreRootV2ErrorKind::SubdirectoryInvalid
+            );
+            fs::rename(&moved, &heads).unwrap();
+
+            let lock_leaf = store.path().join(NATIVE_TRAINING_STORE_LOCK_LEAF_V2);
+            fs::write(&lock_leaf, b"x").unwrap();
+            assert_eq!(
+                ValidatedNativeTrainingStoreRootV2::open_v2(store.path())
+                    .unwrap_err()
+                    .kind(),
+                NativeTrainingStoreRootV2ErrorKind::LockInvalid
+            );
+            fs::write(&lock_leaf, b"").unwrap();
+            ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        }
+
+        #[test]
+        fn recapture_detects_a_replaced_subdirectory() {
+            let store = TestStoreV2::new("recapture");
+            let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+            let heads = store.path().join("heads");
+            let moved = store.path().join("heads-moved");
+            fs::rename(&heads, &moved).unwrap();
+            fs::create_dir(&heads).unwrap();
+            assert_eq!(
+                root.recapture_v2().unwrap_err().kind(),
+                NativeTrainingStoreRootV2ErrorKind::IdentityChanged
+            );
+            fs::remove_dir(&heads).unwrap();
+            fs::rename(&moved, &heads).unwrap();
+            root.recapture_v2().unwrap();
         }
     }
 }
