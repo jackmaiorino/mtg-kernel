@@ -69,6 +69,8 @@ use windows::Win32::System::Threading::{
 
 const LIVE_BROKER_SHA256_V1: &str =
     "e83e1f08260cdbd80e68527964de54afd2774beed8f344b03f609fdd75a34fab";
+const LIVE_TWO_LOCAL_BROKER_SHA256_V1: &str =
+    "6281797239d1827fab4d3767a2273f86ee8b3e1b290ddebbd7d65f75878954b3";
 const LIVE_DISPATCH_BROKER_SHA256_V1: &str =
     "95dcfe3eb38006e8dd26800776ef2e329aef1a9dbf265ba5a0bfe179247b9e49";
 const LIVE_BOOTSTRAP_SHA256_V1: &str =
@@ -163,6 +165,8 @@ pub struct MtgoVerifiedDirectVisibleSourceRuntimeCommitmentsV1 {
 /// ```
 pub struct OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1 {
     broker_path: PathBuf,
+    broker_file_name: &'static str,
+    broker_sha256: &'static str,
     bootstrap_path: PathBuf,
     producer_path: PathBuf,
     validator_path: PathBuf,
@@ -2737,12 +2741,75 @@ pub fn verify_direct_visible_source_runtime_v1(
     );
     Ok(OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1 {
         broker_path,
+        broker_file_name: "mtgo_visible_duel_live_broker_v1.exe",
+        broker_sha256: LIVE_BROKER_SHA256_V1,
         bootstrap_path,
         producer_path,
         validator_path,
         commitments: MtgoVerifiedDirectVisibleSourceRuntimeCommitmentsV1 {
             runtime_identity_commitment_sha256,
             broker_binary_sha256: LIVE_BROKER_SHA256_V1.to_owned(),
+            bootstrap_binary_sha256: LIVE_BOOTSTRAP_SHA256_V1.to_owned(),
+            producer_binary_sha256: LIVE_PRODUCER_SHA256_V1.to_owned(),
+            strict_validator_binary_sha256: LIVE_VALIDATOR_SHA256_V1.to_owned(),
+        },
+    })
+}
+
+/// Verifies the separately named observe-only broker whose live identity gate
+/// requires exactly two local MTGO processes including the caller-bound target.
+/// The other client is not passed to the broker and this runtime grants no
+/// scoring, input, event-entry, or spending authority.
+pub fn verify_two_local_client_direct_visible_source_runtime_v1(
+    broker_path: &Path,
+    bootstrap_path: &Path,
+    producer_path: &Path,
+    validator_path: &Path,
+) -> Result<OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1, String> {
+    let broker_path = verify_exact_artifact_v1(
+        broker_path,
+        "mtgo_visible_duel_live_two_local_broker_v1.exe",
+        LIVE_TWO_LOCAL_BROKER_SHA256_V1,
+        "live two-local-client direct-source broker",
+    )?;
+    let bootstrap_path = verify_exact_artifact_v1(
+        bootstrap_path,
+        "mtgo_visible_duel_bootstrap_v1.dll",
+        LIVE_BOOTSTRAP_SHA256_V1,
+        "live two-local-client direct-source bootstrap",
+    )?;
+    let producer_path = verify_exact_artifact_v1(
+        producer_path,
+        "mtgo_visible_duel_producer_v1.dll",
+        LIVE_PRODUCER_SHA256_V1,
+        "live two-local-client direct-source producer",
+    )?;
+    let validator_path = verify_exact_artifact_v1(
+        validator_path,
+        "check_mtgo_visible_duel_producer_result_v1.exe",
+        LIVE_VALIDATOR_SHA256_V1,
+        "live two-local-client direct-source strict validator",
+    )?;
+    let runtime_identity_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_SOURCE_RUNTIME_DOMAIN_V1,
+        &[
+            LIVE_TWO_LOCAL_BROKER_SHA256_V1.as_bytes(),
+            LIVE_BOOTSTRAP_SHA256_V1.as_bytes(),
+            LIVE_PRODUCER_SHA256_V1.as_bytes(),
+            LIVE_VALIDATOR_SHA256_V1.as_bytes(),
+            b"release_pinned_two_local_observe_only_live_dispatch_compile_disabled",
+        ],
+    );
+    Ok(OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1 {
+        broker_path,
+        broker_file_name: "mtgo_visible_duel_live_two_local_broker_v1.exe",
+        broker_sha256: LIVE_TWO_LOCAL_BROKER_SHA256_V1,
+        bootstrap_path,
+        producer_path,
+        validator_path,
+        commitments: MtgoVerifiedDirectVisibleSourceRuntimeCommitmentsV1 {
+            runtime_identity_commitment_sha256,
+            broker_binary_sha256: LIVE_TWO_LOCAL_BROKER_SHA256_V1.to_owned(),
             bootstrap_binary_sha256: LIVE_BOOTSTRAP_SHA256_V1.to_owned(),
             producer_binary_sha256: LIVE_PRODUCER_SHA256_V1.to_owned(),
             strict_validator_binary_sha256: LIVE_VALIDATOR_SHA256_V1.to_owned(),
@@ -4540,7 +4607,7 @@ fn validate_loaded_seated_duel_manifest_v1(
     ] {
         validate_lower_sha256_direct_visible_review_v1(digest)?;
     }
-    match manifest.qualification_topology.as_str() {
+    let expected_broker_sha256 = match manifest.qualification_topology.as_str() {
         "single_mtgo_process"
             if manifest.approved_target_binding_commitment_sha256.is_none()
                 && manifest
@@ -4549,7 +4616,10 @@ fn validate_loaded_seated_duel_manifest_v1(
                 && !manifest.friend_client_excluded_from_capture
                 && !manifest.friend_client_excluded_from_observation
                 && !manifest.friend_client_excluded_from_scoring
-                && !manifest.friend_client_excluded_from_input => {}
+                && !manifest.friend_client_excluded_from_input =>
+        {
+            LIVE_BROKER_SHA256_V1
+        }
         "operator_bound_two_local_clients"
             if manifest.approved_target_binding_commitment_sha256.is_some()
                 && manifest
@@ -4574,14 +4644,15 @@ fn validate_loaded_seated_duel_manifest_v1(
                     .as_deref()
                     .unwrap_or_default(),
             )?;
+            LIVE_TWO_LOCAL_BROKER_SHA256_V1
         }
         _ => {
             return Err(
                 "seated duel review manifest has an invalid qualification topology".to_owned(),
             )
         }
-    }
-    if manifest.broker_binary_sha256 != LIVE_BROKER_SHA256_V1
+    };
+    if manifest.broker_binary_sha256 != expected_broker_sha256
         || manifest.producer_binary_sha256 != LIVE_PRODUCER_SHA256_V1
         || manifest.before_capture_commitment_sha256 == manifest.after_capture_commitment_sha256
     {
@@ -5427,8 +5498,8 @@ fn verify_runtime_identity_now_v1(
     for (path, file_name, digest, label) in [
         (
             runtime.broker_path.as_path(),
-            "mtgo_visible_duel_live_broker_v1.exe",
-            LIVE_BROKER_SHA256_V1,
+            runtime.broker_file_name,
+            runtime.broker_sha256,
             "live direct-source broker",
         ),
         (
@@ -6457,7 +6528,8 @@ mod tests {
     fn two_client_seated_duel_artifact_binds_target_topology_and_exclusion() {
         let parent = TemporaryReviewParentV1::new("two-client-seated-duel-artifact");
         let output = parent.child("artifact");
-        let (bytes, result, commitments) = seated_duel_review_parts_v1();
+        let (bytes, result, mut commitments) = seated_duel_review_parts_v1();
+        commitments.broker_binary_sha256 = LIVE_TWO_LOCAL_BROKER_SHA256_V1.to_owned();
         let target_binding = "1".repeat(64);
         let process_topology = "2".repeat(64);
         write_seated_duel_direct_visible_review_artifact_from_parts_v1(

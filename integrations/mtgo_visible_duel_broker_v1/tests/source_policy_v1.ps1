@@ -33,6 +33,7 @@ foreach ($required in @(
     'synthetic_managed_host_v1.exe',
     'target_not_synthetic_host',
     'MTGO_LIVE_PINNED_V1',
+    'MTGO_LIVE_PINNED_TWO_LOCAL_CLIENTS_V1',
     'MTGO_LIVE_DISPATCH_ADMITTED_V1',
     'bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92',
     '72b99e1169f9f9445a510b2dae52f9212fb7300c2483b8bc8e02f5760f11904e',
@@ -45,6 +46,7 @@ foreach ($required in @(
     'AuthenticodeValidV1',
     'ExactPinnedVersionV1',
     'ExactlyOneMtgoProcessV1',
+    'ExactlyTwoMtgoProcessesIncludingTargetV1',
     'live_identity_pre',
     'live_identity_post',
     'live_dispatch_not_admitted'
@@ -54,9 +56,12 @@ foreach ($required in @(
     }
 }
 foreach ($requiredBuild in @(
+    'mtgo_visible_duel_live_two_local_broker_v1.exe',
+    '/DMTGO_LIVE_PINNED_V1 /DMTGO_LIVE_PINNED_TWO_LOCAL_CLIENTS_V1',
     'mtgo_visible_duel_live_dispatch_broker_v1.exe',
     '/DMTGO_LIVE_PINNED_V1 /DMTGO_LIVE_DISPATCH_ADMITTED_V1',
     'e83e1f08260cdbd80e68527964de54afd2774beed8f344b03f609fdd75a34fab',
+    '6281797239d1827fab4d3767a2273f86ee8b3e1b290ddebbd7d65f75878954b3',
     '95dcfe3eb38006e8dd26800776ef2e329aef1a9dbf265ba5a0bfe179247b9e49',
     'native live observe-only broker differs from its release pin'
 )) {

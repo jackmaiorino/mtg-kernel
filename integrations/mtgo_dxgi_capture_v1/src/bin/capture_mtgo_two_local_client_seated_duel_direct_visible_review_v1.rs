@@ -6,7 +6,7 @@ compile_error!(
 use mtgo_dxgi_capture_v1::{
     load_approved_mtgo_client_two_local_client_target_binding_v1,
     qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1,
-    verify_direct_visible_source_runtime_v1,
+    verify_two_local_client_direct_visible_source_runtime_v1,
     write_two_local_client_seated_duel_direct_visible_review_artifact_v1,
 };
 use std::path::Path;
@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
     let game_format = args[0].to_str().ok_or("game format is not valid Unicode")?;
     let target_binding =
         load_approved_mtgo_client_two_local_client_target_binding_v1(Path::new(&args[1]))?;
-    let runtime = verify_direct_visible_source_runtime_v1(
+    let runtime = verify_two_local_client_direct_visible_source_runtime_v1(
         Path::new(&args[2]),
         Path::new(&args[3]),
         Path::new(&args[4]),

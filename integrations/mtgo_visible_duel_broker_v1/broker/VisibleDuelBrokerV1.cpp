@@ -175,6 +175,31 @@ bool ExactlyOneMtgoProcessV1(DWORD expected_process_id) {
   return count == 1 && observed_process_id == expected_process_id;
 }
 
+#ifdef MTGO_LIVE_PINNED_TWO_LOCAL_CLIENTS_V1
+bool ExactlyTwoMtgoProcessesIncludingTargetV1(DWORD expected_process_id) {
+  HandleV1 snapshot{
+      CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
+  if (snapshot.value == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  PROCESSENTRY32W entry{};
+  entry.dwSize = sizeof(entry);
+  if (!Process32FirstW(snapshot.value, &entry)) {
+    return false;
+  }
+  DWORD count = 0;
+  bool target_observed = false;
+  do {
+    if (_wcsicmp(entry.szExeFile, kOnlyAdmittedTargetFileName) == 0) {
+      ++count;
+      target_observed =
+          target_observed || entry.th32ProcessID == expected_process_id;
+    }
+  } while (Process32NextW(snapshot.value, &entry));
+  return count == 2 && target_observed;
+}
+#endif
+
 bool Sha256FileV1(const wchar_t* path,
                   std::array<unsigned char, 32>& output) {
   HandleV1 file{CreateFileW(path, GENERIC_READ,
@@ -320,7 +345,11 @@ bool ExactLiveMtgoIdentityV1(HANDLE process, DWORD process_id,
                              const wchar_t* producer_path,
                              const wchar_t* validator_path,
                              std::uint64_t& process_start_time) {
+#ifdef MTGO_LIVE_PINNED_TWO_LOCAL_CLIENTS_V1
+  if (!ExactlyTwoMtgoProcessesIncludingTargetV1(process_id) ||
+#else
   if (!ExactlyOneMtgoProcessV1(process_id) ||
+#endif
       !IsNativeX64TargetWithExactFileNameV1(process) ||
       !ProcessStartTimeV1(process, process_start_time)) {
     return false;

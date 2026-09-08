@@ -33,6 +33,14 @@ time and file identities before and after invocation. It may release one of
 four fixed abstentions or a data-bearing projection accepted by the strict
 validator.
 
+The separately named
+`mtgo_visible_duel_live_two_local_broker_v1.exe` is also observe-only and
+compile-disables every dispatch command. Its only topology difference is an
+exact requirement for two MTGO processes including the explicitly supplied
+target process. It loads and invokes the producer only in that target. The
+approved controlled-opponent process identifier is never passed to it, and no
+opponent private state can leave through the target producer.
+
 The earlier abstention-only live qualification passed against the exact pinned client and
 returned only `duel_surface_unavailable`. The client remained responsive and
 the call did not focus, move, capture, click, type, score, or invoke any MTGO

@@ -2464,6 +2464,7 @@ fn two_local_client_harness_targets_only_the_prebound_approved_client() {
     for required in [
         "bind_foreground_approved_mtgo_client_for_two_local_clients_v1",
         "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "verify_two_local_client_direct_visible_source_runtime_v1",
         "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
         "friend_client_excluded_from_capture: true",
         "friend_client_excluded_from_observation: true",
@@ -2497,6 +2498,7 @@ fn two_local_client_harness_targets_only_the_prebound_approved_client() {
     }
     for required in [
         "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "verify_two_local_client_direct_visible_source_runtime_v1",
         "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
         "write_two_local_client_seated_duel_direct_visible_review_artifact_v1",
         "MTGO_TWO_LOCAL_CLIENT_SEATED_DUEL_REVIEW_REJECTED",
@@ -2508,6 +2510,7 @@ fn two_local_client_harness_targets_only_the_prebound_approved_client() {
     }
     for required in [
         "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "verify_two_local_client_direct_visible_source_runtime_v1",
         "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
         "write_two_local_client_seated_duel_direct_visible_review_artifact_v1",
         "OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1",
