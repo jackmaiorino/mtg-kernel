@@ -1,6 +1,6 @@
 # MTGO League integration: resumption design v1 (revision 4)
 
-Date: 2026-09-08. Author: LEAD (Fable). Status: revision 4 after Codex review rounds 1 (gpt-5.6-sol xhigh, CHANGES REQUIRED), 2 (gpt-6-astra xhigh, CHANGES REQUIRED with replacement clauses, adopted), and 3 (gpt-6-astra high, CHANGES REQUIRED precision-only, adopted verbatim; "no further architectural redesign is requested"). For Jack's rulings in section 9. Nothing in this document authorizes live client input, event entry, or spending.
+Date: 2026-09-08. Author: LEAD (Fable). Status: revision 4 after Codex review rounds 1 (gpt-5.6-sol xhigh, CHANGES REQUIRED), 2 (gpt-6-astra xhigh, CHANGES REQUIRED with replacement clauses, adopted), 3 (gpt-6-astra high, CHANGES REQUIRED precision-only, adopted verbatim; "no further architectural redesign is requested"), and 4 (gpt-6-astra low, COUNTERSIGN "for Jack's design ratification. This closes the design review, not live-use authorization"). For Jack's rulings in section 9. Nothing in this document authorizes live client input, event entry, or spending.
 
 ## 1. Goal and claim boundary
 
