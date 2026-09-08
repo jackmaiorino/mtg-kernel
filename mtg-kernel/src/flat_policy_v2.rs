@@ -3,9 +3,10 @@
 //! Unlike [`crate::rl_session::FlatActionDecisionSliceV2`], this module owns
 //! the state side of the model-input contract: globals, all twenty ordered
 //! object groups, all fourteen relation roles, and the variable-width typed
-//! auxiliary tables.  The existing flat-action cache remains the sole source
-//! of action rows and consume authority; this module neither reconstructs nor
-//! reinterprets that cache.
+//! auxiliary tables. The existing flat-action cache remains the sole source of
+//! session action rows and consume authority. A separate external-observation
+//! producer may reconstruct scorer-only rows from validated public semantics,
+//! but it cannot create an executable action or session binding.
 //!
 //! Raw arena ids, zone-incarnation counters, card names, display text, stable
 //! ids, and observation hashes are deliberately absent from every public type
@@ -18,17 +19,18 @@ use crate::flat_action_contract_v2::{
 };
 use crate::policy_surface_v5::PolicySurfaceStageV5;
 use crate::rl::{
-    BooleanChoicePurposeV4, CardPrivateV1, CardPublicV2, CardStableRefV1, ContinuousEffectPublicV2,
+    validate_external_policy_scoring_decision_v1, ActionSemanticV1, BooleanChoicePurposeV4,
+    CardPrivateV1, CardPublicV2, CardStableRefV1, ContinuousEffectPublicV2,
     DiscardResumeSemanticV2, EffectDurationV2, EngineDecisionStageV2, ExilePlayPermissionPublicV2,
     ObjectRelationPublicV4, ObservationV5, PendingEffectChoiceSemanticV4, PendingTriggerKindV2,
     PlayOrCastV2, PlayPermissionExpiryV2, PlayerSeatV1, SpellCopyStageV2, StackItemKindV2,
     SurfaceDecisionStageV2, TargetRefV1, TargetSelectionPurposeV4, ZoneIndependentStepV1,
 };
 use crate::rl_session::{
-    FastActorDecisionV1, FastActorSessionV1, FlatActionCoreV1, FlatActionDecisionBindingV2,
-    FlatActionDecisionSliceBuffersV2, FlatActionDecisionSliceErrorV1, FlatActionKindV1,
-    FlatActionObjectGroupV1, FlatActionObjectV2, FlatActionRefRoleV1, FlatActionRefV2,
-    FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1,
+    flat_action_core_and_refs_v1, FastActorDecisionV1, FastActorSessionV1, FlatActionCoreV1,
+    FlatActionDecisionBindingV2, FlatActionDecisionSliceBuffersV2, FlatActionDecisionSliceErrorV1,
+    FlatActionKindV1, FlatActionObjectGroupV1, FlatActionObjectV2, FlatActionRefRoleV1,
+    FlatActionRefV2, FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1,
 };
 use crate::state::{AbilityKindV4, CastMethodV4};
 use crate::{mana::ManaColor, state::Zone};
@@ -1029,6 +1031,44 @@ pub(crate) struct FlatObservationOwnedTablesV2 {
     pub completed_dungeons: Vec<FlatCompletedDungeonV2>,
     pub effect_subtype_changes: Vec<FlatEffectSubtypeChangeV2>,
     pub context_path_elements: Vec<FlatContextPathElementV2>,
+}
+
+/// Owned scorer-visible packet reconstructed from one validated public
+/// observation and its exact ordered semantic legal-action set.
+///
+/// This type contains no operational action objects, candidate commitment, or
+/// session consume authority. It is intentionally crate-private and can only
+/// be borrowed as the existing immutable scoring view.
+pub(crate) struct FlatExternalScoringOwnedDecisionV1 {
+    globals: FlatGlobalsV2,
+    objects: Vec<FlatObjectCoreV2>,
+    relations: Vec<FlatRelationV2>,
+    object_subtypes: Vec<FlatObjectSubtypeV2>,
+    ability_uses: Vec<FlatObjectAbilityUseV2>,
+    goads: Vec<FlatObjectGoadV2>,
+    completed_dungeons: Vec<FlatCompletedDungeonV2>,
+    effect_subtype_changes: Vec<FlatEffectSubtypeChangeV2>,
+    context_path_elements: Vec<FlatContextPathElementV2>,
+    actions: Vec<FlatScorerActionCoreV2>,
+    action_refs: Vec<FlatScorerActionRefV2>,
+}
+
+impl FlatExternalScoringOwnedDecisionV1 {
+    pub(crate) fn scoring_view_v1(&self) -> FlatScoringDecisionViewV2<'_> {
+        FlatScoringDecisionViewV2::new(
+            &self.globals,
+            &self.objects,
+            &self.relations,
+            &self.object_subtypes,
+            &self.ability_uses,
+            &self.goads,
+            &self.completed_dungeons,
+            &self.effect_subtype_changes,
+            &self.context_path_elements,
+            &self.actions,
+            &self.action_refs,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3941,6 +3981,148 @@ pub(crate) fn encode_observation_owned_tables_for_fixture_v2(
     })
 }
 
+fn validate_external_fixed_action_relation_v1(
+    semantic: &ActionSemanticV1,
+    actor: PlayerSeatV1,
+) -> Result<(), FlatDecisionErrorV2> {
+    if matches!(
+        semantic,
+        ActionSemanticV1::ChooseEffectColor { .. }
+            | ActionSemanticV1::ChooseEffectNumber { .. }
+            | ActionSemanticV1::FinishTargetSelection { .. }
+    ) {
+        return Err(FlatDecisionErrorV2::Action(
+            FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic,
+        ));
+    }
+    let own_hand = |stable: &CardStableRefV1| {
+        stable.owner == actor && stable.controller == actor && stable.zone == Zone::Hand
+    };
+    let controlled_battlefield = |stable: &CardStableRefV1, controller: PlayerSeatV1| {
+        stable.controller == controller && stable.zone == Zone::Battlefield
+    };
+    let valid = match semantic {
+        ActionSemanticV1::ActivateManaAbility { source, .. }
+        | ActionSemanticV1::ActivateAbility { source, .. } => controlled_battlefield(source, actor),
+        ActionSemanticV1::PlotSpell { source, .. } => own_hand(source),
+        ActionSemanticV1::Discard { cards, .. } => cards.iter().all(own_hand),
+        ActionSemanticV1::ChooseMadnessCast { card, .. } => {
+            card.owner == actor && card.controller == actor && card.zone == Zone::Exile
+        }
+        ActionSemanticV1::ChooseAttackerInclusion { attacker, .. } => {
+            controlled_battlefield(attacker, actor)
+        }
+        ActionSemanticV1::ChooseBlockerInclusion {
+            attacker, blocker, ..
+        } => {
+            controlled_battlefield(attacker, opponent(actor))
+                && controlled_battlefield(blocker, actor)
+        }
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(FlatDecisionErrorV2::InconsistentReference)
+    }
+}
+
+/// Builds an owned scorer packet from a public observation and ordered legal
+/// action semantics. The session action cache remains the only producer of
+/// executable action authority. This sibling path resolves every semantic
+/// reference solely against model-visible observation objects and cannot be
+/// converted into a session binding.
+pub(crate) fn encode_external_flat_scoring_decision_owned_v1(
+    observation: &ObservationV5,
+    action_semantics: &[ActionSemanticV1],
+) -> Result<FlatExternalScoringOwnedDecisionV1, FlatDecisionErrorV2> {
+    validate_external_policy_scoring_decision_v1(observation, action_semantics)
+        .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
+
+    let mut encoder = FlatDecisionEncoderV2::default();
+    encoder.build_globals(observation)?;
+    encoder.register_objects(observation)?;
+    encoder.build_relations(observation)?;
+    // The ordinary validator proves the complete observation-side tables. At
+    // this point action authority tables are empty, so it cannot manufacture
+    // or validate a session consume binding for this external path.
+    encoder.validate_cached_tables()?;
+    if !encoder.scorer_actions.is_empty() || !encoder.scorer_action_refs.is_empty() {
+        return Err(FlatDecisionErrorV2::ScorerBindingMismatch);
+    }
+
+    encoder
+        .scorer_actions
+        .try_reserve(action_semantics.len())
+        .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+    let maximum_ref_count = action_semantics
+        .len()
+        .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+    encoder
+        .scorer_action_refs
+        .try_reserve(maximum_ref_count)
+        .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+
+    for (action_index, semantic) in action_semantics.iter().enumerate() {
+        validate_external_fixed_action_relation_v1(semantic, observation.acting_player)?;
+        let action_index = usize_u32(action_index)?;
+        let ref_start = usize_u32(encoder.scorer_action_refs.len())?;
+        let mut stable_refs = Vec::with_capacity(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1);
+        let core = flat_action_core_and_refs_v1(
+            semantic,
+            observation.acting_player,
+            ref_start,
+            |role, order_index, associated_order, stable| {
+                stable_refs.push((role, order_index, associated_order, stable.clone()));
+                Ok(())
+            },
+        )?;
+        if usize::from(core.ref_len) != stable_refs.len() {
+            return Err(FlatDecisionErrorV2::ScorerBindingMismatch);
+        }
+        for (role, order_index, associated_order, stable) in stable_refs {
+            let model_object_index = encoder.resolve_live(&stable, observation.acting_player)?;
+            let model_object = encoder
+                .objects
+                .get(
+                    usize::try_from(model_object_index)
+                        .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+                )
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            let card_token = u32::from(stable.card_db_id) + 1;
+            if model_object.card_token != card_token {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            encoder.scorer_action_refs.push(FlatScorerActionRefV2 {
+                action_index,
+                projection_role_id: flat_action_ref_projection_role_id_v2(role),
+                order_index,
+                associated_order,
+                card_token,
+                model_object_index,
+            });
+        }
+        encoder
+            .scorer_actions
+            .push(FlatScorerActionCoreV2::from(core));
+    }
+
+    Ok(FlatExternalScoringOwnedDecisionV1 {
+        globals: encoder.globals,
+        objects: encoder.objects,
+        relations: encoder.relations,
+        object_subtypes: encoder.object_subtypes,
+        ability_uses: encoder.ability_uses,
+        goads: encoder.goads,
+        completed_dungeons: encoder.completed_dungeons,
+        effect_subtype_changes: encoder.effect_subtype_changes,
+        context_path_elements: encoder.context_path_elements,
+        actions: encoder.scorer_actions,
+        action_refs: encoder.scorer_action_refs,
+    })
+}
+
 macro_rules! require_capacity {
     ($buffer:expr, $source:expr, $variant:ident) => {
         if $buffer.len() < $source.len() {
@@ -6389,6 +6571,146 @@ mod v2_tests {
             Err(FlatDecisionErrorV2::Action(
                 FlatActionDecisionSliceErrorV1::CorruptCurrentBinding
             ))
+        );
+    }
+
+    #[test]
+    fn external_observation_encoder_matches_session_scorer_tables_exactly() {
+        let session = v2_session(92_100);
+        let expected = expected(&session);
+        let semantics = session
+            .diagnostic_current_action_semantics()
+            .expect("current decision semantics");
+        let mut observation = session.flat_policy_observation_v2(expected).unwrap();
+        observation.kernel_version = crate::KERNEL_VERSION.to_string();
+        observation.visible_projection_hash =
+            crate::rl::visible_projection_hash_v5(&observation).unwrap();
+        validate_external_policy_scoring_decision_v1(&observation, &semantics).unwrap();
+        let external =
+            encode_external_flat_scoring_decision_owned_v1(&observation, &semantics).unwrap();
+
+        let mut encoder = FlatDecisionEncoderV2::default();
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        let decision = session
+            .encode_current_flat_scoring_decision_owned_v2(
+                expected,
+                &mut encoder,
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .unwrap();
+        let internal = FlatScoringDecisionViewV2::new(
+            &decision.globals,
+            &objects,
+            &relations,
+            &object_subtypes,
+            &ability_uses,
+            &goads,
+            &completed_dungeons,
+            &effect_subtype_changes,
+            &context_path_elements,
+            &actions,
+            &action_refs,
+        );
+        let external = external.scoring_view_v1();
+
+        assert_eq!(external.globals(), internal.globals());
+        assert_eq!(external.objects(), internal.objects());
+        assert_eq!(external.relations(), internal.relations());
+        assert_eq!(external.object_subtypes(), internal.object_subtypes());
+        assert_eq!(external.ability_uses(), internal.ability_uses());
+        assert_eq!(external.goads(), internal.goads());
+        assert_eq!(external.completed_dungeons(), internal.completed_dungeons());
+        assert_eq!(
+            external.effect_subtype_changes(),
+            internal.effect_subtype_changes()
+        );
+        assert_eq!(
+            external.context_path_elements(),
+            internal.context_path_elements()
+        );
+        assert_eq!(external.actions(), internal.actions());
+        assert_eq!(external.action_refs(), internal.action_refs());
+    }
+
+    #[test]
+    fn external_observation_encoder_rejects_hash_and_reference_forgery() {
+        let session = v2_session(92_101);
+        let expected = expected(&session);
+        let semantics = session
+            .diagnostic_current_action_semantics()
+            .expect("current decision semantics");
+        let mut observation = session.flat_policy_observation_v2(expected).unwrap();
+        observation.kernel_version = crate::KERNEL_VERSION.to_string();
+        observation.visible_projection_hash =
+            crate::rl::visible_projection_hash_v5(&observation).unwrap();
+        validate_external_policy_scoring_decision_v1(&observation, &semantics).unwrap();
+
+        let mut bad_hash = observation.clone();
+        bad_hash.visible_projection_hash ^= u64::MAX;
+        assert_eq!(
+            encode_external_flat_scoring_decision_owned_v1(&bad_hash, &semantics)
+                .err()
+                .unwrap(),
+            FlatDecisionErrorV2::ObservationContract
+        );
+
+        let mut forged = observation.own_hand[0].stable.clone();
+        forged.arena_id ^= u32::MAX;
+        let forged_semantics = vec![
+            ActionSemanticV1::Pass {
+                actor: observation.acting_player,
+            },
+            ActionSemanticV1::CastSpell {
+                actor: observation.acting_player,
+                source: forged,
+            },
+        ];
+        assert_eq!(
+            encode_external_flat_scoring_decision_owned_v1(&observation, &forged_semantics)
+                .err()
+                .unwrap(),
+            FlatDecisionErrorV2::InvalidReference
+        );
+        assert_eq!(
+            encode_external_flat_scoring_decision_owned_v1(&observation, &[])
+                .err()
+                .unwrap(),
+            FlatDecisionErrorV2::ObservationContract
+        );
+        assert_eq!(
+            encode_external_flat_scoring_decision_owned_v1(
+                &observation,
+                &[ActionSemanticV1::ChooseEffectNumber {
+                    actor: observation.acting_player,
+                    source: observation.own_hand[0].stable.clone(),
+                    number: 1,
+                    minimum: 0,
+                    maximum: 2,
+                }],
+            )
+            .err()
+            .unwrap(),
+            FlatDecisionErrorV2::Action(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
         );
     }
 }

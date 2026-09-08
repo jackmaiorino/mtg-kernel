@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "trace_id": "game-958659998-bottom-six-left-to-right-v1",
+  "required_bottom_count": 6,
+  "original_hand": [
+    {
+      "adapter_object_id": "game-958659998:opening-hand:0",
+      "visible_card_name": "Forest",
+      "original_hand_ordinal": 0
+    },
+    {
+      "adapter_object_id": "game-958659998:opening-hand:1",
+      "visible_card_name": "Plains",
+      "original_hand_ordinal": 1
+    },
+    {
+      "adapter_object_id": "game-958659998:opening-hand:2",
+      "visible_card_name": "Plains",
+      "original_hand_ordinal": 2
+    },
+    {
+      "adapter_object_id": "game-958659998:opening-hand:3",
+      "visible_card_name": "Swamp",
+      "original_hand_ordinal": 3
+    },
+    {
+      "adapter_object_id": "game-958659998:opening-hand:4",
+      "visible_card_name": "Island",
+      "original_hand_ordinal": 4
+    },
+    {
+      "adapter_object_id": "game-958659998:opening-hand:5",
+      "visible_card_name": "Plains",
+      "original_hand_ordinal": 5
+    },
+    {
+      "adapter_object_id": "game-958659998:opening-hand:6",
+      "visible_card_name": "Swamp",
+      "original_hand_ordinal": 6
+    }
+  ],
+  "selected_for_bottom_click_order": [
+    "game-958659998:opening-hand:0",
+    "game-958659998:opening-hand:1",
+    "game-958659998:opening-hand:2",
+    "game-958659998:opening-hand:3",
+    "game-958659998:opening-hand:4",
+    "game-958659998:opening-hand:5"
+  ],
+  "states": [
+    {
+      "selected_count": 0,
+      "source_manifest_sha256": "ac1d01e4cec791112bd942cbaf11060f9905b4108b21bd1cb1d8b471ec9e53e6",
+      "source_frame_sha256": "e364e0a7622ae0159f863d47c8163f9e353e35559fa7bc34840c8db205aea41d",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:0",
+        "game-958659998:opening-hand:1",
+        "game-958659998:opening-hand:2",
+        "game-958659998:opening-hand:3",
+        "game-958659998:opening-hand:4",
+        "game-958659998:opening-hand:5",
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": false,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    },
+    {
+      "selected_count": 1,
+      "source_manifest_sha256": "e9e67a6bc9657288c2c10f0f5f8893e8223a24082ce84e7346e24994f70c0a3f",
+      "source_frame_sha256": "3df0dad98bbf8e7400fe8d8a226ec80749e8d198bda63cc79182fab18172e0ce",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:1",
+        "game-958659998:opening-hand:2",
+        "game-958659998:opening-hand:3",
+        "game-958659998:opening-hand:4",
+        "game-958659998:opening-hand:5",
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": false,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    },
+    {
+      "selected_count": 2,
+      "source_manifest_sha256": "4ca82abf0c7745eba7f80763a73ced9c976a5867bb508a43e205de4a2faf4a0b",
+      "source_frame_sha256": "0d53fd2be7fc23d9fc83c8f0d04b23999dcff5e6a33649d881d3f4cc1d802f49",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:2",
+        "game-958659998:opening-hand:3",
+        "game-958659998:opening-hand:4",
+        "game-958659998:opening-hand:5",
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": false,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    },
+    {
+      "selected_count": 3,
+      "source_manifest_sha256": "13037a3c5e7f86a44074eb15a66700d98ddde9713e546ac4431fe16a087ba3d6",
+      "source_frame_sha256": "e5310d7d08f50ac5c70c20da3634b64fc1d4776c831a4bcce077ca349674aa64",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:3",
+        "game-958659998:opening-hand:4",
+        "game-958659998:opening-hand:5",
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": false,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    },
+    {
+      "selected_count": 4,
+      "source_manifest_sha256": "49b865b9777375ed962a63e1d72eeb87f41823f0bc5feca7b189905c0f01adaf",
+      "source_frame_sha256": "32358841e2aebfb5d2ccf7daa9ae239898fccdbe825c4e907596b1944139ecdb",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:4",
+        "game-958659998:opening-hand:5",
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": false,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    },
+    {
+      "selected_count": 5,
+      "source_manifest_sha256": "e0d3749fde5025b254c7ed3b8161453460f9b61c196425e6ce1373a6c3a7c391",
+      "source_frame_sha256": "8252a1425e93b678b8aa9cf096c3676d6339beed7e144494f1b9777e15e3c1b4",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:5",
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": false,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    },
+    {
+      "selected_count": 6,
+      "source_manifest_sha256": "2eefee0b3a69a167dd5482b219052bd404c5f74f1263a49ae51cee85636b3e3d",
+      "source_frame_sha256": "2f9a192449535af5544ad4cec985acecca8ad21069f18714d926705e00e7abdc",
+      "visible_remaining_object_ids": [
+        "game-958659998:opening-hand:6"
+      ],
+      "done_visible": true,
+      "cancel_visible": true,
+      "prompt_reconciled": true,
+      "legal_action_set_complete": true
+    }
+  ],
+  "completion": {
+    "source_manifest_sha256": "fd6fe2267ed5be7484feb82aaeec6d095d6b4e7447efc37395b1455b7cce515c",
+    "source_frame_sha256": "4e238c922942e103c1037fcadaa818ba4874d2501547c7e6885f4705ceebf2c8",
+    "bottomed_card_count": 6,
+    "began_game_hand_size": 1,
+    "solitaire_draw_observed": true,
+    "resulting_visible_hand_size": 2,
+    "first_main_visible": true,
+    "visible_game_log_reconciled": true
+  }
+}

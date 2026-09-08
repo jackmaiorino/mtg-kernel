@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "audit_id": "solitaire_observation_gap_audit_20260809_2055",
+  "topology": "solitaire_calibration",
+  "frame": {
+    "sequence": 1,
+    "manifest_sha256": "3958848312980957c76cabcd4a64654c78347c4123ff042b29b4ca7c7072337b",
+    "frame_sha256": "da503414c6b948ef399c787a7e7bc17aec34084b4c360e52deff627b308ae31d",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "groups": [
+    {
+      "group": "duel_participants",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 260, "y": 0, "width": 900, "height": 30 },
+          "bgra8_sha256": "07ce7c76542336c1f231cd0be4a2559bb735afc4bfbb06135340f10025f7f29f"
+        }
+      ],
+      "missing_reason_codes": ["solitaire_has_no_distinct_opponent"]
+    },
+    {
+      "group": "turn_phase_and_priority",
+      "status": "visible_complete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 10, "y": 32, "width": 200, "height": 165 },
+          "bgra8_sha256": "0152a903d13d5747f582f2341c23de65f56558f87db24df5d6275f40cb4a1bfd"
+        }
+      ],
+      "missing_reason_codes": []
+    },
+    {
+      "group": "player_public_state",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 10, "y": 203, "width": 200, "height": 248 },
+          "bgra8_sha256": "f4ffba433981c925c7535820dad4b05bbcf5e600a0fc64e56e357afc0c599dee"
+        }
+      ],
+      "missing_reason_codes": ["second_player_public_state_absent"]
+    },
+    {
+      "group": "public_objects_and_zones",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 218, "width": 850, "height": 475 },
+          "bgra8_sha256": "c5048a41ec20223c689df43ef425dc9bfa8c43d7612929bea13bfa301a7032ae"
+        }
+      ],
+      "missing_reason_codes": ["distinct_opponent_zones_absent"]
+    },
+    {
+      "group": "acting_player_private_knowledge",
+      "status": "visible_complete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 729, "width": 850, "height": 190 },
+          "bgra8_sha256": "d0c0b84e2a76dbbcc13021663e6c5fcf2e323a0b939f7fccfebb7e93b7d37721"
+        }
+      ],
+      "missing_reason_codes": []
+    },
+    {
+      "group": "stack_combat_and_pending_choices",
+      "status": "visible_complete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 218, "width": 850, "height": 510 },
+          "bgra8_sha256": "d1716d631b04bc743d24822ca36941d7bc30ded76a5923fc696bf7f325852757"
+        },
+        {
+          "rect_client_px": { "x": 10, "y": 32, "width": 200, "height": 165 },
+          "bgra8_sha256": "0152a903d13d5747f582f2341c23de65f56558f87db24df5d6275f40cb4a1bfd"
+        }
+      ],
+      "missing_reason_codes": []
+    },
+    {
+      "group": "kernel_decision_history_context",
+      "status": "incomplete",
+      "visible_regions": [],
+      "missing_reason_codes": [
+        "kernel_priority_history_not_reconstructed",
+        "kernel_recent_activity_context_not_reconstructed"
+      ]
+    },
+    {
+      "group": "object_incarnations_and_card_db",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 378, "width": 850, "height": 541 },
+          "bgra8_sha256": "c6f29848b8be68aab22fd8148a129d0ccf1a47821c233679a3c89c3e94f8ab88"
+        }
+      ],
+      "missing_reason_codes": [
+        "stable_object_bindings_not_complete",
+        "zone_change_incarnations_not_complete"
+      ]
+    },
+    {
+      "group": "complete_ordered_legal_actions",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 10, "y": 32, "width": 1150, "height": 887 },
+          "bgra8_sha256": "3be7b5a13dec5562ed1b9e7ec78c7768d5a169f40d98c7fc1c05a6e28bd2f3a3"
+        }
+      ],
+      "missing_reason_codes": ["ordered_legal_action_set_not_proven_complete"]
+    },
+    {
+      "group": "kernel_contract_metadata",
+      "status": "local_derived_complete",
+      "visible_regions": [],
+      "missing_reason_codes": []
+    }
+  ],
+  "observation_complete": false,
+  "legal_action_set_complete": false,
+  "ready_for_model_scoring": false
+}

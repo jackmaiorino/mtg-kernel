@@ -1,0 +1,92 @@
+{
+  "schema_version": 2,
+  "corpus_id": "freeform-solitaire-london-mulligan-dark-core-heldout-20260810-v3",
+  "matcher_version": "exact_binary_prompt_dark_core_bgr_sum_below_182-v3",
+  "profile_set_commitment_sha256": "82f85cdc4a46008686c5336721c8794ce00479ce06910a8b032f72ac3343326f",
+  "development_measurement": {
+    "distinct_games": 3,
+    "prompt_samples": 21,
+    "exact_size_matches": 21,
+    "gameplay_negative_samples": 4,
+    "gameplay_negative_no_matches": 4,
+    "threshold_selection": "midpoint of the widest same-label stable interval in the development corpus"
+  },
+  "heldout_samples": [
+    {
+      "sample_id": "game-958671960-seven",
+      "manifest_sha256": "a29887b9b64d96cccab3eb2e49f16261155aa1d9bc8a04706a63e3b1f9a50c78",
+      "frame_sha256": "06c484c27bde548dc573fb59de615454c01095a5fb41988561324cbc9dc1ee81",
+      "human_prospective_keep_size": 7,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "0467bb9790b44a0d29f7fd3b082a0927f556dd95c0f004482c51fe50e4a59f28"
+    },
+    {
+      "sample_id": "game-958671960-six",
+      "manifest_sha256": "4451d31af7058dd03b8109977ce727e2b3a2deeed4739eb7f1143a0055a57489",
+      "frame_sha256": "8a52c222772b3d97bf6da74242493d407fc0dbde1596af2371e66f5f9a7c3e3f",
+      "human_prospective_keep_size": 6,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "090ceff5f77bcb05090aceb9ddf6084dce05e54c01598f2a7b83a2920989e433"
+    },
+    {
+      "sample_id": "game-958671960-five",
+      "manifest_sha256": "a00f969f18e152a58536bf79fdf1bba8793382e7d53fe19319051afdd643025d",
+      "frame_sha256": "c66eada5b332f4ad21e0f224cf25971f72f7e0e1e4a00323a0e8975e2066e72d",
+      "human_prospective_keep_size": 5,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "73d4e3f739bbe075a42a729fee2663e029d237535ef0695e1b5b3ac3a8517c85"
+    },
+    {
+      "sample_id": "game-958671960-four",
+      "manifest_sha256": "a92c24f1f2b9a6a419b6b7b3d99a39c4d999bb601704ade0d989824a55268e92",
+      "frame_sha256": "be34b2a5c48fbdaaf3f36345c0e95771a34c81879a75055345deb276c32b5e0d",
+      "human_prospective_keep_size": 4,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "739f92f3c0b7d86e3dc121ac148ad57f2c8ab3bdbbc74f9661a396785db44d8c"
+    },
+    {
+      "sample_id": "game-958671960-three",
+      "manifest_sha256": "d05f5b2c6dbd602d930336a3478cb947b6a93ffadc5ffb6f8a04673a6609e628",
+      "frame_sha256": "445c9657cf72ec5742f6322e307f26ae2548653be401391490e679a24d40df6f",
+      "human_prospective_keep_size": 3,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "9a21f87c6dae76eb1f1d935fd8cc962b18ebfde769f7879c7f3ea5e5765f092e"
+    },
+    {
+      "sample_id": "game-958671960-two",
+      "manifest_sha256": "c3bb68d92ed36d5161a54b85134bb013a2f6d5ed9ae341f3359bff12bb59b9e5",
+      "frame_sha256": "809824d92054a3a23f2f724016f8c28c49247eb3a9bf7ee19ec4925ff68c4ab4",
+      "human_prospective_keep_size": 2,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "6a7e480916fba15937899fc5d86a93f01a126a4349fc53680789627964067af9"
+    },
+    {
+      "sample_id": "game-958671960-one",
+      "manifest_sha256": "3efecce94d1a0f55eb6779aefc43d7c0f475c35fd22f8682008c5eb8fac467c1",
+      "frame_sha256": "555af1e8df2952096b078b6c406076bdae6befd03df08c9cdd8b996d30deb5a9",
+      "human_prospective_keep_size": 1,
+      "classification": "match",
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "3d378f6c7987f944a70ba3b4494a81751ac2c11caf24cca3f2e7fc32b2ca63cd"
+    }
+  ],
+  "heldout_measurement": {
+    "distinct_games": 1,
+    "prompt_samples": 7,
+    "exact_size_matches": 7,
+    "wrong_size_matches": 0,
+    "ambiguous_results": 0
+  },
+  "nonclaim": "The seven heldout prompts come from one later no-cost Freeform Solitaire game using one fixed two-print basic-land deck. This is a narrow heldout brittleness check, not an accuracy estimate or evidence for another client layout or render path.",
+  "safe_for_live_frame": false,
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}

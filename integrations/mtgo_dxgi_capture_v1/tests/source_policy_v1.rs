@@ -1,0 +1,4119 @@
+#[test]
+fn production_source_uses_composed_desktop_and_excludes_hidden_or_input_apis() {
+    let source = include_str!("../src/probe.rs");
+    for forbidden in [
+        "PrintWindow",
+        "WM_PRINT",
+        "GetWindowDC",
+        "BitBlt",
+        "DwmRegisterThumbnail",
+        "Windows.Graphics.Capture",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "SetWindowsHookEx",
+        "CreateRemoteThread",
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "UIAutomation",
+        "WinHttp",
+        "WinSock",
+        "pcap",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "production source contains forbidden API or channel: {forbidden}"
+        );
+    }
+    for required in [
+        "DuplicateOutput",
+        "AcquireNextFrame",
+        "ProtectedContentMaskedOut",
+        "WinVerifyTrust",
+        "DwmGetWindowAttribute",
+        "GetForegroundWindow",
+    ] {
+        assert!(
+            source.contains(required),
+            "production source is missing required admission operation: {required}"
+        );
+    }
+}
+
+#[test]
+fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
+    let source = include_str!("../src/probe/visible_game_log.rs");
+    let memory = include_str!("../src/competitive_visible_match_memory.rs");
+    let readiness = include_str!("../src/competitive_visible_history_readiness.rs");
+    let scoring = include_str!("../src/probe/duel_perception_runtime.rs");
+    for required in [
+        "begin_competitive_visible_game_log_baseline_v1",
+        "advance_competitive_visible_game_log_baseline_v1",
+        "bind_competitive_match_visible_game_log_lease_v1",
+        "refresh_competitive_match_visible_game_log_v1",
+        "require_game_log_creation_in_selection_window_v1",
+        "require_exactly_one_acting_player_join_v1",
+        "expected_acting_player_alias_sha256",
+        "expected_opponent_alias_sha256",
+        "safe_for_model_scoring_v1(&self) -> bool {\n        false",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive visible Game Log seam is missing: {required}"
+        );
+    }
+    for required in [
+        "bind_match_scoped_competitive_player_visible_game_memory_v1",
+        "into_match_log_lease_and_confirmed_decisions_v1",
+        "ready_for_kernel_history_import_v1(&self) -> bool",
+        "MtgoCompetitiveExternalPublicHistoryConsumerV1",
+        "MtgoCompetitiveExternalConfirmedDecisionV1",
+        "player_visible_decision_v1",
+        "MtgoPlayerVisibleConfirmedDuelDecisionV1",
+        "kernel object references, and internal card IDs remain",
+        "MtgoCompetitiveExternalPublicGameLogEventV1",
+        "visit_external_public_history_v1",
+        "visit_ongoing_external_public_history_v1",
+        "authoritative snapshots, not append-only deltas",
+        "confirmed_decisions: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>",
+        "score_and_select_opaque_player_visible_duel_perception_with_ongoing_history_v1",
+        "SeparateOrderedStreamsNoCrossSourceTotalOrder",
+        "cannot replace, the exact current visible",
+        "into_visible_game_outcome_v1",
+        "OpaqueMtgoCompetitiveVisibleGameOutcomeV1",
+        "OpaqueMtgoCompetitiveCompletedMatchHistoryV1",
+        "begin_competitive_completed_match_history_v1",
+        "append_competitive_completed_match_history_v1",
+        "MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1",
+        "visit_external_completed_match_history_v1",
+        "SeparateOrderedStreamsNoCrossSourceTotalOrder",
+        "derive_visible_game_winner_v1",
+        "kernel_consumer_public_zones_present: true",
+        "kernel_consumer_kernel_bookkeeping_withheld: true",
+    ] {
+        assert!(
+            memory.contains(required) || readiness.contains(required) || scoring.contains(required),
+            "match-scoped visible memory seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub struct MtgoCompetitiveExternalVisibleObservationV1",
+        "pub struct MtgoCompetitiveExternalVisibleBattlefieldCardV1",
+        "pub struct MtgoCompetitiveExternalVisiblePublicZoneCardV1",
+        "pub struct MtgoCompetitiveExternalVisibleStackItemV1",
+        "pub fn candidate_path",
+        "pub fn data_root",
+        "pub fn source_id",
+        "pub fn raw_bytes",
+        "pub fn acting_player_alias_v1",
+        "pub fn opponent_alias_v1",
+        "pub fn source_visible_text_sha256_v1",
+        "pub fn source_record_commitment_sha256_v1",
+        "pub fn public_event_v1",
+        "pub fn confirmed_decision_v1",
+        "pub fn memory_commitment_sha256_v1",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "WinHttp",
+        "WinSock",
+        "TcpStream",
+        "UdpSocket",
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "UIAutomation",
+    ] {
+        assert!(
+            !source.contains(forbidden) && !memory.contains(forbidden),
+            "competitive visible Game Log exposes forbidden channel or authority: {forbidden}"
+        );
+    }
+    for forbidden_memory_getter in [
+        "pub fn match_identity_sha256_v1(&self) -> &str",
+        "pub fn policy_deployment_commitment_sha256_v1(&self) -> &str",
+    ] {
+        assert!(
+            !memory.contains(forbidden_memory_getter),
+            "competitive visible memory exposes private lineage: {forbidden_memory_getter}"
+        );
+    }
+
+    let public_method_names = |body: &str| {
+        body.lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("pub fn ")
+                    .and_then(|rest| rest.split_once('('))
+                    .map(|(name, _)| name.to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    let confirmed_start = memory
+        .find("impl MtgoCompetitiveExternalConfirmedDecisionV1 {")
+        .expect("confirmed-decision model view implementation");
+    let confirmed_end = memory[confirmed_start..]
+        .find("\n}\n\n/// Narrow model-facing view")
+        .map(|offset| confirmed_start + offset + 2)
+        .expect("confirmed-decision model view end");
+    assert_eq!(
+        public_method_names(&memory[confirmed_start..confirmed_end]),
+        ["within_source_position_v1", "player_visible_decision_v1"],
+        "confirmed-decision model view widened beyond player-visible information"
+    );
+
+    let event_start = memory
+        .find("impl MtgoCompetitiveExternalPublicGameLogEventV1<'_> {")
+        .expect("Game Log model view implementation");
+    let event_end = memory[event_start..]
+        .find("\n}\n\n/// Kernel-owned consumer boundary")
+        .map(|offset| event_start + offset + 2)
+        .expect("Game Log model view end");
+    assert_eq!(
+        public_method_names(&memory[event_start..event_end]),
+        [
+            "within_source_position_v1",
+            "kind_v1",
+            "actor_role_v1",
+            "turn_number_v1",
+            "primary_count_v1",
+            "secondary_count_v1",
+            "visible_card_name_count_v1",
+            "visible_card_name_v1",
+        ],
+        "Game Log model view widened beyond player-visible information"
+    );
+}
+
+#[test]
+fn visible_game_log_diagnostics_do_not_emit_transport_or_identity_derivatives() {
+    let offline = include_str!("../../mtgo_blackbox_v1/src/bin/check_mtgo_visible_game_log_v1.rs");
+    let corpus = include_str!(
+        "../../mtgo_blackbox_v1/src/bin/summarize_mtgo_visible_game_log_semantics_v1.rs"
+    );
+    let live = include_str!("../src/bin/probe_mtgo_visible_game_log_v1.rs");
+    for forbidden in [
+        "\"source_file_sha256\"",
+        "\"source_match_id_commitment_sha256\"",
+        "\"projection_commitment_sha256\"",
+    ] {
+        assert!(
+            !offline.contains(forbidden),
+            "offline Game Log diagnostic emits forbidden transport derivative: {forbidden}"
+        );
+    }
+    for forbidden in ["path.display()", "path.to_string_lossy()"] {
+        assert!(
+            !corpus.contains(forbidden),
+            "Game Log corpus diagnostic error path emits a source path: {forbidden}"
+        );
+    }
+    for required in [
+        "raw_visible_text_emitted: false",
+        "player_aliases_emitted: false",
+        "source_identifiers_emitted: false",
+        "card_names_emitted: false",
+    ] {
+        assert!(
+            corpus.contains(required),
+            "Game Log corpus diagnostic lacks explicit non-emission field: {required}"
+        );
+    }
+    for forbidden in [
+        "binding_commitment_sha256:",
+        "semantic_projection_commitment_sha256:",
+        "acting_player_alias_sha256:",
+    ] {
+        assert!(
+            !live.contains(forbidden),
+            "live Game Log diagnostic emits forbidden transport or identity derivative: {forbidden}"
+        );
+    }
+    for required in [
+        "transport_commitments_emitted: false",
+        "player_aliases_emitted: false",
+        "source_identifiers_emitted: false",
+    ] {
+        assert!(
+            live.contains(required),
+            "live Game Log diagnostic lacks explicit non-emission field: {required}"
+        );
+    }
+}
+
+#[test]
+fn visible_game_log_action_corroboration_is_public_fact_only_and_non_actuating() {
+    let source =
+        include_str!("../../mtgo_blackbox_v1/src/visible_game_log_action_corroboration.rs");
+    let semantics = include_str!("../../mtgo_blackbox_v1/src/visible_game_log_semantics.rs");
+    let windows_binder = include_str!("../src/probe/visible_game_log.rs");
+    for required in [
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "safe_for_additional_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+        "after_events.starts_with(&baseline.prior_events)",
+        "MtgoVisibleGameLogPlayerRoleV1::ActingPlayer",
+    ] {
+        assert!(
+            source.contains(required),
+            "Game Log action corroboration lacks required boundary: {required}"
+        );
+    }
+    for forbidden in [
+        "pub trait MtgoVisibleGameLogSemanticSequenceV1",
+        "source_projection_commitment_sha256_v1()",
+        "projection_commitment_sha256_v1()",
+        "acting_player_alias_sha256_v1()",
+        "opponent_alias_sha256_v1()",
+        "visible_text_v1()",
+        "source_visible_text_sha256_v1()",
+        "candidate_path",
+        "ReadProcessMemory",
+        "SendInput",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "Game Log action corroboration reached a forbidden channel: {forbidden}"
+        );
+    }
+    assert!(
+        semantics.contains("pub(crate) fn visible_source_record_prefix_commitment_v1"),
+        "the exact rendered-prefix commitment must remain private to the black-box adapter"
+    );
+    assert!(
+        !semantics.contains("pub fn visible_source_record_prefix_commitment_v1"),
+        "the exact rendered-prefix commitment must not become a public model-facing getter"
+    );
+    for required in [
+        "begin_competitive_match_visible_game_log_action_baseline_v1",
+        "corroborate_competitive_match_visible_game_log_action_v1",
+        "&OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1",
+    ] {
+        assert!(
+            windows_binder.contains(required),
+            "the Windows Game Log wrapper lacks its opaque source binding: {required}"
+        );
+    }
+}
+
+#[test]
+fn native_sideboard_payload_module_is_visible_only_and_isolated_from_live_binder() {
+    let source = include_str!("../src/competitive_native_sideboard.rs");
+    for required in [
+        "MtgoCompetitiveNativeSideboardModelInputV1",
+        "MtgoCompetitiveNativeSideboardModelSelectionV1",
+        "visible_native_sideboard_configuration_v1",
+        "validate_competitive_native_sideboard_model_input_v1",
+        "validate_competitive_native_sideboard_model_selection_v1",
+        "native sideboard player-visible deck size rules are invalid",
+        "native sideboard selection changed the player-visible card inventory",
+    ] {
+        assert!(
+            source.contains(required),
+            "native sideboard visible payload is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub card_db_id",
+        "bind_competitive_event",
+        "OpaqueMtgoMeasuredCompetitiveEventSideboardV1",
+        "SendInput",
+        "SetCursorPos",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "execute",
+        "submit_sideboard",
+        "permits_spending",
+        "permits_event_entry",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "native sideboard payload exposes forbidden metadata or authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn sideboard_classifier_response_has_no_kernel_card_identifier() {
+    let contract = include_str!("../../mtgo_blackbox_v1/src/competitive_sideboard.rs");
+    let start = contract
+        .find("pub struct MtgoVisibleCompetitiveSideboardCardV1")
+        .expect("visible sideboard card response type must exist");
+    let end = contract[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("visible sideboard card response type must have one body");
+    let response_type = &contract[start..end];
+    assert!(response_type.contains("pub card_name: String"));
+    assert!(!response_type.contains("card_db_id"));
+
+    let start = contract
+        .find("pub struct MtgoCompetitiveSideboardTransferV1")
+        .expect("public sideboard transfer type must exist");
+    let end = contract[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("public sideboard transfer type must have one body");
+    let transfer_type = &contract[start..end];
+    assert!(transfer_type.contains("pub card_name: String"));
+    assert!(!transfer_type.contains("card_db_id"));
+
+    let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    let start = classifier
+        .find("struct MtgoCompetitiveSideboardCardProfileV1")
+        .expect("sideboard classifier card profile must exist");
+    let end = classifier[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("sideboard classifier card profile must have one body");
+    let profile = &classifier[start..end];
+    assert!(profile.contains("card_name: String"));
+    assert!(!profile.contains("card_db_id"));
+
+    let actuator = include_str!("../src/actuator.rs");
+    let start = actuator
+        .find("pub struct MtgoAtomicCompetitiveSideboardTransferV1")
+        .expect("public atomic sideboard transfer type must exist");
+    let end = actuator[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("public atomic sideboard transfer type must have one body");
+    let atomic_transfer_type = &actuator[start..end];
+    assert!(atomic_transfer_type.contains("pub card_name: String"));
+    assert!(!atomic_transfer_type.contains("card_db_id"));
+    assert!(
+        !actuator.contains("pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1")
+    );
+    assert!(!actuator
+        .contains("pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1"));
+}
+
+#[test]
+fn native_sideboard_live_binder_is_visible_outcome_bound_and_non_actuating() {
+    let source = include_str!("../src/actuator.rs");
+    let start = source
+        .find("pub fn bind_competitive_event_native_sideboard_request_v1")
+        .expect("native sideboard binder must exist");
+    let end = source[start..]
+        .find("pub fn begin_competitive_event_sideboard_transfer_sequence_v1")
+        .map(|offset| start + offset)
+        .expect("native sideboard binder must end before the transfer sequence");
+    let binder = &source[start..end];
+    for required in [
+        "OpaqueMtgoCompetitiveCompletedMatchHistoryV1",
+        "sideboard_evaluation_ratification_commitment_sha256",
+        "sideboard_evaluation_admission_commitment_sha256",
+        "completed_history.latest_lineage_v1()",
+        "completed_history.history_commitment_sha256_v1()",
+        "MtgoCompetitiveLifecyclePhaseV1::Sideboarding",
+        "sideboard.event_identity_sha256 != outcome_lineage.event_identity_sha256",
+        "sideboard.match_identity_sha256 != outcome_lineage.match_identity_sha256",
+        "native_sideboard_score_from_prior_game_v1",
+        "visible_native_sideboard_configuration_v1",
+        "validate_competitive_native_sideboard_model_input_v1",
+    ] {
+        assert!(
+            binder.contains(required),
+            "native sideboard binder is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1",
+        "sideboard_automation_ratification_commitment_sha256",
+        "execute_prepared",
+        "submit_sideboard",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !binder.contains(forbidden),
+            "native sideboard binder gained input, capture, or hidden-state authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn native_pregame_payload_includes_only_player_known_deck_semantics() {
+    let source = include_str!("../src/actuator.rs");
+    let start = source
+        .find("pub struct MtgoCompetitiveNativePregameModelInputV1")
+        .expect("native pregame model input must exist");
+    let end = source[start..]
+        .find("\n}\n\n/// Move-only source-bound request")
+        .map(|offset| start + offset)
+        .expect("native pregame model input must have one exact struct body")
+        + 2;
+    let payload = &source[start..end];
+    for required in [
+        "player_known_deck_configuration",
+        "MtgoCompetitiveNativeSideboardConfigurationV1",
+        "ordered_visible_cards",
+        "ordered_confirmed_bottom_slots",
+        "ordered_actions",
+    ] {
+        assert!(
+            payload.contains(required),
+            "native pregame visible payload is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "card_db_id",
+        "sha256",
+        "event_identity",
+        "match_identity",
+        "authorization",
+        "capture",
+        "classifier",
+        "deck_manifest",
+        "policy_deployment",
+    ] {
+        assert!(
+            !payload.contains(forbidden),
+            "native pregame payload exposes adapter metadata: {forbidden}"
+        );
+    }
+    let binder_start = source
+        .find("pub fn bind_competitive_event_pregame_native_request_v1")
+        .expect("native pregame binder must exist");
+    let binder_end = source[binder_start..]
+        .find("pub fn competitive_native_pregame_model_input_commitment_v1")
+        .map(|offset| binder_start + offset)
+        .expect("native pregame binder must end before its commitment helper");
+    let binder = &source[binder_start..binder_end];
+    for required in [
+        "deck_manifest.manifest_commitment_sha256() != runtime.commitments.deck_manifest_sha256",
+        "deck_manifest.deck_list_sha256() != runtime.commitments.deck_list_sha256",
+        "deck_manifest.format_sha256() != runtime.commitments.deck_format_sha256",
+        "&runtime.player_known_deck_state.current",
+        "runtime.player_known_current_deck_configuration_commitment_sha256",
+    ] {
+        assert!(
+            binder.contains(required),
+            "native pregame binder does not retain the exact player-known current deck: {required}"
+        );
+    }
+}
+
+#[test]
+fn player_known_deck_state_is_private_confirmed_and_match_scoped() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "struct MtgoCompetitivePlayerKnownDeckStateV1",
+        "from_manifest_v1",
+        "replace_current_v1(visible_target_configuration)",
+        "player_known_current_deck_configuration_commitment_sha256",
+        "reset_for_next_match_v1",
+        "confirmed.action == MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch",
+    ] {
+        assert!(
+            source.contains(required),
+            "player-known cross-game deck retention is missing: {required}"
+        );
+    }
+    assert!(!source.contains("pub struct MtgoCompetitivePlayerKnownDeckStateV1"));
+}
+
+#[test]
+fn competitive_pregame_bottom_history_is_private_visible_and_postcondition_bound() {
+    let source = include_str!("../src/actuator.rs");
+    let exports = include_str!("../src/lib.rs");
+    for required in [
+        "ordered_confirmed_bottom_slots: Vec<u8>",
+        "competitive_pregame_confirmed_bottom_history_commitment_v1",
+        "advance_competitive_event_pregame_observed_with_confirmed_bottom_v1",
+        "competitive pregame observed bottom selection lacks confirmed action history",
+        "bind_competitive_event_pregame_native_request_from_session_v1",
+        "&session.ordered_confirmed_bottom_slots",
+        "current_model_context_binding_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame bottom history seam is missing: {required}"
+        );
+    }
+    assert!(exports.contains("bind_competitive_event_pregame_native_request_from_session_v1"));
+    let session_start = source
+        .find("pub struct OpaqueMtgoCompetitiveEventPregameSessionV1")
+        .unwrap();
+    let session_end = source[session_start..]
+        .find("\n}\n\nimpl OpaqueMtgoCompetitiveEventPregameSessionV1")
+        .map(|offset| session_start + offset)
+        .unwrap();
+    assert!(
+        !source[session_start..session_end].contains("pub ordered_confirmed_bottom_slots: Vec<u8>")
+    );
+}
+
+#[test]
+fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
+    let library = include_str!("../src/lib.rs");
+    let probe = include_str!("../src/probe.rs");
+    for required in [
+        "CaptureWindowModeV2::DuelGame",
+        "\"duel_game\"",
+        "\"acting_player_duel\"",
+        "safe_for_semantic_evidence: false",
+        "safe_for_ocr: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+    ] {
+        assert!(
+            library.contains(required) || probe.contains(required),
+            "acting-player duel boundary is missing: {required}"
+        );
+    }
+}
+
+#[test]
+fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_authority() {
+    let source = include_str!("../src/probe/duel_profile_frame.rs");
+    for required in [
+        "capture_admitted_mtgo_duel_visible_frame_v1",
+        "AdmittedMtgoDuelPerceptionProfileV1",
+        "OpaqueMtgoAdmittedDuelVisibleFrameV1",
+        "CaptureWindowModeV2::DuelGame",
+        "profile.executable_sha256()",
+        "profile.signer_thumbprint()",
+        "profile.signer_subject_sha256()",
+        "profile.dpi()",
+        "profile.client_size_px()",
+        "profile.output_identity_sha256()",
+        "profile.game_format()",
+        "perception_profile_admission_commitment_sha256",
+        "frame_profile_binding_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "admitted duel-frame seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn bind_captured_duel_frame_to_profile_v1",
+        "pub fn canonical_bgra8",
+        "pub fn preview_png",
+        "to_observation",
+        "to_model_request",
+        "to_action_intent",
+        "target_point_client",
+        "safe_for_semantic_evidence_v1(&self) -> bool {\n        true",
+        "safe_for_model_scoring_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "admitted duel-frame seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_classifier_retains_exact_opaque_source_without_input_authority() {
+    let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let contract = include_str!("../../mtgo_blackbox_v1/src/competitive_pregame_classification.rs");
+    for required in [
+        "classify_admitted_mtgo_competitive_pregame_frame_v1",
+        "OpaqueMtgoAdmittedDuelVisibleFrameV1",
+        "AdmittedMtgoDuelPerceptionProfileV1",
+        "AdmittedMtgoCompetitivePregameProfileV1",
+        "OpaqueMtgoVerifiedDuelPerceptionRuntimeV1",
+        "check_untrusted_competitive_pregame_classifier_request_v1",
+        "check_untrusted_competitive_pregame_classifier_response_v1",
+        "verify_duel_perception_runtime_identity_now_v1(runtime)?",
+        "--mtgo-visible-competitive-pregame-v1",
+        "MTGO_VISIBLE_COMPETITIVE_PREGAME_V1\\0",
+        "_source_frame: source_frame",
+        "_checked_classification: checked_classification",
+        "_response: response_record",
+        "visible_interaction_commitment_sha256",
+        "MtgoCompetitivePregameVisibleCardV1",
+        "MtgoCompetitivePregameVisibleControlV1",
+        "competitive_pregame_visible_interaction_commitment_v1",
+        "safe_for_live_classification_v1(&self) -> bool {\n        false",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required) || runtime.contains(required) || contract.contains(required),
+            "competitive pregame classifier runtime is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn pixels",
+        "pub fn control_rect",
+        "pub fn input_point",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "UIAutomation",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame classifier exposes forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_navigation_frame_requires_admitted_profile_and_exact_account_title() {
+    let source = include_str!("../src/probe/competitive_navigation_profile_frame.rs");
+    for required in [
+        "capture_admitted_mtgo_competitive_navigation_frame_v1",
+        "AdmittedMtgoCompetitiveNavigationProfileV1",
+        "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
+        "CaptureWindowModeV2::MainClient",
+        "runtime.executable_sha256()",
+        "runtime.signer_thumbprint()",
+        "runtime.signer_subject_sha256()",
+        "runtime.window_title_sha256()",
+        "runtime.approved_account_alias_sha256()",
+        "runtime.account_identity_rect_client_px()",
+        "runtime.account_identity_region_sha256()",
+        "visible_frame_region_content_sha256_v1",
+        "runtime.dpi()",
+        "runtime.client_size_px()",
+        "runtime.output_identity_sha256()",
+        "profile_admission_commitment_sha256",
+        "frame_profile_binding_sha256",
+        "opaque_main_client_navigation_pixels_no_classification_no_entry_no_spending_no_input",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive navigation frame seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn bind_captured_competitive_navigation_frame_to_profile_v1",
+        "pub fn canonical_bgra8",
+        "pub fn preview_png",
+        "to_lifecycle",
+        "join_control",
+        "target_point_client",
+        "safe_for_lifecycle_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive navigation frame seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_navigation_runtime.rs");
+    for required in [
+        "verify_competitive_navigation_classifier_runtime_v1",
+        "classify_admitted_mtgo_competitive_navigation_frame_v1",
+        "AdmittedMtgoCompetitiveNavigationProfileV1",
+        "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
+        "OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1",
+        "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "LeagueAndChallengeLifecycleClassification",
+        "classifier_assets_manifest_bytes",
+        "MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1",
+        "env_clear()",
+        "Stdio::piped()",
+        "child.kill()",
+        "MAX_CLASSIFIER_RESPONSE_BYTES_V1",
+        "check_untrusted_competitive_navigation_prediction_v1",
+        "rehash_lifecycle_visible_facts_v1",
+        "opaque_eighteen_slice_lifecycle_classification_no_entry_no_spending_no_input",
+        "safe_for_lifecycle_classification_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive navigation classifier seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "cmd.exe",
+        "powershell",
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn join_control",
+        "pub fn input_command",
+        "safe_for_lifecycle_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive navigation classifier seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_event_listing_is_current_pixel_bound_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_event_listing_runtime.rs");
+    let process_source = include_str!("../src/probe/competitive_navigation_runtime.rs");
+    for required in [
+        "bind_classified_navigation_frame_to_competitive_event_listing_v1",
+        "classify_checked_untrusted_competitive_event_listing_v1",
+        "bind_classified_competitive_event_listing_to_evaluation_v1",
+        "AdmittedMtgoCompetitiveEventListingEvaluationV1",
+        "check_untrusted_competitive_event_listing_pixels_v1",
+        "check_untrusted_competitive_event_listing_classifier_request_v1",
+        "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "OpaqueMtgoClassifiedCompetitiveEventListingV1",
+        "OpaqueMtgoEvaluatedCompetitiveEventListingV1",
+        "OpaqueMtgoSourceBoundCompetitiveEventListingV1",
+        "visible_frame_region_content_sha256_v1",
+        "event_label_region_sha256",
+        "open_entry_review_control_region_sha256",
+        "approved_account_alias_sha256",
+        "evaluation_ratification_commitment_sha256",
+        "evaluation_admission_commitment_sha256",
+        "opaque_current_pixels_no_open_review_no_entry_no_spending_no_input",
+        "evaluated_listing_still_no_open_review_no_entry_no_spending_no_input",
+        "prepare_opaque_competitive_event_listing_open_source_v1",
+        "confirm_opaque_competitive_event_listing_opened_v1",
+        "fresh_rehashed_event_browser_control_no_entry_confirmation_no_spending_no_public_coordinates",
+        "strictly_newer_exact_entry_review_visible_no_entry_confirmation_no_spending_no_input",
+        "permits_open_entry_review_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "source-bound competitive event listing is missing: {required}"
+        );
+    }
+    for required in [
+        "--mtgo-visible-competitive-event-listing-v1",
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1",
+    ] {
+        assert!(
+            process_source.contains(required),
+            "bounded event-listing process protocol is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn control_rect_client_px",
+        "pub fn click",
+        "pub fn confirm_entry",
+        "pub fn parser_control_rect",
+        "permits_open_entry_review_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "SetCursorPos",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "source-bound competitive event listing exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_event_record_is_same_frame_pixel_bound_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
+    for required in [
+        "bind_classified_navigation_frame_to_visible_event_record_v1",
+        "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "OpaqueMtgoSourceBoundCompetitiveEventRecordV1",
+        "validate_visible_competitive_event_record_v1",
+        "visible_frame_region_content_sha256_v1",
+        "source_capture_commitment_sha256",
+        "source_frame_profile_binding_sha256",
+        "source_classification_result_commitment_sha256",
+        "source_lifecycle_snapshot_commitment_sha256",
+        "approved_account_alias_sha256",
+        "event_identity_sha256",
+        "exact_same_frame_event_record_pixels_rehashed_no_input_no_entry_no_spending_no_gameplay",
+    ] {
+        assert!(
+            source.contains(required),
+            "source-bound competitive event record is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn input_command",
+        "safe_for_live_input_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "permits_gameplay_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "source-bound competitive event record exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_event_record_parser_is_exact_frame_bounded_and_unratified() {
+    let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
+    let process_source = include_str!("../src/probe/competitive_navigation_runtime.rs");
+    let combined = format!("{source}\n{process_source}");
+    let runtime_start = source
+        .find("pub fn classify_checked_untrusted_competitive_event_record_v1")
+        .expect("event-record parser runtime must exist");
+    let runtime_end = source[runtime_start..]
+        .find("\nfn parse_event_record_classifier_response_v1")
+        .map(|offset| runtime_start + offset)
+        .expect("event-record parser runtime must have a bounded source section");
+    let runtime = &source[runtime_start..runtime_end];
+
+    for required in [
+        "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
+        "MtgoCompetitiveEventRecordClassifierProcessResponseV1",
+        "league_and_challenge_eight_slice_event_record_checked_untrusted_v1",
+        "--mtgo-visible-competitive-event-record-v1",
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1",
+        "validate_visible_competitive_lifecycle_snapshot_v1",
+        "rehash_lifecycle_visible_facts_for_event_record_v1",
+        "validate_visible_competitive_event_record_v1",
+        "validate_event_record_visible_fact_pixels_v1",
+        "checked_untrusted_event_record_parser_no_ratification_no_entry_no_spending_no_gameplay_no_input",
+    ] {
+        assert!(
+            combined.contains(required),
+            "bounded competitive event-record parser is missing: {required}"
+        );
+    }
+    assert!(
+        !runtime.contains("OpaqueMtgoClassifiedCompetitiveNavigationFrameV1"),
+        "the exact-field parser must start from the admitted main-client frame, not a lifecycle label classification"
+    );
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn input_command",
+        "safe_for_live_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "event_record_evaluation_ratification",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !combined.contains(forbidden),
+            "bounded competitive event-record parser exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_lifecycle_controls_are_exact_frame_bound_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_lifecycle_control_runtime.rs");
+    for required in [
+        "bind_classified_navigation_frame_to_lifecycle_control_v1",
+        "OpaqueMtgoCompetitiveLifecycleControlV1",
+        "PairingAcceptControlEnabled",
+        "SideboardSubmitControlEnabled",
+        "MatchContinueControlEnabled",
+        "ReconnectResumeControlEnabled",
+        "EventCloseControlEnabled",
+        "visible_frame_region_content_sha256_v1",
+        "confirm_opaque_competitive_lifecycle_control_postcondition_v1",
+        "validate_checked_competitive_lifecycle_action_transition_v1",
+        "strictly_newer_exact_action_postcondition_no_input_authority",
+        "SideboardNoChangesConfirmed",
+        "SideboardConfigurationVisible",
+        "generic sideboard control binding requires an explicitly visible no-change state",
+        "exact_enabled_control_detection_only_no_coordinates_no_input",
+        "safe_for_live_input_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive lifecycle control seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn rect_client_px",
+        "pub fn canonical_bgra8",
+        "pub fn input_command",
+        "safe_for_live_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive lifecycle control seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionable() {
+    let parser = include_str!("../src/probe/competitive_sideboard_runtime.rs");
+    for required in [
+        "check_untrusted_competitive_sideboard_classifier_request_v1",
+        "classify_checked_untrusted_competitive_sideboard_v1",
+        "plan_classified_competitive_sideboard_v1",
+        "OpaqueMtgoClassifiedCompetitiveSideboardV1",
+        "OpaqueMtgoPlannedCompetitiveSideboardV1",
+        "source_navigation_classification_result_commitment_sha256",
+        "source_lifecycle_snapshot_commitment_sha256",
+        "deck_list_sha256",
+        "deck_manifest_commitment_sha256",
+        "deck_format_sha256",
+        "policy_deployment_commitment_sha256",
+        "visible_frame_region_content_sha256_v1",
+        "same_frame_rehashed_sideboard_checked_untrusted_no_input_no_submit",
+        "coordinate_free_model_sideboard_plan_no_input_no_submit",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_sideboard_submission_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            parser.contains(required),
+            "sideboard measurement seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn card_rectangles",
+        "pub fn input_command",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !parser.contains(forbidden),
+            "sideboard measurement exposes forbidden authority: {forbidden}"
+        );
+    }
+
+    let coordinator = include_str!("../src/actuator.rs");
+    for required in [
+        "measure_competitive_event_runtime_sideboard_v1",
+        "OpaqueMtgoMeasuredCompetitiveEventSideboardV1",
+        "OpaqueMtgoPlannedCompetitiveEventSideboardV1",
+        "COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1",
+        "event_runtime_withheld_during_checked_untrusted_sideboard_measurement_no_input_no_submit",
+        "manifest.deck_list_sha256() != runtime.commitments.deck_list_sha256",
+        "manifest.format_sha256() != runtime.commitments.deck_format_sha256",
+        "sideboard.policy_deployment_commitment_sha256",
+        "begin_competitive_event_sideboard_transfer_sequence_v1",
+        "prepare_competitive_event_sideboard_transfer_drag_v1",
+        "confirm_competitive_event_sideboard_transfer_visible_v1",
+        "review_competitive_sideboard_automation_ratification_candidate_v1",
+        "ratify_competitive_sideboard_automation_v1",
+        "AdmittedMtgoCompetitiveSideboardEvaluationV1",
+        "sideboard_evaluation_ratification_commitment_sha256",
+        "sideboard_evaluation_admission_commitment_sha256",
+        "sideboard evaluation differs from the exact lifecycle profile, account, deck, format, or policy",
+        "RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1: Option<&str> = None",
+        "COMPETITIVE_SIDEBOARD_AUTOMATION_SCOPE_DOMAIN_V1",
+        "OpaqueMtgoCompetitiveEventSideboardSequenceV1",
+        "OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1",
+        "OpaqueMtgoReadyCompetitiveEventSideboardV1",
+        "OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1",
+        "OpaqueMtgoPendingCompetitiveEventSideboardDragV1",
+        "OpaqueMtgoConfirmedCompetitiveEventSideboardDragV1",
+        "prepare_fresh_competitive_event_sideboard_transfer_drag_v1",
+        "execute_fresh_competitive_event_sideboard_drag_v1",
+        "confirm_pending_competitive_event_sideboard_drag_v1",
+        "send_exactly_one_sideboard_drag_v1",
+        "prepare_ready_competitive_event_sideboard_submit_v1",
+        "sideboard_to_mainboard_first_one_card_per_step_visible_confirmation_required_no_input",
+        "official_mtgo_drag_between_visible_zones_preparation_only_no_input",
+        "exactly_one_newer_visible_sideboard_transfer_no_causality_no_input",
+        "all_model_selected_sideboard_transfers_visibly_confirmed_no_submit_no_input",
+        "official_mtgo_drag_between_visible_zones_one_card_per_input",
+        "strictly_newer_exact_inventory_confirmation_after_each_drag",
+        "changed_sideboard_submit_only_after_exact_target_ready",
+        "generic competitive lifecycle preparation cannot submit a sideboard without exact model-selected target provenance",
+        "competitive event runtime cannot submit an unchanged sideboard without an opaque native model decision",
+        "no_double_click_no_keyboard_no_hidden_channels_no_event_entry_no_spending",
+        "halt_before_input_attempt_v3",
+        "set_pending_v3",
+        "release_confirmed_pending_v3",
+    ] {
+        assert!(
+            coordinator.contains(required),
+            "event sideboard coordinator is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "plan_measured_competitive_event_sideboard_v1",
+        "RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1: Option<&str> = Some",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "SubmitUnchangedSideboard",
+    ] {
+        assert!(
+            !coordinator.contains(forbidden),
+            "event sideboard coordinator exposes a forbidden authority or channel: {forbidden}"
+        );
+    }
+
+    let lifecycle_control = include_str!("../src/probe/competitive_lifecycle_control_runtime.rs");
+    assert!(lifecycle_control.contains(
+        "pub(crate) fn bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1"
+    ));
+    let public_exports = include_str!("../src/lib.rs");
+    assert!(!public_exports
+        .contains("bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1"));
+}
+
+#[test]
+fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gated() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "OpaqueMtgoCompetitiveEventRuntimeV1",
+        "begin_competitive_event_runtime_after_entry_v1",
+        "next_competitive_event_driver_directive_v1",
+        "MtgoCompetitiveEventDriverDirectiveV1",
+        "MtgoCompetitiveEventDriverStepV1",
+        "AwaitPairingOrEventEnd",
+        "AcceptPairing",
+        "ResolvePregame",
+        "LaunchGameplay",
+        "AwaitGameOutcome",
+        "ResolveSideboard",
+        "ContinueAfterMatch",
+        "ResumeMatch",
+        "BeginTerminalEventRecordMonitor",
+        "AdvanceTerminalEventRecordMonitor",
+        "competitive event runtime has inconsistent event monitor state",
+        "CloseCompletedEvent",
+        "competitive event runtime has inconsistent gameplay checkout and return state",
+        "competitive event runtime has inconsistent pregame session and completion state",
+        "advance_competitive_event_runtime_observed_v1",
+        "prepare_competitive_event_runtime_lifecycle_control_v1",
+        "execute_prepared_competitive_event_lifecycle_control_v1",
+        "confirm_pending_competitive_event_lifecycle_control_v1",
+        "attach_competitive_event_monitor_to_runtime_v1",
+        "advance_competitive_event_monitor_in_runtime_v1",
+        "process_continuity_commitment_sha256",
+        "process_continuity_commitment_sha256_v1()",
+        "bind_competitive_event_runtime_to_match_launch_identity_v1",
+        "OpaqueMtgoCompetitiveEventMatchLaunchBindingV1",
+        "COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1",
+        "paid_main_client_event_runtime_bound_to_newer_same_process_duel_launch_no_input_no_spending",
+        "process_continuity_commitment_sha256_v1",
+        "checkout_competitive_event_gameplay_session_v1",
+        "OpaqueMtgoCompetitivePregameObservationV1",
+        "OpaqueMtgoCompetitiveEventPregameSessionV1",
+        "checkout_competitive_event_pregame_session_from_classified_frame_v2",
+        "advance_competitive_event_pregame_from_classified_frame_v2",
+        "OpaqueMtgoClassifiedCompetitivePregameFrameV1",
+        "require_immediate_successor_v1",
+        "OpaqueMtgoCompetitivePregameClassifiedSourceV1::Frame(",
+        "Box::new(classified_frame)",
+        "checkout_competitive_event_pregame_session_v1",
+        "advance_competitive_event_pregame_observed_v1",
+        "complete_competitive_event_pregame_session_v1",
+        "COMPETITIVE_EVENT_PREGAME_SESSION_DOMAIN_V1",
+        "COMPETITIVE_EVENT_PREGAME_ADVANCE_DOMAIN_V1",
+        "COMPETITIVE_EVENT_PREGAME_COMPLETION_DOMAIN_V1",
+        "move_only_exact_event_pregame_no_input_no_event_entry_no_spending",
+        "evaluated_visible_gameplay_ready_event_runtime_and_exact_launch_released",
+        "gameplay checkout requires the exact completed pregame",
+        "return_competitive_event_gameplay_session_v1",
+        "COMPETITIVE_GESTURE_GAME_SESSION_EVENT_DECK_BIND_DOMAIN_V1",
+        "competitive_gesture_game_session_event_deck_binding_commitment_v1",
+        "exact_event_entry_selected_deck_bound_to_all_family_game_session",
+        "gesture session is not bound to an exact event entry and selected deck",
+        "gameplay.entry_authorization_sha256 != runtime.entry_authorization_sha256",
+        "game.correspondence_sha256 != runtime.correspondence_sha256",
+        "game.permission_review_commitment_sha256",
+        "competitive entry and lifecycle authorities do not share one exact reviewed permission lineage",
+        "deck_manifest_sha256",
+        "deck_format_sha256",
+        "selected_deck_label_sha256",
+        "policy_deployment_commitment_sha256",
+        "last_returned_gameplay_frame_sequence",
+        "validate_competitive_event_next_frame_order_v1",
+        "competitive event next frame is not newer than its lifecycle, pregame, and returned-gameplay floors",
+        "current exact entry, selected deck, event, match, game, account, or frame lifetime",
+        "closing a competitive event requires its terminal visible event record",
+        "move_only_gameplay_lease_event_runtime_withheld",
+        "one_exact_event_move_only_no_reentry_no_additional_spending",
+        "permits_additional_entry_v1(&self) -> bool {\n        false",
+        "permits_additional_spending_v1(&self) -> bool {\n        false",
+        "safe_for_live_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive event runtime is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn current_frame_v1",
+        "pub fn lifecycle_authorization_v1",
+        "pub fn target_point_client_px",
+        "pub fn input_command",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive event runtime exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_event_monitor_is_move_only_monotonic_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
+    for required in [
+        "OpaqueMtgoCompetitiveEventMonitorV1",
+        "begin_evaluated_competitive_event_monitor_v1",
+        "advance_evaluated_competitive_event_monitor_v1",
+        "AdmittedMtgoCompetitiveEventRecordEvaluationV1",
+        "event_record_evaluation_admission_commitment_sha256",
+        "validate_event_monitor_advance_v1",
+        "validate_event_monitor_progress_advance_v1",
+        "competitive event monitor identity changed across records",
+        "competitive event monitor requires a changed strictly newer record",
+        "a completed competitive event monitor cannot accept another record",
+        "evaluated_event_monitor_advance_no_entry_no_spending_no_gameplay_no_input",
+        "permits_gameplay_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive event monitor is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "begin_checked_untrusted_competitive_event_monitor_v1",
+        "advance_checked_untrusted_competitive_event_monitor_v1",
+        "impl Clone for OpaqueMtgoCompetitiveEventMonitorV1",
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn input_command",
+        "safe_for_live_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "permits_gameplay_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive event monitor exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
+    let source = include_str!("../src/probe/duel_perception_runtime.rs");
+    let lifecycle_evaluation =
+        include_str!("../../mtgo_blackbox_v1/src/competitive_duel_lifecycle_evaluation.rs");
+    for required in [
+        "verify_duel_perception_runtime_v1",
+        "verify_duel_gesture_target_runtime_v1",
+        "perceive_admitted_duel_frame_v1",
+        "score_and_select_opaque_admitted_duel_perception_v1",
+        "score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1",
+        "scorer: &mut MtgoNativeCheckpointObservationScorerV1<'_>",
+        "resolve_opaque_profile_bound_duel_control_v1",
+        "prepare_opaque_competitive_duel_action_plan_v1",
+        "prepare_opaque_competitive_duel_pass_actuation_v1",
+        "check_untrusted_competitive_gameplay_before_input_pixels_v1",
+        "inspect_untrusted_competitive_gameplay_postcondition_candidate_pixels_v1",
+        "confirm_opaque_competitive_duel_pass_postcondition_v1",
+        "bind_opaque_duel_control_to_competitive_action_plan_v1",
+        "OpaqueMtgoVerifiedDuelPerceptionRuntimeV1",
+        "OpaqueMtgoAdmittedDuelPerceptionV1",
+        "OpaqueMtgoProfileBoundDuelModelSelectionV1",
+        "OpaqueMtgoProfileBoundDuelResolvedControlV1",
+        "OpaqueMtgoCompetitiveDuelActionPlanV1",
+        "OpaqueMtgoPreparedCompetitiveDuelPassV1",
+        "MtgoDuelPerceptionProcessResponseV1",
+        "MtgoDuelPerceptionRequestHeaderV1",
+        "MtgoDuelGestureTargetProcessResponseV1",
+        "MtgoDuelGestureTargetRequestHeaderV1",
+        "check_untrusted_duel_perception_request_v1",
+        "check_untrusted_duel_gesture_target_request_v1",
+        "CheckedUntrustedMtgoDuelPerceptionRequestV1",
+        "CheckedUntrustedMtgoDuelGestureTargetRequestV1",
+        "request_commitment_sha256",
+        "reconstruction_audit: MtgoObservationReconstructionAuditV1",
+        "visible_controls: MtgoVisibleActionControlSetV1",
+        "competitive_lifecycle: Option<MtgoVisibleCompetitiveLifecycleSnapshotV1>",
+        "competitive_lifecycle_snapshot_commitment_sha256: Option<String>",
+        "AdmittedMtgoCompetitiveDuelLifecycleProfileV1",
+        "lifecycle_evaluation_commitment_sha256",
+        "lifecycle_profile_admission_commitment_sha256",
+        "competitive duel action requires classifier-bound lifecycle pixels",
+        "visible_frame_region_content_sha256_v1",
+        "validate_observed_decision_v1",
+        "check_untrusted_dxgi_capture_artifact_v1",
+        "validate_dxgi_bound_observation_reconstruction_audit_v1",
+        "check_untrusted_dxgi_observed_decision_candidate_v1",
+        "score_and_select_profile_bound_duel_candidate_v1",
+        "resolve_profile_bound_selected_visible_control_v1",
+        "prepare_profile_bound_action_postcondition_plan_v1",
+        "validate_profile_bound_duel_gesture_plan_v1",
+        "bind_profile_bound_action_plan_to_competitive_match_v1",
+        "gesture_plan_commitment_sha256",
+        "gesture_stage_count",
+        "bind_opaque_competitive_duel_source_gesture_stage_v1",
+        "bind_opaque_competitive_duel_continuation_gesture_stage_v1",
+        "begin_opaque_competitive_duel_gesture_sequence_v1",
+        "begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1",
+        "advance_opaque_competitive_duel_gesture_sequence_v1",
+        "prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1",
+        "prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1",
+        "OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1",
+        "MTGO_VISIBLE_DUEL_GESTURE_TARGET_V1",
+        "gesture_target_runtime_binary_sha256",
+        "gesture_target_assets_manifest_sha256",
+        "gesture_target_request_commitment_sha256",
+        "recheck_visible_duel_gesture_source_stage_v1",
+        "fresh_source_stage_rechecked_private_points_no_input_or_action_causality",
+        "MtgoCompetitiveDuelGestureVisibleTransitionProbeV1",
+        "OpaqueMtgoCompetitiveDuelGestureSequenceV1",
+        "gesture visible-transition probe region did not change",
+        "one_adjacent_stage_visible_region_changed_no_input_or_action_causality",
+        "bind_visible_duel_gesture_stage_v1",
+        "OpaqueMtgoCompetitiveDuelGestureStageV1",
+        "target_points_desktop_px",
+        "duel_action_family_v1",
+        "profile.supported_action_families()",
+        "source_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1",
+        "perception: OpaqueMtgoAdmittedDuelPerceptionV1",
+        "env_clear()",
+        "MAX_PERCEPTION_RESPONSE_BYTES_V1",
+        "runtime timed out",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "proves_action_causality_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "opaque duel-perception runtime is missing: {required}"
+        );
+    }
+    assert!(!source.contains("pub fn bind_opaque_duel_control_to_competitive_action_plan_v1("));
+    assert!(!source.contains(
+        "score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObservationScorerV1>"
+    ));
+    for required in [
+        "RATIFIED_COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_COMMITMENT_V1: Option<&str> = None",
+        "minimum_unique_cases_per_mode",
+        "MtgoCompetitiveEventKindV1::League",
+        "MtgoCompetitiveEventKindV1::Challenge",
+        "exact_snapshot_count == prediction_count",
+        "league_and_challenge_match_in_progress_lifecycle_accuracy_only_no_input_or_entry",
+    ] {
+        assert!(
+            lifecycle_evaluation.contains(required),
+            "competitive duel lifecycle gate is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn observation",
+        "pub fn legal_actions",
+        "pub fn selected_semantic",
+        "pub fn rect_client_px",
+        "pub fn target_point_client_px",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "proves_action_causality_v1(&self) -> bool {\n        true",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "UIAutomation",
+        "WinHttp",
+        "WinSock",
+        "SendInput",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "opaque duel-perception runtime exposes a forbidden channel: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
+    let source = include_str!("../src/probe.rs");
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains("fn measure_mulligan_ladder_parts_v3("));
+    assert!(!source.contains("pub fn measure_mulligan_ladder_parts_v3("));
+    for forbidden in [
+        "canonical_pixels_v3",
+        "to_observation_v5",
+        "to_action_intent",
+        "send_input",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "opaque capture seam exposes forbidden downstream conversion: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn pinned_live_frame_binds_source_identity_and_layout_without_downstream_authority() {
+    let source = include_str!("../src/probe/live_frame.rs");
+    for required in [
+        "capture_pinned_current_solitaire_visible_frame_v1",
+        "OpaqueMtgoPinnedSolitaireVisibleFrameV1",
+        "measure_pinned_current_solitaire_first_main_v1",
+        "OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1",
+        "measure_pinned_current_solitaire_first_main_visible_hand_v1",
+        "OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1",
+        "measure_pinned_current_solitaire_mulligan_ladder_v1",
+        "OpaqueMtgoPinnedSolitaireMulliganMeasurementV1",
+        "measure_pinned_current_solitaire_mulligan_visible_hand_v1",
+        "OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1",
+        "score_and_select_pinned_current_solitaire_pregame_v1",
+        "OpaqueMtgoPinnedSolitairePregameSelectionV1",
+        "build_pinned_current_solitaire_pregame_action_plan_v1",
+        "OpaqueMtgoPinnedSolitairePregameActionPlanV1",
+        "PINNED_EXECUTABLE_SHA256_V1",
+        "PINNED_SIGNER_THUMBPRINT_V1",
+        "PINNED_SIGNER_SUBJECT_SHA256_V1",
+        "PINNED_VISIBLE_TITLE_V1",
+        "PINNED_OUTPUT_DEVICE_V1",
+        "PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1",
+        "CaptureWindowModeV2::SolitaireGame",
+        "expected_game_format: Some(\"Freeform\".to_owned())",
+        "capture_commitment_v3(",
+        "into_checked_untrusted_perception_candidate_v1",
+    ] {
+        assert!(
+            source.contains(required),
+            "pinned visible-frame boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "unsafe {",
+        "pub fn bind_pinned_current_solitaire_visible_frame_v1",
+        "pub fn canonical_bgra8_v1",
+        "pub fn preview_png_v1",
+        "safe_for_semantic_evidence_v1(&self) -> bool {\n        true",
+        "safe_for_observation_v5_v1(&self) -> bool {\n        true",
+        "safe_for_policy_scoring_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "into_checked_untrusted_mulligan_measurement_v1",
+        "into_authorization_gated_action_plan_v1",
+        "execute_authorized_private_match_pregame_action_v3",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "pinned visible-frame boundary exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
+    let source = include_str!("../src/probe.rs");
+    let bottoming = include_str!("../src/probe/bottoming_model.rs");
+    let bottoming_plan = include_str!("../src/probe/bottoming_model/action_plan.rs");
+    let heuristic = include_str!("../src/probe/pregame_heuristic.rs");
+    assert!(source.contains(
+        "pub fn score_and_select_pregame_model_v3<S: MtgoExternalPregameScorerV3>(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn validate_pregame_score_response_v3(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
+    ));
+    assert!(source.contains("fn validate_pregame_score_response_parts_v3("));
+    assert!(!source.contains("pub fn validate_pregame_score_response_parts_v3("));
+    assert!(!source.contains("pub fn make_live_input"));
+
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3(\n    source: OpaqueMtgoDxgiMulliganMeasurementV3,\n    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,"
+    ));
+    assert!(source.contains(
+        "measurement: CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1,"
+    ));
+    assert!(source.contains(
+        "pub fn score_and_select_card_aware_pregame_model_v4<S: MtgoExternalCardAwarePregameScorerV4>(\n    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn validate_card_aware_pregame_score_response_v4(\n    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,"
+    ));
+    assert!(source.contains("ordered_visible_card_names: Vec<String>"));
+    assert!(source.contains(
+        "pub fn build_card_aware_pregame_action_plan_v4(\n    selection: OpaqueMtgoCardAwarePregameModelSelectionV4,"
+    ));
+    assert!(source.contains("CardAware(Box<OpaqueMtgoCardAwarePregameModelSelectionV4>)"));
+    assert!(
+        source.contains("the immediate visible card identities changed after card-aware scoring")
+    );
+    for required in [
+        "pub fn start_card_aware_bottoming_session_v5(",
+        "pub fn score_and_select_card_aware_bottoming_model_v5<",
+        "pub fn confirm_card_aware_bottom_selection_v5(",
+        "pub struct OpaqueMtgoCardAwareBottomingSessionV5 {",
+        "pub struct OpaqueMtgoCardAwareBottomingModelSelectionV5 {",
+        "MtgoBottomingCardIdentitySourceV5::ConfirmedActionHistory",
+    ] {
+        assert!(
+            bottoming.contains(required),
+            "bottoming model boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "target_point_client_px",
+        "pub fn build_bottoming_action_plan",
+        "safe_for_live_input_v5(&self) -> bool {\n        true",
+    ] {
+        assert!(
+            !bottoming.contains(forbidden),
+            "bottoming model boundary exposes forbidden authority: {forbidden}"
+        );
+    }
+    for required in [
+        "pub fn build_card_aware_bottoming_action_plan_v5(",
+        "pub fn confirm_card_aware_bottoming_cancel_plan_v5(",
+        "pub fn confirm_card_aware_bottoming_selection_plan_v5(",
+        "pub fn confirm_card_aware_bottoming_submit_plan_v5(",
+        "pub struct OpaqueMtgoBottomingActionPlanV5 {",
+        "pub struct OpaqueMtgoConfirmedBottomingSubmitV5 {",
+        "AllSelectionsReset",
+    ] {
+        assert!(
+            bottoming_plan.contains(required),
+            "bottoming action-plan boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "pub(crate) fn prepare_bottoming_actuation",
+        "safe_for_live_input_v5(&self) -> bool {\n        true",
+    ] {
+        assert!(
+            !bottoming_plan.contains(forbidden),
+            "bottoming action plan exposes forbidden authority: {forbidden}"
+        );
+    }
+    for required in [
+        "pub struct MtgoNonModelPregameHeuristicV1 {",
+        "impl MtgoExternalCardAwarePregameScorerV4 for MtgoNonModelPregameHeuristicV1",
+        "impl MtgoExternalCardAwareBottomingScorerV5 for MtgoNonModelPregameHeuristicV1",
+        "not-a-checkpoint-manifest",
+        "not-model-parameters",
+        "pub fn is_model_backed_v1(&self) -> bool",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            heuristic.contains(required),
+            "non-model pregame heuristic is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "safe_for_live_input_v1(&self) -> bool {\n        true",
+        "is_model_backed_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "target_point_client_px",
+        "OpaqueMtgoPregameActionPlanV3",
+        "OpaqueMtgoBottomingActionPlanV5",
+    ] {
+        assert!(
+            !heuristic.contains(forbidden),
+            "non-model pregame heuristic exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound() {
+    let source = include_str!("../src/probe.rs");
+    assert!(source.contains(
+        "pub fn build_pregame_action_plan_v3(\n    selection: OpaqueMtgoPregameModelSelectionV3,"
+    ));
+    assert!(source.contains(
+        "pub fn confirm_pregame_mulligan_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiMulliganMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn confirm_pregame_keep_to_first_main_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiFirstMainMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn confirm_pregame_keep_to_bottom_six_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiBottomSixInitialMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_first_main_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineFirstMainCandidateV2,"));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains("pub struct OpaqueMtgoDxgiBottomSixStateMeasurementV3 {"));
+    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,"));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_bottom_six_reflow_candidate_v3(\n    before: OpaqueMtgoDxgiBottomSixStateMeasurementV3,\n    after: OpaqueMtgoDxgiBottomSixStateMeasurementV3,"
+    ));
+    assert!(source.contains("pub struct OpaqueMtgoDxgiBottomSixReflowMeasurementV3 {"));
+    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,"));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_bottom_six_visible_card_identities_candidate_v3(\n    source: OpaqueMtgoDxgiBottomSixStateMeasurementV3,\n    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,"
+    ));
+    assert!(source.contains("pub struct OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {"));
+    assert!(
+        source.contains("measurement: CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,")
+    );
+    for current_classifier in [
+        "classify_untrusted_offline_mulligan_ladder_candidate_v2",
+        "classify_untrusted_offline_mulligan_visible_card_identities_v1",
+        "classify_untrusted_offline_bottom_six_state_candidate_v3",
+        "classify_untrusted_offline_bottom_six_reflow_candidate_v2",
+        "classify_untrusted_offline_bottom_six_visible_card_identities_v3",
+        "classify_untrusted_offline_first_main_candidate_v2",
+    ] {
+        assert!(
+            source.contains(current_classifier),
+            "live measurement seam is missing current classifier: {current_classifier}"
+        );
+    }
+    assert!(source.contains("fn build_pregame_action_plan_parts_v3("));
+    assert!(source.contains("fn validate_mulligan_postcondition_parts_v3("));
+    assert!(source.contains("fn validate_keep_first_main_postcondition_parts_v3("));
+    assert!(source.contains("fn validate_keep_bottom_six_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn build_pregame_action_plan_parts_v3("));
+    assert!(!source.contains("pub fn validate_mulligan_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn validate_keep_first_main_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn validate_keep_bottom_six_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn target_point_client_px_v3"));
+    assert!(!source.contains("safe_for_live_input_v3(&self) -> bool {\n        true"));
+}
+
+#[test]
+fn persisted_solitaire_rehearsal_has_no_capture_or_input_authority() {
+    let probe = include_str!("../src/probe.rs");
+    let live_frame = include_str!("../src/probe/live_frame.rs");
+    let rehearsal = include_str!("../src/bin/rehearse_mtgo_solitaire_pregame_v1.rs");
+    assert!(
+        probe.contains("pub fn load_checked_untrusted_mtgo_dxgi_frame_candidate_from_artifact_v1(")
+    );
+    assert!(
+        live_frame.contains("pub fn load_pinned_current_solitaire_visible_frame_from_artifact_v1(")
+    );
+    for forbidden in [
+        "capture_mtgo_dxgi_frame_candidate_v3(",
+        "capture_pinned_current_solitaire_visible_frame_v1(",
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "SetForegroundWindow",
+        "MoveWindow",
+        "SetWindowPos",
+    ] {
+        assert!(
+            !rehearsal.contains(forbidden),
+            "offline rehearsal contains forbidden live operation: {forbidden}"
+        );
+    }
+    for required in [
+        "input_sent\": false",
+        "client_focused_or_moved\": false",
+        "safe_for_live_input",
+        "safe_for_purchase",
+        "safe_for_queue_entry",
+    ] {
+        assert!(rehearsal.contains(required));
+    }
+}
+
+#[test]
+fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
+    let source = include_str!("../src/actuator.rs");
+    let duel_runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let entry_runtime = include_str!("../src/probe/competitive_entry_runtime.rs");
+    let navigation_runtime = include_str!("../src/probe/competitive_navigation_runtime.rs");
+    for required in [
+        "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1",
+        "RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_OPEN_ENTRY_REVIEW_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "ratify_private_match_authorization_v3",
+        "ratify_competitive_duel_pass_authorization_v1",
+        "ratify_competitive_duel_pass_authorization_from_correspondence_v2",
+        "review_competitive_duel_pass_ratification_candidate_from_correspondence_v2",
+        "ratify_competitive_duel_gesture_authorization_from_correspondence_v1",
+        "review_competitive_duel_gesture_ratification_candidate_from_correspondence_v1",
+        "RatifiedMtgoCompetitiveDuelGestureAuthorizationV1",
+        "MtgoReviewedCompetitiveGestureRatificationCandidateV1",
+        "canonical_duel_gesture_action_families_v1",
+        "complete_reviewed_eleven_family_profile_permission_identity_only_no_input_entry_or_spending",
+        "COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_DOMAIN_V1",
+        "review_competitive_entry_attended_v1",
+        "review_competitive_entry_attended_v2",
+        "review_competitive_entry_attended_v3",
+        "review_competitive_entry_attended_v4",
+        "review_competitive_entry_ratification_candidate_v1",
+        "bind_confirmed_competitive_open_entry_review_to_entry_review_v1",
+        "review_competitive_entry_ratification_candidate_from_selected_listing_v2",
+        "ratify_competitive_entry_authorization_from_selected_listing_v2",
+        "CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1",
+        "selected_listing_visible_arrival_to_fresh_exact_paid_entry_review_no_entry_no_spending_no_input",
+        "prepare_ratified_competitive_entry_v1",
+        "execute_prepared_competitive_entry_v1",
+        "confirm_pending_competitive_entry_v1",
+        "RatifiedMtgoCompetitiveEntryAuthorizationV1",
+        "OpaqueMtgoPreparedCompetitiveEntryV1",
+        "OpaqueMtgoPendingCompetitiveEntryV1",
+        "OpaqueMtgoConfirmedCompetitiveEntryV1",
+        "MtgoPreparedCompetitiveEntryCommitmentsV1",
+        "MtgoCompetitiveEntryInputReceiptCommitmentsV1",
+        "MtgoConfirmedCompetitiveEntryCommitmentsV1",
+        "MtgoReviewedCompetitiveEntryRatificationCandidateV1",
+        "review_competitive_lifecycle_ratification_candidate_from_correspondence_v1",
+        "ratify_competitive_lifecycle_authorization_from_correspondence_v1",
+        "prepare_ratified_competitive_lifecycle_control_v1",
+        "execute_prepared_competitive_lifecycle_control_v1",
+        "confirm_pending_competitive_lifecycle_control_v1",
+        "RatifiedMtgoCompetitiveLifecycleAuthorizationV1",
+        "OpaqueMtgoPreparedCompetitiveLifecycleControlV1",
+        "OpaqueMtgoPendingCompetitiveLifecycleControlV1",
+        "OpaqueMtgoConfirmedCompetitiveLifecycleControlV1",
+        "COMPETITIVE_LIFECYCLE_AUTHORIZATION_DOMAIN_V1",
+        "COMPETITIVE_LIFECYCLE_PREPARATION_DOMAIN_V1",
+        "COMPETITIVE_LIFECYCLE_INPUT_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_LIFECYCLE_CONFIRMATION_RECEIPT_DOMAIN_V1",
+        "all_five_non_entry_lifecycle_controls_one_click_each_exact_postcondition",
+        "exactly_one_left_click_shared_gate_pending_visible_postcondition",
+        "exact_action_visibly_confirmed_shared_gate_released",
+        "review_competitive_open_entry_review_ratification_candidate_v1",
+        "ratify_competitive_open_entry_review_authorization_v1",
+        "prepare_ratified_competitive_open_entry_review_v1",
+        "execute_prepared_competitive_open_entry_review_v1",
+        "confirm_pending_competitive_open_entry_review_v1",
+        "RatifiedMtgoCompetitiveOpenEntryReviewAuthorizationV1",
+        "OpaqueMtgoPreparedCompetitiveOpenEntryReviewV1",
+        "OpaqueMtgoPendingCompetitiveOpenEntryReviewV1",
+        "OpaqueMtgoConfirmedCompetitiveOpenEntryReviewV1",
+        "COMPETITIVE_OPEN_ENTRY_REVIEW_AUTHORIZATION_DOMAIN_V1",
+        "COMPETITIVE_OPEN_ENTRY_REVIEW_PREPARATION_DOMAIN_V1",
+        "COMPETITIVE_OPEN_ENTRY_REVIEW_INPUT_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_OPEN_ENTRY_REVIEW_CONFIRMATION_RECEIPT_DOMAIN_V1",
+        "one_fresh_evaluated_selected_listing",
+        "exactly_one_open_review_left_click_shared_gate_pending_visible_entry_review",
+        "exact_entry_review_visibly_confirmed_shared_gate_released_no_entry_no_spending",
+        "COMPETITIVE_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V1",
+        "COMPETITIVE_ENTRY_PREPARATION_DOMAIN_V1",
+        "COMPETITIVE_ENTRY_INPUT_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_ENTRY_CONFIRMATION_RECEIPT_DOMAIN_V1",
+        "exact_owner_reviewed_existing_account_resource_and_selected_deck_entry_requires_fresh_recapture_and_visible_postcondition",
+        "ratified_exact_entry_fresh_visible_review_retained_no_input_no_join_no_spending",
+        "exactly_one_exactly_ratified_competitive_entry_left_click_pending_visible_confirmation",
+        "one_entry_input_visible_entered_waiting_confirmed_shared_gate_released",
+        "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
+        "CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2",
+        "CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3",
+        "CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4",
+        "MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3",
+        "MtgoControlBoundCompetitiveEntryReviewCommitmentsV4",
+        "CLASSIFIER_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V3",
+        "CONTROL_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V4",
+        "bind_competitive_entry_postcondition_dry_run_v1",
+        "CheckedUntrustedMtgoCompetitiveEntryPostconditionDryRunV1",
+        "MtgoCompetitiveEntryPostconditionDryRunCommitmentsV1",
+        "COMPETITIVE_ENTRY_POSTCONDITION_DRY_RUN_DOMAIN_V1",
+        "visible_postcondition_calibration_pair_no_causality_no_join_no_spending_no_input",
+        "pub fn claims_action_causality_v1(&self) -> bool {\n        false",
+        "classifier_bound_owner_review_no_entry_no_spending_no_input",
+        "source_identity_commitment_sha256",
+        "source_navigation_classification_result_commitment_sha256",
+        "CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1",
+        "source_lifecycle_snapshot_commitment_sha256",
+        "permission_review_commitment_sha256",
+        "entry_authorization_sha256",
+        "interactive_terminal_owner_review_no_entry_no_spending_no_input",
+        "pub fn permits_event_entry_v1(&self) -> bool {\n        false",
+        "pub fn permits_spending_v1(&self) -> bool {\n        false",
+        "pub fn permits_event_entry_v2(&self) -> bool {\n        false",
+        "pub fn permits_spending_v2(&self) -> bool {\n        false",
+        "safe_for_live_input_v2(&self) -> bool {\n        false",
+        "pub fn permits_event_entry_v3(&self) -> bool {\n        false",
+        "pub fn permits_spending_v3(&self) -> bool {\n        false",
+        "safe_for_live_input_v3(&self) -> bool {\n        false",
+        "pub fn permits_event_entry_v4(&self) -> bool {\n        false",
+        "pub fn permits_spending_v4(&self) -> bool {\n        false",
+        "safe_for_live_input_v4(&self) -> bool {\n        false",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+        "ratify_competitive_event_match_launch_attended_v5",
+        "ratify_competitive_gesture_match_launch_attended_v1",
+        "RatifiedMtgoCompetitiveGestureMatchLaunchV1",
+        "ATTENDED_COMPETITIVE_GESTURE_MATCH_LAUNCH_UPGRADE_DOMAIN_V1",
+        "owner_extends_exact_pass_launch_to_complete_reviewed_eleven_family_profile_no_entry_or_spending",
+        "OpaqueMtgoCompetitiveLaunchIdentityV1",
+        "event_display_label",
+        "opponent_display_name",
+        "stdin.is_terminal()",
+        "stdout.is_terminal()",
+        "BCryptGenRandom",
+        "begin_competitive_game_session_v1",
+        "OpaqueMtgoCompetitiveGameSessionV1",
+        "begin_competitive_gesture_game_session_v1",
+        "OpaqueMtgoCompetitiveGestureGameSessionV1",
+        "MtgoCompetitiveGestureGameSessionCommitmentsV1",
+        "COMPETITIVE_GESTURE_GAME_SESSION_INITIAL_DOMAIN_V1",
+        "move_only_all_family_lineage_no_preparation_execution_entry_or_spending",
+        "bind_competitive_duel_gesture_sequence_session_v1",
+        "OpaqueMtgoSessionBoundCompetitiveDuelGestureV1",
+        "MtgoSessionBoundCompetitiveDuelGestureCommitmentsV1",
+        "COMPETITIVE_GESTURE_SESSION_SEQUENCE_BINDING_DOMAIN_V1",
+        "one_source_stage_bound_to_exact_all_family_session_no_preparation_execution_or_input",
+        "prepare_session_bound_competitive_duel_gesture_source_stage_v1",
+        "OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1",
+        "MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1",
+        "COMPETITIVE_GESTURE_SESSION_SOURCE_PREPARATION_DOMAIN_V1",
+        "source_primitive_freshly_rechecked_pinned_runtime_targets_no_input",
+        "target_runtime_attested_v1(&self) -> bool",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "confirm_pending_competitive_duel_gesture_primitive_v1",
+        "OpaqueMtgoPendingCompetitiveDuelGesturePrimitiveV1",
+        "OpaqueMtgoConfirmedCompetitiveDuelGesturePrimitiveV1",
+        "COMPETITIVE_DUEL_GESTURE_INPUT_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_DUEL_GESTURE_TRANSITION_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_DUEL_GESTURE_CONTINUATION_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_GESTURE_SESSION_CONTINUATION_PREPARATION_DOMAIN_V1",
+        "COMPETITIVE_GESTURE_GAME_SESSION_ADVANCE_DOMAIN_V1",
+        "confirm_pending_competitive_duel_gesture_continuation_v1",
+        "prepare_confirmed_competitive_duel_gesture_continuation_stage_v1",
+        "pending_primitive_joined_to_exact_newer_runtime_pinned_visible_stage_no_next_input",
+        "confirmed_transition_then_distinct_fresh_stage_recheck_no_input",
+        "send_exactly_one_gesture_primitive_v1",
+        "MOUSEEVENTF_RIGHTDOWN",
+        "MOUSEEVENTF_RIGHTUP",
+        "all_family_session_returned_only_after_newer_visible_postcondition",
+        "before_input_postcondition_verification_commitment_sha256",
+        "bind_prepared_competitive_duel_pass_session_v2",
+        "execute_authorized_competitive_duel_pass_v1",
+        "confirm_pending_competitive_duel_pass_v2",
+        "advance_competitive_game_session_v1",
+        "returned_only_after_newer_visible_postcondition",
+        "postcondition_candidate_count",
+        "mtgo_input_gate_status_v3",
+        "OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1",
+        "OpaqueMtgoPendingCompetitiveDuelPassV1",
+        "competitive_mode_authorization_commitment_v1",
+        "validate_authorization_for_mode_v1",
+        "MtgoRuntimeModeV1::PrivateMatchInput",
+        "prepare_pregame_actuation_v3",
+        "SendInput(&inputs",
+        "WindowFromPoint",
+        "AwaitingVisiblePostcondition",
+        "confirm_pending_pregame_mulligan_v3",
+        "confirm_pending_pregame_keep_to_bottom_six_v3",
+        "confirm_pending_pregame_keep_to_first_main_v3",
+    ] {
+        assert!(
+            source.contains(required),
+            "live actuator is missing required guard: {required}"
+        );
+    }
+    assert!(!source.contains("pub fn ratify_competitive_entry_authorization_v1("));
+    assert!(!source.contains("pub fn ratify_competitive_match_launch_v1("));
+    assert!(!source.contains("pub fn ratify_competitive_match_launch_attended_v4("));
+    assert!(!duel_runtime
+        .contains("pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1("));
+    for required in [
+        "bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1",
+        "bind_classifier_backed_competitive_entry_control_and_deck_dry_run_v2",
+        "MtgoCompetitiveEntryDeckSelectionReviewInputV1",
+        "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
+        "OpaqueMtgoCompetitiveEntryControlDryRunV1",
+        "MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1",
+        "OPAQUE_COMPETITIVE_ENTRY_CONTROL_AND_DECK_DRY_RUN_DOMAIN_V2",
+        "visibly_enabled_confirmed",
+        "selected_deck_label_sha256",
+        "selected_deck_region_sha256",
+        "deck_manifest_sha256",
+        "deck_format_sha256",
+        "policy_deployment_commitment_sha256",
+        "OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2",
+        "visible_frame_region_content_sha256_v1",
+        "source_window_mode != \"main_client\"",
+        "source_capture_role != \"navigation\"",
+        "opaque_composed_navigation_pixels_owner_review_only_no_entry_no_spending_no_input",
+        "human_reviewed_confirm_entry_control_and_selected_deck_dry_run_no_join_no_spending_no_input",
+        "validate_classifier_backed_competitive_entry_frame_transition_v1",
+        "MtgoCompetitiveEntryFrameTransitionCommitmentsV1",
+        "COMPETITIVE_ENTRY_FRAME_TRANSITION_DOMAIN_V1",
+        "EnteredWaitingForPairing",
+        "entry_review_to_entered_waiting_visible_pair_no_causality_no_entry_no_spending_no_input",
+        "validate_classifier_backed_competitive_entry_immediate_recapture_v1",
+        "MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1",
+        "COMPETITIVE_ENTRY_IMMEDIATE_RECAPTURE_DOMAIN_V1",
+        "fresh_entry_review_event_terms_enabled_control_and_selected_deck_exact_no_input_no_entry_no_spending",
+        "confirm_opaque_competitive_entry_postcondition_v1",
+        "COMPETITIVE_ENTRY_VISIBLE_CONFIRMATION_DOMAIN_V1",
+        "entered_waiting_confirmed_after_exactly_one_entry_input",
+    ] {
+        assert!(
+            entry_runtime.contains(required),
+            "competitive entry identity is missing source binding: {required}"
+        );
+    }
+    for forbidden in [
+        "bind_classifier_backed_competitive_entry_control_dry_run_v1",
+        "pub fn control_rect_client_px",
+        "pub fn visible_control_label_v1",
+        "pub fn execute_competitive_entry",
+        "pub fn purchase_competitive_entry",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !entry_runtime.contains(forbidden),
+            "competitive entry dry run contains a forbidden exposure or actuator: {forbidden}"
+        );
+    }
+    for required in [
+        "bind_classified_navigation_frame_to_competitive_entry_review_identity_v1",
+        "OpaqueMtgoRetainedCompetitiveNavigationClassificationV1",
+        "classified navigation source-frame lineage changed",
+        "classified navigation approved-account profile lineage changed",
+    ] {
+        assert!(
+            navigation_runtime.contains(required),
+            "competitive entry identity is missing classifier lineage: {required}"
+        );
+    }
+    for required in [
+        "bind_opaque_duel_perception_to_competitive_launch_identity_v1",
+        "OpaqueMtgoCompetitiveLaunchIdentityV1",
+        "visible_facts_v1()",
+        "parse_competitive_duel_window_title_v1",
+        "event_label_region_sha256",
+        "confirm_opaque_competitive_duel_gesture_postcondition_v1",
+        "DUEL_OPAQUE_COMPETITIVE_GESTURE_CONFIRMATION_DOMAIN_V1",
+        "competitive gesture postcondition capture predates its input receipt",
+        "advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1",
+        "OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1",
+        "MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1",
+        "DUEL_OPAQUE_PINNED_COMPETITIVE_GESTURE_CONTINUATION_DOMAIN_V1",
+        "invoke_pinned_gesture_target_runtime_for_stage_v1",
+        "derive_opaque_gesture_visible_transition_probe_v1",
+        "no changed same-rectangle evidence ties the adjacent gesture stages",
+        "one_runtime_pinned_adjacent_visible_stage_no_input_or_action_causality",
+    ] {
+        assert!(
+            duel_runtime.contains(required),
+            "duel launch identity is missing required source binding: {required}"
+        );
+    }
+    for forbidden in [
+        "ratify_competitive_match_launch_attended_v2",
+        "pub fn ratify_competitive_match_launch_attended_v3",
+        "pub fn bind_prepared_competitive_duel_pass_authorization_v1",
+        "pub fn confirm_pending_competitive_duel_pass_v1",
+        "pub fn execute_competitive_entry",
+        "pub fn purchase_competitive_entry",
+        "INPUT_KEYBOARD",
+        "KEYBDINPUT",
+        "keybd_event",
+        "mouse_event",
+        "PostMessage",
+        "SendMessage",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "UIAutomation",
+        "WinHttp",
+        "WinSock",
+        "safe_for_next_input_v3(&self) -> bool {\n        true",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "live actuator contains a forbidden API or authority path: {forbidden}"
+        );
+    }
+    assert!(source.contains(
+        "pub fn execute_authorized_private_match_pregame_action_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    authorization: RatifiedMtgoPrivateMatchAuthorizationV3,"
+    ));
+    assert!(!source.contains("pub fn target_x_desktop_px"));
+    assert!(!source.contains("pub fn target_y_desktop_px"));
+}
+
+#[test]
+fn correspondence_review_command_emits_commitments_without_private_text_or_authority() {
+    let source = include_str!("../src/bin/review_mtgo_authorization_correspondence_v2.rs");
+    for required in [
+        "MAX_CORRESPONDENCE_BYTES_V2",
+        "check_untrusted_authorization_correspondence_v1",
+        "review_competitive_duel_pass_ratification_candidate_from_correspondence_v2",
+        "private_correspondence_bytes_retained\": false",
+        "account_alias_text_emitted\": false",
+        "safe_for_live_input\": false",
+        "permits_event_entry\": false",
+        "permits_spending\": false",
+    ] {
+        assert!(
+            source.contains(required),
+            "correspondence review command is missing guard: {required}"
+        );
+    }
+    for forbidden in [
+        "println!(\"{visible_account_alias}",
+        "println!(\"{correspondence_bytes",
+        "fs::write(&correspondence_path, correspondence)",
+    ] {
+        assert!(
+            !source
+                .split("#[cfg(all(test, target_os = \"windows\"))]")
+                .next()
+                .unwrap()
+                .contains(forbidden),
+            "production correspondence review command exposes private input: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes() {
+    let source = include_str!("../src/competitive_wiring_readiness.rs");
+    let binary = include_str!("../src/bin/check_mtgo_competitive_wiring_readiness_v1.rs");
+    let model_source = include_str!("../src/competitive_model_decision_readiness.rs");
+    let model_binary =
+        include_str!("../src/bin/check_mtgo_competitive_model_decision_readiness_v1.rs");
+
+    for required in [
+        "check_competitive_wiring_static_readiness_v1",
+        "MtgoCompetitiveEventKindV1::League",
+        "MtgoCompetitiveEventKindV1::Challenge",
+        "post_entry_operator_loop_present: true",
+        "post_entry_operator_native_pregame_request_checkout_present: true",
+        "post_entry_operator_checked_untrusted_native_pregame_scoring_present: true",
+        "post_entry_operator_model_owned_pregame_resume_present: false",
+        "post_entry_operator_native_sideboard_request_checkout_present: true",
+        "post_entry_operator_checked_untrusted_native_sideboard_scoring_present: true",
+        "post_entry_operator_model_owned_sideboard_resume_present: false",
+        "checkpoint_bound_model_capability_commitment_present: true",
+        "direct_source_background_stable_visible_equivalent_qualification_present: true",
+        "end_to_end_operator_loop_present: false",
+        "native_checkpoint_duel_action_interface_present: true",
+        "player_visible_duel_decision_input_contract_present: true",
+        "player_visible_duel_scorer_transport_contract_present: true",
+        "player_visible_duel_selection_to_visible_control_bridge_present: true",
+        "player_visible_duel_gesture_contract_present: true",
+        "player_visible_duel_gesture_to_opaque_control_join_present: true",
+        "player_visible_duel_gesture_kernel_object_references_withheld: true",
+        "player_visible_duel_source_gesture_target_protocol_present: true",
+        "player_visible_duel_gesture_target_classifier_present: true",
+        "player_visible_duel_source_gesture_target_pixels_rehashed: true",
+        "player_visible_duel_gesture_target_protocol_ratified: false",
+        "player_visible_duel_gesture_continuation_target_binding_present: true",
+        "post_entry_operator_player_visible_gameplay_selection_present: true",
+        "attended_gameplay_completed_history_owner_present: true",
+        "game_one_completed_history_reset_present: true",
+        "completed_game_to_sideboard_history_handoff_present: true",
+        "next_game_log_baseline_retained_through_sideboard_request: true",
+        "terminal_visible_match_owner_present: true",
+        "terminal_visible_match_lifecycle_handoff_present: true",
+        "post_entry_operator_player_visible_gesture_ownership_present: true",
+        "post_entry_operator_player_visible_target_ownership_present: true",
+        "post_entry_operator_player_visible_preinput_refresh_present: true",
+        "post_entry_operator_player_visible_private_pointer_preparation_present: true",
+        "native_checkpoint_player_visible_only_duel_action_interface_present: false",
+        "native_checkpoint_external_public_history_import_present: false",
+        "current_duel_scorer_kernel_bookkeeping_withheld: false",
+        "native_checkpoint_pregame_interface_present: false",
+        "competitive_player_visible_pregame_request_contract_present: true",
+        "competitive_pregame_player_known_submitted_deck_configuration_present: true",
+        "competitive_pregame_player_known_deck_configuration_present: true",
+        "competitive_completed_match_history_contract_present: true",
+        "competitive_later_game_pregame_history_binding_present: true",
+        "competitive_pregame_play_draw_context_present: true",
+        "competitive_pregame_match_score_context_present: true",
+        "competitive_pregame_heuristic_deployment_ratification_present:",
+        "competitive_pregame_session_ownership_bridge_present: true",
+        "visible_accessibility_exact_text_probe_present: true",
+        "visible_accessibility_same_frame_pixel_corroboration_present: true",
+        "competitive_pregame_capture_profile_present: false",
+        "competitive_pregame_card_and_control_surface_present: true",
+        "competitive_pregame_deck_bound_action_planner_present: true",
+        "competitive_pregame_immediate_recapture_preparation_present: true",
+        "competitive_pregame_postcondition_contract_present: true",
+        "competitive_pregame_input_actuator_present: true",
+        "competitive_pregame_capture_and_session_bridge_present: true",
+        "native_checkpoint_changed_sideboard_interface_present: false",
+        "native_checkpoint_sequential_sideboard_interface_present: false",
+        "terminal_outcome_trained_sideboard_head_present: false",
+        "native_checkpoint_unchanged_sideboard_action_present: false",
+        "competitive_player_visible_sideboard_payload_contract_present: true",
+        "competitive_player_visible_sideboard_score_binding_present: true",
+        "competitive_sideboard_completed_history_binding_present: true",
+        "safe_for_live_capture: false",
+        "safe_for_input: false",
+        "safe_for_event_entry: false",
+        "safe_for_spending: false",
+    ] {
+        assert!(
+            source.contains(required),
+            "readiness preflight is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "run_cli_v3",
+        "execute_prepared_competitive_entry_v1",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "execute_prepared_competitive_lifecycle_control_v1",
+        "std::fs::read",
+    ] {
+        assert!(
+            !source.contains(forbidden)
+                && !binary.contains(forbidden)
+                && !model_source.contains(forbidden)
+                && !model_binary.contains(forbidden),
+            "readiness preflight exposes a forbidden operation: {forbidden}"
+        );
+    }
+
+    for required in [
+        "check_competitive_model_decision_readiness_v1",
+        "native_checkpoint_duel_action_interface_present: true",
+        "player_visible_duel_decision_input_contract_present: true",
+        "player_visible_duel_scorer_transport_contract_present: true",
+        "player_visible_duel_selection_to_visible_control_bridge_present: true",
+        "player_visible_duel_gesture_contract_present: true",
+        "player_visible_duel_gesture_to_opaque_control_join_present: true",
+        "player_visible_duel_gesture_kernel_object_references_withheld: true",
+        "player_visible_duel_source_gesture_target_protocol_present: true",
+        "player_visible_duel_gesture_target_classifier_present: true",
+        "player_visible_duel_source_gesture_target_pixels_rehashed: true",
+        "player_visible_duel_gesture_target_protocol_ratified: false",
+        "player_visible_duel_gesture_continuation_target_binding_present: true",
+        "post_entry_operator_player_visible_gameplay_selection_present: true",
+        "post_entry_operator_player_visible_gesture_ownership_present: true",
+        "post_entry_operator_player_visible_target_ownership_present: true",
+        "post_entry_operator_player_visible_preinput_refresh_present: true",
+        "post_entry_operator_player_visible_private_pointer_preparation_present: true",
+        "native_checkpoint_player_visible_only_duel_action_interface_present: false",
+        "native_checkpoint_player_visible_history_import_interface_present: false",
+        "current_duel_scorer_kernel_bookkeeping_withheld: false",
+        "public_model_owned_duel_action_path_present: false",
+        "native_checkpoint_pregame_interface_present: false",
+        "public_player_visible_pregame_request_contract_present: true",
+        "public_completed_match_history_contract_present: true",
+        "later_game_pregame_completed_history_binding_present: true",
+        "public_player_known_submitted_pregame_deck_configuration_present: true",
+        "public_player_known_pregame_deck_configuration_present: true",
+        "public_model_owned_pregame_action_path_present: false",
+        "native_checkpoint_sideboard_interface_present: false",
+        "native_checkpoint_sequential_sideboard_interface_present: false",
+        "public_player_visible_sideboard_payload_contract_present: true",
+        "public_player_visible_sideboard_score_binding_present: true",
+        "sideboard_completed_history_binding_present: true",
+        "public_model_owned_changed_sideboard_path_present: false",
+        "public_model_owned_unchanged_sideboard_path_present: false",
+        "all_required_model_decision_surfaces_present: false",
+        "grants_live_authority: false",
+    ] {
+        assert!(
+            model_source.contains(required) || model_binary.contains(required),
+            "model-decision readiness preflight is missing: {required}"
+        );
+    }
+}
+
+#[test]
+fn background_direct_source_is_exact_visible_equivalent_and_non_actuating() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/qualify_mtgo_direct_visible_background_source_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "qualify_stable_background_direct_visible_source_v1",
+        "sole_pinned_mtgo_process_incarnation_v1",
+        "require_same_private_process_incarnation_v1(&before, &between)",
+        "require_same_private_process_incarnation_v1(&before, &after)",
+        "validate_stable_background_direct_visible_results_v1(&first.0, &second.0)",
+        "if first != second || first_result != second_result",
+        "parse_and_validate_visible_duel_producer_result_v1(first)",
+        "GetSystemWindowsDirectoryW",
+        "broker_argument_path_v1",
+        "same_process_incarnation_verified_privately_and_discarded",
+        "two_exact_visible_equivalent_results_no_pixels_no_model_no_input",
+        "pub struct OpaqueMtgoStableBackgroundDirectVisibleSourceV1",
+        "pub fn requires_foreground_window_v1(&self) -> bool",
+        "pub fn requires_pixel_capture_v1(&self) -> bool",
+        "pub fn safe_for_model_scoring_v1(&self) -> bool",
+        "pub fn safe_for_input_v1(&self) -> bool",
+        "RATIFIED_BACKGROUND_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_BACKGROUND_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1",
+        "score_ratified_stable_background_direct_visible_source_observation_v1",
+        "score_ratified_stable_background_direct_visible_combat_source_observation_v1",
+        "refresh_ratified_stable_background_direct_visible_selection_v1",
+        "refresh_ratified_stable_background_direct_visible_combat_step_v1",
+        "PrivateMtgoInitialDirectVisibleObservationV1::StableBackground",
+        "background_visible_result_exactly_reobserved_foreground_before_input",
+        "refreshed_observation.exact_result_bytes.0",
+        "!= initial_observation._exact_result_bytes.0",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "background direct source is missing boundary: {required}"
+        );
+    }
+    assert_eq!(
+        runtime
+            .matches(".env(\"SystemRoot\", &windows_directory)")
+            .count(),
+        3,
+        "every observe and dispatch broker must receive only the OS-derived SystemRoot"
+    );
+    for required in [
+        "mtgo-direct-visible-background-qualification-summary/v1",
+        "foreground_window_required",
+        "pixel_capture_required",
+        "sanitized_visible_projection_stable",
+        "safe_for_live_semantic_evidence",
+        "safe_for_model_scoring",
+        "safe_for_input",
+        "permits_event_entry",
+        "permits_spending",
+    ] {
+        assert!(
+            binary.contains(required),
+            "background qualification summary is missing: {required}"
+        );
+    }
+    for required in [
+        "qualify_stable_background_direct_visible_source_v1",
+        "OpaqueMtgoStableBackgroundDirectVisibleSourceV1",
+        "MtgoStableBackgroundDirectVisibleSourceCommitmentsV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "background qualification API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub struct PrivateMtgoProcessIncarnationV1",
+        "pub fn process_id",
+        "process_incarnation_commitment_sha256",
+        "raw_client_object",
+        "visible_decision:",
+        "exact_result_bytes:",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !binary.contains(forbidden) && !public_api.contains(forbidden),
+            "background qualification exposes a forbidden surface: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "std::env::var_os(\"SystemRoot\")",
+        ".envs(std::env::vars_os())",
+    ] {
+        assert!(
+            !runtime.contains(forbidden),
+            "background broker inherited caller environment: {forbidden}"
+        );
+    }
+    for private_only in [
+        "score_ratified_stable_background_direct_visible_source_observation_v1",
+        "score_ratified_stable_background_direct_visible_combat_source_observation_v1",
+        "refresh_ratified_stable_background_direct_visible_selection_v1",
+        "refresh_ratified_stable_background_direct_visible_combat_step_v1",
+    ] {
+        assert!(
+            runtime.contains(&format!("pub(crate) fn {private_only}")),
+            "background scorer or foreground rebound is not crate-private: {private_only}"
+        );
+        assert!(
+            !public_api.contains(private_only),
+            "caller-supplied background scorer escaped the crate: {private_only}"
+        );
+    }
+}
+
+#[test]
+fn background_direct_visible_review_artifact_is_data_bearing_but_non_authoritative() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/capture_mtgo_direct_visible_background_review_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "write_stable_background_direct_visible_review_artifact_v1",
+        "parse_and_validate_visible_duel_producer_result_v1(exact_result_bytes)",
+        "background review artifact requires a data-bearing duel result",
+        "rendered_mtgo_ui_or_rendered_game_log_only",
+        "visible-result.json",
+        "review-template.json",
+        "pending_manual_visible_equivalence_review",
+        "every_exported_fact_visible_in_rendered_ui_or_rendered_game_log",
+        "legal_action_set_matches_visible_controls",
+        "no_hidden_zone_or_internal_identifier",
+        "review_completed: false",
+        "safe_for_live_semantic_evidence: false",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+        "background review artifact may not be written inside the repository",
+        "create_new(true)",
+        "fs::rename(&partial, output)",
+        "cleanup_background_direct_visible_review_partial_v1",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "background review writer is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "qualify_stable_background_direct_visible_source_v1",
+        "write_stable_background_direct_visible_review_artifact_v1",
+        "MTGO_DIRECT_VISIBLE_BACKGROUND_REVIEW_REJECTED",
+    ] {
+        assert!(
+            binary.contains(required),
+            "background review CLI is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "write_stable_background_direct_visible_review_artifact_v1",
+        "MtgoStableBackgroundDirectVisibleReviewArtifactReceiptV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "background review API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "visible_result: serde_json::Value",
+        "process_id:",
+        "process_image:",
+        "raw_client_object",
+        "hidden_client_id",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !binary.contains(forbidden),
+            "background review CLI exposes a forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn seated_duel_review_artifact_is_role_bound_identity_free_and_non_authoritative() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/capture_mtgo_seated_duel_direct_visible_review_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "write_seated_duel_direct_visible_review_artifact_v1",
+        "exact_result_bytes: ZeroingVecV1",
+        "PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel",
+        "PrivateMtgoDirectVisibleQualificationRoleV1::Spectator",
+        "seated duel review artifact requires the acting-player duel qualification role",
+        "parse_and_validate_visible_duel_producer_result_v1(exact_result_bytes)",
+        "seated duel review artifact requires a data-bearing acting-player result",
+        "attested_seated_duel_visible_review_candidate",
+        "rendered_mtgo_ui_or_rendered_game_log_only",
+        "pending_manual_visible_equivalence_review",
+        "simultaneously_rendered_surface_reviewed: false",
+        "every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: false",
+        "every_exported_legal_action_matches_visible_controls: false",
+        "no_hidden_zone_internal_identifier_or_nonvisible_metadata: false",
+        "participant_identifiers_emitted: false",
+        "account_identifiers_emitted: false",
+        "process_identifiers_emitted: false",
+        "process_paths_emitted: false",
+        "window_titles_emitted: false",
+        "match_or_game_identifiers_emitted: false",
+        "raw_pixels_emitted: false",
+        "review_completed: false",
+        "safe_for_live_semantic_evidence: false",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+        "validate_background_direct_visible_review_output_v1(requested_output_directory)",
+        "persist_background_direct_visible_review_artifact_v1",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "seated duel review writer is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "qualify_attested_direct_visible_source_current_duel_v1",
+        "write_seated_duel_direct_visible_review_artifact_v1",
+        "MTGO_SEATED_DUEL_DIRECT_VISIBLE_REVIEW_REJECTED",
+    ] {
+        assert!(
+            binary.contains(required),
+            "seated duel review CLI is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "write_seated_duel_direct_visible_review_artifact_v1",
+        "MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "seated duel review API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "process_id:",
+        "process_image:",
+        "participant_name",
+        "account_name",
+        "match_id",
+        "game_id",
+        "raw_pixels",
+        "SendInput",
+        "SetCursorPos",
+        "dispatch",
+    ] {
+        assert!(
+            !binary.contains(forbidden),
+            "seated duel review CLI exposes a forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn two_local_client_harness_targets_only_the_prebound_approved_client() {
+    let probe = include_str!("../src/probe.rs");
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binding_binary =
+        include_str!("../src/bin/bind_mtgo_approved_client_for_two_local_clients_v1.rs");
+    let capture_binary = include_str!(
+        "../src/bin/capture_mtgo_two_local_client_seated_duel_direct_visible_review_v1.rs"
+    );
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "two-client capture requires exactly two MTGO processes",
+        "two-client capture foreground is not the bound approved MTGO process",
+        "bound approved MTGO process is absent from the two-client topology",
+        "two-client MTGO process topology changed during capture",
+        "capture_mtgo_dxgi_frame_candidate_for_two_client_target_v1",
+        "MTGO_TWO_CLIENT_PROCESS_TOPOLOGY_DOMAIN_V1",
+    ] {
+        assert!(
+            probe.contains(required),
+            "two-client probe is missing: {required}"
+        );
+    }
+    for required in [
+        "bind_foreground_approved_mtgo_client_for_two_local_clients_v1",
+        "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "verify_two_local_client_direct_visible_source_runtime_v1",
+        "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
+        "friend_client_excluded_from_capture: true",
+        "friend_client_excluded_from_observation: true",
+        "friend_client_excluded_from_scoring: true",
+        "friend_client_excluded_from_input: true",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+        "move_file_without_replace_v1",
+        "approved_target_only_friend_client_excluded_no_scoring_no_input_no_entry_no_spending",
+        "qualification_topology: qualification_topology.as_str_v1()",
+        "approved_target_binding_commitment_sha256: qualification_topology",
+        "two_client_process_topology_commitment_sha256: qualification_topology",
+        "operator_bound_two_local_clients",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "two-client runtime is missing: {required}"
+        );
+    }
+    for required in [
+        "bind_foreground_approved_mtgo_client_for_two_local_clients_v1",
+        "MTGO_APPROVED_CLIENT_TWO_LOCAL_CLIENT_BINDING_REJECTED",
+        "expected OUTPUT_BINDING_FILE",
+    ] {
+        assert!(
+            binding_binary.contains(required),
+            "binding CLI is missing: {required}"
+        );
+    }
+    for required in [
+        "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "verify_two_local_client_direct_visible_source_runtime_v1",
+        "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
+        "write_two_local_client_seated_duel_direct_visible_review_artifact_v1",
+        "MTGO_TWO_LOCAL_CLIENT_SEATED_DUEL_REVIEW_REJECTED",
+    ] {
+        assert!(
+            capture_binary.contains(required),
+            "capture CLI is missing: {required}"
+        );
+    }
+    for required in [
+        "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "verify_two_local_client_direct_visible_source_runtime_v1",
+        "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
+        "write_two_local_client_seated_duel_direct_visible_review_artifact_v1",
+        "OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1",
+        "OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "public API is missing: {required}"
+        );
+    }
+    for binary in [binding_binary, capture_binary] {
+        for forbidden in [
+            "process_id:",
+            "account_name",
+            "participant_name",
+            "SendInput",
+            "SetCursorPos",
+            "permits_event_entry: true",
+            "permits_spending: true",
+        ] {
+            assert!(
+                !binary.contains(forbidden),
+                "two-client CLI exposes forbidden surface: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn seated_duel_review_finalizer_is_exact_checked_untrusted_and_non_authoritative() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/finalize_mtgo_seated_duel_direct_visible_review_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "RATIFIED_SEATED_DUEL_DIRECT_VISIBLE_REVIEW_CANDIDATE_V1: Option<&str> = None",
+        "finalize_seated_duel_direct_visible_review_artifact_v1",
+        "load_checked_untrusted_seated_duel_direct_visible_review_v1",
+        "seated duel review artifact must contain exactly its three source files",
+        "parse_and_validate_visible_duel_producer_result_v1(&exact_result_bytes.0)",
+        "validate_source_seated_duel_review_template_v1",
+        "validate_edited_seated_duel_review_v1",
+        "validate_completed_seated_duel_review_v1",
+        "reviewer_alias_sha256_v1",
+        "reviewed_at_unix_millis",
+        "ordinary_surface_complete != ordinary",
+        "combat_surface_complete == ordinary",
+        "completed seated duel review may not modify its source artifact",
+        "require_outside_repository_v1(&parent, \"completed seated duel review output\")",
+        "DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_PARTIAL_PREFIX_V1",
+        "production_evaluation_ratified: false",
+        "safe_for_live_semantic_evidence: false",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "seated duel review finalizer is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "run_seated_duel_direct_visible_review_finalization_cli_v1",
+        "MTGO_SEATED_DUEL_REVIEW_FINALIZATION_REJECTED",
+    ] {
+        assert!(
+            binary.contains(required),
+            "seated duel finalizer CLI is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "finalize_seated_duel_direct_visible_review_artifact_v1",
+        "load_checked_untrusted_seated_duel_direct_visible_review_v1",
+        "CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1",
+        "MtgoSeatedDuelDirectVisibleCompletedReviewV1",
+        "MtgoSeatedDuelDirectVisibleCompletedReviewReceiptV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "seated duel finalizer API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "visible_result",
+        "raw_pixels",
+        "participant_name",
+        "account_name",
+        "process_id",
+        "SendInput",
+        "SetCursorPos",
+        "dispatch",
+        "score_decision",
+    ] {
+        assert!(
+            !binary.contains(forbidden),
+            "seated duel finalizer CLI exposes a forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn preview_ocr_probe_is_offline_expected_text_only_and_non_actuating() {
+    let source = include_str!("../src/bin/probe_mtgo_preview_ocr_v1.rs");
+    for required in [
+        "offline_visible_preview_ocr_feasibility_v1",
+        "expected_label_sha256",
+        "exact_normalized_match_count",
+        "raw_ocr_text_emitted: false",
+        "captures_live_client: false",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+    ] {
+        assert!(
+            source.contains(required),
+            "preview OCR probe is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "GetForegroundWindow",
+        "capture_mtgo_dxgi_frame_candidate",
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "Click",
+        "InvokePattern",
+        "ReadProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "preview OCR probe exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_classifier_modes_are_bounded_exact_and_non_actuating() {
+    let source = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    for required in [
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\\0",
+        "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1",
+        "league_and_challenge_selected_listing_windows_ocr_exact_control_v1",
+        "classifier_binary_sha256 != actual_classifier_sha256",
+        "classifier_assets_manifest_sha256 != sha256_hex_v1(assets_json)",
+        "expected exactly one target label inside its reviewed card region",
+        "Open Entry Review control does not match any reviewed enabled reference",
+        "enabled_control_reference_sha256s",
+        "binary_search(&control_region_sha256)",
+        "request_commitment_sha256",
+        "current_exe",
+        "deny_unknown_fields",
+        "--mtgo-visible-competitive-deck-gate-v1",
+        "deck_label_region_rect_client_px",
+        "selected-deck missing-prompt state differs",
+        "selected-deck visible label pixels differ from reviewed target",
+        "--mtgo-visible-competitive-navigation-v1",
+        "MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\\0",
+        "league_and_challenge_navigation_and_listing_exact_visible_regions_v1",
+        "validate_visible_competitive_lifecycle_snapshot_v1",
+        "expected exactly one reviewed navigation profile match",
+        "accepted_reference_sha256s",
+        "navigation fact changed after profile selection",
+        "mtgo-visible-competitive-navigation-snapshot-id-v1",
+        "--mtgo-visible-competitive-event-record-v1",
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\\0",
+        "league_and_challenge_eight_slice_event_record_checked_untrusted_v1",
+        "validate_visible_competitive_event_record_v1",
+        "expected exactly one reviewed event-record profile match",
+        "event-record fact changed after profile selection",
+        "--mtgo-visible-competitive-sideboard-v1",
+        "MTGO_VISIBLE_COMPETITIVE_SIDEBOARD_V1\\0",
+        "league_or_challenge_exact_deck_policy_between_game_sideboard_checked_untrusted_v1",
+        "validate_visible_competitive_sideboard_snapshot_v1",
+        "expected exactly one reviewed sideboard profile match",
+        "visible sideboard card changed after profile selection",
+        "sideboard lifecycle differs from the prior navigation response",
+        "--mtgo-visible-duel-perception-v1",
+        "MTGO_VISIBLE_DUEL_PERCEPTION_V1\\0",
+        "acting_player_duel_exact_visible_semantic_reference_checked_untrusted_v1",
+        "source_manifest_sha256",
+        "validate_observed_decision_v1",
+        "validate_observation_reconstruction_audit_v1",
+        "expected exactly one reviewed duel perception profile match",
+        "duel decision region changed after profile selection",
+        "duel reconstruction region changed after profile selection",
+        "duel lifecycle region changed after profile selection",
+        "duel visible controls must map one-to-one to legal actions",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive classifier is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "GetForegroundWindow",
+        "capture_mtgo_dxgi_frame_candidate",
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "Click",
+        "InvokePattern",
+        "ReadProcessMemory",
+        "TcpStream",
+        "UdpSocket",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive classifier exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_public_context_runtime_is_same_frame_profile_and_binary_bound() {
+    let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    for required in [
+        "classify_competitive_pregame_public_context_v1",
+        "check_untrusted_competitive_pregame_public_context_classifier_request_v1",
+        "check_untrusted_competitive_pregame_public_context_classifier_response_v1",
+        "bind_untrusted_competitive_pregame_model_context_v1",
+        "runtime_commitments.perception_pipeline_binary_sha256",
+        "profile.classifier_binary_sha256()",
+        "source._checked_classification",
+        "raw.canonical_bgra8",
+        "safe_for_native_model_scoring_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame public-context runtime is missing: {required}"
+        );
+    }
+    for required in [
+        "--mtgo-visible-competitive-pregame-public-context-v1",
+        "MTGO_VISIBLE_COMPETITIVE_PREGAME_PUBLIC_CONTEXT_V1",
+    ] {
+        assert!(runtime.contains(required));
+    }
+    for forbidden in [
+        "impl VerifiedPointerTargetV3 for OpaqueMtgoClassifiedCompetitivePregameModelContextV1",
+        "pub fn pixels_v1",
+        "pub fn rect_client_px_v1",
+        "SendInput",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame model context exposes forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn visible_accessibility_probe_is_read_only_private_and_requires_pixel_corroboration() {
+    let source = include_str!("../src/probe/visible_accessibility.rs");
+    let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_v1.rs");
+
+    for required in [
+        "CurrentProcessId",
+        "CurrentIsOffscreen",
+        "CurrentBoundingRectangle",
+        "CurrentName",
+        "requires_same_frame_pixel_corroboration: true",
+        "raw_visible_text_exposed: false",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility probe is missing guard: {required}"
+        );
+    }
+
+    let offscreen_check = source.find(".CurrentIsOffscreen()").unwrap();
+    let bounds_check = source.find(".CurrentBoundingRectangle()").unwrap();
+    let name_read = source.find(".CurrentName()").unwrap();
+    assert!(offscreen_check < bounds_check && bounds_check < name_read);
+
+    for forbidden in [
+        "GetCurrentPattern",
+        ".Invoke(",
+        ".SetFocus(",
+        "SendInput",
+        ".SetValue(",
+        "expected_visible_text: String,\n    pub",
+    ] {
+        assert!(
+            !binary.contains(forbidden)
+                && !source
+                    .split("#[cfg(test)]")
+                    .next()
+                    .unwrap()
+                    .contains(forbidden),
+            "visible accessibility probe exposes forbidden operation or raw result: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
+    let source = include_str!("../src/probe/visible_accessibility.rs");
+    let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_v1.rs");
+    let pixel_binary =
+        include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_pixels_v1.rs");
+    let review_binary =
+        include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_review_v1.rs");
+    let finalize_binary =
+        include_str!("../src/bin/finalize_mtgo_visible_accessibility_catalog_review_v1.rs");
+    let corpus_binary =
+        include_str!("../src/bin/evaluate_mtgo_visible_accessibility_catalog_corpus_v1.rs");
+
+    for required in [
+        "fn known_label_catalog_v1()",
+        "expected_visible_text: \"Keep\"",
+        "expected_visible_text: \"Mulligan\"",
+        "expected_visible_text: \"Combat\"",
+        "expected_visible_text: \"Cancel\"",
+        "expected_visible_text: \"Submit Deck\"",
+        "caller_selected_text_queries_enabled: false",
+        "unmatched_visible_text_retained: false",
+        "raw_visible_text_exposed: false",
+        "requires_same_frame_pixel_corroboration: true",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "VISIBLE_ACCESSIBILITY_CATALOG_REPORT_DOMAIN_V1",
+        "report_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility catalog is missing: {required}"
+        );
+    }
+    assert!(binary.contains("run_visible_accessibility_known_label_catalog_cli_v1"));
+    assert!(pixel_binary
+        .contains("run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1"));
+    assert!(review_binary
+        .contains("run_visible_accessibility_known_label_catalog_review_artifact_cli_v1"));
+    assert!(
+        finalize_binary.contains("run_visible_accessibility_catalog_review_finalization_cli_v1")
+    );
+    assert!(corpus_binary.contains("run_visible_accessibility_catalog_corpus_evaluation_cli_v1"));
+    for required in [
+        "probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1",
+        "build_known_label_pixel_catalog_summary_v1",
+        "source.report_commitment_sha256 != pixel_summary_commitment_v1(&source)?",
+        "source.query_results.len() != catalog.len()",
+        "pixel-corroborated catalog query identity changed",
+        "VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1",
+        "evaluate_untrusted_visible_accessibility_catalog_case_v1",
+        "The corpus contract has no production ratification root",
+        "_source: Box<OpaqueMtgoVisibleAccessibilityPixelCorroborationV1>",
+        "visible_absence_reviewed_when_match_count_is_zero",
+        "every_matched_region_visibly_contains_exact_catalog_label",
+        "production_evaluation_ratified_v1(&self) -> bool",
+        "persist_mtgo_visible_accessibility_catalog_review_artifact_v1",
+        "before-visible-client.png",
+        "after-visible-client.png",
+        "review-template.json",
+        "contains_only_player_visible_pixels_and_opaque_commitments: true",
+        "raw_or_unmatched_visible_text_exposed: false",
+        "pixel_coordinates_exposed: false",
+        "accessibility_metadata_exposed: false",
+        "process_or_window_metadata_exposed: false",
+        "load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1",
+        "finalize_visible_accessibility_catalog_review_artifact_v1",
+        "run_visible_accessibility_catalog_review_finalization_cli_v1",
+        "completed accessibility catalog review may not modify the source artifact directory",
+        "run_visible_accessibility_catalog_corpus_evaluation_cli_v1",
+        "decode_visible_accessibility_png_to_bgra8_v1",
+        "visible_crop_exists_at_same_position_v1",
+        "artifact contains missing or unexpected files",
+        "accessibility review template changed or is already approved",
+        "evaluate_untrusted_visible_accessibility_catalog_corpus_v1",
+        "CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1",
+        "presence_and_absence_coverage_complete",
+        "exact_frame_pairs_are_distinct_across_cases",
+        "production_evaluation_ratified: false",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility pixel catalog is missing: {required}"
+        );
+    }
+    assert!(
+        !source.contains("RATIFIED_VISIBLE_ACCESSIBILITY_CATALOG_EVALUATION_COMMITMENT_V1"),
+        "a single catalog case must not own a production ratification root"
+    );
+    assert!(
+        !source.contains("RATIFIED_VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_COMMITMENT_V1"),
+        "the corpus contract must not self-ratify without reviewed production data"
+    );
+    for forbidden_public_metadata in [
+        "pub observed_control_type_ids",
+        "pub reviewed_control_type_ids",
+        "pub process_id: u32",
+        "pub window_handle: u64",
+        "pub client_rect_desktop_sha256",
+        "pub dpi: u32",
+        "pub eligible_visible_element_count",
+        "pub visible_named_element_count",
+        "pub source_window_identity_commitment_sha256",
+        "pub before_capture_commitment_sha256",
+        "pub after_capture_commitment_sha256",
+        "pub private_match_set_commitment_sha256",
+        "pub private_pixel_match_set_commitment_sha256",
+        "pub rect_client_px",
+        "pub capture_bracket_identity_confirmed",
+    ] {
+        assert!(
+            !source.contains(forbidden_public_metadata),
+            "visible accessibility output exposes non-UI metadata: {forbidden_public_metadata}"
+        );
+    }
+    for forbidden in ["--query", "CurrentName", "GetCurrentPattern", "SendInput"] {
+        assert!(
+            !binary.contains(forbidden)
+                && !pixel_binary.contains(forbidden)
+                && !review_binary.contains(forbidden),
+            "visible accessibility catalog binary exposes forbidden capability: {forbidden}"
+        );
+    }
+    assert!(!source.contains("pub fn known_label_catalog_v1"));
+}
+
+#[test]
+fn visible_accessibility_pixel_corroboration_is_capture_bracketed_and_non_actionable() {
+    let source = include_str!("../src/probe/visible_accessibility.rs");
+    let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_pixels_v1.rs");
+    for required in [
+        "probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1",
+        "let before_frame = capture_mtgo_dxgi_frame_candidate_v3",
+        "probe_mtgo_visible_accessibility_exact_text_v1",
+        "let after_frame = capture_mtgo_dxgi_frame_candidate_v3",
+        "before.pre != accessibility_probe._window_snapshot",
+        "after.pre != accessibility_probe._window_snapshot",
+        "before.output != after.output",
+        "before.frame.source_texture_width != after.frame.source_texture_width",
+        "MAX_VISIBLE_ACCESSIBILITY_CAPTURE_BRACKET_MILLIS_V1",
+        "visible_frame_region_content_sha256_v1",
+        "before_hash != after_hash",
+        "total_pixel_corroborated_match_count",
+        "has_pixel_corroborated_match",
+        "matched_regions_pixel_stable_across_bracket: true",
+        "raw_visible_text_exposed: false",
+        "private_match_rectangles_exposed: false",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "visible_pixel_match_set_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility pixel corroboration is missing: {required}"
+        );
+    }
+    assert!(binary.contains("run_visible_accessibility_pixel_corroboration_cli_v1"));
+    for forbidden in [
+        "GetCurrentPattern",
+        ".Invoke(",
+        ".SetFocus(",
+        "SendInput",
+        ".SetValue(",
+        "pub fn canonical_bgra8",
+        "pub fn match_rectangles",
+        "pub rect_client_px",
+    ] {
+        assert!(
+            !binary.contains(forbidden)
+                && !source
+                    .split("#[cfg(test)]")
+                    .next()
+                    .unwrap()
+                    .contains(forbidden),
+            "visible accessibility pixel corroboration exposes forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_heuristic_is_deck_bound_separately_ratified_and_non_actuating() {
+    let source = include_str!("../src/competitive_pregame_policy.rs");
+    for required in [
+        "RATIFIED_COMPETITIVE_PREGAME_HEURISTIC_REVIEW_COMMITMENT_V1: Option<&str> = None",
+        "check_untrusted_competitive_pregame_heuristic_v1",
+        "admit_ratified_competitive_pregame_heuristic_v1",
+        "bind_competitive_operator_pregame_resources_v1",
+        "select_visible_control_v1",
+        "every_main_deck_card_feature_reviewed",
+        "mulligan_behavior_reviewed",
+        "london_bottoming_behavior_reviewed",
+        "league_and_challenge_use_reviewed",
+        "no_sideboard_policy_claimed",
+        "do not share one exact deck and gameplay deployment",
+        "safe_for_live_scoring_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "permits_sideboard_selection_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame heuristic seam is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "execute_prepared_competitive_entry_v1",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "ReadProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame heuristic seam exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_action_plan_is_deck_bound_coordinate_private_and_non_actuating() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "plan_competitive_event_pregame_action_v1",
+        "OpaqueMtgoCompetitivePregameActionPlanV1",
+        "AdmittedMtgoCompetitivePregameHeuristicV1",
+        "visible_interaction_commitment_sha256",
+        "heuristic_admission_commitment_sha256",
+        "selected_control_visible_content_sha256",
+        "competitive pregame action planning requires a retained classified frame",
+        "competitive pregame heuristic differs from the event deck, format, or gameplay policy",
+        "deck_bound_deterministic_visible_pregame_selection_no_input",
+        "_selected_control: selected_control",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame action plan is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn selected_control_v1",
+        "pub fn target_rect_v1",
+        "pub fn input_point_v1",
+        "prepare_competitive_event_pregame_action_v1",
+        "execute_competitive_event_pregame_action_v1",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame action plan exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_preparation_rechecks_fresh_surface_without_input_authority() {
+    let source = include_str!("../src/actuator.rs");
+    let classifier_source = include_str!("../src/probe/competitive_pregame_runtime.rs");
+    for required in [
+        "prepare_fresh_competitive_event_pregame_action_v1",
+        "OpaqueMtgoPreparedCompetitivePregameActionV1",
+        "check_competitive_event_pregame_postcondition_dry_run_v1",
+        "CheckedUntrustedMtgoCompetitivePregamePostconditionV1",
+        "RATIFIED_COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "review_competitive_pregame_ratification_candidate_from_correspondence_v1",
+        "ratify_competitive_pregame_authorization_from_correspondence_v1",
+        "pub(crate) fn execute_prepared_competitive_pregame_action_v1",
+        "operator-owned, reviewed",
+        "pregame-input roots remain empty",
+        "confirm_pending_competitive_pregame_action_v1",
+        "OpaqueMtgoPendingCompetitivePregameInputV1",
+        "OpaqueMtgoConfirmedCompetitivePregameActionV1",
+        "require_immediate_successor_v1",
+        "competitive_pregame_visible_card_labels_equal_v1",
+        "fresh_selected_control != plan._selected_control",
+        "selected card did not visibly toggle",
+        "same-rect pixel change",
+        "bottom selection changed another card state or rectangle",
+        "claims_action_causality_v1(&self) -> bool {\n        false",
+        "safe_for_next_input_v1(&self) -> bool {\n        false",
+        "structural_visible_postcondition_only_no_input_receipt_no_causality_no_gate_release",
+        "exactly_one_competitive_pregame_left_click_pending_exact_visible_postcondition",
+        "receipt_bound_exact_visible_pregame_transition_shared_gate_released",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame fresh preparation is missing: {required}"
+        );
+    }
+    for required in [
+        "resolve_visible_control_pointer_target_v1",
+        "competitive pregame pointer target is not one exact current visible control",
+        "choose_cursor_park_point_v3",
+    ] {
+        assert!(
+            classifier_source.contains(required),
+            "competitive pregame private target resolution is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitivePregameActionV1",
+        "pub fn target_x_desktop_px_v1",
+        "pub fn pointer_target_v1",
+        "release_confirmed_pending_v3(&prepared",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame preparation exposes forbidden authority: {forbidden}"
+        );
+    }
+    let public_exports = include_str!("../src/lib.rs");
+    assert!(!public_exports.contains("execute_prepared_competitive_pregame_action_v1"));
+}
+
+#[test]
+fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
+    let source = include_str!("../src/competitive_operator_bootstrap.rs");
+    for required in [
+        "bind_competitive_operator_resources_v1",
+        "OpaqueMtgoCompetitiveOperatorResourcesV1",
+        "MtgoCompetitiveOperatorResourcesPartsV1",
+        "navigation profile and runtime are crossed",
+        "event evaluations are crossed",
+        "deck manifest and listing are crossed",
+        "duel perception and lifecycle profiles are crossed",
+        "duel gesture resources are crossed",
+        "listing and checkpoint deployment are crossed",
+        "checkpoint capabilities and deployment are crossed",
+        "checkpoint_competitive_capabilities_commitment_sha256",
+        "sideboard resources are crossed",
+        "safe_for_live_capture_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "operator resource bootstrap is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "execute_prepared_competitive_entry_v1",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "ratify_competitive",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "operator resource bootstrap exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing() {
+    let runtime = include_str!("../src/probe/competitive_deck_chooser_runtime.rs");
+    let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    let readiness = include_str!("../src/competitive_wiring_readiness.rs");
+    let public_api = include_str!("../src/lib.rs");
+    for required in [
+        "mtgo_visible_competitive_deck_chooser_v1",
+        "league_and_challenge_exact_deck_chooser_checked_untrusted_v1",
+        "AwaitingExactDeckSelection",
+        "ExactDeckSelected",
+        "classify_competitive_deck_chooser_open_state_v1",
+        "classify_competitive_deck_chooser_selected_successor_v1",
+        "source_window_continuity_commitment_sha256",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "deck-chooser runtime is missing: {required}"
+        );
+    }
+    for required in [
+        "--mtgo-visible-competitive-deck-chooser-v1",
+        "MTGO_VISIBLE_COMPETITIVE_DECK_CHOOSER_V1",
+        "deck_chooser_profiles",
+        "expected exactly one reviewed deck-chooser state match",
+        "deck-chooser target requires exactly two reviewed state profiles",
+        "deck-chooser label, row, detail, or Submit differs from reviewed pixels",
+        "deck_label_region_rect_client_px",
+        "selection_detail_rect_client_px",
+    ] {
+        assert!(
+            classifier.contains(required),
+            "deck-chooser classifier is missing: {required}"
+        );
+    }
+    for required in [
+        "pre_entry_visible_deck_chooser_classifier_protocol_present: true",
+        "pre_entry_visible_deck_chooser_reviewed_two_state_corpus_present: true",
+        "pre_entry_visible_deck_selection_actuator_present: true",
+    ] {
+        assert!(
+            readiness.contains(required),
+            "deck-chooser readiness boundary is missing: {required}"
+        );
+    }
+    for required in [
+        "MtgoCompetitiveDeckChooserClassifierRequestHeaderV1",
+        "OpaqueMtgoClassifiedCompetitiveDeckChooserV1",
+        "classify_competitive_deck_chooser_selected_successor_v1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "deck-chooser public type surface is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "TcpStream",
+        "UdpSocket",
+        "reqwest",
+        "pub fn canonical_bgra8",
+        "pub fn deck_label_region_rect",
+        "pub fn deck_row_control_rect",
+        "pub fn selection_detail_rect",
+        "pub fn submit_control_rect",
+        "pub fn click",
+    ] {
+        assert!(
+            !runtime.contains(forbidden),
+            "deck-chooser runtime exposes forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_deck_selection_actuator_is_three_control_visible_confirmed_and_unratified() {
+    let source = include_str!("../src/competitive_deck_selection_control.rs");
+    let gate = include_str!("../src/probe/competitive_deck_gate_runtime.rs");
+    let chooser = include_str!("../src/probe/competitive_deck_chooser_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+    for required in [
+        "RATIFIED_COMPETITIVE_DECK_SELECTION_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "MtgoCompetitiveDeckSelectionControlV1",
+        "SelectDeck",
+        "ExactDeckRow",
+        "SubmitSelectedDeck",
+        "prepare_next_competitive_deck_selection_control_v1",
+        "execute_prepared_competitive_deck_selection_control_v1",
+        "confirm_pending_competitive_select_deck_v1",
+        "confirm_pending_competitive_exact_deck_row_v1",
+        "confirm_pending_competitive_deck_submit_v1",
+        "reserve_direct_visible_input_gate_v1",
+        "release_confirmed_direct_visible_input_pending_v1",
+        "no_entry_choice_no_fee_no_entry_no_spending",
+    ] {
+        assert!(
+            source.contains(required),
+            "deck actuator is missing: {required}"
+        );
+    }
+    for required in [
+        "select_deck_control_target_v1",
+        "confirm_classified_competitive_deck_selection_transition_v1",
+    ] {
+        assert!(
+            gate.contains(required),
+            "deck gate join is missing: {required}"
+        );
+    }
+    for required in [
+        "exact_deck_row_control_target_v1",
+        "submit_control_target_v1",
+        "confirm_competitive_deck_submit_visible_v1",
+    ] {
+        assert!(
+            chooser.contains(required),
+            "deck chooser join is missing: {required}"
+        );
+    }
+    for required in [
+        "begin_ratified_competitive_deck_selection_session_v1",
+        "OpaqueMtgoConfirmedCompetitiveDeckSelectionV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "deck actuator public boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "TcpStream",
+        "UdpSocket",
+        "reqwest",
+        "pub fn control_rect",
+        "pub fn target_x",
+        "pub fn click",
+        "pub fn enter_event",
+        "pub fn spend",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "deck actuator exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_entry_authority() {
+    let source = include_str!("../src/competitive_operator_loop.rs");
+    let direct_source = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+    for required in [
+        "begin_competitive_post_entry_operator_v1",
+        "next_competitive_post_entry_operator_directive_v1",
+        "advance_competitive_post_entry_operator_observed_v1",
+        "prepare_competitive_post_entry_operator_lifecycle_v1",
+        "execute_prepared_competitive_post_entry_operator_lifecycle_v1",
+        "confirm_pending_competitive_post_entry_operator_lifecycle_v1",
+        "observe_competitive_post_entry_operator_event_record_v1",
+        "checkout_competitive_post_entry_operator_gameplay_v1",
+        "select_competitive_post_entry_operator_player_visible_gameplay_action_v1",
+        "score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1",
+        "bind_competitive_post_entry_operator_player_visible_gameplay_gesture_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1",
+        "bind_competitive_post_entry_operator_player_visible_gameplay_source_target_v1",
+        "advance_competitive_post_entry_operator_player_visible_gameplay_target_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1",
+        "refresh_competitive_post_entry_operator_player_visible_gameplay_target_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1",
+        "fresh player-visible gameplay target is not newer than the Game Log refresh",
+        "_visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1",
+        "_confirmed_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1",
+        "target.is_final_primitive_v1()",
+        "prepare_competitive_post_entry_operator_player_visible_gameplay_pointer_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1",
+        "prepare_opaque_player_visible_duel_gesture_pointer_v1",
+        "prepare_competitive_post_entry_operator_player_visible_gameplay_before_input_v1",
+        "execute_competitive_post_entry_operator_player_visible_gameplay_primitive_v1",
+        "confirm_competitive_post_entry_operator_player_visible_gameplay_primitive_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPendingV1",
+        "MtgoCompetitiveOperatorPlayerVisibleGameplayConfirmationV1",
+        "release_confirmed_competitive_player_visible_gameplay_primitive_v1",
+        "after-input visible Game Log snapshot is not newer than the input receipt",
+        "player-visible continuation frame is not strictly newer than the confirmed postcondition",
+        "player-visible gesture continuation changed the exact event, match, or game",
+        "player-visible gesture continuation skipped a confirmed primitive",
+        "validate_competitive_player_visible_game_history_for_session_v1",
+        "session_commitments.confirmed_action_count",
+        "session_commitments.last_confirmed_frame_sequence",
+        "select_competitive_post_entry_operator_gameplay_action_v1",
+        "bind_competitive_post_entry_operator_gameplay_action_v1",
+        "return_competitive_post_entry_operator_gameplay_v1",
+        "score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1",
+        "gesture_plan_for_operator_v1",
+        "begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1",
+        "bind_competitive_duel_gesture_sequence_session_v1",
+        "competitive_gesture_game_session_action_authorities_v1",
+        "checkout_competitive_post_entry_operator_native_pregame_v1",
+        "bind_competitive_post_entry_operator_match_launch_identity_v1",
+        "ratify_competitive_post_entry_operator_match_launch_attended_v1",
+        "checkout_competitive_post_entry_operator_attended_native_pregame_v1",
+        "refresh_competitive_post_entry_operator_attended_pregame_visible_game_log_v1",
+        "refresh_resolved_competitive_operator_attended_pregame_visible_game_log_v1",
+        "score_checked_untrusted_competitive_operator_attended_native_pregame_v1",
+        "resolve_checked_untrusted_competitive_operator_attended_native_pregame_v1",
+        "begin_competitive_visible_game_log_baseline_v1",
+        "visible_game_log_baseline_present_v1",
+        "score_checked_untrusted_competitive_operator_native_pregame_v1",
+        "resolve_checked_untrusted_competitive_operator_native_pregame_v1",
+        "checkout_competitive_post_entry_operator_native_sideboard_v1",
+        "score_checked_untrusted_competitive_operator_native_sideboard_v1",
+        "resolve_checked_untrusted_competitive_operator_native_sideboard_v1",
+        "OpaqueMtgoCompetitiveOperatorGameplayLeaseV1",
+        "OpaqueMtgoCompetitiveOperatorGameplaySelectionV1",
+        "OpaqueMtgoCompetitiveOperatorNativePregameRequestV1",
+        "OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1",
+        "OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1",
+        "OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1",
+        "OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1",
+        "OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1",
+        "OpaqueMtgoScoredCompetitiveOperatorNativePregameV1",
+        "OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1",
+        "OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1",
+        "OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1",
+        "OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1",
+        "ResolvePregameWithNativeModel",
+        "LaunchGameplay",
+        "ResolveSideboardWithNativeModel",
+        "native_model_path_present",
+        "competitive_capabilities_v1",
+        "checkpoint.pregame_head_ready_v1()",
+        "checkpoint.player_visible_duel_action_ready_v1()",
+        "checkpoint.sideboard_head_ready_v1()",
+        "checkpoint capabilities changed lineage",
+        "changed_sideboard_resources_present",
+        "safe_for_live_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "player_visible_selected_action_v1",
+        "resources and event runtime are crossed",
+        "pregame checkout changed the exact event, match, game, or resources",
+        "pregame scoring changed resources or deployment",
+        "sideboard checkout changed the exact event, outcome, resources, deck, or deployment",
+        "sideboard scoring changed resources or deployment",
+        "gameplay action changed the operator deployment, visible perception, gesture profile, event, game, or frame lifetime",
+    ] {
+        assert!(
+            source.contains(required),
+            "post-entry operator loop is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "prepare_ratified_competitive_entry_v1",
+        "execute_prepared_competitive_entry_v1",
+        "ratify_competitive_entry",
+        "review_competitive_entry",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+        "SendInput",
+        "SetCursorPos",
+        "pub fn selected_semantic_v1(&self) -> &ActionSemanticV1",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "post-entry operator loop exposes a forbidden new-entry capability: {forbidden}"
+        );
+    }
+    for forbidden_export in [
+        "select_competitive_post_entry_operator_gameplay_action_v1,",
+        "bind_competitive_post_entry_operator_gameplay_action_v1,",
+        "OpaqueMtgoCompetitiveOperatorGameplaySelectionV1,",
+        "OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,",
+        "score_and_select_opaque_admitted_duel_perception_v1,",
+        "score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,",
+        "resolve_opaque_profile_bound_duel_control_v1,",
+        "OpaqueMtgoProfileBoundDuelModelSelectionV1,",
+        "MtgoOpaqueDuelModelSelectionCommitmentsV1,",
+        "checkout_competitive_post_entry_operator_gameplay_v1,",
+        "select_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "select_next_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1,",
+        "execute_competitive_post_entry_operator_direct_visible_action_v1,",
+        "confirm_competitive_post_entry_operator_direct_visible_action_v1,",
+        "MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1,",
+        "select_competitive_operator_attended_direct_visible_gameplay_action_v1,",
+        "retry_competitive_operator_attended_direct_visible_gameplay_action_v1,",
+        "score_ratified_attested_direct_visible_source_observation_v1,",
+        "refresh_ratified_attested_direct_visible_selection_v1,",
+        "OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,",
+        "OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,",
+        "select_competitive_operator_attended_direct_visible_any_gameplay_action_v1,",
+        "score_competitive_operator_attended_direct_visible_combat_rescore_v1,",
+    ] {
+        assert!(
+            !public_api.contains(forbidden_export),
+            "public API exports the legacy complete-observation competitive scorer: {forbidden_export}"
+        );
+    }
+    for required_private_parent in ["mod competitive_operator_loop;", "mod probe;"] {
+        assert!(
+            public_api.contains(required_private_parent),
+            "legacy gameplay route is not retained beneath a private parent module: {required_private_parent}"
+        );
+    }
+    for forbidden_public_parent in ["pub mod competitive_operator_loop;", "pub mod probe;"] {
+        assert!(
+            !public_api.contains(forbidden_public_parent),
+            "legacy gameplay route parent module is public: {forbidden_public_parent}"
+        );
+    }
+    for required_private in [
+        "pub(crate) fn select_competitive_post_entry_operator_gameplay_action_v1(",
+        "pub(crate) fn bind_competitive_post_entry_operator_gameplay_action_v1(",
+        "pub(crate) struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1",
+        "pub(crate) fn checkout_competitive_post_entry_operator_gameplay_v1(",
+        "pub(crate) fn select_competitive_post_entry_operator_direct_visible_gameplay_action_v1",
+        "pub(crate) enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1",
+        "pub(crate) struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1",
+    ] {
+        assert!(
+            source.contains(required_private),
+            "legacy gameplay route is not explicitly crate-private: {required_private}"
+        );
+    }
+    for qualification_only_implementation in [
+        "pub fn select_competitive_operator_attended_direct_visible_gameplay_action_v1",
+        "pub fn retry_competitive_operator_attended_direct_visible_gameplay_action_v1",
+        "pub fn score_ratified_attested_direct_visible_source_observation_v1",
+        "pub fn refresh_ratified_attested_direct_visible_selection_v1",
+    ] {
+        assert!(
+            source.contains(qualification_only_implementation)
+                || direct_source.contains(qualification_only_implementation),
+            "qualification-only direct-source implementation is missing: {qualification_only_implementation}"
+        );
+    }
+    for required_player_visible_export in [
+        "select_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1,",
+        "bind_competitive_post_entry_operator_player_visible_gameplay_gesture_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1,",
+        "bind_competitive_post_entry_operator_player_visible_gameplay_source_target_v1,",
+        "advance_competitive_post_entry_operator_player_visible_gameplay_target_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1,",
+        "refresh_competitive_post_entry_operator_player_visible_gameplay_target_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1,",
+        "prepare_competitive_post_entry_operator_player_visible_gameplay_pointer_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1,",
+        "prepare_competitive_post_entry_operator_player_visible_gameplay_before_input_v1,",
+        "execute_competitive_post_entry_operator_player_visible_gameplay_primitive_v1,",
+        "confirm_competitive_post_entry_operator_player_visible_gameplay_primitive_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPendingV1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1,",
+        "MtgoCompetitiveOperatorPlayerVisibleGameplayConfirmationV1,",
+        "select_next_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
+        "begin_competitive_operator_attended_gameplay_v1,",
+        "refresh_competitive_operator_attended_gameplay_visible_game_log_v1,",
+        "execute_competitive_operator_attended_direct_visible_action_v1,",
+        "confirm_competitive_operator_attended_direct_visible_action_v1,",
+        "complete_competitive_operator_attended_visible_game_for_sideboard_v1,",
+        "complete_competitive_operator_attended_visible_match_v1,",
+        "advance_competitive_operator_completed_visible_game_to_sideboard_v1,",
+        "advance_competitive_operator_completed_visible_match_v1,",
+        "checkout_competitive_operator_visible_native_sideboard_v1,",
+        "MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,",
+        "OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1,",
+        "OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1,",
+        "OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1,",
+        "return_confirmed_competitive_post_entry_operator_player_visible_gameplay_v1,",
+        "prepare_competitive_operator_attended_direct_visible_combat_step_v1,",
+        "execute_competitive_operator_attended_direct_visible_combat_step_v1,",
+        "confirm_competitive_operator_attended_direct_visible_combat_step_v1,",
+        "append_competitive_operator_attended_direct_visible_combat_history_v1,",
+        "MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1,",
+        "MtgoCompetitiveOperatorAttendedDirectVisibleCombatAdvanceV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatBeforeDispatchV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPendingV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1,",
+    ] {
+        assert!(
+            public_api.contains(required_player_visible_export),
+            "public operator API omits the player-visible route: {required_player_visible_export}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_operator_actuator_keeps_private_data_sealed_and_gate_receipt_bound() {
+    let operator = include_str!("../src/competitive_operator_loop.rs");
+    let actuator = include_str!("../src/actuator.rs");
+    let perception = include_str!("../src/probe/duel_perception_runtime.rs");
+
+    for required in [
+        "competitive_player_visible_gameplay_authority_binding_v1",
+        "visible_channels_only",
+        "player_visible_confirmed_primitive_chain_matches_v1",
+        "make_opaque_player_visible_gameplay_input_receipt_v1",
+        "emitted_primitive_sha256",
+        "emitted_mouse_record_count",
+        "cursor_parked_outside_client",
+        "require_matching_pending_v3",
+        "release_confirmed_pending_v3",
+        "complete_opaque_player_visible_gameplay_after_input_v1",
+        "validate_same_duel_window_incarnation_v1",
+        "player_visible_gameplay_after_regions_v1",
+        "advance_competitive_player_visible_gameplay_session_v1",
+        "prior_primitive_confirmation_chain_sha256",
+    ] {
+        assert!(
+            actuator.contains(required)
+                || perception.contains(required)
+                || operator.contains(required),
+            "player-visible actuator chain is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "WinHttp",
+    ] {
+        assert!(
+            !operator.contains(forbidden) && !perception.contains(forbidden),
+            "player-visible operator or perception boundary gained a hidden channel: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn auxiliary_model_resolution_maps_visible_semantics_without_live_authority() {
+    let source = include_str!("../src/competitive_auxiliary_action_resolution.rs");
+    for required in [
+        "resolve_checked_untrusted_competitive_native_pregame_selection_v1",
+        "resolve_checked_untrusted_competitive_native_sideboard_selection_v1",
+        "visible_card_name",
+        "manifest_visible_name_index_v1",
+        "player-visible inventory differs from the submitted deck manifest",
+        "safe_for_live_input_v1(&self) -> bool",
+        "permits_event_session_recovery_v1(&self) -> bool",
+        "permits_sideboard_submission_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "auxiliary model resolution is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "execute_prepared_competitive",
+        "prepare_fresh_competitive",
+        "ratify_competitive",
+        "ReadProcessMemory",
+        "WinHttp",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "auxiliary model resolution exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_duel_scorer_and_control_bridge_withhold_non_ui_information() {
+    let scoring = include_str!("../../mtgo_blackbox_v1/src/player_visible_duel_scoring.rs");
+    let resolution = include_str!("../../mtgo_blackbox_v1/src/action_resolution.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "pub trait MtgoPlayerVisibleDuelScorerV1",
+        "model_input: &MtgoPlayerVisibleDuelDecisionInputV1",
+        "score_and_select_player_visible_profile_bound_duel_candidate_v1",
+        "resolve_player_visible_profile_bound_selected_visible_control_v1",
+        "pub struct CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1",
+        "pub fn score_select_and_resolve_opaque_player_visible_duel_perception_v1",
+        "pub struct OpaqueMtgoPlayerVisibleDuelResolvedControlV1",
+        "pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+        "pub fn permits_event_session_recovery_v1(&self) -> bool",
+        "pub fn permits_event_entry_v1(&self) -> bool",
+        "pub fn permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            scoring.contains(required)
+                || resolution.contains(required)
+                || runtime.contains(required),
+            "player-visible duel seam is missing: {required}"
+        );
+    }
+
+    let trait_start = scoring
+        .find("pub trait MtgoPlayerVisibleDuelScorerV1")
+        .expect("player-visible scorer trait");
+    let trait_end = scoring[trait_start..]
+        .find("\n}\n")
+        .map(|offset| trait_start + offset + 3)
+        .expect("player-visible scorer trait end");
+    let trait_source = &scoring[trait_start..trait_end];
+    for forbidden in [
+        "ObservationV5",
+        "ActionSemanticV1",
+        "deployment_commitment",
+        "frame_",
+        "source_",
+        "rect_",
+        "control_id",
+        "pixel",
+        "authority",
+    ] {
+        assert!(
+            !trait_source.contains(forbidden),
+            "model callback receives non-player-visible metadata: {forbidden}"
+        );
+    }
+
+    for forbidden_public in [
+        "pub fn model_input_commitment_sha256_v1",
+        "pub fn selection_commitment_sha256_v1",
+        "pub fn deployment_commitment_sha256_v1",
+        "pub fn source_candidate_commitment_sha256_v1",
+        "pub fn private_source_binding_commitment_sha256_v1",
+        "pub fn control_id_v1",
+        "pub fn frame_id_v1",
+        "pub fn frame_sequence_v1",
+        "pub fn private_profile_bound_resolution_commitment_sha256_v1",
+    ] {
+        assert!(
+            !scoring.contains(forbidden_public) && !resolution.contains(forbidden_public),
+            "player-visible result publicly exposes adapter metadata: {forbidden_public}"
+        );
+    }
+
+    for required_export in [
+        "score_and_select_opaque_player_visible_duel_perception_v1,",
+        "score_select_and_resolve_opaque_player_visible_duel_perception_v1,",
+        "OpaqueMtgoPlayerVisibleDuelModelSelectionV1,",
+        "OpaqueMtgoPlayerVisibleDuelResolvedControlV1,",
+        "MtgoPlayerVisibleDuelModelSelectionResultV1,",
+    ] {
+        assert!(
+            public_api.contains(required_export),
+            "public API omits the non-authorizing player-visible route: {required_export}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_duel_gesture_contract_and_opaque_join_withhold_internal_identity() {
+    let gesture = include_str!("../../mtgo_blackbox_v1/src/player_visible_duel_gesture.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "pub enum MtgoPlayerVisibleDuelGesturePrimitiveV1",
+        "SelectVisibleObject",
+        "DragVisibleObjectToOrderSlot",
+        "pub struct MtgoPlayerVisibleDuelGesturePlanV1",
+        "pub fn validate_player_visible_duel_gesture_plan_v1",
+        "pub struct OpaqueMtgoPlayerVisibleDuelGestureIntentV1",
+        "pub fn bind_opaque_player_visible_duel_gesture_intent_v1",
+        "pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1",
+        "pub fn primitives_v1(&self) -> &[MtgoPlayerVisibleDuelGesturePrimitiveV1]",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+        "pub fn permits_event_session_recovery_v1(&self) -> bool",
+        "pub fn permits_event_entry_v1(&self) -> bool",
+        "pub fn permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            gesture.contains(required) || runtime.contains(required),
+            "player-visible gesture seam is missing: {required}"
+        );
+    }
+
+    let plan_start = gesture
+        .find("pub struct MtgoPlayerVisibleDuelGesturePlanV1")
+        .expect("player-visible gesture plan");
+    let plan_end = gesture[plan_start..]
+        .find("\n}\n")
+        .map(|offset| plan_start + offset + 3)
+        .expect("player-visible gesture plan end");
+    let plan_source = &gesture[plan_start..plan_end];
+    for forbidden in [
+        "CardStableRefV1",
+        "ActionSemanticV1",
+        "arena_id",
+        "card_db_id",
+        "zone_change_count",
+        "frame_id",
+        "frame_sequence",
+        "control_id",
+        "decision_commitment",
+        "source_",
+        "profile_bound",
+        "rect_client_px",
+        "authorization",
+    ] {
+        assert!(
+            !plan_source.contains(forbidden),
+            "player-visible gesture plan exposes internal identity: {forbidden}"
+        );
+    }
+
+    let intent_start = runtime
+        .find("impl OpaqueMtgoPlayerVisibleDuelGestureIntentV1")
+        .expect("player-visible gesture intent implementation");
+    let intent_end = runtime[intent_start..]
+        .find("\n}\n")
+        .map(|offset| intent_start + offset + 3)
+        .expect("player-visible gesture intent implementation end");
+    let intent_source = &runtime[intent_start..intent_end];
+
+    for forbidden_public in [
+        "pub fn control_id",
+        "pub fn frame_id",
+        "pub fn frame_sequence",
+        "pub fn coordinates",
+        "pub fn rect_client_px",
+        "pub fn kernel_object_ref",
+        "pub fn input_command",
+    ] {
+        assert!(
+            !intent_source.contains(forbidden_public),
+            "player-visible opaque gesture join exposes private adapter state: {forbidden_public}"
+        );
+    }
+
+    for required_export in [
+        "bind_opaque_player_visible_duel_gesture_intent_v1,",
+        "OpaqueMtgoPlayerVisibleDuelGestureIntentV1,",
+    ] {
+        assert!(
+            public_api.contains(required_export),
+            "public API omits player-visible gesture join: {required_export}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() {
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let wire = include_str!("../src/probe/player_visible_duel_gesture_target_wire.rs");
+    let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "pub(crate) struct CheckedUntrustedMtgoPlayerVisibleDuelGestureTargetRequestV1",
+        "pub struct OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1",
+        "pub struct AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1",
+        "pub(crate) fn admit_ratified_player_visible_duel_gesture_target_protocol_v1",
+        "const RATIFIED_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROTOCOL_REVIEW_V1: Option<&str> = None",
+        "pub(crate) fn check_untrusted_player_visible_duel_gesture_target_request_v1",
+        "pub fn bind_opaque_player_visible_duel_source_gesture_target_v1",
+        "pub fn advance_opaque_player_visible_duel_gesture_target_v1",
+        "validate_same_duel_window_incarnation_v1(prior_manifest, current_manifest)",
+        "player-visible gesture continuation changed the sanitized visible decision",
+        "validate_player_visible_gesture_target_transition_v1(",
+        "visible_frame_region_content_sha256_v1(&source.canonical_bgra8, &size, rect)",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+        "pub fn permits_event_session_recovery_v1(&self) -> bool",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "visible target seam is missing: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1",
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetCandidateV1",
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetSetV1",
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetProcessResponseV1",
+    ] {
+        assert!(
+            wire.contains(required),
+            "private visible target wire is missing: {required}"
+        );
+    }
+    assert!(runtime.contains("include_bytes!(\"player_visible_duel_gesture_target_wire.rs\")"));
+
+    let header_start = wire
+        .find("pub(super) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1")
+        .expect("visible target request header");
+    let header_end = wire[header_start..]
+        .find("\n}\n")
+        .map(|offset| header_start + offset + 3)
+        .expect("visible target request header end");
+    let header = &wire[header_start..header_end];
+    for forbidden in [
+        "CardStableRefV1",
+        "ActionSemanticV1",
+        "arena_id",
+        "card_db_id",
+        "zone_change_count",
+        "decision_commitment_sha256",
+        "gesture_plan_commitment_sha256",
+        "control_id",
+        "rect_client_px",
+    ] {
+        assert!(
+            !header.contains(forbidden),
+            "visible request leaks: {forbidden}"
+        );
+    }
+
+    let opaque_start = runtime
+        .find("impl OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1")
+        .expect("visible target binding implementation");
+    let opaque_end = runtime[opaque_start..]
+        .find("\n}\n")
+        .map(|offset| opaque_start + offset + 3)
+        .expect("visible target binding implementation end");
+    let opaque = &runtime[opaque_start..opaque_end];
+    for forbidden in [
+        "pub fn rect_client_px",
+        "pub fn frame_id",
+        "pub fn evidence_id",
+        "pub fn target_id",
+        "pub fn points_desktop_px",
+        "pub fn input_command",
+        "pub fn commitment",
+    ] {
+        assert!(
+            !opaque.contains(forbidden),
+            "opaque target binding exposes: {forbidden}"
+        );
+    }
+
+    let process_start = runtime
+        .find("fn invoke_verified_player_visible_gesture_target_process_v1")
+        .expect("visible target process helper");
+    let process_end = runtime[process_start..]
+        .find("\nfn read_bounded_and_drain_v1")
+        .map(|offset| process_start + offset)
+        .expect("visible target process helper end");
+    let process = &runtime[process_start..process_end];
+    for forbidden in [
+        "stderr_sha256",
+        "stderr_digest}",
+        "canonical_bgra8_sha256}",
+        "request_commitment_sha256}",
+        "runtime_identity_commitment_sha256}",
+    ] {
+        assert!(
+            !process.contains(forbidden),
+            "visible target error path exposes private metadata: {forbidden}"
+        );
+    }
+    let binder_start = runtime
+        .find("pub fn bind_opaque_player_visible_duel_source_gesture_target_v1")
+        .expect("visible source target binder");
+    let binder_end = runtime[binder_start..]
+        .find("\n/// Copyable commitments")
+        .map(|offset| binder_start + offset)
+        .expect("visible source target binder end");
+    let binder = &runtime[binder_start..binder_end];
+    for required in [
+        "perception_profile_admission_commitment_sha256",
+        "response is malformed or unsupported",
+        "primitive_index != 0",
+        "selected_control_content_sha256",
+    ] {
+        assert!(
+            binder.contains(required),
+            "visible source target binder is missing: {required}"
+        );
+    }
+    assert!(
+        !binder.contains("format!(\"player-visible gesture-target response"),
+        "visible source target parser exposes private parse details"
+    );
+
+    for exported in [
+        "bind_opaque_player_visible_duel_source_gesture_target_v1,",
+        "advance_opaque_player_visible_duel_gesture_target_v1,",
+        "AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,",
+        "OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,",
+    ] {
+        assert!(
+            public_api.contains(exported),
+            "visible target API is not exported: {exported}"
+        );
+    }
+    for private in [
+        "check_untrusted_player_visible_duel_gesture_target_request_v1,",
+        "MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1,",
+        "MtgoPlayerVisibleDuelGestureTargetProcessResponseV1,",
+        "MtgoPlayerVisibleDuelGestureTargetSetV1,",
+        "admit_ratified_player_visible_duel_gesture_target_protocol_v1,",
+        "MtgoPlayerVisibleDuelGestureTargetProtocolReviewV1,",
+    ] {
+        assert!(
+            !public_api.contains(private),
+            "private target transport was exported: {private}"
+        );
+    }
+
+    for required in [
+        "--mtgo-player-visible-duel-gesture-target-v1",
+        "MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_V1",
+        "MtgoPlayerVisibleDuelGestureTargetRequestHeaderWireV1",
+        "MtgoPlayerVisibleDuelGestureTargetClassifierAssetsV1",
+        "run_player_visible_duel_gesture_target_v1",
+        "validate_player_visible_duel_gesture_target_assets_and_match_profile_v1",
+        "required_player_visible_duel_gesture_target_roles_v1",
+        "expected exactly one reviewed player-visible gesture-target profile match",
+        "gesture_target_runtime_binary_sha256 != actual_classifier_sha256",
+        "gesture_target_assets_manifest_sha256 != sha256_hex_v1(assets_json)",
+    ] {
+        assert!(
+            classifier.contains(required),
+            "visible target classifier is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "CardStableRefV1",
+        "ActionSemanticV1",
+        "arena_id",
+        "zone_change_count",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "SendInput",
+    ] {
+        assert!(
+            !classifier.contains(forbidden),
+            "visible target classifier exposes a forbidden channel: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn pre_entry_operator_retains_exact_resources_through_attended_spending_and_handoff() {
+    let source = include_str!("../src/competitive_pre_entry_operator.rs");
+    for required in [
+        "prepare_competitive_operator_open_entry_review_v1",
+        "execute_prepared_competitive_operator_open_entry_review_v1",
+        "confirm_pending_competitive_operator_open_entry_review_v1",
+        "bind_competitive_operator_paid_entry_review_v1",
+        "ratify_competitive_operator_paid_entry_v1",
+        "prepare_ratified_competitive_operator_entry_v1",
+        "execute_prepared_competitive_operator_entry_v1",
+        "confirm_pending_competitive_operator_entry_v1",
+        "begin_competitive_post_entry_operator_from_confirmed_entry_v1",
+        "resources, evaluated listing, and Open Entry Review authority are crossed",
+        "paid Entry Review changed the exact operator resource lineage",
+        "deck_list_sha256",
+        "deck_manifest_commitment_sha256",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "safe_for_next_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "pre-entry operator ownership is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+        "pub fn pointer_target",
+        "pub fn canonical_bgra8",
+        "pub fn process_handle",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "pre-entry operator exposes a forbidden primitive: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_entry_accessibility_is_visible_hit_tested_and_non_actuating() {
+    let probe = include_str!("../src/probe/visible_accessibility.rs");
+    let capture = include_str!("../src/probe.rs");
+    let classifier = include_str!("../src/probe/competitive_entry_accessibility_runtime.rs");
+
+    for required in [
+        "CurrentIsOffscreen",
+        "CurrentBoundingRectangle",
+        "ElementFromPoint",
+        "CompareElements",
+        "GetForegroundWindow",
+        "occluding_windows_above",
+    ] {
+        assert!(
+            probe.contains(required) || capture.contains(required),
+            "visible accessibility source is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "IUIAutomationInvokePattern",
+        "GetCurrentPattern",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+    ] {
+        assert!(
+            !probe.contains(forbidden) && !classifier.contains(forbidden),
+            "visible accessibility classification uses a forbidden channel: {forbidden}"
+        );
+    }
+    for required in [
+        "safe_for_policy_scoring_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "visible_uia_exact_center_hit_tested_no_control_pattern_no_input",
+    ] {
+        assert!(
+            classifier.contains(required),
+            "entry accessibility classifier is missing: {required}"
+        );
+    }
+    assert_eq!(
+        classifier.matches("        false\n").count(),
+        4,
+        "all four authority predicates must remain false"
+    );
+}

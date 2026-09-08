@@ -1,0 +1,207 @@
+$ErrorActionPreference = 'Stop'
+
+$sourcePath = Join-Path $PSScriptRoot '..\VisibleDuelProducerV1.cs'
+$source = [IO.File]::ReadAllText((Resolve-Path $sourcePath))
+$sanitizerPath = Join-Path $PSScriptRoot '..\SanitizedVisibleDecisionV1.cs'
+$dispatchPath = Join-Path $PSScriptRoot '..\SealedVisibleActionDispatchV1.cs'
+$completeSource = $source + "`n" +
+    [IO.File]::ReadAllText((Resolve-Path $sanitizerPath)) + "`n" +
+    [IO.File]::ReadAllText((Resolve-Path $dispatchPath))
+
+$required = @(
+    'Shiny.Play.Duel.DuelScene',
+    'FrameworkElement',
+    'DataContext',
+    'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
+    'AllowedGetters.Length != 89',
+    'PrivateVisibleActionJoinGetters.Length != 35',
+    'PrivateVisibleCombatJoinFields.Length != 2',
+    'PrivateVisibleInteractionMethods.Length != 1',
+    'projection_incomplete',
+    'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
+    'MemoryMappedFile.OpenExisting',
+    'MaximumOutputBytes',
+    'IsExactChannelName',
+    'TryValidateVisibleChromeProjectionV1',
+    'TryParseVisibleTurnV1',
+    'TryRequireNoUnrepresentedVisiblePlayerCountersV1',
+    'TryRequireNoVisibleCompanionPanelV1',
+    'TryRequireNoUnrepresentedVisibleModalSurfaceV1',
+    'TryRequireSupportedDuelVariantV1',
+    'TryRequireNoUnrepresentedVisibleCardStateV1',
+    'TryReadExactPropertyV1',
+    'property.GetValue(target, null)',
+    'MaximumVisibleTextCharacters',
+    'MaximumVisibleCollectionItems',
+    'TryValidateVisibleZonesAndCardsV1',
+    'TryValidateNeverEnumeratedZoneRootV1',
+    'TryValidateConditionalVisibleZoneV1',
+    'TryValidateVisibleBattlefieldCardV1',
+    'TryValidateVisibleZoneCardV1',
+    'TryValidateVisibleInitiativeShieldZoneV1',
+    'TryMapVisibleInitiativeHolderV1',
+    'CLBInitiativeEmblem',
+    'seatedCount != seated.Shields.Count',
+    'visibleInitiative != null',
+    'AllowedGetters.Contains(exactKey, StringComparer.Ordinal)',
+    'TryValidatePrivateVisibleCardActionJoinsV1',
+    'TryValidatePrivateVisibleActionV1',
+    'TryRequireBasicVisibleCardActionMenuShapeV1',
+    'TryRequireNoUnrepresentedVisibleCardActionModalV1',
+    '"ManaButtons"',
+    '"NumberEntry"',
+    'out object? actionFlagsValue',
+    'actionFlags != 1u',
+    'TryReadExactPrivateVisibleActionPropertyV1',
+    'PrivateVisibleActionJoinGetters.Contains(',
+    'DispatchSelectedVisibleActionV1',
+    'execute_visible_action_v1|',
+    'DispatchVisibleAttackerStepV1',
+    'execute_visible_attacker_step_v1|',
+    'DispatchVisibleSingleBlockerStepV1',
+    'execute_visible_single_blocker_step_v1|',
+    'DispatchVisibleBlockerStepV1',
+    'execute_visible_blocker_step_v1|',
+    'LeftClickDuringSelectTargets',
+    'AwaitingVisibleAssignment',
+    'SealedVisibleBlockerAssignmentV1',
+    'TryRequireExactCurrentVisibleBlockActionSourceV1',
+    'UsedModelSelectionCommitments',
+    'UsedStepCommitments',
+    'AttackerPlanCommitmentSha256V1',
+    'SingleBlockerPlanCommitmentSha256V1',
+    'UsedSourceSelectionHashes',
+    'CompletedVisibleUniverseHashes',
+    'ExpectedCurrentSelection',
+    'CandidateVisibleOrdinals',
+    'TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1',
+    'TryBuildSanitizedVisibleSingleAttackerBlockerSelectionV1',
+    'TryBuildSanitizedVisibleSingleAttackerBlockerExecutionStateV1',
+    'TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1',
+    'TryBuildSanitizedVisibleBlockerTargetSelectionV1',
+    'TryReadExactPrivateVisibleCombatFieldV1',
+    'ExpectedDecisionSha256',
+    'ExecuteAction',
+    'DispatchedVisibleDecisionsV1',
+    '!DispatchedVisibleDecisionsV1.Add(request.ExpectedDecisionSha256)'
+)
+foreach ($marker in $required) {
+    if (-not $completeSource.Contains($marker)) {
+        throw "required visible-producer marker missing: $marker"
+    }
+}
+
+if (-not $source.Contains('TryValidateConditionalVisibleZoneV1(libraryZone, false, false)') -and
+    -not $source.Contains('TryValidateNeverEnumeratedZoneRootV1(libraryZone)')) {
+    throw 'library zone must remain non-enumerated'
+}
+if ($source.Contains('TryValidateEnumeratedVisibleZoneV1(libraryZone')) {
+    throw 'library cards must never be enumerated'
+}
+if (-not $source.Contains('TryValidateConditionalVisibleZoneV1(') -or
+    -not $source.Contains('handZone,') -or
+    -not $source.Contains('localPlayer,')) {
+    throw 'hand enumeration must remain local-player or visible-zone gated'
+}
+
+if ([regex]::Matches($source, [regex]::Escape('property.GetValue(target, null)')).Count -ne 2) {
+    throw 'producer source must contain exactly two exact allowlisted getter invocations'
+}
+
+$forbidden = @(
+    'ReadProcessMemory',
+    'WriteProcessMemory',
+    'CreateRemoteThread',
+    'VirtualAllocEx',
+    'Socket',
+    'HttpClient',
+    'WebRequest',
+    'System.IO.File',
+    'System.IO.Directory',
+    'FileStream',
+    'StreamReader',
+    'StreamWriter',
+    'Process.',
+    'Console.',
+    'Debug.',
+    'Trace.',
+    'GetFields(',
+    'GetMembers(',
+    'GetProperties(',
+    'InvokeMember(',
+    'Dynamic',
+    'GamePlayer',
+    'ModelZone',
+    'CardDefinition',
+    'CurrentTargetList',
+    'PendingTargets',
+    'ModeIDs',
+    'HiddenActions',
+    'GlobalActions',
+    'CurrentTurn',
+    'ConditionalWeakTable',
+    'WeakReference',
+    'CandidateCards'
+)
+foreach ($marker in $forbidden) {
+    if ($completeSource.Contains($marker)) {
+        throw "forbidden visible-producer marker present: $marker"
+    }
+}
+
+if ($completeSource.Contains('["action_flags"]') -or
+    $completeSource.Contains('"action_flags"')) {
+    throw 'private action flags must never enter the serialized visible schema'
+}
+
+$publicStart = $source.IndexOf('private static readonly string[] AllowedGetters')
+$privateStart = $source.IndexOf('private static readonly string[] PrivateVisibleActionJoinGetters')
+if ($publicStart -lt 0 -or $privateStart -le $publicStart) {
+    throw 'producer getter arrays are missing or out of order'
+}
+$publicGetterSource = $source.Substring($publicStart, $privateStart - $publicStart)
+$getterLines = [regex]::Matches($publicGetterSource, '"(?:Card|DuelScene)\|[^"\r\n]+\|[^"\r\n]+"')
+if ($getterLines.Count -ne 89) {
+    throw "producer source must contain exactly 89 compile-time getter entries"
+}
+
+$privateEnd = $source.IndexOf('};', $privateStart)
+if ($privateEnd -lt 0) {
+    throw 'private action join getter array is unterminated'
+}
+$privateGetterSource = $source.Substring($privateStart, $privateEnd - $privateStart)
+$privateGetterLines = [regex]::Matches(
+    $privateGetterSource,
+    '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
+)
+if ($privateGetterLines.Count -ne 35) {
+    throw 'producer source must contain exactly 35 private visible-source join getters'
+}
+
+$combatStart = $source.IndexOf('private static readonly string[] PrivateVisibleCombatJoinFields')
+$combatEnd = $source.IndexOf('};', $combatStart)
+if ($combatStart -lt 0 -or $combatEnd -lt 0) {
+    throw 'private combat join field array is missing or unterminated'
+}
+$combatSource = $source.Substring($combatStart, $combatEnd - $combatStart)
+$combatLines = [regex]::Matches(
+    $combatSource,
+    '"WotC\.MtGO\.Client\.Model\.Reference\|[^"\r\n]+\|(?:Order|Target)"'
+)
+if ($combatLines.Count -ne 2) {
+    throw 'producer source must contain exactly two private visible combat join fields'
+}
+if ([regex]::Matches($privateGetterSource, '\|GameCard"').Count -ne 1 -or
+    $publicGetterSource.Contains('|GameCard"')) {
+    throw 'GameCard may appear only as one private transaction-local visible combat join'
+}
+
+if (-not $source.Contains('if (localPlayer)') -or
+    -not $source.Contains('seatedPlayerVisibleActionCards.Add(card)') -or
+    -not $source.Contains('TryValidatePrivateVisibleCardActionJoinsV1(') -or
+    $source.Contains("TryValidatePrivateVisibleCardActionJoinsV1(`r`n                battlefieldCards)") -or
+    $source.Contains("TryValidatePrivateVisibleCardActionJoinsV1(`n                battlefieldCards)")) {
+    throw 'private card-action joins must remain bound to seated-player visible cards'
+}
+
+Write-Output 'MTGO_VISIBLE_DUEL_PRODUCER_SOURCE_POLICY_V1:PASS'

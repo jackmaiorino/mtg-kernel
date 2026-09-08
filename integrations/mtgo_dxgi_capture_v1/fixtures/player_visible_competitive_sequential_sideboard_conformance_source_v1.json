@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "fixture_id": "player-visible-competitive-sequential-sideboard-game-two-v1",
+  "source_auxiliary_fixture_sha256": "960bee515dec946e399390f74b6ae6037af92e372fefc3a2441072244065eeca",
+  "source_model_input_commitment_sha256": "b8c78bdcae10253491d3d1f4df53f324c1a2a11412d898d6c7c172cf7f9e2775",
+  "source_completed_match_history_commitment_sha256": "2bb061b7cbe7c7b2499226c8267d5a765a272e747c786a98e320936f54c51002",
+  "deployment_commitment_sha256": "35047b64317d92c6e77598ebc5f50f1f9dff0a741fe8bcb613164be3fef0ca5b",
+  "unchanged": {
+    "steps": [
+      {
+        "expected_decision_number": 1,
+        "expected_ordered_action_count": 3,
+        "expected_selected_index": 2,
+        "expected_selected_action": { "kind": "submit_configuration" },
+        "unselected_logit_f32_bits": 0,
+        "selected_logit_f32_bits": 1065353216,
+        "value_f32_bits": 1048576000,
+        "expected_decision_commitment_sha256": "0c30eff2f0f0fe7e5953faad0fe993ca80c00122b4e64daca9591149401bfd4d",
+        "expected_step_receipt_commitment_sha256": "f38350f346d1ba477b1f6cd5055752f8f9ec40216f078585934fcc679188aed7",
+        "expected_trace_after_step_sha256": "4a3088940dec915da5c7df8deb4d0a11c43f9bca1360a3e172b8fd427e14f87c"
+      }
+    ],
+    "expected_no_changes_selected": true,
+    "expected_decisions_consumed": 1,
+    "expected_model_selection_commitment_sha256": "219206e25447bac8b72c763c100065cfd2480676654149f4d5f3e9179215dee7",
+    "expected_final_trace_commitment_sha256": "4a3088940dec915da5c7df8deb4d0a11c43f9bca1360a3e172b8fd427e14f87c"
+  },
+  "changed": {
+    "steps": [
+      {
+        "expected_decision_number": 1,
+        "expected_ordered_action_count": 3,
+        "expected_selected_index": 0,
+        "expected_selected_action": {
+          "kind": "move_one_to_mainboard",
+          "visible_card_name": "Island"
+        },
+        "unselected_logit_f32_bits": 0,
+        "selected_logit_f32_bits": 1065353216,
+        "value_f32_bits": 1048576000,
+        "expected_decision_commitment_sha256": "0c30eff2f0f0fe7e5953faad0fe993ca80c00122b4e64daca9591149401bfd4d",
+        "expected_step_receipt_commitment_sha256": "70bbb72d3ce73575ac4fc0b072698237ec24c441ab3eda89e4a6c1a80cc9247b",
+        "expected_trace_after_step_sha256": "a90fdc1d4d836f2dc8a2e995f5c3b06c77bfbe572d889eab2280f50bd42993e5"
+      },
+      {
+        "expected_decision_number": 2,
+        "expected_ordered_action_count": 6,
+        "expected_selected_index": 4,
+        "expected_selected_action": {
+          "kind": "move_one_to_sideboard",
+          "visible_card_name": "Mountain"
+        },
+        "unselected_logit_f32_bits": 0,
+        "selected_logit_f32_bits": 1065353216,
+        "value_f32_bits": 1048576000,
+        "expected_decision_commitment_sha256": "c7f181062092468ba95bcda1dc0f68a639ab9dcb0a6e21ba9cfec961f542c553",
+        "expected_step_receipt_commitment_sha256": "90f4f821e48fd28f609f9a31d431251ed5bb588b3ead66ce1a88c2480bc1828c",
+        "expected_trace_after_step_sha256": "7cccc3debc19ed9bf0ca6452ebe6a5955ea00237704dd38e529c41ccf359511c"
+      },
+      {
+        "expected_decision_number": 3,
+        "expected_ordered_action_count": 4,
+        "expected_selected_index": 3,
+        "expected_selected_action": { "kind": "submit_configuration" },
+        "unselected_logit_f32_bits": 0,
+        "selected_logit_f32_bits": 1065353216,
+        "value_f32_bits": 1048576000,
+        "expected_decision_commitment_sha256": "767db33865c4800e49638cc5e99c298c90520fbc7fbb62901d1493764a895b0c",
+        "expected_step_receipt_commitment_sha256": "d7237763128f4cdb793f8a843bd82c822fa7bdf826461ed63077cdf4910cb0df",
+        "expected_trace_after_step_sha256": "d265968b008a91ee5a0893fb1996b49fb5ccf9c65c6b47a8b21f9d6b1d79a150"
+      }
+    ],
+    "expected_no_changes_selected": false,
+    "expected_decisions_consumed": 3,
+    "expected_model_selection_commitment_sha256": "05ebacfd294f6897eac78df24ba15d36cc2927b4c03ae3e1cf8d805c81160993",
+    "expected_final_trace_commitment_sha256": "d265968b008a91ee5a0893fb1996b49fb5ccf9c65c6b47a8b21f9d6b1d79a150"
+  },
+  "whole_target_response_satisfies_native_model_provenance": false,
+  "safe_for_live_input": false,
+  "permits_sideboard_submission": false,
+  "permits_event_entry": false,
+  "permits_spending": false
+}

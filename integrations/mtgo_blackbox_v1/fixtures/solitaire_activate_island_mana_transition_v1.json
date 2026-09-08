@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "trace_id": "solitaire_activate_island_mana_20260809_2055",
+  "before_frame": {
+    "sequence": 1,
+    "manifest_sha256": "6c4edf9b7ad8340c1c83a5197db522fcab3eb6db6c1ca4b72c4a0c2922252126",
+    "frame_sha256": "b5751cad13425b856a8c5d9394588ade9eb35bd3799aed740e58982929843453",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "action": {
+    "action_kind": "activate_mana_ability",
+    "actor": "p0",
+    "source_adapter_object_id": "before-frame:battlefield-object-0",
+    "visible_card_name": "Island",
+    "mana_choice": null,
+    "visible_mana_added": "U"
+  },
+  "action_control_before": {
+    "rect_client_px": { "x": 686, "y": 539, "width": 100, "height": 143 },
+    "bgra8_sha256": "ec6b455693af421e912831a36650158e33353ae98b2ec5a1343835c1ccba3446"
+  },
+  "after_frame": {
+    "sequence": 2,
+    "manifest_sha256": "3958848312980957c76cabcd4a64654c78347c4123ff042b29b4ca7c7072337b",
+    "frame_sha256": "da503414c6b948ef399c787a7e7bc17aec34084b4c360e52deff627b308ae31d",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "visible_postconditions": [
+    {
+      "change": "battlefield_changed",
+      "rect_client_px": { "x": 675, "y": 530, "width": 165, "height": 165 },
+      "before_bgra8_sha256": "731134bc1a21b6de87ade15819756a2877ea0f5e2cba946c46efb71c0be572ed",
+      "after_bgra8_sha256": "b8882e1dee068d126bb6fea6bb1f2a552c68665b261f20b64e4eca3e69a9215d"
+    },
+    {
+      "change": "mana_pool_changed",
+      "rect_client_px": { "x": 315, "y": 635, "width": 90, "height": 50 },
+      "before_bgra8_sha256": "6f36bb9cd8e440d4c9891902ddf6c8e1c5cf7aa50fef318540944a8acb9855c4",
+      "after_bgra8_sha256": "6a173347ece954d205262952d0c14155332d0a428fc2a46126d25001a300c121"
+    }
+  ]
+}

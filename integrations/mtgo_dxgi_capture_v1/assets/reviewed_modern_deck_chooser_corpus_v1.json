@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "scope": "reviewed_modern_deck_chooser_two_state_corpus_v1",
+  "review_id": "mtgo-3.4.158.4691-modern-decks-120dpi-885x734-v1",
+  "reviewed_at_utc": "2026-08-14T07:46:34Z",
+  "review_method": "visible_pixel_review_plus_exact_external_frame_rehash_v1",
+  "client_identity": {
+    "product_version": "3.4.158.4691",
+    "executable_sha256": "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92",
+    "signer_thumbprint": "e9d9e2b989f90555b04c506fddf889c7aba7ac30",
+    "dpi": 120,
+    "client_size_px": {
+      "width": 885,
+      "height": 734
+    },
+    "canonical_pixel_format": "bgra8_unorm_top_down_tightly_packed_v1"
+  },
+  "visible_identity": {
+    "chooser_title": "Modern Decks",
+    "chooser_title_sha256": "fcda248e8a6bd4895bdcd9aed0d49a8be99ddfac06c96328e8b1b3a9506c9cce",
+    "expected_deck_label": "mtgo-kernel-modern-basics-v1",
+    "expected_deck_label_sha256": "a8d55ec035cee5f7060485a354994c530cfac3c523ff6daa477249812cbdb86d"
+  },
+  "region_geometry": {
+    "chooser_title_search_rect_client_px": {
+      "x": 300,
+      "y": 0,
+      "width": 260,
+      "height": 50
+    },
+    "deck_label_region_rect_client_px": {
+      "x": 20,
+      "y": 155,
+      "width": 115,
+      "height": 40
+    },
+    "deck_row_control_rect_client_px": {
+      "x": 15,
+      "y": 75,
+      "width": 120,
+      "height": 140
+    },
+    "selection_detail_rect_client_px": {
+      "x": 444,
+      "y": 52,
+      "width": 436,
+      "height": 160
+    },
+    "submit_control_rect_client_px": {
+      "x": 610,
+      "y": 688,
+      "width": 125,
+      "height": 31
+    }
+  },
+  "reference_hashes": {
+    "shared_title_region_sha256": "cfd544026f657d9542fd34aa8c4b4d6342dec7cc4098a083894b87a185d87269",
+    "awaiting_exact_deck_selection": {
+      "deck_label_region_sha256": "ca37ccbc8f131053a0e5ae16ce3e3991ec7ec4b82a55654ed55d1fd50cc7891d",
+      "deck_row_region_sha256": "e2664c86ed6af8a2589b8c6e61741cb2eee95872b8927364212bd011b243bff6",
+      "selection_detail_region_sha256": "54fa822c2be4df3676756f59b3e380fb49e66e31f8f66e2e0af369991579dc8b",
+      "submit_region_sha256": "da63d28bcfc331aab9a9e26730b767e55a43591a3b599e47c7837e07795e91eb"
+    },
+    "exact_deck_selected": {
+      "deck_label_region_sha256": "0abc8817ead44903a534985470d1f352a7354749d83f281339ac15812fa9fae7",
+      "deck_row_region_sha256": "635f020e37a4512ee103714582520e38a8229e88fa6735185b8569751a2e0a5c",
+      "selection_detail_region_sha256": "5d0dd17eccd001b41037c700e202975fdae0588ff0cb6394e4b9e50cd8071e89",
+      "submit_region_sha256": "9463b5e25425f0443e61d205c3e4ba67a0c04b4fe6d674b6e58517e05ca7015f"
+    }
+  },
+  "reviewed_sources": [
+    {
+      "source_id": "natural-modern-league-unselected-v1",
+      "event_context": "league",
+      "state": "awaiting_exact_deck_selection",
+      "capture_backend": "system_drawing_copy_from_composed_screen_v1",
+      "source_manifest_sha256": "6d76213e4082baf5a24a19f1b3179df9b5d808b9132865cfcbb57142191eaba0",
+      "source_png_sha256": "b8109095b9239aa949e7e8fa2cf5a0a4e2d701beb85ddf347e312b33f828c3c8",
+      "canonical_bgra8_sha256": "6b844c89b0b8a306a968e3779a2901f9c054a30202270aeb5639a0eeb01cb007",
+      "natural_transaction": true,
+      "corroboration_only": false
+    },
+    {
+      "source_id": "natural-modern-league-selected-v1",
+      "event_context": "league",
+      "state": "exact_deck_selected",
+      "capture_backend": "system_drawing_copy_from_composed_screen_v1",
+      "source_manifest_sha256": "63acf4dd945913a0154a264326fc830033f9b6dfb3238fbfedbc65b1658110a1",
+      "source_png_sha256": "b339e16b46b47b56ed1060c7f7975ce720fceb55527697ec054fa3155d0c5c41",
+      "canonical_bgra8_sha256": "21915bcc3f86ff9a5be9b834ebfc9877b5502950e12e377f40fe7e340523a013",
+      "natural_transaction": true,
+      "corroboration_only": false
+    },
+    {
+      "source_id": "restored-modern-challenge-selected-corroboration-v1",
+      "event_context": "challenge",
+      "state": "exact_deck_selected",
+      "capture_backend": "system_drawing_copy_from_composed_screen_v1",
+      "source_manifest_sha256": "efeaa5e1cffe5ffc155a2abf82b12bc769d25250e35e4a8e37750ca13f0997c6",
+      "source_png_sha256": "8661b4ba4c592f87f58d32df8634ff70768c1cd9da1897a6f3f5228cf745e146",
+      "canonical_bgra8_sha256": "05a957dd0c5598ba7e2f102211a51b4b60dcec078c61c5b632c9412706f305e8",
+      "natural_transaction": false,
+      "corroboration_only": true
+    }
+  ],
+  "excluded_sources": [
+    {
+      "source_id": "artificial-modern-challenge-stale-unselected-v1",
+      "event_context": "challenge",
+      "source_manifest_sha256": "345ac87f159597fb9e60a4ac77c8c9e1d595512af0b2d36e17584f7cfadba08f",
+      "source_png_sha256": "1fda5d118da4e3cd34758402e696a0d1f86735c740d5146b9c68c36b601b1892",
+      "canonical_bgra8_sha256": "b432bd9116e339fda4183c860a14deba23f5a172f951cc4a675c2141b31b0738",
+      "reason": "ui_automation_removal_left_enabled_submit_and_is_not_a_natural_three_control_state",
+      "observed_submit_region_sha256": "9463b5e25425f0443e61d205c3e4ba67a0c04b4fe6d674b6e58517e05ca7015f",
+      "must_match_state_count": 0
+    }
+  ],
+  "review_confirmations": {
+    "visible_mtgo_pixels_only": true,
+    "unobscured_and_cursor_absent_from_client": true,
+    "title_and_wrapped_deck_label_confirmed": true,
+    "natural_unselected_state_confirmed": true,
+    "natural_selected_state_confirmed": true,
+    "challenge_selected_regions_equal_league_selected_regions": true,
+    "event_kind_is_bound_by_prior_deck_gate_not_inferred_from_dialog": true,
+    "artificial_stale_submit_state_excluded": true
+  },
+  "authority": {
+    "safe_for_classifier_reference_generation": true,
+    "grants_live_capture": false,
+    "grants_policy_scoring": false,
+    "grants_input": false,
+    "grants_event_entry": false,
+    "grants_spending": false
+  },
+  "classifier_assets": {
+    "schema_version": 1,
+    "scope": "league_and_challenge_navigation_and_listing_exact_visible_regions_v1",
+    "canonical_pixel_format": "bgra8_unorm_top_down_tightly_packed_v1",
+    "profiles": [],
+    "deck_chooser_profiles": [
+      {
+        "profile_id": "a-modern-challenge-64-awaiting-exact-deck-v1",
+        "event_kind": "challenge",
+        "event_display_label_sha256": "c84b2ec4d7dd974902d21d8e6fbd3d4b50fe956f40f0db58cf9087d0eb775fac",
+        "deck_display_label_sha256": "a8d55ec035cee5f7060485a354994c530cfac3c523ff6daa477249812cbdb86d",
+        "expected_visible_deck_label": "mtgo-kernel-modern-basics-v1",
+        "chooser_title_label_sha256": "fcda248e8a6bd4895bdcd9aed0d49a8be99ddfac06c96328e8b1b3a9506c9cce",
+        "expected_visible_chooser_title": "Modern Decks",
+        "state": "awaiting_exact_deck_selection",
+        "client_size_px": { "width": 885, "height": 734 },
+        "chooser_title_search_rect_client_px": { "x": 300, "y": 0, "width": 260, "height": 50 },
+        "deck_label_region_rect_client_px": { "x": 20, "y": 155, "width": 115, "height": 40 },
+        "unselected_deck_label_reference_sha256s": ["ca37ccbc8f131053a0e5ae16ce3e3991ec7ec4b82a55654ed55d1fd50cc7891d"],
+        "selected_deck_label_reference_sha256s": [],
+        "deck_row_control_rect_client_px": { "x": 15, "y": 75, "width": 120, "height": 140 },
+        "unselected_deck_row_reference_sha256s": ["e2664c86ed6af8a2589b8c6e61741cb2eee95872b8927364212bd011b243bff6"],
+        "selected_deck_row_reference_sha256s": [],
+        "selection_detail_rect_client_px": { "x": 444, "y": 52, "width": 436, "height": 160 },
+        "unselected_selection_detail_reference_sha256s": ["54fa822c2be4df3676756f59b3e380fb49e66e31f8f66e2e0af369991579dc8b"],
+        "selected_selection_detail_reference_sha256s": [],
+        "submit_control_rect_client_px": { "x": 610, "y": 688, "width": 125, "height": 31 },
+        "disabled_submit_reference_sha256s": ["da63d28bcfc331aab9a9e26730b767e55a43591a3b599e47c7837e07795e91eb"],
+        "enabled_submit_reference_sha256s": [],
+        "confidence_bps": 9500
+      },
+      {
+        "profile_id": "b-modern-challenge-64-exact-deck-selected-v1",
+        "event_kind": "challenge",
+        "event_display_label_sha256": "c84b2ec4d7dd974902d21d8e6fbd3d4b50fe956f40f0db58cf9087d0eb775fac",
+        "deck_display_label_sha256": "a8d55ec035cee5f7060485a354994c530cfac3c523ff6daa477249812cbdb86d",
+        "expected_visible_deck_label": "mtgo-kernel-modern-basics-v1",
+        "chooser_title_label_sha256": "fcda248e8a6bd4895bdcd9aed0d49a8be99ddfac06c96328e8b1b3a9506c9cce",
+        "expected_visible_chooser_title": "Modern Decks",
+        "state": "exact_deck_selected",
+        "client_size_px": { "width": 885, "height": 734 },
+        "chooser_title_search_rect_client_px": { "x": 300, "y": 0, "width": 260, "height": 50 },
+        "deck_label_region_rect_client_px": { "x": 20, "y": 155, "width": 115, "height": 40 },
+        "unselected_deck_label_reference_sha256s": [],
+        "selected_deck_label_reference_sha256s": ["0abc8817ead44903a534985470d1f352a7354749d83f281339ac15812fa9fae7"],
+        "deck_row_control_rect_client_px": { "x": 15, "y": 75, "width": 120, "height": 140 },
+        "unselected_deck_row_reference_sha256s": [],
+        "selected_deck_row_reference_sha256s": ["635f020e37a4512ee103714582520e38a8229e88fa6735185b8569751a2e0a5c"],
+        "selection_detail_rect_client_px": { "x": 444, "y": 52, "width": 436, "height": 160 },
+        "unselected_selection_detail_reference_sha256s": [],
+        "selected_selection_detail_reference_sha256s": ["5d0dd17eccd001b41037c700e202975fdae0588ff0cb6394e4b9e50cd8071e89"],
+        "submit_control_rect_client_px": { "x": 610, "y": 688, "width": 125, "height": 31 },
+        "disabled_submit_reference_sha256s": [],
+        "enabled_submit_reference_sha256s": ["9463b5e25425f0443e61d205c3e4ba67a0c04b4fe6d674b6e58517e05ca7015f"],
+        "confidence_bps": 9500
+      },
+      {
+        "profile_id": "c-modern-league-awaiting-exact-deck-v1",
+        "event_kind": "league",
+        "event_display_label_sha256": "77f3c8cc296882147b00e50018d0040c7f00cee6b123ef4981ab7408f0789094",
+        "deck_display_label_sha256": "a8d55ec035cee5f7060485a354994c530cfac3c523ff6daa477249812cbdb86d",
+        "expected_visible_deck_label": "mtgo-kernel-modern-basics-v1",
+        "chooser_title_label_sha256": "fcda248e8a6bd4895bdcd9aed0d49a8be99ddfac06c96328e8b1b3a9506c9cce",
+        "expected_visible_chooser_title": "Modern Decks",
+        "state": "awaiting_exact_deck_selection",
+        "client_size_px": { "width": 885, "height": 734 },
+        "chooser_title_search_rect_client_px": { "x": 300, "y": 0, "width": 260, "height": 50 },
+        "deck_label_region_rect_client_px": { "x": 20, "y": 155, "width": 115, "height": 40 },
+        "unselected_deck_label_reference_sha256s": ["ca37ccbc8f131053a0e5ae16ce3e3991ec7ec4b82a55654ed55d1fd50cc7891d"],
+        "selected_deck_label_reference_sha256s": [],
+        "deck_row_control_rect_client_px": { "x": 15, "y": 75, "width": 120, "height": 140 },
+        "unselected_deck_row_reference_sha256s": ["e2664c86ed6af8a2589b8c6e61741cb2eee95872b8927364212bd011b243bff6"],
+        "selected_deck_row_reference_sha256s": [],
+        "selection_detail_rect_client_px": { "x": 444, "y": 52, "width": 436, "height": 160 },
+        "unselected_selection_detail_reference_sha256s": ["54fa822c2be4df3676756f59b3e380fb49e66e31f8f66e2e0af369991579dc8b"],
+        "selected_selection_detail_reference_sha256s": [],
+        "submit_control_rect_client_px": { "x": 610, "y": 688, "width": 125, "height": 31 },
+        "disabled_submit_reference_sha256s": ["da63d28bcfc331aab9a9e26730b767e55a43591a3b599e47c7837e07795e91eb"],
+        "enabled_submit_reference_sha256s": [],
+        "confidence_bps": 9500
+      },
+      {
+        "profile_id": "d-modern-league-exact-deck-selected-v1",
+        "event_kind": "league",
+        "event_display_label_sha256": "77f3c8cc296882147b00e50018d0040c7f00cee6b123ef4981ab7408f0789094",
+        "deck_display_label_sha256": "a8d55ec035cee5f7060485a354994c530cfac3c523ff6daa477249812cbdb86d",
+        "expected_visible_deck_label": "mtgo-kernel-modern-basics-v1",
+        "chooser_title_label_sha256": "fcda248e8a6bd4895bdcd9aed0d49a8be99ddfac06c96328e8b1b3a9506c9cce",
+        "expected_visible_chooser_title": "Modern Decks",
+        "state": "exact_deck_selected",
+        "client_size_px": { "width": 885, "height": 734 },
+        "chooser_title_search_rect_client_px": { "x": 300, "y": 0, "width": 260, "height": 50 },
+        "deck_label_region_rect_client_px": { "x": 20, "y": 155, "width": 115, "height": 40 },
+        "unselected_deck_label_reference_sha256s": [],
+        "selected_deck_label_reference_sha256s": ["0abc8817ead44903a534985470d1f352a7354749d83f281339ac15812fa9fae7"],
+        "deck_row_control_rect_client_px": { "x": 15, "y": 75, "width": 120, "height": 140 },
+        "unselected_deck_row_reference_sha256s": [],
+        "selected_deck_row_reference_sha256s": ["635f020e37a4512ee103714582520e38a8229e88fa6735185b8569751a2e0a5c"],
+        "selection_detail_rect_client_px": { "x": 444, "y": 52, "width": 436, "height": 160 },
+        "unselected_selection_detail_reference_sha256s": [],
+        "selected_selection_detail_reference_sha256s": ["5d0dd17eccd001b41037c700e202975fdae0588ff0cb6394e4b9e50cd8071e89"],
+        "submit_control_rect_client_px": { "x": 610, "y": 688, "width": 125, "height": 31 },
+        "disabled_submit_reference_sha256s": [],
+        "enabled_submit_reference_sha256s": ["9463b5e25425f0443e61d205c3e4ba67a0c04b4fe6d674b6e58517e05ca7015f"],
+        "confidence_bps": 9500
+      }
+    ]
+  }
+}

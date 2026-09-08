@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "trace_id": "live-dxgi-solitaire-keep-20260810-v1",
+  "before_frame": {
+    "manifest_sha256": "e5f6f170764f6f374587e45a0e5c3c3fbbc98849bd091b305a2e318bbfede49d",
+    "canonical_bgra8_sha256": "124e37ee6c431a7b40d13a49c5c830a630580741350ce799e482ddc4522ccf31",
+    "preview_png_sha256": "742a28946df3696c3ce0023aea3899be46b47ef4acd8a4b854c196e865bdf530",
+    "output_identity_sha256": "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6",
+    "client_size_px": {
+      "width": 1550,
+      "height": 925
+    },
+    "captured_at_unix_millis": 1786338302650,
+    "capture_role": "acting_player_solitaire"
+  },
+  "action": {
+    "action_kind": "keep_opening_hand"
+  },
+  "action_control_before": {
+    "x": 116,
+    "y": 151,
+    "width": 56,
+    "height": 35
+  },
+  "after_frame": {
+    "manifest_sha256": "018d955305e253460f2e0fd0e51d850f1f6e8684cbf2b7415ce5446d2a818adb",
+    "canonical_bgra8_sha256": "4b33db6c50945a1a07320709be7cf2ada1ec513b69748e2e386e1f119864f514",
+    "preview_png_sha256": "efa9ec430e2fe4ac8e6836d9acb5f05738f32ec9efa91a6dff69cd0244bf8561",
+    "output_identity_sha256": "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6",
+    "client_size_px": {
+      "width": 1550,
+      "height": 925
+    },
+    "captured_at_unix_millis": 1786338368208,
+    "capture_role": "acting_player_solitaire"
+  },
+  "visible_postconditions": [
+    {
+      "change": "prompt_changed",
+      "rect_client_px": {
+        "x": 10,
+        "y": 32,
+        "width": 202,
+        "height": 170
+      }
+    },
+    {
+      "change": "player_counts_changed",
+      "rect_client_px": {
+        "x": 108,
+        "y": 205,
+        "width": 79,
+        "height": 42
+      }
+    },
+    {
+      "change": "visible_game_log_changed",
+      "rect_client_px": {
+        "x": 1166,
+        "y": 72,
+        "width": 382,
+        "height": 250
+      }
+    },
+    {
+      "change": "phase_bar_changed",
+      "rect_client_px": {
+        "x": 311,
+        "y": 695,
+        "width": 852,
+        "height": 39
+      }
+    },
+    {
+      "change": "hand_changed",
+      "rect_client_px": {
+        "x": 311,
+        "y": 738,
+        "width": 852,
+        "height": 185
+      }
+    }
+  ]
+}

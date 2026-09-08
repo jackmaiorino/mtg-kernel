@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>visible_chrome_fixture_host_v1</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\MtgoVisibleDuelProducerV1.csproj" />
+    <ProjectReference Include="..\DuelScene\DuelScene.csproj" />
+    <ProjectReference Include="..\Reference\Reference.csproj" />
+  </ItemGroup>
+</Project>

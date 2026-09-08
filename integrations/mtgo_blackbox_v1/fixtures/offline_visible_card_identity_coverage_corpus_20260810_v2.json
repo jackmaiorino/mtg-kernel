@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "corpus_id": "seven-template-profile-heldout-visible-slot-coverage-20260810-v2",
+  "profile_scope": "one_observed_bottom_six_hand_only",
+  "profile_template_count": 7,
+  "profile_commitment_sha256": "0310ba629a4caf1fca9806f1e135d15bd3ea99417b2c6b92ec79f948ecbe6739",
+  "samples": [
+    {
+      "sample_id": "game-958668308-bottom-six-selected-zero",
+      "source_manifest_sha256": "a72ba136a754bbe29a810e9cb61e95ad5112a41b8c4b1467d7e63f4bfd09b6ea",
+      "source_stage_commitment_sha256": "2308c6717e2ecf239bda2aca2d54063ad702095da12ba8bc9eb9568a350f244a",
+      "visible_hand_count": 7,
+      "matched_identity_count": 2,
+      "classification": "no_match",
+      "exposed_identity_count": 0,
+      "candidate_commitment_sha256": "baa151358adcce451fe0538dae38002a9e94e5fa50ab9770de54ca3f711911c9"
+    },
+    {
+      "sample_id": "game-958669110-heldout-bottom-six-selected-zero",
+      "source_manifest_sha256": "2b38db351b72e447feb79a03532787fcfb59ff9480121be9f555daf117a03c1d",
+      "source_stage_commitment_sha256": "121d8e9515a50de3767297562f0e73ce7e302098d11fe9cde119e4decfa16fbe",
+      "visible_hand_count": 7,
+      "matched_identity_count": 4,
+      "classification": "no_match",
+      "exposed_identity_count": 0,
+      "candidate_commitment_sha256": "66ba0a5c540b651430697ea88c1a0a4d186786b9f28fb770e1ab54e8e15c0ce4"
+    }
+  ],
+  "distinct_heldout_games": 2,
+  "visible_slot_count": 14,
+  "matched_visible_slot_count": 6,
+  "full_hand_match_count": 0,
+  "nonclaim": "The seven templates came from a different one-hand source game. This corpus measures only visible-slot coverage of that deliberately incomplete candidate universe on two later hands. It is not an accuracy estimate, a complete deck profile, semantic evidence, or proof that unmatched slots cannot be classified after adding reviewed templates.",
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}

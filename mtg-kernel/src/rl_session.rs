@@ -710,7 +710,7 @@ fn flat_zone_v1(zone: Zone) -> u8 {
     }
 }
 
-fn flat_action_core_and_refs_v1<F>(
+pub(crate) fn flat_action_core_and_refs_v1<F>(
     semantic: &ActionSemanticV1,
     expected_actor: PlayerSeatV1,
     ref_start: u32,
