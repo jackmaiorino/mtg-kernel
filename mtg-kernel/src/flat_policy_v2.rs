@@ -4002,8 +4002,17 @@ fn validate_external_fixed_action_relation_v1(
         stable.controller == controller && stable.zone == Zone::Battlefield
     };
     let valid = match semantic {
-        ActionSemanticV1::ActivateManaAbility { source, .. }
-        | ActionSemanticV1::ActivateAbility { source, .. } => controlled_battlefield(source, actor),
+        ActionSemanticV1::ActivateManaAbility {
+            source,
+            cost_target,
+            ..
+        } => {
+            controlled_battlefield(source, actor)
+                && cost_target
+                    .as_ref()
+                    .map_or(true, |target| controlled_battlefield(target, actor))
+        }
+        ActionSemanticV1::ActivateAbility { source, .. } => controlled_battlefield(source, actor),
         ActionSemanticV1::PlotSpell { source, .. } => own_hand(source),
         ActionSemanticV1::Discard { cards, .. } => cards.iter().all(own_hand),
         ActionSemanticV1::ChooseMadnessCast { card, .. } => {
@@ -6050,6 +6059,37 @@ mod tests {
                 available: 0
             }
         );
+    }
+
+    #[test]
+    fn external_fixed_action_relation_validates_mana_ability_cost_target() {
+        let actor = PlayerSeatV1::P0;
+        let source = synthetic_stable(1, 1, actor, actor, Zone::Battlefield);
+        let battlefield_cost = synthetic_stable(2, 2, actor, actor, Zone::Battlefield);
+        let hand_cost = synthetic_stable(3, 3, actor, actor, Zone::Hand);
+        let opponent_cost =
+            synthetic_stable(4, 4, opponent(actor), opponent(actor), Zone::Battlefield);
+        let semantic =
+            |cost_target: Option<CardStableRefV1>| ActionSemanticV1::ActivateManaAbility {
+                actor,
+                source: source.clone(),
+                mana_choice: None,
+                cost_target,
+            };
+        assert!(validate_external_fixed_action_relation_v1(&semantic(None), actor).is_ok());
+        assert!(validate_external_fixed_action_relation_v1(
+            &semantic(Some(battlefield_cost)),
+            actor
+        )
+        .is_ok());
+        assert!(matches!(
+            validate_external_fixed_action_relation_v1(&semantic(Some(hand_cost)), actor),
+            Err(FlatDecisionErrorV2::InconsistentReference)
+        ));
+        assert!(matches!(
+            validate_external_fixed_action_relation_v1(&semantic(Some(opponent_cost)), actor),
+            Err(FlatDecisionErrorV2::InconsistentReference)
+        ));
     }
 }
 
