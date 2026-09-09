@@ -206,6 +206,14 @@ pub enum Subtype {
     /// Appended for the 4/1 black Skeleton token created by Undercity's
     /// Catacombs room. Existing stable ids remain fixed.
     Skeleton,
+    /// Appended for the 1/1 green Squirrel token created by Acorn Harvest.
+    /// Existing stable ids remain fixed.
+    Squirrel,
+    /// Appended for Abandon Attachments' Strixhaven Lesson subtype (not a
+    /// creature type; excluded from `CREATURE_TYPES`/`is_creature_type`
+    /// same as Equipment/Aura/Gate/Saga/Map/Treasure/Clue/Food/Blood).
+    /// Existing stable ids remain fixed.
+    Lesson,
 }
 
 impl Subtype {
@@ -268,6 +276,7 @@ impl Subtype {
         Subtype::Phyrexian,
         Subtype::Horror,
         Subtype::Nightmare,
+        Subtype::Squirrel,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -338,6 +347,7 @@ impl Subtype {
                 | Subtype::Phyrexian
                 | Subtype::Horror
                 | Subtype::Nightmare
+                | Subtype::Squirrel
         )
     }
 }
@@ -555,6 +565,11 @@ impl Keywords {
     /// The permanent spell may be cast whenever its controller has
     /// priority, using the same timing permission as an instant.
     pub const FLASH: Keywords = Keywords(1 << 15);
+    /// The object can't be blocked, unconditionally (509.1b analog for a
+    /// granted rather than printed evasion ability). Artful Dodge is the
+    /// first consumer -- see `engine::legal_blockers_for`'s `ISLANDWALK`
+    /// check, which this sits beside.
+    pub const CANT_BE_BLOCKED: Keywords = Keywords(1 << 16);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -1381,7 +1396,10 @@ mod tests {
     fn card_defs_len_matches_pool() {
         // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
         // Token is appended as id 161 without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 162);
+        // Terminate, Ancient Grudge, Artful Dodge, Abandon Attachments, and
+        // Acorn Harvest are appended as ids 162-166 and Squirrel Token as
+        // id 167, again without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 168);
     }
 
     #[test]
@@ -1447,7 +1465,7 @@ mod tests {
     fn card_db_hash_v32_is_frozen() {
         // Version 32 appends the final pool trio and Skeleton token after the
         // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x5446_bd05_1a02_5568);
     }
 
     #[test]
@@ -1647,7 +1665,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 162, "150 pool cards plus twelve required tokens");
+        assert_eq!(full, 168, "155 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

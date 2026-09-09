@@ -5362,6 +5362,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
         return Vec::new();
     }
+    if has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED) {
+        return Vec::new();
+    }
     let attacker_flying = has_effective_keyword(state, attacker, Keywords::FLYING);
     let minimum = minimum_blockers_required(state, attacker);
     let blockers = state.players[defender.index()]

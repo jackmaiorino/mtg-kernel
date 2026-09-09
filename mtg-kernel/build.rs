@@ -2474,6 +2474,32 @@ enum Special {
     /// Destroy target nonlegendary creature. Cast Down is the first
     /// consumer of the append-only target filter and shared destroy leaf.
     DestroyNonlegendaryCreature,
+    /// Destroy target creature. Terminate is the first consumer; its "it
+    /// can't be regenerated" clause has no kernel equivalent (the engine
+    /// has no regeneration substrate), so this is a plain destroy.
+    DestroyCreature,
+    /// Destroy target artifact. Ancient Grudge is the first consumer;
+    /// flashback {G} is modeled independently in `flashback_for`.
+    DestroyArtifact,
+    /// Target creature can't be blocked this turn. Artful Dodge is the
+    /// first consumer; flashback {U} is modeled independently in
+    /// `flashback_for`.
+    GrantCantBeBlockedUntilEndOfTurn,
+    /// "You may discard a card. If you do, draw `draw` cards." Abandon
+    /// Attachments is the first consumer; shares the same
+    /// `EffectOp::MayPayCostThen` substrate as Highway Robbery, minus the
+    /// sacrifice-a-land alternative (`sacrifice_lands: 0`).
+    MayDiscardThenDraw {
+        draw: u8,
+    },
+    /// Create `count` copies of `token` on the battlefield under the
+    /// controller's control. Acorn Harvest is the first consumer (two
+    /// Squirrel Tokens); flashback {1}{G} plus pay 3 life is modeled
+    /// independently in `flashback_for`.
+    CreateTokens {
+        token: &'static str,
+        count: u8,
+    },
     /// Return target creature or land card from a graveyard to its owner's
     /// hand, then the controller gains a fixed amount of life. Pulse of
     /// Murasa is the first consumer.
@@ -2713,6 +2739,15 @@ impl Special {
             Special::DeemInferior => "deem_inferior".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
             Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
+            Special::DestroyCreature => "destroy_creature".to_string(),
+            Special::DestroyArtifact => "destroy_artifact".to_string(),
+            Special::GrantCantBeBlockedUntilEndOfTurn => {
+                "grant_cant_be_blocked_until_end_of_turn".to_string()
+            }
+            Special::MayDiscardThenDraw { draw } => format!("may_discard_then_draw:{draw}"),
+            Special::CreateTokens { token, count } => {
+                format!("create_tokens:{token}:{count}")
+            }
             Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => {
                 format!("return_creature_or_land_from_graveyard_and_gain_life:{amount}")
             }
@@ -2948,6 +2983,14 @@ fn special_for(name: &str) -> Special {
         "Deem Inferior" => Special::DeemInferior,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Terminate" => Special::DestroyCreature,
+        "Ancient Grudge" => Special::DestroyArtifact,
+        "Artful Dodge" => Special::GrantCantBeBlockedUntilEndOfTurn,
+        "Abandon Attachments" => Special::MayDiscardThenDraw { draw: 2 },
+        "Acorn Harvest" => Special::CreateTokens {
+            token: "Squirrel Token",
+            count: 2,
+        },
         "Pulse of Murasa" => Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount: 6 },
         "Breath Weapon" => Special::DamageEachCreatureWithoutSubtype {
             amount: 2,
@@ -3086,6 +3129,21 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DestroyNonlegendaryCreature => {
             "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
         }
+        Special::DestroyCreature => {
+            "target=Creature;spell=DestroyObject(Target0);mana=None".to_string()
+        }
+        Special::DestroyArtifact => {
+            "target=ArtifactPermanent;spell=DestroyObject(Target0);mana=None".to_string()
+        }
+        Special::GrantCantBeBlockedUntilEndOfTurn => {
+            "target=Creature;spell=GrantKeywordTargetUntilEndOfTurn(Target0,CANT_BE_BLOCKED);mana=None".to_string()
+        }
+        Special::MayDiscardThenDraw { draw } => format!(
+            "target=None;spell=MayPayCostThen(DiscardCards(1),DrawCards(Controller,{draw}));mana=None"
+        ),
+        Special::CreateTokens { token, count } => format!(
+            "target=None;spell=CreateToken({token},{count});mana=None"
+        ),
         Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => format!(
             "target=CreatureOrLandCardInGraveyard;spell=ReturnTargetToOwnersHandThenGainLife({amount});mana=None"
         ),
@@ -3392,6 +3450,27 @@ fn flashback_for(name: &str) -> String {
             )
         }
         "Prismatic Strands" => "Some(FlashbackDef { cost: &[CostComponent::TapUntappedControlledPermanent(PermanentFilterDef::CreatureWithColor(ManaColor::W))] })".to_string(),
+        "Ancient Grudge" => {
+            let (pips, generic, x_count) = parse_cost("{G}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Artful Dodge" => {
+            let (pips, generic, x_count) = parse_cost("{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Acorn Harvest" => {
+            let (pips, generic, x_count) = parse_cost("{1}{G}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
         _ => "None".to_string(),
     }
 }
@@ -4581,6 +4660,40 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(out, "}}").unwrap();
                 writeln!(out).unwrap();
             }
+            Special::MayDiscardThenDraw { draw } => {
+                // "You may discard a card. If you do, draw `draw` cards" --
+                // DoIfCostPaid(DrawCardSourceControllerEffect, DiscardCardCost).
+                // Byte-for-byte Highway Robbery's `MayPayCostThen` shape
+                // with `sacrifice_lands: 0` (no land-sacrifice alternative).
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some(EffectOp::MayPayCostThen {{").unwrap();
+                writeln!(out, "        discard: 1,").unwrap();
+                writeln!(out, "        sacrifice_lands: 0,").unwrap();
+                writeln!(out, "        then: Box::new(EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }}),").unwrap();
+                writeln!(out, "    }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            Special::CreateTokens { token, count } => {
+                // Create `count` copies of the same named token. The
+                // primitive `EffectOp::CreateToken` creates exactly one
+                // token per call (see its doc), so this repeats it `count`
+                // times inside one `Sequence` -- the same shape Rally at
+                // the Hornburg already uses for its own two Human Soldier
+                // tokens, just generalized over `count` here since Acorn
+                // Harvest is a second consumer of the identical shape.
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+                for _ in 0..count {
+                    writeln!(out, "        EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }},").unwrap();
+                }
+                writeln!(out, "    ]))").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
             _ => {}
         }
     }
@@ -5289,6 +5402,66 @@ fn codegen(cards: &[CardJson]) -> String {
         .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DestroyCreature))
+    {
+        writeln!(out, "fn spell_effect_destroy_creature() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DestroyArtifact))
+    {
+        writeln!(out, "fn spell_effect_destroy_artifact() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::GrantCantBeBlockedUntilEndOfTurn
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_grant_cant_be_blocked_until_end_of_turn() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::CANT_BE_BLOCKED }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -6164,6 +6337,29 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_destroy_nonlegendary_creature".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::DestroyCreature => (
+                "TargetSpec::Creature",
+                "spell_effect_destroy_creature".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DestroyArtifact => (
+                "TargetSpec::ArtifactPermanent",
+                "spell_effect_destroy_artifact".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::GrantCantBeBlockedUntilEndOfTurn => (
+                "TargetSpec::Creature",
+                "spell_effect_grant_cant_be_blocked_until_end_of_turn".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::MayDiscardThenDraw { .. } | Special::CreateTokens { .. } => (
+                "TargetSpec::None",
+                format!(
+                    "spell_effect_{}",
+                    c.name.to_ascii_lowercase().replace([' ', '\''], "_")
+                ),
+                "no_effect".to_string(),
+            ),
             Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => (
                 "TargetSpec::CreatureOrLandCardInGraveyard",
                 format!(
@@ -6836,6 +7032,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",
         "Skeleton" => "Subtype::Skeleton",
+        "Squirrel" => "Subtype::Squirrel",
+        "Lesson" => "Subtype::Lesson",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

@@ -147,8 +147,8 @@ fn generated_definitions_ids_and_append_only_token_are_exact() {
     assert_eq!(card_id("Nyxborn Hydra"), 81);
     assert_eq!(card_id("Skeleton Token"), 161);
     assert_eq!(Subtype::Skeleton.stable_id(), 69);
-    assert_eq!(CARD_DEFS.len(), 162);
-    assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
+    assert_eq!(CARD_DEFS.len(), 168);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x5446_bd05_1a02_5568);
 
     let monstrous = &CARD_DEFS[74];
     assert_eq!(monstrous.capability, CardCapability::Full);

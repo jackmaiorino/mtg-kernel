@@ -5054,6 +5054,180 @@
         "menace"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/SkeletonMenaceToken.java"
+    },
+    {
+      "name": "Terminate",
+      "engine_capability": "full",
+      "mana_cost": "{B}{R}",
+      "mana_value": 2,
+      "colors": [
+        "B",
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "removal",
+        "destroy_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/Terminate.java"
+    },
+    {
+      "name": "Ancient Grudge",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "artifact_hate",
+        "destroy_target",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AncientGrudge.java"
+    },
+    {
+      "name": "Artful Dodge",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Mono-Blue Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "keyword_grant",
+        "until_end_of_turn",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/ArtfulDodge.java"
+    },
+    {
+      "name": "Abandon Attachments",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U/R}",
+      "mana_value": 2,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [
+        "Lesson"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "discard",
+        "draw_card",
+        "conditional_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AbandonAttachments.java"
+    },
+    {
+      "name": "Acorn Harvest",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "flashback",
+        "flashback_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AcornHarvest.java"
+    },
+    {
+      "name": "Squirrel Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Squirrel"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "trivial",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SquirrelToken.java"
     }
   ],
   "unresolved": []

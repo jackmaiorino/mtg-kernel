@@ -135,6 +135,7 @@ TOKEN_DEPENDENCIES = (
     ("Hero Token", ("Black Mage's Rod",)),
     ("Clue Token", ("Toxin Analysis",)),
     ("Skeleton Token", ("Avenging Hunter",)),
+    ("Squirrel Token", ("Acorn Harvest",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
