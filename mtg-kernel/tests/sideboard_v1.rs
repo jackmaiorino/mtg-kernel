@@ -118,7 +118,7 @@ fn executable_registration_rejects_unknown_token_and_unsupported_cards() {
 #[test]
 fn checked_in_pool_is_wired_to_the_executable_bo3_admission_gate() {
     let decks = checked_in_pauper_registered_decks_v1().unwrap();
-    assert_eq!(decks.len(), 9);
+    assert!(!decks.is_empty());
     assert!(decks.iter().all(|deck| {
         deck.registered_configuration().mainboard().len() == 60
             && deck.registered_configuration().sideboard().len() == 15
@@ -127,9 +127,12 @@ fn checked_in_pool_is_wired_to_the_executable_bo3_admission_gate() {
 
 #[test]
 fn completed_checked_in_decks_are_individually_admitted_for_bo3() {
-    for deck_id in [
-        "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries",
-    ] {
+    let pool_ids: Vec<String> = checked_in_pauper_registered_decks_v1()
+        .unwrap()
+        .into_iter()
+        .map(|deck| deck.deck_id().to_owned())
+        .collect();
+    for deck_id in &pool_ids {
         let deck = checked_in_pauper_registered_deck_by_id_v1(deck_id).unwrap();
         assert_eq!(deck.deck_id(), deck_id);
         assert_eq!(deck.registered_configuration().mainboard().len(), 60);
@@ -142,6 +145,23 @@ fn completed_checked_in_decks_are_individually_admitted_for_bo3() {
             deck_id: "Missing".to_owned(),
         })
     );
+}
+
+#[test]
+fn checked_in_pool_and_policy_cover_the_same_registration_set() {
+    let decks = checked_in_pauper_registered_decks_v1().expect("pool");
+    let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().expect("policy");
+    let mut pool_ids: Vec<&str> = decks.iter().map(|deck| deck.deck_id()).collect();
+    pool_ids.sort_unstable();
+    let mut policy_ids: Vec<&str> = policy.deck_ids().iter().map(String::as_str).collect();
+    policy_ids.sort_unstable();
+    assert_eq!(pool_ids, policy_ids);
+    assert!(pool_ids.len() >= 9, "the historical nine never leave the pool");
+    for historical in [
+        "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries",
+    ] {
+        assert!(pool_ids.contains(&historical), "{historical} missing");
+    }
 }
 
 #[test]
@@ -382,10 +402,9 @@ fn policy_hash_and_plan_selection_are_order_independent_and_keyed() {
 }
 
 #[test]
-fn checked_in_policy_is_strict_versioned_and_covers_nine_decks() {
+fn checked_in_policy_is_strict_versioned() {
     let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
     assert_eq!(policy.policy_id(), "pauper-registered-75-static/v1");
-    assert_eq!(policy.deck_ids().len(), 9);
     assert_eq!(policy.deck_ids().first().unwrap(), "Affinity");
     assert_eq!(policy.deck_ids().last().unwrap(), "Wildfire");
     assert!(policy.plans().is_empty());

@@ -249,10 +249,8 @@ fn checked_in_pauper_pool_document_v1() -> Result<PauperPoolDocumentV1, Sideboar
             actual: document.schema,
         });
     }
-    if document.decks.len() != 9 {
-        return Err(SideboardErrorV1::PoolDeckCount {
-            actual: document.decks.len(),
-        });
+    if document.decks.is_empty() {
+        return Err(SideboardErrorV1::EmptyPool);
     }
 
     let mut deck_ids = document
@@ -739,6 +737,7 @@ pub enum SideboardErrorV1 {
     PoolDeckCount {
         actual: usize,
     },
+    EmptyPool,
     DuplicatePoolDeckId {
         deck_id: String,
     },
@@ -865,6 +864,9 @@ impl fmt::Display for SideboardErrorV1 {
             }
             Self::PoolDeckCount { actual } => {
                 write!(formatter, "Pauper pool must contain 9 decks, got {actual}")
+            }
+            Self::EmptyPool => {
+                formatter.write_str("Pauper pool must contain at least one deck")
             }
             Self::DuplicatePoolDeckId { deck_id } => {
                 write!(formatter, "duplicate Pauper pool deck id {deck_id:?}")

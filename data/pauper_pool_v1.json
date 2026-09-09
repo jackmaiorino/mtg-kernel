@@ -4,8 +4,10 @@
   "source": {
     "java_factory_path": "oracle/xmage/DeterminizationSampler.java",
     "java_factory_method": "DeterminizationSampler.pauperDefaults",
-    "java_factory_file_sha256": "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d",
+    "java_factory_file_sha256": "0273a0cf46d393bb5377a8b5b4a94aee5c4f1f74a0fa1d9ab168f98ed86659fa",
     "java_factory_method_sha256": "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b",
+    "java_factory_registrations_method": "DeterminizationSampler.pauperRegistrationsV2",
+    "java_factory_registrations_method_sha256": "5cd95f0bee51f6bd04385cc2c2529eaab147a0b3266dc1702f655a275e95c3eb",
     "source_hash_normalization": "utf8_text_crlf_v1"
   },
   "materialization": {

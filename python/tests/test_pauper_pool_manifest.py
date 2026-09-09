@@ -19,16 +19,12 @@ if str(TOOLS) not in sys.path:
 import generate_pauper_manifests as manifests  # noqa: E402
 
 
-EXPECTED_SPECS = (
-    ("Wildfire", "Wildfire", "Deck - Jund Wildfire.dek", "cff35798ff724888a9e5a4520dd55e70b0c628a55908697aa116089d8fd980a5"),
-    ("Rally", "Rally", "Deck - Mono Red Rally.dek", "4b5019bd08f9387aeabebdca0d90aaa10dfd75fc75ed3a87c95a2fabf4dba834"),
-    ("Affinity", "Affinity", "Deck - Grixis Affinity.dek", "4a41135ac6d14960e75ddce8e9980c0505c0b71a9c08a2e10578a10d2fcf8801"),
-    ("Elves", "Elves", "Deck - Elves.dek", "6b040933c9b3506536e7dc71c94dcaf5f16c7ade43a3d0f7f9b240be6deb0d87"),
-    ("Spy", "SpyCombo", "Deck - Spy Combo.dek", "f08177d5ed133b18312f59649d1155e15b5074ababeaabcdf3f31ded650308ba"),
-    ("Burn", "Burn", "Deck - Mono-Red Burn.dek", "4ebba6b42bb27a0ea55001cee133aada81f0dffd8661b46b012fc5026675aa32"),
-    ("Terror", "Terror", "Deck - Mono-Blue Terror.dek", "8ba22b67b843bc49a421e1c2814c4dd24a04ab2b45131ec7876a8312115a9fda"),
-    ("CawGates", "CawGates", "Deck - Caw-Gates.dek", "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14"),
-    ("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
+# The pool catalog (REGISTRATION_SPECS) is the source of truth; this test
+# file no longer keeps its own independent literal copy, since the catalog
+# is expected to grow beyond the historical nine across later waves.
+EXPECTED_SPECS = tuple(
+    (spec.deck_id, spec.source_key, spec.filename, spec.source_sha256)
+    for spec in manifests.REGISTRATION_SPECS
 )
 
 MISSING_SPY_RECORDS: set[str] = set()
@@ -85,8 +81,10 @@ class PauperPoolManifestTest(unittest.TestCase):
             {
                 "java_factory_path": "oracle/xmage/DeterminizationSampler.java",
                 "java_factory_method": "DeterminizationSampler.pauperDefaults",
-                "java_factory_file_sha256": "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d",
+                "java_factory_file_sha256": "0273a0cf46d393bb5377a8b5b4a94aee5c4f1f74a0fa1d9ab168f98ed86659fa",
                 "java_factory_method_sha256": "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b",
+                "java_factory_registrations_method": "DeterminizationSampler.pauperRegistrationsV2",
+                "java_factory_registrations_method_sha256": "5cd95f0bee51f6bd04385cc2c2529eaab147a0b3266dc1702f655a275e95c3eb",
                 "source_hash_normalization": "utf8_text_crlf_v1",
             },
         )
@@ -160,7 +158,7 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(
             self.pool["totals"],
             {
-                "deck_count": 9,
+                "deck_count": len(manifests.REGISTRATION_SPECS),
                 "mainboard_unique_cards": 121,
                 "sideboard_unique_cards": 36,
                 "pool_unique_cards": 150,
@@ -214,7 +212,7 @@ class PauperPoolManifestTest(unittest.TestCase):
 
         runtime_specs = [
             (order, spec)
-            for order, spec in enumerate(manifests.DECK_SPECS, start=1)
+            for order, spec in enumerate(manifests.REGISTRATION_SPECS, start=1)
             if spec.deck_id in manifests.RUNTIME_DECK_IDS
         ]
         self.assertEqual(
@@ -413,7 +411,8 @@ class PauperPoolManifestTest(unittest.TestCase):
             encoding="utf-8", errors="strict"
         )
         mutated = source.replace("        paths.put(\"", "        // paths.put(\"")
-        self.assertEqual(mutated.count("        // paths.put(\""), 9)
+        # pauperDefaults() and pauperRegistrationsV2() each contribute nine.
+        self.assertEqual(mutated.count("        // paths.put(\""), 18)
         mutated = mutated.replace(
             "        return loadArchetypes(paths);",
             "        paths.put(new String(\"NotCanonical\"), base + \"/Deck - Nope.dek\");\n"
@@ -1021,6 +1020,14 @@ class PauperPoolManifestTest(unittest.TestCase):
             ):
                 manifests.check_outputs(temporary_root)
             runtime_path.write_bytes(original)
+
+    def test_registrations_are_a_superset_of_the_runtime_set(self) -> None:
+        registered = [spec.deck_id for spec in manifests.REGISTRATION_SPECS]
+        self.assertEqual(registered[:9], list(manifests.RUNTIME_DECK_IDS))
+        self.assertEqual(
+            self.pool["source"]["java_factory_registrations_method"],
+            "DeterminizationSampler.pauperRegistrationsV2",
+        )
 
 
 if __name__ == "__main__":
