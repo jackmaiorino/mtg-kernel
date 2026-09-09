@@ -24,10 +24,13 @@ fn exact_fully_supported_card_name_resolves_to_compile_bound_id() {
 }
 
 #[test]
-fn unknown_unsupported_and_inexact_names_fail_closed() {
+fn unknown_and_inexact_names_fail_closed() {
     for (name, expected_code) in [
         ("Not A Real Card", "kernel_card_name_unknown"),
-        ("Tolarian Terror", "kernel_card_not_fully_supported"),
+        // Every registry card is CardCapability::Full in the frozen kernel, so no registered
+        // name can exercise "kernel_card_not_fully_supported" here either; that branch is
+        // covered again once a partial card lands.
+        ("Not A Kernel Card", "kernel_card_name_unknown"),
         ("island", "kernel_card_name_unknown"),
         (" Island", "visible_card_name_invalid"),
         ("Island ", "visible_card_name_invalid"),
