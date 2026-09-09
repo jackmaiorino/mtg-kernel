@@ -48,9 +48,9 @@ for arch, decks in sorted(by_arch.items()):
     for did, m, s in decks:
         vec = collections.Counter(m); vec.update({"SB:" + k: v for k, v in s.items()})
         dist = sum(abs(vec[k] - avg[k]) for k in set(vec) | set(avg))
-        # penalise registry-missing and xmage-absent cards lightly so ties favour implementable lists
+        # lists containing XMage-absent cards are used only when every sampled list has one
         absent = [k for k in list(m) + list(s) if k not in registry and not java_path(k)]
-        score = dist + 2 * len(absent)
+        score = dist + (1000 if absent else 0)  # any list without XMage-absent cards beats every list with one
         if best is None or score < best[0]: best = (score, did, m, s, absent, dist)
     score, did, m, s, absent, dist = best
     missing_main = sorted(k for k in m if k not in registry)

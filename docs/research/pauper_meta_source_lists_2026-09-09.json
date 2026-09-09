@@ -114,26 +114,13 @@
   "xmage_absent": []
  },
  "Gates": {
-  "deck_id": "885394",
-  "distance": 55.0,
+  "deck_id": "885724",
+  "distance": 59.8,
   "main_total": 60,
   "side_total": 15,
-  "missing_main": {
-   "Armadillo Cloak": 3,
-   "Call Damage Control": 2,
-   "Cliffgate": 2,
-   "Malevolent Rumble": 4,
-   "Manor Gate": 4,
-   "Midnight Tilling": 2,
-   "Plains": 3
-  },
-  "missing_side": {
-   "Ancient Grudge": 2,
-   "Destroy Evil": 2
-  },
-  "xmage_absent": [
-   "Call Damage Control"
-  ]
+  "missing_main": {},
+  "missing_side": {},
+  "xmage_absent": []
  },
  "GruulAggro": {
   "deck_id": "886621",
@@ -255,33 +242,37 @@
   ]
  },
  "WhiteWeenie": {
-  "deck_id": "888108",
-  "distance": 36.0,
+  "deck_id": "887258",
+  "distance": 108.5,
   "main_total": 60,
   "side_total": 15,
   "missing_main": {
-   "Battle Screech": 4,
-   "Greatsword of Tyr": 2,
-   "Guardians' Pledge": 2,
-   "Idyllic Grange": 3,
-   "Kor Skyfisher": 4,
-   "Leonardo, Big Brother": 3,
-   "Lunarch Veteran": 4,
-   "Novice Inspector": 4,
-   "Plains": 16,
-   "Raffine's Informant": 4,
-   "Ramosian Rally": 1,
-   "Spider-Man, Web-Slinger": 1,
-   "Thraben Inspector": 4
+   "Akroan Skyguard": 4,
+   "Benevolent Blessing": 4,
+   "Blacksmith's Skill": 1,
+   "Emerge Unscathed": 1,
+   "Ethereal Armor": 4,
+   "Guiding Voice": 4,
+   "Homestead Courage": 4,
+   "Hyena Umbra": 4,
+   "Lagonna-Band Trailblazer": 4,
+   "Loran's Escape": 1,
+   "Plains": 13,
+   "Remote Farm": 4,
+   "Sentinel's Eyes": 4,
+   "Skyward Spider": 4,
+   "Spirit Link": 4
   },
   "missing_side": {
-   "Destroy Evil": 1,
-   "Holy Light": 2,
-   "Martyr of Sands": 4,
-   "Standard Bearer": 2
+   "Airbending Lesson": 1,
+   "Apostle's Blessing": 1,
+   "Blacksmith's Skill": 1,
+   "Death Speakers": 3,
+   "Lifelink": 2,
+   "Mask of Law and Grace": 3,
+   "Shield of Duty and Reason": 3,
+   "Sokka's Sword Training": 1
   },
-  "xmage_absent": [
-   "Leonardo, Big Brother"
-  ]
+  "xmage_absent": []
  }
 }
