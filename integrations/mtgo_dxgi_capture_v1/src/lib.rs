@@ -44,6 +44,8 @@ mod placeholder_pregame_controller;
 #[cfg(target_os = "windows")]
 mod placeholder_sideboard_controller;
 #[cfg(target_os = "windows")]
+mod placeholder_visible_duel_scorer;
+#[cfg(target_os = "windows")]
 mod search_root_provider;
 #[cfg(target_os = "windows")]
 mod unknown_card_policy;
@@ -476,8 +478,9 @@ pub use competitive_visible_match_memory::{
 };
 #[cfg(target_os = "windows")]
 pub use deployment_slots::{
-    MtgoDeploymentSlotDescriptorV1, MtgoDeploymentSlotKindV1, MtgoDeploymentSlotReportV1,
-    MtgoDeploymentSlotV1, MtgoDeploymentSlotsV1, MTGO_DEPLOYMENT_SLOT_REPORT_SCHEMA_V1,
+    build_placeholder_deployment_slots_v1, MtgoDeploymentSlotDescriptorV1,
+    MtgoDeploymentSlotKindV1, MtgoDeploymentSlotReportV1, MtgoDeploymentSlotV1,
+    MtgoDeploymentSlotsV1, MtgoPlaceholderDeploymentSlotsV1, MTGO_DEPLOYMENT_SLOT_REPORT_SCHEMA_V1,
 };
 #[cfg(target_os = "windows")]
 pub use placeholder_pregame_controller::{
@@ -485,6 +488,11 @@ pub use placeholder_pregame_controller::{
 };
 #[cfg(target_os = "windows")]
 pub use placeholder_sideboard_controller::MtgoPlaceholderSideboardControllerV1;
+#[cfg(target_os = "windows")]
+pub use placeholder_visible_duel_scorer::{
+    visible_card_names_v1, MtgoPlaceholderVisibleDuelScorerV1,
+    MTGO_VISIBLE_KERNEL_SCORER_NOT_QUALIFIED_REASON_V1,
+};
 #[cfg(target_os = "windows")]
 pub use search_root_provider::{
     MtgoRawPolicyOnlySearchRootProviderV1, MtgoSearchRootDecisionV1, MtgoSearchRootProviderV1,

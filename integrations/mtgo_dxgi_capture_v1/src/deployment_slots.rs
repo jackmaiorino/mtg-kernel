@@ -107,6 +107,29 @@ where
     }
 }
 
+pub type MtgoPlaceholderDeploymentSlotsV1 = MtgoDeploymentSlotsV1<
+    crate::MtgoPlaceholderVisibleDuelScorerV1,
+    crate::MtgoPlaceholderPregameControllerV1,
+    crate::MtgoPlaceholderSideboardControllerV1,
+    crate::MtgoUnknownCardPolicyV1,
+    crate::MtgoRawPolicyOnlySearchRootProviderV1,
+>;
+
+/// Builds the all-placeholder deployment for one deck. Every slot is wired;
+/// none is qualified for live use.
+pub fn build_placeholder_deployment_slots_v1(
+    deck: &crate::MtgoCompetitiveNativeSideboardConfigurationV1,
+) -> Result<MtgoPlaceholderDeploymentSlotsV1, String> {
+    let policy = crate::MtgoUnknownCardPolicyV1::FailClosedHumanTakeover;
+    Ok(MtgoDeploymentSlotsV1 {
+        duel_scorer: crate::MtgoPlaceholderVisibleDuelScorerV1::new_v1(policy),
+        pregame_controller: crate::MtgoPlaceholderPregameControllerV1::new_v1(deck, policy)?,
+        sideboard_controller: crate::MtgoPlaceholderSideboardControllerV1,
+        unknown_card_policy: policy,
+        search_root_provider: crate::MtgoRawPolicyOnlySearchRootProviderV1,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
