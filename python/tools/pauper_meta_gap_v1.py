@@ -1,14 +1,17 @@
 """Aggregate Pauper decklists per archetype, diff against the kernel registry, and
 estimate per-card implementation effort from XMage sources.
 
+Usage: pauper_meta_gap_v1.py <deck_dir> [shares_json] [out_json]
+Set MTG_KERNEL_XMAGE_CARDS to point at the Mage fork's card sources.
+
 Input: a directory of decklist text files named <archetype>__<deckid>.txt in MTGO
 export form ("4 Lightning Bolt" lines, a blank line or "Sideboard" separating the
 sideboard). Output: JSON + a markdown table.
 """
 import json, os, re, sys, glob, collections
 
-ROOT = r"C:\Users\Jack\IdeaProjects\mtg-kernel"
-XMAGE_CARDS = r"C:\Users\Jack\IdeaProjects\mage-cycle4-lead\Mage.Sets\src\mage\cards"
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+XMAGE_CARDS = os.environ.get("MTG_KERNEL_XMAGE_CARDS", os.path.join(ROOT, "..", "mage-cycle4-lead", "Mage.Sets", "src", "mage", "cards"))
 DECK_DIR = sys.argv[1]
 SHARES = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}  # archetype -> meta share percent
 OUT = sys.argv[3] if len(sys.argv) > 3 else os.path.join(DECK_DIR, "meta_gap.json")
