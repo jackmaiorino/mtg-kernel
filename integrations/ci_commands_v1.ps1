@@ -16,6 +16,7 @@ function Invoke-Step([string]$label, [string]$directory, [scriptblock]$body) {
 
 Invoke-Step 'blackbox crate tests' (Join-Path $root 'mtgo_blackbox_v1') { cargo test --release }
 Invoke-Step 'dxgi capture crate tests' (Join-Path $root 'mtgo_dxgi_capture_v1') { cargo test --release }
+Invoke-Step 'dxgi capture crate formatting' (Join-Path $root 'mtgo_dxgi_capture_v1') { cargo fmt -- --check }
 Invoke-Step 'broker source policy' (Join-Path $root 'mtgo_visible_duel_broker_v1') { & .\tests\source_policy_v1.ps1 }
 Invoke-Step 'producer source policy' (Join-Path $root 'mtgo_visible_duel_producer_v1') { & .\tests\source_policy_v1.ps1 }
 Invoke-Step 'producer build' (Join-Path $root 'mtgo_visible_duel_producer_v1') { dotnet build -c Release --nologo -v q }

@@ -113,11 +113,14 @@ impl MtgoPlaceholderPregameControllerV1 {
                 if prospective_keep_size <= 6 || (2..=5).contains(&land_count) {
                     return Ok(keep);
                 }
-                Ok(Self::action_index_v1(
+                Self::action_index_v1(
                     input,
                     &MtgoCompetitiveNativePregameActionV1::Mulligan { next_hand_size: 6 },
                 )
-                .unwrap_or(keep))
+                .ok_or_else(|| {
+                    "placeholder pregame controller requires a mulligan action for a hand outside two to five lands"
+                        .to_owned()
+                })
             }
             MtgoCompetitivePregameStageV1::LondonBottoming {
                 required_bottom_count,
@@ -281,6 +284,10 @@ mod tests {
         }
     }
 
+    /// Builds a London-bottoming request the validator accepts:
+    /// `prospective_keep_size` stays `None` for this stage, and
+    /// `SubmitBottoming` joins `ordered_actions` only once `selected` reaches
+    /// `required`, matching `validate_competitive_native_pregame_model_input_v1`.
     fn bottoming_input(
         names: [&str; 7],
         selected: &[u8],
@@ -296,7 +303,9 @@ mod tests {
                 },
             )
             .collect();
-        actions.push(MtgoCompetitiveNativePregameActionV1::SubmitBottoming);
+        if selected.len() == usize::from(required) {
+            actions.push(MtgoCompetitiveNativePregameActionV1::SubmitBottoming);
+        }
         MtgoCompetitiveNativePregameModelInputV1 {
             game_number: 1,
             play_draw: MtgoCompetitivePregamePlayDrawV1::OnPlay,
@@ -307,7 +316,7 @@ mod tests {
                 required_bottom_count: required,
                 selected_bottom_count: selected.len() as u8,
             },
-            prospective_keep_size: Some(7 - required),
+            prospective_keep_size: None,
             required_bottom_count: required,
             selected_bottom_count: selected.len() as u8,
             ordered_visible_cards: cards,
@@ -350,6 +359,17 @@ mod tests {
     }
 
     #[test]
+    fn missing_mulligan_action_fails_closed_for_a_hand_outside_two_to_five_lands() {
+        let mut input = mulligan_input([M, B, B, B, B, B, B], 7);
+        input.ordered_actions = vec![MtgoCompetitiveNativePregameActionV1::KeepOpeningHand];
+        let error = controller().choose_index_v1(&input).unwrap_err();
+        assert_eq!(
+            error,
+            "placeholder pregame controller requires a mulligan action for a hand outside two to five lands"
+        );
+    }
+
+    #[test]
     fn never_goes_below_six() {
         let input = mulligan_input([B, B, B, B, B, B, B], 6);
         assert_eq!(controller().choose_index_v1(&input).unwrap(), 0);
@@ -369,6 +389,35 @@ mod tests {
         assert_eq!(
             second.ordered_actions[chosen],
             MtgoCompetitiveNativePregameActionV1::SubmitBottoming
+        );
+    }
+
+    #[test]
+    fn routes_a_bottoming_decision_through_the_checked_untrusted_pregame_path() {
+        let selecting = bottoming_input([M, M, M, B, B, B, B], &[], 1);
+        let mut scorer = controller();
+        let selection = score_checked_untrusted_competitive_native_pregame_v1(
+            &selecting,
+            &"c".repeat(64),
+            &mut scorer,
+        )
+        .unwrap();
+        assert_eq!(
+            selection.selected_action_v1(),
+            &MtgoCompetitiveNativePregameActionV1::SelectForBottom { card_slot: 6 }
+        );
+
+        let submitting = bottoming_input([M, M, M, B, B, B, B], &[6], 1);
+        let mut scorer = controller();
+        let selection = score_checked_untrusted_competitive_native_pregame_v1(
+            &submitting,
+            &"c".repeat(64),
+            &mut scorer,
+        )
+        .unwrap();
+        assert_eq!(
+            selection.selected_action_v1(),
+            &MtgoCompetitiveNativePregameActionV1::SubmitBottoming
         );
     }
 

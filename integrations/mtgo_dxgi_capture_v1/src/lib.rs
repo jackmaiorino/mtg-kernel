@@ -490,8 +490,8 @@ pub use placeholder_pregame_controller::{
 pub use placeholder_sideboard_controller::MtgoPlaceholderSideboardControllerV1;
 #[cfg(target_os = "windows")]
 pub use placeholder_visible_duel_scorer::{
-    visible_card_names_v1, MtgoPlaceholderVisibleDuelScorerV1,
-    MTGO_VISIBLE_KERNEL_SCORER_NOT_QUALIFIED_REASON_V1,
+    visible_card_names_v1, visible_name_collection_v1, MtgoPlaceholderVisibleDuelScorerV1,
+    MtgoVisibleNameCollectionV1, MTGO_VISIBLE_KERNEL_SCORER_NOT_QUALIFIED_REASON_V1,
 };
 #[cfg(target_os = "windows")]
 pub use search_root_provider::{

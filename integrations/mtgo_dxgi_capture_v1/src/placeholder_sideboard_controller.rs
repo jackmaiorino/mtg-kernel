@@ -4,6 +4,11 @@
 //! sideboard head replaces it behind the same slot.
 
 use crate::{
+    MtgoCompetitiveExternalCompletedGameHeaderV1,
+    MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+    MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1,
+    MtgoCompetitiveExternalConfirmedCombatDecisionV1, MtgoCompetitiveExternalConfirmedDecisionV1,
+    MtgoCompetitiveExternalPublicGameLogEventV1,
     MtgoCompetitiveNativeSideboardDeliberationActionV1,
     MtgoCompetitiveNativeSideboardDeliberationDecisionV1,
     MtgoCompetitiveNativeSideboardDeliberationScoreResponseV1,
@@ -12,6 +17,7 @@ use crate::{
     MtgoCompetitiveNativeSideboardScorerV1, MtgoDeploymentSlotDescriptorV1,
     MtgoDeploymentSlotKindV1, MtgoDeploymentSlotV1,
     MTGO_COMPETITIVE_AUXILIARY_MODEL_SCORING_SCHEMA_V1,
+    MTGO_COMPETITIVE_NATIVE_SIDEBOARD_DELIBERATION_SCHEMA_V1,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -41,6 +47,12 @@ impl MtgoCompetitiveNativeSideboardDeliberationScorerV1 for MtgoPlaceholderSideb
         &mut self,
         decision: &MtgoCompetitiveNativeSideboardDeliberationDecisionV1,
     ) -> Result<MtgoCompetitiveNativeSideboardDeliberationScoreResponseV1, String> {
+        if decision.schema_version != MTGO_COMPETITIVE_NATIVE_SIDEBOARD_DELIBERATION_SCHEMA_V1 {
+            return Err(
+                "placeholder sideboard controller saw an unsupported deliberation schema"
+                    .to_owned(),
+            );
+        }
         let submit = decision
             .ordered_actions
             .iter()
@@ -74,6 +86,65 @@ impl MtgoDeploymentSlotV1 for MtgoPlaceholderSideboardControllerV1 {
             qualified_for_live: false,
             contract_version: 1,
         }
+    }
+}
+
+/// Ignoring completed-match history is correct for a controller that always
+/// submits unchanged.
+impl MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1
+    for MtgoPlaceholderSideboardControllerV1
+{
+    type Output = ();
+
+    fn begin_completed_match_history_v1(
+        &mut self,
+        _header: MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn begin_completed_game_v1(
+        &mut self,
+        _header: MtgoCompetitiveExternalCompletedGameHeaderV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn consume_confirmed_decision_v1(
+        &mut self,
+        _decision: MtgoCompetitiveExternalConfirmedDecisionV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn consume_confirmed_combat_decision_v1(
+        &mut self,
+        _decision: MtgoCompetitiveExternalConfirmedCombatDecisionV1,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn consume_public_game_log_event_v1(
+        &mut self,
+        _event: MtgoCompetitiveExternalPublicGameLogEventV1<'_>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn finish_public_game_log_stream_v1(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn finish_completed_game_v1(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn finish_completed_match_history_v1(&mut self) -> Result<Self::Output, String> {
+        Ok(())
     }
 }
 
@@ -168,6 +239,51 @@ mod tests {
         assert!(controller
             .score_sideboard_deliberation_v1(&without_submit)
             .is_err());
+    }
+
+    #[test]
+    fn deliberation_rejects_an_unsupported_schema_version() {
+        let mut controller = MtgoPlaceholderSideboardControllerV1;
+        let decision = MtgoCompetitiveNativeSideboardDeliberationDecisionV1 {
+            schema_version: MTGO_COMPETITIVE_NATIVE_SIDEBOARD_DELIBERATION_SCHEMA_V1 + 1,
+            decision_number: 1,
+            model_input_commitment_sha256: "a".repeat(64),
+            deployment_commitment_sha256: "b".repeat(64),
+            prior_trace_commitment_sha256: "c".repeat(64),
+            candidate_configuration: deck_v1(),
+            ordered_actions: vec![
+                MtgoCompetitiveNativeSideboardDeliberationActionV1::SubmitConfiguration,
+            ],
+            decision_commitment_sha256: "e".repeat(64),
+        };
+        let error = controller
+            .score_sideboard_deliberation_v1(&decision)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "placeholder sideboard controller saw an unsupported deliberation schema"
+        );
+    }
+
+    // `score_competitive_native_sideboard_request_deliberation_v1` needs an
+    // `OpaqueMtgoCompetitiveNativeSideboardRequestV1`, buildable only via
+    // `bind_competitive_event_native_sideboard_request_v1`, which itself needs an
+    // `OpaqueMtgoMeasuredCompetitiveEventSideboardV1` and an
+    // `OpaqueMtgoCompetitiveCompletedMatchHistoryV1` produced by the full
+    // competitive event pipeline (entry authorization, lifecycle state, sideboard
+    // evaluation, completed-history import). Likewise
+    // `score_checked_untrusted_competitive_operator_native_sideboard_deliberation_v1`
+    // needs an `OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1`, buildable
+    // only from inside the operator loop's resource-bound entry. Neither opaque
+    // value has a constructor reachable from a unit test in this module, so this
+    // proves the trait bound the operator loop requires instead of exercising it.
+    #[test]
+    fn placeholder_satisfies_the_completed_match_history_consumer_bound() {
+        fn assert_consumer<
+            T: MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1<Output = ()>,
+        >() {
+        }
+        assert_consumer::<MtgoPlaceholderSideboardControllerV1>();
     }
 
     #[test]

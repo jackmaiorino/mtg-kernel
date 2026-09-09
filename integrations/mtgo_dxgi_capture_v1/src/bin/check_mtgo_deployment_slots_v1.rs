@@ -1,6 +1,8 @@
-//! Prints the deployment slot report for the placeholder deployment of the
-//! canonical Burn mainboard. Non-actuating: reads no MTGO process state,
-//! captures no pixels, sends no input, and grants no authority.
+//! Prints the deployment slot report for the placeholder deployment of a
+//! minimal resolvable two-card test deck (4 Lightning Bolt, 56 Mountain, 15
+//! Lightning Bolt sideboard) that exercises construction only. Non-actuating:
+//! reads no MTGO process state, captures no pixels, sends no input, and
+//! grants no authority.
 
 #[cfg(not(target_os = "windows"))]
 compile_error!("check_mtgo_deployment_slots_v1 is Windows-only");

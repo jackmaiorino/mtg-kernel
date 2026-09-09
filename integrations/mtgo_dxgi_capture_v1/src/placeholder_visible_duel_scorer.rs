@@ -15,10 +15,29 @@ use mtgo_blackbox_v1::{
 pub const MTGO_VISIBLE_KERNEL_SCORER_NOT_QUALIFIED_REASON_V1: &str =
     "player_visible_kernel_scorer_not_qualified_v1";
 
+/// Sorted, deduplicated visible card names, plus the counted zone entries
+/// whose name is absent rather than visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoVisibleNameCollectionV1 {
+    /// Sorted, deduplicated visible card names.
+    pub names: Vec<String>,
+    /// Exile entries whose name is not visible (face-down); admissible per the
+    /// player-visible scorer design, reported so no caller can miss them.
+    pub unnamed_exile_count: u32,
+    /// Stack items whose source name is not visible; encoded neutrally by the
+    /// player-visible scorer design, reported so no caller can miss them.
+    pub unnamed_stack_count: u32,
+}
+
 /// Every card name the seated player can see in one decision, sorted and
-/// deduplicated. Hidden zones are never enumerated because the input schema
-/// cannot carry them.
-pub fn visible_card_names_v1(input: &MtgoPlayerVisibleDuelDecisionInputV1) -> Vec<String> {
+/// deduplicated, plus the counted zone entries whose name is absent. Hidden
+/// zones are never enumerated because the input schema cannot carry them.
+/// Absent names are admissible under the player-visible scorer design
+/// (neutral stack detail, face-down exile) and are counted rather than
+/// dropped.
+pub fn visible_name_collection_v1(
+    input: &MtgoPlayerVisibleDuelDecisionInputV1,
+) -> MtgoVisibleNameCollectionV1 {
     let state = &input.current_state;
     let mut names: Vec<String> = Vec::new();
     names.extend(state.own_hand.iter().map(|card| card.card_name.clone()));
@@ -28,12 +47,22 @@ pub fn visible_card_names_v1(input: &MtgoPlayerVisibleDuelDecisionInputV1) -> Ve
     for side in &state.graveyards {
         names.extend(side.iter().map(|card| card.card_name.clone()));
     }
+    let unnamed_exile_count = state
+        .exile
+        .iter()
+        .filter(|card| card.visible_card_name.is_none())
+        .count();
     names.extend(
         state
             .exile
             .iter()
             .filter_map(|card| card.visible_card_name.clone()),
     );
+    let unnamed_stack_count = state
+        .stack
+        .iter()
+        .filter(|item| item.visible_source_name.is_none())
+        .count();
     names.extend(
         state
             .stack
@@ -48,7 +77,18 @@ pub fn visible_card_names_v1(input: &MtgoPlayerVisibleDuelDecisionInputV1) -> Ve
     }
     names.sort();
     names.dedup();
-    names
+    MtgoVisibleNameCollectionV1 {
+        names,
+        unnamed_exile_count: u32::try_from(unnamed_exile_count).unwrap_or(u32::MAX),
+        unnamed_stack_count: u32::try_from(unnamed_stack_count).unwrap_or(u32::MAX),
+    }
+}
+
+/// Every card name the seated player can see in one decision, sorted and
+/// deduplicated. Hidden zones are never enumerated because the input schema
+/// cannot carry them.
+pub fn visible_card_names_v1(input: &MtgoPlayerVisibleDuelDecisionInputV1) -> Vec<String> {
+    visible_name_collection_v1(input).names
 }
 
 pub struct MtgoPlaceholderVisibleDuelScorerV1 {
@@ -179,6 +219,38 @@ mod tests {
                 "Zebra Card".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn absent_names_are_counted_not_dropped() {
+        let baseline_names = visible_card_names_v1(&sample_input());
+        let mut input = sample_input();
+        let battlefield_object_ref = input.current_state.battlefield[0][0].object_ref;
+        input
+            .current_state
+            .exile
+            .push(mtgo_blackbox_v1::MtgoPlayerVisibleExileCardV1 {
+                object_ref: mtgo_blackbox_v1::MtgoPlayerVisibleObjectRefV1 {
+                    visible_ordinal: 9_101,
+                },
+                zone_owner: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+                visible_card_name: None,
+            });
+        input
+            .current_state
+            .stack
+            .push(mtgo_blackbox_v1::MtgoPlayerVisibleStackItemV1 {
+                visible_stack_position: 0,
+                source_object_ref: battlefield_object_ref,
+                visible_source_name: None,
+                controller: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+                visible_targets: Vec::new(),
+                item_kind: mtgo_blackbox_v1::StackItemKindV2::Spell,
+            });
+        let collection = visible_name_collection_v1(&input);
+        assert_eq!(collection.unnamed_exile_count, 1);
+        assert_eq!(collection.unnamed_stack_count, 1);
+        assert_eq!(collection.names, baseline_names);
     }
 
     #[test]
