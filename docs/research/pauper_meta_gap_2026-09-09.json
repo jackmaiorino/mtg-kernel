@@ -1,0 +1,10182 @@
+{
+ "archetypes": {
+  "Affinity": {
+   "decks": 8,
+   "share": 10.0,
+   "cards": [
+    {
+     "card": "Thoughtcast",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Myr Enforcer",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Galvanic Blast",
+     "avg_main": 3.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Vault of Whispers",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Reckoner's Bargain",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Refurbished Familiar",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Utrom Monitor",
+     "avg_main": 3.12,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Seat of the Synod",
+     "avg_main": 3.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Mistvault Bridge",
+     "avg_main": 3.0,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Great Furnace",
+     "avg_main": 2.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Ichor Wellspring",
+     "avg_main": 2.5,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Drossforge Bridge",
+     "avg_main": 2.38,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Blood Fountain",
+     "avg_main": 2.0,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Silverbluff Bridge",
+     "avg_main": 2.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_main": 1.88,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Krark-Clan Shaman",
+     "avg_main": 1.75,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Glint Hawk",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Cryogen Relic",
+     "avg_main": 1.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Giant's Boulder",
+     "avg_main": 1.38,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Ancient Den",
+     "avg_main": 1.25,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Toxin Analysis",
+     "avg_main": 1.25,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Makeshift Munitions",
+     "avg_main": 0.88,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Black Mage's Rod",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Sewer-veillance Cam",
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Razortide Bridge",
+     "avg_main": 0.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Experimental Synthesizer",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Kenku Artificer",
+     "avg_main": 0.38,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Cast Down",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Journey to Nowhere",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Lembas",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Metallic Rebuke",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Kor Skyfisher",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Fanatical Offering",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Mountain",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Swamp",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Plains",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Prophetic Prism",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Hydroblast",
+     "avg_side": 3.38,
+     "in_registry": true
+    },
+    {
+     "card": "Pyroblast",
+     "avg_side": 2.25,
+     "in_registry": true
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 1.88,
+     "in_registry": true
+    },
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 1.25,
+     "in_registry": true
+    },
+    {
+     "card": "Extract a Confession",
+     "avg_side": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Krark-Clan Shaman",
+     "avg_side": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Duress",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Unexpected Fangs",
+     "avg_side": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Envelop",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Campfire",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Cast Down",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Mesmeric Fiend",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 0.12,
+     "in_registry": true
+    }
+   ]
+  },
+  "Burn": {
+   "decks": 8,
+   "share": 12.0,
+   "cards": [
+    {
+     "card": "Mountain",
+     "avg_main": 18.5,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lava Dart",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Grab the Prize",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Highway Robbery",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Fiery Temper",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Sneaky Snacker",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lightning Bolt",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Kessig Flamebreather",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Voldaren Epicure",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Fireblast",
+     "avg_main": 3.25,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Guttersnipe",
+     "avg_main": 3.25,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Faithless Looting",
+     "avg_main": 3.25,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Melded Moxite",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Pyroblast",
+     "avg_side": 3.12,
+     "in_registry": true
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 2.75,
+     "in_registry": true
+    },
+    {
+     "card": "Searing Blaze",
+     "avg_side": 2.38,
+     "in_registry": true
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 1.75,
+     "in_registry": true
+    },
+    {
+     "card": "End the Festivities",
+     "avg_side": 1.38,
+     "in_registry": true
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 1.25,
+     "in_registry": true
+    },
+    {
+     "card": "Smash to Smithereens",
+     "avg_side": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Tormod's Crypt",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Molten Rain",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Raze",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Campfire",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Chain Lightning",
+     "avg_side": 0.12,
+     "in_registry": true
+    }
+   ]
+  },
+  "DimirControl": {
+   "decks": 8,
+   "share": 4.0,
+   "cards": [
+    {
+     "card": "Island",
+     "avg_main": 10.12,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lorien Revealed",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Contaminated Aquifer",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Counterspell",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Snuff Out",
+     "avg_main": 3.88,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Brainstorm",
+     "avg_main": 3.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Sneaky Snacker",
+     "avg_main": 2.5,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Tolarian Terror",
+     "avg_main": 2.5,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Cast Down",
+     "avg_main": 2.12,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Thought Scour",
+     "avg_main": 2.0,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Abandon Attachments",
+     "avg_main": 1.62,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Mental Note",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Augur of Bolas",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Spellstutter Sprite",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Faerie Seer",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Gurmag Angler",
+     "avg_main": 1.25,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Ice Tunnel",
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Spell Pierce",
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Thorn of the Black Rose",
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Dispel",
+     "avg_main": 0.75,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Ninja of the Deep Hours",
+     "avg_main": 0.75,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Moon-Circuit Hacker",
+     "avg_main": 0.75,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_main": 0.62,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Suffocating Fumes",
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Unexpected Fangs",
+     "avg_main": 0.62,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_main": 0.62,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Swamp",
+     "avg_main": 0.5,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Consider",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ponder",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Plunder the Trollshaws",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Seething Landscape",
+     "avg_main": 0.38,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "The Modern Age",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Extract a Confession",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Sewer-veillance Cam",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Deep Analysis",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Lose Focus",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Foreboding Landscape",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Mukotai Ambusher",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Agony Warp",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Dimir Aqueduct",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Preordain",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 3.0,
+     "in_registry": true
+    },
+    {
+     "card": "Annul",
+     "avg_side": 2.12,
+     "in_registry": true
+    },
+    {
+     "card": "Hydroblast",
+     "avg_side": 2.0,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_side": 1.25,
+     "in_registry": true
+    },
+    {
+     "card": "Arms of Hadar",
+     "avg_side": 1.25,
+     "in_registry": false
+    },
+    {
+     "card": "Steel Sabotage",
+     "avg_side": 1.25,
+     "in_registry": true
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Unexpected Fangs",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Extract a Confession",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Gleeful Sabotage",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Drown in Sorrow",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Mukotai Ambusher",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Campfire",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Suffocating Fumes",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Agony Warp",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Okiba-Gang Shinobi",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Azure Fleet Admiral",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Dispel",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Thorn of the Black Rose",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "Elves": {
+   "decks": 8,
+   "share": 5.0,
+   "cards": [
+    {
+     "card": "Forest",
+     "avg_main": 7.0,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Snow-Covered Forest",
+     "avg_main": 4.12,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Priest of Titania",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Quirion Ranger",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lead the Stampede",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Winding Way",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Timberwatch Elf",
+     "avg_main": 3.62,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Generous Ent",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Nyxborn Hydra",
+     "avg_main": 3.25,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Avenging Hunter",
+     "avg_main": 2.88,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Masked Vandal",
+     "avg_main": 2.88,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Llanowar Elves",
+     "avg_main": 2.75,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Fyndhorn Elves",
+     "avg_main": 2.12,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Elvish Mystic",
+     "avg_main": 2.12,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Jaspera Sentinel",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Land Grant",
+     "avg_main": 1.5,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Birchlore Rangers",
+     "avg_main": 1.25,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Sagu Wildling",
+     "avg_main": 1.0,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Gingerbread Cabin",
+     "avg_main": 0.88,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Elvish Vanguard",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Salt Road Packbeast",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Rift Sower",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Wellwisher",
+     "avg_main": 0.38,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Pegasus Guardian",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Distant Melody",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Boulderbranch Golem",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Arbor Elf",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Lys Alana Huntmaster",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Primordial Pachyderm",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Radiant Grove",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Stormshriek Feral",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Tuktuk Rubblefort",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 2.62,
+     "in_registry": true
+    },
+    {
+     "card": "Vitu-Ghazi Inspector",
+     "avg_side": 2.0,
+     "in_registry": true
+    },
+    {
+     "card": "Monstrous Emergence",
+     "avg_side": 2.0,
+     "in_registry": true
+    },
+    {
+     "card": "Spinewoods Paladin",
+     "avg_side": 1.88,
+     "in_registry": true
+    },
+    {
+     "card": "Masked Vandal",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Weather the Storm",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Honorable Scout",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Scattershot Archer",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Spidersilk Armor",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Sagu Wildling",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Wellwisher",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Viridian Longbow",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Webweaver Changeling",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Negate",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Natural State",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Gorilla Shaman",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Valakut Invoker",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Dispel",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Nylea's Disciple",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Snakeskin Veil",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Lignify",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Granger Guildmage",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Rooftop Percher",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Coalition Honor Guard",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Crimson Acolyte",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Flaring Pain",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Obsidian Acolyte",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Undergrowth Leopard",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "Ephemerate": {
+   "decks": 8,
+   "share": 4.0,
+   "cards": [
+    {
+     "card": "Snow-Covered Island",
+     "avg_main": 5.12,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Preordain",
+     "avg_main": 3.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Mulldrifter",
+     "avg_main": 3.5,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Lorien Revealed",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Ephemerate",
+     "avg_main": 3.12,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Perilous Landscape",
+     "avg_main": 3.12,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Skred",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Archaeomancer",
+     "avg_main": 2.75,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Augur of Bolas",
+     "avg_main": 2.75,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Counterspell",
+     "avg_main": 2.5,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Island",
+     "avg_main": 2.38,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Volatile Fjord",
+     "avg_main": 1.88,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Glacial Floodplain",
+     "avg_main": 1.75,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Bender's Waterskin",
+     "avg_main": 1.5,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Snow-Covered Plains",
+     "avg_main": 1.5,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Snow-Covered Mountain",
+     "avg_main": 1.38,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_main": 1.25,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Dispel",
+     "avg_main": 1.25,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Ride's End",
+     "avg_main": 1.12,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "God-Pharaoh's Faithful",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Sunscape Familiar",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Snap",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Azorius Chancery",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Union of the Third Path",
+     "avg_main": 0.88,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Behold the Multiverse",
+     "avg_main": 0.62,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Suplex",
+     "avg_main": 0.62,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Plains",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Memory Lapse",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "The Modern Age",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Foil",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Thraben Charm",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Sea Gate Oracle",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Meeting of Minds",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ash Barrens",
+     "avg_main": 0.38,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Deep Analysis",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Prismatic Strands",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Brainstorm",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Fanged Flames",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Ghostly Flicker",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Negate",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Mortuary Mire",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Bedeck/Bedazzle",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Goliath Paladin",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ethereal Haze",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Fallaji Archaeologist",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Glorious Gale",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Prohibit",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Remove Soul",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Bonder's Ornament",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Torch the Tower",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Idyllic Beachfront",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Hydroblast",
+     "avg_side": 3.5,
+     "in_registry": true
+    },
+    {
+     "card": "Pyroblast",
+     "avg_side": 2.38,
+     "in_registry": true
+    },
+    {
+     "card": "Dust to Dust",
+     "avg_side": 1.5,
+     "in_registry": true
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_side": 1.12,
+     "in_registry": true
+    },
+    {
+     "card": "Envelop",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Thraben Charm",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Last Breath",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Negate",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Ethereal Haze",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Annul",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Steel Sabotage",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Weather the Storm",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Ingot Chewer",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Stonehorn Dignitary",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Destroy Evil",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Prohibit",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Goliath Paladin",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Circle of Protection: Red",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "God-Pharaoh's Faithful",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Fiery Cannonade",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Campfire",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Revoke Existence",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "Garden": {
+   "decks": 8,
+   "share": 3.0,
+   "cards": [
+    {
+     "card": "Swamp",
+     "avg_main": 9.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Cast Down",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Khalni Garden",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Fanatical Offering",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Eviscerator's Insight",
+     "avg_main": 3.38,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Ichor Wellspring",
+     "avg_main": 3.38,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Troll of Khazad-dum",
+     "avg_main": 3.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_main": 2.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Defile",
+     "avg_main": 2.5,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Lembas",
+     "avg_main": 2.5,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Tithing Blade",
+     "avg_main": 2.38,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Crypt Rats",
+     "avg_main": 2.25,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Campfire",
+     "avg_main": 2.25,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_main": 1.88,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Witch's Cottage",
+     "avg_main": 1.38,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Haunted Mire",
+     "avg_main": 1.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Nutrient Block",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Snuff Out",
+     "avg_main": 0.88,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Avenging Hunter",
+     "avg_main": 0.75,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Golgari Rot Farm",
+     "avg_main": 0.75,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Cauldron Familiar",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Pestilence",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Accursed Marauder",
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Fungal Infection",
+     "avg_main": 0.5,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Spinning Darkness",
+     "avg_main": 0.5,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Suffocating Fumes",
+     "avg_main": 0.5,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Heritage Reclamation",
+     "avg_main": 0.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Sagu Wildling",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Unmake",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Reckoner's Bargain",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Toxin Analysis",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Bonder's Ornament",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Heaped Harvest",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Grapple with Death",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Tragic Slip",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Shred Memory",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Go for the Throat",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Weather the Storm",
+     "avg_side": 3.88,
+     "in_registry": true
+    },
+    {
+     "card": "Troublemaker Ouphe",
+     "avg_side": 2.75,
+     "in_registry": true
+    },
+    {
+     "card": "Duress",
+     "avg_side": 2.0,
+     "in_registry": true
+    },
+    {
+     "card": "Drown in Sorrow",
+     "avg_side": 2.0,
+     "in_registry": false
+    },
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 1.38,
+     "in_registry": true
+    },
+    {
+     "card": "Rancid Earth",
+     "avg_side": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Cuombajj Witches",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Tragic Slip",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Moment's Peace",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Avenging Hunter",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Balustrade Spy",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Diabolic Edict",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Snuff Out",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "Gates": {
+   "decks": 8,
+   "share": 2.0,
+   "cards": [
+    {
+     "card": "Basilisk Gate",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Citadel Gate",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Sacred Cat",
+     "avg_main": 3.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Outlaw Medic",
+     "avg_main": 3.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Prismatic Strands",
+     "avg_main": 3.38,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Journey to Nowhere",
+     "avg_main": 3.0,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Thraben Charm",
+     "avg_main": 2.75,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Malevolent Rumble",
+     "avg_main": 2.5,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Writhing Chrysalis",
+     "avg_main": 2.0,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Manor Gate",
+     "avg_main": 1.88,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Plains",
+     "avg_main": 1.75,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Cliffgate",
+     "avg_main": 1.5,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Squadron Hawk",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "The Modern Age",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Counterspell",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Brainstorm",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Lorien Revealed",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Sea Gate",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Heap Gate",
+     "avg_main": 1.5,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Guardian of the Guildpact",
+     "avg_main": 1.38,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Island",
+     "avg_main": 1.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Sneaky Snacker",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Pursue the Past",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Lightning Bolt",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Mountain",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Armadillo Cloak",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Melded Moxite",
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Gatecreeper Vine",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Midnight Tilling",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Call Damage Control",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Corrupted Conviction",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Devour Flesh",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Sheltering Word",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Daru Spiritualist",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Nomads en-Kor",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Task Force",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Black Dragon Gate",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Idyllic Beachfront",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Azorius Guildgate",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Forest",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Spirit en-Kor",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Stormshriek Feral",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Shattered Acolyte",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Dispel",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Sagu Wildling",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Balustrade Spy",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Deceptive Landscape",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Swamp",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Pyroblast",
+     "avg_side": 2.12,
+     "in_registry": true
+    },
+    {
+     "card": "Dust to Dust",
+     "avg_side": 1.62,
+     "in_registry": true
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_side": 1.38,
+     "in_registry": true
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 1.12,
+     "in_registry": true
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Ancient Grudge",
+     "avg_side": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Hydroblast",
+     "avg_side": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Destroy Evil",
+     "avg_side": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Vendetta",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Duress",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Guardian of the Guildpact",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Tamiyo's Safekeeping",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Revoke Existence",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Ephemeral Shields",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Fiery Cannonade",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Coalition Honor Guard",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Negate",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Palace Sentinels",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Dispel",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Envelop",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Journey to Nowhere",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Flaring Pain",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Electrickery",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Suplex",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "GruulAggro": {
+   "decks": 8,
+   "share": 4.0,
+   "cards": [
+    {
+     "card": "Forest",
+     "avg_main": 9.62,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Writhing Chrysalis",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Arbor Elf",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Utopia Sprawl",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Snow-Covered Forest",
+     "avg_main": 3.5,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Eldrazi Repurposer",
+     "avg_main": 3.38,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Avenging Hunter",
+     "avg_main": 3.0,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Boarding Party",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Wild Growth",
+     "avg_main": 2.75,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Mountain",
+     "avg_main": 2.25,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Jewel Thief",
+     "avg_main": 2.0,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Malevolent Rumble",
+     "avg_main": 2.0,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Mwonvuli Acid-Moss",
+     "avg_main": 2.0,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Annoyed Altisaur",
+     "avg_main": 1.88,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Thermokarst",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Sagu Wildling",
+     "avg_main": 1.38,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Ram Through",
+     "avg_main": 1.0,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Bonder's Ornament",
+     "avg_main": 0.88,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Nyxborn Hydra",
+     "avg_main": 0.88,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Structural Distortion",
+     "avg_main": 0.75,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Molten Gatekeeper",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Impact Tremors",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Bannerhide Krushok",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Snow-Covered Mountain",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Skred",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Glimpse the Impossible",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Call Damage Control",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Essence Warden",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Nest Invader",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Horrific Assault",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Bristling Backwoods",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Khalni Garden",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Raphael, Tough Turtle",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ancient Grudge",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Brood Birthing",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Generous Ent",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Temur Battle Rage",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Smaug, the Great Calamity",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Highland Forest",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Wooded Ridgeline",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Vines of Vastwood",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Lead the Stampede",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Ferocious Werefox",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "You Meet in a Tavern",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Weather the Storm",
+     "avg_side": 2.88,
+     "in_registry": true
+    },
+    {
+     "card": "Deglamer",
+     "avg_side": 2.25,
+     "in_registry": false
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 2.12,
+     "in_registry": true
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_side": 1.62,
+     "in_registry": true
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Suplex",
+     "avg_side": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Horrific Assault",
+     "avg_side": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Fiery Cannonade",
+     "avg_side": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Vines of Vastwood",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Monstrous Emergence",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Nylea's Disciple",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Gorilla Shaman",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Heritage Reclamation",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Electrickery",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Pulse of Murasa",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Pyroblast",
+     "avg_side": 0.12,
+     "in_registry": true
+    }
+   ]
+  },
+  "Jund": {
+   "decks": 8,
+   "share": 5.0,
+   "cards": [
+    {
+     "card": "Cleansing Wildfire",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Drossforge Bridge",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Refurbished Familiar",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Slagwoods Bridge",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Writhing Chrysalis",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Fanatical Offering",
+     "avg_main": 3.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Ichor Wellspring",
+     "avg_main": 3.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Twisted Landscape",
+     "avg_main": 3.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Cast Down",
+     "avg_main": 3.5,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_main": 3.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Krark-Clan Shaman",
+     "avg_main": 3.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Swamp",
+     "avg_main": 2.62,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Lembas",
+     "avg_main": 2.25,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Eviscerator's Insight",
+     "avg_main": 2.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Vault of Whispers",
+     "avg_main": 2.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Forest",
+     "avg_main": 1.75,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Gixian Infiltrator",
+     "avg_main": 1.25,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Mountain",
+     "avg_main": 1.12,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Blood Fountain",
+     "avg_main": 1.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Makeshift Munitions",
+     "avg_main": 0.75,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Toxin Analysis",
+     "avg_main": 0.75,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Nyxborn Hydra",
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Torch the Tower",
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Pulse of Murasa",
+     "avg_main": 0.5,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Snuff Out",
+     "avg_main": 0.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Snow-Covered Swamp",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Snow-Covered Forest",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Snow-Covered Mountain",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Galvanic Blast",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Command Bridge",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Terminate",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Geomancer's Gambit",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Weather the Storm",
+     "avg_side": 3.62,
+     "in_registry": true
+    },
+    {
+     "card": "Duress",
+     "avg_side": 2.88,
+     "in_registry": true
+    },
+    {
+     "card": "Troublemaker Ouphe",
+     "avg_side": 2.12,
+     "in_registry": true
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_side": 2.0,
+     "in_registry": true
+    },
+    {
+     "card": "Pyroblast",
+     "avg_side": 1.25,
+     "in_registry": true
+    },
+    {
+     "card": "Ancient Grudge",
+     "avg_side": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Terminate",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Extract a Confession",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Toxin Analysis",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Cast Down",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Torch the Tower",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "MonoBlueAggro": {
+   "decks": 8,
+   "share": 12.0,
+   "cards": [
+    {
+     "card": "Island",
+     "avg_main": 16.5,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Counterspell",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Cryptic Serpent",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Delver of Secrets",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Tolarian Terror",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Brainstorm",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Mental Note",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Thought Scour",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Lorien Revealed",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Ponder",
+     "avg_main": 1.88,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Dispel",
+     "avg_main": 1.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Sleep of the Dead",
+     "avg_main": 1.5,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Spell Pierce",
+     "avg_main": 1.38,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Brinebarrow Intruder",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Faerie Seer",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Moon-Circuit Hacker",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Of One Mind",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Faerie Miscreant",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Ninja of the Deep Hours",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Spellstutter Sprite",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Deem Inferior",
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Cryoshatter",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Sewer-veillance Cam",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Gut Shot",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Force Spike",
+     "avg_main": 0.5,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Harrier Strix",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Artful Dodge",
+     "avg_main": 0.38,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Deep Analysis",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Snap",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Plunder the Trollshaws",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Boomerang",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Vapor Snag",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 3.0,
+     "in_registry": true
+    },
+    {
+     "card": "Hydroblast",
+     "avg_side": 2.88,
+     "in_registry": true
+    },
+    {
+     "card": "Annul",
+     "avg_side": 2.5,
+     "in_registry": true
+    },
+    {
+     "card": "Steel Sabotage",
+     "avg_side": 1.75,
+     "in_registry": true
+    },
+    {
+     "card": "Gut Shot",
+     "avg_side": 1.75,
+     "in_registry": true
+    },
+    {
+     "card": "Envelop",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Dispel",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Cryoshatter",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Piracy Charm",
+     "avg_side": 0.12,
+     "in_registry": true
+    }
+   ]
+  },
+  "RedDeckWins": {
+   "decks": 8,
+   "share": 6.0,
+   "cards": [
+    {
+     "card": "Mountain",
+     "avg_main": 13.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Clockwork Percussionist",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Goblin Tomb Raider",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Voldaren Epicure",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Galvanic Blast",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lightning Bolt",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Great Furnace",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Goblin Bushwhacker",
+     "avg_main": 3.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Burning-Tree Emissary",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Rally at the Hornburg",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Experimental Synthesizer",
+     "avg_main": 2.5,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Reckless Impulse",
+     "avg_main": 2.12,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Chain Lightning",
+     "avg_main": 1.5,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Inventor's Axe",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Gingerbrute",
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Fireblast",
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "End the Festivities",
+     "avg_main": 0.62,
+     "deck_pct": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Wrenn's Resolve",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Reckless Lackey",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Tectonic Hazard",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Burning Sun's Fury",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 3.38,
+     "in_registry": true
+    },
+    {
+     "card": "Smash to Smithereens",
+     "avg_side": 2.12,
+     "in_registry": false
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 2.0,
+     "in_registry": true
+    },
+    {
+     "card": "Cast into the Fire",
+     "avg_side": 1.5,
+     "in_registry": true
+    },
+    {
+     "card": "End the Festivities",
+     "avg_side": 1.12,
+     "in_registry": true
+    },
+    {
+     "card": "Raze",
+     "avg_side": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Pyroblast",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Tormod's Crypt",
+     "avg_side": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Cleansing Wildfire",
+     "avg_side": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Tectonic Hazard",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Flaring Pain",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Searing Blaze",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Suplex",
+     "avg_side": 0.25,
+     "in_registry": false
+    }
+   ]
+  },
+  "Spy": {
+   "decks": 8,
+   "share": 4.0,
+   "cards": [
+    {
+     "card": "Generous Ent",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Sagu Wildling",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Saruli Caretaker",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Overgrown Battlement",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Balustrade Spy",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Land Grant",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lead the Stampede",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Winding Way",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Wall of Roots",
+     "avg_main": 3.75,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Masked Vandal",
+     "avg_main": 3.38,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Forest",
+     "avg_main": 3.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Gatecreeper Vine",
+     "avg_main": 2.88,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Mesmeric Fiend",
+     "avg_main": 2.75,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Elves of Deep Shadow",
+     "avg_main": 2.38,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Lotleth Giant",
+     "avg_main": 2.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Dread Return",
+     "avg_main": 2.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Avenging Hunter",
+     "avg_main": 1.62,
+     "deck_pct": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Quirion Ranger",
+     "avg_main": 1.5,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Lotus Petal",
+     "avg_main": 1.0,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Swamp",
+     "avg_main": 1.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Nyxborn Hydra",
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Troll of Khazad-dum",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Writhing Chrysalis",
+     "avg_side": 2.62,
+     "in_registry": true
+    },
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 1.88,
+     "in_registry": true
+    },
+    {
+     "card": "Nylea's Disciple",
+     "avg_side": 1.88,
+     "in_registry": false
+    },
+    {
+     "card": "Mesmeric Fiend",
+     "avg_side": 1.25,
+     "in_registry": true
+    },
+    {
+     "card": "Fang Dragon",
+     "avg_side": 1.12,
+     "in_registry": false
+    },
+    {
+     "card": "Flaring Pain",
+     "avg_side": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Mountain",
+     "avg_side": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Masked Vandal",
+     "avg_side": 0.62,
+     "in_registry": true
+    },
+    {
+     "card": "Accursed Marauder",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Jack-o'-Lantern",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Vitu-Ghazi Inspector",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Healer of the Glade",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Scattershot Archer",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Avenging Hunter",
+     "avg_side": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Acorn Harvest",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Infestation Sage",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Old Thrush",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Voracious Varmint",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Swamp",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Dread Return",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Lotleth Giant",
+     "avg_side": 0.12,
+     "in_registry": true
+    }
+   ]
+  },
+  "Terror": {
+   "decks": 8,
+   "share": 3.0,
+   "cards": [
+    {
+     "card": "Island",
+     "avg_main": 13.88,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Brainstorm",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Counterspell",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Thought Scour",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Tolarian Terror",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Lorien Revealed",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Mental Note",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Cryptic Serpent",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Force Spike",
+     "avg_main": 3.38,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Ponder",
+     "avg_main": 3.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Deem Inferior",
+     "avg_main": 2.12,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Sleep of the Dead",
+     "avg_main": 2.0,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Snow-Covered Island",
+     "avg_main": 2.0,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_main": 1.62,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Dispel",
+     "avg_main": 1.38,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Deep Analysis",
+     "avg_main": 1.25,
+     "deck_pct": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Artful Dodge",
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Unable to Scream",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Spell Pierce",
+     "avg_main": 0.38,
+     "deck_pct": 0.25,
+     "in_registry": true
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Hydroblast",
+     "avg_side": 4.0,
+     "in_registry": true
+    },
+    {
+     "card": "Annul",
+     "avg_side": 2.38,
+     "in_registry": true
+    },
+    {
+     "card": "Steel Sabotage",
+     "avg_side": 2.25,
+     "in_registry": true
+    },
+    {
+     "card": "Gut Shot",
+     "avg_side": 1.88,
+     "in_registry": true
+    },
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 1.88,
+     "in_registry": true
+    },
+    {
+     "card": "Envelop",
+     "avg_side": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Azure Fleet Admiral",
+     "avg_side": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Unable to Scream",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Dispel",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_side": 0.12,
+     "in_registry": true
+    }
+   ]
+  },
+  "Urzatron": {
+   "decks": 8,
+   "share": 9.0,
+   "cards": [
+    {
+     "card": "Urza's Tower",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Urza's Power Plant",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Urza's Mine",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Giant's Boulder",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Expedition Map",
+     "avg_main": 4.0,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Bramble Wurm",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Barrels of Blasting Jelly",
+     "avg_main": 3.25,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Ancient Stirrings",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Crop Rotation",
+     "avg_main": 2.62,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Forest",
+     "avg_main": 2.25,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Unfathomable Truths",
+     "avg_main": 2.25,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Maelstrom Colossus",
+     "avg_main": 2.25,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Generous Ent",
+     "avg_main": 2.0,
+     "deck_pct": 0.88,
+     "in_registry": true
+    },
+    {
+     "card": "Pinnacle Kill-Ship",
+     "avg_main": 2.0,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Bonder's Ornament",
+     "avg_main": 1.75,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Boulderbranch Golem",
+     "avg_main": 1.62,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Malevolent Rumble",
+     "avg_main": 1.5,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Conduit Pylons",
+     "avg_main": 1.38,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Nyxborn Hydra",
+     "avg_main": 1.38,
+     "deck_pct": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_main": 0.88,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Prophetic Prism",
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Rooftop Percher",
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Pulse of Murasa",
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "in_registry": true
+    },
+    {
+     "card": "Plunder the Trollshaws",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Writhing Chrysalis",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Visionary's Dance",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Mystical Teachings",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Mulldrifter",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Haunted Fengraf",
+     "avg_main": 0.38,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Warped Tusker",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Wooded Ridgeline",
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Mnemonic Wall",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Island",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Ghostly Flicker",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Weather the Storm",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Lorien Revealed",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Breath Weapon",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Energy Refractor",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Moment's Peace",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Prohibit",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Stonehorn Dignitary",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Unwind",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ephemerate",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Murmuring Mystic",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Molten Tributary",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Tangled Islet",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Kaervek's Torch",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Candy Trail",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Lignify",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Firebolt",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Deep Analysis",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Call Damage Control",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Crystal Grotto",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Breath Weapon",
+     "avg_side": 3.0,
+     "in_registry": true
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 1.62,
+     "in_registry": true
+    },
+    {
+     "card": "Blue Elemental Blast",
+     "avg_side": 1.38,
+     "in_registry": true
+    },
+    {
+     "card": "Call Damage Control",
+     "avg_side": 1.12,
+     "in_registry": false
+    },
+    {
+     "card": "Hydroblast",
+     "avg_side": 1.0,
+     "in_registry": true
+    },
+    {
+     "card": "Earth Rift",
+     "avg_side": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Ancient Grudge",
+     "avg_side": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Scour from Existence",
+     "avg_side": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Red Elemental Blast",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Rooftop Percher",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Tangle",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Fiery Cannonade",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Faerie Macabre",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Nihil Spellbomb",
+     "avg_side": 0.38,
+     "in_registry": true
+    },
+    {
+     "card": "Feed the Clan",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Coalition Honor Guard",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Circle of Protection: Red",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Tormod's Crypt",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Whispersilk Cloak",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Moment's Peace",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Stonehorn Dignitary",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Dinrova Horror",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Exclude",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Flaring Pain",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  },
+  "WhiteWeenie": {
+   "decks": 8,
+   "share": 4.0,
+   "cards": [
+    {
+     "card": "Plains",
+     "avg_main": 15.5,
+     "deck_pct": 1.0,
+     "in_registry": false
+    },
+    {
+     "card": "Thraben Inspector",
+     "avg_main": 3.5,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Novice Inspector",
+     "avg_main": 3.12,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Battle Screech",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Raffine's Informant",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Kor Skyfisher",
+     "avg_main": 3.0,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Lunarch Veteran",
+     "avg_main": 2.88,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Thraben Charm",
+     "avg_main": 2.88,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Leonardo, Big Brother",
+     "avg_main": 2.88,
+     "deck_pct": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Prismatic Strands",
+     "avg_main": 2.62,
+     "deck_pct": 0.75,
+     "in_registry": true
+    },
+    {
+     "card": "Guardians' Pledge",
+     "avg_main": 1.75,
+     "deck_pct": 0.75,
+     "in_registry": false
+    },
+    {
+     "card": "Idyllic Grange",
+     "avg_main": 1.38,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Spider-Man, Web-Slinger",
+     "avg_main": 1.0,
+     "deck_pct": 0.62,
+     "in_registry": false
+    },
+    {
+     "card": "Ramosian Rally",
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Elite Interceptor",
+     "avg_main": 0.75,
+     "deck_pct": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Patient Instructor",
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Akroan Skyguard",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Lagonna-Band Trailblazer",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Skyward Spider",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Guiding Voice",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Homestead Courage",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Benevolent Blessing",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ethereal Armor",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Hyena Umbra",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Sentinel's Eyes",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Spirit Link",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Remote Farm",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Halo Hopper",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Martyr's Soul",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Ornithopter",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Phyrexian Walker",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Salt Road Packbeast",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Search Party Captain",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Khalni Garden",
+     "avg_main": 0.5,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Winding Way",
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Journey to Nowhere",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Orzhov Basilica",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Greatsword of Tyr",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Summon: Choco/Mog",
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Icatian Javelineers",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Steadfast Unicorn",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Eagles of the North",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Blacksmith's Skill",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Emerge Unscathed",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Loran's Escape",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Holdout Settlement",
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "in_registry": false
+    }
+   ],
+   "sideboard": [
+    {
+     "card": "Dust to Dust",
+     "avg_side": 3.12,
+     "in_registry": true
+    },
+    {
+     "card": "Martyr of Sands",
+     "avg_side": 1.75,
+     "in_registry": false
+    },
+    {
+     "card": "Standard Bearer",
+     "avg_side": 1.62,
+     "in_registry": false
+    },
+    {
+     "card": "Journey to Nowhere",
+     "avg_side": 1.5,
+     "in_registry": true
+    },
+    {
+     "card": "Holy Light",
+     "avg_side": 0.88,
+     "in_registry": false
+    },
+    {
+     "card": "Destroy Evil",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Temple Acolyte",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Thraben Charm",
+     "avg_side": 0.5,
+     "in_registry": true
+    },
+    {
+     "card": "Archon's Glory",
+     "avg_side": 0.5,
+     "in_registry": false
+    },
+    {
+     "card": "Revoke Existence",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Death Speakers",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Mask of Law and Grace",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Shield of Duty and Reason",
+     "avg_side": 0.38,
+     "in_registry": false
+    },
+    {
+     "card": "Obsidian Acolyte",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Sunlance",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Lifelink",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Palace Sentinels",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Goliath Paladin",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Ultimate Alliance",
+     "avg_side": 0.25,
+     "in_registry": false
+    },
+    {
+     "card": "Patrician's Scorn",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Hallow",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Relic of Progenitus",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Blacksmith's Skill",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Airbending Lesson",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Apostle's Blessing",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Sokka's Sword Training",
+     "avg_side": 0.12,
+     "in_registry": false
+    },
+    {
+     "card": "Prismatic Strands",
+     "avg_side": 0.12,
+     "in_registry": true
+    },
+    {
+     "card": "Bojuka Bog",
+     "avg_side": 0.12,
+     "in_registry": false
+    }
+   ]
+  }
+ },
+ "missing_cards": {
+  "Plains": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Ephemerate": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    },
+    "Gates": {
+     "avg_main": 1.75,
+     "deck_pct": 0.62
+    },
+    "WhiteWeenie": {
+     "avg_main": 15.5,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 64.84375,
+   "main_weight": 64.84375,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Giant's Boulder": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 1.38,
+     "deck_pct": 0.38
+    },
+    "Urzatron": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 41.15625,
+   "main_weight": 41.15625,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Kessig Flamebreather": {
+   "archetypes": {
+    "Burn": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 36.75,
+   "main_weight": 36.75,
+   "xmage_java": "k\\KessigFlamebreather.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Urza's Tower": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 36.0,
+   "main_weight": 36.0,
+   "xmage_java": "u\\UrzaSTower.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": []
+   }
+  },
+  "Urza's Power Plant": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 36.0,
+   "main_weight": 36.0,
+   "xmage_java": "u\\UrzaSPowerPlant.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": []
+   }
+  },
+  "Urza's Mine": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 36.0,
+   "main_weight": 36.0,
+   "xmage_java": "u\\UrzaSMine.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": []
+   }
+  },
+  "Expedition Map": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 36.0,
+   "main_weight": 36.0,
+   "xmage_java": "e\\ExpeditionMap.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Utrom Monitor": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 3.12,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 31.25,
+   "main_weight": 31.25,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Bramble Wurm": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 27.5625,
+   "main_weight": 27.5625,
+   "xmage_java": "b\\BrambleWurm.java",
+   "complexity": {
+    "java_lines": 57,
+    "features": [
+     "trigger",
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Delver of Secrets": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 27.0,
+   "main_weight": 27.0,
+   "xmage_java": "d\\DelverOfSecrets.java",
+   "complexity": {
+    "java_lines": 90,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Barrels of Blasting Jelly": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 3.25,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 25.59375,
+   "main_weight": 25.59375,
+   "xmage_java": "b\\BarrelsOfBlastingJelly.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Crop Rotation": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 2.62,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 23.625,
+   "main_weight": 23.625,
+   "xmage_java": "c\\CropRotation.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Ancient Stirrings": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 20.25,
+   "main_weight": 20.25,
+   "xmage_java": "a\\AncientStirrings.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": []
+   }
+  },
+  "Snuff Out": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 3.88,
+     "deck_pct": 1.0
+    },
+    "Garden": {
+     "avg_main": 0.88,
+     "deck_pct": 0.88,
+     "avg_side": 0.12
+    },
+    "Jund": {
+     "avg_main": 0.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 18.7578125,
+   "main_weight": 18.734375,
+   "xmage_java": "s\\SnuffOut.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "static",
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Unfathomable Truths": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 2.25,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 17.71875,
+   "main_weight": 17.71875,
+   "xmage_java": "u\\UnfathomableTruths.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "token"
+    ]
+   }
+  },
+  "Snow-Covered Island": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 5.12,
+     "deck_pct": 0.75
+    },
+    "Terror": {
+     "avg_main": 2.0,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 16.125,
+   "main_weight": 16.125,
+   "xmage_java": "s\\SnowCoveredIsland.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Contaminated Aquifer": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 16.0,
+   "main_weight": 16.0,
+   "xmage_java": "c\\ContaminatedAquifer.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Mulldrifter": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.5,
+     "deck_pct": 1.0
+    },
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 14.421875,
+   "main_weight": 14.421875,
+   "xmage_java": "m\\Mulldrifter.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Bojuka Bog": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.62,
+     "deck_pct": 0.5
+    },
+    "Garden": {
+     "avg_main": 1.88,
+     "deck_pct": 1.0,
+     "avg_side": 0.12
+    },
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.88,
+     "deck_pct": 0.88,
+     "avg_side": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 13.96875,
+   "main_weight": 13.84375,
+   "xmage_java": "b\\BojukaBog.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Eldrazi Repurposer": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 3.38,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 13.5,
+   "main_weight": 13.5,
+   "xmage_java": "e\\EldraziRepurposer.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Bonder's Ornament": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Garden": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    },
+    "GruulAggro": {
+     "avg_main": 0.88,
+     "deck_pct": 0.38
+    },
+    "Urzatron": {
+     "avg_main": 1.75,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 13.375,
+   "main_weight": 13.375,
+   "xmage_java": "b\\BonderSOrnament.java",
+   "complexity": {
+    "java_lines": 79,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Malevolent Rumble": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 2.5,
+     "deck_pct": 0.62
+    },
+    "GruulAggro": {
+     "avg_main": 2.0,
+     "deck_pct": 0.62
+    },
+    "Urzatron": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 13.1875,
+   "main_weight": 13.1875,
+   "xmage_java": "m\\MalevolentRumble.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "static",
+     "token"
+    ]
+   }
+  },
+  "Maelstrom Colossus": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 2.25,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 12.65625,
+   "main_weight": 12.65625,
+   "xmage_java": "m\\MaelstromColossus.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Ephemerate": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.12,
+     "deck_pct": 1.0
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 12.640625,
+   "main_weight": 12.640625,
+   "xmage_java": "e\\Ephemerate.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Arbor Elf": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "GruulAggro": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 12.40625,
+   "main_weight": 12.40625,
+   "xmage_java": "a\\ArborElf.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Khalni Garden": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    },
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 12.375,
+   "main_weight": 12.375,
+   "xmage_java": "k\\KhalniGarden.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Utopia Sprawl": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 12.25,
+   "main_weight": 12.25,
+   "xmage_java": "u\\UtopiaSprawl.java",
+   "complexity": {
+    "java_lines": 98,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Thraben Inspector": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 12.25,
+   "main_weight": 12.25,
+   "xmage_java": "t\\ThrabenInspector.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Archaeomancer": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 2.75,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 11.0,
+   "main_weight": 11.0,
+   "xmage_java": "a\\Archaeomancer.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Perilous Landscape": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.12,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 10.9375,
+   "main_weight": 10.9375,
+   "xmage_java": "p\\PerilousLandscape.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Novice Inspector": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.12,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 10.9375,
+   "main_weight": 10.9375,
+   "xmage_java": "n\\NoviceInspector.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Conduit Pylons": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 1.38,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 10.828125,
+   "main_weight": 10.828125,
+   "xmage_java": "c\\ConduitPylons.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Augur of Bolas": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    },
+    "Ephemerate": {
+     "avg_main": 2.75,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 10.5,
+   "main_weight": 10.5,
+   "xmage_java": "a\\AugurOfBolas.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Leonardo, Big Brother": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 2.88,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 10.0625,
+   "main_weight": 10.0625,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Wild Growth": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 2.75,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 9.625,
+   "main_weight": 9.625,
+   "xmage_java": "w\\WildGrowth.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Skred": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    },
+    "GruulAggro": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 9.5,
+   "main_weight": 9.5,
+   "xmage_java": "s\\Skred.java",
+   "complexity": {
+    "java_lines": 73,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Kor Skyfisher": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 9.46875,
+   "main_weight": 9.46875,
+   "xmage_java": "k\\KorSkyfisher.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Boarding Party": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 9.0,
+   "main_weight": 9.0,
+   "xmage_java": "b\\BoardingParty.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": []
+   }
+  },
+  "Pinnacle Kill-Ship": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 2.0,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 9.0,
+   "main_weight": 9.0,
+   "xmage_java": "p\\PinnacleKillShip.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Battle Screech": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 9.0,
+   "main_weight": 9.0,
+   "xmage_java": "b\\BattleScreech.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "target",
+     "cost",
+     "token",
+     "flashback"
+    ]
+   }
+  },
+  "Raffine's Informant": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 9.0,
+   "main_weight": 9.0,
+   "xmage_java": "r\\RaffineSInformant.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Lunarch Veteran": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 2.88,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 8.625,
+   "main_weight": 8.625,
+   "xmage_java": "l\\LunarchVeteran.java",
+   "complexity": {
+    "java_lines": 62,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Smash to Smithereens": {
+   "archetypes": {
+    "Burn": {
+     "avg_side": 0.88
+    },
+    "RedDeckWins": {
+     "avg_side": 2.12
+    }
+   },
+   "weight": 7.546875,
+   "main_weight": 0.0,
+   "xmage_java": "s\\SmashToSmithereens.java",
+   "complexity": {
+    "java_lines": 71,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Boulderbranch Golem": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 1.62,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 7.46875,
+   "main_weight": 7.46875,
+   "xmage_java": "b\\BoulderbranchGolem.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Campfire": {
+   "archetypes": {
+    "Affinity": {
+     "avg_side": 0.38
+    },
+    "Burn": {
+     "avg_side": 0.25
+    },
+    "DimirControl": {
+     "avg_side": 0.25
+    },
+    "Ephemerate": {
+     "avg_side": 0.12
+    },
+    "Garden": {
+     "avg_main": 2.25,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 7.328125,
+   "main_weight": 6.75,
+   "xmage_java": "c\\Campfire.java",
+   "complexity": {
+    "java_lines": 90,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Tithing Blade": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 2.38,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 7.125,
+   "main_weight": 7.125,
+   "xmage_java": "t\\TithingBlade.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Sewer-veillance Cam": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62
+    },
+    "DimirControl": {
+     "avg_main": 0.38,
+     "deck_pct": 0.38
+    },
+    "MonoBlueAggro": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 6.71875,
+   "main_weight": 6.71875,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Glacial Floodplain": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.75,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 6.125,
+   "main_weight": 6.125,
+   "xmage_java": "g\\GlacialFloodplain.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Glint Hawk": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 5.625,
+   "main_weight": 5.625,
+   "xmage_java": "g\\GlintHawk.java",
+   "complexity": {
+    "java_lines": 89,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Volatile Fjord": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.88,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 5.625,
+   "main_weight": 5.625,
+   "xmage_java": "v\\VolatileFjord.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Defile": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 2.5,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 5.625,
+   "main_weight": 5.625,
+   "xmage_java": "d\\Defile.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Guardians' Pledge": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 1.75,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 5.25,
+   "main_weight": 5.25,
+   "xmage_java": "g\\GuardiansPledge.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": []
+   }
+  },
+  "Crypt Rats": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 2.25,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 5.0625,
+   "main_weight": 5.0625,
+   "xmage_java": "c\\CryptRats.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Snow-Covered Mountain": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.38,
+     "deck_pct": 0.75
+    },
+    "GruulAggro": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    },
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 4.703125,
+   "main_weight": 4.703125,
+   "xmage_java": "s\\SnowCoveredMountain.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Ancient Den": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 1.25,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 4.6875,
+   "main_weight": 4.6875,
+   "xmage_java": "a\\AncientDen.java",
+   "complexity": {
+    "java_lines": 31,
+    "features": []
+   }
+  },
+  "Annoyed Altisaur": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 1.88,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 4.6875,
+   "main_weight": 4.6875,
+   "xmage_java": "a\\AnnoyedAltisaur.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": []
+   }
+  },
+  "Snow-Covered Plains": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.5,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 4.5,
+   "xmage_java": "s\\SnowCoveredPlains.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Abandon Attachments": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 1.62,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 4.0625,
+   "main_weight": 4.0625,
+   "xmage_java": "a\\AbandonAttachments.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Jewel Thief": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 2.0,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 4.0,
+   "main_weight": 4.0,
+   "xmage_java": "j\\JewelThief.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Mwonvuli Acid-Moss": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 2.0,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 4.0,
+   "main_weight": 4.0,
+   "xmage_java": "m\\MwonvuliAcidMoss.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Deglamer": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_side": 2.25
+    }
+   },
+   "weight": 3.9375,
+   "main_weight": 0.0,
+   "xmage_java": "d\\Deglamer.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Call Damage Control": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    },
+    "GruulAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 1.12
+    }
+   },
+   "weight": 3.7421875,
+   "main_weight": 0.578125,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Idyllic Grange": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 1.38,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 3.4375,
+   "main_weight": 3.4375,
+   "xmage_java": "i\\IdyllicGrange.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "trigger",
+     "target",
+     "condition",
+     "counter"
+    ]
+   }
+  },
+  "Ride's End": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.12,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 3.375,
+   "main_weight": 3.375,
+   "xmage_java": "r\\RideSEnd.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "static",
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Inventor's Axe": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 3.375,
+   "main_weight": 3.375,
+   "xmage_java": "i\\InventorSAxe.java",
+   "complexity": {
+    "java_lines": 53,
+    "features": [
+     "trigger",
+     "static",
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Gurmag Angler": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 1.25,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 3.125,
+   "main_weight": 3.125,
+   "xmage_java": "g\\GurmagAngler.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": []
+   }
+  },
+  "Gixian Infiltrator": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 1.25,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 3.125,
+   "main_weight": 3.125,
+   "xmage_java": "g\\GixianInfiltrator.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "trigger",
+     "static",
+     "counter"
+    ]
+   }
+  },
+  "Witch's Cottage": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 1.38,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 3.09375,
+   "main_weight": 3.09375,
+   "xmage_java": "w\\WitchSCottage.java",
+   "complexity": {
+    "java_lines": 66,
+    "features": [
+     "trigger",
+     "static",
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Drown in Sorrow": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 0.25
+    },
+    "Garden": {
+     "avg_side": 2.0
+    }
+   },
+   "weight": 3.0625,
+   "main_weight": 0.0,
+   "xmage_java": "d\\DrownInSorrow.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": []
+   }
+  },
+  "Bender's Waterskin": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "b\\BenderSWaterskin.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Haunted Mire": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 1.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "h\\HauntedMire.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Brinebarrow Intruder": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "b\\BrinebarrowIntruder.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Ancient Grudge": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.75
+    },
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "Jund": {
+     "avg_side": 0.75
+    },
+    "Urzatron": {
+     "avg_side": 0.62
+    }
+   },
+   "weight": 2.8671875,
+   "main_weight": 0.125,
+   "xmage_java": "a\\AncientGrudge.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Jaspera Sentinel": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 2.8125,
+   "main_weight": 2.8125,
+   "xmage_java": "j\\JasperaSentinel.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Cryoshatter": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25,
+     "avg_side": 0.25
+    }
+   },
+   "weight": 2.625,
+   "main_weight": 2.25,
+   "xmage_java": "c\\Cryoshatter.java",
+   "complexity": {
+    "java_lines": 53,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Melded Moxite": {
+   "archetypes": {
+    "Burn": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    },
+    "Gates": {
+     "avg_main": 0.62,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 2.5625,
+   "main_weight": 2.5625,
+   "xmage_java": "m\\MeldedMoxite.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "trigger",
+     "activated",
+     "cost",
+     "token"
+    ]
+   }
+  },
+  "Spider-Man, Web-Slinger": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 1.0,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 2.5,
+   "main_weight": 2.5,
+   "xmage_java": "s\\SpiderManWebSlinger.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Suffocating Fumes": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "avg_side": 0.25
+    },
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 2.4375,
+   "main_weight": 2.3125,
+   "xmage_java": "s\\SuffocatingFumes.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "static",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Birchlore Rangers": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 1.25,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 2.34375,
+   "main_weight": 2.34375,
+   "xmage_java": "b\\BirchloreRangers.java",
+   "complexity": {
+    "java_lines": 95,
+    "features": [
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Manor Gate": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 1.88,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 2.34375,
+   "main_weight": 2.34375,
+   "xmage_java": "m\\ManorGate.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Artful Dodge": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.25
+    },
+    "Terror": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 2.296875,
+   "main_weight": 2.296875,
+   "xmage_java": "a\\ArtfulDodge.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Rooftop Percher": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 2.2890625,
+   "main_weight": 1.40625,
+   "xmage_java": "r\\RooftopPercher.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Thermokarst": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 2.25,
+   "main_weight": 2.25,
+   "xmage_java": "t\\Thermokarst.java",
+   "complexity": {
+    "java_lines": 69,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Arms of Hadar": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 1.25
+    }
+   },
+   "weight": 2.1875,
+   "main_weight": 0.0,
+   "xmage_java": "a\\ArmsOfHadar.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Union of the Third Path": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.88,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 2.1875,
+   "main_weight": 2.1875,
+   "xmage_java": "u\\UnionOfTheThirdPath.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": []
+   }
+  },
+  "Standard Bearer": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 1.62
+    }
+   },
+   "weight": 2.03125,
+   "main_weight": 0.0,
+   "xmage_java": "s\\StandardBearer.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Nylea's Disciple": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    },
+    "GruulAggro": {
+     "avg_side": 0.38
+    },
+    "Spy": {
+     "avg_side": 1.88
+    }
+   },
+   "weight": 2.0078125,
+   "main_weight": 0.0,
+   "xmage_java": "n\\NyleaSDisciple.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Suplex": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.62,
+     "deck_pct": 0.5
+    },
+    "Gates": {
+     "avg_side": 0.12
+    },
+    "GruulAggro": {
+     "avg_side": 0.75
+    },
+    "RedDeckWins": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 1.921875,
+   "main_weight": 1.25,
+   "xmage_java": "s\\Suplex.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Razortide Bridge": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 1.875,
+   "main_weight": 1.875,
+   "xmage_java": "r\\RazortideBridge.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Prophetic Prism": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.84375,
+   "main_weight": 1.84375,
+   "xmage_java": "p\\PropheticPrism.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Thorn of the Black Rose": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 1.78125,
+   "main_weight": 1.75,
+   "xmage_java": "t\\ThornOfTheBlackRose.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Ice Tunnel": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.88,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 1.75,
+   "main_weight": 1.75,
+   "xmage_java": "i\\IceTunnel.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Ramosian Rally": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.88,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 1.75,
+   "main_weight": 1.75,
+   "xmage_java": "r\\RamosianRally.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Martyr of Sands": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 1.75
+    }
+   },
+   "weight": 1.75,
+   "main_weight": 0.0,
+   "xmage_java": "m\\MartyrOfSands.java",
+   "complexity": {
+    "java_lines": 62,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Cliffgate": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 1.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "c\\Cliffgate.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Ram Through": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 1.0,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "r\\RamThrough.java",
+   "complexity": {
+    "java_lines": 97,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Gingerbrute": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "g\\Gingerbrute.java",
+   "complexity": {
+    "java_lines": 60,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Raze": {
+   "archetypes": {
+    "Burn": {
+     "avg_side": 0.25
+    },
+    "RedDeckWins": {
+     "avg_side": 1.0
+    }
+   },
+   "weight": 1.3125,
+   "main_weight": 0.0,
+   "xmage_java": "r\\Raze.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Plunder the Trollshaws": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.38,
+     "deck_pct": 0.38
+    },
+    "MonoBlueAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 1.3125,
+   "main_weight": 1.3125,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Accursed Marauder": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62
+    },
+    "Spy": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 1.296875,
+   "main_weight": 1.171875,
+   "xmage_java": "a\\AccursedMarauder.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Haunted Fengraf": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 1.265625,
+   "main_weight": 1.265625,
+   "xmage_java": "h\\HauntedFengraf.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "static",
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Earth Rift": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.75
+    }
+   },
+   "weight": 1.265625,
+   "main_weight": 0.0,
+   "xmage_java": "e\\EarthRift.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Behold the Multiverse": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.62,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 1.25,
+   "main_weight": 1.25,
+   "xmage_java": "b\\BeholdTheMultiverse.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Golgari Rot Farm": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.75,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 1.125,
+   "main_weight": 1.125,
+   "xmage_java": "g\\GolgariRotFarm.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Structural Distortion": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.75,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 1.125,
+   "main_weight": 1.125,
+   "xmage_java": "s\\StructuralDistortion.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Elite Interceptor": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.75,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 1.125,
+   "main_weight": 1.125,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Tormod's Crypt": {
+   "archetypes": {
+    "Burn": {
+     "avg_side": 0.5
+    },
+    "RedDeckWins": {
+     "avg_side": 0.75
+    },
+    "Urzatron": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 1.078125,
+   "main_weight": 0.0,
+   "xmage_java": "t\\TormodSCrypt.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "God-Pharaoh's Faithful": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 1.03125,
+   "main_weight": 1.0,
+   "xmage_java": "g\\GodPharaohSFaithful.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Sunscape Familiar": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "s\\SunscapeFamiliar.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "static",
+     "cost"
+    ]
+   }
+  },
+  "Azorius Chancery": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "a\\AzoriusChancery.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Fiery Cannonade": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.12
+    },
+    "Gates": {
+     "avg_side": 0.38
+    },
+    "GruulAggro": {
+     "avg_side": 0.62
+    },
+    "Urzatron": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.953125,
+   "main_weight": 0.0,
+   "xmage_java": "f\\FieryCannonade.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Kenku Artificer": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.38,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.9375,
+   "main_weight": 0.9375,
+   "xmage_java": "k\\KenkuArtificer.java",
+   "complexity": {
+    "java_lines": 65,
+    "features": [
+     "trigger",
+     "static",
+     "target",
+     "token",
+     "counter"
+    ]
+   }
+  },
+  "Torch the Tower": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Jund": {
+     "avg_main": 0.62,
+     "deck_pct": 0.25,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.8828125,
+   "main_weight": 0.84375,
+   "xmage_java": "t\\TorchTheTower.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Salt Road Packbeast": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    },
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.875,
+   "main_weight": 0.875,
+   "xmage_java": "s\\SaltRoadPackbeast.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "static",
+     "cost",
+     "affinity"
+    ]
+   }
+  },
+  "Holy Light": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.88
+    }
+   },
+   "weight": 0.875,
+   "main_weight": 0.0,
+   "xmage_java": "h\\HolyLight.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Destroy Evil": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.25
+    },
+    "Gates": {
+     "avg_side": 0.62
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.859375,
+   "main_weight": 0.0,
+   "xmage_java": "d\\DestroyEvil.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Fang Dragon": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 1.12
+    }
+   },
+   "weight": 0.84375,
+   "main_weight": 0.0,
+   "xmage_java": "f\\FangDragon.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Nutrient Block": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.75,
+   "main_weight": 0.75,
+   "xmage_java": "n\\NutrientBlock.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Fungal Infection": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 0.75,
+   "main_weight": 0.75,
+   "xmage_java": "f\\FungalInfection.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "target",
+     "token"
+    ]
+   }
+  },
+  "Spinning Darkness": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 0.75,
+   "main_weight": 0.75,
+   "xmage_java": "s\\SpinningDarkness.java",
+   "complexity": {
+    "java_lines": 109,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Tectonic Hazard": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.75,
+   "main_weight": 0.375,
+   "xmage_java": "t\\TectonicHazard.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Scour from Existence": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.62
+    }
+   },
+   "weight": 0.703125,
+   "main_weight": 0.0,
+   "xmage_java": "s\\ScourFromExistence.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Horrific Assault": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12,
+     "avg_side": 0.62
+    }
+   },
+   "weight": 0.65625,
+   "main_weight": 0.1875,
+   "xmage_java": "h\\HorrificAssault.java",
+   "complexity": {
+    "java_lines": 56,
+    "features": [
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Heritage Reclamation": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.38
+    },
+    "GruulAggro": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.625,
+   "main_weight": 0.5625,
+   "xmage_java": "h\\HeritageReclamation.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Wooded Ridgeline": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.625,
+   "main_weight": 0.625,
+   "xmage_java": "w\\WoodedRidgeline.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Patient Instructor": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.62,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.625,
+   "main_weight": 0.625,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Azure Fleet Admiral": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 0.12
+    },
+    "Terror": {
+     "avg_side": 0.62
+    }
+   },
+   "weight": 0.6171875,
+   "main_weight": 0.0,
+   "xmage_java": "a\\AzureFleetAdmiral.java",
+   "complexity": {
+    "java_lines": 67,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Cauldron Familiar": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.5625,
+   "main_weight": 0.5625,
+   "xmage_java": "c\\CauldronFamiliar.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "trigger",
+     "static",
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Pestilence": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.5625,
+   "main_weight": 0.5625,
+   "xmage_java": "p\\Pestilence.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "trigger",
+     "activated",
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Unable to Scream": {
+   "archetypes": {
+    "Terror": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.5625,
+   "main_weight": 0.375,
+   "xmage_java": "u\\UnableToScream.java",
+   "complexity": {
+    "java_lines": 95,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Visionary's Dance": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.5625,
+   "main_weight": 0.5625,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Tangle": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.5625,
+   "main_weight": 0.0,
+   "xmage_java": "t\\Tangle.java",
+   "complexity": {
+    "java_lines": 88,
+    "features": [
+     "continuouseffect",
+     "target"
+    ]
+   }
+  },
+  "Terminate": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.546875,
+   "main_weight": 0.078125,
+   "xmage_java": "t\\Terminate.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Ghostly Flicker": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    },
+    "Urzatron": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.53125,
+   "main_weight": 0.53125,
+   "xmage_java": "g\\GhostlyFlicker.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Pursue the Past": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.5,
+   "main_weight": 0.5,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Bannerhide Krushok": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.5,
+   "main_weight": 0.5,
+   "xmage_java": "b\\BannerhideKrushok.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Jack-o'-Lantern": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.5,
+   "main_weight": 0.0,
+   "xmage_java": "j\\JackOLantern.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "static",
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Metallic Rebuke": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.46875,
+   "main_weight": 0.46875,
+   "xmage_java": "m\\MetallicRebuke.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Mystical Teachings": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.421875,
+   "main_weight": 0.421875,
+   "xmage_java": "m\\MysticalTeachings.java",
+   "complexity": {
+    "java_lines": 50,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Warped Tusker": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.421875,
+   "main_weight": 0.421875,
+   "xmage_java": "w\\WarpedTusker.java",
+   "complexity": {
+    "java_lines": 58,
+    "features": [
+     "trigger",
+     "cost",
+     "token",
+     "cycling"
+    ]
+   }
+  },
+  "Negate": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    },
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "avg_side": 0.38
+    },
+    "Gates": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.40625,
+   "main_weight": 0.125,
+   "xmage_java": "n\\Negate.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "static",
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Seething Landscape": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.38,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.375,
+   "xmage_java": "s\\SeethingLandscape.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Mukotai Ambusher": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.25,
+   "xmage_java": "m\\MukotaiAmbusher.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "ninjutsu"
+    ]
+   }
+  },
+  "Ash Barrens": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.38,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.375,
+   "xmage_java": "a\\AshBarrens.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Rancid Earth": {
+   "archetypes": {
+    "Garden": {
+     "avg_side": 1.0
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.0,
+   "xmage_java": "r\\RancidEarth.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "static",
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Armadillo Cloak": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.375,
+   "xmage_java": "a\\ArmadilloCloak.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Wrenn's Resolve": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.375,
+   "xmage_java": "w\\WrennSResolve.java",
+   "complexity": {
+    "java_lines": 31,
+    "features": []
+   }
+  },
+  "Reckless Lackey": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.375,
+   "main_weight": 0.375,
+   "xmage_java": "r\\RecklessLackey.java",
+   "complexity": {
+    "java_lines": 56,
+    "features": [
+     "activated",
+     "cost",
+     "token"
+    ]
+   }
+  },
+  "Moment's Peace": {
+   "archetypes": {
+    "Garden": {
+     "avg_side": 0.38
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.3515625,
+   "main_weight": 0.140625,
+   "xmage_java": "m\\MomentSPeace.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Elvish Vanguard": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.3125,
+   "main_weight": 0.3125,
+   "xmage_java": "e\\ElvishVanguard.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "trigger",
+     "counter"
+    ]
+   }
+  },
+  "Rift Sower": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.3125,
+   "main_weight": 0.3125,
+   "xmage_java": "r\\RiftSower.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Vines of Vastwood": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.3125,
+   "main_weight": 0.0625,
+   "xmage_java": "v\\VinesOfVastwood.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "continuouseffect",
+     "target",
+     "condition",
+     "kicker"
+    ]
+   }
+  },
+  "Molten Rain": {
+   "archetypes": {
+    "Burn": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.28125,
+   "main_weight": 0.0,
+   "xmage_java": "m\\MoltenRain.java",
+   "complexity": {
+    "java_lines": 72,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Agony Warp": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.28125,
+   "main_weight": 0.25,
+   "xmage_java": "a\\AgonyWarp.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Mnemonic Wall": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.28125,
+   "main_weight": 0.28125,
+   "xmage_java": "m\\MnemonicWall.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Whispersilk Cloak": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.28125,
+   "main_weight": 0.0,
+   "xmage_java": "w\\WhispersilkCloak.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "static",
+     "cost"
+    ]
+   }
+  },
+  "Stonehorn Dignitary": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.25
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.2734375,
+   "main_weight": 0.140625,
+   "xmage_java": "s\\StonehornDignitary.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Prohibit": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.25
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.265625,
+   "main_weight": 0.203125,
+   "xmage_java": "p\\Prohibit.java",
+   "complexity": {
+    "java_lines": 80,
+    "features": [
+     "target",
+     "condition",
+     "counter",
+     "kicker"
+    ]
+   }
+  },
+  "Revoke Existence": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.12
+    },
+    "Gates": {
+     "avg_side": 0.38
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.265625,
+   "main_weight": 0.0,
+   "xmage_java": "r\\RevokeExistence.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Consider": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "c\\Consider.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": []
+   }
+  },
+  "Foreboding Landscape": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "f\\ForebodingLandscape.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Memory Lapse": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "m\\MemoryLapse.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": [
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Foil": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "f\\Foil.java",
+   "complexity": {
+    "java_lines": 49,
+    "features": [
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Fanged Flames": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "f\\FangedFlames.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Mortuary Mire": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "m\\MortuaryMire.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Last Breath": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.0,
+   "xmage_java": "l\\LastBreath.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Midnight Tilling": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "m\\MidnightTilling.java",
+   "complexity": {
+    "java_lines": 31,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Molten Gatekeeper": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "m\\MoltenGatekeeper.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "trigger",
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Impact Tremors": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "i\\ImpactTremors.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Highland Forest": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "h\\HighlandForest.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Akroan Skyguard": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "a\\AkroanSkyguard.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "counter"
+    ]
+   }
+  },
+  "Lagonna-Band Trailblazer": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "l\\LagonnaBandTrailblazer.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "counter"
+    ]
+   }
+  },
+  "Skyward Spider": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "s\\SkywardSpider.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "static",
+     "continuouseffect",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Guiding Voice": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "g\\GuidingVoice.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Homestead Courage": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "h\\HomesteadCourage.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "target",
+     "cost",
+     "counter",
+     "flashback"
+    ]
+   }
+  },
+  "Benevolent Blessing": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "b\\BenevolentBlessing.java",
+   "complexity": {
+    "java_lines": 61,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Ethereal Armor": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "e\\EtherealArmor.java",
+   "complexity": {
+    "java_lines": 62,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Hyena Umbra": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "h\\HyenaUmbra.java",
+   "complexity": {
+    "java_lines": 55,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Sentinel's Eyes": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "s\\SentinelSEyes.java",
+   "complexity": {
+    "java_lines": 58,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Spirit Link": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "s\\SpiritLink.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Remote Farm": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "r\\RemoteFarm.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "condition",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Halo Hopper": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "h\\HaloHopper.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Martyr's Soul": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "m\\MartyrSSoul.java",
+   "complexity": {
+    "java_lines": 61,
+    "features": [
+     "trigger",
+     "condition",
+     "counter"
+    ]
+   }
+  },
+  "Ornithopter": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "o\\Ornithopter.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": []
+   }
+  },
+  "Phyrexian Walker": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "p\\PhyrexianWalker.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": []
+   }
+  },
+  "Search Party Captain": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.25,
+   "main_weight": 0.25,
+   "xmage_java": "s\\SearchPartyCaptain.java",
+   "complexity": {
+    "java_lines": 79,
+    "features": [
+     "trigger",
+     "static",
+     "cost"
+    ]
+   }
+  },
+  "Pegasus Guardian": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.234375,
+   "main_weight": 0.234375,
+   "xmage_java": "p\\PegasusGuardian.java",
+   "complexity": {
+    "java_lines": 57,
+    "features": [
+     "trigger",
+     "target",
+     "condition",
+     "token"
+    ]
+   }
+  },
+  "Snow-Covered Swamp": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.234375,
+   "main_weight": 0.234375,
+   "xmage_java": "s\\SnowCoveredSwamp.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Coalition Honor Guard": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    },
+    "Gates": {
+     "avg_side": 0.25
+    },
+    "Urzatron": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.2109375,
+   "main_weight": 0.0,
+   "xmage_java": "c\\CoalitionHonorGuard.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Feed the Clan": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.2109375,
+   "main_weight": 0.0,
+   "xmage_java": "f\\FeedTheClan.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "condition"
+    ]
+   }
+  },
+  "Sea Gate Oracle": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "s\\SeaGateOracle.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Meeting of Minds": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "m\\MeetingOfMinds.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": []
+   }
+  },
+  "Ethereal Haze": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.0625,
+   "xmage_java": "e\\EtherealHaze.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Unmake": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "u\\Unmake.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Tragic Slip": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.046875,
+   "xmage_java": "t\\TragicSlip.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "continuouseffect",
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Glimpse the Impossible": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "g\\GlimpseTheImpossible.java",
+   "complexity": {
+    "java_lines": 106,
+    "features": [
+     "trigger",
+     "target",
+     "condition",
+     "token"
+    ]
+   }
+  },
+  "Essence Warden": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "e\\EssenceWarden.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Nest Invader": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "n\\NestInvader.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Boomerang": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "b\\Boomerang.java",
+   "complexity": {
+    "java_lines": 32,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Vapor Snag": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1875,
+   "main_weight": 0.1875,
+   "xmage_java": "v\\VaporSnag.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Lignify": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.1796875,
+   "main_weight": 0.140625,
+   "xmage_java": "l\\Lignify.java",
+   "complexity": {
+    "java_lines": 55,
+    "features": [
+     "static",
+     "target",
+     "token"
+    ]
+   }
+  },
+  "Scattershot Archer": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    },
+    "Spy": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.171875,
+   "main_weight": 0.0,
+   "xmage_java": "s\\ScattershotArcher.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "static",
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Circle of Protection: Red": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.12
+    },
+    "Urzatron": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.171875,
+   "main_weight": 0.0,
+   "xmage_java": "c\\CircleOfProtectionRed.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Distant Melody": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.15625,
+   "main_weight": 0.15625,
+   "xmage_java": "d\\DistantMelody.java",
+   "complexity": {
+    "java_lines": 70,
+    "features": []
+   }
+  },
+  "Goliath Paladin": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.15625,
+   "main_weight": 0.0625,
+   "xmage_java": "g\\GoliathPaladin.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Stormshriek Feral": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Gates": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "s\\StormshriekFeral.java",
+   "complexity": {
+    "java_lines": 58,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Energy Refractor": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "e\\EnergyRefractor.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Unwind": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "u\\Unwind.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "static",
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Molten Tributary": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "m\\MoltenTributary.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Tangled Islet": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "t\\TangledIslet.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Kaervek's Torch": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "k\\KaervekSTorch.java",
+   "complexity": {
+    "java_lines": 89,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Candy Trail": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "c\\CandyTrail.java",
+   "complexity": {
+    "java_lines": 49,
+    "features": [
+     "trigger",
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Firebolt": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "f\\Firebolt.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Crystal Grotto": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.140625,
+   "main_weight": 0.140625,
+   "xmage_java": "c\\CrystalGrotto.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Lose Focus": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "l\\LoseFocus.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Corrupted Conviction": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "c\\CorruptedConviction.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Devour Flesh": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "d\\DevourFlesh.java",
+   "complexity": {
+    "java_lines": 80,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Sheltering Word": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "s\\ShelteringWord.java",
+   "complexity": {
+    "java_lines": 74,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Daru Spiritualist": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "d\\DaruSpiritualist.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Nomads en-Kor": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "n\\NomadsEnKor.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Task Force": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "t\\TaskForce.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Black Dragon Gate": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "b\\BlackDragonGate.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Bristling Backwoods": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "b\\BristlingBackwoods.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Raphael, Tough Turtle": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Brood Birthing": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "b\\BroodBirthing.java",
+   "complexity": {
+    "java_lines": 66,
+    "features": [
+     "token"
+    ]
+   }
+  },
+  "Temur Battle Rage": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "t\\TemurBattleRage.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "continuouseffect",
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Smaug, the Great Calamity": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Acorn Harvest": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.0,
+   "xmage_java": "a\\AcornHarvest.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "cost",
+     "token",
+     "flashback"
+    ]
+   }
+  },
+  "Orzhov Basilica": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "o\\OrzhovBasilica.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Greatsword of Tyr": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "g\\GreatswordOfTyr.java",
+   "complexity": {
+    "java_lines": 58,
+    "features": [
+     "trigger",
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Summon: Choco/Mog": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.125,
+   "xmage_java": "s\\SummonChocoMog.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": []
+   }
+  },
+  "Temple Acolyte": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.0,
+   "xmage_java": "t\\TempleAcolyte.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Archon's Glory": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.125,
+   "main_weight": 0.0,
+   "xmage_java": "a\\ArchonSGlory.java",
+   "complexity": {
+    "java_lines": 49,
+    "features": [
+     "continuouseffect",
+     "target",
+     "condition"
+    ]
+   }
+  },
+  "Honorable Scout": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.1171875,
+   "main_weight": 0.0,
+   "xmage_java": "h\\HonorableScout.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Obsidian Acolyte": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.1015625,
+   "main_weight": 0.0,
+   "xmage_java": "o\\ObsidianAcolyte.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Gleeful Sabotage": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.0,
+   "xmage_java": "g\\GleefulSabotage.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Heaped Harvest": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.09375,
+   "xmage_java": "h\\HeapedHarvest.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Burning Sun's Fury": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.09375,
+   "xmage_java": "b\\BurningSunSFury.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Blacksmith's Skill": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.0625,
+   "xmage_java": "b\\BlacksmithSSkill.java",
+   "complexity": {
+    "java_lines": 74,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Death Speakers": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.0,
+   "xmage_java": "d\\DeathSpeakers.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": []
+   }
+  },
+  "Mask of Law and Grace": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.0,
+   "xmage_java": "m\\MaskOfLawAndGrace.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Shield of Duty and Reason": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.09375,
+   "main_weight": 0.0,
+   "xmage_java": "s\\ShieldOfDutyAndReason.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Lys Alana Huntmaster": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.078125,
+   "xmage_java": "l\\LysAlanaHuntmaster.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Primordial Pachyderm": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.078125,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Radiant Grove": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.078125,
+   "xmage_java": "r\\RadiantGrove.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Tuktuk Rubblefort": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.078125,
+   "xmage_java": "t\\TuktukRubblefort.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Spidersilk Armor": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.0,
+   "xmage_java": "s\\SpidersilkArmor.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Viridian Longbow": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.0,
+   "xmage_java": "v\\ViridianLongbow.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "static",
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Webweaver Changeling": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.0,
+   "xmage_java": "w\\WebweaverChangeling.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "trigger",
+     "static",
+     "condition"
+    ]
+   }
+  },
+  "Natural State": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.0,
+   "xmage_java": "n\\NaturalState.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Palace Sentinels": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.0,
+   "xmage_java": "p\\PalaceSentinels.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Electrickery": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.12
+    },
+    "GruulAggro": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.0,
+   "xmage_java": "e\\Electrickery.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Command Bridge": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.078125,
+   "xmage_java": "c\\CommandBridge.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Geomancer's Gambit": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.078125,
+   "main_weight": 0.078125,
+   "xmage_java": "g\\GeomancerSGambit.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Cuombajj Witches": {
+   "archetypes": {
+    "Garden": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.0703125,
+   "main_weight": 0.0,
+   "xmage_java": "c\\CuombajjWitches.java",
+   "complexity": {
+    "java_lines": 77,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Dinrova Horror": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0703125,
+   "main_weight": 0.0,
+   "xmage_java": "d\\DinrovaHorror.java",
+   "complexity": {
+    "java_lines": 79,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Exclude": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0703125,
+   "main_weight": 0.0,
+   "xmage_java": "e\\Exclude.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Dimir Aqueduct": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "d\\DimirAqueduct.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Bedeck/Bedazzle": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "b\\BedeckBedazzle.java",
+   "complexity": {
+    "java_lines": 82,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Fallaji Archaeologist": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "f\\FallajiArchaeologist.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "trigger",
+     "counter"
+    ]
+   }
+  },
+  "Glorious Gale": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "g\\GloriousGale.java",
+   "complexity": {
+    "java_lines": 67,
+    "features": [
+     "static",
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Remove Soul": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "r\\RemoveSoul.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": [
+     "static",
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Ingot Chewer": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": "i\\IngotChewer.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Spirit en-Kor": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "s\\SpiritEnKor.java",
+   "complexity": {
+    "java_lines": 51,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Shattered Acolyte": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Vendetta": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": "v\\Vendetta.java",
+   "complexity": {
+    "java_lines": 72,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Ferocious Werefox": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "f\\FerociousWerefox.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "You Meet in a Tavern": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "y\\YouMeetInATavern.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Infestation Sage": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": "i\\InfestationSage.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Old Thrush": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Icatian Javelineers": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "i\\IcatianJavelineers.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Steadfast Unicorn": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "s\\SteadfastUnicorn.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "static",
+     "activated",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Eagles of the North": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "e\\EaglesOfTheNorth.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "trigger",
+     "static",
+     "cost"
+    ]
+   }
+  },
+  "Emerge Unscathed": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "e\\EmergeUnscathed.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Loran's Escape": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "l\\LoranSEscape.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Holdout Settlement": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0625,
+   "xmage_java": "h\\HoldoutSettlement.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Sunlance": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": "s\\Sunlance.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Lifelink": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": "l\\Lifelink.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Ultimate Alliance": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.0625,
+   "main_weight": 0.0,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Grapple with Death": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.046875,
+   "main_weight": 0.046875,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Shred Memory": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.046875,
+   "main_weight": 0.046875,
+   "xmage_java": "s\\ShredMemory.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Go for the Throat": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.046875,
+   "main_weight": 0.046875,
+   "xmage_java": "g\\GoForTheThroat.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Tamiyo's Safekeeping": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.046875,
+   "main_weight": 0.0,
+   "xmage_java": "t\\TamiyoSSafekeeping.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Ephemeral Shields": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.046875,
+   "main_weight": 0.0,
+   "xmage_java": "e\\EphemeralShields.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Valakut Invoker": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0390625,
+   "main_weight": 0.0,
+   "xmage_java": "v\\ValakutInvoker.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Snakeskin Veil": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0390625,
+   "main_weight": 0.0,
+   "xmage_java": "s\\SnakeskinVeil.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Granger Guildmage": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0390625,
+   "main_weight": 0.0,
+   "xmage_java": "g\\GrangerGuildmage.java",
+   "complexity": {
+    "java_lines": 55,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Crimson Acolyte": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0390625,
+   "main_weight": 0.0,
+   "xmage_java": "c\\CrimsonAcolyte.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Undergrowth Leopard": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0390625,
+   "main_weight": 0.0,
+   "xmage_java": "u\\UndergrowthLeopard.java",
+   "complexity": {
+    "java_lines": 49,
+    "features": [
+     "static",
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Okiba-Gang Shinobi": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "o\\OkibaGangShinobi.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "target",
+     "cost",
+     "ninjutsu"
+    ]
+   }
+  },
+  "Deceptive Landscape": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.03125,
+   "xmage_java": "d\\DeceptiveLandscape.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Voracious Varmint": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "v\\VoraciousVarmint.java",
+   "complexity": {
+    "java_lines": 49,
+    "features": [
+     "static",
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Patrician's Scorn": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "p\\PatricianSScorn.java",
+   "complexity": {
+    "java_lines": 89,
+    "features": [
+     "static",
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Hallow": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "h\\Hallow.java",
+   "complexity": {
+    "java_lines": 82,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Airbending Lesson": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "a\\AirbendingLesson.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Apostle's Blessing": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "a\\ApostleSBlessing.java",
+   "complexity": {
+    "java_lines": 95,
+    "features": [
+     "continuouseffect",
+     "target"
+    ]
+   }
+  },
+  "Sokka's Sword Training": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.03125,
+   "main_weight": 0.0,
+   "xmage_java": "s\\SokkaSSwordTraining.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": [
+     "target",
+     "token"
+    ]
+   }
+  },
+  "Diabolic Edict": {
+   "archetypes": {
+    "Garden": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 0.0234375,
+   "main_weight": 0.0,
+   "xmage_java": "d\\DiabolicEdict.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  }
+ }
+}
