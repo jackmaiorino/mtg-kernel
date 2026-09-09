@@ -6,6 +6,7 @@ function Invoke-Step([string]$label, [string]$directory, [scriptblock]$body) {
     Write-Output "=== $label"
     Push-Location $directory
     try {
+        $global:LASTEXITCODE = 0
         & $body
         if ($LASTEXITCODE -ne 0) { throw "$label failed with exit code $LASTEXITCODE" }
     } finally {
