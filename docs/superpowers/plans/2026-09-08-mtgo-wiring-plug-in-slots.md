@@ -10,6 +10,8 @@
 
 **Spec:** `docs/design/MTGO_LEAGUE_INTEGRATION_RESUMPTION_V1.md` (revision 5), sections 6.2 to 6.9 and Jack's 2026-09-08 direction: "focus on getting the wiring for everything present even if it involves placeholders for now for future cards and sideboarding so once the model is trained for such it's plug and play".
 
+**Execution record (2026-09-09):** executed by subagent-driven development on `lead/mtgo-integration-v1`, commits 4d4900d6..3d529867 (a preliminary compatibility task 0b was ruled in first because the integration crates did not compile against the merged kernel); every task review and the final whole-branch review closed clean after fix rounds; the ledger with every ruling is archived at `C:/Users/Jack/mtg-kernel-gae-lane/mtgo-wiring-slots-sdd-2026-09-08/progress.md`.
+
 ## Global Constraints
 
 - Branch: `lead/mtgo-integration-v1` (deployment branch). Never commit to the main tree; never touch `mtg-kernel/src/flat_policy_v2.rs` in this plan.
