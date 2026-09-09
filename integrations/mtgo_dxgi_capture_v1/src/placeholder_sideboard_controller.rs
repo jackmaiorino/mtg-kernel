@@ -81,9 +81,12 @@ impl MtgoDeploymentSlotV1 for MtgoPlaceholderSideboardControllerV1 {
 mod tests {
     use super::*;
     use crate::{
+        advance_competitive_native_sideboard_deliberation_v1,
+        begin_competitive_native_sideboard_deliberation_v1,
         score_checked_untrusted_competitive_native_sideboard_v1,
         MtgoCompetitiveNativeSideboardCardCountV1, MtgoCompetitiveNativeSideboardConfigurationV1,
         MtgoCompetitiveNativeSideboardDeliberationActionV1,
+        MtgoCompetitiveNativeSideboardDeliberationAdvanceV1,
         MtgoCompetitiveNativeSideboardDeliberationDecisionV1,
         MtgoCompetitiveNativeSideboardModelInputV1,
         MTGO_COMPETITIVE_NATIVE_SIDEBOARD_DELIBERATION_SCHEMA_V1,
@@ -165,6 +168,33 @@ mod tests {
         assert!(controller
             .score_sideboard_deliberation_v1(&without_submit)
             .is_err());
+    }
+
+    #[test]
+    fn deliberation_driver_submits_the_unchanged_current_configuration() {
+        let mut controller = MtgoPlaceholderSideboardControllerV1;
+        let deliberation =
+            begin_competitive_native_sideboard_deliberation_v1(input_v1(), &"b".repeat(64))
+                .unwrap();
+        let advance =
+            advance_competitive_native_sideboard_deliberation_v1(deliberation, &mut controller)
+                .unwrap();
+        let (submission, receipt) = match advance {
+            MtgoCompetitiveNativeSideboardDeliberationAdvanceV1::Submitted {
+                submission,
+                receipt,
+            } => (submission, receipt),
+            MtgoCompetitiveNativeSideboardDeliberationAdvanceV1::Continue { .. } => {
+                panic!("placeholder sideboard controller did not submit on the first decision")
+            }
+        };
+        assert_eq!(submission.decisions_consumed_v1(), 1);
+        assert_eq!(receipt.decision_number, 1);
+        assert_eq!(
+            receipt.selected_action,
+            MtgoCompetitiveNativeSideboardDeliberationActionV1::SubmitConfiguration
+        );
+        assert_eq!(submission.selection_v1().target_configuration, deck_v1());
     }
 
     #[test]
