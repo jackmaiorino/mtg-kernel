@@ -118,6 +118,70 @@ mod tests {
     }
 
     #[test]
+    fn collects_a_name_from_every_visible_zone() {
+        let mut input = sample_input();
+        let battlefield_object_ref = input.current_state.battlefield[0][0].object_ref;
+        input.current_state.graveyards[1].push(mtgo_blackbox_v1::MtgoPlayerVisibleNamedCardV1 {
+            object_ref: mtgo_blackbox_v1::MtgoPlayerVisibleObjectRefV1 {
+                visible_ordinal: 9_001,
+            },
+            card_name: "Zebra Card".to_owned(),
+        });
+        input
+            .current_state
+            .exile
+            .push(mtgo_blackbox_v1::MtgoPlayerVisibleExileCardV1 {
+                object_ref: mtgo_blackbox_v1::MtgoPlayerVisibleObjectRefV1 {
+                    visible_ordinal: 9_002,
+                },
+                zone_owner: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+                visible_card_name: Some("Alpha Card".to_owned()),
+            });
+        input
+            .current_state
+            .stack
+            .push(mtgo_blackbox_v1::MtgoPlayerVisibleStackItemV1 {
+                visible_stack_position: 0,
+                source_object_ref: battlefield_object_ref,
+                visible_source_name: Some("Mid Card".to_owned()),
+                controller: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+                visible_targets: Vec::new(),
+                item_kind: mtgo_blackbox_v1::StackItemKindV2::Spell,
+            });
+        input.current_state.known_library_cards[0].push(
+            mtgo_blackbox_v1::MtgoPlayerVisibleKnownLibraryCardV1 {
+                visible_known_position: 0,
+                card: mtgo_blackbox_v1::MtgoPlayerVisibleNamedCardV1 {
+                    object_ref: mtgo_blackbox_v1::MtgoPlayerVisibleObjectRefV1 {
+                        visible_ordinal: 9_003,
+                    },
+                    card_name: "Mountain".to_owned(),
+                },
+            },
+        );
+        input.current_state.known_hand_cards[1].push(
+            mtgo_blackbox_v1::MtgoPlayerVisibleNamedCardV1 {
+                object_ref: mtgo_blackbox_v1::MtgoPlayerVisibleObjectRefV1 {
+                    visible_ordinal: 9_004,
+                },
+                card_name: "Beta Card".to_owned(),
+            },
+        );
+        let names = visible_card_names_v1(&input);
+        assert_eq!(
+            names,
+            vec![
+                "Alpha Card".to_owned(),
+                "Beta Card".to_owned(),
+                "Lightning Bolt".to_owned(),
+                "Mid Card".to_owned(),
+                "Mountain".to_owned(),
+                "Zebra Card".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn all_known_names_fail_closed_with_the_not_qualified_reason() {
         let mut scorer = MtgoPlaceholderVisibleDuelScorerV1::new_v1(
             MtgoUnknownCardPolicyV1::FailClosedHumanTakeover,
