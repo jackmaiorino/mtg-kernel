@@ -1,0 +1,287 @@
+{
+ "Affinity": {
+  "deck_id": "887998",
+  "distance": 31.5,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Sewer-veillance Cam": 1,
+   "Utrom Monitor": 3
+  },
+  "missing_side": {},
+  "xmage_absent": [
+   "Utrom Monitor",
+   "Sewer-veillance Cam"
+  ]
+ },
+ "Burn": {
+  "deck_id": "888077",
+  "distance": 9.8,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Kessig Flamebreather": 4
+  },
+  "missing_side": {
+   "Smash to Smithereens": 2
+  },
+  "xmage_absent": []
+ },
+ "DimirControl": {
+  "deck_id": "886841",
+  "distance": 38.2,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Abandon Attachments": 2,
+   "Contaminated Aquifer": 4,
+   "Gurmag Angler": 2,
+   "Ice Tunnel": 2,
+   "Snuff Out": 4,
+   "Suffocating Fumes": 1
+  },
+  "missing_side": {
+   "Arms of Hadar": 2
+  },
+  "xmage_absent": []
+ },
+ "Elves": {
+  "deck_id": "887257",
+  "distance": 39.0,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {},
+  "missing_side": {
+   "Viridian Longbow": 2,
+   "Webweaver Changeling": 2
+  },
+  "xmage_absent": []
+ },
+ "Ephemerate": {
+  "deck_id": "887943",
+  "distance": 38.4,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Archaeomancer": 2,
+   "Augur of Bolas": 3,
+   "Behold the Multiverse": 2,
+   "Bender's Waterskin": 2,
+   "Bonder's Ornament": 1,
+   "Ephemerate": 3,
+   "Fanged Flames": 1,
+   "Glacial Floodplain": 2,
+   "Mulldrifter": 3,
+   "Perilous Landscape": 4,
+   "Ride's End": 1,
+   "Skred": 4,
+   "Snow-Covered Island": 6,
+   "Snow-Covered Mountain": 2,
+   "Snow-Covered Plains": 2,
+   "Suplex": 1,
+   "Union of the Third Path": 1,
+   "Volatile Fjord": 3
+  },
+  "missing_side": {
+   "Campfire": 1,
+   "Ethereal Haze": 1
+  },
+  "xmage_absent": []
+ },
+ "Garden": {
+  "deck_id": "887812",
+  "distance": 18.5,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Accursed Marauder": 1,
+   "Bojuka Bog": 2,
+   "Campfire": 2,
+   "Crypt Rats": 3,
+   "Defile": 3,
+   "Fungal Infection": 1,
+   "Haunted Mire": 1,
+   "Khalni Garden": 4,
+   "Snuff Out": 1,
+   "Spinning Darkness": 1,
+   "Suffocating Fumes": 1,
+   "Tithing Blade": 2,
+   "Witch's Cottage": 2
+  },
+  "missing_side": {
+   "Drown in Sorrow": 2
+  },
+  "xmage_absent": []
+ },
+ "Gates": {
+  "deck_id": "885394",
+  "distance": 55.0,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Armadillo Cloak": 3,
+   "Call Damage Control": 2,
+   "Cliffgate": 2,
+   "Malevolent Rumble": 4,
+   "Manor Gate": 4,
+   "Midnight Tilling": 2,
+   "Plains": 3
+  },
+  "missing_side": {
+   "Ancient Grudge": 2,
+   "Destroy Evil": 2
+  },
+  "xmage_absent": [
+   "Call Damage Control"
+  ]
+ },
+ "GruulAggro": {
+  "deck_id": "886621",
+  "distance": 42.2,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Annoyed Altisaur": 3,
+   "Arbor Elf": 4,
+   "Boarding Party": 4,
+   "Eldrazi Repurposer": 4,
+   "Jewel Thief": 4,
+   "Malevolent Rumble": 4,
+   "Mwonvuli Acid-Moss": 4,
+   "Utopia Sprawl": 4,
+   "Wild Growth": 4
+  },
+  "missing_side": {
+   "Deglamer": 3,
+   "Nylea's Disciple": 3,
+   "Suplex": 2
+  },
+  "xmage_absent": []
+ },
+ "Jund": {
+  "deck_id": "887774",
+  "distance": 12.8,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Gixian Infiltrator": 2
+  },
+  "missing_side": {
+   "Ancient Grudge": 1,
+   "Terminate": 1
+  },
+  "xmage_absent": []
+ },
+ "MonoBlueAggro": {
+  "deck_id": "887942",
+  "distance": 33.0,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Delver of Secrets": 4
+  },
+  "missing_side": {},
+  "xmage_absent": []
+ },
+ "RedDeckWins": {
+  "deck_id": "888081",
+  "distance": 18.2,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {},
+  "missing_side": {
+   "Raze": 3,
+   "Smash to Smithereens": 2
+  },
+  "xmage_absent": []
+ },
+ "Spy": {
+  "deck_id": "887010",
+  "distance": 14.2,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {},
+  "missing_side": {
+   "Acorn Harvest": 1,
+   "Fang Dragon": 3
+  },
+  "xmage_absent": []
+ },
+ "Terror": {
+  "deck_id": "887001",
+  "distance": 11.9,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Artful Dodge": 1
+  },
+  "missing_side": {
+   "Azure Fleet Admiral": 1
+  },
+  "xmage_absent": []
+ },
+ "Urzatron": {
+  "deck_id": "888074",
+  "distance": 38.1,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Ancient Stirrings": 4,
+   "Barrels of Blasting Jelly": 4,
+   "Bojuka Bog": 1,
+   "Bonder's Ornament": 2,
+   "Boulderbranch Golem": 4,
+   "Bramble Wurm": 4,
+   "Conduit Pylons": 2,
+   "Crop Rotation": 3,
+   "Expedition Map": 4,
+   "Giant's Boulder": 4,
+   "Maelstrom Colossus": 4,
+   "Pinnacle Kill-Ship": 4,
+   "Unfathomable Truths": 2,
+   "Urza's Mine": 4,
+   "Urza's Power Plant": 4,
+   "Urza's Tower": 4
+  },
+  "missing_side": {
+   "Call Damage Control": 2,
+   "Earth Rift": 2,
+   "Rooftop Percher": 1,
+   "Tangle": 2
+  },
+  "xmage_absent": [
+   "Giant's Boulder",
+   "Call Damage Control"
+  ]
+ },
+ "WhiteWeenie": {
+  "deck_id": "888108",
+  "distance": 36.0,
+  "main_total": 60,
+  "side_total": 15,
+  "missing_main": {
+   "Battle Screech": 4,
+   "Greatsword of Tyr": 2,
+   "Guardians' Pledge": 2,
+   "Idyllic Grange": 3,
+   "Kor Skyfisher": 4,
+   "Leonardo, Big Brother": 3,
+   "Lunarch Veteran": 4,
+   "Novice Inspector": 4,
+   "Plains": 16,
+   "Raffine's Informant": 4,
+   "Ramosian Rally": 1,
+   "Spider-Man, Web-Slinger": 1,
+   "Thraben Inspector": 4
+  },
+  "missing_side": {
+   "Destroy Evil": 1,
+   "Holy Light": 2,
+   "Martyr of Sands": 4,
+   "Standard Bearer": 2
+  },
+  "xmage_absent": [
+   "Leonardo, Big Brother"
+  ]
+ }
+}
