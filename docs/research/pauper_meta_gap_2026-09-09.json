@@ -4753,8 +4753,11 @@
    },
    "weight": 64.84375,
    "main_weight": 64.84375,
-   "xmage_java": null,
-   "complexity": null
+   "xmage_java": "..\\..\\..\\..\\Mage\\src\\main\\java\\mage\\cards\\basiclands\\Plains.java",
+   "complexity": {
+    "java_lines": 28,
+    "features": []
+   }
   },
   "Giant's Boulder": {
    "archetypes": {

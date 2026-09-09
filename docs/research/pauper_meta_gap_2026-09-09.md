@@ -1,32 +1,32 @@
 # Pauper meta gap report (2026-09-09)
 
-Source: mtgtop8 Pauper metagame, Last 2 Weeks window, 779 decks; 120 decklists sampled (8 most recent per archetype) via the MTGO export endpoint. Weight = meta share x average mainboard copies x fraction of decks (sideboard at half weight). Registry = data/cards_v1.json at 75406ffe (162 definitions).
+Source: mtgtop8 Pauper metagame, Last 2 Weeks window, 779 decks; 120 decklists sampled (8 most recent per archetype) via the MTGO export endpoint. Shares in pauper_meta_shares_2026-09-09.json. Weight = meta share x average mainboard copies x fraction of decks (sideboard at half weight). Registry = data/cards_v1.json at 75406ffe (162 definitions). Regenerate with python/tools/pauper_meta_gap_v1.py.
 
 ## Archetype coverage
 
 | archetype | share | decks sampled | mainboard copies covered | missing distinct mainboard cards (avg >= 1) |
 |---|---|---|---|---|
-| Burn | 12.0% | 8 | 93% | 1 |
-| MonoBlueAggro | 12.0% | 8 | 90% | 2 |
-| Affinity | 10.0% | 8 | 84% | 4 |
-| Urzatron | 9.0% | 8 | 13% | 16 |
-| RedDeckWins | 6.0% | 8 | 94% | 2 |
-| Elves | 5.0% | 8 | 90% | 2 |
-| Jund | 5.0% | 8 | 94% | 1 |
-| DimirControl | 4.0% | 8 | 70% | 5 |
-| Ephemerate | 4.0% | 8 | 30% | 16 |
-| GruulAggro | 4.0% | 8 | 42% | 11 |
-| Spy | 4.0% | 8 | 100% | 0 |
-| WhiteWeenie | 4.0% | 8 | 10% | 11 |
-| Garden | 3.0% | 8 | 57% | 9 |
-| Terror | 3.0% | 8 | 95% | 1 |
-| Gates | 2.0% | 8 | 74% | 5 |
+| Burn | 12% | 8 | 93% | 1 |
+| MonoBlueAggro | 12% | 8 | 90% | 2 |
+| Affinity | 10% | 8 | 84% | 4 |
+| Urzatron | 9% | 8 | 13% | 16 |
+| RedDeckWins | 6% | 8 | 94% | 2 |
+| Elves | 5% | 8 | 90% | 2 |
+| Jund | 5% | 8 | 94% | 1 |
+| DimirControl | 4% | 8 | 70% | 5 |
+| Ephemerate | 4% | 8 | 30% | 16 |
+| GruulAggro | 4% | 8 | 42% | 11 |
+| Spy | 4% | 8 | 100% | 0 |
+| WhiteWeenie | 4% | 8 | 10% | 11 |
+| Garden | 3% | 8 | 57% | 9 |
+| Terror | 3% | 8 | 95% | 1 |
+| Gates | 2% | 8 | 74% | 5 |
 
 ## Missing cards by weight (top 120)
 
 | rank | card | weight | archetypes (avg main copies) | xmage java lines | features |
 |---|---|---|---|---|---|
-| 1 | Plains | 64.8 | Affinity 0.12, Ephemerate 0.5, Gates 1.75, WhiteWeenie 15.5 | absent in pinned XMage |  |
+| 1 | Plains | 64.8 | Affinity 0.12, Ephemerate 0.5, Gates 1.75, WhiteWeenie 15.5 | 28 |  |
 | 2 | Giant's Boulder | 41.2 | Affinity 1.38, Urzatron 4.0 | absent in pinned XMage |  |
 | 3 | Kessig Flamebreather | 36.8 | Burn 3.5 | 43 | trigger static target |
 | 4 | Urza's Tower | 36.0 | Urzatron 4.0 | 37 |  |

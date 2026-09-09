@@ -38,7 +38,13 @@ def parse(path):
         target[name] += count
     return main, side
 
+BASIC_LANDS = {"Plains", "Island", "Swamp", "Mountain", "Forest"}
+XMAGE_BASICS = os.path.join(XMAGE_CARDS, "..", "..", "..", "..", "Mage", "src", "main", "java", "mage", "cards", "basiclands")
+
 def java_path(name):
+    if name in BASIC_LANDS:
+        cand = os.path.normpath(os.path.join(XMAGE_BASICS, name + ".java"))
+        return cand if os.path.exists(cand) else None
     letter = name[0].lower()
     fname = re.sub(r"[^A-Za-z0-9]", "", name.title().replace("'", "")) + ".java"
     # XMage names classes by removing punctuation and capitalising words
