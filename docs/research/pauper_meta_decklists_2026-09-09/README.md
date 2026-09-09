@@ -1,0 +1,3 @@
+# Sampled Pauper decklists (2026-09-09)
+
+120 decklists retrieved on 2026-09-09 from mtgtop8 (`https://mtgtop8.com/mtgo?d=<id>`, MTGO export form) for the 15 archetypes on the Pauper metagame page (Last 2 Weeks window, 779 decks). File name: `<archetype>__<mtgtop8 deck id>.txt`. The eight most recent decks per archetype page were taken. Shares are in `../pauper_meta_shares_2026-09-09.json`. Regenerate the gap JSON with `python python/tools/pauper_meta_gap_v1.py docs/research/pauper_meta_decklists_2026-09-09 "$(cat docs/research/pauper_meta_shares_2026-09-09.json)" docs/research/pauper_meta_gap_2026-09-09.json`.

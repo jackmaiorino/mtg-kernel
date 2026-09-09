@@ -4751,8 +4751,8 @@
      "deck_pct": 1.0
     }
    },
-   "weight": 64.84375,
-   "main_weight": 64.84375,
+   "weight": 68.75,
+   "main_weight": 68.75,
    "xmage_java": "..\\..\\..\\..\\Mage\\src\\main\\java\\mage\\cards\\basiclands\\Plains.java",
    "complexity": {
     "java_lines": 28,
@@ -4770,8 +4770,8 @@
      "deck_pct": 1.0
     }
    },
-   "weight": 41.15625,
-   "main_weight": 41.15625,
+   "weight": 49.75,
+   "main_weight": 49.75,
    "xmage_java": null,
    "complexity": null
   },
@@ -4782,8 +4782,8 @@
      "deck_pct": 0.88
     }
    },
-   "weight": 36.75,
-   "main_weight": 36.75,
+   "weight": 42.0,
+   "main_weight": 42.0,
    "xmage_java": "k\\KessigFlamebreather.java",
    "complexity": {
     "java_lines": 43,
@@ -4791,6 +4791,23 @@
      "trigger",
      "static",
      "target"
+    ]
+   }
+  },
+  "Delver of Secrets": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 36.0,
+   "main_weight": 36.0,
+   "xmage_java": "d\\DelverOfSecrets.java",
+   "complexity": {
+    "java_lines": 90,
+    "features": [
+     "trigger"
     ]
    }
   },
@@ -4858,6 +4875,25 @@
     ]
    }
   },
+  "Bramble Wurm": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 31.5,
+   "main_weight": 31.5,
+   "xmage_java": "b\\BrambleWurm.java",
+   "complexity": {
+    "java_lines": 57,
+    "features": [
+     "trigger",
+     "activated",
+     "cost"
+    ]
+   }
+  },
   "Utrom Monitor": {
    "archetypes": {
     "Affinity": {
@@ -4870,42 +4906,6 @@
    "xmage_java": null,
    "complexity": null
   },
-  "Bramble Wurm": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 3.5,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 27.5625,
-   "main_weight": 27.5625,
-   "xmage_java": "b\\BrambleWurm.java",
-   "complexity": {
-    "java_lines": 57,
-    "features": [
-     "trigger",
-     "activated",
-     "cost"
-    ]
-   }
-  },
-  "Delver of Secrets": {
-   "archetypes": {
-    "MonoBlueAggro": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 27.0,
-   "main_weight": 27.0,
-   "xmage_java": "d\\DelverOfSecrets.java",
-   "complexity": {
-    "java_lines": 90,
-    "features": [
-     "trigger"
-    ]
-   }
-  },
   "Barrels of Blasting Jelly": {
    "archetypes": {
     "Urzatron": {
@@ -4913,8 +4913,8 @@
      "deck_pct": 0.88
     }
    },
-   "weight": 25.59375,
-   "main_weight": 25.59375,
+   "weight": 29.25,
+   "main_weight": 29.25,
    "xmage_java": "b\\BarrelsOfBlastingJelly.java",
    "complexity": {
     "java_lines": 48,
@@ -4922,6 +4922,66 @@
      "activated",
      "target",
      "cost"
+    ]
+   }
+  },
+  "Ancient Stirrings": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 27.0,
+   "main_weight": 27.0,
+   "xmage_java": "a\\AncientStirrings.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": []
+   }
+  },
+  "Snow-Covered Island": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 5.12,
+     "deck_pct": 0.75
+    },
+    "Terror": {
+     "avg_main": 2.0,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 26.5,
+   "main_weight": 26.5,
+   "xmage_java": "s\\SnowCoveredIsland.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Malevolent Rumble": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 2.5,
+     "deck_pct": 0.62
+    },
+    "GruulAggro": {
+     "avg_main": 2.0,
+     "deck_pct": 0.62
+    },
+    "Urzatron": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 26.5,
+   "main_weight": 26.5,
+   "xmage_java": "m\\MalevolentRumble.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": [
+     "static",
+     "token"
     ]
    }
   },
@@ -4944,21 +5004,6 @@
     ]
    }
   },
-  "Ancient Stirrings": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 20.25,
-   "main_weight": 20.25,
-   "xmage_java": "a\\AncientStirrings.java",
-   "complexity": {
-    "java_lines": 39,
-    "features": []
-   }
-  },
   "Snuff Out": {
    "archetypes": {
     "DimirControl": {
@@ -4975,8 +5020,8 @@
      "deck_pct": 0.38
     }
    },
-   "weight": 18.7578125,
-   "main_weight": 18.734375,
+   "weight": 20.8125,
+   "main_weight": 20.625,
    "xmage_java": "s\\SnuffOut.java",
    "complexity": {
     "java_lines": 51,
@@ -4988,6 +5033,36 @@
     ]
    }
   },
+  "Bonder's Ornament": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    },
+    "Garden": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    },
+    "GruulAggro": {
+     "avg_main": 0.88,
+     "deck_pct": 0.38
+    },
+    "Urzatron": {
+     "avg_main": 1.75,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 20.5,
+   "main_weight": 20.5,
+   "xmage_java": "b\\BonderSOrnament.java",
+   "complexity": {
+    "java_lines": 79,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
   "Unfathomable Truths": {
    "archetypes": {
     "Urzatron": {
@@ -4995,8 +5070,8 @@
      "deck_pct": 0.88
     }
    },
-   "weight": 17.71875,
-   "main_weight": 17.71875,
+   "weight": 20.25,
+   "main_weight": 20.25,
    "xmage_java": "u\\UnfathomableTruths.java",
    "complexity": {
     "java_lines": 37,
@@ -5005,58 +5080,36 @@
     ]
    }
   },
-  "Snow-Covered Island": {
+  "Maelstrom Colossus": {
    "archetypes": {
-    "Ephemerate": {
-     "avg_main": 5.12,
-     "deck_pct": 0.75
-    },
-    "Terror": {
-     "avg_main": 2.0,
-     "deck_pct": 0.12
+    "Urzatron": {
+     "avg_main": 2.25,
+     "deck_pct": 0.62
     }
    },
-   "weight": 16.125,
-   "main_weight": 16.125,
-   "xmage_java": "s\\SnowCoveredIsland.java",
+   "weight": 20.25,
+   "main_weight": 20.25,
+   "xmage_java": "m\\MaelstromColossus.java",
    "complexity": {
     "java_lines": 36,
     "features": []
    }
   },
-  "Contaminated Aquifer": {
+  "Pinnacle Kill-Ship": {
    "archetypes": {
-    "DimirControl": {
-     "avg_main": 4.0,
-     "deck_pct": 1.0
-    }
-   },
-   "weight": 16.0,
-   "main_weight": 16.0,
-   "xmage_java": "c\\ContaminatedAquifer.java",
-   "complexity": {
-    "java_lines": 40,
-    "features": []
-   }
-  },
-  "Mulldrifter": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 3.5,
-     "deck_pct": 1.0
-    },
     "Urzatron": {
-     "avg_main": 0.38,
-     "deck_pct": 0.12
+     "avg_main": 2.0,
+     "deck_pct": 0.5
     }
    },
-   "weight": 14.421875,
-   "main_weight": 14.421875,
-   "xmage_java": "m\\Mulldrifter.java",
+   "weight": 18.0,
+   "main_weight": 18.0,
+   "xmage_java": "p\\PinnacleKillShip.java",
    "complexity": {
-    "java_lines": 44,
+    "java_lines": 51,
     "features": [
-     "trigger"
+     "trigger",
+     "target"
     ]
    }
   },
@@ -5084,13 +5137,278 @@
      "avg_side": 0.12
     }
    },
-   "weight": 13.96875,
-   "main_weight": 13.84375,
+   "weight": 17.625,
+   "main_weight": 16.625,
    "xmage_java": "b\\BojukaBog.java",
    "complexity": {
     "java_lines": 41,
     "features": [
      "trigger",
+     "target"
+    ]
+   }
+  },
+  "Mulldrifter": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.5,
+     "deck_pct": 1.0
+    },
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 17.375,
+   "main_weight": 17.375,
+   "xmage_java": "m\\Mulldrifter.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Augur of Bolas": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    },
+    "Ephemerate": {
+     "avg_main": 2.75,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 17.0,
+   "main_weight": 17.0,
+   "xmage_java": "a\\AugurOfBolas.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Sewer-veillance Cam": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62
+    },
+    "DimirControl": {
+     "avg_main": 0.38,
+     "deck_pct": 0.38
+    },
+    "MonoBlueAggro": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 16.75,
+   "main_weight": 16.75,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Contaminated Aquifer": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 16.0,
+   "main_weight": 16.0,
+   "xmage_java": "c\\ContaminatedAquifer.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Boulderbranch Golem": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 1.62,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 15.875,
+   "main_weight": 15.875,
+   "xmage_java": "b\\BoulderbranchGolem.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Kor Skyfisher": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 15.75,
+   "main_weight": 15.75,
+   "xmage_java": "k\\KorSkyfisher.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Arbor Elf": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "GruulAggro": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 15.25,
+   "main_weight": 15.25,
+   "xmage_java": "a\\ArborElf.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Glint Hawk": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 15.0,
+   "main_weight": 15.0,
+   "xmage_java": "g\\GlintHawk.java",
+   "complexity": {
+    "java_lines": 89,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Khalni Garden": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 4.0,
+     "deck_pct": 1.0
+    },
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 15.0,
+   "main_weight": 15.0,
+   "xmage_java": "k\\KhalniGarden.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Skred": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    },
+    "GruulAggro": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 14.0,
+   "main_weight": 14.0,
+   "xmage_java": "s\\Skred.java",
+   "complexity": {
+    "java_lines": 73,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Utopia Sprawl": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 14.0,
+   "main_weight": 14.0,
+   "xmage_java": "u\\UtopiaSprawl.java",
+   "complexity": {
+    "java_lines": 98,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Thraben Inspector": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.5,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 14.0,
+   "main_weight": 14.0,
+   "xmage_java": "t\\ThrabenInspector.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Ephemerate": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 3.12,
+     "deck_pct": 1.0
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 13.625,
+   "main_weight": 13.625,
+   "xmage_java": "e\\Ephemerate.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
      "target"
     ]
    }
@@ -5113,181 +5431,195 @@
     ]
    }
   },
-  "Bonder's Ornament": {
+  "Ancient Den": {
    "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12
-    },
-    "Garden": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25
-    },
-    "GruulAggro": {
-     "avg_main": 0.88,
-     "deck_pct": 0.38
-    },
-    "Urzatron": {
-     "avg_main": 1.75,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 13.375,
-   "main_weight": 13.375,
-   "xmage_java": "b\\BonderSOrnament.java",
-   "complexity": {
-    "java_lines": 79,
-    "features": [
-     "activated",
-     "cost"
-    ]
-   }
-  },
-  "Malevolent Rumble": {
-   "archetypes": {
-    "Gates": {
-     "avg_main": 2.5,
-     "deck_pct": 0.62
-    },
-    "GruulAggro": {
-     "avg_main": 2.0,
-     "deck_pct": 0.62
-    },
-    "Urzatron": {
-     "avg_main": 1.5,
+    "Affinity": {
+     "avg_main": 1.25,
      "deck_pct": 0.38
     }
    },
-   "weight": 13.1875,
-   "main_weight": 13.1875,
-   "xmage_java": "m\\MalevolentRumble.java",
+   "weight": 12.5,
+   "main_weight": 12.5,
+   "xmage_java": "a\\AncientDen.java",
    "complexity": {
-    "java_lines": 37,
-    "features": [
-     "static",
-     "token"
-    ]
-   }
-  },
-  "Maelstrom Colossus": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 2.25,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 12.65625,
-   "main_weight": 12.65625,
-   "xmage_java": "m\\MaelstromColossus.java",
-   "complexity": {
-    "java_lines": 36,
+    "java_lines": 31,
     "features": []
    }
   },
-  "Ephemerate": {
+  "Perilous Landscape": {
    "archetypes": {
     "Ephemerate": {
      "avg_main": 3.12,
-     "deck_pct": 1.0
-    },
-    "Urzatron": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 12.640625,
-   "main_weight": 12.640625,
-   "xmage_java": "e\\Ephemerate.java",
-   "complexity": {
-    "java_lines": 36,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Arbor Elf": {
-   "archetypes": {
-    "Elves": {
-     "avg_main": 0.25,
-     "deck_pct": 0.12
-    },
-    "GruulAggro": {
-     "avg_main": 3.5,
      "deck_pct": 0.88
     }
    },
-   "weight": 12.40625,
-   "main_weight": 12.40625,
-   "xmage_java": "a\\ArborElf.java",
+   "weight": 12.5,
+   "main_weight": 12.5,
+   "xmage_java": "p\\PerilousLandscape.java",
    "complexity": {
-    "java_lines": 46,
+    "java_lines": 64,
     "features": [
      "activated",
      "target",
-     "cost"
+     "cost",
+     "cycling"
     ]
    }
   },
-  "Khalni Garden": {
+  "Novice Inspector": {
    "archetypes": {
-    "Garden": {
-     "avg_main": 4.0,
-     "deck_pct": 1.0
-    },
-    "GruulAggro": {
-     "avg_main": 0.25,
-     "deck_pct": 0.12
-    },
     "WhiteWeenie": {
-     "avg_main": 0.5,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 12.375,
-   "main_weight": 12.375,
-   "xmage_java": "k\\KhalniGarden.java",
-   "complexity": {
-    "java_lines": 39,
-    "features": [
-     "trigger",
-     "token"
-    ]
-   }
-  },
-  "Utopia Sprawl": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 3.5,
+     "avg_main": 3.12,
      "deck_pct": 0.88
     }
    },
-   "weight": 12.25,
-   "main_weight": 12.25,
-   "xmage_java": "u\\UtopiaSprawl.java",
-   "complexity": {
-    "java_lines": 98,
-    "features": [
-     "trigger",
-     "target"
-    ]
-   }
-  },
-  "Thraben Inspector": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 3.5,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 12.25,
-   "main_weight": 12.25,
-   "xmage_java": "t\\ThrabenInspector.java",
+   "weight": 12.5,
+   "main_weight": 12.5,
+   "xmage_java": "n\\NoviceInspector.java",
    "complexity": {
     "java_lines": 38,
     "features": [
      "trigger"
     ]
    }
+  },
+  "Conduit Pylons": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 1.38,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 12.375,
+   "main_weight": 12.375,
+   "xmage_java": "c\\ConduitPylons.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Boarding Party": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 12.0,
+   "main_weight": 12.0,
+   "xmage_java": "b\\BoardingParty.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": []
+   }
+  },
+  "Brinebarrow Intruder": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 12.0,
+   "main_weight": 12.0,
+   "xmage_java": "b\\BrinebarrowIntruder.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "trigger",
+     "target"
+    ]
+   }
+  },
+  "Battle Screech": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 12.0,
+   "main_weight": 12.0,
+   "xmage_java": "b\\BattleScreech.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "target",
+     "cost",
+     "token",
+     "flashback"
+    ]
+   }
+  },
+  "Raffine's Informant": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 3.0,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 12.0,
+   "main_weight": 12.0,
+   "xmage_java": "r\\RaffineSInformant.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Smash to Smithereens": {
+   "archetypes": {
+    "Burn": {
+     "avg_side": 0.88
+    },
+    "RedDeckWins": {
+     "avg_side": 2.12
+    }
+   },
+   "weight": 11.625,
+   "main_weight": 0.0,
+   "xmage_java": "s\\SmashToSmithereens.java",
+   "complexity": {
+    "java_lines": 71,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Lunarch Veteran": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 2.88,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 11.5,
+   "main_weight": 11.5,
+   "xmage_java": "l\\LunarchVeteran.java",
+   "complexity": {
+    "java_lines": 62,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Leonardo, Big Brother": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 2.88,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 11.5,
+   "main_weight": 11.5,
+   "xmage_java": null,
+   "complexity": null
   },
   "Archaeomancer": {
    "archetypes": {
@@ -5308,95 +5640,6 @@
     ]
    }
   },
-  "Perilous Landscape": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 3.12,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 10.9375,
-   "main_weight": 10.9375,
-   "xmage_java": "p\\PerilousLandscape.java",
-   "complexity": {
-    "java_lines": 64,
-    "features": [
-     "activated",
-     "target",
-     "cost",
-     "cycling"
-    ]
-   }
-  },
-  "Novice Inspector": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 3.12,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 10.9375,
-   "main_weight": 10.9375,
-   "xmage_java": "n\\NoviceInspector.java",
-   "complexity": {
-    "java_lines": 38,
-    "features": [
-     "trigger"
-    ]
-   }
-  },
-  "Conduit Pylons": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 1.38,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 10.828125,
-   "main_weight": 10.828125,
-   "xmage_java": "c\\ConduitPylons.java",
-   "complexity": {
-    "java_lines": 47,
-    "features": [
-     "trigger",
-     "cost"
-    ]
-   }
-  },
-  "Augur of Bolas": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 1.5,
-     "deck_pct": 0.38
-    },
-    "Ephemerate": {
-     "avg_main": 2.75,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 10.5,
-   "main_weight": 10.5,
-   "xmage_java": "a\\AugurOfBolas.java",
-   "complexity": {
-    "java_lines": 43,
-    "features": [
-     "trigger",
-     "static"
-    ]
-   }
-  },
-  "Leonardo, Big Brother": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 2.88,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 10.0625,
-   "main_weight": 10.0625,
-   "xmage_java": null,
-   "complexity": null
-  },
   "Wild Growth": {
    "archetypes": {
     "GruulAggro": {
@@ -5404,185 +5647,14 @@
      "deck_pct": 0.88
     }
    },
-   "weight": 9.625,
-   "main_weight": 9.625,
+   "weight": 11.0,
+   "main_weight": 11.0,
    "xmage_java": "w\\WildGrowth.java",
    "complexity": {
     "java_lines": 52,
     "features": [
      "trigger",
      "target"
-    ]
-   }
-  },
-  "Skred": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    },
-    "GruulAggro": {
-     "avg_main": 0.5,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 9.5,
-   "main_weight": 9.5,
-   "xmage_java": "s\\Skred.java",
-   "complexity": {
-    "java_lines": 73,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Kor Skyfisher": {
-   "archetypes": {
-    "Affinity": {
-     "avg_main": 0.38,
-     "deck_pct": 0.12
-    },
-    "WhiteWeenie": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 9.46875,
-   "main_weight": 9.46875,
-   "xmage_java": "k\\KorSkyfisher.java",
-   "complexity": {
-    "java_lines": 46,
-    "features": [
-     "trigger"
-    ]
-   }
-  },
-  "Boarding Party": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 9.0,
-   "main_weight": 9.0,
-   "xmage_java": "b\\BoardingParty.java",
-   "complexity": {
-    "java_lines": 41,
-    "features": []
-   }
-  },
-  "Pinnacle Kill-Ship": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 2.0,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 9.0,
-   "main_weight": 9.0,
-   "xmage_java": "p\\PinnacleKillShip.java",
-   "complexity": {
-    "java_lines": 51,
-    "features": [
-     "trigger",
-     "target"
-    ]
-   }
-  },
-  "Battle Screech": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 9.0,
-   "main_weight": 9.0,
-   "xmage_java": "b\\BattleScreech.java",
-   "complexity": {
-    "java_lines": 48,
-    "features": [
-     "target",
-     "cost",
-     "token",
-     "flashback"
-    ]
-   }
-  },
-  "Raffine's Informant": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 3.0,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 9.0,
-   "main_weight": 9.0,
-   "xmage_java": "r\\RaffineSInformant.java",
-   "complexity": {
-    "java_lines": 38,
-    "features": [
-     "trigger"
-    ]
-   }
-  },
-  "Lunarch Veteran": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 2.88,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 8.625,
-   "main_weight": 8.625,
-   "xmage_java": "l\\LunarchVeteran.java",
-   "complexity": {
-    "java_lines": 62,
-    "features": [
-     "trigger",
-     "static"
-    ]
-   }
-  },
-  "Smash to Smithereens": {
-   "archetypes": {
-    "Burn": {
-     "avg_side": 0.88
-    },
-    "RedDeckWins": {
-     "avg_side": 2.12
-    }
-   },
-   "weight": 7.546875,
-   "main_weight": 0.0,
-   "xmage_java": "s\\SmashToSmithereens.java",
-   "complexity": {
-    "java_lines": 71,
-    "features": [
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Boulderbranch Golem": {
-   "archetypes": {
-    "Elves": {
-     "avg_main": 0.25,
-     "deck_pct": 0.12
-    },
-    "Urzatron": {
-     "avg_main": 1.62,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 7.46875,
-   "main_weight": 7.46875,
-   "xmage_java": "b\\BoulderbranchGolem.java",
-   "complexity": {
-    "java_lines": 44,
-    "features": [
-     "trigger"
     ]
    }
   },
@@ -5605,537 +5677,13 @@
      "deck_pct": 1.0
     }
    },
-   "weight": 7.328125,
+   "weight": 10.875,
    "main_weight": 6.75,
    "xmage_java": "c\\Campfire.java",
    "complexity": {
     "java_lines": 90,
     "features": [
      "activated",
-     "cost"
-    ]
-   }
-  },
-  "Tithing Blade": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 2.38,
-     "deck_pct": 1.0
-    }
-   },
-   "weight": 7.125,
-   "main_weight": 7.125,
-   "xmage_java": "t\\TithingBlade.java",
-   "complexity": {
-    "java_lines": 59,
-    "features": [
-     "trigger",
-     "static"
-    ]
-   }
-  },
-  "Sewer-veillance Cam": {
-   "archetypes": {
-    "Affinity": {
-     "avg_main": 0.62,
-     "deck_pct": 0.62
-    },
-    "DimirControl": {
-     "avg_main": 0.38,
-     "deck_pct": 0.38
-    },
-    "MonoBlueAggro": {
-     "avg_main": 0.75,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 6.71875,
-   "main_weight": 6.71875,
-   "xmage_java": null,
-   "complexity": null
-  },
-  "Glacial Floodplain": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.75,
-     "deck_pct": 0.88
-    }
-   },
-   "weight": 6.125,
-   "main_weight": 6.125,
-   "xmage_java": "g\\GlacialFloodplain.java",
-   "complexity": {
-    "java_lines": 43,
-    "features": []
-   }
-  },
-  "Glint Hawk": {
-   "archetypes": {
-    "Affinity": {
-     "avg_main": 1.5,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 5.625,
-   "main_weight": 5.625,
-   "xmage_java": "g\\GlintHawk.java",
-   "complexity": {
-    "java_lines": 89,
-    "features": [
-     "trigger",
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Volatile Fjord": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.88,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 5.625,
-   "main_weight": 5.625,
-   "xmage_java": "v\\VolatileFjord.java",
-   "complexity": {
-    "java_lines": 43,
-    "features": []
-   }
-  },
-  "Defile": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 2.5,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 5.625,
-   "main_weight": 5.625,
-   "xmage_java": "d\\Defile.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Guardians' Pledge": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 1.75,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 5.25,
-   "main_weight": 5.25,
-   "xmage_java": "g\\GuardiansPledge.java",
-   "complexity": {
-    "java_lines": 42,
-    "features": []
-   }
-  },
-  "Crypt Rats": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 2.25,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 5.0625,
-   "main_weight": 5.0625,
-   "xmage_java": "c\\CryptRats.java",
-   "complexity": {
-    "java_lines": 59,
-    "features": [
-     "activated",
-     "cost"
-    ]
-   }
-  },
-  "Snow-Covered Mountain": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.38,
-     "deck_pct": 0.75
-    },
-    "GruulAggro": {
-     "avg_main": 0.5,
-     "deck_pct": 0.25
-    },
-    "Jund": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 4.703125,
-   "main_weight": 4.703125,
-   "xmage_java": "s\\SnowCoveredMountain.java",
-   "complexity": {
-    "java_lines": 36,
-    "features": []
-   }
-  },
-  "Ancient Den": {
-   "archetypes": {
-    "Affinity": {
-     "avg_main": 1.25,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 4.6875,
-   "main_weight": 4.6875,
-   "xmage_java": "a\\AncientDen.java",
-   "complexity": {
-    "java_lines": 31,
-    "features": []
-   }
-  },
-  "Annoyed Altisaur": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 1.88,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 4.6875,
-   "main_weight": 4.6875,
-   "xmage_java": "a\\AnnoyedAltisaur.java",
-   "complexity": {
-    "java_lines": 44,
-    "features": []
-   }
-  },
-  "Snow-Covered Plains": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.5,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 4.5,
-   "main_weight": 4.5,
-   "xmage_java": "s\\SnowCoveredPlains.java",
-   "complexity": {
-    "java_lines": 36,
-    "features": []
-   }
-  },
-  "Abandon Attachments": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 1.62,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 4.0625,
-   "main_weight": 4.0625,
-   "xmage_java": "a\\AbandonAttachments.java",
-   "complexity": {
-    "java_lines": 35,
-    "features": [
-     "cost"
-    ]
-   }
-  },
-  "Jewel Thief": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 2.0,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 4.0,
-   "main_weight": 4.0,
-   "xmage_java": "j\\JewelThief.java",
-   "complexity": {
-    "java_lines": 47,
-    "features": [
-     "trigger",
-     "token"
-    ]
-   }
-  },
-  "Mwonvuli Acid-Moss": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 2.0,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 4.0,
-   "main_weight": 4.0,
-   "xmage_java": "m\\MwonvuliAcidMoss.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Deglamer": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_side": 2.25
-    }
-   },
-   "weight": 3.9375,
-   "main_weight": 0.0,
-   "xmage_java": "d\\Deglamer.java",
-   "complexity": {
-    "java_lines": 33,
-    "features": [
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Call Damage Control": {
-   "archetypes": {
-    "Gates": {
-     "avg_main": 0.5,
-     "deck_pct": 0.25
-    },
-    "GruulAggro": {
-     "avg_main": 0.38,
-     "deck_pct": 0.12
-    },
-    "Urzatron": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12,
-     "avg_side": 1.12
-    }
-   },
-   "weight": 3.7421875,
-   "main_weight": 0.578125,
-   "xmage_java": null,
-   "complexity": null
-  },
-  "Idyllic Grange": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 1.38,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 3.4375,
-   "main_weight": 3.4375,
-   "xmage_java": "i\\IdyllicGrange.java",
-   "complexity": {
-    "java_lines": 64,
-    "features": [
-     "trigger",
-     "target",
-     "condition",
-     "counter"
-    ]
-   }
-  },
-  "Ride's End": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.12,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 3.375,
-   "main_weight": 3.375,
-   "xmage_java": "r\\RideSEnd.java",
-   "complexity": {
-    "java_lines": 54,
-    "features": [
-     "static",
-     "target",
-     "condition",
-     "cost"
-    ]
-   }
-  },
-  "Inventor's Axe": {
-   "archetypes": {
-    "RedDeckWins": {
-     "avg_main": 1.5,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 3.375,
-   "main_weight": 3.375,
-   "xmage_java": "i\\InventorSAxe.java",
-   "complexity": {
-    "java_lines": 53,
-    "features": [
-     "trigger",
-     "static",
-     "target",
-     "cost",
-     "counter"
-    ]
-   }
-  },
-  "Gurmag Angler": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 1.25,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 3.125,
-   "main_weight": 3.125,
-   "xmage_java": "g\\GurmagAngler.java",
-   "complexity": {
-    "java_lines": 37,
-    "features": []
-   }
-  },
-  "Gixian Infiltrator": {
-   "archetypes": {
-    "Jund": {
-     "avg_main": 1.25,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 3.125,
-   "main_weight": 3.125,
-   "xmage_java": "g\\GixianInfiltrator.java",
-   "complexity": {
-    "java_lines": 42,
-    "features": [
-     "trigger",
-     "static",
-     "counter"
-    ]
-   }
-  },
-  "Witch's Cottage": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 1.38,
-     "deck_pct": 0.75
-    }
-   },
-   "weight": 3.09375,
-   "main_weight": 3.09375,
-   "xmage_java": "w\\WitchSCottage.java",
-   "complexity": {
-    "java_lines": 66,
-    "features": [
-     "trigger",
-     "static",
-     "target",
-     "condition"
-    ]
-   }
-  },
-  "Drown in Sorrow": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_side": 0.25
-    },
-    "Garden": {
-     "avg_side": 2.0
-    }
-   },
-   "weight": 3.0625,
-   "main_weight": 0.0,
-   "xmage_java": "d\\DrownInSorrow.java",
-   "complexity": {
-    "java_lines": 35,
-    "features": []
-   }
-  },
-  "Bender's Waterskin": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.5,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 3.0,
-   "main_weight": 3.0,
-   "xmage_java": "b\\BenderSWaterskin.java",
-   "complexity": {
-    "java_lines": 35,
-    "features": [
-     "static"
-    ]
-   }
-  },
-  "Haunted Mire": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 1.0,
-     "deck_pct": 1.0
-    }
-   },
-   "weight": 3.0,
-   "main_weight": 3.0,
-   "xmage_java": "h\\HauntedMire.java",
-   "complexity": {
-    "java_lines": 40,
-    "features": []
-   }
-  },
-  "Brinebarrow Intruder": {
-   "archetypes": {
-    "MonoBlueAggro": {
-     "avg_main": 1.0,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 3.0,
-   "main_weight": 3.0,
-   "xmage_java": "b\\BrinebarrowIntruder.java",
-   "complexity": {
-    "java_lines": 46,
-    "features": [
-     "trigger",
-     "target"
-    ]
-   }
-  },
-  "Ancient Grudge": {
-   "archetypes": {
-    "Gates": {
-     "avg_side": 0.75
-    },
-    "GruulAggro": {
-     "avg_main": 0.25,
-     "deck_pct": 0.12
-    },
-    "Jund": {
-     "avg_side": 0.75
-    },
-    "Urzatron": {
-     "avg_side": 0.62
-    }
-   },
-   "weight": 2.8671875,
-   "main_weight": 0.125,
-   "xmage_java": "a\\AncientGrudge.java",
-   "complexity": {
-    "java_lines": 37,
-    "features": [
-     "target",
-     "cost",
-     "flashback"
-    ]
-   }
-  },
-  "Jaspera Sentinel": {
-   "archetypes": {
-    "Elves": {
-     "avg_main": 1.5,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 2.8125,
-   "main_weight": 2.8125,
-   "xmage_java": "j\\JasperaSentinel.java",
-   "complexity": {
-    "java_lines": 46,
-    "features": [
-     "static",
-     "target",
      "cost"
     ]
    }
@@ -6148,8 +5696,8 @@
      "avg_side": 0.25
     }
    },
-   "weight": 2.625,
-   "main_weight": 2.25,
+   "weight": 10.5,
+   "main_weight": 9.0,
    "xmage_java": "c\\Cryoshatter.java",
    "complexity": {
     "java_lines": 53,
@@ -6171,8 +5719,8 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 2.5625,
-   "main_weight": 2.5625,
+   "weight": 10.25,
+   "main_weight": 10.25,
    "xmage_java": "m\\MeldedMoxite.java",
    "complexity": {
     "java_lines": 48,
@@ -6184,102 +5732,47 @@
     ]
    }
   },
-  "Spider-Man, Web-Slinger": {
+  "Inventor's Axe": {
    "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 1.0,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 2.5,
-   "main_weight": 2.5,
-   "xmage_java": "s\\SpiderManWebSlinger.java",
-   "complexity": {
-    "java_lines": 40,
-    "features": []
-   }
-  },
-  "Suffocating Fumes": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.62,
-     "deck_pct": 0.62,
-     "avg_side": 0.25
-    },
-    "Garden": {
-     "avg_main": 0.5,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 2.4375,
-   "main_weight": 2.3125,
-   "xmage_java": "s\\SuffocatingFumes.java",
-   "complexity": {
-    "java_lines": 39,
-    "features": [
-     "static",
-     "cost",
-     "cycling"
-    ]
-   }
-  },
-  "Birchlore Rangers": {
-   "archetypes": {
-    "Elves": {
-     "avg_main": 1.25,
+    "RedDeckWins": {
+     "avg_main": 1.5,
      "deck_pct": 0.38
     }
    },
-   "weight": 2.34375,
-   "main_weight": 2.34375,
-   "xmage_java": "b\\BirchloreRangers.java",
+   "weight": 9.0,
+   "main_weight": 9.0,
+   "xmage_java": "i\\InventorSAxe.java",
    "complexity": {
-    "java_lines": 95,
+    "java_lines": 53,
     "features": [
-     "target",
-     "cost"
-    ]
-   }
-  },
-  "Manor Gate": {
-   "archetypes": {
-    "Gates": {
-     "avg_main": 1.88,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 2.34375,
-   "main_weight": 2.34375,
-   "xmage_java": "m\\ManorGate.java",
-   "complexity": {
-    "java_lines": 48,
-    "features": [
-     "cost"
-    ]
-   }
-  },
-  "Artful Dodge": {
-   "archetypes": {
-    "MonoBlueAggro": {
-     "avg_main": 0.38,
-     "deck_pct": 0.25
-    },
-    "Terror": {
-     "avg_main": 0.62,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 2.296875,
-   "main_weight": 2.296875,
-   "xmage_java": "a\\ArtfulDodge.java",
-   "complexity": {
-    "java_lines": 39,
-    "features": [
+     "trigger",
+     "static",
      "target",
      "cost",
-     "flashback"
+     "counter"
     ]
    }
+  },
+  "Call Damage Control": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    },
+    "GruulAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    },
+    "Urzatron": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 1.12
+    }
+   },
+   "weight": 8.6875,
+   "main_weight": 3.625,
+   "xmage_java": null,
+   "complexity": null
   },
   "Rooftop Percher": {
    "archetypes": {
@@ -6292,8 +5785,8 @@
      "avg_side": 0.5
     }
    },
-   "weight": 2.2890625,
-   "main_weight": 1.40625,
+   "weight": 8.1875,
+   "main_weight": 5.625,
    "xmage_java": "r\\RooftopPercher.java",
    "complexity": {
     "java_lines": 51,
@@ -6303,131 +5796,26 @@
     ]
    }
   },
-  "Thermokarst": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 1.5,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 2.25,
-   "main_weight": 2.25,
-   "xmage_java": "t\\Thermokarst.java",
-   "complexity": {
-    "java_lines": 69,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Arms of Hadar": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_side": 1.25
-    }
-   },
-   "weight": 2.1875,
-   "main_weight": 0.0,
-   "xmage_java": "a\\ArmsOfHadar.java",
-   "complexity": {
-    "java_lines": 43,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Union of the Third Path": {
+  "Snow-Covered Mountain": {
    "archetypes": {
     "Ephemerate": {
-     "avg_main": 0.88,
-     "deck_pct": 0.62
-    }
-   },
-   "weight": 2.1875,
-   "main_weight": 2.1875,
-   "xmage_java": "u\\UnionOfTheThirdPath.java",
-   "complexity": {
-    "java_lines": 34,
-    "features": []
-   }
-  },
-  "Standard Bearer": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_side": 1.62
-    }
-   },
-   "weight": 2.03125,
-   "main_weight": 0.0,
-   "xmage_java": "s\\StandardBearer.java",
-   "complexity": {
-    "java_lines": 39,
-    "features": [
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Nylea's Disciple": {
-   "archetypes": {
-    "Elves": {
-     "avg_side": 0.12
+     "avg_main": 1.38,
+     "deck_pct": 0.75
     },
     "GruulAggro": {
-     "avg_side": 0.38
-    },
-    "Spy": {
-     "avg_side": 1.88
-    }
-   },
-   "weight": 2.0078125,
-   "main_weight": 0.0,
-   "xmage_java": "n\\NyleaSDisciple.java",
-   "complexity": {
-    "java_lines": 41,
-    "features": [
-     "trigger"
-    ]
-   }
-  },
-  "Suplex": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.62,
-     "deck_pct": 0.5
-    },
-    "Gates": {
-     "avg_side": 0.12
-    },
-    "GruulAggro": {
-     "avg_side": 0.75
-    },
-    "RedDeckWins": {
-     "avg_side": 0.25
-    }
-   },
-   "weight": 1.921875,
-   "main_weight": 1.25,
-   "xmage_java": "s\\Suplex.java",
-   "complexity": {
-    "java_lines": 41,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Razortide Bridge": {
-   "archetypes": {
-    "Affinity": {
      "avg_main": 0.5,
-     "deck_pct": 0.38
+     "deck_pct": 0.25
+    },
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12
     }
    },
-   "weight": 1.875,
-   "main_weight": 1.875,
-   "xmage_java": "r\\RazortideBridge.java",
+   "weight": 8.125,
+   "main_weight": 8.125,
+   "xmage_java": "s\\SnowCoveredMountain.java",
    "complexity": {
-    "java_lines": 40,
+    "java_lines": 36,
     "features": []
    }
   },
@@ -6442,8 +5830,8 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 1.84375,
-   "main_weight": 1.84375,
+   "weight": 8.0,
+   "main_weight": 8.0,
    "xmage_java": "p\\PropheticPrism.java",
    "complexity": {
     "java_lines": 41,
@@ -6453,147 +5841,38 @@
     ]
    }
   },
-  "Thorn of the Black Rose": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.88,
-     "deck_pct": 0.5,
-     "avg_side": 0.12
-    }
-   },
-   "weight": 1.78125,
-   "main_weight": 1.75,
-   "xmage_java": "t\\ThornOfTheBlackRose.java",
-   "complexity": {
-    "java_lines": 44,
-    "features": [
-     "trigger"
-    ]
-   }
-  },
-  "Ice Tunnel": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.88,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 1.75,
-   "main_weight": 1.75,
-   "xmage_java": "i\\IceTunnel.java",
-   "complexity": {
-    "java_lines": 43,
-    "features": []
-   }
-  },
-  "Ramosian Rally": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 0.88,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 1.75,
-   "main_weight": 1.75,
-   "xmage_java": "r\\RamosianRally.java",
-   "complexity": {
-    "java_lines": 51,
-    "features": [
-     "target",
-     "condition",
-     "cost"
-    ]
-   }
-  },
-  "Martyr of Sands": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_side": 1.75
-    }
-   },
-   "weight": 1.75,
-   "main_weight": 0.0,
-   "xmage_java": "m\\MartyrOfSands.java",
-   "complexity": {
-    "java_lines": 62,
-    "features": [
-     "activated",
-     "target",
-     "cost"
-    ]
-   }
-  },
-  "Cliffgate": {
-   "archetypes": {
-    "Gates": {
-     "avg_main": 1.5,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 1.5,
-   "main_weight": 1.5,
-   "xmage_java": "c\\Cliffgate.java",
-   "complexity": {
-    "java_lines": 48,
-    "features": [
-     "cost"
-    ]
-   }
-  },
-  "Ram Through": {
+  "Jewel Thief": {
    "archetypes": {
     "GruulAggro": {
-     "avg_main": 1.0,
-     "deck_pct": 0.38
+     "avg_main": 2.0,
+     "deck_pct": 0.5
     }
    },
-   "weight": 1.5,
-   "main_weight": 1.5,
-   "xmage_java": "r\\RamThrough.java",
+   "weight": 8.0,
+   "main_weight": 8.0,
+   "xmage_java": "j\\JewelThief.java",
    "complexity": {
-    "java_lines": 97,
+    "java_lines": 47,
     "features": [
-     "static",
+     "trigger",
+     "token"
+    ]
+   }
+  },
+  "Mwonvuli Acid-Moss": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 2.0,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 8.0,
+   "main_weight": 8.0,
+   "xmage_java": "m\\MwonvuliAcidMoss.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
      "target"
-    ]
-   }
-  },
-  "Gingerbrute": {
-   "archetypes": {
-    "RedDeckWins": {
-     "avg_main": 1.0,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 1.5,
-   "main_weight": 1.5,
-   "xmage_java": "g\\Gingerbrute.java",
-   "complexity": {
-    "java_lines": 60,
-    "features": [
-     "activated",
-     "cost"
-    ]
-   }
-  },
-  "Raze": {
-   "archetypes": {
-    "Burn": {
-     "avg_side": 0.25
-    },
-    "RedDeckWins": {
-     "avg_side": 1.0
-    }
-   },
-   "weight": 1.3125,
-   "main_weight": 0.0,
-   "xmage_java": "r\\Raze.java",
-   "complexity": {
-    "java_lines": 39,
-    "features": [
-     "static",
-     "target",
-     "cost"
     ]
    }
   },
@@ -6612,130 +5891,187 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 1.3125,
-   "main_weight": 1.3125,
+   "weight": 7.5,
+   "main_weight": 7.5,
    "xmage_java": null,
    "complexity": null
   },
-  "Accursed Marauder": {
+  "Jaspera Sentinel": {
    "archetypes": {
-    "Garden": {
-     "avg_main": 0.62,
-     "deck_pct": 0.62
-    },
-    "Spy": {
-     "avg_side": 0.5
-    }
-   },
-   "weight": 1.296875,
-   "main_weight": 1.171875,
-   "xmage_java": "a\\AccursedMarauder.java",
-   "complexity": {
-    "java_lines": 47,
-    "features": [
-     "trigger",
-     "token"
-    ]
-   }
-  },
-  "Haunted Fengraf": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 0.38,
+    "Elves": {
+     "avg_main": 1.5,
      "deck_pct": 0.38
     }
    },
-   "weight": 1.265625,
-   "main_weight": 1.265625,
-   "xmage_java": "h\\HauntedFengraf.java",
+   "weight": 7.5,
+   "main_weight": 7.5,
+   "xmage_java": "j\\JasperaSentinel.java",
+   "complexity": {
+    "java_lines": 46,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Volatile Fjord": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.88,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 7.5,
+   "main_weight": 7.5,
+   "xmage_java": "v\\VolatileFjord.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Defile": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 2.5,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 7.5,
+   "main_weight": 7.5,
+   "xmage_java": "d\\Defile.java",
    "complexity": {
     "java_lines": 45,
     "features": [
-     "static",
+     "target"
+    ]
+   }
+  },
+  "Annoyed Altisaur": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 1.88,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 7.5,
+   "main_weight": 7.5,
+   "xmage_java": "a\\AnnoyedAltisaur.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": []
+   }
+  },
+  "Tithing Blade": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 2.38,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 7.125,
+   "main_weight": 7.125,
+   "xmage_java": "t\\TithingBlade.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "trigger",
+     "static"
+    ]
+   }
+  },
+  "Glacial Floodplain": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.75,
+     "deck_pct": 0.88
+    }
+   },
+   "weight": 7.0,
+   "main_weight": 7.0,
+   "xmage_java": "g\\GlacialFloodplain.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": []
+   }
+  },
+  "Guardians' Pledge": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 1.75,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 7.0,
+   "main_weight": 7.0,
+   "xmage_java": "g\\GuardiansPledge.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": []
+   }
+  },
+  "Crypt Rats": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 2.25,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 6.75,
+   "main_weight": 6.75,
+   "xmage_java": "c\\CryptRats.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
      "activated",
      "cost"
     ]
    }
   },
-  "Earth Rift": {
+  "Abandon Attachments": {
    "archetypes": {
-    "Urzatron": {
-     "avg_side": 0.75
+    "DimirControl": {
+     "avg_main": 1.62,
+     "deck_pct": 0.62
     }
    },
-   "weight": 1.265625,
-   "main_weight": 0.0,
-   "xmage_java": "e\\EarthRift.java",
+   "weight": 6.5,
+   "main_weight": 6.5,
+   "xmage_java": "a\\AbandonAttachments.java",
    "complexity": {
-    "java_lines": 39,
+    "java_lines": 35,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Ancient Grudge": {
+   "archetypes": {
+    "Gates": {
+     "avg_side": 0.75
+    },
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    },
+    "Jund": {
+     "avg_side": 0.75
+    },
+    "Urzatron": {
+     "avg_side": 0.62
+    }
+   },
+   "weight": 6.4375,
+   "main_weight": 1.0,
+   "xmage_java": "a\\AncientGrudge.java",
+   "complexity": {
+    "java_lines": 37,
     "features": [
      "target",
      "cost",
      "flashback"
     ]
    }
-  },
-  "Behold the Multiverse": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.62,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 1.25,
-   "main_weight": 1.25,
-   "xmage_java": "b\\BeholdTheMultiverse.java",
-   "complexity": {
-    "java_lines": 36,
-    "features": []
-   }
-  },
-  "Golgari Rot Farm": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 0.75,
-     "deck_pct": 0.5
-    }
-   },
-   "weight": 1.125,
-   "main_weight": 1.125,
-   "xmage_java": "g\\GolgariRotFarm.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "trigger",
-     "cost"
-    ]
-   }
-  },
-  "Structural Distortion": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 0.75,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 1.125,
-   "main_weight": 1.125,
-   "xmage_java": "s\\StructuralDistortion.java",
-   "complexity": {
-    "java_lines": 44,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Elite Interceptor": {
-   "archetypes": {
-    "WhiteWeenie": {
-     "avg_main": 0.75,
-     "deck_pct": 0.38
-    }
-   },
-   "weight": 1.125,
-   "main_weight": 1.125,
-   "xmage_java": null,
-   "complexity": null
   },
   "Tormod's Crypt": {
    "archetypes": {
@@ -6749,7 +6085,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 1.078125,
+   "weight": 6.375,
    "main_weight": 0.0,
    "xmage_java": "t\\TormodSCrypt.java",
    "complexity": {
@@ -6761,6 +6097,349 @@
     ]
    }
   },
+  "Artful Dodge": {
+   "archetypes": {
+    "MonoBlueAggro": {
+     "avg_main": 0.38,
+     "deck_pct": 0.25
+    },
+    "Terror": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 6.375,
+   "main_weight": 6.375,
+   "xmage_java": "a\\ArtfulDodge.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Birchlore Rangers": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 1.25,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 6.25,
+   "main_weight": 6.25,
+   "xmage_java": "b\\BirchloreRangers.java",
+   "complexity": {
+    "java_lines": 95,
+    "features": [
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Gixian Infiltrator": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 1.25,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 6.25,
+   "main_weight": 6.25,
+   "xmage_java": "g\\GixianInfiltrator.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "trigger",
+     "static",
+     "counter"
+    ]
+   }
+  },
+  "Bender's Waterskin": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 6.0,
+   "main_weight": 6.0,
+   "xmage_java": "b\\BenderSWaterskin.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Snow-Covered Plains": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.5,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 6.0,
+   "main_weight": 6.0,
+   "xmage_java": "s\\SnowCoveredPlains.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": []
+   }
+  },
+  "Thermokarst": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 1.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 6.0,
+   "main_weight": 6.0,
+   "xmage_java": "t\\Thermokarst.java",
+   "complexity": {
+    "java_lines": 69,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Gingerbrute": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 6.0,
+   "main_weight": 6.0,
+   "xmage_java": "g\\Gingerbrute.java",
+   "complexity": {
+    "java_lines": 60,
+    "features": [
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Idyllic Grange": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 1.38,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 5.5,
+   "main_weight": 5.5,
+   "xmage_java": "i\\IdyllicGrange.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "trigger",
+     "target",
+     "condition",
+     "counter"
+    ]
+   }
+  },
+  "Razortide Bridge": {
+   "archetypes": {
+    "Affinity": {
+     "avg_main": 0.5,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 5.0,
+   "main_weight": 5.0,
+   "xmage_java": "r\\RazortideBridge.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
+   }
+  },
+  "Gurmag Angler": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 1.25,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 5.0,
+   "main_weight": 5.0,
+   "xmage_java": "g\\GurmagAngler.java",
+   "complexity": {
+    "java_lines": 37,
+    "features": []
+   }
+  },
+  "Suplex": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.62,
+     "deck_pct": 0.5
+    },
+    "Gates": {
+     "avg_side": 0.12
+    },
+    "GruulAggro": {
+     "avg_side": 0.75
+    },
+    "RedDeckWins": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 4.875,
+   "main_weight": 2.5,
+   "xmage_java": "s\\Suplex.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Nylea's Disciple": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.12
+    },
+    "GruulAggro": {
+     "avg_side": 0.38
+    },
+    "Spy": {
+     "avg_side": 1.88
+    }
+   },
+   "weight": 4.8125,
+   "main_weight": 0.0,
+   "xmage_java": "n\\NyleaSDisciple.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Raze": {
+   "archetypes": {
+    "Burn": {
+     "avg_side": 0.25
+    },
+    "RedDeckWins": {
+     "avg_side": 1.0
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 0.0,
+   "xmage_java": "r\\Raze.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Suffocating Fumes": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62,
+     "avg_side": 0.25
+    },
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 4.0,
+   "xmage_java": "s\\SuffocatingFumes.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "static",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Salt Road Packbeast": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    },
+    "WhiteWeenie": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 4.5,
+   "xmage_java": "s\\SaltRoadPackbeast.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "static",
+     "cost",
+     "affinity"
+    ]
+   }
+  },
+  "Ride's End": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.12,
+     "deck_pct": 0.75
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 4.5,
+   "xmage_java": "r\\RideSEnd.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "static",
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Deglamer": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_side": 2.25
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 0.0,
+   "xmage_java": "d\\Deglamer.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Visionary's Dance": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 4.5,
+   "main_weight": 4.5,
+   "xmage_java": null,
+   "complexity": null
+  },
   "God-Pharaoh's Faithful": {
    "archetypes": {
     "Ephemerate": {
@@ -6769,49 +6448,13 @@
      "avg_side": 0.12
     }
    },
-   "weight": 1.03125,
-   "main_weight": 1.0,
+   "weight": 4.25,
+   "main_weight": 4.0,
    "xmage_java": "g\\GodPharaohSFaithful.java",
    "complexity": {
     "java_lines": 48,
     "features": [
      "trigger"
-    ]
-   }
-  },
-  "Sunscape Familiar": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.0,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 1.0,
-   "main_weight": 1.0,
-   "xmage_java": "s\\SunscapeFamiliar.java",
-   "complexity": {
-    "java_lines": 54,
-    "features": [
-     "static",
-     "cost"
-    ]
-   }
-  },
-  "Azorius Chancery": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 1.0,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 1.0,
-   "main_weight": 1.0,
-   "xmage_java": "a\\AzoriusChancery.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "trigger",
-     "cost"
     ]
    }
   },
@@ -6830,7 +6473,7 @@
      "avg_side": 0.5
     }
    },
-   "weight": 0.953125,
+   "weight": 4.125,
    "main_weight": 0.0,
    "xmage_java": "f\\FieryCannonade.java",
    "complexity": {
@@ -6838,25 +6481,93 @@
     "features": []
    }
   },
-  "Kenku Artificer": {
+  "Witch's Cottage": {
    "archetypes": {
-    "Affinity": {
-     "avg_main": 0.38,
-     "deck_pct": 0.25
+    "Garden": {
+     "avg_main": 1.38,
+     "deck_pct": 0.75
     }
    },
-   "weight": 0.9375,
-   "main_weight": 0.9375,
-   "xmage_java": "k\\KenkuArtificer.java",
+   "weight": 4.125,
+   "main_weight": 4.125,
+   "xmage_java": "w\\WitchSCottage.java",
    "complexity": {
-    "java_lines": 65,
+    "java_lines": 66,
     "features": [
      "trigger",
      "static",
      "target",
-     "token",
-     "counter"
+     "condition"
     ]
+   }
+  },
+  "Sunscape Familiar": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 4.0,
+   "main_weight": 4.0,
+   "xmage_java": "s\\SunscapeFamiliar.java",
+   "complexity": {
+    "java_lines": 54,
+    "features": [
+     "static",
+     "cost"
+    ]
+   }
+  },
+  "Azorius Chancery": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 1.0,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 4.0,
+   "main_weight": 4.0,
+   "xmage_java": "a\\AzoriusChancery.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Ram Through": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 1.0,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 4.0,
+   "main_weight": 4.0,
+   "xmage_java": "r\\RamThrough.java",
+   "complexity": {
+    "java_lines": 97,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Spider-Man, Web-Slinger": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 1.0,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 4.0,
+   "main_weight": 4.0,
+   "xmage_java": "s\\SpiderManWebSlinger.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
    }
   },
   "Torch the Tower": {
@@ -6871,8 +6582,8 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.8828125,
-   "main_weight": 0.84375,
+   "weight": 3.9375,
+   "main_weight": 3.625,
    "xmage_java": "t\\TorchTheTower.java",
    "complexity": {
     "java_lines": 54,
@@ -6882,80 +6593,292 @@
     ]
    }
   },
-  "Salt Road Packbeast": {
+  "Kenku Artificer": {
    "archetypes": {
-    "Elves": {
-     "avg_main": 0.5,
+    "Affinity": {
+     "avg_main": 0.38,
      "deck_pct": 0.25
-    },
-    "WhiteWeenie": {
-     "avg_main": 0.5,
-     "deck_pct": 0.12
     }
    },
-   "weight": 0.875,
-   "main_weight": 0.875,
-   "xmage_java": "s\\SaltRoadPackbeast.java",
+   "weight": 3.75,
+   "main_weight": 3.75,
+   "xmage_java": "k\\KenkuArtificer.java",
    "complexity": {
-    "java_lines": 47,
+    "java_lines": 65,
     "features": [
      "trigger",
      "static",
-     "cost",
-     "affinity"
+     "target",
+     "token",
+     "counter"
     ]
    }
   },
-  "Holy Light": {
+  "Metallic Rebuke": {
    "archetypes": {
-    "WhiteWeenie": {
-     "avg_side": 0.88
+    "Affinity": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
     }
    },
-   "weight": 0.875,
-   "main_weight": 0.0,
-   "xmage_java": "h\\HolyLight.java",
+   "weight": 3.75,
+   "main_weight": 3.75,
+   "xmage_java": "m\\MetallicRebuke.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "target",
+     "cost",
+     "counter"
+    ]
+   }
+  },
+  "Thorn of the Black Rose": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.88,
+     "deck_pct": 0.5,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 3.75,
+   "main_weight": 3.5,
+   "xmage_java": "t\\ThornOfTheBlackRose.java",
+   "complexity": {
+    "java_lines": 44,
+    "features": [
+     "trigger"
+    ]
+   }
+  },
+  "Manor Gate": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 1.88,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 3.75,
+   "main_weight": 3.75,
+   "xmage_java": "m\\ManorGate.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Ice Tunnel": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.88,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 3.5,
+   "main_weight": 3.5,
+   "xmage_java": "i\\IceTunnel.java",
    "complexity": {
     "java_lines": 43,
     "features": []
    }
   },
-  "Destroy Evil": {
+  "Drown in Sorrow": {
    "archetypes": {
-    "Ephemerate": {
+    "DimirControl": {
      "avg_side": 0.25
     },
-    "Gates": {
-     "avg_side": 0.62
-    },
-    "WhiteWeenie": {
-     "avg_side": 0.5
+    "Garden": {
+     "avg_side": 2.0
     }
    },
-   "weight": 0.859375,
+   "weight": 3.5,
    "main_weight": 0.0,
-   "xmage_java": "d\\DestroyEvil.java",
+   "xmage_java": "d\\DrownInSorrow.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": []
+   }
+  },
+  "Union of the Third Path": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.88,
+     "deck_pct": 0.62
+    }
+   },
+   "weight": 3.5,
+   "main_weight": 3.5,
+   "xmage_java": "u\\UnionOfTheThirdPath.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": []
+   }
+  },
+  "Ramosian Rally": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.88,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 3.5,
+   "main_weight": 3.5,
+   "xmage_java": "r\\RamosianRally.java",
    "complexity": {
     "java_lines": 51,
+    "features": [
+     "target",
+     "condition",
+     "cost"
+    ]
+   }
+  },
+  "Martyr of Sands": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 1.75
+    }
+   },
+   "weight": 3.5,
+   "main_weight": 0.0,
+   "xmage_java": "m\\MartyrOfSands.java",
+   "complexity": {
+    "java_lines": 62,
+    "features": [
+     "activated",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Mystical Teachings": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 3.375,
+   "main_weight": 3.375,
+   "xmage_java": "m\\MysticalTeachings.java",
+   "complexity": {
+    "java_lines": 50,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Haunted Fengraf": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 3.375,
+   "main_weight": 3.375,
+   "xmage_java": "h\\HauntedFengraf.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "static",
+     "activated",
+     "cost"
+    ]
+   }
+  },
+  "Warped Tusker": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_main": 0.38,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 3.375,
+   "main_weight": 3.375,
+   "xmage_java": "w\\WarpedTusker.java",
+   "complexity": {
+    "java_lines": 58,
+    "features": [
+     "trigger",
+     "cost",
+     "token",
+     "cycling"
+    ]
+   }
+  },
+  "Earth Rift": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.75
+    }
+   },
+   "weight": 3.375,
+   "main_weight": 0.0,
+   "xmage_java": "e\\EarthRift.java",
+   "complexity": {
+    "java_lines": 39,
+    "features": [
+     "target",
+     "cost",
+     "flashback"
+    ]
+   }
+  },
+  "Ghostly Flicker": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    },
+    "Urzatron": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 3.25,
+   "main_weight": 3.25,
+   "xmage_java": "g\\GhostlyFlicker.java",
+   "complexity": {
+    "java_lines": 42,
     "features": [
      "target"
     ]
    }
   },
-  "Fang Dragon": {
+  "Standard Bearer": {
    "archetypes": {
-    "Spy": {
-     "avg_side": 1.12
+    "WhiteWeenie": {
+     "avg_side": 1.62
     }
    },
-   "weight": 0.84375,
+   "weight": 3.25,
    "main_weight": 0.0,
-   "xmage_java": "f\\FangDragon.java",
+   "xmage_java": "s\\StandardBearer.java",
    "complexity": {
-    "java_lines": 45,
+    "java_lines": 39,
     "features": [
-     "static"
+     "static",
+     "target"
     ]
+   }
+  },
+  "Haunted Mire": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 1.0,
+     "deck_pct": 1.0
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "h\\HauntedMire.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": []
    }
   },
   "Nutrient Block": {
@@ -6965,8 +6888,8 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 0.75,
-   "main_weight": 0.75,
+   "weight": 3.0,
+   "main_weight": 3.0,
    "xmage_java": "n\\NutrientBlock.java",
    "complexity": {
     "java_lines": 42,
@@ -6975,40 +6898,71 @@
     ]
    }
   },
-  "Fungal Infection": {
+  "Cliffgate": {
    "archetypes": {
-    "Garden": {
-     "avg_main": 0.5,
+    "Gates": {
+     "avg_main": 1.5,
      "deck_pct": 0.5
     }
    },
-   "weight": 0.75,
-   "main_weight": 0.75,
-   "xmage_java": "f\\FungalInfection.java",
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "c\\Cliffgate.java",
    "complexity": {
-    "java_lines": 37,
+    "java_lines": 48,
     "features": [
-     "target",
-     "token"
+     "cost"
     ]
    }
   },
-  "Spinning Darkness": {
+  "Structural Distortion": {
    "archetypes": {
-    "Garden": {
-     "avg_main": 0.5,
-     "deck_pct": 0.5
+    "GruulAggro": {
+     "avg_main": 0.75,
+     "deck_pct": 0.38
     }
    },
-   "weight": 0.75,
-   "main_weight": 0.75,
-   "xmage_java": "s\\SpinningDarkness.java",
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "s\\StructuralDistortion.java",
    "complexity": {
-    "java_lines": 109,
+    "java_lines": 44,
     "features": [
-     "static",
-     "target",
-     "cost"
+     "target"
+    ]
+   }
+  },
+  "Wrenn's Resolve": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "w\\WrennSResolve.java",
+   "complexity": {
+    "java_lines": 31,
+    "features": []
+   }
+  },
+  "Reckless Lackey": {
+   "archetypes": {
+    "RedDeckWins": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": "r\\RecklessLackey.java",
+   "complexity": {
+    "java_lines": 56,
+    "features": [
+     "activated",
+     "cost",
+     "token"
     ]
    }
   },
@@ -7020,8 +6974,8 @@
      "avg_side": 0.5
     }
    },
-   "weight": 0.75,
-   "main_weight": 0.375,
+   "weight": 3.0,
+   "main_weight": 1.5,
    "xmage_java": "t\\TectonicHazard.java",
    "complexity": {
     "java_lines": 36,
@@ -7031,13 +6985,46 @@
     ]
    }
   },
+  "Elite Interceptor": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_main": 0.75,
+     "deck_pct": 0.38
+    }
+   },
+   "weight": 3.0,
+   "main_weight": 3.0,
+   "xmage_java": null,
+   "complexity": null
+  },
+  "Accursed Marauder": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.62,
+     "deck_pct": 0.62
+    },
+    "Spy": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 2.875,
+   "main_weight": 1.875,
+   "xmage_java": "a\\AccursedMarauder.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "trigger",
+     "token"
+    ]
+   }
+  },
   "Scour from Existence": {
    "archetypes": {
     "Urzatron": {
      "avg_side": 0.62
     }
    },
-   "weight": 0.703125,
+   "weight": 2.8125,
    "main_weight": 0.0,
    "xmage_java": "s\\ScourFromExistence.java",
    "complexity": {
@@ -7055,34 +7042,14 @@
      "avg_side": 0.62
     }
    },
-   "weight": 0.65625,
-   "main_weight": 0.1875,
+   "weight": 2.75,
+   "main_weight": 1.5,
    "xmage_java": "h\\HorrificAssault.java",
    "complexity": {
     "java_lines": 56,
     "features": [
      "target",
      "condition"
-    ]
-   }
-  },
-  "Heritage Reclamation": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 0.5,
-     "deck_pct": 0.38
-    },
-    "GruulAggro": {
-     "avg_side": 0.25
-    }
-   },
-   "weight": 0.625,
-   "main_weight": 0.5625,
-   "xmage_java": "h\\HeritageReclamation.java",
-   "complexity": {
-    "java_lines": 47,
-    "features": [
-     "target"
     ]
    }
   },
@@ -7097,11 +7064,103 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 0.625,
-   "main_weight": 0.625,
+   "weight": 2.75,
+   "main_weight": 2.75,
    "xmage_java": "w\\WoodedRidgeline.java",
    "complexity": {
     "java_lines": 40,
+    "features": []
+   }
+  },
+  "Arms of Hadar": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 1.25
+    }
+   },
+   "weight": 2.5,
+   "main_weight": 0.0,
+   "xmage_java": "a\\ArmsOfHadar.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Elvish Vanguard": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 2.5,
+   "main_weight": 2.5,
+   "xmage_java": "e\\ElvishVanguard.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "trigger",
+     "counter"
+    ]
+   }
+  },
+  "Rift Sower": {
+   "archetypes": {
+    "Elves": {
+     "avg_main": 0.5,
+     "deck_pct": 0.12
+    }
+   },
+   "weight": 2.5,
+   "main_weight": 2.5,
+   "xmage_java": "r\\RiftSower.java",
+   "complexity": {
+    "java_lines": 42,
+    "features": [
+     "cost"
+    ]
+   }
+  },
+  "Negate": {
+   "archetypes": {
+    "Elves": {
+     "avg_side": 0.25
+    },
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.12,
+     "avg_side": 0.38
+    },
+    "Gates": {
+     "avg_side": 0.12
+    }
+   },
+   "weight": 2.5,
+   "main_weight": 1.0,
+   "xmage_java": "n\\Negate.java",
+   "complexity": {
+    "java_lines": 35,
+    "features": [
+     "static",
+     "target",
+     "counter"
+    ]
+   }
+  },
+  "Behold the Multiverse": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.62,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 2.5,
+   "main_weight": 2.5,
+   "xmage_java": "b\\BeholdTheMultiverse.java",
+   "complexity": {
+    "java_lines": 36,
     "features": []
    }
   },
@@ -7112,28 +7171,42 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 0.625,
-   "main_weight": 0.625,
+   "weight": 2.5,
+   "main_weight": 2.5,
    "xmage_java": null,
    "complexity": null
   },
-  "Azure Fleet Admiral": {
+  "Molten Rain": {
    "archetypes": {
-    "DimirControl": {
-     "avg_side": 0.12
-    },
-    "Terror": {
-     "avg_side": 0.62
+    "Burn": {
+     "avg_side": 0.38
     }
    },
-   "weight": 0.6171875,
+   "weight": 2.25,
    "main_weight": 0.0,
-   "xmage_java": "a\\AzureFleetAdmiral.java",
+   "xmage_java": "m\\MoltenRain.java",
    "complexity": {
-    "java_lines": 67,
+    "java_lines": 72,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Golgari Rot Farm": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.75,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 2.25,
+   "main_weight": 2.25,
+   "xmage_java": "g\\GolgariRotFarm.java",
+   "complexity": {
+    "java_lines": 45,
     "features": [
      "trigger",
-     "static"
+     "cost"
     ]
    }
   },
@@ -7144,8 +7217,8 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 0.5625,
-   "main_weight": 0.5625,
+   "weight": 2.25,
+   "main_weight": 2.25,
    "xmage_java": "c\\CauldronFamiliar.java",
    "complexity": {
     "java_lines": 54,
@@ -7165,8 +7238,8 @@
      "deck_pct": 0.25
     }
    },
-   "weight": 0.5625,
-   "main_weight": 0.5625,
+   "weight": 2.25,
+   "main_weight": 2.25,
    "xmage_java": "p\\Pestilence.java",
    "complexity": {
     "java_lines": 48,
@@ -7176,351 +7249,6 @@
      "target",
      "condition",
      "cost"
-    ]
-   }
-  },
-  "Unable to Scream": {
-   "archetypes": {
-    "Terror": {
-     "avg_main": 0.5,
-     "deck_pct": 0.25,
-     "avg_side": 0.5
-    }
-   },
-   "weight": 0.5625,
-   "main_weight": 0.375,
-   "xmage_java": "u\\UnableToScream.java",
-   "complexity": {
-    "java_lines": 95,
-    "features": [
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Visionary's Dance": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 0.5,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.5625,
-   "main_weight": 0.5625,
-   "xmage_java": null,
-   "complexity": null
-  },
-  "Tangle": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_side": 0.5
-    }
-   },
-   "weight": 0.5625,
-   "main_weight": 0.0,
-   "xmage_java": "t\\Tangle.java",
-   "complexity": {
-    "java_lines": 88,
-    "features": [
-     "continuouseffect",
-     "target"
-    ]
-   }
-  },
-  "Terminate": {
-   "archetypes": {
-    "Jund": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12,
-     "avg_side": 0.5
-    }
-   },
-   "weight": 0.546875,
-   "main_weight": 0.078125,
-   "xmage_java": "t\\Terminate.java",
-   "complexity": {
-    "java_lines": 34,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Ghostly Flicker": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25
-    },
-    "Urzatron": {
-     "avg_main": 0.25,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.53125,
-   "main_weight": 0.53125,
-   "xmage_java": "g\\GhostlyFlicker.java",
-   "complexity": {
-    "java_lines": 42,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Pursue the Past": {
-   "archetypes": {
-    "Gates": {
-     "avg_main": 1.0,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.5,
-   "main_weight": 0.5,
-   "xmage_java": null,
-   "complexity": null
-  },
-  "Bannerhide Krushok": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 0.5,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.5,
-   "main_weight": 0.5,
-   "xmage_java": "b\\BannerhideKrushok.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "cost"
-    ]
-   }
-  },
-  "Jack-o'-Lantern": {
-   "archetypes": {
-    "Spy": {
-     "avg_side": 0.5
-    }
-   },
-   "weight": 0.5,
-   "main_weight": 0.0,
-   "xmage_java": "j\\JackOLantern.java",
-   "complexity": {
-    "java_lines": 51,
-    "features": [
-     "static",
-     "activated",
-     "target",
-     "cost"
-    ]
-   }
-  },
-  "Metallic Rebuke": {
-   "archetypes": {
-    "Affinity": {
-     "avg_main": 0.38,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.46875,
-   "main_weight": 0.46875,
-   "xmage_java": "m\\MetallicRebuke.java",
-   "complexity": {
-    "java_lines": 38,
-    "features": [
-     "target",
-     "cost",
-     "counter"
-    ]
-   }
-  },
-  "Mystical Teachings": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 0.38,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.421875,
-   "main_weight": 0.421875,
-   "xmage_java": "m\\MysticalTeachings.java",
-   "complexity": {
-    "java_lines": 50,
-    "features": [
-     "target",
-     "cost",
-     "flashback"
-    ]
-   }
-  },
-  "Warped Tusker": {
-   "archetypes": {
-    "Urzatron": {
-     "avg_main": 0.38,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.421875,
-   "main_weight": 0.421875,
-   "xmage_java": "w\\WarpedTusker.java",
-   "complexity": {
-    "java_lines": 58,
-    "features": [
-     "trigger",
-     "cost",
-     "token",
-     "cycling"
-    ]
-   }
-  },
-  "Negate": {
-   "archetypes": {
-    "Elves": {
-     "avg_side": 0.25
-    },
-    "Ephemerate": {
-     "avg_main": 0.25,
-     "deck_pct": 0.12,
-     "avg_side": 0.38
-    },
-    "Gates": {
-     "avg_side": 0.12
-    }
-   },
-   "weight": 0.40625,
-   "main_weight": 0.125,
-   "xmage_java": "n\\Negate.java",
-   "complexity": {
-    "java_lines": 35,
-    "features": [
-     "static",
-     "target",
-     "counter"
-    ]
-   }
-  },
-  "Seething Landscape": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.38,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.375,
-   "xmage_java": "s\\SeethingLandscape.java",
-   "complexity": {
-    "java_lines": 64,
-    "features": [
-     "activated",
-     "target",
-     "cost",
-     "cycling"
-    ]
-   }
-  },
-  "Mukotai Ambusher": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25,
-     "avg_side": 0.25
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.25,
-   "xmage_java": "m\\MukotaiAmbusher.java",
-   "complexity": {
-    "java_lines": 41,
-    "features": [
-     "ninjutsu"
-    ]
-   }
-  },
-  "Ash Barrens": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.38,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.375,
-   "xmage_java": "a\\AshBarrens.java",
-   "complexity": {
-    "java_lines": 36,
-    "features": [
-     "cost"
-    ]
-   }
-  },
-  "Rancid Earth": {
-   "archetypes": {
-    "Garden": {
-     "avg_side": 1.0
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.0,
-   "xmage_java": "r\\RancidEarth.java",
-   "complexity": {
-    "java_lines": 48,
-    "features": [
-     "static",
-     "target",
-     "condition"
-    ]
-   }
-  },
-  "Armadillo Cloak": {
-   "archetypes": {
-    "Gates": {
-     "avg_main": 0.75,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.375,
-   "xmage_java": "a\\ArmadilloCloak.java",
-   "complexity": {
-    "java_lines": 59,
-    "features": [
-     "trigger",
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Wrenn's Resolve": {
-   "archetypes": {
-    "RedDeckWins": {
-     "avg_main": 0.5,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.375,
-   "xmage_java": "w\\WrennSResolve.java",
-   "complexity": {
-    "java_lines": 31,
-    "features": []
-   }
-  },
-  "Reckless Lackey": {
-   "archetypes": {
-    "RedDeckWins": {
-     "avg_main": 0.5,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.375,
-   "main_weight": 0.375,
-   "xmage_java": "r\\RecklessLackey.java",
-   "complexity": {
-    "java_lines": 56,
-    "features": [
-     "activated",
-     "cost",
-     "token"
     ]
    }
   },
@@ -7535,8 +7263,8 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.3515625,
-   "main_weight": 0.140625,
+   "weight": 2.25,
+   "main_weight": 1.125,
    "xmage_java": "m\\MomentSPeace.java",
    "complexity": {
     "java_lines": 38,
@@ -7546,92 +7274,37 @@
     ]
    }
   },
-  "Elvish Vanguard": {
+  "Fang Dragon": {
    "archetypes": {
-    "Elves": {
-     "avg_main": 0.5,
-     "deck_pct": 0.12
+    "Spy": {
+     "avg_side": 1.12
     }
    },
-   "weight": 0.3125,
-   "main_weight": 0.3125,
-   "xmage_java": "e\\ElvishVanguard.java",
+   "weight": 2.25,
+   "main_weight": 0.0,
+   "xmage_java": "f\\FangDragon.java",
    "complexity": {
-    "java_lines": 48,
+    "java_lines": 45,
     "features": [
-     "trigger",
-     "counter"
+     "static"
     ]
    }
   },
-  "Rift Sower": {
+  "Unable to Scream": {
    "archetypes": {
-    "Elves": {
+    "Terror": {
      "avg_main": 0.5,
-     "deck_pct": 0.12
-    }
-   },
-   "weight": 0.3125,
-   "main_weight": 0.3125,
-   "xmage_java": "r\\RiftSower.java",
-   "complexity": {
-    "java_lines": 42,
-    "features": [
-     "cost"
-    ]
-   }
-  },
-  "Vines of Vastwood": {
-   "archetypes": {
-    "GruulAggro": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12,
+     "deck_pct": 0.25,
      "avg_side": 0.5
     }
    },
-   "weight": 0.3125,
-   "main_weight": 0.0625,
-   "xmage_java": "v\\VinesOfVastwood.java",
+   "weight": 2.25,
+   "main_weight": 1.5,
+   "xmage_java": "u\\UnableToScream.java",
    "complexity": {
-    "java_lines": 52,
+    "java_lines": 95,
     "features": [
-     "continuouseffect",
-     "target",
-     "condition",
-     "kicker"
-    ]
-   }
-  },
-  "Molten Rain": {
-   "archetypes": {
-    "Burn": {
-     "avg_side": 0.38
-    }
-   },
-   "weight": 0.28125,
-   "main_weight": 0.0,
-   "xmage_java": "m\\MoltenRain.java",
-   "complexity": {
-    "java_lines": 72,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Agony Warp": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25,
-     "avg_side": 0.12
-    }
-   },
-   "weight": 0.28125,
-   "main_weight": 0.25,
-   "xmage_java": "a\\AgonyWarp.java",
-   "complexity": {
-    "java_lines": 40,
-    "features": [
+     "static",
      "target"
     ]
    }
@@ -7643,8 +7316,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.28125,
-   "main_weight": 0.28125,
+   "weight": 2.25,
+   "main_weight": 2.25,
    "xmage_java": "m\\MnemonicWall.java",
    "complexity": {
     "java_lines": 52,
@@ -7654,20 +7327,20 @@
     ]
    }
   },
-  "Whispersilk Cloak": {
+  "Tangle": {
    "archetypes": {
     "Urzatron": {
-     "avg_side": 0.25
+     "avg_side": 0.5
     }
    },
-   "weight": 0.28125,
+   "weight": 2.25,
    "main_weight": 0.0,
-   "xmage_java": "w\\WhispersilkCloak.java",
+   "xmage_java": "t\\Tangle.java",
    "complexity": {
-    "java_lines": 47,
+    "java_lines": 88,
     "features": [
-     "static",
-     "cost"
+     "continuouseffect",
+     "target"
     ]
    }
   },
@@ -7682,8 +7355,8 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.2734375,
-   "main_weight": 0.140625,
+   "weight": 2.1875,
+   "main_weight": 1.125,
    "xmage_java": "s\\StonehornDignitary.java",
    "complexity": {
     "java_lines": 43,
@@ -7705,8 +7378,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.265625,
-   "main_weight": 0.203125,
+   "weight": 2.125,
+   "main_weight": 1.625,
    "xmage_java": "p\\Prohibit.java",
    "complexity": {
     "java_lines": 80,
@@ -7718,25 +7391,24 @@
     ]
    }
   },
-  "Revoke Existence": {
+  "Destroy Evil": {
    "archetypes": {
     "Ephemerate": {
-     "avg_side": 0.12
+     "avg_side": 0.25
     },
     "Gates": {
-     "avg_side": 0.38
+     "avg_side": 0.62
     },
     "WhiteWeenie": {
-     "avg_side": 0.38
+     "avg_side": 0.5
     }
    },
-   "weight": 0.265625,
+   "weight": 2.125,
    "main_weight": 0.0,
-   "xmage_java": "r\\RevokeExistence.java",
+   "xmage_java": "d\\DestroyEvil.java",
    "complexity": {
-    "java_lines": 36,
+    "java_lines": 51,
     "features": [
-     "static",
      "target"
     ]
    }
@@ -7748,32 +7420,12 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "c\\Consider.java",
    "complexity": {
     "java_lines": 34,
     "features": []
-   }
-  },
-  "Foreboding Landscape": {
-   "archetypes": {
-    "DimirControl": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.25,
-   "main_weight": 0.25,
-   "xmage_java": "f\\ForebodingLandscape.java",
-   "complexity": {
-    "java_lines": 64,
-    "features": [
-     "activated",
-     "target",
-     "cost",
-     "cycling"
-    ]
    }
   },
   "Memory Lapse": {
@@ -7783,8 +7435,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "m\\MemoryLapse.java",
    "complexity": {
     "java_lines": 34,
@@ -7801,8 +7453,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "f\\Foil.java",
    "complexity": {
     "java_lines": 49,
@@ -7813,74 +7465,37 @@
     ]
    }
   },
-  "Fanged Flames": {
+  "Heritage Reclamation": {
    "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.38
+    },
+    "GruulAggro": {
+     "avg_side": 0.25
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
-   "xmage_java": "f\\FangedFlames.java",
+   "weight": 2.0,
+   "main_weight": 1.5,
+   "xmage_java": "h\\HeritageReclamation.java",
    "complexity": {
-    "java_lines": 38,
+    "java_lines": 47,
     "features": [
      "target"
     ]
    }
   },
-  "Mortuary Mire": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_main": 0.25,
-     "deck_pct": 0.25
-    }
-   },
-   "weight": 0.25,
-   "main_weight": 0.25,
-   "xmage_java": "m\\MortuaryMire.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "trigger",
-     "static",
-     "target"
-    ]
-   }
-  },
-  "Last Breath": {
-   "archetypes": {
-    "Ephemerate": {
-     "avg_side": 0.5
-    }
-   },
-   "weight": 0.25,
-   "main_weight": 0.0,
-   "xmage_java": "l\\LastBreath.java",
-   "complexity": {
-    "java_lines": 45,
-    "features": [
-     "target"
-    ]
-   }
-  },
-  "Midnight Tilling": {
+  "Pursue the Past": {
    "archetypes": {
     "Gates": {
-     "avg_main": 0.5,
+     "avg_main": 1.0,
      "deck_pct": 0.25
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
-   "xmage_java": "m\\MidnightTilling.java",
-   "complexity": {
-    "java_lines": 31,
-    "features": [
-     "static"
-    ]
-   }
+   "weight": 2.0,
+   "main_weight": 2.0,
+   "xmage_java": null,
+   "complexity": null
   },
   "Molten Gatekeeper": {
    "archetypes": {
@@ -7889,8 +7504,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "m\\MoltenGatekeeper.java",
    "complexity": {
     "java_lines": 46,
@@ -7909,8 +7524,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "i\\ImpactTremors.java",
    "complexity": {
     "java_lines": 40,
@@ -7921,19 +7536,21 @@
     ]
    }
   },
-  "Highland Forest": {
+  "Bannerhide Krushok": {
    "archetypes": {
     "GruulAggro": {
-     "avg_main": 0.25,
+     "avg_main": 0.5,
      "deck_pct": 0.25
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
-   "xmage_java": "h\\HighlandForest.java",
+   "weight": 2.0,
+   "main_weight": 2.0,
+   "xmage_java": "b\\BannerhideKrushok.java",
    "complexity": {
-    "java_lines": 43,
-    "features": []
+    "java_lines": 45,
+    "features": [
+     "cost"
+    ]
    }
   },
   "Akroan Skyguard": {
@@ -7943,8 +7560,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "a\\AkroanSkyguard.java",
    "complexity": {
     "java_lines": 43,
@@ -7960,8 +7577,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "l\\LagonnaBandTrailblazer.java",
    "complexity": {
     "java_lines": 41,
@@ -7977,8 +7594,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "s\\SkywardSpider.java",
    "complexity": {
     "java_lines": 51,
@@ -7997,8 +7614,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "g\\GuidingVoice.java",
    "complexity": {
     "java_lines": 39,
@@ -8015,8 +7632,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "h\\HomesteadCourage.java",
    "complexity": {
     "java_lines": 45,
@@ -8035,8 +7652,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "b\\BenevolentBlessing.java",
    "complexity": {
     "java_lines": 61,
@@ -8053,8 +7670,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "e\\EtherealArmor.java",
    "complexity": {
     "java_lines": 62,
@@ -8071,8 +7688,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "h\\HyenaUmbra.java",
    "complexity": {
     "java_lines": 55,
@@ -8089,8 +7706,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "s\\SentinelSEyes.java",
    "complexity": {
     "java_lines": 58,
@@ -8107,8 +7724,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "s\\SpiritLink.java",
    "complexity": {
     "java_lines": 47,
@@ -8125,8 +7742,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "r\\RemoteFarm.java",
    "complexity": {
     "java_lines": 59,
@@ -8144,8 +7761,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "h\\HaloHopper.java",
    "complexity": {
     "java_lines": 36,
@@ -8159,8 +7776,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "m\\MartyrSSoul.java",
    "complexity": {
     "java_lines": 61,
@@ -8178,8 +7795,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "o\\Ornithopter.java",
    "complexity": {
     "java_lines": 37,
@@ -8193,8 +7810,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "p\\PhyrexianWalker.java",
    "complexity": {
     "java_lines": 33,
@@ -8208,8 +7825,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.25,
-   "main_weight": 0.25,
+   "weight": 2.0,
+   "main_weight": 2.0,
    "xmage_java": "s\\SearchPartyCaptain.java",
    "complexity": {
     "java_lines": 79,
@@ -8227,8 +7844,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.234375,
-   "main_weight": 0.234375,
+   "weight": 1.875,
+   "main_weight": 1.875,
    "xmage_java": "p\\PegasusGuardian.java",
    "complexity": {
     "java_lines": 57,
@@ -8247,11 +7864,43 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.234375,
-   "main_weight": 0.234375,
+   "weight": 1.875,
+   "main_weight": 1.875,
    "xmage_java": "s\\SnowCoveredSwamp.java",
    "complexity": {
     "java_lines": 36,
+    "features": []
+   }
+  },
+  "Terminate": {
+   "archetypes": {
+    "Jund": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 1.875,
+   "main_weight": 0.625,
+   "xmage_java": "t\\Terminate.java",
+   "complexity": {
+    "java_lines": 34,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Holy Light": {
+   "archetypes": {
+    "WhiteWeenie": {
+     "avg_side": 0.88
+    }
+   },
+   "weight": 1.75,
+   "main_weight": 0.0,
+   "xmage_java": "h\\HolyLight.java",
+   "complexity": {
+    "java_lines": 43,
     "features": []
    }
   },
@@ -8267,7 +7916,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.2109375,
+   "weight": 1.6875,
    "main_weight": 0.0,
    "xmage_java": "c\\CoalitionHonorGuard.java",
    "complexity": {
@@ -8284,13 +7933,51 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.2109375,
+   "weight": 1.6875,
    "main_weight": 0.0,
    "xmage_java": "f\\FeedTheClan.java",
    "complexity": {
     "java_lines": 39,
     "features": [
      "condition"
+    ]
+   }
+  },
+  "Seething Landscape": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.38,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "s\\SeethingLandscape.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Mukotai Ambusher": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "avg_side": 0.25
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.0,
+   "xmage_java": "m\\MukotaiAmbusher.java",
+   "complexity": {
+    "java_lines": 41,
+    "features": [
+     "ninjutsu"
     ]
    }
   },
@@ -8301,8 +7988,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "s\\SeaGateOracle.java",
    "complexity": {
     "java_lines": 42,
@@ -8318,66 +8005,102 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "m\\MeetingOfMinds.java",
    "complexity": {
     "java_lines": 34,
     "features": []
    }
   },
-  "Ethereal Haze": {
+  "Ash Barrens": {
    "archetypes": {
     "Ephemerate": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12,
-     "avg_side": 0.25
-    }
-   },
-   "weight": 0.1875,
-   "main_weight": 0.0625,
-   "xmage_java": "e\\EtherealHaze.java",
-   "complexity": {
-    "java_lines": 38,
-    "features": [
-     "static"
-    ]
-   }
-  },
-  "Unmake": {
-   "archetypes": {
-    "Garden": {
-     "avg_main": 0.25,
+     "avg_main": 0.38,
      "deck_pct": 0.25
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
-   "xmage_java": "u\\Unmake.java",
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "a\\AshBarrens.java",
    "complexity": {
-    "java_lines": 33,
+    "java_lines": 36,
     "features": [
-     "target"
+     "cost"
     ]
    }
   },
-  "Tragic Slip": {
+  "Fungal Infection": {
    "archetypes": {
     "Garden": {
-     "avg_main": 0.12,
-     "deck_pct": 0.12,
-     "avg_side": 0.38
+     "avg_main": 0.5,
+     "deck_pct": 0.5
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.046875,
-   "xmage_java": "t\\TragicSlip.java",
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "f\\FungalInfection.java",
    "complexity": {
-    "java_lines": 45,
+    "java_lines": 37,
     "features": [
-     "continuouseffect",
+     "target",
+     "token"
+    ]
+   }
+  },
+  "Spinning Darkness": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.5,
+     "deck_pct": 0.5
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "s\\SpinningDarkness.java",
+   "complexity": {
+    "java_lines": 109,
+    "features": [
+     "static",
+     "target",
+     "cost"
+    ]
+   }
+  },
+  "Rancid Earth": {
+   "archetypes": {
+    "Garden": {
+     "avg_side": 1.0
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 0.0,
+   "xmage_java": "r\\RancidEarth.java",
+   "complexity": {
+    "java_lines": 48,
+    "features": [
+     "static",
      "target",
      "condition"
+    ]
+   }
+  },
+  "Armadillo Cloak": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.75,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 1.5,
+   "xmage_java": "a\\ArmadilloCloak.java",
+   "complexity": {
+    "java_lines": 59,
+    "features": [
+     "trigger",
+     "static",
+     "target"
     ]
    }
   },
@@ -8388,8 +8111,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "g\\GlimpseTheImpossible.java",
    "complexity": {
     "java_lines": 106,
@@ -8408,8 +8131,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "e\\EssenceWarden.java",
    "complexity": {
     "java_lines": 47,
@@ -8425,14 +8148,35 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "n\\NestInvader.java",
    "complexity": {
     "java_lines": 42,
     "features": [
      "trigger",
      "token"
+    ]
+   }
+  },
+  "Vines of Vastwood": {
+   "archetypes": {
+    "GruulAggro": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.5
+    }
+   },
+   "weight": 1.5,
+   "main_weight": 0.5,
+   "xmage_java": "v\\VinesOfVastwood.java",
+   "complexity": {
+    "java_lines": 52,
+    "features": [
+     "continuouseffect",
+     "target",
+     "condition",
+     "kicker"
     ]
    }
   },
@@ -8443,8 +8187,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "b\\Boomerang.java",
    "complexity": {
     "java_lines": 32,
@@ -8460,8 +8204,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1875,
-   "main_weight": 0.1875,
+   "weight": 1.5,
+   "main_weight": 1.5,
    "xmage_java": "v\\VaporSnag.java",
    "complexity": {
     "java_lines": 35,
@@ -8480,8 +8224,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.1796875,
-   "main_weight": 0.140625,
+   "weight": 1.4375,
+   "main_weight": 1.125,
    "xmage_java": "l\\Lignify.java",
    "complexity": {
     "java_lines": 55,
@@ -8501,7 +8245,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.171875,
+   "weight": 1.375,
    "main_weight": 0.0,
    "xmage_java": "s\\ScattershotArcher.java",
    "complexity": {
@@ -8522,7 +8266,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.171875,
+   "weight": 1.375,
    "main_weight": 0.0,
    "xmage_java": "c\\CircleOfProtectionRed.java",
    "complexity": {
@@ -8533,6 +8277,47 @@
     ]
    }
   },
+  "Revoke Existence": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.12
+    },
+    "Gates": {
+     "avg_side": 0.38
+    },
+    "WhiteWeenie": {
+     "avg_side": 0.38
+    }
+   },
+   "weight": 1.375,
+   "main_weight": 0.0,
+   "xmage_java": "r\\RevokeExistence.java",
+   "complexity": {
+    "java_lines": 36,
+    "features": [
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Agony Warp": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25,
+     "avg_side": 0.12
+    }
+   },
+   "weight": 1.25,
+   "main_weight": 1.0,
+   "xmage_java": "a\\AgonyWarp.java",
+   "complexity": {
+    "java_lines": 40,
+    "features": [
+     "target"
+    ]
+   }
+  },
   "Distant Melody": {
    "archetypes": {
     "Elves": {
@@ -8540,8 +8325,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.15625,
-   "main_weight": 0.15625,
+   "weight": 1.25,
+   "main_weight": 1.25,
    "xmage_java": "d\\DistantMelody.java",
    "complexity": {
     "java_lines": 70,
@@ -8559,13 +8344,33 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.15625,
-   "main_weight": 0.0625,
+   "weight": 1.25,
+   "main_weight": 0.5,
    "xmage_java": "g\\GoliathPaladin.java",
    "complexity": {
     "java_lines": 43,
     "features": [
      "trigger"
+    ]
+   }
+  },
+  "Azure Fleet Admiral": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_side": 0.12
+    },
+    "Terror": {
+     "avg_side": 0.62
+    }
+   },
+   "weight": 1.1875,
+   "main_weight": 0.0,
+   "xmage_java": "a\\AzureFleetAdmiral.java",
+   "complexity": {
+    "java_lines": 67,
+    "features": [
+     "trigger",
+     "static"
     ]
    }
   },
@@ -8580,8 +8385,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "s\\StormshriekFeral.java",
    "complexity": {
     "java_lines": 58,
@@ -8598,8 +8403,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "e\\EnergyRefractor.java",
    "complexity": {
     "java_lines": 36,
@@ -8616,8 +8421,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "u\\Unwind.java",
    "complexity": {
     "java_lines": 38,
@@ -8635,8 +8440,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "m\\MoltenTributary.java",
    "complexity": {
     "java_lines": 40,
@@ -8650,8 +8455,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "t\\TangledIslet.java",
    "complexity": {
     "java_lines": 40,
@@ -8665,8 +8470,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "k\\KaervekSTorch.java",
    "complexity": {
     "java_lines": 89,
@@ -8684,8 +8489,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "c\\CandyTrail.java",
    "complexity": {
     "java_lines": 49,
@@ -8703,8 +8508,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "f\\Firebolt.java",
    "complexity": {
     "java_lines": 39,
@@ -8722,13 +8527,30 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.140625,
-   "main_weight": 0.140625,
+   "weight": 1.125,
+   "main_weight": 1.125,
    "xmage_java": "c\\CrystalGrotto.java",
    "complexity": {
     "java_lines": 44,
     "features": [
      "trigger",
+     "cost"
+    ]
+   }
+  },
+  "Whispersilk Cloak": {
+   "archetypes": {
+    "Urzatron": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 1.125,
+   "main_weight": 0.0,
+   "xmage_java": "w\\WhispersilkCloak.java",
+   "complexity": {
+    "java_lines": 47,
+    "features": [
+     "static",
      "cost"
     ]
    }
@@ -8740,8 +8562,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "l\\LoseFocus.java",
    "complexity": {
     "java_lines": 37,
@@ -8752,6 +8574,113 @@
     ]
    }
   },
+  "Foreboding Landscape": {
+   "archetypes": {
+    "DimirControl": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "f\\ForebodingLandscape.java",
+   "complexity": {
+    "java_lines": 64,
+    "features": [
+     "activated",
+     "target",
+     "cost",
+     "cycling"
+    ]
+   }
+  },
+  "Fanged Flames": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "f\\FangedFlames.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Mortuary Mire": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "m\\MortuaryMire.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "trigger",
+     "static",
+     "target"
+    ]
+   }
+  },
+  "Ethereal Haze": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 0.5,
+   "xmage_java": "e\\EtherealHaze.java",
+   "complexity": {
+    "java_lines": 38,
+    "features": [
+     "static"
+    ]
+   }
+  },
+  "Last Breath": {
+   "archetypes": {
+    "Ephemerate": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 0.0,
+   "xmage_java": "l\\LastBreath.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "target"
+    ]
+   }
+  },
+  "Midnight Tilling": {
+   "archetypes": {
+    "Gates": {
+     "avg_main": 0.5,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "m\\MidnightTilling.java",
+   "complexity": {
+    "java_lines": 31,
+    "features": [
+     "static"
+    ]
+   }
+  },
   "Corrupted Conviction": {
    "archetypes": {
     "Gates": {
@@ -8759,8 +8688,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "c\\CorruptedConviction.java",
    "complexity": {
     "java_lines": 35,
@@ -8778,8 +8707,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "d\\DevourFlesh.java",
    "complexity": {
     "java_lines": 80,
@@ -8796,8 +8725,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "s\\ShelteringWord.java",
    "complexity": {
     "java_lines": 74,
@@ -8813,8 +8742,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "d\\DaruSpiritualist.java",
    "complexity": {
     "java_lines": 43,
@@ -8831,8 +8760,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "n\\NomadsEnKor.java",
    "complexity": {
     "java_lines": 48,
@@ -8850,8 +8779,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "t\\TaskForce.java",
    "complexity": {
     "java_lines": 41,
@@ -8868,8 +8797,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "b\\BlackDragonGate.java",
    "complexity": {
     "java_lines": 48,
@@ -8885,8 +8814,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "b\\BristlingBackwoods.java",
    "complexity": {
     "java_lines": 48,
@@ -8903,8 +8832,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": null,
    "complexity": null
   },
@@ -8915,8 +8844,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "b\\BroodBirthing.java",
    "complexity": {
     "java_lines": 66,
@@ -8932,8 +8861,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "t\\TemurBattleRage.java",
    "complexity": {
     "java_lines": 48,
@@ -8951,26 +8880,42 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": null,
    "complexity": null
   },
-  "Acorn Harvest": {
+  "Highland Forest": {
    "archetypes": {
-    "Spy": {
-     "avg_side": 0.25
+    "GruulAggro": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.0,
-   "xmage_java": "a\\AcornHarvest.java",
+   "weight": 1.0,
+   "main_weight": 1.0,
+   "xmage_java": "h\\HighlandForest.java",
    "complexity": {
     "java_lines": 43,
+    "features": []
+   }
+  },
+  "Jack-o'-Lantern": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.5
+    }
+   },
+   "weight": 1.0,
+   "main_weight": 0.0,
+   "xmage_java": "j\\JackOLantern.java",
+   "complexity": {
+    "java_lines": 51,
     "features": [
-     "cost",
-     "token",
-     "flashback"
+     "static",
+     "activated",
+     "target",
+     "cost"
     ]
    }
   },
@@ -8981,8 +8926,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "o\\OrzhovBasilica.java",
    "complexity": {
     "java_lines": 47,
@@ -8999,8 +8944,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "g\\GreatswordOfTyr.java",
    "complexity": {
     "java_lines": 58,
@@ -9019,8 +8964,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.125,
-   "main_weight": 0.125,
+   "weight": 1.0,
+   "main_weight": 1.0,
    "xmage_java": "s\\SummonChocoMog.java",
    "complexity": {
     "java_lines": 48,
@@ -9033,7 +8978,7 @@
      "avg_side": 0.5
     }
    },
-   "weight": 0.125,
+   "weight": 1.0,
    "main_weight": 0.0,
    "xmage_java": "t\\TempleAcolyte.java",
    "complexity": {
@@ -9049,7 +8994,7 @@
      "avg_side": 0.5
     }
    },
-   "weight": 0.125,
+   "weight": 1.0,
    "main_weight": 0.0,
    "xmage_java": "a\\ArchonSGlory.java",
    "complexity": {
@@ -9067,7 +9012,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.1171875,
+   "weight": 0.9375,
    "main_weight": 0.0,
    "xmage_java": "h\\HonorableScout.java",
    "complexity": {
@@ -9075,6 +9020,26 @@
     "features": [
      "trigger",
      "target"
+    ]
+   }
+  },
+  "Tragic Slip": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.12,
+     "deck_pct": 0.12,
+     "avg_side": 0.38
+    }
+   },
+   "weight": 0.9375,
+   "main_weight": 0.375,
+   "xmage_java": "t\\TragicSlip.java",
+   "complexity": {
+    "java_lines": 45,
+    "features": [
+     "continuouseffect",
+     "target",
+     "condition"
     ]
    }
   },
@@ -9087,7 +9052,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.1015625,
+   "weight": 0.8125,
    "main_weight": 0.0,
    "xmage_java": "o\\ObsidianAcolyte.java",
    "complexity": {
@@ -9105,13 +9070,30 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.09375,
+   "weight": 0.75,
    "main_weight": 0.0,
    "xmage_java": "g\\GleefulSabotage.java",
    "complexity": {
     "java_lines": 39,
     "features": [
      "static",
+     "target"
+    ]
+   }
+  },
+  "Unmake": {
+   "archetypes": {
+    "Garden": {
+     "avg_main": 0.25,
+     "deck_pct": 0.25
+    }
+   },
+   "weight": 0.75,
+   "main_weight": 0.75,
+   "xmage_java": "u\\Unmake.java",
+   "complexity": {
+    "java_lines": 33,
+    "features": [
      "target"
     ]
    }
@@ -9123,8 +9105,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.09375,
-   "main_weight": 0.09375,
+   "weight": 0.75,
+   "main_weight": 0.75,
    "xmage_java": "h\\HeapedHarvest.java",
    "complexity": {
     "java_lines": 47,
@@ -9142,8 +9124,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.09375,
-   "main_weight": 0.09375,
+   "weight": 0.75,
+   "main_weight": 0.75,
    "xmage_java": "b\\BurningSunSFury.java",
    "complexity": {
     "java_lines": 41,
@@ -9160,8 +9142,8 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.09375,
-   "main_weight": 0.0625,
+   "weight": 0.75,
+   "main_weight": 0.5,
    "xmage_java": "b\\BlacksmithSSkill.java",
    "complexity": {
     "java_lines": 74,
@@ -9176,7 +9158,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.09375,
+   "weight": 0.75,
    "main_weight": 0.0,
    "xmage_java": "d\\DeathSpeakers.java",
    "complexity": {
@@ -9190,7 +9172,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.09375,
+   "weight": 0.75,
    "main_weight": 0.0,
    "xmage_java": "m\\MaskOfLawAndGrace.java",
    "complexity": {
@@ -9207,7 +9189,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.09375,
+   "weight": 0.75,
    "main_weight": 0.0,
    "xmage_java": "s\\ShieldOfDutyAndReason.java",
    "complexity": {
@@ -9225,8 +9207,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.078125,
-   "main_weight": 0.078125,
+   "weight": 0.625,
+   "main_weight": 0.625,
    "xmage_java": "l\\LysAlanaHuntmaster.java",
    "complexity": {
     "java_lines": 44,
@@ -9243,8 +9225,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.078125,
-   "main_weight": 0.078125,
+   "weight": 0.625,
+   "main_weight": 0.625,
    "xmage_java": null,
    "complexity": null
   },
@@ -9255,8 +9237,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.078125,
-   "main_weight": 0.078125,
+   "weight": 0.625,
+   "main_weight": 0.625,
    "xmage_java": "r\\RadiantGrove.java",
    "complexity": {
     "java_lines": 40,
@@ -9270,8 +9252,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.078125,
-   "main_weight": 0.078125,
+   "weight": 0.625,
+   "main_weight": 0.625,
    "xmage_java": "t\\TuktukRubblefort.java",
    "complexity": {
     "java_lines": 51,
@@ -9286,7 +9268,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.078125,
+   "weight": 0.625,
    "main_weight": 0.0,
    "xmage_java": "s\\SpidersilkArmor.java",
    "complexity": {
@@ -9302,7 +9284,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.078125,
+   "weight": 0.625,
    "main_weight": 0.0,
    "xmage_java": "v\\ViridianLongbow.java",
    "complexity": {
@@ -9321,7 +9303,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.078125,
+   "weight": 0.625,
    "main_weight": 0.0,
    "xmage_java": "w\\WebweaverChangeling.java",
    "complexity": {
@@ -9339,7 +9321,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.078125,
+   "weight": 0.625,
    "main_weight": 0.0,
    "xmage_java": "n\\NaturalState.java",
    "complexity": {
@@ -9358,7 +9340,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.078125,
+   "weight": 0.625,
    "main_weight": 0.0,
    "xmage_java": "p\\PalaceSentinels.java",
    "complexity": {
@@ -9377,7 +9359,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.078125,
+   "weight": 0.625,
    "main_weight": 0.0,
    "xmage_java": "e\\Electrickery.java",
    "complexity": {
@@ -9396,8 +9378,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.078125,
-   "main_weight": 0.078125,
+   "weight": 0.625,
+   "main_weight": 0.625,
    "xmage_java": "c\\CommandBridge.java",
    "complexity": {
     "java_lines": 43,
@@ -9416,8 +9398,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.078125,
-   "main_weight": 0.078125,
+   "weight": 0.625,
+   "main_weight": 0.625,
    "xmage_java": "g\\GeomancerSGambit.java",
    "complexity": {
     "java_lines": 38,
@@ -9432,7 +9414,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.0703125,
+   "weight": 0.5625,
    "main_weight": 0.0,
    "xmage_java": "c\\CuombajjWitches.java",
    "complexity": {
@@ -9450,7 +9432,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0703125,
+   "weight": 0.5625,
    "main_weight": 0.0,
    "xmage_java": "d\\DinrovaHorror.java",
    "complexity": {
@@ -9467,7 +9449,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0703125,
+   "weight": 0.5625,
    "main_weight": 0.0,
    "xmage_java": "e\\Exclude.java",
    "complexity": {
@@ -9485,8 +9467,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "d\\DimirAqueduct.java",
    "complexity": {
     "java_lines": 44,
@@ -9503,8 +9485,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "b\\BedeckBedazzle.java",
    "complexity": {
     "java_lines": 82,
@@ -9520,8 +9502,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "f\\FallajiArchaeologist.java",
    "complexity": {
     "java_lines": 51,
@@ -9538,8 +9520,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "g\\GloriousGale.java",
    "complexity": {
     "java_lines": 67,
@@ -9557,8 +9539,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "r\\RemoveSoul.java",
    "complexity": {
     "java_lines": 33,
@@ -9575,7 +9557,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": "i\\IngotChewer.java",
    "complexity": {
@@ -9593,8 +9575,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "s\\SpiritEnKor.java",
    "complexity": {
     "java_lines": 51,
@@ -9612,8 +9594,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": null,
    "complexity": null
   },
@@ -9623,7 +9605,7 @@
      "avg_side": 0.5
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": "v\\Vendetta.java",
    "complexity": {
@@ -9641,8 +9623,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "f\\FerociousWerefox.java",
    "complexity": {
     "java_lines": 48,
@@ -9658,13 +9640,31 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "y\\YouMeetInATavern.java",
    "complexity": {
     "java_lines": 43,
     "features": [
      "static"
+    ]
+   }
+  },
+  "Acorn Harvest": {
+   "archetypes": {
+    "Spy": {
+     "avg_side": 0.25
+    }
+   },
+   "weight": 0.5,
+   "main_weight": 0.0,
+   "xmage_java": "a\\AcornHarvest.java",
+   "complexity": {
+    "java_lines": 43,
+    "features": [
+     "cost",
+     "token",
+     "flashback"
     ]
    }
   },
@@ -9674,7 +9674,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": "i\\InfestationSage.java",
    "complexity": {
@@ -9691,7 +9691,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": null,
    "complexity": null
@@ -9703,8 +9703,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "i\\IcatianJavelineers.java",
    "complexity": {
     "java_lines": 52,
@@ -9723,8 +9723,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "s\\SteadfastUnicorn.java",
    "complexity": {
     "java_lines": 54,
@@ -9743,8 +9743,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "e\\EaglesOfTheNorth.java",
    "complexity": {
     "java_lines": 59,
@@ -9762,8 +9762,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "e\\EmergeUnscathed.java",
    "complexity": {
     "java_lines": 39,
@@ -9779,8 +9779,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "l\\LoranSEscape.java",
    "complexity": {
     "java_lines": 43,
@@ -9797,8 +9797,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.0625,
-   "main_weight": 0.0625,
+   "weight": 0.5,
+   "main_weight": 0.5,
    "xmage_java": "h\\HoldoutSettlement.java",
    "complexity": {
     "java_lines": 48,
@@ -9814,7 +9814,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": "s\\Sunlance.java",
    "complexity": {
@@ -9830,7 +9830,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": "l\\Lifelink.java",
    "complexity": {
@@ -9847,7 +9847,7 @@
      "avg_side": 0.25
     }
    },
-   "weight": 0.0625,
+   "weight": 0.5,
    "main_weight": 0.0,
    "xmage_java": null,
    "complexity": null
@@ -9859,8 +9859,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.046875,
-   "main_weight": 0.046875,
+   "weight": 0.375,
+   "main_weight": 0.375,
    "xmage_java": null,
    "complexity": null
   },
@@ -9871,8 +9871,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.046875,
-   "main_weight": 0.046875,
+   "weight": 0.375,
+   "main_weight": 0.375,
    "xmage_java": "s\\ShredMemory.java",
    "complexity": {
     "java_lines": 37,
@@ -9889,8 +9889,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.046875,
-   "main_weight": 0.046875,
+   "weight": 0.375,
+   "main_weight": 0.375,
    "xmage_java": "g\\GoForTheThroat.java",
    "complexity": {
     "java_lines": 42,
@@ -9905,7 +9905,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.046875,
+   "weight": 0.375,
    "main_weight": 0.0,
    "xmage_java": "t\\TamiyoSSafekeeping.java",
    "complexity": {
@@ -9921,7 +9921,7 @@
      "avg_side": 0.38
     }
    },
-   "weight": 0.046875,
+   "weight": 0.375,
    "main_weight": 0.0,
    "xmage_java": "e\\EphemeralShields.java",
    "complexity": {
@@ -9937,7 +9937,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0390625,
+   "weight": 0.3125,
    "main_weight": 0.0,
    "xmage_java": "v\\ValakutInvoker.java",
    "complexity": {
@@ -9955,7 +9955,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0390625,
+   "weight": 0.3125,
    "main_weight": 0.0,
    "xmage_java": "s\\SnakeskinVeil.java",
    "complexity": {
@@ -9972,7 +9972,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0390625,
+   "weight": 0.3125,
    "main_weight": 0.0,
    "xmage_java": "g\\GrangerGuildmage.java",
    "complexity": {
@@ -9990,7 +9990,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0390625,
+   "weight": 0.3125,
    "main_weight": 0.0,
    "xmage_java": "c\\CrimsonAcolyte.java",
    "complexity": {
@@ -10008,7 +10008,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0390625,
+   "weight": 0.3125,
    "main_weight": 0.0,
    "xmage_java": "u\\UndergrowthLeopard.java",
    "complexity": {
@@ -10027,7 +10027,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "o\\OkibaGangShinobi.java",
    "complexity": {
@@ -10047,8 +10047,8 @@
      "deck_pct": 0.12
     }
    },
-   "weight": 0.03125,
-   "main_weight": 0.03125,
+   "weight": 0.25,
+   "main_weight": 0.25,
    "xmage_java": "d\\DeceptiveLandscape.java",
    "complexity": {
     "java_lines": 64,
@@ -10066,7 +10066,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "v\\VoraciousVarmint.java",
    "complexity": {
@@ -10085,7 +10085,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "p\\PatricianSScorn.java",
    "complexity": {
@@ -10104,7 +10104,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "h\\Hallow.java",
    "complexity": {
@@ -10120,7 +10120,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "a\\AirbendingLesson.java",
    "complexity": {
@@ -10136,7 +10136,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "a\\ApostleSBlessing.java",
    "complexity": {
@@ -10153,7 +10153,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.03125,
+   "weight": 0.25,
    "main_weight": 0.0,
    "xmage_java": "s\\SokkaSSwordTraining.java",
    "complexity": {
@@ -10170,7 +10170,7 @@
      "avg_side": 0.12
     }
    },
-   "weight": 0.0234375,
+   "weight": 0.1875,
    "main_weight": 0.0,
    "xmage_java": "d\\DiabolicEdict.java",
    "complexity": {

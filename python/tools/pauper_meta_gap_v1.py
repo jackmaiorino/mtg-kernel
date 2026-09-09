@@ -97,14 +97,14 @@ for arch, a in archetypes.items():
         rows.append({"card": name, "avg_main": round(avg, 2), "deck_pct": round(pct, 2), "in_registry": name in registry})
         if name not in registry:
             missing[name]["archetypes"][arch] = {"avg_main": round(avg, 2), "deck_pct": round(pct, 2)}
-            missing[name]["weight"] += share * avg * pct
-            missing[name]["main_weight"] += share * avg * pct
+            missing[name]["weight"] += share * avg
+            missing[name]["main_weight"] += share * avg
     for name, copies in a["side"].most_common():
         avg = copies / d
         pct = a["side_decks"][name] / d
         if name not in registry:
             missing[name]["archetypes"].setdefault(arch, {})["avg_side"] = round(avg, 2)
-            missing[name]["weight"] += 0.5 * share * avg * pct
+            missing[name]["weight"] += 0.5 * share * avg
     report["archetypes"][arch] = {"decks": d, "share": share, "cards": rows, "sideboard": [{"card": n, "avg_side": round(c / d, 2), "in_registry": n in registry} for n, c in a["side"].most_common()]}
 
 for name, info in missing.items():
