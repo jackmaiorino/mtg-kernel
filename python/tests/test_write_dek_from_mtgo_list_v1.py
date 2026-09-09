@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import pathlib
+import subprocess
+import sys
+import tempfile
+import unittest
+from xml.etree import ElementTree as ET
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+LIST = ROOT / "docs/research/pauper_meta_decklists_2026-09-09/Affinity__887998.txt"
+TOOL = "python/tools/write_dek_from_mtgo_list_v1.py"
+
+
+class WriteDek(unittest.TestCase):
+    def test_substitutions_and_counts(self) -> None:
+        out = pathlib.Path(tempfile.mkdtemp()) / "t.dek"
+        # Glint Hawk is not yet registered in data/cards_v1.json (a later
+        # task in this wave adds it); --allow-pending is the documented
+        # escape hatch (task-4-brief.md step 4) for exactly this case.
+        subprocess.run(
+            [
+                sys.executable,
+                TOOL,
+                str(LIST),
+                str(out),
+                "--substitute",
+                "Utrom Monitor=Glint Hawk",
+                "--substitute",
+                "Sewer-veillance Cam=Cryogen Relic",
+                "--allow-pending",
+                "Glint Hawk",
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+        rows = ET.parse(out).getroot().findall("Cards")
+        main = sum(int(r.get("Quantity")) for r in rows if r.get("Sideboard") == "false")
+        side = sum(int(r.get("Quantity")) for r in rows if r.get("Sideboard") == "true")
+        names = {r.get("Name") for r in rows}
+        self.assertEqual((main, side), (60, 15))
+        self.assertIn("Glint Hawk", names)
+        self.assertNotIn("Utrom Monitor", names)
+        self.assertIn("Cryogen Relic", names)
+        self.assertNotIn("Sewer-veillance Cam", names)
+
+    def test_substitution_target_not_registered_and_not_pending_is_an_error(self) -> None:
+        out = pathlib.Path(tempfile.mkdtemp()) / "t.dek"
+        result = subprocess.run(
+            [
+                sys.executable,
+                TOOL,
+                str(LIST),
+                str(out),
+                "--substitute",
+                "Utrom Monitor=Glint Hawk",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(out.exists())
+
+    def test_substitution_source_absent_from_list_is_an_error(self) -> None:
+        out = pathlib.Path(tempfile.mkdtemp()) / "t.dek"
+        result = subprocess.run(
+            [
+                sys.executable,
+                TOOL,
+                str(LIST),
+                str(out),
+                "--substitute",
+                "Card Not In This List=Glint Hawk",
+                "--allow-pending",
+                "Glint Hawk",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(out.exists())
+
+    def test_header_and_line_endings_match_existing_files(self) -> None:
+        out = pathlib.Path(tempfile.mkdtemp()) / "t.dek"
+        subprocess.run(
+            [sys.executable, TOOL, str(LIST), str(out),
+             "--substitute", "Utrom Monitor=Glint Hawk",
+             "--substitute", "Sewer-veillance Cam=Cryogen Relic",
+             "--allow-pending", "Glint Hawk"],
+            cwd=ROOT,
+            check=True,
+        )
+        existing = (ROOT / "oracle/xmage/decks/Pauper/Deck - Elves.dek").read_bytes()
+        existing_header = existing.split(b"\r\n")[0:4]
+        actual = out.read_bytes()
+        actual_header = actual.split(b"\r\n")[0:4]
+        self.assertEqual(actual_header, existing_header)
+        self.assertNotIn(b"\r\r\n", actual)
+        # Every line terminator in the file is CRLF (no bare LF).
+        body = actual.replace(b"\r\n", b"")
+        self.assertNotIn(b"\n", body)
+
+
+if __name__ == "__main__":
+    unittest.main()
