@@ -163,6 +163,24 @@ const FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1: &str = "64c82a261e078f1a";
 const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// PAUPER_META_W1 catalog profile (schema migration, design ruling 6
+// pending): the pauper-meta-cards-v1 card lane's third catalog-identity
+// profile. Later tasks in that wave append cards to data/cards_v1.json,
+// which moves the live card DB hash (`KERNEL_CARDDB_HASH`) while the
+// runtime deck catalog stays unchanged, so this profile pairs its own card
+// DB hash literal with the SAME `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`
+// literal CURRENT uses, rather than defining a new runtime catalog literal.
+// Initialised here to today's live hash, byte-identical to
+// `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`, purely so the crate builds and
+// this profile's classifier arm is exercisable now; a later task in the
+// same wave moves it to the wave's own hash once the card lane's cards
+// land (`python/tools/repin_card_db_identity_v1.py --write` owns that
+// rewrite going forward). This is a schema migration: the owner rules on
+// it before any store written under this profile is used. See
+// `classify_catalog_profile_v1`'s doc comment for the tie rule this
+// byte-identical initial value requires against CURRENT.
+const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "64c82a261e078f1a";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1773,24 +1791,40 @@ pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
 }
 
 /// The closed catalog-identity profile classification of a validated run
-/// (Dual-Profile Catalog Successor, collab CLAUDE #220).
+/// (Dual-Profile Catalog Successor, collab CLAUDE #220; extended to a third
+/// profile by the pauper-meta-cards-v1 card lane's schema migration, design
+/// ruling 6 pending).
 ///
-/// Sealed and crate-private. A record is exactly one of these two, decided by
-/// a complete-tuple match (`card_db_hash_u64_hex`, `runtime_catalog_sha256`)
-/// against exactly one of two disjoint frozen literal pairs at decode time in
-/// [`classify_catalog_profile_v1`]; there is no third state, no default, and
-/// every hybrid (neither pair, or a value from one field's pair paired with
-/// the other field's opposite pair) is rejected. `Historical` pins the frozen
-/// rev3 two-deck catalog forever, byte-identical, and stays readable: a
-/// historical record decodes and validates cleanly. `Current` pins the live
-/// nine-deck catalog as of the runtime-decks-nine landing. Callers that must
-/// admit only live science-loop authority (science-loop use, publication,
-/// resume) reject `Historical` with a specific error at their own boundary;
-/// this module itself never refuses to decode or validate either profile.
+/// Sealed and crate-private. A record is exactly one of these three, decided
+/// by a complete-tuple match (`card_db_hash_u64_hex`, `runtime_catalog_sha256`)
+/// against exactly one of three disjoint frozen literal pairs at decode time
+/// in [`classify_catalog_profile_v1`] (subject to that function's documented
+/// tie rule while `FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1` still equals
+/// `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`); there is no fourth state, no
+/// default, and every hybrid (none of the three pairs, or a value from one
+/// field's pair paired with a different tuple's opposite field) is rejected.
+/// `Historical` pins the frozen rev3 two-deck catalog forever, byte-identical,
+/// and stays readable: a historical record decodes and validates cleanly.
+/// `Current` pins the live nine-deck catalog as of the runtime-decks-nine
+/// landing. `PauperMetaW1` pins the card lane's post-wave-1 card DB hash
+/// against that same runtime catalog; a store written under this profile
+/// needs the owner's ruling before use (schema migration, ruling 6 pending).
+/// Callers that must admit only live science-loop authority (science-loop
+/// use, publication, resume) reject `Historical` with a specific error at
+/// their own boundary and otherwise treat `Current`/`PauperMetaW1`
+/// identically; this module itself never refuses to decode or validate any
+/// of the three profiles.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRunCatalogProfileV1 {
     Historical,
     Current,
+    /// The card lane's third catalog profile (schema migration, design
+    /// ruling 6 pending). Selected when the record's tuple equals
+    /// (`FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1`,
+    /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`); see
+    /// `classify_catalog_profile_v1` for the tie rule against `Current`
+    /// that applies while the two hash literals still match.
+    PauperMetaW1,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2290,21 +2324,40 @@ fn environment_randomization_section_is_exact_v2(
 }
 
 /// The one closed catalog-identity profile classifier (Dual-Profile Catalog
-/// Successor, collab CLAUDE #220).
+/// Successor, collab CLAUDE #220; extended to a third profile by the
+/// pauper-meta-cards-v1 card lane's schema migration, design ruling 6
+/// pending).
 ///
-/// Exactly two complete tuples are admissible: the record's own
+/// Exactly three complete tuples are admissible: the record's own
 /// `card_db_hash_u64_hex` and `runtime_catalog_sha256` fields must equal
 /// EITHER both HISTORICAL frozen rev3 literals (`FROZEN_CARD_DB_HASH_U64_HEX_V2`,
-/// `FROZEN_RUNTIME_CATALOG_SHA256_V2`, byte-identical forever) OR both CURRENT
-/// frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_V2`, byte-identical forever), OR both
+/// CURRENT frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`,
 /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`, pinned to the live nine-deck
-/// catalog as of the runtime-decks-nine landing); every other combination,
-/// including a hybrid that matches one field's literal from one tuple and the
-/// other field's literal from the other tuple, is rejected. This mirrors
+/// catalog as of the runtime-decks-nine landing), OR both PAUPER_META_W1
+/// frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1` -- it shares CURRENT's runtime
+/// catalog literal since the card lane only appends cards, never touches
+/// the runtime deck catalog); every other combination, including a hybrid
+/// that matches one field's literal from one tuple and the other field's
+/// literal from a different tuple, is rejected. This mirrors
 /// `classify_environment_trajectory_contract_v1`'s own shape (whole-tuple
 /// selection before any partial-field tolerance, every hybrid rejected) but
 /// is a distinct, independent classification: a record's trajectory contract
 /// and its catalog profile vary independently.
+///
+/// Tie rule: `FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1` is initialised to
+/// the same value as `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1` (schema
+/// migration, ruling 6 pending) so the crate builds before a later task in
+/// the same wave moves it to that wave's own hash. Until that move, a tuple
+/// whose `card_db_hash_u64_hex` equals the shared value and whose
+/// `runtime_catalog_sha256` equals `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`
+/// satisfies BOTH the CURRENT and PAUPER_META_W1 conditions at once; this
+/// classifier resolves that tie in favor of `Current`, never `PauperMetaW1`
+/// and never an error, so every already-sealed CURRENT-profile record keeps
+/// classifying exactly as it did before this migration landed. Once the
+/// hash moves, the two conditions become mutually exclusive and the tie arm
+/// below is unreachable in practice.
 fn classify_catalog_profile_v1(
     environment: &TrainRunEnvironmentV2,
 ) -> Result<NativeRunCatalogProfileV1> {
@@ -2312,9 +2365,17 @@ fn classify_catalog_profile_v1(
         && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_V2;
     let current = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
-    match (historical, current) {
-        (true, false) => Ok(NativeRunCatalogProfileV1::Historical),
-        (false, true) => Ok(NativeRunCatalogProfileV1::Current),
+    let pauper_meta_w1 = environment.card_db_hash_u64_hex
+        == FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
+    match (historical, current, pauper_meta_w1) {
+        (true, false, false) => Ok(NativeRunCatalogProfileV1::Historical),
+        (false, true, false) => Ok(NativeRunCatalogProfileV1::Current),
+        // Tie rule (see doc comment above): both CURRENT and PAUPER_META_W1
+        // match while the two frozen literals are byte-identical. Resolve
+        // to Current so today's already-sealed records are unaffected.
+        (false, true, true) => Ok(NativeRunCatalogProfileV1::Current),
+        (false, false, true) => Ok(NativeRunCatalogProfileV1::PauperMetaW1),
         _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
     }
 }
@@ -6632,6 +6693,60 @@ mod tests {
         assert_eq!(
             decode_train_run_v2(&bytes).unwrap_err().kind(),
             TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Schema migration: third catalog profile PauperMetaW1 (card lane,
+    // design ruling 6 pending)
+    // ------------------------------------------------------------------
+
+    /// Test-only builder for a `TrainRunEnvironmentV2` with the two
+    /// catalog-identity fields set to specific strings and everything else
+    /// taken from `fixture_record()`'s CURRENT-profile default. Lets the
+    /// classifier tests below exercise `classify_catalog_profile_v1` directly
+    /// against arbitrary tuples without going through a full decode.
+    fn sample_environment_v2_with(
+        card_db_hash_u64_hex: &str,
+        runtime_catalog_sha256: &str,
+    ) -> TrainRunEnvironmentV2 {
+        let mut environment = fixture_record().environment;
+        environment.card_db_hash_u64_hex = card_db_hash_u64_hex.to_owned();
+        environment.runtime_catalog_sha256 = runtime_catalog_sha256.to_owned();
+        environment
+    }
+
+    /// Schema migration (design ruling 6 pending): the card lane's third
+    /// catalog profile, PauperMetaW1. `FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1`
+    /// is initialised to the same value as `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`
+    /// so the crate builds and this classifier is exercisable now, before a
+    /// later task in this wave moves the constant to the wave's own hash.
+    /// This test references the constant itself, never a hardcoded literal,
+    /// so it stays correct on both sides of that move: while the two
+    /// literals tie, the tuple below also satisfies the CURRENT arm and
+    /// `classify_catalog_profile_v1`'s documented tie rule resolves it to
+    /// `Current`; once the hash moves, the tie breaks and the identical
+    /// tuple resolves to `PauperMetaW1`.
+    #[test]
+    fn classify_catalog_profile_accepts_the_pauper_meta_w1_tuple() {
+        let environment = sample_environment_v2_with(
+            FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1,
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1,
+        );
+        let classified = classify_catalog_profile_v1(&environment).unwrap();
+        if FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1 == FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1 {
+            assert_eq!(classified, NativeRunCatalogProfileV1::Current);
+        } else {
+            assert_eq!(classified, NativeRunCatalogProfileV1::PauperMetaW1);
+        }
+
+        let hybrid = sample_environment_v2_with(
+            FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1,
+            FROZEN_RUNTIME_CATALOG_SHA256_V2,
+        );
+        assert!(
+            classify_catalog_profile_v1(&hybrid).is_err(),
+            "hybrid tuples stay rejected"
         );
     }
 

@@ -58,9 +58,10 @@ mtg-kernel/src/native_training_store_run_v2.rs's
 FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1 and FROZEN_CARD_DB_HASH_U64_HEX_V2 are
 never rewritten by this tool; Task 3 owns their migration. Matches on that
 file are reported separately as "training-store constants, owned by the
-catalog profile migration". TASK3_REWRITABLE_IDENTIFIERS_V1 is a
-deliberately empty allow-list: Task 3 will name its new constant there once
-it lands, at which point this tool may rewrite it like any other site.
+catalog profile migration". Task 3 landed the card lane's third catalog
+profile, FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1, and named it in
+TASK3_REWRITABLE_IDENTIFIERS_V1, so this tool rewrites that one constant
+like any other pin site while still leaving the two protected ones alone.
 
 Usage
 -----
@@ -159,12 +160,14 @@ PROTECTED_IDENTIFIERS_V1 = (
     "FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1",
     "FROZEN_CARD_DB_HASH_U64_HEX_V2",
 )
-# Task 3 will add a third training-store constant that this tool IS
-# allowed to rewrite. Its exact identifier is not yet known; add it here
-# once Task 3 lands. Until then this stays empty, and every literal match
-# in PROTECTED_FILE_V1 is treated as protected (report-only, never
-# rewritten).
-TASK3_REWRITABLE_IDENTIFIERS_V1: tuple[str, ...] = ()
+# Task 3's own new training-store constant: the card lane's third catalog
+# profile (schema migration, design ruling 6 pending). Unlike
+# PROTECTED_IDENTIFIERS_V1 above, this one IS rewritten by --write like any
+# other pin site, since (unlike CURRENT_V1/V2) it is meant to track the live
+# hash forward across future card waves.
+TASK3_REWRITABLE_IDENTIFIERS_V1: tuple[str, ...] = (
+    "FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1",
+)
 
 TRAINING_STORE_LABEL = "training-store constants, owned by the catalog profile migration"
 

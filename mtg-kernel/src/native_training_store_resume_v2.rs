@@ -661,13 +661,16 @@ fn resume_native_training_store_impl_v1(
     // mutation. `validate_native_training_store_v2` (the read-only walk used
     // to verify sealed evidence stores) deliberately performs no such
     // rejection; only this mutator path does. Exhaustive match (fix round,
-    // panel finding 3): a future third profile variant fails this match at
-    // compile time rather than silently resuming under it. The CURRENT arm
+    // panel finding 3): an unhandled future profile variant fails this match
+    // at compile time rather than silently resuming under it. The CURRENT arm
     // (fix round, panel finding 1, blocker: bypass) additionally requires the
     // record's own catalog fields to equal the crate's live build constants
     // at this moment, not merely the pinned CURRENT literal -- closing the
     // gap where a record merely claiming that literal, authored by a build
     // whose real identity has since moved past it, could still resume.
+    // PauperMetaW1 (schema migration, card lane, design ruling 6 pending)
+    // shares the CURRENT arm identically: same live-build-identity check,
+    // same error kind on mismatch.
     use crate::native_training_store_run_v2::{
         current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
     };
@@ -677,7 +680,7 @@ fn resume_native_training_store_impl_v1(
                 NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current => {
+        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::PauperMetaW1 => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,

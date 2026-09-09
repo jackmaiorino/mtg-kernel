@@ -659,13 +659,16 @@ fn publish_generation_v2(
     // lock, or filesystem mutation. Both `publish_genesis_generation_v2` and
     // `publish_prepared_segment_v2` funnel through this shared function, so
     // this one check covers both. Exhaustive match (fix round, panel finding
-    // 3): a future third profile variant fails this match at compile time
-    // rather than silently publishing under it. The CURRENT arm (fix round,
-    // panel finding 1, blocker: bypass) additionally requires the record's
-    // own catalog fields to equal the crate's live build constants at this
-    // moment, not merely the pinned CURRENT literal -- closing the gap where
-    // a record merely claiming that literal, authored by a build whose real
-    // identity has since moved past it, could still publish.
+    // 3): an unhandled future profile variant fails this match at compile
+    // time rather than silently publishing under it. The CURRENT arm (fix
+    // round, panel finding 1, blocker: bypass) additionally requires the
+    // record's own catalog fields to equal the crate's live build constants
+    // at this moment, not merely the pinned CURRENT literal -- closing the
+    // gap where a record merely claiming that literal, authored by a build
+    // whose real identity has since moved past it, could still publish.
+    // PauperMetaW1 (schema migration, card lane, design ruling 6 pending)
+    // shares the CURRENT arm identically: same live-build-identity check,
+    // same error kind on mismatch.
     use crate::native_training_store_run_v2::{
         current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
     };
@@ -675,7 +678,7 @@ fn publish_generation_v2(
                 NativeTrainingStorePublisherV2ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current => {
+        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::PauperMetaW1 => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
