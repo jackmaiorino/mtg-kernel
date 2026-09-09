@@ -87,6 +87,7 @@ pub fn resolve_checked_untrusted_kernel_card_correspondence_v1(
             visible_card_name,
         ));
     }
+    // Unreachable with the frozen registry (every definition is Full); covered again when a partial-capability card lands.
     if definition.capability != CardCapability::Full {
         return Err(MtgoContractErrorV1::new(
             "kernel_card_not_fully_supported",
