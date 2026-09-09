@@ -1823,7 +1823,11 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     /// (`FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1`,
     /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`); see
     /// `classify_catalog_profile_v1` for the tie rule against `Current`
-    /// that applies while the two hash literals still match.
+    /// that applies while the two hash literals still match. This profile's
+    /// label, for any future caller that renders one, is `pauper_meta_w1`
+    /// (`Historical`/`Current` have no such rendering today; no code in this
+    /// crate currently renders a profile label string at all, so there is
+    /// nothing else to update for this label).
     PauperMetaW1,
 }
 
