@@ -59,19 +59,19 @@ fn supported_token_is_distinct_from_a_deck_card() {
 
 #[test]
 fn supported_profile_commitment_is_deterministic_and_source_bound() {
-    assert_eq!(CARD_DEFS.len(), 136);
+    assert_eq!(CARD_DEFS.len(), 162);
     assert_eq!(
         CARD_DEFS
             .iter()
             .filter(|definition| definition.capability == CardCapability::Full)
             .count(),
-        49
+        162
     );
     let first = mtgo_kernel_supported_card_profile_commitment_v1().unwrap();
     let second = mtgo_kernel_supported_card_profile_commitment_v1().unwrap();
     assert_eq!(first, second);
     assert_eq!(
         first,
-        "42d3820feae9c37be9703ec12372de4fea1bd86e2811123266a39156af634839"
+        "f9c233495c501450b12e209a585d70ef96fd21ece28e83aa210f067dab5c63f6"
     );
 }

@@ -38,7 +38,7 @@
     {"ordinal": 5, "visible_card_name": "Forest", "template_id": "kernel-basics-ordinal-5-forest-dsk-286-v1", "public_print_id": "0da5fbc2-24ad-4520-a60a-436d3a485fec", "set_code": "dsk", "collector_number": "286", "mean_absolute_difference_milli": 0, "distinct_name_margin_milli": 53000},
     {"ordinal": 6, "visible_card_name": "Island", "template_id": "kernel-basics-ordinal-6-island-dsk-273-v1", "public_print_id": "40e3bf00-84cc-498c-b214-1052b4904d92", "set_code": "dsk", "collector_number": "273", "mean_absolute_difference_milli": 0, "distinct_name_margin_milli": 71010}
   ],
-  "kernel_card_db_hash_hex": "a06fa9566106f0ea",
+  "kernel_card_db_hash_hex": "64c82a261e078f1a",
   "fully_supported_kernel_name_count": 7,
   "nonclaim": "Three print templates were calibrated on this source frame and one Island template came from an earlier reviewed frame. This is complete same-frame wiring coverage, not a heldout accuracy estimate, object binding, ObservationV5, model decision, or input authority.",
   "safe_for_object_binding": false,

@@ -11,9 +11,19 @@ fn producer_root_v1() -> PathBuf {
         .join("mtgo_visible_duel_producer_v1")
 }
 
+// Checkouts of the sibling C# producer may carry CRLF or LF line endings
+// depending on the worktree (Windows checkouts are CRLF, other lanes are LF).
+// Normalize before any multi-line substring assertion so this policy test is
+// checkout-independent instead of asserting on incidental line-ending bytes.
+fn normalized_source_v1(source: String) -> String {
+    source.replace("\r\n", "\n")
+}
+
 fn producer_source_v1() -> String {
-    fs::read_to_string(producer_root_v1().join("VisibleDuelProducerV1.cs"))
-        .expect("read direct-source producer")
+    normalized_source_v1(
+        fs::read_to_string(producer_root_v1().join("VisibleDuelProducerV1.cs"))
+            .expect("read direct-source producer"),
+    )
 }
 
 fn complete_producer_source_v1() -> String {
@@ -23,7 +33,11 @@ fn complete_producer_source_v1() -> String {
         "SealedVisibleActionDispatchV1.cs",
     ]
     .into_iter()
-    .map(|name| fs::read_to_string(producer_root_v1().join(name)).expect("read producer source"))
+    .map(|name| {
+        normalized_source_v1(
+            fs::read_to_string(producer_root_v1().join(name)).expect("read producer source"),
+        )
+    })
     .collect::<Vec<_>>()
     .join("\n")
 }
