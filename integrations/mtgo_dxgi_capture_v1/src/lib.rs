@@ -37,10 +37,15 @@ mod competitive_pregame_policy;
 mod competitive_visible_history_readiness;
 #[cfg(target_os = "windows")]
 mod competitive_visible_match_memory;
+#[cfg(target_os = "windows")]
 mod deployment_slots;
+#[cfg(target_os = "windows")]
 mod placeholder_pregame_controller;
+#[cfg(target_os = "windows")]
 mod placeholder_sideboard_controller;
+#[cfg(target_os = "windows")]
 mod search_root_provider;
+#[cfg(target_os = "windows")]
 mod unknown_card_policy;
 
 #[cfg(target_os = "windows")]
@@ -469,18 +474,23 @@ pub use competitive_visible_match_memory::{
     OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
     MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
 };
+#[cfg(target_os = "windows")]
 pub use deployment_slots::{
     MtgoDeploymentSlotDescriptorV1, MtgoDeploymentSlotKindV1, MtgoDeploymentSlotReportV1,
     MtgoDeploymentSlotV1, MtgoDeploymentSlotsV1, MTGO_DEPLOYMENT_SLOT_REPORT_SCHEMA_V1,
 };
+#[cfg(target_os = "windows")]
 pub use placeholder_pregame_controller::{
     MtgoPlaceholderPregameControllerV1, MTGO_PLACEHOLDER_PREGAME_RULE_TABLE_V1,
 };
+#[cfg(target_os = "windows")]
 pub use placeholder_sideboard_controller::MtgoPlaceholderSideboardControllerV1;
+#[cfg(target_os = "windows")]
 pub use search_root_provider::{
     MtgoRawPolicyOnlySearchRootProviderV1, MtgoSearchRootDecisionV1, MtgoSearchRootProviderV1,
     MTGO_SEARCH_ROOT_NOT_RATIFIED_REASON_V1,
 };
+#[cfg(target_os = "windows")]
 pub use unknown_card_policy::{
     MtgoResolvedVisibleCardV1, MtgoUnknownCardAbstentionV1, MtgoUnknownCardPolicyV1,
     MTGO_UNKNOWN_CARD_FAIL_CLOSED_REASON_V1,
