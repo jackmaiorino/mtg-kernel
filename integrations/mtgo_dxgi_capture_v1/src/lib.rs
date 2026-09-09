@@ -37,6 +37,7 @@ mod competitive_pregame_policy;
 mod competitive_visible_history_readiness;
 #[cfg(target_os = "windows")]
 mod competitive_visible_match_memory;
+mod deployment_slots;
 
 #[cfg(target_os = "windows")]
 mod reviewed_deck_gate_partial_corpus;
@@ -463,6 +464,10 @@ pub use competitive_visible_match_memory::{
     MtgoCompetitivePlayerRelativeGameWinnerV1, OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
     OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
     MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
+};
+pub use deployment_slots::{
+    MtgoDeploymentSlotDescriptorV1, MtgoDeploymentSlotKindV1, MtgoDeploymentSlotReportV1,
+    MtgoDeploymentSlotV1, MtgoDeploymentSlotsV1, MTGO_DEPLOYMENT_SLOT_REPORT_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]
