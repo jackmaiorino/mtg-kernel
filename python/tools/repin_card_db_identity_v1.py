@@ -19,11 +19,15 @@ build.rs's canonicalization). Build the crate first, e.g. from Git Bash:
 
 then point this tool at the same target dir with the MTG_KERNEL_CARGO_TARGET_DIR
 environment variable (default: "target", Cargo's own default, resolved
-relative to the repo root if not absolute). This tool globs
-"$MTG_KERNEL_CARGO_TARGET_DIR/debug/build/mtg-kernel-*/out/*.rs" for the line
-"pub const KERNEL_CARDDB_HASH: u64 = 0x...;". If several "out" directories
-exist (stale ones from an earlier build hash), it uses the newest by
-modification time and prints which one it used.
+relative to the repo root if not absolute). This tool globs both
+"$MTG_KERNEL_CARGO_TARGET_DIR/debug/build/mtg-kernel-*/out/*.rs" and
+"$MTG_KERNEL_CARGO_TARGET_DIR/release/build/mtg-kernel-*/out/*.rs" for the
+line "pub const KERNEL_CARDDB_HASH: u64 = 0x...;" (both profiles: CI's
+python-tests job only ever runs `cargo build --release`, a local dev build
+usually only runs plain `cargo build`). If several "out" directories exist
+across either profile, it uses the newest by modification time among the
+ones that actually contain the KERNEL_CARDDB_HASH line, and prints which
+directory and profile it used.
 
 Old literal
 -----------
@@ -117,17 +121,22 @@ BRIEF_LISTED_SITES_V1 = (
 )
 
 # Verified 2026-09-09 by direct inspection: these five brief-listed files
-# pin RUNTIME_DECK_CATALOG_FILE_SHA256 / EXPECTED_RUNTIME_DECK_CATALOG_FILE_SHA256_V2
-# (a SHA-256 of the two-deck runtime catalog file), which is a distinct
-# identity from KERNEL_CARDDB_HASH. That pin was last re-baselined by
-# commits 40a0fadc and bca8f91b (2026-08-14), unrelated to and predating
-# this card-DB-hash re-pin tool. As of this writing they carry zero
-# occurrences of either spelling of the card-DB-hash literal, so they are
-# excluded from REQUIRED_PIN_SITES_V1 (folding them in would fail --check
-# on an otherwise perfectly consistent tree). They stay inside the
-# recursive glob search below, so if a future wave ever does add a
-# card-DB-hash literal to one of them, this tool will find and manage it
-# like any other site.
+# pin a SHA-256 of the two-deck runtime catalog file, which is a distinct
+# identity from KERNEL_CARDDB_HASH -- RUNTIME_DECK_CATALOG_FILE_SHA256 /
+# EXPECTED_RUNTIME_DECK_CATALOG_FILE_SHA256_V2 in runtime_decks.rs,
+# native_full_episode_trajectory_v2.rs,
+# native_full_episode_trajectory_v2_goldens.rs, and
+# generate_native_full_episode_trajectory_v2_goldens.py; the differently
+# named RUNTIME_DECK_CATALOG_SHA256 (no "FILE") in
+# generate_environment_randomization_v2_reset_physical_trajectory_goldens_v1.py.
+# That pin was last re-baselined by commits 40a0fadc and bca8f91b
+# (2026-08-14), unrelated to and predating this card-DB-hash re-pin tool.
+# As of this writing they carry zero occurrences of either spelling of the
+# card-DB-hash literal, so they are excluded from REQUIRED_PIN_SITES_V1
+# (folding them in would fail --check on an otherwise perfectly consistent
+# tree). They stay inside the recursive glob search below, so if a future
+# wave ever does add a card-DB-hash literal to one of them, this tool will
+# find and manage it like any other site.
 NOT_CURRENTLY_PINNED_SITES_V1 = (
     "mtg-kernel/src/runtime_decks.rs",
     "mtg-kernel/src/native_full_episode_trajectory_v2.rs",
@@ -196,26 +205,58 @@ def cargo_target_dir() -> Path:
     return path
 
 
-def find_generated_out_dir(target_dir: Path) -> Path:
-    pattern = str(target_dir / "debug" / "build" / "mtg-kernel-*" / "out")
-    candidates = [Path(p) for p in glob.glob(pattern) if Path(p).is_dir()]
+# CI's python-tests job builds only `cargo build --release --locked --bin
+# kernel_rl_env` (see .github/workflows/ci.yml, python-tests job), never a
+# plain (debug) `cargo build`, so only release/build/mtg-kernel-*/out ever
+# exists there; a local dev build usually only runs plain `cargo build`, so
+# only debug/build/mtg-kernel-*/out exists. Both profiles are searched so
+# this tool (and its covering test) works unmodified in either environment.
+CARGO_PROFILES = ("debug", "release")
+
+
+def find_out_dir_candidates(target_dir: Path) -> list[tuple[Path, str]]:
+    """Return (out_dir, profile) pairs across both cargo profiles, newest
+    (by the out directory's own modification time) first.
+    """
+    candidates: list[tuple[float, Path, str]] = []
+    for profile in CARGO_PROFILES:
+        pattern = str(target_dir / profile / "build" / "mtg-kernel-*" / "out")
+        for raw in glob.glob(pattern):
+            out_dir = Path(raw)
+            if out_dir.is_dir():
+                candidates.append((out_dir.stat().st_mtime, out_dir, profile))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [(out_dir, profile) for _, out_dir, profile in candidates]
+
+
+def parse_live_hash(target_dir: Path) -> tuple[int, Path, str]:
+    """Return (live_hash, rs_path, profile) from the newest out directory,
+    across both the debug and release profiles, that actually contains a
+    KERNEL_CARDDB_HASH line.
+    """
+    candidates = find_out_dir_candidates(target_dir)
     if not candidates:
+        patterns = " or ".join(
+            str(target_dir / profile / "build" / "mtg-kernel-*" / "out")
+            for profile in CARGO_PROFILES
+        )
         raise RepinError(
-            f"no generated build output matched {pattern}; build the crate "
-            "first (cargo build --locked -p mtg-kernel) with "
+            f"no generated build output directory matched {patterns}; build "
+            "the crate first (cargo build --locked -p mtg-kernel, or cargo "
+            "build --release --locked -p mtg-kernel) with "
             f"{CARGO_TARGET_DIR_ENV} (or Cargo's own CARGO_TARGET_DIR) "
             "pointed at the same target dir"
         )
-    return max(candidates, key=lambda p: p.stat().st_mtime)
-
-
-def parse_live_hash(out_dir: Path) -> tuple[int, Path]:
-    for rs_path in sorted(out_dir.glob("*.rs")):
-        text = rs_path.read_bytes().decode("utf-8")
-        match = GENERATED_HASH_PATTERN.search(text)
-        if match:
-            return int(match.group(1).replace("_", ""), 16), rs_path
-    raise RepinError(f"no KERNEL_CARDDB_HASH constant found under {out_dir}")
+    for out_dir, profile in candidates:
+        for rs_path in sorted(out_dir.glob("*.rs")):
+            text = rs_path.read_bytes().decode("utf-8")
+            match = GENERATED_HASH_PATTERN.search(text)
+            if match:
+                return int(match.group(1).replace("_", ""), 16), rs_path, profile
+    raise RepinError(
+        "no KERNEL_CARDDB_HASH constant found under any candidate out "
+        "directory: " + ", ".join(str(out_dir) for out_dir, _ in candidates)
+    )
 
 
 def discover_search_files() -> list[Path]:
@@ -381,8 +422,7 @@ def run(*, write: bool) -> int:
         old_bare = bare_spelling(old_hash)
 
         target_dir = cargo_target_dir()
-        out_dir = find_generated_out_dir(target_dir)
-        live_hash, generated_path = parse_live_hash(out_dir)
+        live_hash, generated_path, profile = parse_live_hash(target_dir)
         new_grouped = grouped_spelling(live_hash)
         new_bare = bare_spelling(live_hash)
 
@@ -393,7 +433,7 @@ def run(*, write: bool) -> int:
         return 1
 
     print(f"card_db_hash {new_bare} ({new_grouped})")
-    print(f"generated_from {generated_path}")
+    print(f"generated_from {generated_path} (profile={profile})")
 
     found_files = {occ.rel_path for occ in occurrences}
 
