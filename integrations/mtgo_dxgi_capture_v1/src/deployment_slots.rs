@@ -60,11 +60,13 @@ pub struct MtgoDeploymentSlotsV1<D, P, S, U, R> {
 
 impl<D, P, S, U, R> MtgoDeploymentSlotsV1<D, P, S, U, R>
 where
-    D: MtgoDeploymentSlotV1,
-    P: MtgoDeploymentSlotV1,
-    S: MtgoDeploymentSlotV1,
+    D: mtgo_blackbox_v1::MtgoPlayerVisibleDuelScorerV1 + MtgoDeploymentSlotV1,
+    P: crate::MtgoCompetitiveNativePregameScorerV1 + MtgoDeploymentSlotV1,
+    S: crate::MtgoCompetitiveNativeSideboardScorerV1
+        + crate::MtgoCompetitiveNativeSideboardDeliberationScorerV1
+        + MtgoDeploymentSlotV1,
     U: MtgoDeploymentSlotV1,
-    R: MtgoDeploymentSlotV1,
+    R: crate::MtgoSearchRootProviderV1 + MtgoDeploymentSlotV1,
 {
     pub fn slot_report_v1(&self) -> MtgoDeploymentSlotReportV1 {
         let slots = vec![
@@ -108,6 +110,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mtgo_blackbox_v1::{
+        MtgoPlayerVisibleDuelDecisionInputV1, MtgoPlayerVisibleDuelScoreResponseV1,
+    };
 
     struct Stub(&'static str, bool);
 
@@ -122,6 +127,58 @@ mod tests {
                 is_placeholder: self.1,
                 qualified_for_live: false,
                 contract_version: 1,
+            }
+        }
+    }
+
+    impl mtgo_blackbox_v1::MtgoPlayerVisibleDuelScorerV1 for Stub {
+        fn score_player_visible_duel_v1(
+            &mut self,
+            _model_input: &MtgoPlayerVisibleDuelDecisionInputV1,
+        ) -> Result<MtgoPlayerVisibleDuelScoreResponseV1, String> {
+            Err("stub".to_owned())
+        }
+    }
+
+    impl crate::MtgoCompetitiveNativePregameScorerV1 for Stub {
+        fn score_pregame_v1(
+            &mut self,
+            _model_input: &crate::MtgoCompetitiveNativePregameModelInputV1,
+            _model_input_commitment_sha256: &str,
+            _deployment_commitment_sha256: &str,
+        ) -> Result<crate::MtgoCompetitiveNativePregameScoreResponseV1, String> {
+            Err("stub".to_owned())
+        }
+    }
+
+    impl crate::MtgoCompetitiveNativeSideboardScorerV1 for Stub {
+        fn score_sideboard_v1(
+            &mut self,
+            _model_input: &crate::MtgoCompetitiveNativeSideboardModelInputV1,
+            _model_input_commitment_sha256: &str,
+            _deployment_commitment_sha256: &str,
+        ) -> Result<crate::MtgoCompetitiveNativeSideboardScoreResponseV1, String> {
+            Err("stub".to_owned())
+        }
+    }
+
+    impl crate::MtgoCompetitiveNativeSideboardDeliberationScorerV1 for Stub {
+        fn score_sideboard_deliberation_v1(
+            &mut self,
+            _decision: &crate::MtgoCompetitiveNativeSideboardDeliberationDecisionV1,
+        ) -> Result<crate::MtgoCompetitiveNativeSideboardDeliberationScoreResponseV1, String>
+        {
+            Err("stub".to_owned())
+        }
+    }
+
+    impl crate::MtgoSearchRootProviderV1 for Stub {
+        fn search_root_v1(
+            &self,
+            _decision: &MtgoPlayerVisibleDuelDecisionInputV1,
+        ) -> crate::MtgoSearchRootDecisionV1 {
+            crate::MtgoSearchRootDecisionV1::RawPolicyOnly {
+                reason: "stub".to_owned(),
             }
         }
     }
