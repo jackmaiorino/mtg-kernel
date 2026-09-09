@@ -39,6 +39,7 @@ mod competitive_visible_history_readiness;
 mod competitive_visible_match_memory;
 mod deployment_slots;
 mod placeholder_pregame_controller;
+mod placeholder_sideboard_controller;
 mod unknown_card_policy;
 
 #[cfg(target_os = "windows")]
@@ -474,6 +475,7 @@ pub use deployment_slots::{
 pub use placeholder_pregame_controller::{
     MtgoPlaceholderPregameControllerV1, MTGO_PLACEHOLDER_PREGAME_RULE_TABLE_V1,
 };
+pub use placeholder_sideboard_controller::MtgoPlaceholderSideboardControllerV1;
 pub use unknown_card_policy::{
     MtgoResolvedVisibleCardV1, MtgoUnknownCardAbstentionV1, MtgoUnknownCardPolicyV1,
     MTGO_UNKNOWN_CARD_FAIL_CLOSED_REASON_V1,
