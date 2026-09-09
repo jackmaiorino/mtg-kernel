@@ -860,10 +860,19 @@ fn visible_action_v1(
             actor,
             source,
             mana_choice,
-        } => V::ActivateManaAbility {
-            actor: relative_player_v1(*actor, seated_player),
-            source: refs.get_v1(source)?,
-            mana_choice: *mana_choice,
+            cost_target,
+        } => match cost_target {
+            Some(_) => {
+                return Err(error_v1(
+                    "player_visible_action_cost_target_unsupported",
+                    "the player-visible schema has no cost-target concept",
+                ))
+            }
+            None => V::ActivateManaAbility {
+                actor: relative_player_v1(*actor, seated_player),
+                source: refs.get_v1(source)?,
+                mana_choice: *mana_choice,
+            },
         },
         A::ActivateAbility {
             actor,

@@ -554,6 +554,7 @@ mod tests {
                     actor: PlayerSeatV1::P0,
                     source: first.clone(),
                     mana_choice: None,
+                    cost_target: None,
                 },
                 direct_v1(MtgoDuelPrimaryActivationV1::SingleLeftClick),
             ),

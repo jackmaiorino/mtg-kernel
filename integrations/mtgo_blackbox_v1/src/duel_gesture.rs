@@ -143,7 +143,6 @@ impl CheckedUntrustedMtgoDuelGesturePlanV1 {
     pub fn stages_v1(&self) -> &[MtgoDuelGestureStageV1] {
         &self.plan.stages
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1006,6 +1005,7 @@ mod tests {
                     actor: PlayerSeatV1::P0,
                     source: first.clone(),
                     mana_choice: None,
+                    cost_target: None,
                 },
                 direct(MtgoDuelPrimaryActivationV1::SingleLeftClick),
             ),

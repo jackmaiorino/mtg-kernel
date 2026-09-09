@@ -497,3 +497,52 @@ fn kernel_choice_indices_do_not_cross_the_player_visible_action_boundary() {
         .unwrap()
         .contains("ability_index"));
 }
+
+#[test]
+fn activate_mana_ability_without_cost_target_still_converts() {
+    let mut record = valid_record();
+    let actor = record.payload.observation.acting_player;
+    let source = record.payload.object_bindings[0].kernel_ref.clone();
+    record.payload.legal_actions = vec![ActionSemanticV1::ActivateManaAbility {
+        actor,
+        source,
+        mana_choice: None,
+        cost_target: None,
+    }];
+    refresh_record_commitments(&mut record);
+
+    let decision = validate_observed_decision_v1(record).unwrap();
+    let input = build_player_visible_duel_decision_input_v1(&decision).unwrap();
+
+    assert_eq!(input.ordered_legal_actions.len(), 1);
+    assert!(matches!(
+        input.ordered_legal_actions[0],
+        MtgoPlayerVisibleDuelActionV1::ActivateManaAbility { .. }
+    ));
+}
+
+#[test]
+fn activate_mana_ability_with_cost_target_fails_closed() {
+    let mut record = valid_record();
+    let actor = record.payload.observation.acting_player;
+    let source = record.payload.object_bindings[0].kernel_ref.clone();
+    let cost_target = CardStableRefV1 {
+        arena_id: source.arena_id + 1,
+        ..source.clone()
+    };
+    record.payload.legal_actions = vec![ActionSemanticV1::ActivateManaAbility {
+        actor,
+        source,
+        mana_choice: None,
+        cost_target: Some(cost_target),
+    }];
+    refresh_record_commitments(&mut record);
+
+    let decision = validate_observed_decision_v1(record).unwrap();
+    let error = build_player_visible_duel_decision_input_v1(&decision).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        "player_visible_action_cost_target_unsupported"
+    );
+}
