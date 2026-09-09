@@ -63,6 +63,13 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub terminal_outcome_trained_sideboard_head_present: bool,
     pub public_model_owned_changed_sideboard_path_present: bool,
     pub public_model_owned_unchanged_sideboard_path_present: bool,
+    /// Placeholder wiring (spec 6.5, 6.9, 6.4). True means the slot is wired
+    /// with a disclosed placeholder; it never implies a trained head.
+    pub placeholder_pregame_controller_present: bool,
+    pub placeholder_sideboard_controller_present: bool,
+    pub unknown_card_policy_fail_closed_present: bool,
+    pub search_root_provider_interface_present: bool,
+    pub deployment_slot_report_present: bool,
     pub all_required_model_decision_surfaces_present: bool,
     pub grants_live_authority: bool,
 }
@@ -181,6 +188,11 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         terminal_outcome_trained_sideboard_head_present: false,
         public_model_owned_changed_sideboard_path_present: false,
         public_model_owned_unchanged_sideboard_path_present: false,
+        placeholder_pregame_controller_present: true,
+        placeholder_sideboard_controller_present: true,
+        unknown_card_policy_fail_closed_present: true,
+        search_root_provider_interface_present: true,
+        deployment_slot_report_present: true,
         all_required_model_decision_surfaces_present: false,
         grants_live_authority: false,
     };
@@ -257,6 +269,26 @@ mod tests {
             report.all_required_model_decision_surfaces_present,
             report.recompute_all_required_model_decision_surfaces_present_v1()
         );
+        assert!(!report.all_required_model_decision_surfaces_present);
+        assert!(!report.grants_live_authority);
+    }
+}
+
+#[cfg(test)]
+mod placeholder_readiness_tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_slots_are_reported_without_changing_model_owned_flags() {
+        let report = check_competitive_model_decision_readiness_v1();
+        assert!(report.placeholder_pregame_controller_present);
+        assert!(report.placeholder_sideboard_controller_present);
+        assert!(report.unknown_card_policy_fail_closed_present);
+        assert!(report.search_root_provider_interface_present);
+        assert!(report.deployment_slot_report_present);
+        assert!(!report.terminal_outcome_trained_pregame_head_present);
+        assert!(!report.terminal_outcome_trained_sideboard_head_present);
+        assert!(!report.public_model_owned_pregame_action_path_present);
         assert!(!report.all_required_model_decision_surfaces_present);
         assert!(!report.grants_live_authority);
     }
