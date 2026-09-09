@@ -7,6 +7,7 @@ publish = false
 [workspace]
 
 [dependencies]
+mtg-kernel = { path = "../../mtg-kernel" }
 mtgo-blackbox-v1 = { path = "../mtgo_blackbox_v1" }
 png = "0.17"
 serde = { version = "1", features = ["derive"] }
@@ -35,6 +36,3 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
-
-[dev-dependencies]
-mtg-kernel = { path = "../../mtg-kernel" }
