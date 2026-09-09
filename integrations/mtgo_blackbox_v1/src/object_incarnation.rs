@@ -1255,7 +1255,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_order_unsupported_card_and_invalid_identifier_reject() {
+    fn duplicate_order_unknown_card_and_invalid_identifier_reject() {
         let frame = "1".repeat(64);
         let seed = |ordinal, id: &str, name: &str| MtgoVisibleObjectSeedV1 {
             display_ordinal: ordinal,
@@ -1285,15 +1285,19 @@ mod tests {
             .code(),
             "object_ledger_duplicate_visible_object_id"
         );
+        // Every registry card is CardCapability::Full in the frozen kernel, so no registered
+        // name can exercise the "kernel_card_not_fully_supported" branch; that branch is
+        // covered again once a partial card lands. An unregistered name exercises the
+        // resolver's unknown-name branch instead.
         assert_eq!(
             start_checked_untrusted_visible_object_ledger_v1(
                 &frame,
-                vec![seed(0, "object-0", "Tolarian Terror")],
+                vec![seed(0, "object-0", "Not A Kernel Card")],
             )
             .err()
             .unwrap()
             .code(),
-            "kernel_card_not_fully_supported"
+            "kernel_card_name_unknown"
         );
         assert_eq!(
             start_checked_untrusted_visible_object_ledger_v1(
