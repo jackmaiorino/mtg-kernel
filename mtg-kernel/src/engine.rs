@@ -8959,7 +8959,6 @@ pub(crate) fn validated_stack_item_target_spec(
         StackItemKind::ActivatedAbility => {
             if item.inline_effect.is_none()
                 || item.v4.madness_source_contract.is_some()
-                || item.v4.granted_by.is_some()
                 || item.v4.optional_additional_cost_paid.is_some()
             {
                 return Err(
@@ -8971,9 +8970,12 @@ pub(crate) fn validated_stack_item_target_spec(
                 .activated_ability_index
                 .ok_or("activated stack item lost its definition-owned ability index")?;
             let source_contract = validated_ability_source_contract(state, item)?;
-            let ability =
-                resolved_activated_ability(source_contract.card_def, ability_index, state, item.source)
-                    .ok_or("activated stack item carries an out-of-range ability index")?;
+            let ability = resolved_stack_activated_ability(
+                state,
+                source_contract,
+                ability_index,
+                item.v4.granted_by,
+            )?;
             let ability = &ability;
             if item.inline_effect.as_ref() != Some(&(ability.effect)()) {
                 return Err(
@@ -9116,9 +9118,12 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     .activated_ability_index
                     .ok_or("activated stack item lost its definition-owned ability index")?;
                 let source_contract = validated_ability_source_contract(state, item)?;
-                let ability =
-                    resolved_activated_ability(source_contract.card_def, ability_index, state, item.source)
-                        .ok_or("activated stack item carries an out-of-range ability index")?;
+                let ability = resolved_stack_activated_ability(
+                    state,
+                    source_contract,
+                    ability_index,
+                    item.v4.granted_by,
+                )?;
                 activation_legal_targets_for(item.source, &ability, &chosen, state)
                     .contains(&target)
             }
@@ -10221,34 +10226,54 @@ pub(crate) fn attached_equipment_profiles(
         })
 }
 
-/// The `ActivatedAbilityDef`-shaped ability `host` gains from an attached
-/// Equipment's `granted_activated_ability` (Viridian Longbow's tap-ping),
-/// if any. Synthesized with the fixed defaults a granted ability takes in
-/// this pool -- usable any time `host` has priority-eligible timing on the
+/// Synthesizes the full `ActivatedAbilityDef` a `GrantedActivatedAbilityDef`
+/// expands to, with the fixed defaults a granted ability takes in this pool
+/// -- usable any time its host has priority-eligible timing on the
 /// battlefield (`activation_zone: Battlefield`, `sorcery_speed_only:
 /// false`), no source-relative target restriction beyond `target_spec`
 /// (`ActivationTargetFilter::TargetSpecOnly`), and no per-turn activation
-/// cap (`max_activations_per_turn: None`). `None` for an unequipped
+/// cap (`max_activations_per_turn: None`).
+fn synthesized_granted_activated_ability(
+    granted: card_def::GrantedActivatedAbilityDef,
+) -> card_def::ActivatedAbilityDef {
+    card_def::ActivatedAbilityDef {
+        cost: granted.cost,
+        target_spec: granted.target_spec,
+        effect: granted.effect,
+        activation_zone: Zone::Battlefield,
+        sorcery_speed_only: false,
+        activation_target_filter: card_def::ActivationTargetFilter::TargetSpecOnly,
+        max_activations_per_turn: None,
+    }
+}
+
+/// `host`'s attached Equipment that grants it an activated ability
+/// (Viridian Longbow's tap-ping), if any, together with that Equipment's
+/// own `ObjectId` -- needed to freeze `StackStateV4::granted_by` at
+/// activation-push time (`push_paid_activation`). `None` for an unequipped
 /// creature or an attached Equipment without a granted ability. At most one
 /// attached Equipment in this pool ever grants an ability, so the first
-/// match wins.
+/// match wins. Live-state only: correct for every *pre-stack* use (offering
+/// and paying for the activation still requires the ability to currently
+/// exist) but never consulted once the ability is on the stack -- see
+/// `resolved_stack_activated_ability`'s doc for why resolution instead uses
+/// frozen, last-known-information provenance.
+fn equipped_granted_activated_ability_with_equipment(
+    state: &GameState,
+    host: ObjectId,
+) -> Option<(ObjectId, card_def::ActivatedAbilityDef)> {
+    attached_equipment_profiles(state, host).find_map(|(equipment_id, equipment)| {
+        equipment
+            .granted_activated_ability
+            .map(|granted| (equipment_id, synthesized_granted_activated_ability(granted)))
+    })
+}
+
 fn equipped_granted_activated_ability(
     state: &GameState,
     host: ObjectId,
 ) -> Option<card_def::ActivatedAbilityDef> {
-    attached_equipment_profiles(state, host).find_map(|(_, equipment)| {
-        equipment
-            .granted_activated_ability
-            .map(|granted| card_def::ActivatedAbilityDef {
-                cost: granted.cost,
-                target_spec: granted.target_spec,
-                effect: granted.effect,
-                activation_zone: Zone::Battlefield,
-                sorcery_speed_only: false,
-                activation_target_filter: card_def::ActivationTargetFilter::TargetSpecOnly,
-                max_activations_per_turn: None,
-            })
-    })
+    equipped_granted_activated_ability_with_equipment(state, host).map(|(_, ability)| ability)
 }
 
 /// Resolves `ability_index` for the object whose printed card definition is
@@ -10257,12 +10282,23 @@ fn equipped_granted_activated_ability(
 /// resolves it as `source`'s current equipment-granted ability instead.
 /// Centralizing this lookup is what lets a granted ability reuse the
 /// ordinary `Action::ActivateAbility(ObjectId, u8)` action identity end to
-/// end -- offer (`available_activatable_abilities`), begin/target/pay
-/// (`begin_activation` through `push_paid_activation`), and stack
-/// resolution/retarget validation (`validated_stack_item_target_spec`,
-/// `stack_targets_still_legal`) -- without a new decision/action kind or any
-/// `flat_policy_v2` change: from the RL surface's perspective this is just
-/// another `(source, ability_index)` candidate on the equipped creature.
+/// end for every *pre-stack* stage -- offer
+/// (`available_activatable_abilities`), begin/target/pay
+/// (`begin_activation` through `finalize_activation`) -- without a new
+/// decision/action kind or any `flat_policy_v2` change: from the RL
+/// surface's perspective this is just another `(source, ability_index)`
+/// candidate on the equipped creature.
+///
+/// Live-state only, deliberately: an ability offer/activation announcement
+/// legitimately requires the granting Equipment to currently be attached
+/// (602.2/601.2a-style "is this actually legal right now"), and nothing can
+/// interrupt an activation between `begin_activation` and
+/// `push_paid_activation` (602's announcement is atomic; no player receives
+/// priority mid-announcement). Once the ability is safely on the stack,
+/// `push_paid_activation` freezes its identity into the `StackItem` instead
+/// and every later read goes through `resolved_stack_activated_ability`,
+/// never this function -- see that function's doc for why (CR 113.7a: an
+/// activated ability on the stack resolves independently of its source).
 fn resolved_activated_ability(
     card_def_idx: u16,
     ability_index: u8,
@@ -10277,6 +10313,70 @@ fn resolved_activated_ability(
         return None;
     }
     equipped_granted_activated_ability(state, source)
+}
+
+/// Resolves the `ActivatedAbilityDef` for an *on-stack* activated-ability
+/// item from the FROZEN identity `push_paid_activation` captured when it
+/// was pushed, never by re-deriving from live equipment state. CR 113.7a:
+/// "an ability that has left the stack ... continues to exist ... An
+/// activated or triggered ability that's on the stack is unaffected by its
+/// source leaving the zone it was in when it was activated or triggered" --
+/// XMage's `StackAbility` is decoupled from its source the same way. A
+/// printed ability is looked up by index exactly as before (and must not
+/// carry `granted_by`). A granted ability (`item.v4.granted_by` set, mirror
+/// of how `trigger.rs` freezes `PendingTrigger::granted_by` for Black Mage's
+/// Rod's granted trigger) is looked up from the frozen Equipment's own
+/// *static* `CardDef` -- its printed granted-ability text can never change
+/// at runtime, so no live lookup is needed once the identity itself passes
+/// the same historical-consistency check
+/// `validate_equipment_granted_trigger_contract` already applies to a
+/// granted trigger: both the host and the Equipment contracts must still be
+/// internally coherent (`validate_historical_ability_source_contract`), and
+/// the Equipment must have actually been attached to this exact host
+/// incarnation at the moment of capture. Neither the host creature nor the
+/// Equipment needs to still exist or still be attached now -- a response
+/// that destroys the Equipment (Ancient Grudge, Smash to Smithereens) or
+/// the host creature (Snuff Out) must not stop the ability from resolving.
+fn resolved_stack_activated_ability(
+    state: &GameState,
+    host_contract: AbilitySourceContractV4,
+    ability_index: u8,
+    granted_by: Option<AbilitySourceContractV4>,
+) -> Result<card_def::ActivatedAbilityDef, String> {
+    let def = card_def::CARD_DEFS
+        .get(host_contract.card_def as usize)
+        .ok_or("activated stack item source definition is missing")?;
+    if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
+        if granted_by.is_some() {
+            return Err(
+                "printed activated ability carries unexpected granted-by provenance".to_string(),
+            );
+        }
+        return Ok(*ability);
+    }
+    if ability_index as usize != def.activated_abilities.len() {
+        return Err("activated stack item carries an out-of-range ability index".to_string());
+    }
+    let equipment =
+        granted_by.ok_or("granted activated ability lost its equipment provenance")?;
+    validate_historical_ability_source_contract(state, equipment)?;
+    if host_contract.source == equipment.source
+        || host_contract.zone != Zone::Battlefield
+        || equipment.zone != Zone::Battlefield
+        || equipment.attached_to
+            != Some(ObjectLinkV4 {
+                object: host_contract.source,
+                zone_change_count: host_contract.zone_change_count,
+            })
+    {
+        return Err("granted activated ability source contract is inconsistent".to_string());
+    }
+    let granted = card_def::CARD_DEFS
+        .get(equipment.card_def as usize)
+        .and_then(|definition| definition.equipment)
+        .and_then(|equipment_def| equipment_def.granted_activated_ability)
+        .ok_or("granted activated ability's Equipment no longer grants one")?;
+    Ok(synthesized_granted_activated_ability(granted))
 }
 
 pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
@@ -13545,13 +13645,31 @@ fn push_paid_activation(
     pending: PendingActivation,
     discarded: Vec<ObjectId>,
 ) {
-    let ability = resolved_activated_ability(
-        state.objects.get(pending.source).card_def,
-        pending.ability_index,
-        state,
-        pending.source,
-    )
-    .expect("callers validate this ability index resolves before pushing the activation");
+    // Resolve and, for a granted ability, freeze its granting Equipment's
+    // exact incarnation right here -- the only place this needs a live
+    // lookup. From this point on the stack item is self-contained: every
+    // later read (`validated_stack_item_target_spec`,
+    // `stack_targets_still_legal`) goes through
+    // `resolved_stack_activated_ability`'s frozen/LKI path instead of
+    // re-deriving from live equipment state, so a response that destroys
+    // the Equipment or this creature can't halt the ability's resolution.
+    let host_card_def = state.objects.get(pending.source).card_def;
+    let printed_len = card_def::CARD_DEFS[host_card_def as usize]
+        .activated_abilities
+        .len();
+    let (ability, granted_by) = if (pending.ability_index as usize) < printed_len {
+        (
+            card_def::CARD_DEFS[host_card_def as usize].activated_abilities
+                [pending.ability_index as usize],
+            None,
+        )
+    } else {
+        let (equipment_id, ability) =
+            equipped_granted_activated_ability_with_equipment(state, pending.source).expect(
+                "callers validate this ability index resolves before pushing the activation",
+            );
+        (ability, Some(AbilitySourceContractV4::capture(state, equipment_id)))
+    };
     let ability = &ability;
     let source = state.objects.get(pending.source);
     let ability_source_contract = AbilitySourceContractV4 {
@@ -13633,6 +13751,7 @@ fn push_paid_activation(
                     zone_change_count: pending.source_zone_change_count,
                 },
             ),
+            granted_by,
             ..StackStateV4::default()
         },
     });

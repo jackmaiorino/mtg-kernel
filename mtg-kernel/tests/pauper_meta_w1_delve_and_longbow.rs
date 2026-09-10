@@ -509,3 +509,136 @@ fn summoning_sick_equipped_creature_cannot_activate_the_granted_tap_ability() {
         "activating an unoffered ability is rejected"
     );
 }
+
+// ---------------------------------------------------------------------
+// CR 113.7a: an activated ability on the stack resolves independently of
+// its source. A response that removes the granting Equipment or the
+// equipped creature after the ping is activated must not halt the engine
+// (review finding, fix round 1).
+// ---------------------------------------------------------------------
+
+#[test]
+fn longbow_ping_resolves_after_the_longbow_is_destroyed_in_response() {
+    let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
+    let longbow = put_object(&mut state, PlayerId::P0, "Viridian Longbow", Zone::Battlefield);
+    let elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    attach_exact_for_test(&mut state, longbow, elf);
+    let ancient_grudge = put_object(&mut state, PlayerId::P0, "Ancient Grudge", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+
+    engine::step(&mut state, Action::ActivateAbility(elf, 0)).unwrap();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Player(PlayerId::P1)));
+        }
+        other => panic!("expected ChooseTargets, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+
+    // In response, destroy the Longbow while the ping still sits on the
+    // stack beneath the new spell.
+    match engine::advance_until_decision(&mut state) {
+        Decision::CastSpellOrPass {
+            player,
+            castable_spells,
+            ..
+        } => {
+            assert_eq!(player, PlayerId::P0);
+            assert!(castable_spells.contains(&ancient_grudge));
+            assert_eq!(state.stack.len(), 1, "the ping is on the stack");
+            assert!(state.objects.get(elf).tapped, "paid its tap cost");
+        }
+        other => panic!("expected CastSpellOrPass, got {other:?}"),
+    }
+    engine::step(&mut state, Action::CastSpell(ancient_grudge)).unwrap();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(longbow)));
+        }
+        other => panic!("expected ChooseTargets, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(longbow))).unwrap();
+
+    resolve_until_idle(&mut state);
+
+    assert!(
+        state.engine.halted.is_none(),
+        "the engine must not halt: {:?}",
+        state.engine.halted
+    );
+    assert_eq!(
+        state.objects.get(longbow).zone,
+        Zone::Graveyard,
+        "the Longbow was destroyed before the ping resolved"
+    );
+    assert_eq!(
+        state.players[1].life, 19,
+        "the ping still resolves for 1 damage using the frozen ability, \
+         even though the Equipment that granted it is gone"
+    );
+}
+
+#[test]
+fn longbow_ping_resolves_after_the_equipped_creature_is_destroyed_in_response() {
+    let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
+    let longbow = put_object(&mut state, PlayerId::P0, "Viridian Longbow", Zone::Battlefield);
+    let elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    attach_exact_for_test(&mut state, longbow, elf);
+    let snuff_out = put_object(&mut state, PlayerId::P0, "Snuff Out", Zone::Hand);
+    // Cast for the printed {3}{B} cost (floating mana, same shape as
+    // `pauper_meta_w1_snuff_out_and_duals.rs`'s own test) so no Swamp is
+    // needed.
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 3;
+
+    engine::step(&mut state, Action::ActivateAbility(elf, 0)).unwrap();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Player(PlayerId::P1)));
+        }
+        other => panic!("expected ChooseTargets, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+
+    // In response, destroy the equipped creature (the ping's own source)
+    // while it still sits on the stack.
+    match engine::advance_until_decision(&mut state) {
+        Decision::CastSpellOrPass {
+            player,
+            castable_spells,
+            ..
+        } => {
+            assert_eq!(player, PlayerId::P0);
+            assert!(castable_spells.contains(&snuff_out));
+            assert_eq!(state.stack.len(), 1, "the ping is on the stack");
+        }
+        other => panic!("expected CastSpellOrPass, got {other:?}"),
+    }
+    engine::step(&mut state, Action::CastSpell(snuff_out)).unwrap();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(elf)));
+        }
+        other => panic!("expected ChooseTargets, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(elf))).unwrap();
+
+    resolve_until_idle(&mut state);
+
+    assert!(
+        state.engine.halted.is_none(),
+        "the engine must not halt: {:?}",
+        state.engine.halted
+    );
+    assert_eq!(
+        state.objects.get(elf).zone,
+        Zone::Graveyard,
+        "the equipped creature was destroyed before the ping resolved"
+    );
+    assert_eq!(
+        state.players[1].life, 19,
+        "the ping still resolves for 1 damage via last-known information \
+         even though its own source creature already died"
+    );
+}

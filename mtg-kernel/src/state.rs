@@ -886,8 +886,10 @@ pub struct StackStateV4 {
     /// its captured zone while the ability waits or resolves.
     #[serde(default)]
     pub ability_source_contract: Option<AbilitySourceContractV4>,
-    /// Exact Equipment incarnation that granted a triggered ability to this
-    /// stack item's source creature. Only attachment-granted triggers use it.
+    /// Exact Equipment incarnation that granted a triggered or activated
+    /// ability to this stack item's source creature (Black Mage's Rod's
+    /// granted trigger; Viridian Longbow's granted tap ability). `None` for
+    /// every printed, non-granted ability and for spells.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
     /// Optional additional cost actually paid for this exact cast or the
