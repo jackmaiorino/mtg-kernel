@@ -11,7 +11,9 @@
 use crate::card_def::{
     CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, Subtype, TargetSpec,
 };
-use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef};
+use crate::effect::{
+    CardTypePredicate, EffectCond, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef,
+};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
@@ -85,6 +87,14 @@ pub enum TriggerCondition {
     /// This creature deals combat damage to a player. The committed marker
     /// carries the source's exact zone-change generation.
     DealsCombatDamageToPlayer,
+    /// 505.2, matched against `event::CommittedEvent::UpkeepBegan`: the
+    /// beginning of an Upkeep step. `controller_only` selects "at the
+    /// beginning of *your* upkeep" (Delver of Secrets, `true`) versus "at
+    /// the beginning of *each* upkeep" (`false`, no pool card yet, kept for
+    /// the shape); either way, exactly one Upkeep step happens per turn
+    /// (the active player's), so a `false` source still fires only on
+    /// turns where that upkeep is the active player's own.
+    BeginningOfUpkeep { controller_only: bool },
 }
 
 pub struct TriggeredAbilityDef {
@@ -707,6 +717,16 @@ fn avenging_hunter_etb_effect() -> EffectOp {
     }
 }
 
+fn delver_of_secrets_effect() -> EffectOp {
+    // At the beginning of your upkeep, look at the top card of your
+    // library. You may reveal that card. If an instant or sorcery card is
+    // revealed this way, transform Delver of Secrets.
+    EffectOp::LookAtTopMayRevealThen {
+        predicate: CardTypePredicate::InstantOrSorcery,
+        then: Box::new(EffectOp::TransformSourceInPlace),
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -990,6 +1010,16 @@ const AVENGING_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     effect: avenging_hunter_etb_effect,
 }];
 
+const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: delver_of_secrets_effect,
+}];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -1050,6 +1080,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Troublemaker Ouphe" => &TROUBLEMAKER_OUPHE_TRIGGERS,
         "Vitu-Ghazi Inspector" => &VITU_GHAZI_INSPECTOR_TRIGGERS,
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
+        "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
         _ => &[],
     }
 }
@@ -2029,6 +2060,10 @@ fn trigger_matches(
                 ..
             },
         ) => *object != source && *controller_before == controller,
+        (
+            TriggerCondition::BeginningOfUpkeep { controller_only },
+            CommittedEvent::UpkeepBegan { player },
+        ) => !controller_only || *player == controller,
         _ => false,
     }
 }

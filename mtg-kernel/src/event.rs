@@ -137,6 +137,19 @@ pub struct CreateTokenProposed {
     pub touched_by: Vec<ReplacementId>,
 }
 
+/// Flips a permanent's face in place, with no zone change: the same
+/// `ObjectId` and the same `zone_change_count` before and after (Delver of
+/// Secrets transforming into Insectile Aberration). `face_index` must name
+/// a face the object's `CardDef::transform_face` defines; `commit` panics
+/// rather than guess at an undefined one, matching the zone-change path's
+/// own `battlefield_face_index` handling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransformProposed {
+    pub object: ObjectId,
+    pub face_index: u8,
+    pub touched_by: Vec<ReplacementId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposedEvent {
     Damage(DamageProposed),
@@ -147,6 +160,7 @@ pub enum ProposedEvent {
     Tap(TapProposed),
     ManaAdd(ManaAddProposed),
     CreateToken(CreateTokenProposed),
+    Transform(TransformProposed),
 }
 
 impl ProposedEvent {
@@ -287,6 +301,16 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    /// Flips `object`'s face in place with no zone change (Delver of
+    /// Secrets transforming into Insectile Aberration). See
+    /// `TransformProposed`'s doc.
+    pub fn transform_in_place(object: ObjectId, face_index: u8) -> ProposedEvent {
+        ProposedEvent::Transform(TransformProposed {
+            object,
+            face_index,
+            touched_by: Vec::new(),
+        })
+    }
 
     fn touched_by(&self) -> &[ReplacementId] {
         match self {
@@ -298,6 +322,7 @@ impl ProposedEvent {
             ProposedEvent::Tap(e) => &e.touched_by,
             ProposedEvent::ManaAdd(e) => &e.touched_by,
             ProposedEvent::CreateToken(e) => &e.touched_by,
+            ProposedEvent::Transform(e) => &e.touched_by,
         }
     }
 
@@ -311,6 +336,7 @@ impl ProposedEvent {
             ProposedEvent::Tap(e) => &mut e.touched_by,
             ProposedEvent::ManaAdd(e) => &mut e.touched_by,
             ProposedEvent::CreateToken(e) => &mut e.touched_by,
+            ProposedEvent::Transform(e) => &mut e.touched_by,
         };
         v.push(id);
     }
@@ -408,6 +434,22 @@ pub enum CommittedEvent {
         source_zone_change_count: u32,
         controller: PlayerId,
         chapter: u8,
+    },
+    /// 505.2: the beginning of `player`'s own Upkeep step (Delver of
+    /// Secrets). Exactly one Upkeep step happens each turn, belonging to
+    /// the active player, so this fires once per turn.
+    UpkeepBegan {
+        player: PlayerId,
+    },
+    /// `object`'s face flipped to `face_index` in place, with no zone
+    /// change (Delver of Secrets transforming into Insectile Aberration).
+    /// Distinct from the Saga path's exile-then-return
+    /// (`ZoneChange`/`ProposedEvent::transformed_battlefield_return`),
+    /// which creates a new incarnation because that card's own rules text
+    /// says so.
+    Transformed {
+        object: ObjectId,
+        face_index: u8,
     },
     /// Transient cast-provenance marker consumed from `event_log` by the
     /// trigger collection immediately following this resolution. It is not
@@ -746,6 +788,28 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 controller: t.controller,
             }
         }
+        ProposedEvent::Transform(t) => {
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            let Some(face) = (t.face_index == 1).then_some(def.transform_face.as_ref()).flatten()
+            else {
+                panic!("transform_in_place requested an undefined face");
+            };
+            obj.v4.face_index = t.face_index;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+            obj.v4.effective_subtype_ids = face
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = face.name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: t.face_index,
+            }
+        }
     };
     let saga_entered = matches!(
         committed,
@@ -880,6 +944,17 @@ pub fn log_saga_chapter(state: &mut GameState, source: ObjectId, chapter: u8) {
         controller: object.controller,
         chapter,
     };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Logs the nonreplaceable marker for the beginning of `player`'s own
+/// Upkeep step (Delver of Secrets and any future "at the beginning of ...
+/// upkeep" trigger). 505.2: exactly one Upkeep step happens each turn,
+/// belonging to the active player, so callers log this once per turn for
+/// `player == state.active_player`.
+pub fn log_upkeep_began(state: &mut GameState, player: PlayerId) {
+    let committed = CommittedEvent::UpkeepBegan { player };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
 }

@@ -5649,6 +5649,9 @@ fn pending_effect_semantic_v4(
                         } => BooleanChoicePurposeV4::PayCost,
                         crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
                             ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                            ..
                         } => BooleanChoicePurposeV4::OptionalEffect,
                     },
                 }),
@@ -6955,6 +6958,97 @@ mod glint_hawk_optional_cost_tests {
             choices,
             vec![OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent],
             "exactly the decline and the return actions, in that order"
+        );
+
+        for candidate in &candidates {
+            let SurfaceAction::Action(action) = candidate.surface_action.clone() else {
+                panic!("expected a direct Action candidate");
+            };
+            let mut applied = state.clone();
+            engine::step(&mut applied, action)
+                .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        }
+    }
+}
+
+/// Delver of Secrets' upkeep "may reveal" decision reuses the fully generic
+/// `Decision::ChooseEffectBoolean` surface (`effect::
+/// EffectBooleanChoicePurpose::LookAtTopMayRevealThen`):
+/// `core_surface_action_candidates_v1`'s `Decision::ChooseEffectBoolean` arm
+/// already emits exactly `[false, true]` for every purpose, unconditionally
+/// (see that arm's own doc on schema-v4's Boolean ordering convention), so
+/// this new decision shape needed no new `ActionSemanticV1` variant and no
+/// `flat_policy_v2.rs` change.
+#[cfg(test)]
+mod delver_of_secrets_reveal_tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::state::{Counters, ObjectStateV4};
+
+    fn put_battlefield(state: &mut GameState, name: &str) -> ObjectId {
+        let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"));
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[0].battlefield.push(id);
+        id
+    }
+
+    #[test]
+    fn delver_reveal_offers_exactly_decline_and_reveal_and_each_applies() {
+        // `GameState::new_from_libraries` starts every state at `Step::Untap`
+        // on turn 1 (see its own doc); the test drives it forward through
+        // Upkeep the same way the engine's own turn loop would, rather than
+        // hand-setting `state.step`.
+        let top = card_id_by_name("Glint Hawk").expect("Glint Hawk in CARD_DEFS");
+        let mut state = GameState::new_from_libraries(&[top], &[], card_name, 1);
+        put_battlefield(&mut state, "Delver of Secrets");
+
+        let decision = loop {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                other => break other,
+            }
+        };
+        match &decision {
+            Decision::ChooseEffectBoolean {
+                player, default, ..
+            } => {
+                assert_eq!(*player, PlayerId::P0);
+                assert_eq!(*default, Some(false));
+            }
+            other => panic!("expected ChooseEffectBoolean, got {other:?}"),
+        }
+
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision.clone()), &state)
+                .unwrap();
+        let choices: Vec<bool> = candidates
+            .iter()
+            .map(|candidate| match &candidate.surface_action {
+                SurfaceAction::Action(Action::ChooseEffectBoolean(value)) => *value,
+                other => panic!("expected a direct Action::ChooseEffectBoolean, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            choices,
+            vec![false, true],
+            "exactly decline then reveal, in that order"
         );
 
         for candidate in &candidates {

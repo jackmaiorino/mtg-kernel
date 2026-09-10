@@ -3382,7 +3382,21 @@ fn object_name_for(name: &str) -> &str {
 fn transform_face_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
+        "Delver of Secrets" => "Some(TransformFaceDef { name: \"Insectile Aberration\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Insect], colors: &[ManaColor::U], power: Some(3), toughness: Some(2), keywords: Keywords::FLYING })",
         _ => "None",
+    }
+}
+
+/// The visible back-face name for a transforming card, if any. Feeds only
+/// `card_id_by_visible_name`'s generated match; kept in sync by hand with
+/// the `name:` field `transform_face_for` embeds for the same card (the
+/// pool's transform cards are few enough that a small hand-kept table is
+/// simpler than parsing the generated struct-literal string back apart).
+fn transform_face_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "The Modern Age" => Some("Vector Glider"),
+        "Delver of Secrets" => Some("Insectile Aberration"),
+        _ => None,
     }
 }
 
@@ -4645,6 +4659,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "etb_if_collect_evidence_6:target_creature:plus_one_counter:gain_life_2"
         }
         "Avenging Hunter" => "etb:take_initiative:undercity",
+        "Delver of Secrets" => {
+            "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
+        }
         _ => "none",
     }
 }
@@ -6938,6 +6955,33 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "    match name {{").unwrap();
     for (i, c) in cards.iter().enumerate() {
         writeln!(out, "        {:?} => Some({i}),", c.name).unwrap();
+    }
+    writeln!(out, "        _ => None,").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+
+    // ---- visible name (front/transform-back/adventure face) -> (id, face) --
+    // Front names always resolve to face 0; a transforming card's back-face
+    // name resolves to face 1 (`ObjectStateV4::face_index`'s meaning). Slot
+    // reserved for adventure spell-side names at face 2 once Task 11 lands
+    // (Fang Dragon's "Forktail Sweep" and any sibling); no card in the pool
+    // has one yet, so no `=> Some((_, 2))` arm exists today. Tokens are not
+    // included here: they already resolve by their registry name through
+    // `card_id_by_name`, and a token has no alternate face.
+    writeln!(
+        out,
+        "pub fn card_id_by_visible_name(name: &str) -> Option<(u16, u8)> {{"
+    )
+    .unwrap();
+    writeln!(out, "    match name {{").unwrap();
+    for (i, c) in cards.iter().enumerate() {
+        writeln!(out, "        {:?} => Some(({i}, 0)),", c.name).unwrap();
+    }
+    for (i, c) in cards.iter().enumerate() {
+        if let Some(back_name) = transform_face_name_for(&c.name) {
+            writeln!(out, "        {back_name:?} => Some(({i}, 1)),").unwrap();
+        }
     }
     writeln!(out, "        _ => None,").unwrap();
     writeln!(out, "    }}").unwrap();

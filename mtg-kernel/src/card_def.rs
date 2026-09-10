@@ -214,6 +214,9 @@ pub enum Subtype {
     /// same as Equipment/Aura/Gate/Saga/Map/Treasure/Clue/Food/Blood).
     /// Existing stable ids remain fixed.
     Lesson,
+    /// Appended for Insectile Aberration, Delver of Secrets' transformed
+    /// back face. Existing stable ids remain fixed.
+    Insect,
 }
 
 impl Subtype {
@@ -277,6 +280,7 @@ impl Subtype {
         Subtype::Horror,
         Subtype::Nightmare,
         Subtype::Squirrel,
+        Subtype::Insect,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -348,6 +352,7 @@ impl Subtype {
                 | Subtype::Horror
                 | Subtype::Nightmare
                 | Subtype::Squirrel
+                | Subtype::Insect
         )
     }
 }
@@ -1446,8 +1451,10 @@ mod tests {
         // 168-171, again without renumbering earlier ids. Snuff Out,
         // Contaminated Aquifer, Ice Tunnel, Kessig Flamebreather, Gixian
         // Infiltrator, Webweaver Changeling, and Glint Hawk are appended as
-        // ids 172-178, again without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 179);
+        // ids 172-178, again without renumbering earlier ids. Delver of
+        // Secrets is appended as id 179, again without renumbering earlier
+        // ids.
+        assert_eq!(CARD_DEFS.len(), 180);
     }
 
     #[test]
@@ -1514,7 +1521,7 @@ mod tests {
     fn card_db_hash_v32_is_frozen() {
         // Version 32 appends the final pool trio and Skeleton token after the
         // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x55da_3223_6603_f81f);
+        assert_eq!(KERNEL_CARDDB_HASH, 0xef29_164c_bb88_e96a);
     }
 
     #[test]
@@ -1537,6 +1544,30 @@ mod tests {
             );
         }
         assert_eq!(card_id_by_name("Not A Real Card"), None);
+    }
+
+    #[test]
+    fn visible_name_resolves_faces() {
+        let delver = card_id_by_name("Delver of Secrets").expect("Delver of Secrets in CARD_DEFS");
+        assert_eq!(
+            card_id_by_visible_name("Delver of Secrets"),
+            Some((delver, 0))
+        );
+        assert_eq!(
+            card_id_by_visible_name("Insectile Aberration"),
+            Some((delver, 1))
+        );
+        assert_eq!(card_id_by_visible_name("Nonexistent"), None);
+
+        // Every front face resolves to face 0, matching `card_id_by_name`.
+        for (i, def) in CARD_DEFS.iter().enumerate() {
+            assert_eq!(
+                card_id_by_visible_name(def.name),
+                Some((i as u16, 0)),
+                "front face name={}",
+                def.name
+            );
+        }
     }
 
     #[test]
@@ -1714,7 +1745,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 179, "166 pool cards plus thirteen required tokens");
+        assert_eq!(full, 180, "167 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

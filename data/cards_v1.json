@@ -5569,6 +5569,38 @@
         "sacrifice_self_cost"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GlintHawk.java"
+    },
+    {
+      "name": "Delver of Secrets",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Mono-Blue Delver V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "transform",
+        "reveal",
+        "upkeep_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DelverOfSecrets.java"
     }
   ],
   "unresolved": []

@@ -810,6 +810,29 @@ pub enum EffectOp {
     /// Exile this exact Saga incarnation and return the same physical card
     /// transformed under this ability's controller.
     TransformSagaSource,
+    /// Flip this exact permanent's `ObjectStateV4::face_index` to its
+    /// `CardDef::transform_face` characteristics with no zone change: the
+    /// same `ObjectId`, the same `zone_change_count`, throughout (Delver of
+    /// Secrets transforming into Insectile Aberration). Distinct from
+    /// `TransformSagaSource`, whose card exiles and returns transformed
+    /// because that Saga's own chapter text says so; Delver's rules text
+    /// never leaves the battlefield.
+    TransformSourceInPlace,
+    /// Looks privately at the top card of the controller's library
+    /// (`GameState::reveal_library_top` records this for the controller
+    /// only, so the identity never enters the opponent's observation), then
+    /// asks whether to reveal it publicly. If revealed and its printed
+    /// types match `predicate`, `then` executes; declining, or revealing a
+    /// card that does not match, ends this effect with no further
+    /// consequence (Delver of Secrets: "look at the top card of your
+    /// library. You may reveal that card. If an instant or sorcery card is
+    /// revealed this way, transform Delver of Secrets."). See
+    /// `CardTypePredicate` and
+    /// `EffectBooleanChoicePurpose::LookAtTopMayRevealThen`.
+    LookAtTopMayRevealThen {
+        predicate: CardTypePredicate,
+        then: Box<EffectOp>,
+    },
     /// The selected player sacrifices one creature matching the printed
     /// restriction. Ties for greatest power remain that player's choice.
     SacrificeCreature {
@@ -1175,6 +1198,19 @@ pub enum EffectFrame {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// Authenticated post-answer completion for Delver of Secrets' reveal
+    /// choice. The actual public reveal and predicate check are deferred to
+    /// this frame (matching `choose_resumable_boolean`'s "the next engine
+    /// advance owns the consequence" convention) rather than executed while
+    /// answering, since `choose_resumable_boolean` only holds a mutable
+    /// borrow of the continuation, not of `state` itself.
+    LookAtTopMayReveal {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        predicate: CardTypePredicate,
+        then: Box<EffectOp>,
+        path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1405,6 +1441,26 @@ pub enum LibraryPartitionSelectionStage {
     OrderRest { selected: Vec<EffectObjectBinding> },
 }
 
+/// A predicate over a revealed card's printed types, checked against the
+/// exact top-of-library incarnation `LookAtTopMayRevealThen` bound before
+/// asking whether to reveal it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CardTypePredicate {
+    /// Delver of Secrets: "if an instant or sorcery card is revealed this
+    /// way".
+    InstantOrSorcery,
+}
+
+impl CardTypePredicate {
+    fn matches(self, types: &[CardType]) -> bool {
+        match self {
+            CardTypePredicate::InstantOrSorcery => {
+                types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery)
+            }
+        }
+    }
+}
+
 /// Internal completion semantics for a generic Boolean effect choice.
 /// Public schema-v4 projects the shuffle use through its already-reserved
 /// `BooleanChoicePurposeV4::Shuffle` variant.
@@ -1445,6 +1501,17 @@ pub enum EffectBooleanChoicePurpose {
         candidates: Vec<EffectObjectBinding>,
         then: Box<EffectOp>,
         canonical_path: Vec<u16>,
+    },
+    /// Delver of Secrets' upkeep trigger: the controller privately looked at
+    /// the top card of their library (already recorded via
+    /// `GameState::reveal_library_top` before this choice was staged) and
+    /// may now reveal it publicly. `top` binds that exact incarnation so a
+    /// stale or restored continuation cannot substitute a different card.
+    LookAtTopMayRevealThen {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        predicate: CardTypePredicate,
+        then: Box<EffectOp>,
     },
 }
 
@@ -1702,7 +1769,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
         | EffectOp::ResolveInitiativeTrigger { .. }
-        | EffectOp::ResolveUndercityThrone { .. } => true,
+        | EffectOp::ResolveUndercityThrone { .. }
+        | EffectOp::LookAtTopMayRevealThen { .. } => true,
         _ => false,
     }
 }
@@ -2369,6 +2437,45 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                 );
                             }
                         }
+                    }
+                }
+                EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                    player: reveal_player,
+                    top,
+                    predicate,
+                    then,
+                } => {
+                    if player != reveal_player {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose: EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                                player: reveal_player,
+                                top,
+                                predicate,
+                                then,
+                            },
+                        });
+                        return Err(
+                            "reveal choice player does not own the looked-at library".to_string()
+                        );
+                    }
+                    if value {
+                        // The public reveal and the predicate check both
+                        // touch `state`, which this function cannot borrow
+                        // while `continuation` (derived from
+                        // `state.engine.pending_effect`) is held mutably;
+                        // deferred to `EffectFrame::LookAtTopMayReveal` on
+                        // the next engine advance instead, same as every
+                        // other purpose here.
+                        continuation.frames.push(EffectFrame::LookAtTopMayReveal {
+                            player: reveal_player,
+                            top,
+                            predicate,
+                            then,
+                            path,
+                        });
                     }
                 }
             }
@@ -5524,6 +5631,29 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 validate_resumable_program(then)?;
             }
+            EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                player: reveal_player,
+                top,
+                predicate,
+                then,
+            } => {
+                if player != reveal_player || !path.is_empty() || !pending.frames.is_empty() {
+                    return Err("reveal Boolean choice metadata is inconsistent".to_string());
+                }
+                validate_effect_object_binding(state, *top)?;
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                let Some(EffectOp::LookAtTopMayRevealThen {
+                    predicate: original_predicate,
+                    then: original_then,
+                }) = effect_op_at_structural_path(root.as_ref(), path)
+                else {
+                    return Err("reveal choice lost its originating operation".to_string());
+                };
+                if original_predicate != predicate || original_then != then {
+                    return Err("reveal choice payload changed".to_string());
+                }
+                validate_resumable_program(then)?;
+            }
         },
         PendingEffectChoice::ChooseOption {
             player,
@@ -5709,9 +5839,8 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             }
         }
         EffectOp::MayPayManaThen { then, .. }
-        | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. } => {
-            validate_resumable_program(then)?
-        }
+        | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
+        | EffectOp::LookAtTopMayRevealThen { then, .. } => validate_resumable_program(then)?,
         EffectOp::MayPayCostThen { .. } | EffectOp::OfferAffectedPlayerSpellCopy { .. } => {
             return Err(
                 "choice-bearing programs cannot yet mix legacy-suspending effect leaves"
@@ -6980,6 +7109,27 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     continuation.answered_choice_guard = None;
                     apply_undercity_throne_result(state, binding, Some(chosen))?;
                 }
+                EffectFrame::LookAtTopMayReveal {
+                    player,
+                    top,
+                    predicate,
+                    then,
+                    path,
+                } => {
+                    validate_effect_object_binding(state, top)?;
+                    // The reveal is public: both observers learn this exact
+                    // incarnation's identity now, not just the controller
+                    // who already knew it privately from the initial look.
+                    state.reveal_library_top(PlayerId::P0, player, 1);
+                    state.reveal_library_top(PlayerId::P1, player, 1);
+                    let revealed_def =
+                        &crate::card_def::CARD_DEFS[state.objects.get(top.object).card_def as usize];
+                    if predicate.matches(revealed_def.types) {
+                        continuation
+                            .frames
+                            .push(EffectFrame::Program { op: *then, path });
+                    }
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -7941,6 +8091,34 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     event::ProposedEvent::zone_change(object.object, to_zone)
                 };
                 event::propose_and_commit(state, proposed);
+            }
+            EffectOp::LookAtTopMayRevealThen { predicate, then } => {
+                let player = continuation.ctx.controller;
+                let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
+                    // Nothing to look at: an empty library silently ends
+                    // this effect, same "no real choice" shortcut used
+                    // elsewhere in this interpreter (e.g. `ChooseKicker`
+                    // when kicking isn't affordable).
+                    continue;
+                };
+                // Private look: only the controller becomes an observer of
+                // this exact library incarnation. The identity must not
+                // enter the opponent's observation unless the controller
+                // actually reveals it below.
+                state.reveal_library_top(player, player, 1);
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                        player,
+                        top,
+                        predicate,
+                        then,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
             }
             leaf => {
                 if matches!(leaf, EffectOp::DiscardCards { .. }) && !continuation.frames.is_empty()
@@ -9950,6 +10128,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::ExploreTarget { .. } => {
             panic!("ExploreTarget must run through the resumable interpreter")
         }
+        EffectOp::LookAtTopMayRevealThen { .. } => {
+            panic!("LookAtTopMayRevealThen must run through the resumable interpreter")
+        }
         EffectOp::MoveBoundObject {
             object,
             to_zone,
@@ -10857,6 +11038,34 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 event::ProposedEvent::transformed_battlefield_return(ctx.source, 1, ctx.controller),
             );
+        }
+        EffectOp::TransformSourceInPlace => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(source) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            if source.card_def != source_contract.card_def
+                || source.owner != source_contract.owner
+                || source.zone_change_count != source_contract.zone_change_count
+                || source.zone != Zone::Battlefield
+            {
+                return;
+            }
+            let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
+            if source.v4.face_index != 0 || def.transform_face.is_none() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(state, event::ProposedEvent::transform_in_place(ctx.source, 1));
         }
         EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters => {
             if state.objects.get(ctx.source).zone != Zone::Stack {

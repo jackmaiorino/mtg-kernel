@@ -9691,6 +9691,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::Upkeep => {
             let p = state.active_player;
+            // 505.2: logged unconditionally, once per turn, for whichever
+            // player's own Upkeep step this is -- see
+            // `TriggerCondition::BeginningOfUpkeep` (Delver of Secrets).
+            event::log_upkeep_began(state, p);
             if state.initiative == Some(p) {
                 let Some(source) = state.engine.initiative_source else {
                     state.engine.halted =
@@ -9711,8 +9715,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     ));
                     return;
                 }
-                collect_and_queue_triggers(state);
             }
+            collect_and_queue_triggers(state);
         }
         Step::Draw => {
             let p = state.active_player;
