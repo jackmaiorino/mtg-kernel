@@ -12,6 +12,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -61,6 +62,70 @@ class ParseLiveHashProfileLayout(unittest.TestCase):
             self.assertEqual(live_hash, 0xDEAD_BEEF_CAFE_F00D)
             self.assertEqual(rs_path, generated)
             self.assertEqual(profile, "release")
+
+
+class FindOutDirCandidatesPicksNewestGeneratedFile(unittest.TestCase):
+    """Task 11 fix round 1: on Windows/NTFS, overwriting a file's content in
+    place does not bump its *parent directory's* own mtime (only adding,
+    removing, or renaming an entry does). `find_out_dir_candidates` used to
+    sort candidate `out` directories by the directory's own mtime, so once a
+    session's `cargo test`/`cargo check` churn had created more than one
+    `mtg-kernel-<hash>/out` directory under the same target dir, it could
+    hand back a stale `card_defs.rs` from whichever directory happened to be
+    *created* last, even though a *different* directory's file had actually
+    been *regenerated* more recently. Confirmed by hand during Task 11
+    (`E:/cargo-target-pauper-meta`): the directory with the newer own mtime
+    held the staler generated content.
+
+    This synthesizes exactly that inverted layout -- the "older" directory's
+    own mtime is newer than the "newer" directory's, but the "newer"
+    directory's file content and file mtime are genuinely the more recent
+    ones -- and asserts the file wins on both `find_out_dir_candidates`'s
+    ordering and `parse_live_hash`'s selection.
+    """
+
+    def test_newest_generated_file_wins_even_in_an_older_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target_dir = pathlib.Path(tmp)
+            older_dir = target_dir / "debug" / "build" / "mtg-kernel-older" / "out"
+            newer_dir = target_dir / "debug" / "build" / "mtg-kernel-newer" / "out"
+            older_dir.mkdir(parents=True)
+            newer_dir.mkdir(parents=True)
+
+            older_file = older_dir / "card_defs.rs"
+            newer_file = newer_dir / "card_defs.rs"
+            older_file.write_text(
+                "pub const KERNEL_CARDDB_HASH: u64 = 0x1111_1111_1111_1111;\n",
+                encoding="utf-8",
+            )
+            newer_file.write_text(
+                "pub const KERNEL_CARDDB_HASH: u64 = 0x2222_2222_2222_2222;\n",
+                encoding="utf-8",
+            )
+
+            now = time.time()
+            # Inverted on purpose: the "newer" out directory's own mtime is
+            # set *older* than the "older" one's (an NTFS directory whose
+            # mtime was never bumped by a later in-place file rewrite),
+            # while its file content is genuinely the more recently written
+            # one (a real regeneration).
+            os.utime(newer_dir, (now - 1000, now - 1000))
+            os.utime(older_dir, (now - 10, now - 10))
+            os.utime(older_file, (now - 2000, now - 2000))
+            os.utime(newer_file, (now, now))
+
+            candidates = repin_tool.find_out_dir_candidates(target_dir)
+            self.assertEqual(
+                candidates[0],
+                (newer_dir, "debug"),
+                "the directory whose *file* is newest must sort first, "
+                "even though its own directory mtime is older",
+            )
+
+            live_hash, rs_path, profile = repin_tool.parse_live_hash(target_dir)
+            self.assertEqual(live_hash, 0x2222_2222_2222_2222)
+            self.assertEqual(rs_path, newer_file)
+            self.assertEqual(profile, "debug")
 
 
 class RewriteProtectedFile(unittest.TestCase):

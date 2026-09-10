@@ -218,16 +218,45 @@ CARGO_PROFILES = ("debug", "release")
 
 
 def find_out_dir_candidates(target_dir: Path) -> list[tuple[Path, str]]:
-    """Return (out_dir, profile) pairs across both cargo profiles, newest
-    (by the out directory's own modification time) first.
+    """Return (out_dir, profile) pairs across both cargo profiles, ordered
+    newest first by the newest KERNEL_CARDDB_HASH-bearing `*.rs` file's own
+    modification time inside each out directory -- deliberately *not* the
+    out directory's own mtime.
+
+    NTFS does not bump a directory's own mtime when a file inside it is
+    overwritten in place (only when an entry is added/removed/renamed), so
+    an out directory that cargo has silently regenerated many times across
+    a session can carry an older directory mtime than one that has not been
+    touched since cargo first created it. Sorting on the directory's own
+    mtime can then hand back a stale `card_defs.rs` from a directory that
+    merely happened to be created later, even though a *different*
+    directory's file was actually regenerated more recently. Confirmed by
+    hand during Task 11: two `mtg-kernel-<hash>/out` directories existed
+    under the same target dir, and the one with the newer directory mtime
+    held the staler `card_defs.rs` content.
+
+    An out directory with no `KERNEL_CARDDB_HASH`-bearing file at all sorts
+    last (as `float("-inf")`) but is still returned, so `parse_live_hash`'s
+    own "no constant found under any candidate" diagnostic still sees it.
     """
     candidates: list[tuple[float, Path, str]] = []
     for profile in CARGO_PROFILES:
         pattern = str(target_dir / profile / "build" / "mtg-kernel-*" / "out")
         for raw in glob.glob(pattern):
             out_dir = Path(raw)
-            if out_dir.is_dir():
-                candidates.append((out_dir.stat().st_mtime, out_dir, profile))
+            if not out_dir.is_dir():
+                continue
+            newest_generated_mtime = float("-inf")
+            for rs_path in out_dir.glob("*.rs"):
+                try:
+                    text = rs_path.read_bytes().decode("utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if GENERATED_HASH_PATTERN.search(text):
+                    newest_generated_mtime = max(
+                        newest_generated_mtime, rs_path.stat().st_mtime
+                    )
+            candidates.append((newest_generated_mtime, out_dir, profile))
     candidates.sort(key=lambda item: item[0], reverse=True)
     return [(out_dir, profile) for _, out_dir, profile in candidates]
 

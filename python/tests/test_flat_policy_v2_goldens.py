@@ -248,7 +248,7 @@ class FlatPolicyV2GoldenTests(unittest.TestCase):
         self.assertEqual(
             golden["card_db_hash_authority"],
             {
-                "source": "mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen",
+                "source": "mtg-kernel/src/card_def.rs::card_db_hash_v33_is_frozen",
                 "value_hex": "9378c4e1705d5875",
             },
         )

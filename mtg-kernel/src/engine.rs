@@ -4498,7 +4498,7 @@ fn normal_cost_is_payable(
 /// Cast-form selection reuses the ordinary two-form decision while retaining
 /// each form's own target shape. Other cast-cost modifiers remain excluded
 /// until their ordering with Omen is needed by a pool card.
-fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
+pub(crate) fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
     let omen = def.omen.as_ref()?;
     let has_spell_type =
         omen.types.contains(&CardType::Instant) || omen.types.contains(&CardType::Sorcery);
@@ -4533,6 +4533,7 @@ fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
         && def.mode3.is_none()
         && def.escape.is_none()
         && def.omen.is_none()
+        && def.adventure.is_none()
         && def.generic_cost_reduction.is_none())
     .then_some(bestow)
 }
@@ -4550,7 +4551,7 @@ fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
 /// side can never be cast back out of exile (only the creature can, via
 /// `ObjectStateV4::on_adventure`, which never runs through this modal path
 /// at all -- see `castable_spells`' exile loop).
-fn supported_adventure(def: &card_def::CardDef) -> Option<&card_def::AdventureDef> {
+pub(crate) fn supported_adventure(def: &card_def::CardDef) -> Option<&card_def::AdventureDef> {
     let adventure = def.adventure.as_ref()?;
     let has_spell_type =
         adventure.types.contains(&CardType::Instant) || adventure.types.contains(&CardType::Sorcery);
@@ -6650,6 +6651,9 @@ pub(crate) fn validate_pending_cast(
     }
     if def.bestow.is_some() && supported_bestow(def).is_none() {
         return Err("pending cast source has an unsupported Bestow definition".to_string());
+    }
+    if def.adventure.is_some() && supported_adventure(def).is_none() {
+        return Err("pending cast source has an unsupported Adventure definition".to_string());
     }
     if source.spell_copy_origin.is_some() {
         return Err("a virtual spell copy cannot be staged as a cast".to_string());
@@ -10799,9 +10803,12 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
     // kernel deliberately does route through a trigger for consistency with
     // Undercity's own stack-based transfer) -- a direct designation change,
     // mirrored the same way the Initiative transfer above locates its
-    // triggering damage event.
+    // triggering damage event. `EngineState::monarch_source` is rebound to
+    // the attacking creature here too, so a later end-step draw trigger
+    // freezes the correct (post-transfer) provenance rather than staying
+    // pinned to whichever object last granted the monarchy.
     if let Some(holder) = state.monarch {
-        let transfer_player = state.engine.event_log[event_start..]
+        let transfer = state.engine.event_log[event_start..]
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CombatDamageToPlayer {
@@ -10816,12 +10823,13 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
                             && object_has_type(state, *source, CardType::Creature)
                     }) =>
                 {
-                    Some(state.objects.get(*source).controller)
+                    Some((*source, state.objects.get(*source).controller))
                 }
                 _ => None,
             });
-        if let Some(player) = transfer_player {
+        if let Some((source, player)) = transfer {
             state.monarch = Some(player);
+            state.engine.monarch_source = Some(AbilitySourceContractV4::capture(state, source));
         }
     }
     collect_and_queue_triggers(state);

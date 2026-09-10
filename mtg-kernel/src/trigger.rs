@@ -1898,10 +1898,14 @@ fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardTyp
         .and_then(|origin| origin.finalized_method)
         == Some(crate::state::CastMethodV4::Omen)
     {
-        definition
-            .omen
-            .as_ref()
-            .map(|omen| omen.types)
+        // `CastMethodV4::Omen` is shared between a real Omen card's
+        // alternative form and an Adventure card's named spell (Fang
+        // Dragon's Forktail Sweep) -- see `engine::supported_adventure`'s
+        // doc. `CardDef::adventure`/`CardDef::omen` are mutually exclusive
+        // per card, so check the Adventure definition first.
+        crate::engine::supported_adventure(definition)
+            .map(|adventure| adventure.types)
+            .or_else(|| crate::engine::supported_omen(definition).map(|omen| omen.types))
             .unwrap_or(&[])
     } else {
         definition.types

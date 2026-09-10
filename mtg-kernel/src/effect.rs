@@ -3464,7 +3464,14 @@ fn validated_definition_owned_root_effect(
             .ok_or("answered spell frame lost its source definition")?;
         let effect =
             if pending.resolving_item.v4.cast_method == Some(crate::state::CastMethodV4::Omen) {
-                definition.omen.as_ref().map(|omen| (omen.effect)())
+                // Shared between a real Omen card's alternative form and an
+                // Adventure card's named spell -- see
+                // `engine::supported_adventure`'s doc.
+                crate::engine::supported_adventure(definition)
+                    .map(|adventure| (adventure.effect)())
+                    .or_else(|| {
+                        crate::engine::supported_omen(definition).map(|omen| (omen.effect)())
+                    })
             } else {
                 match pending.resolving_item.mode_chosen {
                     0 => (definition.spell_effect)(),

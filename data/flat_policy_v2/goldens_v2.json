@@ -532,7 +532,7 @@
   "action_commitment": {
     "serialization_authority": "python_struct_little_endian_v1",
     "card_db_hash_authority": {
-      "source": "mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen",
+      "source": "mtg-kernel/src/card_def.rs::card_db_hash_v33_is_frozen",
       "value_hex": "9378c4e1705d5875"
     },
     "serializer_stress_v2": {
@@ -869,5 +869,5 @@
     "u16_max_v2_token": 65536,
     "v1_u16_max_card_db_id_disposition": "reject_checked_integer_range"
   },
-  "payload_sha256": "2e765fc90b554e6291da3d1222cc44748bfd12a6175a853052f5fae38d153ce7"
+  "payload_sha256": "a0d6bf80ad7e2dd3a12df948e0c0023f9fbd70317d9791188dfa65c591856654"
 }

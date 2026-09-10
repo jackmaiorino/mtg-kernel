@@ -25,7 +25,7 @@ BASE_GOLDENS = ROOT / "data" / "flat_policy_v1" / "goldens_v1.json"
 BASE_LAYOUT = ROOT / "mtg-kernel" / "src" / "flat_policy_v1.rs"
 OVERLAY_LAYOUT = ROOT / "mtg-kernel" / "src" / "flat_policy_v2.rs"
 CARD_DEF_SOURCE = ROOT / "mtg-kernel" / "src" / "card_def.rs"
-# Frozen by mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen and checked
+# Frozen by mtg-kernel/src/card_def.rs::card_db_hash_v33_is_frozen and checked
 # again by the Rust production-commitment golden test.
 KERNEL_CARDDB_HASH = 0x9378_C4E1_705D_5875
 # The cross-version comparison is a historical byte fixture, not a current
@@ -758,7 +758,7 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
     return {
         "serialization_authority": "python_struct_little_endian_v1",
         "card_db_hash_authority": {
-            "source": "mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen",
+            "source": "mtg-kernel/src/card_def.rs::card_db_hash_v33_is_frozen",
             "value_hex": f"{card_db_hash:016x}",
         },
         "serializer_stress_v2": serializer_stress,

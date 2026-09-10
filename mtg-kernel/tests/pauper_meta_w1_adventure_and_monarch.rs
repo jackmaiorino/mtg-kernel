@@ -397,6 +397,14 @@ fn combat_damage_to_the_monarch_moves_the_crown() {
         Some(PlayerId::P1),
         "the attacker's controller becomes the monarch"
     );
+    let source_contract = state
+        .engine
+        .monarch_source
+        .expect("combat-damage transfer rebinds monarch_source");
+    assert_eq!(
+        source_contract.source, attacker,
+        "monarch_source rebinds to the attacking creature, not any earlier ETB grant"
+    );
 }
 
 #[test]
@@ -483,4 +491,69 @@ fn admiral_cannot_be_blocked_by_the_monarchs_creatures() {
             other => panic!("unexpected path to blockers: {other:?}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Review fix round 1: `trigger::selected_spell_types` classified an Omen-
+// tagged cast by `CardDef::omen` only, so an Adventure spell (Forktail
+// Sweep, `CardDef::omen` is `None`) was misclassified as typeless and never
+// matched `TriggerCondition::CastInstantOrSorcery` (Guttersnipe, Murmuring
+// Mystic).
+// ---------------------------------------------------------------------
+
+#[test]
+fn forktail_sweep_still_triggers_cast_instant_or_sorcery_abilities() {
+    let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
+    let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Hand);
+    let guttersnipe = put_object(&mut state, PlayerId::P0, "Guttersnipe", Zone::Battlefield);
+    let p0_elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    let p1_elf = put_object(&mut state, PlayerId::P1, "Llanowar Elves", Zone::Battlefield);
+    // Exactly {1}{R}: only Forktail Sweep is payable, so it auto-selects.
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+
+    engine::step(&mut state, Action::CastSpell(fang_dragon)).unwrap();
+    resolve_until_idle(&mut state);
+
+    assert_eq!(
+        state.objects.get(p1_elf).zone,
+        Zone::Graveyard,
+        "Forktail Sweep still deals 1 to P1's 1/1"
+    );
+    assert_eq!(
+        state.objects.get(p0_elf).zone,
+        Zone::Battlefield,
+        "Forktail Sweep still doesn't hit P0's own creature"
+    );
+    assert_eq!(
+        state.players[1].life, 18,
+        "Guttersnipe's cast-instant-or-sorcery trigger also deals 2 to the opponent, \
+         in addition to (not instead of) the sweep's own creature damage"
+    );
+    assert!(state.players[0].battlefield.contains(&guttersnipe));
+}
+
+#[test]
+fn fang_dragon_cast_as_a_creature_does_not_trigger_cast_instant_or_sorcery_abilities() {
+    let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
+    let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Hand);
+    put_object(&mut state, PlayerId::P0, "Guttersnipe", Zone::Battlefield);
+    // {5}{R}{R}: both forms are payable, so the creature form must be
+    // chosen explicitly.
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 5;
+
+    engine::step(&mut state, Action::CastSpell(fang_dragon)).unwrap();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseSpellMode { mode_count: 2, .. } => {}
+        other => panic!("expected ChooseSpellMode, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseSpellMode(0)).unwrap();
+    resolve_until_idle(&mut state);
+
+    assert_eq!(state.objects.get(fang_dragon).zone, Zone::Battlefield);
+    assert_eq!(
+        state.players[1].life, 20,
+        "Fang Dragon's creature side is not an instant or sorcery; Guttersnipe does not trigger"
+    );
 }
