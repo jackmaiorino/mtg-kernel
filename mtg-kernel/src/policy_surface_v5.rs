@@ -1296,16 +1296,39 @@ mod tests {
     fn surface_binding_envelopes_are_diagnostic_dispatched_with_exact_goldens() {
         let (legacy, v2) = standalone_binding_states();
         let surface = crate::surface_v2::HarnessSurfaceV2::new();
-        assert_eq!(legacy.diagnostic_state_hash(), 0xa921_902d_e1a8_d8ce);
+        // Stale duplicate of state.rs's own
+        // `diagnostic_state_hash_contract_and_golden_value_are_frozen`
+        // golden (same fixture shape: two_card_libraries/debug_names, seed
+        // 99, draw P0 then P1): that test was re-baselined to
+        // 0x3313_5945_dcb9_4ed1 when Task 11 added `GameState::monarch`
+        // (serialized unconditionally, shifting the v8 envelope for every
+        // state), but this file's own copy of the same literal was missed.
+        // Old value: 0xa921_902d_e1a8_d8ce.
+        assert_eq!(legacy.diagnostic_state_hash(), 0x3313_5945_dcb9_4ed1);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the SurfaceBinding envelope embeds via
+        // CardDef-shaped state (same root cause as the state-hash re-pin
+        // above). Old value: 0xd281_e56f_4389_60a9. New value is this
+        // test's own live-computed hash, read directly from a failing run
+        // (never hand-typed).
         assert_eq!(
             surface_binding_hash(&legacy, &surface).expect("legacy binding hashes"),
-            0xd281_e56f_4389_60a9,
+            0x6940_0c4c_9fdc_2b49,
             "final-pool-v8 legacy SurfaceBinding V1 golden"
         );
-        assert_eq!(v2.diagnostic_state_hash(), 0x8ecd_b59c_374e_2345);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): same root cause as the legacy state
+        // hash above (`GameState::monarch`, added in Task 11, is serialized
+        // unconditionally and shifts the v8/v9 envelope for every state).
+        // Old value: 0x8ecd_b59c_374e_2345.
+        assert_eq!(v2.diagnostic_state_hash(), 0x9689_f972_2063_c266);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): same root cause as the two goldens
+        // above. Old value: 0x5c8f_cd1c_7941_a53e.
         assert_eq!(
             surface_binding_hash(&v2, &surface).expect("v2 binding hashes"),
-            0x5c8f_cd1c_7941_a53e,
+            0xc8e2_f885_b7e8_8615,
             "final-pool-v9 SurfaceBinding V2 golden"
         );
 

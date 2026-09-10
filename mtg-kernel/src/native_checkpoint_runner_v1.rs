@@ -1406,9 +1406,17 @@ mod tests {
         // model_parameter_sha256/train_state_sha256/deck_hashes below are
         // unaffected and still verify against the original parent-commit
         // capture unchanged.
+        //
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation (and so
+        // logical_state_sha256) embeds. Old value:
+        // "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974".
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974"
+            "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1432,9 +1440,16 @@ mod tests {
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, see logical_state_sha256
         // above for the full rationale.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation embeds. Old value:
+        // "f6a0be9ced1bceb1628965d2597e7c3cc7adeaa5ae8de24aa017d52a481b6985".
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "f6a0be9ced1bceb1628965d2597e7c3cc7adeaa5ae8de24aa017d52a481b6985"
+            "a9e2d7d620e2b921bda94ebdc77db9bd3f1a211fae4835bf650ee3aea9347bad"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 151);
@@ -1454,9 +1469,16 @@ mod tests {
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, see logical_state_sha256
         // above for the full rationale.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation embeds. Old value:
+        // "2253bd914bb47db25ab403b212680272cec399a9e4459286b5a6bbcfb2d17b90".
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "2253bd914bb47db25ab403b212680272cec399a9e4459286b5a6bbcfb2d17b90"
+            "91020a9d924d1a53eeddc9cc59c72c72d7fff44cc10ddf61d775be00d4186778"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE

@@ -84,7 +84,7 @@ where
 fn generated_definitions_match_the_four_mage_cards() {
     assert_eq!(card_id("Gatecreeper Vine"), 145);
     assert_eq!(card_id("Healer of the Glade"), 146);
-    assert_eq!(CARD_DEFS.len(), 162);
+    assert_eq!(CARD_DEFS.len(), 184); // pauper meta wave 1 (Tasks 1-12): 162 -> 184
     assert_eq!(Subtype::Elemental.stable_id(), 60);
 
     let pulse = &CARD_DEFS[card_id("Pulse of Murasa") as usize];

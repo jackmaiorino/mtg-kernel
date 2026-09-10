@@ -1812,8 +1812,16 @@ mod tests {
     // 603.10-family observation fixes. Value is this test's own
     // live-computed digest, read directly from a failing run (never
     // hand-typed).
+    //
+    // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+    // (Task 13, identity finalisation): the wave's 21 new cards moved
+    // KERNEL_CARDDB_HASH, which the genesis manifest's run-authority fields
+    // embed. Old value:
+    // "719d3edde1584b20cd8fb97caadbcd3e4d0af0a33d0759fd5be5aac30109d03f". New
+    // value is this test's own live-computed digest, read directly from a
+    // failing run (never hand-typed).
     const GENESIS_MANIFEST_SHA256_GOLDEN_V3: &str =
-        "719d3edde1584b20cd8fb97caadbcd3e4d0af0a33d0759fd5be5aac30109d03f";
+        "41041620bb9bcdb656571a49f9e9da915c59569b29d8946cfc827f7bef93984b";
     const GENESIS_PAYLOAD_SHA256_GOLDEN_V1: &str =
         "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43";
     // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
@@ -1821,8 +1829,14 @@ mod tests {
     // GENESIS_MANIFEST_SHA256_GOLDEN_V3 above (and matches
     // native_checkpoint_runner_v1.rs's logical_state_sha256 re-baseline,
     // same underlying fixture scenario).
+    //
+    // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+    // (Task 13, identity finalisation): same shared fixture scenario as
+    // `native_checkpoint_runner_v1.rs`'s `logical_state_sha256` re-pin (see
+    // that file's own comment); this constant moves identically. Old value:
+    // "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974".
     const GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1: &str =
-        "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974";
+        "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5";
     const GENESIS_TRAIN_STATE_SHA256_GOLDEN_V1: &str =
         "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26";
 

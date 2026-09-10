@@ -45,6 +45,18 @@ class WriteDek(unittest.TestCase):
         self.assertNotIn("Sewer-veillance Cam", names)
 
     def test_substitution_target_not_registered_and_not_pending_is_an_error(self) -> None:
+        # Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+        # identity finalisation): this test's original substitution target,
+        # Glint Hawk, was itself registered by Task 8 of this same wave, so
+        # it stopped being an example of "not registered and not pending"
+        # (the tool now accepts it with no --allow-pending needed, which is
+        # correct new behavior, not a bug -- see
+        # test_substitutions_and_counts above, which still passes
+        # --allow-pending harmlessly for the same now-registered card).
+        # Mulldrifter is confirmed absent from data/cards_v1.json (see
+        # docs/research/pauper_meta_gap_after_w1_2026-09.json) and is not
+        # this wave's own card, so it is a stable "still unregistered"
+        # example for this negative test.
         out = pathlib.Path(tempfile.mkdtemp()) / "t.dek"
         result = subprocess.run(
             [
@@ -53,7 +65,7 @@ class WriteDek(unittest.TestCase):
                 str(LIST),
                 str(out),
                 "--substitute",
-                "Utrom Monitor=Glint Hawk",
+                "Utrom Monitor=Mulldrifter",
             ],
             cwd=ROOT,
             capture_output=True,

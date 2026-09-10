@@ -11044,11 +11044,20 @@ mod tests {
         assert_eq!(actions, [FlatActionCoreV1::default()]);
         // Independently generated with Python hashlib/struct over the
         // documented little-endian v1 byte stream and frozen CardDB hash.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): `FlatActionCommitmentHasherV1::new`
+        // mixes `KERNEL_CARDDB_HASH` directly into the commitment's SHA-256
+        // domain separator, so the wave's 21 new cards move this value. Old
+        // bytes: [0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f,
+        // 0x19, 0x65, 0xbc, 0xdb, 0x6d, 0xce]. New value is this test's own
+        // live-computed commitment, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f, 0x19, 0x65, 0xbc, 0xdb,
-                0x6d, 0xce,
+                0x45, 0x8c, 0xce, 0x40, 0xb7, 0x14, 0x6d, 0x98, 0x81, 0x18, 0xc5, 0x49, 0x46, 0xeb,
+                0x92, 0x40,
             ]
         );
     }
@@ -11091,11 +11100,19 @@ mod tests {
             &[object_v1],
         )
         .unwrap();
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): `FlatActionCommitmentHasherV1::new`
+        // (like its V2 sibling below) mixes `KERNEL_CARDDB_HASH` into the
+        // commitment's SHA-256 domain separator, so the wave's 21 new cards
+        // move every commitment in this test. Old v1 bytes: [0x38, 0x90,
+        // 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40,
+        // 0xe7, 0x7c, 0xd1]. New value is this test's own live-computed
+        // commitment, read directly from a failing run (never hand-typed).
         assert_eq!(
             v1,
             [
-                0x38, 0x90, 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40, 0xe7,
-                0x7c, 0xd1,
+                0xc3, 0xa8, 0x8d, 0xde, 0xbc, 0xbc, 0xc3, 0xf3, 0xcb, 0xac, 0x00, 0x74, 0xda, 0xcd,
+                0x75, 0x5f,
             ]
         );
 
@@ -11121,19 +11138,29 @@ mod tests {
                 .unwrap()
         };
         let common_v2 = commitment_v2(u32::from(u16::MAX));
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): `FlatActionCommitmentHasherV2::new`
+        // also mixes `KERNEL_CARDDB_HASH` into its SHA-256 domain separator
+        // (see the V1 re-pin note on `v1` above). Old bytes: [0x9f, 0xfa,
+        // 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20,
+        // 0x25, 0xe3, 0x13].
         assert_eq!(
             common_v2,
             [
-                0x9f, 0xfa, 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20, 0x25,
-                0xe3, 0x13,
+                0xf4, 0x6a, 0x56, 0x15, 0x52, 0x37, 0x5e, 0xcf, 0xaa, 0x0b, 0x8a, 0xbc, 0x76, 0xa4,
+                0xcd, 0x05,
             ]
         );
         assert_ne!(common_v2, v1);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): same root cause as `common_v2` above.
+        // Old bytes: [0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04,
+        // 0xcb, 0xd3, 0x4d, 0x55, 0xad, 0xc6, 0x06].
         assert_eq!(
             commitment_v2(65_536),
             [
-                0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04, 0xcb, 0xd3, 0x4d, 0x55, 0xad,
-                0xc6, 0x06,
+                0x1f, 0x17, 0x3b, 0x7e, 0x1d, 0xa5, 0x8e, 0x0e, 0xd3, 0xc6, 0xb9, 0xb3, 0x21, 0x78,
+                0xd1, 0xa0,
             ]
         );
     }
@@ -11752,6 +11779,22 @@ mod tests {
     fn environment_hashes_are_diagnostic_dispatched_with_exact_goldens() {
         // Pre-edit captured legacy goldens (episode 1, env seed 99, max 8),
         // recorded from the untouched parent before any production edit.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which `RlEpisodeSessionV1::reset`/
+        // `full_session_on_environment_v2`'s real Burn/Rally-pool state
+        // (and everything the surface/binding hasher derives from it)
+        // embeds. All four constants below are reused verbatim by
+        // `v2_reset_preexisting_entry_points_remain_legacy_randomness` and
+        // `v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive`
+        // (updated identically, same underlying computation); every new
+        // value is this test's own live-computed hash, read directly from a
+        // failing run (never hand-typed):
+        //   final-pool-v8 legacy policy environment: 0xfca3_b546_61ec_28c6 -> 0x6908_0ca5_c012_7e2b
+        //   final-pool-v8 legacy full-session core:  0x9a93_e402_6f8e_ad86 -> 0x3c6d_b17f_22d6_0e43
+        //   final-pool-v9 environment-v2 policy:      0x9ed7_895c_1f47_82ca -> 0xda58_b63d_08f6_6b99
+        //   final-pool-v9 environment-v2 core:        0xf69d_f52f_fdd0_564e -> 0xa1c5_ca41_1ee8_1a2d
         let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
         let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
         let v2_full = full_session_on_environment_v2(99);
@@ -11761,34 +11804,34 @@ mod tests {
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0xfca3_b546_61ec_28c6,
+            0x6908_0ca5_c012_7e2b,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
             legacy_full.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86,
+            0x3c6d_b17f_22d6_0e43,
             "final-pool-v8 legacy full-session core golden"
         );
         assert_eq!(
             legacy_fast.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86,
+            0x3c6d_b17f_22d6_0e43,
             "captured legacy fast-session core golden equals the full one"
         );
 
         assert_eq!(
-            v2_policy, 0x9ed7_895c_1f47_82ca,
+            v2_policy, 0xda58_b63d_08f6_6b99,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0xf69d_f52f_fdd0_564e,
+            v2_full_core, 0xa1c5_ca41_1ee8_1a2d,
             "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
             v2_fast_core, v2_full_core,
             "full and fast environment-v2 core hashes are equal"
         );
-        assert_ne!(v2_policy, 0xfca3_b546_61ec_28c6);
-        assert_ne!(v2_full_core, 0x9a93_e402_6f8e_ad86);
+        assert_ne!(v2_policy, 0x6908_0ca5_c012_7e2b);
+        assert_ne!(v2_full_core, 0x3c6d_b17f_22d6_0e43);
     }
 
     #[test]
@@ -12013,15 +12056,15 @@ mod tests {
         // Captured legacy pins are preserved bit-exact.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0xfca3_b546_61ec_28c6
+            0x6908_0ca5_c012_7e2b
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86
+            0x3c6d_b17f_22d6_0e43
         );
         assert_eq!(
             fast_canonical.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86
+            0x3c6d_b17f_22d6_0e43
         );
     }
 
@@ -12197,17 +12240,17 @@ mod tests {
         let fast = canonical_v2_fast_reset(99);
         assert_eq!(
             full.privileged_environment_hash(),
-            0x9ed7_895c_1f47_82ca,
+            0xda58_b63d_08f6_6b99,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0xf69d_f52f_fdd0_564e,
+            0xa1c5_ca41_1ee8_1a2d,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0xf69d_f52f_fdd0_564e,
+            0xa1c5_ca41_1ee8_1a2d,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -12245,11 +12288,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x9ed7_895c_1f47_82ca
+            0xda58_b63d_08f6_6b99
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0xf69d_f52f_fdd0_564e
+            0xa1c5_ca41_1ee8_1a2d
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.
@@ -12525,8 +12568,15 @@ mod tests {
     ];
     /// Recaptured at the exact final-card head after its CardDB identity
     /// changed. The V5 schema, protocol, and response layout stay unchanged.
+    /// Re-captured again for the pauper-meta-cards-v1 card lane's wave 1
+    /// (Task 13, identity finalisation): the wave's 21 new cards moved
+    /// KERNEL_CARDDB_HASH, embedded in the real Burn-deck decision transcript
+    /// above. Old value:
+    /// "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2". New
+    /// value is this test's own live-computed digest, read directly from a
+    /// failing run (never hand-typed).
     const V5_TRANSCRIPT_SHA256: &str =
-        "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2";
+        "d0494851dbd7d944dab4cbca34e443ceedaf6a7269a0125cd1a7533c7b38f110";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

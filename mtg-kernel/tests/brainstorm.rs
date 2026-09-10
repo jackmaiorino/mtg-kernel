@@ -220,7 +220,13 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let first_snapshot = state.snapshot();
     let first_hash = state.state_hash();
-    assert_eq!(first_hash, 0x27ea_a9b5_f80f_2f40);
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): `GameState::monarch` (added Task 11) is a new
+    // struct field and so shifts the derived `Hash` this state_hash() reads,
+    // for every state. Old value: 0x27ea_a9b5_f80f_2f40. New value is this
+    // test's own live-computed hash, read directly from a failing run
+    // (never hand-typed).
+    assert_eq!(first_hash, 0x5b1b_3fdc_abbe_f2ba);
 
     answer_hand_choice(&mut state, *a);
     assert_eq!(
@@ -254,7 +260,10 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     ));
     let answered_snapshot = state.snapshot();
     let answered_hash = state.state_hash();
-    assert_eq!(answered_hash, 0xebf9_1eed_7c7c_9e60);
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): same cause as `first_hash` above
+    // (`GameState::monarch`, Task 11). Old value: 0xebf9_1eed_7c7c_9e60.
+    assert_eq!(answered_hash, 0x8945_08d2_063e_dcc6);
     let answered = state.clone();
     assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(*a))).is_err());
     assert_eq!(state, answered, "an answered action is immediately stale");
@@ -276,7 +285,10 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let second_snapshot = state.snapshot();
     let second_hash = state.state_hash();
-    assert_eq!(second_hash, 0xfa09_c501_2a59_3135);
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): same cause as `first_hash` above
+    // (`GameState::monarch`, Task 11). Old value: 0xfa09_c501_2a59_3135.
+    assert_eq!(second_hash, 0xaf2c_7cf7_da44_4e01);
 
     answer_hand_choice(&mut state, *c);
     assert_eq!(state.players[0].library, vec![*a, *d]);
@@ -329,7 +341,10 @@ fn brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_rest
     );
     let expected = state.clone();
     let expected_hash = state.state_hash();
-    assert_eq!(expected_hash, 0x487a_9c25_e0a8_fbb0);
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): same cause as `first_hash` above
+    // (`GameState::monarch`, Task 11). Old value: 0x487a_9c25_e0a8_fbb0.
+    assert_eq!(expected_hash, 0xdee1_a67a_2cfe_56b0);
 
     state.restore(&second_snapshot);
     assert_eq!(state.state_hash(), second_hash);

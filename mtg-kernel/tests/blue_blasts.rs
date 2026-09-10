@@ -431,7 +431,13 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v8() {
         restored.diagnostic_state_hash(),
         state.diagnostic_state_hash()
     );
-    assert_eq!(state.diagnostic_state_hash(), 0x64d0_7fde_5fbd_0f5a);
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): `GameState::monarch` (added Task 11) is
+    // serialized unconditionally, shifting the v8 envelope for every state
+    // including this one. Old value: 0x64d0_7fde_5fbd_0f5a. New value is
+    // this test's own live-computed hash, read directly from a failing run
+    // (never hand-typed).
+    assert_eq!(state.diagnostic_state_hash(), 0x0931_82a3_ee7d_afab);
 
     engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
     let decision = engine::advance_until_decision(&mut state);

@@ -5916,9 +5916,17 @@ mod tests {
         // behavioral regression. Value is this test's own live-computed
         // digest, read directly from a failing run before this update
         // (never hand-typed).
+        //
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation bytes embed. Old value:
+        // "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043".
+        // scorer.counts above is again unaffected. New value is this test's
+        // own live-computed digest, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             digest,
-            "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043"
+            "78289df65db7f4464e1107fdcbb7703c9ad2512aa3246fc9b5bb82475d103c81"
         );
     }
 

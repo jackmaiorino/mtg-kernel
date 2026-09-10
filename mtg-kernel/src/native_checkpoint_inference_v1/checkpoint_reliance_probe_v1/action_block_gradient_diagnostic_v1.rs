@@ -7916,9 +7916,16 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
     // 2026-08-14): joined_fixture_v1 carries live deck_ids/deck_hashes, so
     // this serializer golden moves with the nine-deck catalog landing.
+    //
+    // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+    // (Task 13, identity finalisation): the wave's 21 new cards moved
+    // KERNEL_CARDDB_HASH, which the live deck_ids/deck_hashes above embed.
+    // Old value: "d6812f9e689c56911b38426ee17eddf00d400e94ee3ff8aa3ebf8d2310e00970".
+    // New value is this test's own live-computed digest, read directly from
+    // a failing run (never hand-typed).
     assert_eq!(
         frame.sha256_v1(),
-        "d6812f9e689c56911b38426ee17eddf00d400e94ee3ff8aa3ebf8d2310e00970",
+        "ae853cabe8cb59c0aa44e93e142d11963d4cc57893a1d9b27ffe7fedc6366a71",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame

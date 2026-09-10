@@ -5107,24 +5107,41 @@ mod tests {
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, same rationale as the
         // numerical witness above.
+        //
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation (and so the trajectory
+        // digest) embeds. Old bytes: [206, 204, 202, 83, 211, 229, 60, 79,
+        // 178, 67, 28, 33, 251, 247, 221, 162, 116, 116, 169, 215, 228, 160,
+        // 65, 144, 30, 135, 83, 123, 92, 60, 227, 185]. New value is this
+        // test's own live-computed digest, read directly from a failing
+        // run (never hand-typed).
         assert_eq!(
             narrow_evidence.episodes[0]
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                206, 204, 202, 83, 211, 229, 60, 79, 178, 67, 28, 33, 251, 247, 221, 162, 116, 116,
-                169, 215, 228, 160, 65, 144, 30, 135, 83, 123, 92, 60, 227, 185,
+                146, 96, 71, 19, 161, 67, 106, 182, 228, 70, 255, 159, 173, 185, 114, 122, 177,
+                100, 70, 139, 150, 215, 245, 17, 209, 229, 50, 14, 103, 162, 8, 48,
             ]
         );
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, same rationale as above.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation embeds. Old bytes:
+        // [162, 131, 253, 244, 77, 73, 235, 205, 77, 158, 173, 180, 1, 20,
+        // 164, 57, 130, 181, 15, 208, 117, 142, 3, 104, 207, 50, 221, 194,
+        // 231, 238, 51, 94]. New value is this test's own live-computed
+        // digest, read directly from a failing run (never hand-typed).
         assert_eq!(
             narrow_evidence.episodes[1]
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                162, 131, 253, 244, 77, 73, 235, 205, 77, 158, 173, 180, 1, 20, 164, 57, 130, 181,
-                15, 208, 117, 142, 3, 104, 207, 50, 221, 194, 231, 238, 51, 94,
+                98, 192, 36, 61, 165, 126, 250, 1, 161, 202, 78, 70, 100, 50, 198, 91, 242, 42,
+                198, 17, 126, 28, 170, 1, 127, 206, 41, 245, 145, 161, 230, 14,
             ]
         );
 
@@ -6037,16 +6054,26 @@ mod tests {
                 )
             })
             .collect();
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which this live Rally+Burn replay's
+        // observation (and so both digests) embeds. Old value:
+        // [("03cbfef4e13926e27cdbcb0ec0864d9d830d50f235522224943b222b5fa6101d",
+        // "2218bdf0e39836dbaca0d6c08d2b82aacc237534bd32430472edb9a6d5ad6f66"),
+        // ("0462ea3dfdad0787f2eac9be68ea38e29a58510b0167148489806b02bb6d94ed",
+        // "0c4f922282ddd153fd722a7c98130e2679543d47124c4f994a3d809587e2ad7b")].
+        // New value is this test's own live-computed digests, read directly
+        // from a failing run (never hand-typed).
         assert_eq!(
             digest_hexes,
             [
                 (
-                    "03cbfef4e13926e27cdbcb0ec0864d9d830d50f235522224943b222b5fa6101d".to_owned(),
-                    "2218bdf0e39836dbaca0d6c08d2b82aacc237534bd32430472edb9a6d5ad6f66".to_owned(),
+                    "7076afcbed3e4901263986cf49dec2aef0fc524298035a1303d9ee5c18ac391c".to_owned(),
+                    "99d5adb203cee530600150364f452a38312d0b1e3ec1a452484be04a892083af".to_owned(),
                 ),
                 (
-                    "0462ea3dfdad0787f2eac9be68ea38e29a58510b0167148489806b02bb6d94ed".to_owned(),
-                    "0c4f922282ddd153fd722a7c98130e2679543d47124c4f994a3d809587e2ad7b".to_owned(),
+                    "fb36f8a7c6c81938f6f93a47bd097da4b784ca42470082ce3376319dbb51ec68".to_owned(),
+                    "42e736f84023f82d3c193d7baca5ac2d4247c2a13365fb05ead5b9c2362341d1".to_owned(),
                 ),
             ],
             "the distinct-deck V2 pair goldens drifted"

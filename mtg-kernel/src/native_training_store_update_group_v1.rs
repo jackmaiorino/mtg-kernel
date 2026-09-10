@@ -5325,9 +5325,21 @@ mod tests {
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
             "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc";
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which `test_fixture_bytes_v2()`'s live-tracking
+        // catalog identity (see `fixture_record`'s doc comment in
+        // native_training_store_run_v2.rs) embeds into this synchronous
+        // path's canonical bytes. Byte length (`MAIN_GOLDEN_LEN_V1`, below)
+        // is unchanged, confirming no structural/additive-field
+        // perturbation, only the digest moved. Old x86_64-pc-windows-msvc
+        // value: "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8".
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run on this Windows host (never hand-typed), same
+        // discipline as this constant's own prior re-baseline note above.
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8";
+            "a833a6e04bec9416f9fc71d9df1fcfd04dbe6af49cc9a5aef979a2eb5fe480cf";
         const MAIN_GOLDEN_LEN_V1: usize = 78_190;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -5816,9 +5828,17 @@ mod tests {
             to_canonical_json_bytes_v1(&value["evidence"]["episodes"], episode_null_policy_v1())
                 .unwrap();
         let episodes_sha256: [u8; 32] = Sha256::digest(&episodes_cj).into();
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which this legacy episode projection's deck
+        // bindings and trajectory digests embed. Old value (pre-wave-1):
+        // "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372".
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run on this Windows host (never hand-typed), same
+        // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372",
+            "0fd11d97f708f191e89c0039a0d65a48c2b63a38b68cbeaa86c0dc152c16498f",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }

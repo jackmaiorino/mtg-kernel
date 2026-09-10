@@ -3480,13 +3480,23 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): the wave's 21 new cards moved
+    // KERNEL_CARDDB_HASH and grew CardDef's own struct shape (adventure,
+    // equipment, monarch, delve fields), both of which this serialized
+    // Burn/Rally GameState embeds even though Burn/Rally themselves gained
+    // no new cards. Old values:
+    //   serialized SHA-256: "7037b030d73ee7d4e7765a0e9f90fc79a9bd77989250ba7592425251f4f8fa7a"
+    //   v9 diagnostic hash: "05c6af543cba5573"
+    // New values are this test's own live-computed digests, read directly
+    // from a failing run (never hand-typed).
     assert_eq!(
-        serialized_sha256, "7037b030d73ee7d4e7765a0e9f90fc79a9bd77989250ba7592425251f4f8fa7a",
+        serialized_sha256, "4a35ce834cce76e2fb104bba1ad9ba0f3c8e467e36a639789f755fb9aad6ad36",
         "pinned SHA-256 of the serialized Burn/Rally root-940001 state"
     );
     assert_eq!(
         format!("{:016x}", state.diagnostic_state_hash()),
-        "05c6af543cba5573",
+        "114a052a68589a04",
         "pinned v9 diagnostic hash of the Burn/Rally root-940001 state"
     );
 }
