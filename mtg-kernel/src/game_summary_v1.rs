@@ -411,10 +411,24 @@ fn fold_event_history_v1(
                 // Opponent evidence, from each seat's own point of view:
                 // `object`'s owner (not `controller_before`, so a stolen
                 // permanent still reveals its true owner's card) belonging
-                // to the *other* seat, made public.
+                // to the *other* seat, made public. Gated on the object's
+                // actual `owner` (final review item 1), not on card-id
+                // membership in the opponent's registered list: registered
+                // decks can share card ids across archetypes (e.g. Burn and
+                // Rally both register 66/76/127), so a membership-only gate
+                // records a phantom opponent_evidence row for a seat's own
+                // copy of a shared card the moment it becomes public. The
+                // registered-id check is kept alongside the owner check as a
+                // sanity filter (it should always agree for a non-token
+                // object once ownership is right), but `object_owner` is the
+                // authority.
                 for seat in 0..2 {
                     let opponent_seat = 1 - seat;
-                    if own_registered_ids[opponent_seat].contains(&card_id) && is_public {
+                    let opponent_player = PlayerId(opponent_seat as u8);
+                    if object_owner.get(object) == Some(&opponent_player)
+                        && own_registered_ids[opponent_seat].contains(&card_id)
+                        && is_public
+                    {
                         opponent_first_seen[seat]
                             .entry(card_id)
                             .or_insert_with(|| turn_for_event_index_v1(turn_watermarks, final_turn, index));
@@ -711,7 +725,8 @@ mod tests {
             requires_target: [200u16].into_iter().collect(),
             is_counterspell: Default::default(),
         };
-        let object_owner: BTreeMap<ObjectId, PlayerId> = Default::default();
+        let object_owner: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(10), PlayerId::P1), (ObjectId(20), PlayerId::P0)].into_iter().collect();
         let mut resource_curve = ResourceCurveV1::default();
 
         let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
@@ -1113,7 +1128,8 @@ mod tests {
             [Default::default(), [300u16].into_iter().collect()];
         let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
         let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
-        let object_owner: BTreeMap<ObjectId, PlayerId> = Default::default();
+        let object_owner: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(30), PlayerId::P1), (ObjectId(31), PlayerId::P1)].into_iter().collect();
         let mut resource_curve = ResourceCurveV1::default();
 
         let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
@@ -1267,5 +1283,143 @@ mod tests {
         let summary = run_episode_with_summary_v1(&mut session, "fixround1counterspell", &tags, &mut policy);
         let outcome = &summary.own_card_outcomes[0][&COUNTERSPELL_CARD_ID];
         assert!(outcome.counterspell_held, "seed 1 seat 0's Counterspell must read held to game end");
+    }
+
+    #[test]
+    fn fold_event_history_gates_opponent_evidence_on_actual_owner_not_shared_card_id_membership() {
+        use crate::ids::ObjectId;
+
+        // Final review item 1 (Important): registered decks can share card
+        // ids across archetypes (Burn and Rally both register card_id 66,
+        // confirmed against `data/runtime_decks_v1.json`), so gating
+        // opponent_evidence on card-id membership in the opponent's
+        // registered list (rather than the object's actual `owner`) records
+        // a phantom row for a seat's OWN copy of a shared card the moment
+        // it becomes public. Two independent single-event histories: P0's
+        // own copy of card_id 66 going public must not appear in P0's own
+        // evidence (opponent_evidence[0]) at all, only in P1's (the true
+        // opponent); symmetrically for P1's own copy.
+        let object_card_def: BTreeMap<ObjectId, u16> = [(ObjectId(80), 66u16)].into_iter().collect();
+        let own_registered_ids: [std::collections::BTreeSet<u16>; 2] =
+            [[66u16].into_iter().collect(), [66u16].into_iter().collect()];
+        let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let turn_watermarks = vec![(0usize, 1u32)];
+        let final_turn = 1u32;
+
+        // P0's own copy of the shared card goes public.
+        let p0_owns_it = vec![CommittedEvent::ZoneChange {
+            object: ObjectId(80),
+            from: Zone::Library,
+            to: Zone::Battlefield,
+            controller_before: PlayerId::P0,
+        }];
+        let object_owner_p0: BTreeMap<ObjectId, PlayerId> = [(ObjectId(80), PlayerId::P0)].into_iter().collect();
+        let mut resource_curve = ResourceCurveV1::default();
+        let (opponent_evidence, _) = fold_event_history_v1(
+            &p0_owns_it,
+            final_turn,
+            &turn_watermarks,
+            &object_card_def,
+            &object_owner_p0,
+            &own_registered_ids,
+            &end_of_game_hand_card_ids,
+            &offered_as_cast,
+            &tags,
+            &mut resource_curve,
+        );
+        assert!(
+            opponent_evidence[0].is_empty(),
+            "P0's own copy of a shared card_id must never appear in P0's own opponent_evidence"
+        );
+        assert_eq!(opponent_evidence[1].len(), 1, "P1 (the true opponent) must learn about P0's public card");
+        assert_eq!(opponent_evidence[1][0].card_id, 66);
+
+        // Symmetric case: P1's own copy of the same shared card_id goes
+        // public (a fresh, independent history and object_owner map).
+        let p1_owns_it = vec![CommittedEvent::ZoneChange {
+            object: ObjectId(80),
+            from: Zone::Library,
+            to: Zone::Battlefield,
+            controller_before: PlayerId::P1,
+        }];
+        let object_owner_p1: BTreeMap<ObjectId, PlayerId> = [(ObjectId(80), PlayerId::P1)].into_iter().collect();
+        let mut resource_curve = ResourceCurveV1::default();
+        let (opponent_evidence, _) = fold_event_history_v1(
+            &p1_owns_it,
+            final_turn,
+            &turn_watermarks,
+            &object_card_def,
+            &object_owner_p1,
+            &own_registered_ids,
+            &end_of_game_hand_card_ids,
+            &offered_as_cast,
+            &tags,
+            &mut resource_curve,
+        );
+        assert!(
+            opponent_evidence[1].is_empty(),
+            "P1's own copy of a shared card_id must never appear in P1's own opponent_evidence"
+        );
+        assert_eq!(opponent_evidence[0].len(), 1, "P0 (the true opponent) must learn about P1's public card");
+        assert_eq!(opponent_evidence[0][0].card_id, 66);
+    }
+
+    #[test]
+    fn run_episode_with_real_engine_opponent_evidence_rows_are_always_backed_by_an_opponent_owned_public_reveal() {
+        // Final review item 1 (Important), real-episode half: for every
+        // opponent_evidence row a seat recorded, walk the real trace
+        // (`event_history`, not the summary alone) and confirm at least one
+        // `ZoneChange` shows an object with that card_id, owned by the
+        // opponent seat, entering a public zone. Under the pre-fix
+        // card-id-membership gate this could be satisfied by the
+        // *observer's own* object instead, for any card_id both decks
+        // register; the owner gate closes that.
+        let mainboards = burn_and_rally();
+        let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
+        let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            5, 0xBBBB_BBBB_BBBB_BBBB, 2000, 200_000, deck_ids, mainboards,
+        )
+        .unwrap();
+        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let mut rng = SplitMix64::seed(0xCCCC_CCCC_CCCC_CCCC);
+        let mut policy = |decision: &RlSessionDecisionV1| {
+            let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+            (index as u32, decision.legal_actions[index].stable_id.clone())
+        };
+        let summary = run_episode_with_summary_v1(&mut session, "finalreviewitem1", &tags, &mut policy);
+
+        let final_state = session.game_state();
+        let object_card_def = build_object_card_def_map_v1(final_state);
+        let object_owner = build_object_owner_map_v1(final_state);
+
+        let mut public_reveals_by_owner_seat: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        for event in &final_state.engine.event_history {
+            if let CommittedEvent::ZoneChange { object, to, .. } = event {
+                let is_public = matches!(to, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
+                if !is_public {
+                    continue;
+                }
+                let (Some(&card_id), Some(&owner)) = (object_card_def.get(object), object_owner.get(object)) else {
+                    continue;
+                };
+                public_reveals_by_owner_seat[seat_index_from_player_id_v1(owner)].insert(card_id);
+            }
+        }
+
+        let mut checked = 0usize;
+        for seat in 0..2 {
+            let opponent_seat = 1 - seat;
+            for row in &summary.opponent_evidence[seat] {
+                assert!(
+                    public_reveals_by_owner_seat[opponent_seat].contains(&row.card_id),
+                    "seat {seat}: opponent_evidence row for card_id {} has no matching opponent-owned (seat {opponent_seat}) public ZoneChange in the real trace",
+                    row.card_id
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "a full Burn vs Rally game must reveal at least one opponent card publicly");
     }
 }

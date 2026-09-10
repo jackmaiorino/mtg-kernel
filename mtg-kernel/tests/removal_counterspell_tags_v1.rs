@@ -84,7 +84,13 @@ fn every_is_counterspell_row_has_a_spell_on_stack_target_spec() {
     let document = load_tag_file();
     let mut checked = 0usize;
     for row in &document.cards {
-        let def = &CARD_DEFS[row.card_id];
+        // Reuse the same bounds-checked access as
+        // `every_requires_target_row_matches_a_nontrivial_live_target_spec`
+        // above, rather than the unchecked `CARD_DEFS[row.card_id]` index
+        // this line used to take.
+        let Some(def) = CARD_DEFS.get(row.card_id) else {
+            panic!("tag file row {:?} (card_id {}) has no CARD_DEFS entry", row.name, row.card_id);
+        };
         if def.capability != CardCapability::Full {
             continue;
         }

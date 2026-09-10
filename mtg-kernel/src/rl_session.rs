@@ -7261,7 +7261,8 @@ fn explicit_deck_hash_v1(mainboard: &[u16]) -> u64 {
 /// Explicit-deck sibling of `build_session_deck_pair_state`: identical
 /// dispatch to the environment-v2 deck-pair builders, sourced from two
 /// caller-supplied 60-card mainboards instead of a `RUNTIME_DECKS` lookup.
-/// Always builds on `ResetRandomization::EnvironmentV2`; there is no legacy
+/// Always dispatches to the EnvironmentV2 deck-pair builders directly (no
+/// `ResetRandomization` value is constructed); there is no legacy
 /// explicit-deck path because every consumer of this seam (the paired
 /// estimator, the search driver) needs the paired-seed mechanism.
 fn build_session_deck_pair_state_from_explicit_decks(
