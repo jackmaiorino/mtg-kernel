@@ -120,7 +120,7 @@ Two independent prerequisite gates, not one:
 
 ## 10. Owner rulings required
 
-1. Approve the `rl_session.rs` explicit-deck resolver and its starting-player-aware constructor pair (section 2) as model-play-path code ahead of a campaign boundary, though it does not touch `flat_policy_v2.rs`.
+1. Approve the `rl_session.rs` explicit-deck resolver and its starting-player-aware constructor pair (section 2) as model-play-path code ahead of a campaign boundary, though it does not touch `flat_policy_v2.rs`. RULED 2026-09-10 (Jack, in session): approved; the harness plan docs/superpowers/plans/2026-09-09-deck-model-harness-and-search.md may execute.
 2. Ratify the acceptance rule, both the BO1 provisional stage and the BO3 ratification stage including M, per-cell N, the search-campaign manifest's fixed fields (checkpoint hash and git HEAD, K, the max-iteration bound, the traversal-order rule, the seed function, the plan-inputs sha256, the exact one-sided alpha for BO1 and the fixed confidence level for BO3, the bootstrap's resample count/method/sidedness, and N's power-based derivation formula together with its minimum-win-rate-delta and target-power inputs), and the checkpoint identity a table is valid for (section 4), before any candidate is scored.
 3. Rule on whether and when to spend a training cycle on post-board exposure and the self-play sampling mix (section 5).
 4. Ratify the catalog-id versioning convention (section 5): a promoted `RUNTIME_DECKS` id embeds the accepted table's checkpoint hash and search-generation ordinal, before the first promotion.
