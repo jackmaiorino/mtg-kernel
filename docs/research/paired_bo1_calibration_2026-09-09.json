@@ -1,0 +1,8 @@
+{
+  "checkpoint_identity": "none: random policy (harness-cost floor only; W6 substitutes the real inference policy_fn and must re-calibrate under it)",
+  "mean_seconds_per_game": 0.027322164,
+  "mean_seconds_per_paired_trial": 0.054644328,
+  "paired_trial_count": 50,
+  "schema": "paired_bo1_calibration/v1",
+  "total_seconds": 2.7322164
+}
