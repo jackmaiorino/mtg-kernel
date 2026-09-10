@@ -3481,11 +3481,11 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
-    // identity finalisation): the wave's 21 new cards moved
-    // KERNEL_CARDDB_HASH and grew CardDef's own struct shape (adventure,
-    // equipment, monarch, delve fields), both of which this serialized
-    // Burn/Rally GameState embeds even though Burn/Rally themselves gained
-    // no new cards. Old values:
+    // identity finalisation): GameState gained the `monarch` field (Task 11),
+    // which the serialized Burn/Rally GameState and the v9 diagnostic hash
+    // both embed even though Burn/Rally themselves gained no new cards.
+    // Neither digest embeds KERNEL_CARDDB_HASH (state.rs and engine.rs never
+    // hash it), so the card DB identity change is not a cause here. Old values:
     //   serialized SHA-256: "7037b030d73ee7d4e7765a0e9f90fc79a9bd77989250ba7592425251f4f8fa7a"
     //   v9 diagnostic hash: "05c6af543cba5573"
     // New values are this test's own live-computed digests, read directly

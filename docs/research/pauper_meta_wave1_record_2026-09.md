@@ -331,9 +331,9 @@ named literal.
 | `policy_surface_v5.rs` | same test (v2 `state_hash`) | B | `0x8ecd_b59c_374e_2345` -> `0x9689_f972_2063_c266` |
 | `policy_surface_v5.rs` | same test (v2 `SurfaceBinding`) | B | `0x5c8f_cd1c_7941_a53e` -> `0xc8e2_f885_b7e8_8615` |
 | `rl_session.rs` | `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`, `v2_reset_preexisting_entry_points_remain_legacy_randomness` (shared legacy env hash) | A | `0xfca3_b546_61ec_28c6` -> `0x6908_0ca5_c012_7e2b` |
-| `rl_session.rs` | same two tests (shared legacy core hash) | A | `0x9a93_e402_6f8e_ad86` -> `0x3c6d_b17f_22d6_0e43` |
+| `rl_session.rs` | same two tests (shared legacy core hash) | B | `0x9a93_e402_6f8e_ad86` -> `0x3c6d_b17f_22d6_0e43` |
 | `rl_session.rs` | `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`, `v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive` (shared v2 policy hash) | A | `0x9ed7_895c_1f47_82ca` -> `0xda58_b63d_08f6_6b99` |
-| `rl_session.rs` | same two tests (shared v2 core hash) | A | `0xf69d_f52f_fdd0_564e` -> `0xa1c5_ca41_1ee8_1a2d` |
+| `rl_session.rs` | same two tests (shared v2 core hash) | B | `0xf69d_f52f_fdd0_564e` -> `0xa1c5_ca41_1ee8_1a2d` |
 | `rl_session.rs` | `flat_action_candidate_commitment_matches_independent_pass_vector` | A | `[0x70,0x7d,...,0xce]` -> `[0x45,0x8c,...,0x40]` |
 | `rl_session.rs` | `flat_action_v2_token_domain_and_commitment_goldens_are_independent` (`v1`) | A | `[0x38,0x90,0x05,0xe8,...]` -> `[0xc3,0xa8,0x8d,0xde,...]` |
 | `rl_session.rs` | same test (`common_v2`) | A | `[0x9f,0xfa,...,0x13]` -> `[0xf4,0x6a,...,0x05]` |
