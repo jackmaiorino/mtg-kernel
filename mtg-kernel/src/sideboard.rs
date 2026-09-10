@@ -1174,6 +1174,21 @@ fn add_count_v1(counts: &mut BTreeMap<u16, u8>, row: CardCountV1) {
     *counts.entry(row.card_id).or_insert(0) += row.count;
 }
 
+/// Hashes a bare mainboard `card_id` slice with the exact same domain tag
+/// and convention `DeckConfigurationV1::mainboard_sha256_v1` uses
+/// (`configuration_zone_sha256_v1(b"mainboard", ...)`), for call sites that
+/// have a resolved mainboard but not a full `DeckConfigurationV1` (no
+/// paired sideboard to construct one), such as
+/// `sideboard_search_campaign_v1::resolve_bo3_game_mainboards_v1`'s
+/// opponent-side and carried-forward-checked-in branches (fix round 2,
+/// item 1: the BO3 trace's mainboard hashes must be the same convention as
+/// `AppliedSideboardReceiptV1.after_mainboard_sha256`, not an ad hoc third
+/// hash). Byte-identical to `DeckConfigurationV1::mainboard_sha256_v1()`
+/// for the same card sequence, since both call the same private helper.
+pub(crate) fn mainboard_slice_sha256_v1(mainboard: &[u16]) -> [u8; 32] {
+    configuration_zone_sha256_v1(b"mainboard", mainboard)
+}
+
 fn configuration_zone_sha256_v1(zone: &[u8], cards: &[u16]) -> [u8; 32] {
     let mut bytes = Vec::new();
     push_string_v1(&mut bytes, DECK_CONFIGURATION_HASH_DOMAIN_V1);

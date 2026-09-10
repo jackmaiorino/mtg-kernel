@@ -1,0 +1,25 @@
+{
+  "schema": "kernel_sideboard_search_campaign_manifest/v1",
+  "checkpoint_weights_hash": "PLACEHOLDER_FILLED_BY_W6_AT_CAMPAIGN_START",
+  "checkpoint_git_head": "PLACEHOLDER_FILLED_BY_W6_AT_CAMPAIGN_START",
+  "k_max_candidates_per_cell": 32,
+  "max_iterations_per_cell": 64,
+  "traversal_order": "ascending_card_id_one_swap_then_multi_swap_degree_two_to_four",
+  "master_seed": 5850241847850241,
+  "n_per_cell": 0,
+  "n_derivation": {
+    "minimum_win_rate_delta": 0.05,
+    "target_power": 0.8,
+    "calibration_mean_seconds_per_game": 0.0,
+    "formula": "n = ceil((z_alpha + z_power)^2 * variance / minimum_win_rate_delta^2), variance = p(1-p) at p = 0.5"
+  },
+  "m_bo3_matches_per_ratification": 60,
+  "warm_start_plan_inputs_sha256": "PLACEHOLDER_FILLED_BY_W6_AT_CAMPAIGN_START",
+  "bo1_one_sided_alpha": 0.05,
+  "bo3_confidence_level": 0.95,
+  "bootstrap_resample_count": 10000,
+  "bootstrap_seed": 13893676993274437887,
+  "bootstrap_resampling_method": "case_resampling_with_replacement",
+  "bo1_bootstrap_sidedness": "one_sided_lower",
+  "bo3_bootstrap_sidedness": "two_sided"
+}
