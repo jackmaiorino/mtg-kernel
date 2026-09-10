@@ -61,6 +61,11 @@ pub enum SearchCampaignErrorV1 {
     Json(String),
     HashMismatch { expected: String, actual: String },
     MissingHashFile(String),
+    /// A manifest field or driver parameter failed a pre-registered
+    /// validity check (fix round 1, item 3: `bo1_one_sided_alpha` and
+    /// `bo3_confidence_level` must lie strictly inside (0, 1); also used by
+    /// `run_bo3_ratification_v1`'s `game_index` parameter check).
+    InvalidParameter { name: String, reason: String },
 }
 
 impl std::fmt::Display for SearchCampaignErrorV1 {
@@ -72,6 +77,9 @@ impl std::fmt::Display for SearchCampaignErrorV1 {
                 f, "manifest sha256 mismatch: recorded {expected}, recomputed {actual}"
             ),
             Self::MissingHashFile(path) => write!(f, "missing sidecar hash file: {path}"),
+            Self::InvalidParameter { name, reason } => {
+                write!(f, "invalid parameter {name}: {reason}")
+            }
         }
     }
 }
@@ -115,7 +123,33 @@ pub fn load_and_verify_manifest_v1(
     }
     let manifest: SearchCampaignManifestV1 =
         serde_json::from_str(&raw).map_err(|error| SearchCampaignErrorV1::Json(error.to_string()))?;
+    validate_manifest_alpha_and_confidence_v1(&manifest)?;
     Ok(manifest)
+}
+
+/// Fix round 1, item 3: `bo1_one_sided_alpha` and `bo3_confidence_level`
+/// are hashed into the manifest and consumed by the two drivers below
+/// (`run_bo1_provisional_search_for_cell_v1` passes `bo1_one_sided_alpha`,
+/// `run_bo3_ratification_v1` passes `1.0 - bo3_confidence_level`, both into
+/// `paired_bootstrap_ci_with_alpha_v1`), so a value outside the percentile
+/// function's valid domain must be refused at load time, not silently
+/// produce a degenerate or panicking bootstrap later.
+fn validate_manifest_alpha_and_confidence_v1(
+    manifest: &SearchCampaignManifestV1,
+) -> Result<(), SearchCampaignErrorV1> {
+    if !(manifest.bo1_one_sided_alpha > 0.0 && manifest.bo1_one_sided_alpha < 1.0) {
+        return Err(SearchCampaignErrorV1::InvalidParameter {
+            name: "bo1_one_sided_alpha".to_owned(),
+            reason: format!("must lie strictly inside (0, 1), got {}", manifest.bo1_one_sided_alpha),
+        });
+    }
+    if !(manifest.bo3_confidence_level > 0.0 && manifest.bo3_confidence_level < 1.0) {
+        return Err(SearchCampaignErrorV1::InvalidParameter {
+            name: "bo3_confidence_level".to_owned(),
+            reason: format!("must lie strictly inside (0, 1), got {}", manifest.bo3_confidence_level),
+        });
+    }
+    Ok(())
 }
 
 pub fn candidate_seed_v1(
@@ -501,8 +535,9 @@ pub fn run_bo1_provisional_search_for_cell_v1(
             .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
             deltas.push(outcome.delta);
         }
-        let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_v1(
+        let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
             &deltas, manifest.bootstrap_resample_count, manifest.bootstrap_seed, manifest.bo1_bootstrap_sidedness,
+            manifest.bo1_one_sided_alpha,
         );
         if result.lower > 0.0 {
             working_best_mainboard = candidate_mainboard;
@@ -512,36 +547,183 @@ pub fn run_bo1_provisional_search_for_cell_v1(
     Ok(working_best)
 }
 
-/// Plays one full BO3 match for `self_mainboard` (seated P0) against
-/// `opponent_mainboard` (seated P1): each game is constructed from
+fn mainboard_sha256_v1(mainboard: &[u16]) -> String {
+    let mut hasher = Sha256::new();
+    for &card_id in mainboard {
+        hasher.update(card_id.to_be_bytes());
+    }
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Bo3RatificationArmV1 {
+    Candidate,
+    Incumbent,
+}
+
+/// One physical game's disclosable record (design section 4: the receipts
+/// require a disclosable record of what was played). `self_mainboard_sha256`/
+/// `opponent_mainboard_sha256` hash the exact 60-card sequence
+/// `resolve_bo3_game_mainboards_v1` selected for that game, so a reviewer
+/// can prove which mainboard was actually played without a full card-list
+/// dump per game.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Bo3GameTraceV1 {
+    pub match_index: u32,
+    pub arm: Bo3RatificationArmV1,
+    pub game_index: u8,
+    pub starting_player: PlayerId,
+    pub chooser: PlayerId,
+    pub self_mainboard_sha256: String,
+    pub opponent_mainboard_sha256: String,
+    pub winner: Option<PlayerId>,
+}
+
+/// Resolves the exact 60-card mainboard each seat plays for one physical
+/// BO3 game (fix round 1, item 1; bo3_session's own contract, stated in
+/// `bo3_session.rs`'s module doc: "Game 1 uses the registered mainboards;
+/// every later physical game independently applies the versioned sideboard
+/// policy to the original registered 75"):
+///
+/// - `physical_game_index == 1`: both seats play their REGISTERED
+///   mainboards, unconditionally.
+/// - `physical_game_index >= 2` and `physical_game_index >= cell_game_index`:
+///   the self seat plays `plan_under_test` applied to its own registered
+///   75 (`apply_plan_v1`); this is design section 4's carry-forward rule
+///   in effect (testing cell `game_index == 2` also carries the same plan
+///   into a decisive physical game 3, since `3 >= 2`; testing cell
+///   `game_index == 3` does NOT apply it to physical game 2, since
+///   `2 < 3`).
+/// - `physical_game_index >= 2` and `physical_game_index < cell_game_index`
+///   (only reachable when `cell_game_index == 3` and `physical_game_index
+///   == 2`): the self seat is not under test in this game, so it plays its
+///   own checked-in `sideboard_policy` resolution instead, computed by
+///   reusing `resolve_opponent_mainboard_for_cell_v1` with the self/opponent
+///   ids swapped (that function's logic is deck-agnostic: it resolves
+///   "the mainboard for `opponent_deck_id` against `self_deck_id`", so
+///   swapping the two ids resolves the self seat's own mainboard the same
+///   way `resolve_opponent_mainboard_for_cell_v1` would for a real
+///   opponent).
+/// - The opponent seat is NEVER under test here: every physical game 2 or
+///   later resolves the opponent's mainboard via
+///   `resolve_opponent_mainboard_for_cell_v1(opponent_deck_id,
+///   self_deck_id, physical_game_index, sideboard_policy)` unconditionally.
+///
+/// This function deliberately never reads `PreparedMatchGameV1::configuration()`
+/// for the self seat's post-board 60: `prepare_game_v1` applies the
+/// checked-in `data/pauper_sideboard_policy_v1.json` policy internally,
+/// which has no plans today and cannot carry `plan_under_test` (W8a is the
+/// seam that will let a plan be injected into `prepare_game_v1` itself).
+/// `game.configuration()` may still be used by the caller for game 1, as a
+/// cross-check that bo3_session's own independently computed game-1
+/// mainboards agree with this function's registered-mainboard branch.
+fn resolve_bo3_game_mainboards_v1(
+    self_registered: &RegisteredDeckV1,
+    self_deck_id: &str,
+    opponent_deck_id: &str,
+    physical_game_index: u8,
+    cell_game_index: u8,
+    plan_under_test: &SideboardPlanV1,
+    sideboard_policy: &crate::sideboard::DeterministicSideboardPolicyV1,
+) -> Result<(Vec<u16>, Vec<u16>), SearchCampaignErrorV1> {
+    let (opponent_mainboard, _variant) = resolve_opponent_mainboard_for_cell_v1(
+        opponent_deck_id, self_deck_id, physical_game_index, sideboard_policy,
+    )
+    .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+    let self_mainboard = if physical_game_index == 1 {
+        self_registered.registered_configuration().mainboard().to_vec()
+    } else if physical_game_index >= cell_game_index {
+        let (configuration, _receipt) = self_registered
+            .apply_plan_v1(plan_under_test, "search-driver-bo3-self/v1", [0u8; 32])
+            .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+        configuration.mainboard().to_vec()
+    } else {
+        let (mainboard, _variant) = resolve_opponent_mainboard_for_cell_v1(
+            self_deck_id, opponent_deck_id, physical_game_index, sideboard_policy,
+        )
+        .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+        mainboard
+    };
+    Ok((self_mainboard, opponent_mainboard))
+}
+
+/// Plays one full BO3 match for `self_deck_id` (seated P0) against
+/// `opponent_deck_id` (seated P1). Each physical game's mainboards come
+/// from `resolve_bo3_game_mainboards_v1` (see its doc comment for the full
+/// rule), each game's episode is constructed from
 /// `PreparedMatchGameV1::start().starting_player` via Task A's
 /// starting-player-aware explicit-deck constructor, driven to terminal by
 /// `policy_fn`, and its result fed back through `record_game_result_v1`
-/// until `MatchTransitionV1::Complete`. Returns whether the `self_mainboard`
-/// seat won the match.
+/// until `MatchTransitionV1::Complete`.
+///
+/// The chooser for each `prepare_game_v1` call is read from
+/// `match_session.match_state().phase()` immediately before the call, never
+/// assumed to be the self seat (fix round 1, item 2):
+/// `record_game_result_v1` sets the next chooser to the loser of a decisive
+/// game (`bo3_match.rs`, Magic Tournament Rules 2.2), so after the self
+/// seat (always P0 here) wins a non-final game the opponent seat becomes
+/// the chooser, and hardcoding `PlayerId::P0` there aborts with
+/// `WrongChooser`. The play/draw rule is pre-registered as "the chooser
+/// always chooses Play" (design section 4); this function never offers
+/// Draw.
+///
+/// Returns whether the self seat won the match, plus one `Bo3GameTraceV1`
+/// per physical game played, tagged with `match_index` and `arm` so the
+/// caller can disclose exactly what every game of every match played.
+#[allow(clippy::too_many_arguments)]
 fn play_bo3_match_for_seat_v1(
     self_deck_id: &str,
     opponent_deck_id: &str,
-    self_mainboard: &[u16],
-    opponent_mainboard: &[u16],
+    cell_game_index: u8,
+    plan_under_test: &SideboardPlanV1,
     sideboard_policy: &crate::sideboard::DeterministicSideboardPolicyV1,
     pair_environment_seed: u64,
+    match_index: u32,
+    arm: Bo3RatificationArmV1,
     policy_fn: &mut dyn FnMut(&crate::rl_session::RlSessionDecisionV1) -> (u32, String),
-) -> Result<bool, SearchCampaignErrorV1> {
+) -> Result<(bool, Vec<Bo3GameTraceV1>), SearchCampaignErrorV1> {
     let self_registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(self_deck_id)
         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
     let opponent_registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(opponent_deck_id)
         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
     let mut match_session = crate::bo3_session::BestOfThreeDeckMatchV1::new_v1(
-        self_registered, opponent_registered, sideboard_policy.clone(), PlayerId::P0,
+        self_registered.clone(), opponent_registered, sideboard_policy.clone(), PlayerId::P0,
     )
     .map_err(|error| SearchCampaignErrorV1::Io(format!("{error:?}")))?;
 
+    let mut trace = Vec::new();
     loop {
+        let chooser = match match_session.match_state().phase() {
+            crate::bo3_match::MatchPhaseV1::AwaitingPlayDrawChoice { chooser, .. } => chooser,
+            other => {
+                return Err(SearchCampaignErrorV1::Io(format!(
+                    "expected AwaitingPlayDrawChoice before prepare_game_v1, got {other:?}"
+                )));
+            }
+        };
         let game = match_session
-            .prepare_game_v1(PlayerId::P0, crate::bo3_match::PlayDrawChoiceV1::Play)
+            .prepare_game_v1(chooser, crate::bo3_match::PlayDrawChoiceV1::Play)
             .map_err(|error| SearchCampaignErrorV1::Io(format!("{error:?}")))?;
         let start = game.start();
+
+        let (self_mainboard, opponent_mainboard) = resolve_bo3_game_mainboards_v1(
+            &self_registered, self_deck_id, opponent_deck_id, start.game_index, cell_game_index,
+            plan_under_test, sideboard_policy,
+        )?;
+        if start.game_index == 1 {
+            // Cross-check against bo3_session's own independently computed
+            // game-1 configuration; both must be the registered mainboard.
+            let bo3_self = game.configuration(PlayerId::P0).map(|configuration| configuration.mainboard());
+            let bo3_opponent = game.configuration(PlayerId::P1).map(|configuration| configuration.mainboard());
+            if bo3_self != Some(self_mainboard.as_slice()) || bo3_opponent != Some(opponent_mainboard.as_slice()) {
+                return Err(SearchCampaignErrorV1::Io(
+                    "game 1 mainboard cross-check against bo3_session's own configuration failed".to_owned(),
+                ));
+            }
+        }
+
         let deck_ids = [self_deck_id.to_owned(), opponent_deck_id.to_owned()];
         let mut session = crate::rl_session::RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
             u64::from(start.game_index),
@@ -549,7 +731,7 @@ fn play_bo3_match_for_seat_v1(
             2000,
             200_000,
             deck_ids,
-            [self_mainboard.to_vec(), opponent_mainboard.to_vec()],
+            [self_mainboard.clone(), opponent_mainboard.clone()],
             start.starting_player,
         )
         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
@@ -565,9 +747,23 @@ fn play_bo3_match_for_seat_v1(
                 }
             }
         };
-        let outcome = match winner {
-            Some(crate::rl::PlayerSeatV1::P0) => crate::bo3_match::GameOutcomeV1::Win { winner: PlayerId::P0 },
-            Some(crate::rl::PlayerSeatV1::P1) => crate::bo3_match::GameOutcomeV1::Win { winner: PlayerId::P1 },
+        let winner_player_id = match winner {
+            Some(crate::rl::PlayerSeatV1::P0) => Some(PlayerId::P0),
+            Some(crate::rl::PlayerSeatV1::P1) => Some(PlayerId::P1),
+            None => None,
+        };
+        trace.push(Bo3GameTraceV1 {
+            match_index,
+            arm,
+            game_index: start.game_index,
+            starting_player: start.starting_player,
+            chooser: start.chooser,
+            self_mainboard_sha256: mainboard_sha256_v1(&self_mainboard),
+            opponent_mainboard_sha256: mainboard_sha256_v1(&opponent_mainboard),
+            winner: winner_player_id,
+        });
+        let outcome = match winner_player_id {
+            Some(winner) => crate::bo3_match::GameOutcomeV1::Win { winner },
             None => crate::bo3_match::GameOutcomeV1::Draw,
         };
         match match_session
@@ -576,45 +772,68 @@ fn play_bo3_match_for_seat_v1(
         {
             crate::bo3_match::MatchTransitionV1::NextGameChoice { .. } => continue,
             crate::bo3_match::MatchTransitionV1::Complete { outcome } => {
-                return Ok(matches!(outcome, crate::bo3_match::MatchOutcomeV1::Winner { winner: PlayerId::P0 }));
+                return Ok((
+                    matches!(outcome, crate::bo3_match::MatchOutcomeV1::Winner { winner: PlayerId::P0 }),
+                    trace,
+                ));
             }
         }
     }
 }
 
 /// Runs `manifest.m_bo3_matches_per_ratification` paired BO3 matches
-/// (candidate mainboard vs incumbent mainboard, same opponent and shared
-/// seed per pair) and ratifies the candidate only when the two-sided
-/// paired-bootstrap CI on match-win delta excludes 0 at
-/// `manifest.bo3_confidence_level` (design section 4, BO3 ratification).
-/// Gated on `load_and_verify_manifest_v1`, exactly like the BO1 stage.
+/// (candidate plan vs incumbent plan, same opponent and shared seed per
+/// pair) for the `game_index` cell under test (2 or 3; validated, fix
+/// round 1 item 4) and ratifies the candidate only when the two-sided
+/// paired-bootstrap CI on match-win delta, at `manifest.bo3_confidence_level`
+/// (fix round 1 item 3: consumed via `paired_bootstrap_ci_with_alpha_v1`'s
+/// `alpha = 1.0 - bo3_confidence_level`, not a hardcoded percentile),
+/// excludes 0 (design section 4, BO3 ratification). Gated on
+/// `load_and_verify_manifest_v1`, exactly like the BO1 stage. Returns the
+/// ratification decision plus every physical game's `Bo3GameTraceV1`
+/// across both arms and every match, for disclosure.
+#[allow(clippy::too_many_arguments)]
 pub fn run_bo3_ratification_v1(
     manifest: &SearchCampaignManifestV1,
     manifest_path: &std::path::Path,
     self_deck_id: &str,
     opponent_deck_id: &str,
-    candidate_mainboard: &[u16],
-    incumbent_mainboard: &[u16],
-    opponent_mainboard: &[u16],
+    game_index: u8,
+    candidate_plan: &SideboardPlanV1,
+    incumbent_plan: &SideboardPlanV1,
     sideboard_policy: &crate::sideboard::DeterministicSideboardPolicyV1,
     policy_fn: &mut dyn FnMut(&crate::rl_session::RlSessionDecisionV1) -> (u32, String),
-) -> Result<bool, SearchCampaignErrorV1> {
+) -> Result<(bool, Vec<Bo3GameTraceV1>), SearchCampaignErrorV1> {
     load_and_verify_manifest_v1(manifest_path)?;
+    if game_index < 2 {
+        return Err(SearchCampaignErrorV1::InvalidParameter {
+            name: "game_index".to_owned(),
+            reason: format!(
+                "BO3 ratification only applies to post-board games (2 or more), got {game_index}"
+            ),
+        });
+    }
     let mut deltas: Vec<i8> = Vec::with_capacity(manifest.m_bo3_matches_per_ratification as usize);
+    let mut trace = Vec::new();
     for match_index in 0..manifest.m_bo3_matches_per_ratification {
-        let seed = candidate_seed_v1(manifest.master_seed, self_deck_id, opponent_deck_id, 2, match_index);
-        let candidate_won = play_bo3_match_for_seat_v1(
-            self_deck_id, opponent_deck_id, candidate_mainboard, opponent_mainboard, sideboard_policy, seed, policy_fn,
+        let seed = candidate_seed_v1(manifest.master_seed, self_deck_id, opponent_deck_id, game_index, match_index);
+        let (candidate_won, candidate_trace) = play_bo3_match_for_seat_v1(
+            self_deck_id, opponent_deck_id, game_index, candidate_plan, sideboard_policy, seed,
+            match_index, Bo3RatificationArmV1::Candidate, policy_fn,
         )?;
-        let incumbent_won = play_bo3_match_for_seat_v1(
-            self_deck_id, opponent_deck_id, incumbent_mainboard, opponent_mainboard, sideboard_policy, seed, policy_fn,
+        let (incumbent_won, incumbent_trace) = play_bo3_match_for_seat_v1(
+            self_deck_id, opponent_deck_id, game_index, incumbent_plan, sideboard_policy, seed,
+            match_index, Bo3RatificationArmV1::Incumbent, policy_fn,
         )?;
+        trace.extend(candidate_trace);
+        trace.extend(incumbent_trace);
         deltas.push(if candidate_won { 1i8 } else { 0i8 } - if incumbent_won { 1i8 } else { 0i8 });
     }
-    let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_v1(
+    let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
         &deltas, manifest.bootstrap_resample_count, manifest.bootstrap_seed, manifest.bo3_bootstrap_sidedness,
+        1.0 - manifest.bo3_confidence_level,
     );
-    Ok(result.lower > 0.0 || result.upper < 0.0)
+    Ok((result.lower > 0.0 || result.upper < 0.0, trace))
 }
 
 #[cfg(test)]
@@ -999,5 +1218,233 @@ mod tests {
         let loaded = load_and_verify_manifest_v1(&path)
             .expect("the committed template manifest must match its committed sidecar hash");
         assert_eq!(loaded.schema, SEARCH_CAMPAIGN_MANIFEST_SCHEMA_V1);
+    }
+
+    #[test]
+    fn load_and_verify_manifest_refuses_bo1_alpha_or_bo3_confidence_outside_zero_one() {
+        let dir = std::env::temp_dir().join(format!("search_manifest_alpha_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut bad_alpha = sample_manifest();
+        bad_alpha.bo1_one_sided_alpha = 0.0;
+        let path = dir.join("bad_alpha.json");
+        std::fs::write(&path, manifest_canonical_bytes_v1(&bad_alpha)).unwrap();
+        std::fs::write(path.with_extension("json.sha256"), manifest_sha256_v1(&bad_alpha)).unwrap();
+        let error = load_and_verify_manifest_v1(&path).expect_err("bo1_one_sided_alpha = 0.0 must be refused");
+        assert!(matches!(
+            error,
+            SearchCampaignErrorV1::InvalidParameter { ref name, .. } if name == "bo1_one_sided_alpha"
+        ));
+
+        let mut bad_confidence = sample_manifest();
+        bad_confidence.bo3_confidence_level = 1.0;
+        let path = dir.join("bad_confidence.json");
+        std::fs::write(&path, manifest_canonical_bytes_v1(&bad_confidence)).unwrap();
+        std::fs::write(path.with_extension("json.sha256"), manifest_sha256_v1(&bad_confidence)).unwrap();
+        let error = load_and_verify_manifest_v1(&path).expect_err("bo3_confidence_level = 1.0 must be refused");
+        assert!(matches!(
+            error,
+            SearchCampaignErrorV1::InvalidParameter { ref name, .. } if name == "bo3_confidence_level"
+        ));
+    }
+
+    #[test]
+    fn resolve_bo3_game_mainboards_selects_registered_for_game_one_and_the_plan_under_test_with_carry_forward() {
+        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
+        let opponent_registered = checked_in_pauper_registered_deck_by_id_v1("Rally").expect("Rally is checked in");
+        let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
+        let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
+        let plan_under_test = candidates.first().expect("at least one candidate exists");
+
+        // Game 1: both seats play their registered mainboards, exactly,
+        // regardless of cell_game_index or plan_under_test.
+        let (self_game1, opponent_game1) = resolve_bo3_game_mainboards_v1(
+            &registered, "Burn", "Rally", 1, 2, plan_under_test, &policy,
+        )
+        .expect("game 1 resolves");
+        assert_eq!(self_game1, registered.registered_configuration().mainboard());
+        assert_eq!(opponent_game1, opponent_registered.registered_configuration().mainboard());
+
+        // Game 2, cell_game_index 2: the self seat plays exactly
+        // apply_plan_v1(plan_under_test)'s mainboard, not the registered one.
+        let (expected_configuration, _receipt) = registered
+            .apply_plan_v1(plan_under_test, "test-expected/v1", [0u8; 32])
+            .unwrap();
+        let (self_game2_cell2, _opponent_game2) = resolve_bo3_game_mainboards_v1(
+            &registered, "Burn", "Rally", 2, 2, plan_under_test, &policy,
+        )
+        .expect("game 2 resolves");
+        assert_eq!(self_game2_cell2, expected_configuration.mainboard());
+        assert_ne!(
+            self_game2_cell2, self_game1,
+            "the plan under test must actually change the game-2 mainboard versus game 1's registered one"
+        );
+
+        // Game 3, cell_game_index 2 (carry-forward): physical game 3 still
+        // plays the SAME plan under test, since 3 >= cell_game_index (2).
+        let (self_game3_cell2, _) = resolve_bo3_game_mainboards_v1(
+            &registered, "Burn", "Rally", 3, 2, plan_under_test, &policy,
+        )
+        .expect("game 3 resolves");
+        assert_eq!(
+            self_game3_cell2, expected_configuration.mainboard(),
+            "carry-forward: game 3 reuses the game-2 plan when the cell under test is game_index 2"
+        );
+
+        // Game 2, cell_game_index 3 (testing a game-3 cell instead):
+        // physical game 2 is NOT under test, so it must NOT play the plan
+        // under test; it falls back to the self seat's own checked-in
+        // resolution (registered mainboard here, since the checked-in
+        // policy has zero plans).
+        let (self_game2_cell3, _) = resolve_bo3_game_mainboards_v1(
+            &registered, "Burn", "Rally", 2, 3, plan_under_test, &policy,
+        )
+        .expect("game 2 resolves under cell_game_index 3");
+        assert_eq!(
+            self_game2_cell3, registered.registered_configuration().mainboard(),
+            "physical game 2 must not play the game-3 plan under test when the cell being ratified is game_index 3"
+        );
+    }
+
+    #[test]
+    fn chooser_rotates_to_the_loser_after_a_decisive_game_so_hardcoding_p0_would_abort() {
+        // Isolates the exact mechanism play_bo3_match_for_seat_v1 depends
+        // on (reading match_state().phase() for the real chooser) against
+        // the real bo3_match contract, without needing a full stochastic
+        // RL game to control who wins: driving the match state machine
+        // directly is deterministic and fast, and exercises the identical
+        // BestOfThreeDeckMatchV1 API surface the driver calls.
+        let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
+        let p0 = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let p1 = checked_in_pauper_registered_deck_by_id_v1("Rally").unwrap();
+        let mut match_session = BestOfThreeDeckMatchV1::new_v1(p0, p1, policy, PlayerId::P0).unwrap();
+        match_session.prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play).unwrap();
+        let transition = match_session
+            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .unwrap();
+        assert_eq!(
+            transition,
+            crate::bo3_match::MatchTransitionV1::NextGameChoice { game_index: 2, chooser: PlayerId::P1 },
+            "the loser of a decisive game becomes the next game's chooser"
+        );
+        match match_session.match_state().phase() {
+            crate::bo3_match::MatchPhaseV1::AwaitingPlayDrawChoice { chooser, game_index } => {
+                assert_eq!(chooser, PlayerId::P1);
+                assert_eq!(game_index, 2);
+            }
+            other => panic!("expected AwaitingPlayDrawChoice, got {other:?}"),
+        }
+        // The fix round 1 bug: hardcoding PlayerId::P0 here aborts with
+        // WrongChooser once P1 is the actual expected chooser.
+        let wrong_chooser_error = match_session
+            .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
+            .expect_err("hardcoding P0 as the chooser must fail once P1 is the actual expected chooser");
+        assert!(matches!(
+            wrong_chooser_error,
+            crate::bo3_session::Bo3SessionErrorV1::Match(crate::bo3_match::MatchStateErrorV1::WrongChooser { .. })
+        ));
+        match_session
+            .prepare_game_v1(PlayerId::P1, PlayDrawChoiceV1::Play)
+            .expect("game 2 must accept P1 as chooser after P0 won game 1");
+    }
+
+    #[test]
+    fn run_bo3_ratification_refuses_a_game_index_below_two() {
+        let manifest = sample_manifest();
+        let dir = std::env::temp_dir().join(format!("bo3_game_index_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest_path = dir.join("manifest.json");
+        std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
+        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+
+        // The plan itself must be a valid postboard (>= 2) plan (SideboardPlanV1's
+        // own constructor refuses game_index 1); this test's target is the
+        // separate `game_index: u8` parameter run_bo3_ratification_v1 takes
+        // to name which cell is under test, which must independently
+        // refuse 1.
+        let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
+        let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
+        let mut policy_fn = |_decision: &crate::rl_session::RlSessionDecisionV1| (0u32, String::new());
+
+        let error = run_bo3_ratification_v1(
+            &manifest, &manifest_path, "Burn", "Rally", 1, &incumbent_plan, &incumbent_plan, &policy, &mut policy_fn,
+        )
+        .expect_err("game_index 1 is not a post-board cell and must be refused before any match is simulated");
+        assert!(matches!(
+            error,
+            SearchCampaignErrorV1::InvalidParameter { ref name, .. } if name == "game_index"
+        ));
+    }
+
+    #[test]
+    fn run_bo3_ratification_completes_a_real_match_with_a_full_disclosable_trace() {
+        let mut manifest = sample_manifest();
+        manifest.m_bo3_matches_per_ratification = 2;
+        let dir = std::env::temp_dir().join(format!("bo3_driver_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest_path = dir.join("manifest.json");
+        std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
+        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+
+        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
+        let candidate_plan = candidates.first().expect("at least one candidate exists").clone();
+        let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
+        let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
+        let mut rng = SplitMix64::seed(0x2323_2323_2323_2323);
+        let mut policy_fn = |decision: &crate::rl_session::RlSessionDecisionV1| {
+            let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+            (index as u32, decision.legal_actions[index].stable_id.clone())
+        };
+
+        let (_ratified, trace) = run_bo3_ratification_v1(
+            &manifest, &manifest_path, "Burn", "Rally", 2, &candidate_plan, &incumbent_plan, &policy, &mut policy_fn,
+        )
+        .expect("a real Burn-vs-Rally BO3 ratification run must complete without WrongChooser or any other abort");
+
+        let expected_matches = manifest.m_bo3_matches_per_ratification;
+        // Every match plays at least 2 physical games per arm (BO3 never
+        // completes in fewer than 2), across 2 arms (candidate, incumbent).
+        assert!(trace.len() as u32 >= 2 * 2 * expected_matches, "trace is missing games: {} rows", trace.len());
+        for row in &trace {
+            assert!(row.match_index < expected_matches);
+            assert!((1..=3).contains(&row.game_index));
+            assert!(!row.self_mainboard_sha256.is_empty());
+            assert!(!row.opponent_mainboard_sha256.is_empty());
+        }
+
+        // Reconstruct each (match_index, arm)'s per-game chooser sequence
+        // and confirm it is internally consistent with the bo3_match
+        // contract: game 1's chooser is always P0 (checked_in_pauper_v1's
+        // game_one_chooser inside play_bo3_match_for_seat_v1), and every
+        // later game's chooser is the previous game's loser. This could
+        // only be true across every one of these real, data-dependent
+        // matches if play_bo3_match_for_seat_v1 read the actual chooser
+        // every time instead of hardcoding P0: a hardcoded P0 would have
+        // returned Err on the first match where the self seat won a
+        // non-final game, and this call would not have reached here.
+        use std::collections::BTreeMap;
+        let mut by_match_arm: BTreeMap<(u32, Bo3RatificationArmV1), Vec<&Bo3GameTraceV1>> = BTreeMap::new();
+        for row in &trace {
+            by_match_arm.entry((row.match_index, row.arm)).or_default().push(row);
+        }
+        assert_eq!(by_match_arm.len() as u32, 2 * expected_matches, "every match must have both a candidate and an incumbent arm");
+        for rows in by_match_arm.values() {
+            assert_eq!(rows[0].game_index, 1);
+            assert_eq!(rows[0].chooser, PlayerId::P0);
+            for pair in rows.windows(2) {
+                let previous = pair[0];
+                let next = pair[1];
+                let expected_chooser = match previous.winner {
+                    Some(winner) => winner.opponent(),
+                    None => previous.chooser,
+                };
+                assert_eq!(
+                    next.chooser, expected_chooser,
+                    "game {}'s chooser must be the previous game's loser (or the same chooser again on a draw)",
+                    next.game_index
+                );
+            }
+        }
     }
 }

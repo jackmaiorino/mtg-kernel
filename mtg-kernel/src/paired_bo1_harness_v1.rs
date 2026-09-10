@@ -108,15 +108,43 @@ pub struct PairedBootstrapResultV1 {
 /// Case resampling with replacement over the paired per-seed deltas
 /// (design section 4's manifest field: "resampling method"). `resample_count`
 /// and `seed` are always caller-supplied, never a library default, per this
-/// plan's Global Constraints (single-shot discipline).
+/// plan's Global Constraints (single-shot discipline). Delegates to
+/// `paired_bootstrap_ci_with_alpha_v1` at `alpha = 0.05` (the one-sided 5th
+/// percentile and the two-sided 2.5/97.5 percentiles this function always
+/// used before fix round 1 added the alpha parameter); behavior at this
+/// fixed alpha is unchanged.
 pub fn paired_bootstrap_ci_v1(
     deltas: &[i8],
     resample_count: u32,
     seed: u64,
     sidedness: BootstrapSidednessV1,
 ) -> PairedBootstrapResultV1 {
+    paired_bootstrap_ci_with_alpha_v1(deltas, resample_count, seed, sidedness, 0.05)
+}
+
+/// Same estimator as `paired_bootstrap_ci_v1`, generalized to an explicit
+/// `alpha` (fix round 1, item 3: the manifest's `bo1_one_sided_alpha` and
+/// `bo3_confidence_level` fields must actually govern the accept/reject
+/// boundary, not be hashed and ignored). `alpha` is the one-sided lower
+/// tail probability for `BootstrapSidednessV1::OneSidedLower` (the `alpha`
+/// percentile order statistic), and the two-sided total tail probability
+/// for `BootstrapSidednessV1::TwoSided` (the `alpha / 2` and
+/// `1 - alpha / 2` order statistics). Callers passing `manifest.bo1_one_sided_alpha`
+/// or `1.0 - manifest.bo3_confidence_level` must first load the manifest
+/// through `load_and_verify_manifest_v1`, which refuses any value outside
+/// `(0, 1)`; this function additionally asserts the same bound, since it is
+/// also callable directly (as the tests below do) without going through
+/// that gate.
+pub fn paired_bootstrap_ci_with_alpha_v1(
+    deltas: &[i8],
+    resample_count: u32,
+    seed: u64,
+    sidedness: BootstrapSidednessV1,
+    alpha: f64,
+) -> PairedBootstrapResultV1 {
     assert!(!deltas.is_empty(), "bootstrap is undefined over zero deltas");
     assert!(resample_count > 0, "resample_count must be positive");
+    assert!(alpha > 0.0 && alpha < 1.0, "alpha must lie strictly inside (0, 1)");
     let mean = deltas.iter().map(|&delta| f64::from(delta)).sum::<f64>() / deltas.len() as f64;
     let mut rng = SplitMix64::seed(seed);
     let mut resample_means: Vec<f64> = Vec::with_capacity(resample_count as usize);
@@ -131,12 +159,12 @@ pub fn paired_bootstrap_ci_v1(
     resample_means.sort_by(|a, b| a.partial_cmp(b).expect("resample means are never NaN"));
     let (lower, upper) = match sidedness {
         BootstrapSidednessV1::OneSidedLower => {
-            let alpha_index = ((resample_count as f64) * 0.05).floor() as usize;
+            let alpha_index = ((resample_count as f64) * alpha).floor() as usize;
             (resample_means[alpha_index.min(resample_means.len() - 1)], f64::INFINITY)
         }
         BootstrapSidednessV1::TwoSided => {
-            let lower_index = ((resample_count as f64) * 0.025).floor() as usize;
-            let upper_index = ((resample_count as f64) * 0.975).floor() as usize;
+            let lower_index = ((resample_count as f64) * (alpha / 2.0)).floor() as usize;
+            let upper_index = ((resample_count as f64) * (1.0 - alpha / 2.0)).floor() as usize;
             (
                 resample_means[lower_index.min(resample_means.len() - 1)],
                 resample_means[upper_index.min(resample_means.len() - 1)],
@@ -182,6 +210,42 @@ mod tests {
         assert_eq!(result.mean, 1.0);
         assert_eq!(result.lower, 1.0);
         assert_eq!(result.upper, 1.0);
+    }
+
+    #[test]
+    fn paired_bootstrap_ci_with_alpha_v1_moves_the_bound_and_the_unparameterized_function_delegates_at_0_05() {
+        let deltas = [1i8, 1, 1, 0, -1, 1, 1, 0, 1, 1];
+        let at_default_alpha =
+            paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower, 0.05);
+        let at_wider_alpha =
+            paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower, 0.10);
+        assert_ne!(
+            at_default_alpha.lower, at_wider_alpha.lower,
+            "a manifest changing bo1_one_sided_alpha from 0.05 to 0.10 must actually move the accept boundary"
+        );
+        assert_eq!(
+            at_default_alpha,
+            paired_bootstrap_ci_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower),
+            "paired_bootstrap_ci_v1 must delegate to alpha = 0.05 unchanged (existing callers see identical behavior)"
+        );
+
+        let two_sided_default = paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::TwoSided, 0.05);
+        let two_sided_wider = paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::TwoSided, 0.10);
+        assert!(
+            two_sided_default.lower != two_sided_wider.lower || two_sided_default.upper != two_sided_wider.upper,
+            "a manifest changing bo3_confidence_level's derived alpha must actually move the two-sided CI"
+        );
+        assert_eq!(
+            two_sided_default,
+            paired_bootstrap_ci_v1(&deltas, 2000, 42, BootstrapSidednessV1::TwoSided),
+            "paired_bootstrap_ci_v1 must delegate to alpha = 0.05 unchanged for the two-sided case too"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "alpha must lie strictly inside (0, 1)")]
+    fn paired_bootstrap_ci_with_alpha_v1_rejects_alpha_outside_zero_one() {
+        paired_bootstrap_ci_with_alpha_v1(&[1i8, -1], 10, 1, BootstrapSidednessV1::OneSidedLower, 0.0);
     }
 
     #[test]
