@@ -249,7 +249,7 @@ class FlatPolicyV2GoldenTests(unittest.TestCase):
             golden["card_db_hash_authority"],
             {
                 "source": "mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen",
-                "value_hex": "ef29164cbb88e96a",
+                "value_hex": "555dca6aadfb7b66",
             },
         )
         stress = golden["serializer_stress_v2"]

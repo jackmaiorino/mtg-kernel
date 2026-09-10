@@ -137,8 +137,8 @@ fn card_id_source(state: &GameState, name: &str) -> ObjectId {
 
 #[test]
 fn definitions_ids_hash_and_generated_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0xef29_164c_bb88_e96a);
-    assert_eq!(CARD_DEFS.len(), 180);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x555d_ca6a_adfb_7b66);
+    assert_eq!(CARD_DEFS.len(), 182);
     for (name, expected_id) in [
         ("Guardian of the Guildpact", 49),
         ("Journey to Nowhere", 61),

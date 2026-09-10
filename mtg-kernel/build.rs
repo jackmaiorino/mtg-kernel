@@ -3992,6 +3992,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Viridian Longbow" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 3,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Cryogen Relic" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -4582,8 +4594,9 @@ fn ward_cost_for(name: &str) -> &'static str {
 
 fn equipment_for(name: &str) -> &'static str {
     match name {
-        "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true })",
-        "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false })",
+        "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true, granted_activated_ability: None })",
+        "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
         _ => "None",
     }
 }
@@ -4607,6 +4620,11 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
 
 fn changeling_for(name: &str) -> bool {
     name == "Masked Vandal" || name == "Webweaver Changeling"
+}
+
+/// True iff this card has Delve (702.65) -- see `CardDef::delve`'s doc.
+fn delve_for(name: &str) -> bool {
+    name == "Gurmag Angler"
 }
 
 /// Stable semantic binding for definition-owned triggered abilities. Runtime
@@ -6945,6 +6963,12 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        delve: {},",
+            executable && delve_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -7196,6 +7220,9 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("escape=");
         canon.push_str(&escape_for(&c.name));
+        canon.push('|');
+        canon.push_str("delve=");
+        canon.push_str(&delve_for(&c.name).to_string());
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());
@@ -7324,6 +7351,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Skeleton" => "Subtype::Skeleton",
         "Squirrel" => "Subtype::Squirrel",
         "Lesson" => "Subtype::Lesson",
+        "Fish" => "Subtype::Fish",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

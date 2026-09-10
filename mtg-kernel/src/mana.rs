@@ -274,6 +274,60 @@ pub fn can_pay_combined(
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
+/// Delve (702.65a): "For each generic mana in this spell's total cost, you
+/// may exile a card from your graveyard rather than pay that mana." Delve
+/// is not an alternative or additional cost -- it applies to `cost`'s total
+/// generic amount exactly as `can_pay` would see it (after any
+/// `CardDef::generic_cost_reduction` the caller already folded in), and
+/// exiling is simply another way to pay, atomic with the rest of the mana
+/// payment (matching XMage's `DelveAbility`/`AlternateManaPaymentAbility`,
+/// not `CostComponent::ExileOtherCardsFromOwnGraveyard`'s separate-component
+/// shape used by Escape).
+///
+/// Mana payment plans are already an opaque, engine-chosen detail with no
+/// dedicated RL decision (`can_pay`/`solve` pick one deterministic plan, not
+/// a menu the policy selects from) -- delve counts are chosen the same way,
+/// deterministically, rather than opening a new decision/action kind:
+///
+/// Enumerates `k` (cards exiled) from `0` to `min(graveyard size, printed
+/// generic)` in ascending order and returns the first plan whose remaining
+/// cost -- every colored/hybrid/phyrexian pip untouched, generic reduced by
+/// `k` -- is payable from ordinary mana sources. This prefers paying with
+/// mana over the graveyard (a `k=0` plan wins whenever the printed cost is
+/// already affordable outright) and only increases `k` when a smaller one
+/// can't be paid, so a spell is offered as castable via the *smallest*
+/// delve count that makes it affordable -- never a larger, unnecessary one.
+///
+/// The `k` cards actually exiled are always the *oldest* `k` entries of the
+/// caster's graveyard (index `0..k`, i.e. `PlayerState::graveyard`'s
+/// existing push-order/insertion order -- the first card that entered the
+/// graveyard is exiled first). This fixed, card-name-free order keeps the
+/// plan space to exactly one candidate per `k` instead of `C(graveyard, k)`,
+/// and is deterministic and reproducible across an offer-time affordability
+/// check and the later payment-time re-derivation (both call this function
+/// against the live graveyard, same as every other cast cost in this
+/// engine).
+pub fn delve_payment_plan(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    let graveyard = &state.players[player.index()].graveyard;
+    let max_k = graveyard.len().min(usize::from(cost.generic));
+    for k in 0..=max_k {
+        let reduced = Cost {
+            pips: cost.pips,
+            generic: cost.generic - k as u8,
+            x_count: cost.x_count,
+        };
+        if let Some(plan) = can_pay(&reduced, x_value, player, state) {
+            return Some((plan, graveyard[..k].to_vec()));
+        }
+    }
+    None
+}
+
 pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {

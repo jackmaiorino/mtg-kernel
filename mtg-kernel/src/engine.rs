@@ -4452,6 +4452,29 @@ fn effective_normal_cast_cost(
     cost
 }
 
+/// Whether a spell's normal-mode total cost (`effective_normal_cast_cost`'s
+/// output: colored/hybrid/phyrexian pips plus generic, already net of any
+/// `generic_cost_reduction`) is currently payable, accounting for Delve
+/// (`CardDef::delve`) when present. Centralizes the "ordinary `mana::
+/// can_pay`, or `mana::delve_payment_plan` for a delve spell" branch so
+/// every payability check (`is_castable_now`'s offer,
+/// `remaining_cast_payment_is_payable`'s mid-cast re-check) agrees with
+/// `finalize_cast`'s actual payment about what "payable" means for a delve
+/// spell -- see `mana::delve_payment_plan`'s doc for the plan itself.
+fn normal_cost_is_payable(
+    def: &card_def::CardDef,
+    normal_cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    if def.delve {
+        mana::delve_payment_plan(normal_cost, x_value, player, state).is_some()
+    } else {
+        mana::can_pay(normal_cost, x_value, player, state).is_some()
+    }
+}
+
 /// Returns the supported Omen definition for the current cast pipeline.
 /// Cast-form selection reuses the ordinary two-form decision while retaining
 /// each form's own target shape. Other cast-cost modifiers remain excluded
@@ -4741,8 +4764,8 @@ fn is_castable_now(
         }),
         CastMethodV4::Normal => {
             let normal_cost = effective_normal_cast_cost(def, player, state);
-            let normal_ok =
-                main_timing_ok && mana::can_pay(&normal_cost, 0, player, state).is_some();
+            let normal_ok = main_timing_ok
+                && normal_cost_is_payable(def, &normal_cost, 0, player, state);
             let alt_ok = def
                 .alt_cost
                 .map(|alt| {
@@ -5320,6 +5343,22 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     out.push((id, i as u8));
                 }
             }
+            // An equipment-granted ability (Viridian Longbow) lives one
+            // index past this object's own printed abilities and is only
+            // ever usable on the battlefield -- see
+            // `resolved_activated_ability`'s doc for why this reuses the
+            // same `(source, ability_index)` action identity instead of a
+            // new candidate/decision kind.
+            if zone == Zone::Battlefield {
+                if let Some(granted) = equipped_granted_activated_ability(state, id) {
+                    let granted_index = def.activated_abilities.len() as u8;
+                    if can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((id, granted_index));
+                    }
+                }
+            }
         }
     }
     out
@@ -5814,7 +5853,7 @@ fn remaining_cast_payment_is_payable(
                         .is_some()
                 })
             } else {
-                mana::can_pay(&normal, x_value, pending.controller, state).is_some()
+                normal_cost_is_payable(def, &normal, x_value, pending.controller, state)
             }
         }
         CastMethodV4::Alternative => def.alt_cost.is_some_and(|alt| {
@@ -5934,8 +5973,11 @@ pub(crate) fn validate_pending_discard_binding(
             }
             validate_pending_activation(state, pending).map_err(|message| (source, message))?;
             let object = state.objects.get(source);
-            let def = &card_def::CARD_DEFS[object.card_def as usize];
-            let ability = &def.activated_abilities[ability_index as usize];
+            let Some(ability) =
+                resolved_activated_ability(object.card_def, ability_index, state, source)
+            else {
+                return fail("activation discard resumed against an unknown ability index");
+            };
             let Some(expected) = discard_count_in(ability.cost) else {
                 return fail(
                     "activation discard resumed an ability without an interactive discard cost",
@@ -6118,8 +6160,17 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 .pending_activation
                 .clone()
                 .expect("validated activation discard retains its activation");
-            let def = &card_def::CARD_DEFS[state.objects.get(p.source).card_def as usize];
-            let ability = &def.activated_abilities[p.ability_index as usize];
+            let Some(ability) = resolved_activated_ability(
+                state.objects.get(p.source).card_def,
+                p.ability_index,
+                state,
+                p.source,
+            ) else {
+                state.engine.pending_activation = None;
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
+                return;
+            };
             // Keep the state-changing payment outside `debug_assert!`: the
             // macro (including its argument) is compiled out in release
             // builds, but costs must be paid in every profile. The complete
@@ -7697,8 +7748,14 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             source: pending.source,
         });
     }
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("validate_pending_activation already confirmed this ability index resolves");
+    let ability = &ability;
 
     let max_targets = target_count(pending.target_spec);
     if (pending.targets_chosen.len() as u8) < max_targets {
@@ -7927,10 +7984,10 @@ pub(crate) fn validate_pending_activation(
     if !def.is_executable() {
         return Err("pending activation source is not executable".to_string());
     }
-    let ability = def
-        .activated_abilities
-        .get(pending.ability_index as usize)
-        .ok_or_else(|| "pending activation ability index changed".to_string())?;
+    let ability =
+        resolved_activated_ability(object.card_def, pending.ability_index, state, pending.source)
+            .ok_or_else(|| "pending activation ability index changed".to_string())?;
+    let ability = &ability;
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
     }
@@ -8914,13 +8971,10 @@ pub(crate) fn validated_stack_item_target_spec(
                 .activated_ability_index
                 .ok_or("activated stack item lost its definition-owned ability index")?;
             let source_contract = validated_ability_source_contract(state, item)?;
-            let def = card_def::CARD_DEFS
-                .get(source_contract.card_def as usize)
-                .ok_or("activated stack item source definition is missing")?;
-            let ability = def
-                .activated_abilities
-                .get(ability_index as usize)
-                .ok_or("activated stack item carries an out-of-range ability index")?;
+            let ability =
+                resolved_activated_ability(source_contract.card_def, ability_index, state, item.source)
+                    .ok_or("activated stack item carries an out-of-range ability index")?;
+            let ability = &ability;
             if item.inline_effect.as_ref() != Some(&(ability.effect)()) {
                 return Err(
                     "activated stack item effect no longer matches its ability index".to_string(),
@@ -9062,14 +9116,11 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     .activated_ability_index
                     .ok_or("activated stack item lost its definition-owned ability index")?;
                 let source_contract = validated_ability_source_contract(state, item)?;
-                let def = card_def::CARD_DEFS
-                    .get(source_contract.card_def as usize)
-                    .ok_or("activated stack item source definition is missing")?;
-                let ability = def
-                    .activated_abilities
-                    .get(ability_index as usize)
-                    .ok_or("activated stack item carries an out-of-range ability index")?;
-                activation_legal_targets_for(item.source, ability, &chosen, state).contains(&target)
+                let ability =
+                    resolved_activated_ability(source_contract.card_def, ability_index, state, item.source)
+                        .ok_or("activated stack item carries an out-of-range ability index")?;
+                activation_legal_targets_for(item.source, &ability, &chosen, state)
+                    .contains(&target)
             }
             _ => legal_targets_for_controller_from_source(
                 spec,
@@ -10170,6 +10221,64 @@ pub(crate) fn attached_equipment_profiles(
         })
 }
 
+/// The `ActivatedAbilityDef`-shaped ability `host` gains from an attached
+/// Equipment's `granted_activated_ability` (Viridian Longbow's tap-ping),
+/// if any. Synthesized with the fixed defaults a granted ability takes in
+/// this pool -- usable any time `host` has priority-eligible timing on the
+/// battlefield (`activation_zone: Battlefield`, `sorcery_speed_only:
+/// false`), no source-relative target restriction beyond `target_spec`
+/// (`ActivationTargetFilter::TargetSpecOnly`), and no per-turn activation
+/// cap (`max_activations_per_turn: None`). `None` for an unequipped
+/// creature or an attached Equipment without a granted ability. At most one
+/// attached Equipment in this pool ever grants an ability, so the first
+/// match wins.
+fn equipped_granted_activated_ability(
+    state: &GameState,
+    host: ObjectId,
+) -> Option<card_def::ActivatedAbilityDef> {
+    attached_equipment_profiles(state, host).find_map(|(_, equipment)| {
+        equipment
+            .granted_activated_ability
+            .map(|granted| card_def::ActivatedAbilityDef {
+                cost: granted.cost,
+                target_spec: granted.target_spec,
+                effect: granted.effect,
+                activation_zone: Zone::Battlefield,
+                sorcery_speed_only: false,
+                activation_target_filter: card_def::ActivationTargetFilter::TargetSpecOnly,
+                max_activations_per_turn: None,
+            })
+    })
+}
+
+/// Resolves `ability_index` for the object whose printed card definition is
+/// `card_def_idx` against that card's own `CardDef::activated_abilities`
+/// first; if `ability_index` names exactly one slot past the printed end,
+/// resolves it as `source`'s current equipment-granted ability instead.
+/// Centralizing this lookup is what lets a granted ability reuse the
+/// ordinary `Action::ActivateAbility(ObjectId, u8)` action identity end to
+/// end -- offer (`available_activatable_abilities`), begin/target/pay
+/// (`begin_activation` through `push_paid_activation`), and stack
+/// resolution/retarget validation (`validated_stack_item_target_spec`,
+/// `stack_targets_still_legal`) -- without a new decision/action kind or any
+/// `flat_policy_v2` change: from the RL surface's perspective this is just
+/// another `(source, ability_index)` candidate on the equipped creature.
+fn resolved_activated_ability(
+    card_def_idx: u16,
+    ability_index: u8,
+    state: &GameState,
+    source: ObjectId,
+) -> Option<card_def::ActivatedAbilityDef> {
+    let def = card_def::CARD_DEFS.get(card_def_idx as usize)?;
+    if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
+        return Some(*ability);
+    }
+    if ability_index as usize != def.activated_abilities.len() {
+        return None;
+    }
+    equipped_granted_activated_ability(state, source)
+}
+
 pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     let Some(object) = state.objects.try_get(id) else {
         return Vec::new();
@@ -10646,8 +10755,14 @@ fn pending_activation_action_stage(
         }
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("validate_pending_activation already confirmed this ability index resolves");
+    let ability = &ability;
     let return_cost_incomplete =
         return_permanent_filter_in(ability.cost).is_some() && pending.object_cost_chosen.is_empty();
     let sacrifice_cost_incomplete = activation_permanent_sacrifice_needed(ability.cost)
@@ -11026,12 +11141,16 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             Ok(())
         }
         TargetingProducer::Activation(pending) => {
-            let definition =
-                &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-            let ability = &definition.activated_abilities[pending.ability_index as usize];
+            let ability = resolved_activated_ability(
+                state.objects.get(pending.source).card_def,
+                pending.ability_index,
+                state,
+                pending.source,
+            )
+            .expect("validate_pending_activation already confirmed this ability index resolves");
             if !completable_next_activation_targets_for(
                 pending.source,
-                ability,
+                &ability,
                 &pending.targets_chosen,
                 state,
             )
@@ -11503,8 +11622,14 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
     }
     if let Some(pending) = state.engine.pending_activation.clone() {
         validate_pending_activation(state, &pending)?;
-        let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-        let ability = &def.activated_abilities[pending.ability_index as usize];
+        let ability = resolved_activated_ability(
+            state.objects.get(pending.source).card_def,
+            pending.ability_index,
+            state,
+            pending.source,
+        )
+        .expect("validate_pending_activation already confirmed this ability index resolves");
+        let ability = &ability;
         if !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len()) {
             return Err(
                 "activation cost target chosen before activation targeting completed".to_string(),
@@ -12854,8 +12979,13 @@ fn begin_cast_ex(
 /// case) and `finalize_activation` (the no-discard case) for exactly when
 /// each component pays, and why that split exists.
 fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, ability_index: u8) {
-    let def = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
-    let ability = &def.activated_abilities[ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(source).card_def,
+        ability_index,
+        state,
+        source,
+    )
+    .expect("caller validated ability_index against available_activatable_abilities");
     state.engine.pending_activation = Some(PendingActivation {
         source,
         source_zone_change_count: state.objects.get(source).zone_change_count,
@@ -12992,24 +13122,40 @@ fn finalize_owned_cast(
         CastMethodV4::Normal => {
             let kicked = pending.kicked == Some(true);
             let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-            let plan = if kicked {
-                let kicker_cost = def
-                    .kicker_cost
-                    .expect("validated kicked cast has a definition-owned kicker cost");
-                mana::can_pay_combined(
-                    &[&normal_cost, &kicker_cost],
-                    x_value,
-                    pending.controller,
-                    state,
-                )
+            if def.delve {
+                // Delve is never combined with Kicker in this pool (Gurmag
+                // Angler has no `kicker_cost`); `kicked` stays false and
+                // `delve_payment_plan` re-derives, at payment time, the same
+                // "smallest k that's affordable, oldest cards first" plan
+                // `normal_cost_is_payable` already checked at offer time.
+                let Some((plan, exiled)) =
+                    mana::delve_payment_plan(&normal_cost, x_value, pending.controller, state)
+                else {
+                    abort_cast(state, pending, cast_method);
+                    return Ok(());
+                };
+                pay_plan(state, pending.controller, &plan);
+                commit_graveyard_exile(state, &exiled);
             } else {
-                mana::can_pay(&normal_cost, x_value, pending.controller, state)
-            };
-            let Some(plan) = plan else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            pay_plan(state, pending.controller, &plan);
+                let plan = if kicked {
+                    let kicker_cost = def
+                        .kicker_cost
+                        .expect("validated kicked cast has a definition-owned kicker cost");
+                    mana::can_pay_combined(
+                        &[&normal_cost, &kicker_cost],
+                        x_value,
+                        pending.controller,
+                        state,
+                    )
+                } else {
+                    mana::can_pay(&normal_cost, x_value, pending.controller, state)
+                };
+                let Some(plan) = plan else {
+                    abort_cast(state, pending, cast_method);
+                    return Ok(());
+                };
+                pay_plan(state, pending.controller, &plan);
+            }
             was_kicked = kicked;
         }
         CastMethodV4::Alternative => {
@@ -13337,8 +13483,14 @@ fn finalize_activation(state: &mut GameState) {
         .pending_activation
         .take()
         .expect("finalize_activation requires a pending activation");
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("validate_pending_activation already confirmed this ability index resolves");
+    let ability = &ability;
     let mut discarded = Vec::new();
     if ability
         .cost
@@ -13393,8 +13545,14 @@ fn push_paid_activation(
     pending: PendingActivation,
     discarded: Vec<ObjectId>,
 ) {
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("callers validate this ability index resolves before pushing the activation");
+    let ability = &ability;
     let source = state.objects.get(pending.source);
     let ability_source_contract = AbilitySourceContractV4 {
         source: pending.source,

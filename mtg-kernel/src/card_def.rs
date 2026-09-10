@@ -217,6 +217,8 @@ pub enum Subtype {
     /// Appended for Insectile Aberration, Delver of Secrets' transformed
     /// back face. Existing stable ids remain fixed.
     Insect,
+    /// Appended for Gurmag Angler. Existing stable ids remain fixed.
+    Fish,
 }
 
 impl Subtype {
@@ -281,6 +283,7 @@ impl Subtype {
         Subtype::Nightmare,
         Subtype::Squirrel,
         Subtype::Insect,
+        Subtype::Fish,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -353,6 +356,7 @@ impl Subtype {
                 | Subtype::Nightmare
                 | Subtype::Squirrel
                 | Subtype::Insect
+                | Subtype::Fish
         )
     }
 }
@@ -787,6 +791,13 @@ pub struct EscapeDef {
 /// ability). Permanent abilities, hand-zone Cycling/typecycling, and
 /// graveyard abilities such as Embalm share the same no-target,
 /// inline-`EffectOp` stack representation (see `state::StackItem::inline_effect`).
+///
+/// `Clone`/`Copy` let `engine::resolved_activated_ability` return this
+/// by value: a printed ability borrowed straight out of `CardDef::
+/// activated_abilities`, or one synthesized on the fly from an attached
+/// Equipment's `GrantedActivatedAbilityDef` (Viridian Longbow), behind the
+/// same owned type so every activation call site treats both uniformly.
+#[derive(Debug, Clone, Copy)]
 pub struct ActivatedAbilityDef {
     pub cost: &'static [CostComponent],
     pub target_spec: TargetSpec,
@@ -978,10 +989,48 @@ pub struct SagaDef {
     pub chapter_effects: &'static [fn() -> EffectOp],
 }
 
+/// A non-mana activated ability an Equipment grants to whichever creature it
+/// is attached to (Viridian Longbow's "{T}: deal 1 damage to any target").
+/// Deliberately narrower than `ActivatedAbilityDef`: a granted ability is
+/// always usable at instant speed on the battlefield, has no source-relative
+/// target filter beyond `target_spec`, and no per-turn activation cap in this
+/// pool, so those fields aren't carried here -- `engine::
+/// equipped_granted_activated_ability` fills them in with those fixed
+/// defaults when it synthesizes the full `ActivatedAbilityDef` the rest of
+/// the activation machinery consumes.
+///
+/// No `PartialEq`/`Eq`: like `ActivatedAbilityDef`/`ModeDef`/`OmenDef`, this
+/// carries a raw `fn() -> EffectOp` pointer, whose equality is not
+/// meaningful across codegen units (`unpredictable_function_pointer_
+/// comparisons`); nothing in this pool compares two ability definitions for
+/// equality, only their individual fields.
+#[derive(Debug, Clone, Copy)]
+pub struct GrantedActivatedAbilityDef {
+    pub cost: &'static [CostComponent],
+    pub target_spec: TargetSpec,
+    pub effect: fn() -> EffectOp,
+}
+
+/// Viridian Longbow's granted ability: "This creature deals 1 damage to any
+/// target." Hand-written (not build.rs's `AbilityEffectRecipe` codegen,
+/// which only walks `CardDef::activated_abilities`/omen recipes) because
+/// this effect belongs to `EquipmentDef::granted_activated_ability`, a
+/// separate table keyed by the Equipment's own name rather than the
+/// creature that ends up with the ability.
+fn longbow_ping() -> EffectOp {
+    EffectOp::DealDamage {
+        target: TargetRef::Target(0),
+        amount: 1,
+    }
+}
+
 /// Reusable static and triggered grants produced by an attached Equipment.
 /// The attachment relation itself is incarnation-bound in `state.rs`; this
 /// definition contains only printed characteristics and granted abilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// No `PartialEq`/`Eq` since `GrantedActivatedAbilityDef` (nested via
+/// `granted_activated_ability`) has none -- see that type's doc.
+#[derive(Debug, Clone, Copy)]
 pub struct EquipmentDef {
     pub power_delta: i16,
     pub toughness_delta: i16,
@@ -990,6 +1039,10 @@ pub struct EquipmentDef {
     pub other_turn_keywords: Keywords,
     pub noncreature_spell_damage_to_each_opponent: u8,
     pub job_select: bool,
+    /// A non-mana activated ability the equipped creature gains while this
+    /// Equipment is attached to it (Viridian Longbow). `None` for every
+    /// other Equipment in the pool.
+    pub granted_activated_ability: Option<GrantedActivatedAbilityDef>,
 }
 
 pub struct CardDef {
@@ -1146,6 +1199,13 @@ pub struct CardDef {
     /// Alternative Bestow spell characteristics. Appended so every earlier
     /// generated field identity remains stable.
     pub bestow: Option<BestowDef>,
+    /// True iff this spell has Delve (702.65): each card its controller
+    /// exiles from their own graveyard while casting it pays for {1} of its
+    /// generic cost, up to the printed generic amount. Only Gurmag Angler
+    /// this increment. Appended so every earlier generated field identity
+    /// remains stable; see `mana::delve_payment_plan` for the payment-time
+    /// mechanics and `build.rs`'s `delve_for` for the source table.
+    pub delve: bool,
 }
 
 impl CardDef {
@@ -1454,7 +1514,7 @@ mod tests {
         // ids 172-178, again without renumbering earlier ids. Delver of
         // Secrets is appended as id 179, again without renumbering earlier
         // ids.
-        assert_eq!(CARD_DEFS.len(), 180);
+        assert_eq!(CARD_DEFS.len(), 182);
     }
 
     #[test]
@@ -1521,7 +1581,7 @@ mod tests {
     fn card_db_hash_v32_is_frozen() {
         // Version 32 appends the final pool trio and Skeleton token after the
         // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xef29_164c_bb88_e96a);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x555d_ca6a_adfb_7b66);
     }
 
     #[test]
@@ -1756,7 +1816,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 180, "167 pool cards plus thirteen required tokens");
+        assert_eq!(full, 182, "169 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

@@ -5601,6 +5601,65 @@
         "upkeep_trigger"
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DelverOfSecrets.java"
+    },
+    {
+      "name": "Gurmag Angler",
+      "engine_capability": "full",
+      "mana_cost": "{6}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie",
+        "Fish"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "delve"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GurmagAngler.java"
+    },
+    {
+      "name": "Viridian Longbow",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Elves V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "tap_ability",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/v/ViridianLongbow.java"
     }
   ],
   "unresolved": []
