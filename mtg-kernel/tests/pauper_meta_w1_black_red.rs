@@ -451,4 +451,64 @@ fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
         "the targeted land is destroyed and in the graveyard"
     );
     assert_eq!(state2.objects[raze2].zone, Zone::Graveyard);
+
+    // With exactly one controlled land, Raze is still castable: the mana
+    // cost and the additional cost are checked independently by the
+    // generic cost machinery (`engine::is_castable_now`/`can_pay_components`),
+    // with no reservation between them, so the same land can pay {R} and
+    // then, since a sacrifice never checks tapped status, also serve as the
+    // one land `CostComponent::SacrificeControlled` needs. This also
+    // matches real Magic: tapping a land for mana and then sacrificing
+    // that same tapped land is legal. The target is the opponent's land,
+    // so a legal target still exists once the caster's only land is spent
+    // as the additional cost.
+    let mut state3 = ready_main1(&["Island"; 8], &["Island"; 8]);
+    let raze3 = put_object(&mut state3, PlayerId::P0, "Raze", Zone::Hand);
+    let sole_land = put_object(&mut state3, PlayerId::P0, "Mountain", Zone::Battlefield);
+    let opponent_land = put_object(&mut state3, PlayerId::P1, "Mountain", Zone::Battlefield);
+
+    let offer3 = engine::advance_until_decision(&mut state3);
+    assert!(
+        matches!(
+            offer3,
+            Decision::CastSpellOrPass { ref castable_spells, .. } if castable_spells.contains(&raze3)
+        ),
+        "with exactly one land, Raze is still castable: that land pays {{R}} and is then sacrificed"
+    );
+    engine::step(&mut state3, Action::CastSpell(raze3)).unwrap();
+
+    let mut targeted3 = false;
+    loop {
+        match engine::advance_until_decision(&mut state3) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(opponent_land)));
+                engine::step(&mut state3, Action::ChooseTarget(Target::Object(opponent_land)))
+                    .unwrap();
+                targeted3 = true;
+            }
+            Decision::ChooseCostTargets { .. } => {
+                panic!(
+                    "with only one candidate land, the sacrifice must auto-resolve without a \
+                     ChooseCostTargets decision (same convention `drain_pending_cast_or_decide` \
+                     uses whenever `candidates.len() <= 1`)"
+                );
+            }
+            Decision::CastSpellOrPass { .. } => break,
+            other => panic!("unexpected decision while casting Raze with one land: {other:?}"),
+        }
+    }
+    assert!(targeted3, "Raze's own target (the opponent's land) must be chosen");
+    pass_until_stack_empty(&mut state3);
+
+    assert_eq!(
+        state3.objects[sole_land].zone,
+        Zone::Graveyard,
+        "the caster's sole land pays the additional cost, auto-selected as the only candidate"
+    );
+    assert_eq!(
+        state3.objects[opponent_land].zone,
+        Zone::Graveyard,
+        "the targeted opponent's land is destroyed"
+    );
+    assert_eq!(state3.objects[raze3].zone, Zone::Graveyard);
 }
