@@ -384,6 +384,7 @@ mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
 pub mod paired_bo1_harness_v1;
 pub mod game_summary_v1;
+pub mod sideboard_search_campaign_v1;
 // MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by
