@@ -4086,6 +4086,87 @@ impl RlEpisodeSessionV1 {
         )
     }
 
+    /// Explicit-deck sibling of `reset_with_decks_and_limits_environment_v2`
+    /// (design section 2, W1): the harness's deck-injection seam. `deck_ids`
+    /// is a caller-supplied label pair for receipts and logs only; it is
+    /// never resolved against `RUNTIME_DECKS`. Defaults to P0 starting,
+    /// matching `build_deck_pair_state_environment_v2`'s own default.
+    pub fn reset_with_explicit_decks_and_limits(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            None,
+        )
+    }
+
+    /// Starting-player-aware sibling of the constructor above
+    /// (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2's discipline, design
+    /// section 2). W6's BO3 ratification stage and W8a's self-play driver
+    /// pass `PreparedMatchGameV1::start().starting_player` here, never the
+    /// plain constructor.
+    pub fn reset_with_explicit_decks_and_limits_with_starting_player_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            Some(starting_player),
+        )
+    }
+
+    fn reset_with_explicit_decks_and_limits_with_randomization(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
+            &mainboards,
+            pair_environment_seed,
+            starting_player,
+        )?;
+        let mut session = RlEpisodeSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal_profiled(None);
+        Ok(session)
+    }
+
     fn reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
         episode_id: u64,
         randomization: ResetRandomization,
@@ -4763,6 +4844,86 @@ impl FastActorSessionV1 {
             FlatActionContractModeV1::V2,
             Some(starting_player),
         )
+    }
+
+    /// Explicit-deck sibling of
+    /// `reset_with_decks_and_limits_flat_action_v2_environment_v2` (W1).
+    /// Always `FlatActionContractModeV1::V2`: every explicit-deck consumer
+    /// (the paired estimator, the search driver) drives this session type
+    /// for speed and has no reason to select the legacy flat-action
+    /// contract.
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            None,
+        )
+    }
+
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            Some(starting_player),
+        )
+    }
+
+    fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
+            &mainboards,
+            pair_environment_seed,
+            starting_player,
+        )?;
+        let mut session = FastActorSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            flat_action_contract_mode: FlatActionContractModeV1::V2,
+            flat_action_cache_spare: None,
+            flat_action_cache_spare_v2: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal();
+        Ok(session)
     }
 
     fn reset_with_decks_and_limits_in_flat_action_mode(
@@ -7042,6 +7203,79 @@ fn supported_runtime_deck_ids() -> String {
         .map(|deck| format!("{:?}", deck.id))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn resolve_explicit_decks(
+    mainboards: &[Vec<u16>; 2],
+) -> Result<[Vec<u16>; 2], RlSessionError> {
+    for (seat, mainboard) in mainboards.iter().enumerate() {
+        if mainboard.len() != crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1 {
+            return Err(session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                &format!(
+                    "explicit deck for seat {seat} must contain exactly {} cards, got {}",
+                    crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1,
+                    mainboard.len()
+                ),
+            ));
+        }
+        crate::card_def::preflight_fully_supported_deck(mainboard).map_err(|error| {
+            session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                &format!("seat {seat} explicit deck failed full-support preflight: {error}"),
+            )
+        })?;
+    }
+    Ok([mainboards[0].clone(), mainboards[1].clone()])
+}
+
+/// The `sorted-explicit` hash convention (design section 2): sort the
+/// mainboard, serialize as a JSON u16 array, FNV-1a it with the same
+/// algorithm and constant `build.rs` uses for the catalog's
+/// `fnv1a64-serde-json-u16-array/v1` convention. Deliberately does not
+/// reuse `RuntimeDeckDefinition::runtime_deck_hash`: that hash is over the
+/// unsorted `materialized_mainboard` walk order, a different convention.
+fn explicit_deck_hash_v1(mainboard: &[u16]) -> u64 {
+    let mut sorted = mainboard.to_vec();
+    sorted.sort_unstable();
+    let serialized = serde_json::to_vec(&sorted).expect("a u16 vector always serializes as JSON");
+    fnv1a64(&serialized)
+}
+
+/// Explicit-deck sibling of `build_session_deck_pair_state`: identical
+/// dispatch to the environment-v2 deck-pair builders, sourced from two
+/// caller-supplied 60-card mainboards instead of a `RUNTIME_DECKS` lookup.
+/// Always builds on `ResetRandomization::EnvironmentV2`; there is no legacy
+/// explicit-deck path because every consumer of this seam (the paired
+/// estimator, the search driver) needs the paired-seed mechanism.
+fn build_session_deck_pair_state_from_explicit_decks(
+    mainboards: &[Vec<u16>; 2],
+    pair_environment_seed: u64,
+    starting_player: Option<PlayerId>,
+) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
+    let resolved = resolve_explicit_decks(mainboards)?;
+    let deck_hashes = [
+        explicit_deck_hash_v1(&resolved[0]),
+        explicit_deck_hash_v1(&resolved[1]),
+    ];
+    let state = match starting_player {
+        None => crate::rl::build_deck_pair_state_environment_v2(
+            pair_environment_seed,
+            &resolved[0],
+            &resolved[1],
+        )
+        .map_err(map_deck_pair_build_error_v2)?,
+        Some(starting_player) => {
+            crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
+                pair_environment_seed,
+                &resolved[0],
+                &resolved[1],
+                starting_player,
+            )
+            .map_err(map_deck_pair_build_error_v2)?
+        }
+    };
+    Ok((deck_hashes, state))
 }
 
 fn terminal_from_winner(
@@ -11933,6 +12167,139 @@ mod tests {
             .chain(&state.players[player.index()].library)
             .map(|&object| state.objects.get(object).card_def)
             .collect()
+    }
+
+    fn burn_and_rally_explicit_mainboards() -> [Vec<u16>; 2] {
+        [
+            runtime_deck_by_id("Burn").expect("Burn is catalog-registered").card_ids.to_vec(),
+            runtime_deck_by_id("Rally").expect("Rally is catalog-registered").card_ids.to_vec(),
+        ]
+    }
+
+    #[test]
+    fn explicit_deck_hash_uses_the_sorted_convention_and_differs_from_the_catalog_hash() {
+        let mainboards = burn_and_rally_explicit_mainboards();
+        let burn_catalog_hash = runtime_deck_by_id("Burn").unwrap().runtime_deck_hash;
+        let rally_catalog_hash = runtime_deck_by_id("Rally").unwrap().runtime_deck_hash;
+        let burn_explicit_hash = explicit_deck_hash_v1(&mainboards[0]);
+        let rally_explicit_hash = explicit_deck_hash_v1(&mainboards[1]);
+        // Measured empirically (cargo test ... -- --nocapture) once
+        // explicit_deck_hash_v1 existed; pinned here per the Step 5
+        // calibration discipline (measure first, hardcode only the
+        // measured value).
+        assert_eq!(burn_catalog_hash, 0x5fdb7b92986b6fc1);
+        assert_eq!(rally_catalog_hash, 0xc9f01c2544412bf);
+        assert_eq!(burn_explicit_hash, 0x9fa377dc966c3b11);
+        assert_eq!(rally_explicit_hash, 0xbb9ab5160fd8ba3f);
+        assert_ne!(
+            burn_explicit_hash, burn_catalog_hash,
+            "sorted-explicit and catalog-materialized hashes must not silently coincide"
+        );
+        assert_ne!(rally_explicit_hash, rally_catalog_hash);
+        // Order-insensitivity: a permuted view of the same multiset hashes the same.
+        let mut reversed = mainboards[0].clone();
+        reversed.reverse();
+        assert_eq!(explicit_deck_hash_v1(&reversed), burn_explicit_hash);
+    }
+
+    #[test]
+    fn resolve_explicit_decks_rejects_the_wrong_mainboard_size() {
+        let mut mainboards = burn_and_rally_explicit_mainboards();
+        mainboards[1].pop();
+        let error = resolve_explicit_decks(&mainboards).expect_err("59 cards must be rejected");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error.message.contains("seat 1") && error.message.contains("59"),
+            "message identifies the failing seat and actual count: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_decks_rejects_an_unsupported_card_id() {
+        let mut mainboards = burn_and_rally_explicit_mainboards();
+        mainboards[0][0] = u16::MAX;
+        let error = resolve_explicit_decks(&mainboards).expect_err("out-of-range card id must fail preflight");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(error.message.contains("seat 0"), "{}", error.message);
+    }
+
+    #[test]
+    fn explicit_deck_reset_full_episode_completes_with_paired_seed_and_both_starting_players() {
+        let mainboards = burn_and_rally_explicit_mainboards();
+        let deck_ids = ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
+        let root = 0x51de_51de_51de_51de;
+
+        let p0_starts = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+            1, root, 2000, 200_000, deck_ids.clone(), mainboards.clone(), PlayerId::P0,
+        )
+        .expect("P0-starting explicit-deck reset succeeds");
+        assert_eq!(p0_starts.state.active_player, PlayerId::P0);
+        let p1_starts = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+            1, root, 2000, 200_000, deck_ids.clone(), mainboards.clone(), PlayerId::P1,
+        )
+        .expect("P1-starting explicit-deck reset succeeds");
+        assert_eq!(p1_starts.state.active_player, PlayerId::P1);
+        let plain = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1, root, 2000, 200_000, deck_ids, mainboards,
+        )
+        .expect("plain explicit-deck reset succeeds");
+        assert_eq!(
+            plain.state.active_player, PlayerId::P0,
+            "the plain constructor defaults to P0, matching build_deck_pair_state_environment_v2's own default"
+        );
+
+        for mut session in [p0_starts, p1_starts] {
+            let mut policy_rng = crate::state::SplitMix64::seed(0x9a9a_9a9a_9a9a_9a9a);
+            let mut steps = 0u32;
+            loop {
+                match session.current_response() {
+                    RlSessionResponseV1::Terminal(terminal) => {
+                        assert!(
+                            matches!(
+                                terminal.terminal_outcome,
+                                TerminalOutcomeV1::P0Win | TerminalOutcomeV1::P1Win | TerminalOutcomeV1::Draw
+                            ),
+                            "episode reaches a well-formed terminal, not a halt"
+                        );
+                        break;
+                    }
+                    RlSessionResponseV1::Decision(decision) => {
+                        assert!(steps < 200_000, "episode must terminate inside the policy-step cap");
+                        steps += 1;
+                        let selected_index = (policy_rng.next_u64() as usize) % decision.legal_actions.len();
+                        let selected_action_id = decision.legal_actions[selected_index].stable_id.clone();
+                        session
+                            .step(decision.episode_id, decision.step, selected_index as u32, &selected_action_id)
+                            .expect("random-policy step succeeds");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_deck_reset_shares_the_identical_shuffle_for_a_fixed_pair_environment_seed() {
+        let mainboards = burn_and_rally_explicit_mainboards();
+        let deck_ids = ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
+        let a = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1, 0x1234_5678_9abc_def0, 8, 1024, deck_ids.clone(), mainboards.clone(),
+        )
+        .unwrap();
+        let b = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1, 0x1234_5678_9abc_def0, 8, 1024, deck_ids.clone(), mainboards.clone(),
+        )
+        .unwrap();
+        assert_eq!(definition_order(&a.state, PlayerId::P0), definition_order(&b.state, PlayerId::P0));
+        assert_eq!(definition_order(&a.state, PlayerId::P1), definition_order(&b.state, PlayerId::P1));
+        let c = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1, 0x1234_5678_9abc_def1, 8, 1024, deck_ids, mainboards,
+        )
+        .unwrap();
+        assert_ne!(
+            definition_order(&a.state, PlayerId::P0), definition_order(&c.state, PlayerId::P0),
+            "a different pair_environment_seed must not coincidentally reproduce the same shuffle"
+        );
     }
 
     #[test]
