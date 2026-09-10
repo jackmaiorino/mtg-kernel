@@ -1557,6 +1557,17 @@ mod tests {
             card_id_by_visible_name("Insectile Aberration"),
             Some((delver, 1))
         );
+        // A second transforming card confirms the back-face table isn't
+        // just a single-entry special case.
+        let modern_age = card_id_by_name("The Modern Age").expect("The Modern Age in CARD_DEFS");
+        assert_eq!(
+            card_id_by_visible_name("The Modern Age"),
+            Some((modern_age, 0))
+        );
+        assert_eq!(
+            card_id_by_visible_name("Vector Glider"),
+            Some((modern_age, 1))
+        );
         assert_eq!(card_id_by_visible_name("Nonexistent"), None);
 
         // Every front face resolves to face 0, matching `card_id_by_name`.

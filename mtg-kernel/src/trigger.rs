@@ -1578,6 +1578,19 @@ fn triggers_from_events(
             if !uses_leave_lki && obj.zone != def.home_zone {
                 continue;
             }
+            // A `TriggeredAbilityDef` names one printed face's ability text
+            // (Delver of Secrets: the trigger prints on the front half only,
+            // Insectile Aberration carries none). `face_index` can only be
+            // nonzero for a battlefield permanent with a `transform_face`,
+            // and any zone change resets it to 0 (`reset_for_zone_change`),
+            // so this is a no-op for every `uses_leave_lki`/non-battlefield
+            // home zone case; it mirrors the same "front face only"
+            // exclusion the Saga chapter/completion paths already apply
+            // unconditionally (`obj.v4.face_index != 0` at this file's own
+            // SBA and chapter-matching sites).
+            if obj.v4.face_index != 0 {
+                continue;
+            }
             for (i, ev) in events.iter().enumerate() {
                 let event_controller = match ev {
                     CommittedEvent::ZoneChange {

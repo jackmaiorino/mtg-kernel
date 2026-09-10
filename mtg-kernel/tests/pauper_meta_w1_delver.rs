@@ -10,7 +10,7 @@
 //! revealed this way, transform Delver of Secrets. Insectile Aberration is
 //! a 3/2 Human Insect, blue, with flying.
 
-use mtg_kernel::card_def::{card_id_by_name, Keywords, CARD_DEFS};
+use mtg_kernel::card_def::{card_id_by_name, mana_colors_mask, Keywords, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::state::{Counters, GameObject, GameState, ObjectStateV4, Zone};
@@ -51,6 +51,48 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
         Zone::Command => state.command.push(id),
         Zone::Stack => panic!("test helper does not construct stack objects"),
     }
+    id
+}
+
+/// Places an already-transformed Delver of Secrets (`face_index` 1,
+/// Insectile Aberration) directly on P0's battlefield, with the same
+/// `v4.effective_color_mask`/`v4.effective_subtype_ids`/`name` fields
+/// `event::commit`'s `ProposedEvent::Transform` arm would have set. This
+/// file's other tests exercise the transform itself; this helper starts
+/// from its far side, to check nothing re-triggers it.
+fn put_transformed_delver(state: &mut GameState) -> ObjectId {
+    let card_def = card_id("Delver of Secrets");
+    let def = &CARD_DEFS[card_def as usize];
+    let face = def
+        .transform_face
+        .as_ref()
+        .expect("Delver of Secrets has a transform_face");
+    let mut v4 = ObjectStateV4::from_card_def(card_def);
+    v4.face_index = 1;
+    v4.effective_color_mask = mana_colors_mask(face.colors);
+    v4.effective_subtype_ids = {
+        let mut ids: Vec<u16> = face.subtypes.iter().map(|s| s.stable_id()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let id = state.objects.push(GameObject {
+        card_def,
+        name: face.name.to_string(),
+        owner: PlayerId::P0,
+        controller: PlayerId::P0,
+        zone: Zone::Battlefield,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Counters::default(),
+        attachments: Vec::new(),
+        v4,
+        spell_copy_origin: None,
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    state.players[0].battlefield.push(id);
     id
 }
 
@@ -127,8 +169,32 @@ fn delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery() {
         }
         other => panic!("expected the reveal ChooseEffectBoolean, got {other:?}"),
     }
+    // Private look, public reveal: before the reveal decision is answered,
+    // the opponent's view of the controller's library must still be empty
+    // (the initial look is `reveal_library_top(controller, controller, 1)`,
+    // recorded only in the controller's own row), while the controller's
+    // own view is already populated.
+    assert!(
+        accepted
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .is_empty(),
+        "the opponent must not learn the top card from a private look"
+    );
+    assert!(
+        !accepted
+            .known_library_cards(PlayerId::P0, PlayerId::P0)
+            .is_empty(),
+        "the controller privately knows the top card after looking"
+    );
     engine::step(&mut accepted, Action::ChooseEffectBoolean(true)).unwrap();
     pass_to_stack_empty(&mut accepted);
+
+    assert!(
+        !accepted
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .is_empty(),
+        "an accepted reveal is public: the opponent now knows the top card too"
+    );
 
     let object = accepted.objects.get(delver);
     assert_eq!(object.name, "Insectile Aberration");
@@ -207,5 +273,42 @@ fn delver_trigger_is_controllers_upkeep_only() {
     let object = state.objects.get(delver);
     assert_eq!(object.name, "Delver of Secrets");
     assert_eq!(object.v4.face_index, 0);
+    assert_eq!(object.zone_change_count, original_zone_change_count);
+}
+
+#[test]
+fn delver_does_not_retrigger_once_transformed() {
+    // DelverOfSecrets.java attaches the upkeep trigger to the front half
+    // only (`getLeftHalfCard().addAbility(...)`); Insectile Aberration
+    // carries none. An already-transformed Delver with another instant on
+    // top of its controller's library must not look, must not offer a
+    // reveal decision, and must not transform again (which would otherwise
+    // run `TransformSourceInPlace` against `face_index == 1` and halt the
+    // engine, per its own guard).
+    let top = card_id("Lightning Bolt");
+    let mut state = GameState::new_from_libraries(&[top], &[], card_name, 1);
+    let delver = put_transformed_delver(&mut state);
+    let original_zone_change_count = state.objects.get(delver).zone_change_count;
+
+    match engine::advance_until_decision(&mut state) {
+        Decision::CastSpellOrPass { player, .. } => {
+            assert_eq!(player, PlayerId::P0, "priority opens with the active player");
+            assert!(
+                state.stack.is_empty(),
+                "a transformed Delver's front-face trigger must not fire again"
+            );
+        }
+        other => panic!("unexpected decision at the transformed Delver's upkeep: {other:?}"),
+    }
+    assert!(
+        state.engine.halted.is_none(),
+        "the engine must not halt: got {:?}",
+        state.engine.halted
+    );
+
+    let object = state.objects.get(delver);
+    assert_eq!(object.name, "Insectile Aberration");
+    assert_eq!(object.v4.face_index, 1);
+    assert_eq!(object.zone, Zone::Battlefield);
     assert_eq!(object.zone_change_count, original_zone_change_count);
 }
