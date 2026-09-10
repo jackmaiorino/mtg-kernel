@@ -490,6 +490,43 @@ pub fn derive_n_per_cell_v1(minimum_win_rate_delta: f64, target_power: f64, one_
     n.ceil() as u32
 }
 
+/// The BO1 provisional-accept decision (design section 4), factored into a
+/// pure function so the manifest's `bo1_one_sided_alpha` is the only thing
+/// that can move the boundary (fix round 2, item 2: "a reverted hardcoded
+/// alpha at either call site would pass every test" otherwise). Reads
+/// `bootstrap_resample_count`, `bo1_bootstrap_sidedness`, and
+/// `bo1_one_sided_alpha` from `manifest` only; `run_bo1_provisional_search_for_cell_v1`
+/// is the only production call site, alongside this module's own tests.
+pub fn bo1_provisional_accept_v1(
+    deltas: &[i8],
+    manifest: &SearchCampaignManifestV1,
+    seed: u64,
+) -> (bool, crate::paired_bo1_harness_v1::PairedBootstrapResultV1) {
+    let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
+        deltas, manifest.bootstrap_resample_count, seed, manifest.bo1_bootstrap_sidedness,
+        manifest.bo1_one_sided_alpha,
+    );
+    (result.lower > 0.0, result)
+}
+
+/// The BO3 ratification decision (design section 4), factored into a pure
+/// function for the same reason as `bo1_provisional_accept_v1`. Reads
+/// `bootstrap_resample_count`, `bo3_bootstrap_sidedness`, and
+/// `bo3_confidence_level` (as `alpha = 1.0 - bo3_confidence_level`) from
+/// `manifest` only; `run_bo3_ratification_v1` is the only production call
+/// site, alongside this module's own tests.
+pub fn bo3_ratify_v1(
+    deltas: &[i8],
+    manifest: &SearchCampaignManifestV1,
+    seed: u64,
+) -> (bool, crate::paired_bo1_harness_v1::PairedBootstrapResultV1) {
+    let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
+        deltas, manifest.bootstrap_resample_count, seed, manifest.bo3_bootstrap_sidedness,
+        1.0 - manifest.bo3_confidence_level,
+    );
+    (result.lower > 0.0 || result.upper < 0.0, result)
+}
+
 /// Runs `manifest.n_per_cell` paired BO1 trials per candidate (candidate
 /// mainboard vs the search's current working-best mainboard, starting from
 /// `incumbent`), computes the one-sided paired-bootstrap CI on the
@@ -535,11 +572,8 @@ pub fn run_bo1_provisional_search_for_cell_v1(
             .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
             deltas.push(outcome.delta);
         }
-        let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
-            &deltas, manifest.bootstrap_resample_count, manifest.bootstrap_seed, manifest.bo1_bootstrap_sidedness,
-            manifest.bo1_one_sided_alpha,
-        );
-        if result.lower > 0.0 {
+        let (accepted, _result) = bo1_provisional_accept_v1(&deltas, manifest, manifest.bootstrap_seed);
+        if accepted {
             working_best_mainboard = candidate_mainboard;
             working_best = Some(candidate.clone());
         }
@@ -547,12 +581,21 @@ pub fn run_bo1_provisional_search_for_cell_v1(
     Ok(working_best)
 }
 
-fn mainboard_sha256_v1(mainboard: &[u16]) -> String {
-    let mut hasher = Sha256::new();
-    for &card_id in mainboard {
-        hasher.update(card_id.to_be_bytes());
-    }
-    let digest = hasher.finalize();
+/// The hash convention the BO3 trace's `self_mainboard_sha256`/
+/// `opponent_mainboard_sha256` fields use (fix round 2, item 1; design
+/// section 4's receipts require a disclosed `hash_convention` field):
+/// `crate::sideboard::mainboard_slice_sha256_v1`, which is byte-identical
+/// to `DeckConfigurationV1::mainboard_sha256_v1()` for the same card
+/// sequence (both call the same private domain-tagged
+/// `configuration_zone_sha256_v1(b"mainboard", ...)` helper). This is the
+/// SAME convention `AppliedSideboardReceiptV1.after_mainboard_sha256`
+/// already uses, not a third, ad hoc hash: a trace row's
+/// `self_mainboard_sha256` for a game where the self seat plays a plan
+/// under test equals that `apply_plan_v1` call's own
+/// `after_mainboard_sha256`, hex-encoded (tested below).
+pub const TRACE_MAINBOARD_HASH_CONVENTION_V1: &str = "deck_configuration_mainboard_sha256_v1";
+
+fn hex_encode_v1(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -564,11 +607,16 @@ pub enum Bo3RatificationArmV1 {
 }
 
 /// One physical game's disclosable record (design section 4: the receipts
-/// require a disclosable record of what was played). `self_mainboard_sha256`/
-/// `opponent_mainboard_sha256` hash the exact 60-card sequence
-/// `resolve_bo3_game_mainboards_v1` selected for that game, so a reviewer
-/// can prove which mainboard was actually played without a full card-list
-/// dump per game.
+/// require a disclosable record of what was played, plus a
+/// `hash_convention` field naming which convention produced the hashes).
+/// `self_mainboard_sha256`/`opponent_mainboard_sha256` hash the exact
+/// 60-card sequence `resolve_bo3_game_mainboards_v1` selected for that
+/// game, under `hash_convention` (always `TRACE_MAINBOARD_HASH_CONVENTION_V1`
+/// today), so a reviewer can prove which mainboard was actually played
+/// without a full card-list dump per game, and can cross-check that hash
+/// against `AppliedSideboardReceiptV1.after_mainboard_sha256` for any game
+/// where the self seat played a plan under test (same convention, same
+/// bytes).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Bo3GameTraceV1 {
     pub match_index: u32,
@@ -576,6 +624,7 @@ pub struct Bo3GameTraceV1 {
     pub game_index: u8,
     pub starting_player: PlayerId,
     pub chooser: PlayerId,
+    pub hash_convention: String,
     pub self_mainboard_sha256: String,
     pub opponent_mainboard_sha256: String,
     pub winner: Option<PlayerId>,
@@ -758,8 +807,9 @@ fn play_bo3_match_for_seat_v1(
             game_index: start.game_index,
             starting_player: start.starting_player,
             chooser: start.chooser,
-            self_mainboard_sha256: mainboard_sha256_v1(&self_mainboard),
-            opponent_mainboard_sha256: mainboard_sha256_v1(&opponent_mainboard),
+            hash_convention: TRACE_MAINBOARD_HASH_CONVENTION_V1.to_owned(),
+            self_mainboard_sha256: hex_encode_v1(crate::sideboard::mainboard_slice_sha256_v1(&self_mainboard)),
+            opponent_mainboard_sha256: hex_encode_v1(crate::sideboard::mainboard_slice_sha256_v1(&opponent_mainboard)),
             winner: winner_player_id,
         });
         let outcome = match winner_player_id {
@@ -829,11 +879,8 @@ pub fn run_bo3_ratification_v1(
         trace.extend(incumbent_trace);
         deltas.push(if candidate_won { 1i8 } else { 0i8 } - if incumbent_won { 1i8 } else { 0i8 });
     }
-    let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
-        &deltas, manifest.bootstrap_resample_count, manifest.bootstrap_seed, manifest.bo3_bootstrap_sidedness,
-        1.0 - manifest.bo3_confidence_level,
-    );
-    Ok((result.lower > 0.0 || result.upper < 0.0, trace))
+    let (ratified, _result) = bo3_ratify_v1(&deltas, manifest, manifest.bootstrap_seed);
+    Ok((ratified, trace))
 }
 
 #[cfg(test)]
@@ -1308,44 +1355,105 @@ mod tests {
 
     #[test]
     fn chooser_rotates_to_the_loser_after_a_decisive_game_so_hardcoding_p0_would_abort() {
-        // Isolates the exact mechanism play_bo3_match_for_seat_v1 depends
-        // on (reading match_state().phase() for the real chooser) against
-        // the real bo3_match contract, without needing a full stochastic
-        // RL game to control who wins: driving the match state machine
-        // directly is deterministic and fast, and exercises the identical
-        // BestOfThreeDeckMatchV1 API surface the driver calls.
+        // Fix round 2, item 3: the round 1 version of this test drove
+        // bo3_match directly and never called the fixed code
+        // (play_bo3_match_for_seat_v1), so it could not have caught a
+        // regression back to a hardcoded P0 chooser. This version calls
+        // play_bo3_match_for_seat_v1 itself (private, reachable from
+        // mod tests) with a seed under which the self seat (P0) wins game
+        // 1 with a real, random policy, asserting the call returns Ok (no
+        // WrongChooser abort) and that the trace's game-2 row reports P1
+        // as chooser. Game 1 always plays the registered mainboards
+        // regardless of plan_under_test/cell_game_index (item 1), so the
+        // game-1 outcome is driven only by the seed and policy; searches a
+        // fixed, ordered seed range for the first one where P0 wins,
+        // rather than a hand-picked magic seed (the Task D pattern).
+        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
+        let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
+        let plan_under_test = candidates.first().expect("at least one candidate exists").clone();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
-        let p0 = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
-        let p1 = checked_in_pauper_registered_deck_by_id_v1("Rally").unwrap();
-        let mut match_session = BestOfThreeDeckMatchV1::new_v1(p0, p1, policy, PlayerId::P0).unwrap();
-        match_session.prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play).unwrap();
-        let transition = match_session
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
-            .unwrap();
-        assert_eq!(
-            transition,
-            crate::bo3_match::MatchTransitionV1::NextGameChoice { game_index: 2, chooser: PlayerId::P1 },
-            "the loser of a decisive game becomes the next game's chooser"
-        );
-        match match_session.match_state().phase() {
-            crate::bo3_match::MatchPhaseV1::AwaitingPlayDrawChoice { chooser, game_index } => {
-                assert_eq!(chooser, PlayerId::P1);
-                assert_eq!(game_index, 2);
+
+        for seed in 1u64..=150 {
+            let mut rng = SplitMix64::seed(seed ^ 0x1357_9BDF_2468_ACE0);
+            let mut policy_fn = |decision: &crate::rl_session::RlSessionDecisionV1| {
+                let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+                (index as u32, decision.legal_actions[index].stable_id.clone())
+            };
+            let (_self_won, trace) = play_bo3_match_for_seat_v1(
+                "Burn", "Rally", 2, &plan_under_test, &policy, seed, 0, Bo3RatificationArmV1::Candidate, &mut policy_fn,
+            )
+            .expect("play_bo3_match_for_seat_v1 must never abort with WrongChooser once the chooser is read from the live phase");
+            let game_one = trace.iter().find(|row| row.game_index == 1).expect("every match plays game 1");
+            if game_one.winner == Some(PlayerId::P0) {
+                let game_two = trace
+                    .iter()
+                    .find(|row| row.game_index == 2)
+                    .expect("a decisive game 1 must be followed by game 2");
+                assert_eq!(
+                    game_two.chooser, PlayerId::P1,
+                    "seed {seed}: after P0 won game 1, game 2's chooser must be P1 (the loser), not P0"
+                );
+                return;
             }
-            other => panic!("expected AwaitingPlayDrawChoice, got {other:?}"),
         }
-        // The fix round 1 bug: hardcoding PlayerId::P0 here aborts with
-        // WrongChooser once P1 is the actual expected chooser.
-        let wrong_chooser_error = match_session
-            .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
-            .expect_err("hardcoding P0 as the chooser must fail once P1 is the actual expected chooser");
-        assert!(matches!(
-            wrong_chooser_error,
-            crate::bo3_session::Bo3SessionErrorV1::Match(crate::bo3_match::MatchStateErrorV1::WrongChooser { .. })
-        ));
-        match_session
-            .prepare_game_v1(PlayerId::P1, PlayDrawChoiceV1::Play)
-            .expect("game 2 must accept P1 as chooser after P0 won game 1");
+        panic!("no seed in 1..=150 gave P0 a game-1 win in a Burn-vs-Rally match; widen the search range");
+    }
+
+    #[test]
+    fn bo1_provisional_accept_changes_with_bo1_one_sided_alpha() {
+        // Fix round 2, item 2: no test previously showed a driver's accept
+        // decision changing with the manifest value, so a reverted
+        // hardcoded alpha at either call site would have passed every
+        // test. Two manifests, identical except bo1_one_sided_alpha, on a
+        // fixed synthetic delta vector, must give different accept
+        // results, proven through the same pure function
+        // run_bo1_provisional_search_for_cell_v1 calls (not an inline
+        // re-derivation): confirmed empirically (bootstrap_seed
+        // 0xC0FF_EEC0_FFEE_C0FF, resample_count 10_000, OneSidedLower)
+        // that alpha 0.05 rejects (lower = -0.4) and alpha 0.40 accepts
+        // (lower = 0.2) on this exact vector.
+        let deltas: [i8; 10] = [1, 1, 1, 1, 1, 1, -1, -1, -1, -1];
+        let mut manifest_narrow = sample_manifest();
+        manifest_narrow.bo1_one_sided_alpha = 0.05;
+        let mut manifest_wide = sample_manifest();
+        manifest_wide.bo1_one_sided_alpha = 0.40;
+        let (accept_narrow, result_narrow) = bo1_provisional_accept_v1(&deltas, &manifest_narrow, 42);
+        let (accept_wide, result_wide) = bo1_provisional_accept_v1(&deltas, &manifest_wide, 42);
+        assert!(
+            !accept_narrow,
+            "bo1_one_sided_alpha = 0.05 must reject this vector (lower = {})", result_narrow.lower
+        );
+        assert!(
+            accept_wide,
+            "bo1_one_sided_alpha = 0.40 must accept this vector (lower = {})", result_wide.lower
+        );
+        assert_ne!(accept_narrow, accept_wide, "the manifest's bo1_one_sided_alpha must actually govern the accept decision");
+    }
+
+    #[test]
+    fn bo3_ratify_changes_with_bo3_confidence_level() {
+        // Same purpose as the BO1 test above, for the BO3 stage: confirmed
+        // empirically that bo3_confidence_level 0.95 does not exclude 0
+        // (lower = -0.4, upper = 0.8) while 0.2 does (lower = 0.2, upper =
+        // 0.2) on this exact vector, same seed and resample_count.
+        let deltas: [i8; 10] = [1, 1, 1, 1, 1, 1, -1, -1, -1, -1];
+        let mut manifest_high_confidence = sample_manifest();
+        manifest_high_confidence.bo3_confidence_level = 0.95;
+        let mut manifest_low_confidence = sample_manifest();
+        manifest_low_confidence.bo3_confidence_level = 0.2;
+        let (ratify_high, result_high) = bo3_ratify_v1(&deltas, &manifest_high_confidence, 42);
+        let (ratify_low, result_low) = bo3_ratify_v1(&deltas, &manifest_low_confidence, 42);
+        assert!(
+            !ratify_high,
+            "bo3_confidence_level = 0.95 must not ratify this vector (lower = {}, upper = {})",
+            result_high.lower, result_high.upper
+        );
+        assert!(
+            ratify_low,
+            "bo3_confidence_level = 0.2 must ratify this vector (lower = {}, upper = {})",
+            result_low.lower, result_low.upper
+        );
+        assert_ne!(ratify_high, ratify_low, "the manifest's bo3_confidence_level must actually govern the ratify decision");
     }
 
     #[test]
@@ -1446,5 +1554,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn trace_mainboard_hash_matches_the_applied_plan_receipt_hash_and_names_its_convention() {
+        // Fix round 2, item 1: the trace's mainboard hashes must be the
+        // SAME convention AppliedSideboardReceiptV1.after_mainboard_sha256
+        // already uses, not a third, ad hoc hash. Runs a real match
+        // (M = 1) and checks the candidate arm's game-2 trace row (the
+        // game where the self seat plays plan_under_test, per item 1's
+        // rule) against an independently computed apply_plan_v1 receipt
+        // for the exact same plan.
+        let mut manifest = sample_manifest();
+        manifest.m_bo3_matches_per_ratification = 1;
+        let dir = std::env::temp_dir().join(format!("bo3_trace_hash_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest_path = dir.join("manifest.json");
+        std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
+        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+
+        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
+        let candidate_plan = candidates.first().expect("at least one candidate exists").clone();
+        let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
+        let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
+        let mut rng = SplitMix64::seed(0x5151_5151_5151_5151);
+        let mut policy_fn = |decision: &crate::rl_session::RlSessionDecisionV1| {
+            let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+            (index as u32, decision.legal_actions[index].stable_id.clone())
+        };
+        let (_ratified, trace) = run_bo3_ratification_v1(
+            &manifest, &manifest_path, "Burn", "Rally", 2, &candidate_plan, &incumbent_plan, &policy, &mut policy_fn,
+        )
+        .expect("a real Burn-vs-Rally BO3 ratification run must complete");
+
+        let candidate_game_two_row = trace
+            .iter()
+            .find(|row| row.arm == Bo3RatificationArmV1::Candidate && row.game_index == 2)
+            .expect("the candidate arm always plays at least a game 2");
+        assert_eq!(candidate_game_two_row.hash_convention, TRACE_MAINBOARD_HASH_CONVENTION_V1);
+
+        let (_configuration, receipt) = registered
+            .apply_plan_v1(&candidate_plan, "trace-hash-expected/v1", [0u8; 32])
+            .unwrap();
+        let expected_hex = hex_encode_v1(receipt.after_mainboard_sha256());
+        assert_eq!(
+            candidate_game_two_row.self_mainboard_sha256, expected_hex,
+            "the trace's game-2 self mainboard hash must equal apply_plan_v1's own receipt hash for the same plan"
+        );
     }
 }
