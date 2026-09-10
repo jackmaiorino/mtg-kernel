@@ -165,7 +165,7 @@ unchanged at every task's identity re-pin and again at this task).
 Recomputed with `uvx uv@0.11.29 run --no-sync python python/tools/pauper_meta_gap_v1.py
 docs/research/pauper_meta_decklists_2026-09-09 "$(cat
 docs/research/pauper_meta_shares_2026-09-09.json)"
-docs/research/pauper_meta_gap_after_w1_2026-09.json`, against the same 121 sampled
+docs/research/pauper_meta_gap_after_w1_2026-09.json`, against the same 120 sampled
 mtgtop8 decklists (15 archetypes, 8 decks each) the wave-start gap report
 (`docs/research/pauper_meta_gap_2026-09-09.md`/`.json`, commit `973ba7e9`) used. "Covered"
 is the share of average-copies-per-deck backed by an in-registry card
@@ -255,8 +255,9 @@ existing frozen literal moved or deleted):
 
 This single root-cause fix resolved **30 of the 45** originally-failing lib tests without
 touching their bodies at all (they never hardcoded `Current`; they only needed a live-
-matching record to pass their own live-authenticity mutation-boundary check): all 12
-`native_training_store_v2::windows_publisher_tests`, all 6 `native_training_store_resume_v2::windows_resume_tests`
+matching record to pass their own live-authenticity mutation-boundary check):
+`native_checkpoint_shadow_stdio_v1::tests::the_chosen_action_is_independent_of_the_measured_latency_v1`,
+all 12 `native_training_store_v2::windows_publisher_tests`, all 6 `native_training_store_resume_v2::windows_resume_tests`
 (via a 7th sub-check that also passed already), 3 of 5 `native_training_store_update_group_v1::tests` (`v2_resume_drives_publish_commit_and_continuation_with_rederived_mode`,
 `v2_science_loop_completes_end_to_end_from_real_snapshots`,
 `wide_v2_resume_reconstructs_through_the_run_bound_wide_constructor`), 7
@@ -312,13 +313,14 @@ named literal.
 |---|---|---|---|
 | `async_flat_scored_rollout_v1.rs` | `first_five_scorer_packets_have_exact_safe_golden` | A | `2683fe1d...ebd043` -> `78289df6...103c81` |
 | `native_checkpoint_inference_v1/checkpoint_reliance_probe_v1/action_block_gradient_diagnostic_v1.rs` | `joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1` | A | `d6812f9e...e00970` -> `ae853cab...66a71` |
-| `native_checkpoint_runner_v1.rs` | `starting_player_unset_reproduces_parent_commit_checkpoint_eval_bytes_v1` (`logical_state_sha256`) | A | `f6a0be9c...86778` -> `a9e2d7d6...47bad` |
+| `native_checkpoint_runner_v1.rs` | `starting_player_unset_reproduces_parent_commit_checkpoint_eval_bytes_v1` (`logical_state_sha256`) | A | `69e6a7d0...fad974` -> `4a3d928e...74e3f5` |
+| `native_checkpoint_runner_v1.rs` | same test (`bindings[0].trajectory_sha256`) | A | `f6a0be9c...1b6985` -> `a9e2d7d6...347bad` |
 | `native_checkpoint_runner_v1.rs` | same test (`bindings[1].trajectory_sha256`) | A | `2253bd91...17b90` -> `91020a9d...86778` |
 | `native_trainer_v1.rs` | `real_burn_pair_updates_once_and_is_topology_invariant` (`episodes[0].trajectory_sha256`) | A | `[206,204,...,185]` -> `[146,96,...,48]` |
 | `native_trainer_v1.rs` | same test (`episodes[1].trajectory_sha256`) | A | `[162,131,...,94]` -> `[98,192,...,14]` |
 | `native_trainer_v1.rs` | `genuine_environment_v2_pair_executes_with_distinct_decks_and_reconstructible_outer` | A | `("03cbfef4...","2218bdf0...")`, `("0462ea3d...","0c4f9222...")` -> `("7076afcb...","99d5adb2...")`, `("fb36f8a7...","42e736f8...")` |
 | `native_training_store_checkpoint_v3.rs` | `genesis_authority_roundtrips_and_matches_frozen_goldens` (`GENESIS_MANIFEST_SHA256_GOLDEN_V3`) | A | `719d3edd...09d03f` -> `41041620...93984b` |
-| `native_training_store_checkpoint_v3.rs` | same test (`GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1`, shared value with checkpoint_runner_v1's `logical_state_sha256`) | A | `69e6a7d0...86778` -> `a9e2d7d6...47bad` |
+| `native_training_store_checkpoint_v3.rs` | same test (`GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1`, shared value with checkpoint_runner_v1's `logical_state_sha256`) | A | `69e6a7d0...fad974` -> `4a3d928e...74e3f5` |
 | `native_training_store_run_v2.rs` | `independent_digest_references_and_goldens_match` (`semantics`) | A | `affcfccc...85c8e0` -> `2ad70a88...4665d` |
 | `native_training_store_run_v2.rs` | same test (`identity`) | A | `f118e0a8...bf323` -> `3374ce80...4cb3` |
 | `native_training_store_run_v2.rs` | same test, plus `population_program_absence_preserves_legacy_bytes_and_run_hash` and `response_exploiter_absence_preserves_existing_bytes_and_population_behavior` (shared `fixture_bytes()` sha256) | A | `b99df856...87e8e` -> `4c8ae8a6...cfcd2` |
@@ -333,11 +335,12 @@ named literal.
 | `rl_session.rs` | `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`, `v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive` (shared v2 policy hash) | A | `0x9ed7_895c_1f47_82ca` -> `0xda58_b63d_08f6_6b99` |
 | `rl_session.rs` | same two tests (shared v2 core hash) | A | `0xf69d_f52f_fdd0_564e` -> `0xa1c5_ca41_1ee8_1a2d` |
 | `rl_session.rs` | `flat_action_candidate_commitment_matches_independent_pass_vector` | A | `[0x70,0x7d,...,0xce]` -> `[0x45,0x8c,...,0x40]` |
-| `rl_session.rs` | `flat_action_v2_token_domain_and_commitment_goldens_are_independent` (`common_v2`) | A | `[0x9f,0xfa,...,0x13]` -> `[0xf4,0x6a,...,0x05]` |
+| `rl_session.rs` | `flat_action_v2_token_domain_and_commitment_goldens_are_independent` (`v1`) | A | `[0x38,0x90,0x05,0xe8,...]` -> `[0xc3,0xa8,0x8d,0xde,...]` |
+| `rl_session.rs` | same test (`common_v2`) | A | `[0x9f,0xfa,...,0x13]` -> `[0xf4,0x6a,...,0x05]` |
 | `rl_session.rs` | same test (`commitment_v2(65_536)`) | A | `[0xb8,0x28,...,0x06]` -> `[0x1f,0x17,...,0xa0]` |
 | `rl_session.rs` | `jsonl_v6_frozen_v5_bytes_and_api` (`V5_TRANSCRIPT_SHA256`) | A | `a583c230...2541e2` -> `d0494851...8f110` |
-| `mtg-kernel/tests/rl_contract.rs` | `v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins` (serialized SHA-256) | A | `7037b030...8fa7a` -> `4a35ce83...6ad36` |
-| `mtg-kernel/tests/rl_contract.rs` | same test (v9 diagnostic hash) | B (plus A: the encoded state also embeds `card_db_hash` in its binding) | `05c6af543cba5573` -> `114a052a68589a04` |
+| `mtg-kernel/tests/rl_contract.rs` | `v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins` (serialized SHA-256) | B | `7037b030...8fa7a` -> `4a35ce83...6ad36` |
+| `mtg-kernel/tests/rl_contract.rs` | same test (v9 diagnostic hash) | B | `05c6af543cba5573` -> `114a052a68589a04` |
 | `mtg-kernel/tests/blue_blasts.rs` | `blue_pending_cast_is_frozen_into_diagnostic_hash_v8` | B | `0x64d0_7fde_5fbd_0f5a` -> `0x0931_82a3_ee7d_afab` |
 | `mtg-kernel/tests/brainstorm.rs` | `brainstorm_golden_is_two_independent_private_puts_with_exact_history_and_restore` (`first_hash`) | B | `0x27ea_a9b5_f80f_2f40` -> `0x5b1b_3fdc_abbe_f2ba` |
 | `mtg-kernel/tests/brainstorm.rs` | same test (`answered_hash`) | B | `0xebf9_1eed_7c7c_9e60` -> `0x8945_08d2_063e_dcc6` |
@@ -372,11 +375,15 @@ hand-authored fixture tests (`flat_action_candidate_commitment_matches_independe
 `flat_action_v2_token_domain_and_commitment_goldens_are_independent`,
 `jsonl_v6_frozen_v5_bytes_and_api`, `v2_reset_preexisting_entry_points_remain_legacy_randomness`,
 `v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive`). All seven are listed in the
-re-pin table above: every one encodes card-DB-dependent bytes (`KERNEL_CARDDB_HASH` mixed
-directly into a SHA-256 domain separator, or a serialized `GameState`/observation whose
-byte shape moved with `CardDef`'s struct growth), none is a real regression, and all seven
-now pass (`cargo test --locked -p mtg-kernel --test rl_contract`: 56/56 ok;
-the six `rl_session::` names: confirmed individually passing, see the report).
+re-pin table above: the six `rl_session::` tests are cause A (`KERNEL_CARDDB_HASH` mixed
+directly into a SHA-256 domain separator); `rl_contract.rs`'s test is cause B (it hashes a
+raw `GameState` directly, never a `TrainRunV2`/environment record, so no `card_db_hash`
+field is in scope at all -- `Object`/`ObjectStateV4` stores `card_def: u16`, an index into
+`CARD_DEFS`, never an embedded `CardDef`, so `CardDef`'s own struct growth this wave does
+not reach `GameState` serialization; only `GameState`'s own new `monarch` field does). None
+is a real regression, and all seven now pass (`cargo test --locked -p mtg-kernel --test
+rl_contract`: 56/56 ok; the six `rl_session::` names: confirmed individually passing, see
+the report).
 
 ## Full sweep results
 
@@ -426,6 +433,22 @@ command log and every suite's counts. Summary:
   premise" pattern as the `CARD_DEFS.len()` literals, not a repin and not a behavior
   regression. No torch-dependent or other pre-existing failures were found; the suite is
   fully green.
+
+### Addendum: final confirmation `--lib` sweep after commit
+
+Run after commits `0c47c4bc`/`af4f4574`/`ad77ddf9` landed, per the controller's directive
+that a further full sweep is only run post-commit: **1712 passed, 2 failed, 42 ignored,
+3985.41s**. The 2 failures: the same intentional canary
+(`current_frozen_literal_matches_the_live_build_constant`), and a sibling of the
+timing-margin class already documented above -- `native_checkpoint_shadow_stdio_v1::tests::model_guided_search_replay_is_bit_identical_apart_from_wall_time_v1`,
+a `search_ceiling_status: within_slo` vs `slo_exceeded` mismatch on one decision under a
+`decision_slo_seconds: 4.0` budget, same mechanism as the two `population_pool_*` and
+`search_slot_opponent_identity_round_trips_and_rejects_tampering`/`generation_eight_requires_the_sealed_generation_four_parent`
+failures classified earlier (`the_chosen_action_is_independent_of_the_measured_latency_v1`,
+which failed in earlier runs, passed clean in this one). Which specific test in this
+`Rollout`/SLO-timing family gets hit continues to vary run to run and shrank from 4-5
+failures to 1 here, consistent with contention/timing margin, not a deterministic bug tied
+to any one test or to this task's code.
 
 ## ROADMAP.md
 

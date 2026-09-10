@@ -6757,7 +6757,17 @@ mod tests {
     #[test]
     fn default_fixture_decodes_clean_and_classifies_as_the_live_profile() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
-        assert_eq!(validated.catalog_profile_v1(), live_catalog_profile_v1());
+        // Asserted against the concrete literal, not `live_catalog_profile_v1()`
+        // again: comparing the same classifier call to itself on both sides
+        // can never fail and so is not a real regression check. On this
+        // branch (pauper-meta-cards-v1, wave 1) the live build has moved off
+        // the CURRENT/PauperMetaW1 tie, so the live profile is concretely
+        // PauperMetaW1; on the main tree this same test body would instead
+        // pin Current.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::PauperMetaW1
+        );
         let (live_card_db_hash_u64_hex, live_runtime_catalog_sha256) =
             live_catalog_build_identity_v1();
         assert_eq!(
