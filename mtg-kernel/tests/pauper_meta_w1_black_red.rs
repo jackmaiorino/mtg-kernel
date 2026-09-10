@@ -379,6 +379,35 @@ fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
     );
 }
 
+// covers: Smash to Smithereens: no_legal_target_without_artifact
+#[test]
+fn smash_to_smithereens_has_no_legal_target_without_an_artifact() {
+    // No artifacts anywhere (only lands and, on P1's side, nothing at
+    // all): Smash to Smithereens' `TargetSpec::ArtifactPermanent` prefix
+    // can never complete, so it is excluded from `castable_spells`
+    // entirely -- same convention as Terminate's own definitions test
+    // (`terminate_has_no_legal_target_without_a_creature`).
+    let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
+    let smash = put_object(&mut state, PlayerId::P0, "Smash to Smithereens", Zone::Hand);
+    put_object(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+    put_object(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+
+    let offer = engine::advance_until_decision(&mut state);
+    match offer {
+        Decision::CastSpellOrPass { ref castable_spells, .. } => {
+            assert!(
+                !castable_spells.contains(&smash),
+                "Smash to Smithereens has no legal artifact target and must not be offered as castable"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        engine::step(&mut state, Action::CastSpell(smash)).is_err(),
+        "casting Smash to Smithereens directly must also be rejected with no legal target"
+    );
+}
+
 #[test]
 fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
     // With zero lands, Raze is castable neither for mana nor for its
