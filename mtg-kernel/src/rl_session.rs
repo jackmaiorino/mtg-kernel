@@ -4245,6 +4245,14 @@ impl RlEpisodeSessionV1 {
         self.state.diagnostic_state_hash()
     }
 
+    /// Read-only access to the underlying game state, for the `GameSummaryV1`
+    /// extractor (design section 3, W3), which needs `state.turn` and
+    /// `state.engine.event_history` directly. Deliberately `&GameState`,
+    /// never `&mut`: the extractor watches, it does not drive.
+    pub fn game_state(&self) -> &crate::state::GameState {
+        &self.state
+    }
+
     pub fn privileged_environment_hash(&self) -> u64 {
         self.compute_environment_hash(self.current.as_ref())
             .expect("session environment serializes")
@@ -5484,6 +5492,14 @@ impl FastActorSessionV1 {
 
     pub fn diagnostic_state_hash(&self) -> u64 {
         self.state.diagnostic_state_hash()
+    }
+
+    /// Read-only access to the underlying game state, for the `GameSummaryV1`
+    /// extractor (design section 3, W3), which needs `state.turn` and
+    /// `state.engine.event_history` directly. Deliberately `&GameState`,
+    /// never `&mut`: the extractor watches, it does not drive.
+    pub fn game_state(&self) -> &crate::state::GameState {
+        &self.state
     }
 
     /// Audit-only counterpart to
