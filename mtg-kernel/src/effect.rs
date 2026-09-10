@@ -24,8 +24,8 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
 use crate::state::{
     AbilitySourceContractV4, GameState, InitiativeTriggerBindingV1, InitiativeTriggerKindV1,
-    LinkedExileRecordV4, ObjectLinkV4, PaidCostRefV4, StackItem, StackSourceContractV4,
-    StackTargetContractV4, Target, UndercityRoomV1, Zone,
+    LinkedExileRecordV4, MonarchTriggerBindingV1, ObjectLinkV4, PaidCostRefV4, StackItem,
+    StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,11 @@ pub enum CreatureFilter {
     /// Any creature that does not currently have `keyword`. Operations may
     /// apply this predicate across both battlefields.
     WithoutKeyword(Keywords),
+    /// Any creature controlled by the effect's controller's one opponent
+    /// (Forktail Sweep's "each creature you don't control" -- in this
+    /// strictly two-player kernel, "not controlled by the effect's
+    /// controller" and "controlled by the opponent" are the same set).
+    OpponentControlled,
 }
 
 /// Battlefield creature restriction for a player-directed sacrifice.
@@ -887,6 +892,16 @@ pub enum EffectOp {
     /// then shuffle.
     ResolveUndercityThrone {
         binding: InitiativeTriggerBindingV1,
+    },
+    /// Make this effect's controller the monarch (306) and freeze this
+    /// resolution's source as the provenance for their future end-step draw
+    /// triggers. Azure Fleet Admiral's ETB is the definition-owned producer.
+    BecomeMonarch,
+    /// Runtime-bound engine-owned monarch end-step draw trigger. The
+    /// event-history index and historical designation source are validated
+    /// before dispatch, the same discipline `ResolveInitiativeTrigger` uses.
+    ResolveMonarchTrigger {
+        binding: MonarchTriggerBindingV1,
     },
     /// A team-wide, until-end-of-turn power/toughness modifier applied to
     /// every permanent matching `filter` on `controller`'s battlefield --
@@ -3886,6 +3901,50 @@ pub(crate) fn validate_initiative_trigger_binding(
     {
         return Err("Initiative trigger source provenance is malformed".to_string());
     }
+    Ok(())
+}
+
+/// Validates one engine-owned monarch end-step draw trigger's binding, the
+/// same discipline `validate_initiative_trigger_binding` applies. Deliberately
+/// looser than that sibling: the monarch trigger's source need not still be
+/// on the battlefield or carry one fixed card name (Azure Fleet Admiral's ETB
+/// grant and any later combat-damage transfer are both valid producers), only
+/// the same physical incarnation it was frozen against.
+pub(crate) fn validate_monarch_trigger_binding(
+    state: &GameState,
+    binding: MonarchTriggerBindingV1,
+) -> Result<(), String> {
+    let history_index = usize::try_from(binding.history_index)
+        .map_err(|_| "Monarch history index exceeds usize".to_string())?;
+    if state.engine.event_history.get(history_index)
+        != Some(&event::CommittedEvent::MonarchTrigger { binding })
+    {
+        return Err("Monarch trigger lost its exact committed marker".to_string());
+    }
+    let source = state
+        .objects
+        .try_get(binding.source.source)
+        .ok_or("Monarch trigger source object is missing")?;
+    if binding.source.controller != binding.player
+        || source.card_def != binding.source.card_def
+        || source.owner != binding.source.owner
+        || source.zone_change_count < binding.source.zone_change_count
+        || (source.zone_change_count == binding.source.zone_change_count
+            && (source.zone != binding.source.zone
+                || source.v4.attached_to != binding.source.attached_to))
+    {
+        return Err("Monarch trigger source provenance is malformed".to_string());
+    }
+    Ok(())
+}
+
+/// Draws one card for the monarch trigger's binding player -- 306.3's "the
+/// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
+/// this trigger never needs a player choice, so it resolves through ordinary
+/// `execute` rather than the resumable interpreter.
+fn resolve_monarch_trigger(state: &mut GameState, binding: MonarchTriggerBindingV1) -> Result<(), String> {
+    validate_monarch_trigger_binding(state, binding)?;
+    event::propose_and_commit(state, event::ProposedEvent::draw(binding.player));
     Ok(())
 }
 
@@ -9714,7 +9773,12 @@ fn commit_zone_change_batch(
     Ok(())
 }
 
-fn creature_matches_filter(state: &GameState, object: ObjectId, filter: &CreatureFilter) -> bool {
+fn creature_matches_filter(
+    state: &GameState,
+    object: ObjectId,
+    filter: &CreatureFilter,
+    caster: PlayerId,
+) -> bool {
     let live = state.objects.get(object);
     let def = &crate::card_def::CARD_DEFS[live.card_def as usize];
     if live.zone != Zone::Battlefield || !def.has_type(CardType::Creature) {
@@ -9726,6 +9790,7 @@ fn creature_matches_filter(state: &GameState, object: ObjectId, filter: &Creatur
         CreatureFilter::WithoutKeyword(keyword) => {
             !crate::engine::has_effective_keyword(state, object, *keyword)
         }
+        CreatureFilter::OpponentControlled => live.controller != caster,
     }
 }
 
@@ -10440,7 +10505,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-                .filter(|object| creature_matches_filter(state, *object, filter))
+                .filter(|object| creature_matches_filter(state, *object, filter, ctx.controller))
                 .map(|object| {
                     event::ProposedEvent::damage(ctx.source, Target::Object(object), *amount)
                 })
@@ -10560,7 +10625,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     if !def.has_type(crate::card_def::CardType::Creature) {
                         return false;
                     }
-                    creature_matches_filter(state, id, filter)
+                    creature_matches_filter(state, id, filter, ctx.controller)
                 })
                 .collect();
             if !object_ids.is_empty() {
@@ -11209,6 +11274,26 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             if take_initiative(state, player, source).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::BecomeMonarch => {
+            let Some(mut source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            source.controller = ctx.controller;
+            state.monarch = Some(ctx.controller);
+            state.engine.monarch_source = Some(source);
+        }
+        EffectOp::ResolveMonarchTrigger { binding } => {
+            if resolve_monarch_trigger(state, *binding).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

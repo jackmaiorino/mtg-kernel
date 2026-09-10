@@ -5660,6 +5660,69 @@
         "damage"
       ],
       "java_file": "Mage.Sets/src/mage/cards/v/ViridianLongbow.java"
+    },
+    {
+      "name": "Fang Dragon",
+      "engine_capability": "full",
+      "mana_cost": "{5}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "adventure",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FangDragon.java"
+    },
+    {
+      "name": "Azure Fleet Admiral",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Mono-Blue Terror V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "complex",
+      "mechanics": [
+        "monarch",
+        "etb_trigger",
+        "blocking_filter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AzureFleetAdmiral.java"
     }
   ],
   "unresolved": []

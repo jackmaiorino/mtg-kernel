@@ -2914,6 +2914,9 @@ enum PermanentFilterRecipe {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CreatureEffectFilterRecipe {
     WithoutKeyword(&'static str),
+    /// Creatures controlled by the effect's controller's one opponent
+    /// (Forktail Sweep's "each creature you don't control").
+    OpponentControlled,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3282,7 +3285,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Squadron Hawk"
         | "Balustrade Spy"
         | "Spellstutter Sprite"
-        | "Glint Hawk" => keywords.push("Keywords::FLYING"),
+        | "Glint Hawk"
+        | "Fang Dragon" => keywords.push("Keywords::FLYING"),
         "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" | "Webweaver Changeling" => {
             keywords.push("Keywords::REACH")
         }
@@ -4270,6 +4274,7 @@ fn creature_effect_filter_token(filter: CreatureEffectFilterRecipe) -> String {
         CreatureEffectFilterRecipe::WithoutKeyword(keyword) => {
             format!("without_keyword:{}", keyword.to_ascii_lowercase())
         }
+        CreatureEffectFilterRecipe::OpponentControlled => "opponent_controlled".to_string(),
     }
 }
 
@@ -4336,6 +4341,10 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             keyword.to_ascii_lowercase(),
             amount
         ),
+        AbilityEffectRecipe::DamageAllCreatures {
+            amount,
+            filter: CreatureEffectFilterRecipe::OpponentControlled,
+        } => format!("ability_effect_damage_all_creatures_opponent_controlled_{amount}"),
         AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
             "ability_effect_exile_target_players_graveyard".to_string()
         }
@@ -4546,6 +4555,47 @@ fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
     }
 }
 
+/// Alternative spell characteristics for Adventure cards. Fang Dragon's
+/// Forktail Sweep half is a red sorcery dealing 1 damage to each creature its
+/// controller doesn't control -- the shared engine cast-method path owns
+/// exiling the physical card (with `ObjectStateV4::on_adventure = true`)
+/// instead of its ordinary graveyard departure.
+fn adventure_for(name: &str) -> String {
+    match name {
+        "Fang Dragon" => {
+            "Some(AdventureDef { name: \"Forktail Sweep\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_damage_all_creatures_opponent_controlled_1 })".to_string()
+        }
+        _ => "None".to_string(),
+    }
+}
+
+fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
+    match name {
+        "Fang Dragon" => Some(AbilityEffectRecipe::DamageAllCreatures {
+            amount: 1,
+            filter: CreatureEffectFilterRecipe::OpponentControlled,
+        }),
+        _ => None,
+    }
+}
+
+/// Card names whose Adventure creature face has its own visible name
+/// distinct from the front (physical) card's own name -- see
+/// `card_id_by_visible_name`'s face-2 arm.
+fn adventure_face_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Fang Dragon" => Some("Forktail Sweep"),
+        _ => None,
+    }
+}
+
+/// True iff this permanent can't be blocked by creatures controlled by
+/// whoever currently holds the monarchy -- see
+/// `CardDef::cant_be_blocked_by_monarchs_creatures`'s doc.
+fn cant_be_blocked_by_monarchs_creatures_for(name: &str) -> bool {
+    name == "Azure Fleet Admiral"
+}
+
 /// Minimum number of creatures required to block one attacker. The engine
 /// treats zero/one as ordinary blocking and enforces larger values against
 /// the complete declaration, with Troll of Khazad-dum requiring three.
@@ -4677,6 +4727,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "etb_if_collect_evidence_6:target_creature:plus_one_counter:gain_life_2"
         }
         "Avenging Hunter" => "etb:take_initiative:undercity",
+        "Azure Fleet Admiral" => "etb:become_monarch",
         "Delver of Secrets" => {
             "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
         }
@@ -5052,6 +5103,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 activated_effects.push(effect);
             }
         }
+        if let Some(effect) = adventure_effect_recipe_for(&card.name) {
+            if !activated_effects.contains(&effect) {
+                activated_effects.push(effect);
+            }
+        }
     }
     for effect in activated_effects {
         let function_name = ability_effect_fn_name(effect);
@@ -5108,6 +5164,12 @@ fn codegen(cards: &[CardJson]) -> String {
                 filter: CreatureEffectFilterRecipe::WithoutKeyword(keyword),
             } => {
                 writeln!(out, "    EffectOp::DamageAllCreatures {{ filter: CreatureFilter::WithoutKeyword(Keywords::{keyword}), amount: {amount} }}").unwrap();
+            }
+            AbilityEffectRecipe::DamageAllCreatures {
+                amount,
+                filter: CreatureEffectFilterRecipe::OpponentControlled,
+            } => {
+                writeln!(out, "    EffectOp::DamageAllCreatures {{ filter: CreatureFilter::OpponentControlled, amount: {amount} }}").unwrap();
             }
             AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
                 writeln!(
@@ -6969,6 +7031,22 @@ fn codegen(cards: &[CardJson]) -> String {
             executable && delve_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        adventure: {},",
+            if executable {
+                adventure_for(&c.name)
+            } else {
+                "None".to_string()
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        cant_be_blocked_by_monarchs_creatures: {},",
+            executable && cant_be_blocked_by_monarchs_creatures_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -6987,12 +7065,13 @@ fn codegen(cards: &[CardJson]) -> String {
 
     // ---- visible name (front/transform-back/adventure face) -> (id, face) --
     // Front names always resolve to face 0; a transforming card's back-face
-    // name resolves to face 1 (`ObjectStateV4::face_index`'s meaning). Slot
-    // reserved for adventure spell-side names at face 2 once Task 11 lands
-    // (Fang Dragon's "Forktail Sweep" and any sibling); no card in the pool
-    // has one yet, so no `=> Some((_, 2))` arm exists today. Tokens are not
-    // included here: they already resolve by their registry name through
-    // `card_id_by_name`, and a token has no alternate face.
+    // name resolves to face 1 (`ObjectStateV4::face_index`'s meaning). An
+    // Adventure card's spell-side name (Fang Dragon's "Forktail Sweep")
+    // resolves to face 2 -- purely a lookup convention for name resolution,
+    // unrelated to `ObjectStateV4::face_index`/`on_adventure`, which never
+    // takes the value 2 (face_index is reserved for transform). Tokens are
+    // not included here: they already resolve by their registry name
+    // through `card_id_by_name`, and a token has no alternate face.
     writeln!(
         out,
         "pub fn card_id_by_visible_name(name: &str) -> Option<(u16, u8)> {{"
@@ -7005,6 +7084,11 @@ fn codegen(cards: &[CardJson]) -> String {
     for (i, c) in cards.iter().enumerate() {
         if let Some(back_name) = transform_face_name_for(&c.name) {
             writeln!(out, "        {back_name:?} => Some(({i}, 1)),").unwrap();
+        }
+    }
+    for (i, c) in cards.iter().enumerate() {
+        if let Some(adventure_name) = adventure_face_name_for(&c.name) {
+            writeln!(out, "        {adventure_name:?} => Some(({i}, 2)),").unwrap();
         }
     }
     writeln!(out, "        _ => None,").unwrap();
@@ -7020,9 +7104,15 @@ fn codegen(cards: &[CardJson]) -> String {
     // remain bound alongside each Blast's checked color and
     // targeting-versus-resolution filter timing. Wildfire utility effects,
     // typed battlefield searches, Storm, and Clue remain bound too.
+    // v33 adds Fang Dragon's Adventure characteristics/effect (Forktail
+    // Sweep) and Azure Fleet Admiral's `cant_be_blocked_by_monarchs_creatures`
+    // static flag; the monarch draw/combat-transfer triggers themselves are
+    // engine-owned, not per-card recipes, so they add no new canon token
+    // (Azure Fleet Admiral's ETB grant is already covered by the existing
+    // `trigger=` token via `etb:become_monarch`).
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v32\n");
+    let mut canon = String::from("kernel_carddb/v33\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -7223,6 +7313,19 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("delve=");
         canon.push_str(&delve_for(&c.name).to_string());
+        canon.push('|');
+        canon.push_str("adventure=");
+        canon.push_str(&adventure_for(&c.name));
+        canon.push('|');
+        canon.push_str("adventure_effect=");
+        if let Some(effect) = adventure_effect_recipe_for(&c.name) {
+            canon.push_str(&ability_effect_token(effect));
+        } else {
+            canon.push_str("none");
+        }
+        canon.push('|');
+        canon.push_str("cant_be_blocked_by_monarchs_creatures=");
+        canon.push_str(&cant_be_blocked_by_monarchs_creatures_for(&c.name).to_string());
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());

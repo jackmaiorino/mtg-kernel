@@ -717,6 +717,10 @@ fn avenging_hunter_etb_effect() -> EffectOp {
     }
 }
 
+fn azure_fleet_admiral_etb_effect() -> EffectOp {
+    EffectOp::BecomeMonarch
+}
+
 fn delver_of_secrets_effect() -> EffectOp {
     // At the beginning of your upkeep, look at the top card of your
     // library. You may reveal that card. If an instant or sorcery card is
@@ -1010,6 +1014,14 @@ const AVENGING_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     effect: avenging_hunter_etb_effect,
 }];
 
+const AZURE_FLEET_ADMIRAL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: azure_fleet_admiral_etb_effect,
+}];
+
 const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningOfUpkeep {
         controller_only: true,
@@ -1080,6 +1092,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Troublemaker Ouphe" => &TROUBLEMAKER_OUPHE_TRIGGERS,
         "Vitu-Ghazi Inspector" => &VITU_GHAZI_INSPECTOR_TRIGGERS,
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
+        "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
         _ => &[],
     }
@@ -1165,6 +1178,19 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    // The monarch end-step draw trigger is engine-owned like Initiative's
+    // Undercity trigger, but (unlike Avenging Hunter's fixed Initiative
+    // source) its source is never one fixed card: Azure Fleet Admiral's ETB
+    // grants it, but a later combat-damage transfer (`engine::
+    // deal_combat_damage`) can rebind `EngineState::monarch_source` to
+    // whichever creature's controller took the crown next. So this bypasses
+    // the per-card `trigger_effect_matches`/`trigger_target_spec` dispatch
+    // entirely rather than name-gating on one card the way the "Avenging
+    // Hunter" branch below does -- the trigger never targets, regardless of
+    // `card_def`.
+    if matches!(effect, EffectOp::ResolveMonarchTrigger { .. }) {
+        return Some(TargetSpec::None);
+    }
     if !trigger_effect_matches(card_def, effect) {
         return None;
     }
@@ -1828,6 +1854,28 @@ fn triggers_from_events(
             is_madness_offer: false,
             kicked: false,
             target_spec,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(binding.source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
+
+    for event in events {
+        let CommittedEvent::MonarchTrigger { binding } = event else {
+            continue;
+        };
+        let binding = *binding;
+        new_triggers.push(PendingTrigger {
+            controller: binding.player,
+            source: binding.source.source,
+            effect: EffectOp::ResolveMonarchTrigger { binding },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,

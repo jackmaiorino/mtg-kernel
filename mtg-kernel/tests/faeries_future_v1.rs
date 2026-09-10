@@ -184,7 +184,7 @@ fn resolve_top_without_choice(state: &mut GameState) {
 
 #[test]
 fn definitions_ids_keywords_programs_and_target_grammars_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x555d_ca6a_adfb_7b66);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x9378_c4e1_705d_5875);
     for (name, expected_id) in [
         ("Bind the Monster", 4),
         ("Harrier Strix", 52),

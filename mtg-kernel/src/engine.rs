@@ -260,6 +260,13 @@ pub struct EngineState {
     /// Undercity's Throne room is the first consumer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub until_next_turn_keywords: Vec<UntilNextTurnKeywordEffectV1>,
+    /// Historical card-backed source used to represent the monarch's
+    /// end-step draw trigger on this object-id based stack -- see
+    /// `MonarchTriggerBindingV1`'s doc. Updated to whichever object most
+    /// recently made someone the monarch, whether Azure Fleet Admiral's own
+    /// ETB grant or a combat-damage transfer's attacking creature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monarch_source: Option<AbilitySourceContractV4>,
 }
 
 fn next_stack_item_id(state: &mut GameState) -> StackItemId {
@@ -1566,6 +1573,12 @@ fn validate_physical_spell_cast_origin(
                         | CastMethodV4::Omen
                 )
         }
+        SpellCastRouteV4::AdventureExile => {
+            origin.origin_zone == Zone::Exile
+                && source.owner == item.controller
+                && cast_method == CastMethodV4::Normal
+                && def.adventure.is_some()
+        }
         SpellCastRouteV4::GraveyardFlashback => {
             origin.origin_zone == Zone::Graveyard
                 && source.owner == item.controller
@@ -1738,7 +1751,8 @@ fn validate_spell_source_contract_fields(
         CastMethodV4::Flashback if def.flashback.is_some() => {}
         CastMethodV4::Madness if def.madness_cost.is_some() => {}
         CastMethodV4::Escape if def.escape.is_some() => {}
-        CastMethodV4::Omen if supported_omen(def).is_some() => {}
+        CastMethodV4::Omen
+            if supported_omen(def).is_some() || supported_adventure(def).is_some() => {}
         CastMethodV4::Bestow if supported_bestow(def).is_some() => {}
         CastMethodV4::Plotted
             if def.plot_cost.is_some()
@@ -1880,7 +1894,8 @@ fn storm_source_contract_is_structurally_valid(
         SpellCastRouteV4::GraveyardFlashback
         | SpellCastRouteV4::Plotted { .. }
         | SpellCastRouteV4::Madness
-        | SpellCastRouteV4::GraveyardEscape => false,
+        | SpellCastRouteV4::GraveyardEscape
+        | SpellCastRouteV4::AdventureExile => false,
     };
     definition.name == "Weather the Storm"
         && definition.is_executable()
@@ -2257,7 +2272,11 @@ fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType
     match item.v4.cast_method {
         Some(CastMethodV4::Bestow) => card_type == CardType::Enchantment,
         Some(CastMethodV4::Omen) => {
-            supported_omen(def).is_some_and(|omen| omen.types.contains(&card_type))
+            if let Some(adventure) = supported_adventure(def) {
+                adventure.types.contains(&card_type)
+            } else {
+                supported_omen(def).is_some_and(|omen| omen.types.contains(&card_type))
+            }
         }
         _ => def.has_type(card_type),
     }
@@ -4518,11 +4537,45 @@ fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
     .then_some(bestow)
 }
 
+/// Returns the supported Adventure definition for the current cast pipeline.
+/// Cast-form selection reuses the ordinary two-form decision Omen/Bestow
+/// already share (form 1 == the Adventure), and a finalized Adventure cast
+/// is tagged the same `CastMethodV4::Omen` a real Omen card's alternative
+/// form gets -- see `CastMethodV4::Omen`'s doc for why this pool shares
+/// that discriminant instead of adding a new one. Every consumer gated on
+/// `CastMethodV4::Omen` further dispatches on `supported_adventure`/
+/// `supported_omen` (mutually exclusive per card) to pick the right
+/// departure zone, cost, and effect. `viable_pending_spell_forms`
+/// additionally restricts form 1 to a Hand-origin cast, since the Adventure
+/// side can never be cast back out of exile (only the creature can, via
+/// `ObjectStateV4::on_adventure`, which never runs through this modal path
+/// at all -- see `castable_spells`' exile loop).
+fn supported_adventure(def: &card_def::CardDef) -> Option<&card_def::AdventureDef> {
+    let adventure = def.adventure.as_ref()?;
+    let has_spell_type =
+        adventure.types.contains(&CardType::Instant) || adventure.types.contains(&CardType::Sorcery);
+    (has_spell_type
+        && def.alt_cost.is_none()
+        && def.kicker_cost.is_none()
+        && def.additional_cost.is_none()
+        && def.flashback.is_none()
+        && def.plot_cost.is_none()
+        && def.madness_cost.is_none()
+        && def.mode2.is_none()
+        && def.mode3.is_none()
+        && def.escape.is_none()
+        && def.omen.is_none()
+        && def.bestow.is_none()
+        && def.generic_cost_reduction.is_none())
+    .then_some(adventure)
+}
+
 fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
     def.mode2.is_some()
         || def.mode3.is_some()
         || supported_omen(def).is_some()
         || supported_bestow(def).is_some()
+        || supported_adventure(def).is_some()
 }
 
 fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
@@ -4531,6 +4584,7 @@ fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
     } else if def.mode2.is_some()
         || supported_omen(def).is_some()
         || supported_bestow(def).is_some()
+        || supported_adventure(def).is_some()
     {
         2
     } else {
@@ -4546,7 +4600,8 @@ fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpe
             .as_ref()
             .map(|mode| mode.target_spec)
             .or_else(|| supported_omen(def).map(|omen| omen.target_spec))
-            .or_else(|| supported_bestow(def).map(|bestow| bestow.target_spec)),
+            .or_else(|| supported_bestow(def).map(|bestow| bestow.target_spec))
+            .or_else(|| supported_adventure(def).map(|adventure| adventure.target_spec)),
         2 => def.mode3.as_ref().map(|mode| mode.target_spec),
         _ => None,
     }
@@ -4623,6 +4678,45 @@ fn viable_pending_spell_forms(
         }
         return forms;
     }
+    if let Some(adventure) = supported_adventure(def) {
+        let mut forms = Vec::with_capacity(2);
+        let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
+        if target_prefix_can_complete_for_controller_and_source(
+            def.target_spec,
+            &pending.targets_chosen,
+            pending.controller,
+            targeting_source_for_object(state, pending.spell),
+            state,
+        ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
+            && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
+        {
+            forms.push(0);
+        }
+        // The Adventure side is only ever a Hand-zone cast: a card sitting
+        // in Exile can only be castable via `ObjectStateV4::on_adventure`
+        // (the creature face only), never modally re-offered as the
+        // Adventure again.
+        let cast_from_hand = state
+            .objects
+            .get(pending.spell)
+            .v4
+            .spell_cast_origin
+            .is_some_and(|origin| origin.origin_zone == Zone::Hand);
+        if cast_from_hand
+            && target_prefix_can_complete_for_controller_and_source(
+                adventure.target_spec,
+                &pending.targets_chosen,
+                pending.controller,
+                targeting_source_for_object(state, pending.spell),
+                state,
+            )
+            && pending_cast_form_timing_ok(adventure.types, Keywords::NONE, pending, state)
+            && mana::can_pay(&adventure.cost, 0, pending.controller, state).is_some()
+        {
+            forms.push(1);
+        }
+        return forms;
+    }
     let Some(omen) = supported_omen(def) else {
         return viable_printed_spell_modes(def, pending.spell, pending.controller, state);
     };
@@ -4684,6 +4778,9 @@ fn pending_cast_selected_mana_cost(
     match pending.mode_chosen {
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
         Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
+        Some(1) if supported_adventure(def).is_some() => {
+            supported_adventure(def).map(|a| a.cost)
+        }
         Some(_) => Some(effective_normal_cast_cost(def, pending.controller, state)),
         None => None,
     }
@@ -4723,6 +4820,9 @@ fn is_castable_now(
         return false;
     }
     if def.bestow.is_some() && supported_bestow(def).is_none() {
+        return false;
+    }
+    if def.adventure.is_some() && supported_adventure(def).is_none() {
         return false;
     }
     if cast_method != CastMethodV4::Normal
@@ -4803,7 +4903,24 @@ fn is_castable_now(
                     )
                     && mana::can_pay(&bestow.cost, 0, player, state).is_some()
             });
-            main_ok || omen_ok || bestow_ok
+            // The Adventure side is only ever offered from Hand -- unlike
+            // Omen/Bestow above, exile never legalizes it: a card sitting in
+            // exile with `on_adventure` set offers only its creature face
+            // (already covered by `main_ok`, zone-agnostic), never the
+            // Adventure spell again.
+            let adventure_ok = supported_adventure(def).is_some_and(|adventure| {
+                state.objects.get(id).zone == Zone::Hand
+                    && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
+                    && target_prefix_can_complete_for_controller_and_source(
+                        adventure.target_spec,
+                        &[],
+                        player,
+                        targeting_source_for_object(state, id),
+                        state,
+                    )
+                    && mana::can_pay(&adventure.cost, 0, player, state).is_some()
+            });
+            main_ok || omen_ok || bestow_ok || adventure_ok
         }
         CastMethodV4::Alternative
         | CastMethodV4::Madness
@@ -4830,6 +4947,16 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     }
     for &id in &state.exile {
         if state.objects.get(id).owner == player && is_plotted_castable_now(player, id, state) {
+            out.push(id);
+            continue;
+        }
+        // Adventure exile permission: the creature face of an Adventure
+        // card sitting in exile with `on_adventure` set is castable by its
+        // owner, no separate `PlayPermission` entry -- see that flag's doc.
+        if state.objects.get(id).owner == player
+            && state.objects.get(id).v4.on_adventure
+            && is_castable_now(player, id, CastMethodV4::Normal, state)
+        {
             out.push(id);
             continue;
         }
@@ -5475,6 +5602,15 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     if has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED) {
         return Vec::new();
     }
+    // Azure Fleet Admiral: "can't be blocked by creatures the monarch
+    // controls." Every creature the defending player controls is such a
+    // creature exactly when the defender is currently the monarch, so this
+    // excludes the whole defending battlefield up front rather than
+    // filtering blocker-by-blocker.
+    let attacker_def = &card_def::CARD_DEFS[attacker_obj.card_def as usize];
+    if attacker_def.cant_be_blocked_by_monarchs_creatures && state.monarch == Some(defender) {
+        return Vec::new();
+    }
     let attacker_flying = has_effective_keyword(state, attacker, Keywords::FLYING);
     let minimum = minimum_blockers_required(state, attacker);
     let blockers = state.players[defender.index()]
@@ -5870,9 +6006,15 @@ fn remaining_cast_payment_is_payable(
             .madness_cost
             .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
         CastMethodV4::Plotted => true,
-        CastMethodV4::Omen => supported_omen(def).is_some_and(|omen| {
-            mana::can_pay(&omen.cost, x_value, pending.controller, state).is_some()
-        }),
+        CastMethodV4::Omen => {
+            if let Some(adventure) = supported_adventure(def) {
+                mana::can_pay(&adventure.cost, x_value, pending.controller, state).is_some()
+            } else {
+                supported_omen(def).is_some_and(|omen| {
+                    mana::can_pay(&omen.cost, x_value, pending.controller, state).is_some()
+                })
+            }
+        }
         CastMethodV4::Bestow => supported_bestow(def).is_some_and(|bestow| {
             mana::can_pay(&bestow.cost, x_value, pending.controller, state).is_some()
         }),
@@ -5889,7 +6031,9 @@ fn finalized_cast_method(
     def: &card_def::CardDef,
 ) -> CastMethodV4 {
     if staged_method == CastMethodV4::Normal {
-        if supported_omen(def).is_some() && pending.mode_chosen == Some(1) {
+        if (supported_omen(def).is_some() || supported_adventure(def).is_some())
+            && pending.mode_chosen == Some(1)
+        {
             CastMethodV4::Omen
         } else if supported_bestow(def).is_some() && pending.mode_chosen == Some(1) {
             CastMethodV4::Bestow
@@ -6605,8 +6749,15 @@ pub(crate) fn validate_pending_cast(
     };
     match method {
         CastMethodV4::Normal => {
+            // `move_to_stack` clears `ObjectStateV4::on_adventure`;
+            // `begin_cast_ex`/`abort_cast` restamp it `true` across the
+            // active Exile -> Stack attempt (see those restamps' docs), so
+            // it is still readable here on the live post-move source.
+            let has_adventure_exile_permission =
+                pending.origin_zone == Zone::Exile && source.v4.on_adventure;
             if pending.origin_zone != Zone::Hand
-                && !(pending.origin_zone == Zone::Exile && has_prior_exile_permission())
+                && !(pending.origin_zone == Zone::Exile
+                    && (has_prior_exile_permission() || has_adventure_exile_permission))
             {
                 return Err(
                     "normal cast has an invalid origin zone or exile permission".to_string()
@@ -8803,6 +8954,18 @@ fn triggered_stack_item_expected_target_spec(
         }
         effect::validate_initiative_trigger_binding(state, *binding)?;
     }
+    if let EffectOp::ResolveMonarchTrigger { binding } = inline_effect {
+        let Some(source_contract) = ability_source_contract else {
+            return Err("Monarch trigger lost its historical designation source".to_string());
+        };
+        if source_contract != binding.source
+            || item.controller != binding.player
+            || item.source != binding.source.source
+        {
+            return Err("Monarch trigger changed its source or controller".to_string());
+        }
+        effect::validate_monarch_trigger_binding(state, *binding)?;
+    }
     let source_def = card_def::CARD_DEFS
         .get(source_card_def as usize)
         .ok_or("triggered stack item source definition is missing")?;
@@ -8923,11 +9086,15 @@ pub(crate) fn validated_stack_item_target_spec(
                 if item.mode_chosen != 0 {
                     return Err("Omen spell stack item carries a modal index".to_string());
                 }
-                Some(
-                    supported_omen(def)
-                        .ok_or("Omen spell stack item lost its definition")?
-                        .target_spec,
-                )
+                if let Some(adventure) = supported_adventure(def) {
+                    Some(adventure.target_spec)
+                } else {
+                    Some(
+                        supported_omen(def)
+                            .ok_or("Omen spell stack item lost its definition")?
+                            .target_spec,
+                    )
+                }
             } else if item.v4.cast_method == Some(CastMethodV4::Bestow) {
                 if item.mode_chosen != 0 {
                     return Err("Bestow spell stack item carries a modal index".to_string());
@@ -9272,6 +9439,24 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        if supported_adventure(def).is_some() {
+            let departure = plan_spell_departure(state, item, Zone::Exile)?;
+            if item.is_copy {
+                return apply_spell_departure(state, departure);
+            }
+            apply_spell_departure(state, departure)?;
+            if state.objects.get(item.source).zone != Zone::Exile
+                || !state.exile.contains(&item.source)
+            {
+                return Err("resolved Adventure source did not enter exile".to_string());
+            }
+            // 715-style Adventure exile: grant the owner permission to cast
+            // the creature face later from this exact exile incarnation.
+            // Stamped only after the move, the same way `plot_spell`
+            // re-stamps `plotted_turn` after its own zone change.
+            state.objects.get_mut(item.source).v4.on_adventure = true;
+            return Ok(());
+        }
         supported_omen(def).ok_or("resolved Omen spell lost its definition")?;
         let departure = plan_spell_departure(state, item, Zone::Library)?;
         if item.is_copy {
@@ -9299,8 +9484,9 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
 }
 
 /// A spell countered by the rules for having no legal targets performs none
-/// of its resolution effects. In particular, an Omen card goes to the
-/// graveyard here rather than applying its successful source shuffle.
+/// of its resolution effects. In particular, an Omen or Adventure card goes
+/// to the graveyard here rather than applying its successful post-resolution
+/// departure (library shuffle, or exile-with-permission).
 fn finish_failed_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
     if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Omen) {
         let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
@@ -9465,7 +9651,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // `finalize_cast`). Each printed mode retains its own definition-owned
     // program, while Omen continues to use its separate cast form.
     let program = if item.v4.cast_method == Some(CastMethodV4::Omen) {
-        supported_omen(def).map(|omen| (omen.effect)())
+        if let Some(adventure) = supported_adventure(def) {
+            Some((adventure.effect)())
+        } else {
+            supported_omen(def).map(|omen| (omen.effect)())
+        }
     } else if item.v4.cast_method == Some(CastMethodV4::Bestow) {
         supported_bestow(def).map(|_| {
             EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters {
@@ -9832,6 +10022,28 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::CombatDamage => {
             deal_combat_damage(state);
+        }
+        Step::End => {
+            let p = state.active_player;
+            // 306.3: logged only for whichever player's own End step this
+            // is, and only if they currently hold the monarchy -- the same
+            // "active player's own step, gated on a global designation"
+            // shape as Initiative's Venture-at-upkeep above.
+            if state.monarch == Some(p) {
+                let Some(source) = state.engine.monarch_source else {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    return;
+                };
+                if event::log_monarch_trigger(state, p, source).is_err() {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        source.source,
+                    ));
+                    return;
+                }
+            }
+            collect_and_queue_triggers(state);
         }
         Step::Cleanup => {
             // 514.1/514.2: reset damage, "until end of turn" effects end,
@@ -10579,6 +10791,37 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
                 ));
                 return;
             }
+        }
+    }
+    // 306.4: whenever a creature deals combat damage to the monarch, its
+    // controller becomes the monarch. This does not use the stack (unlike
+    // the Initiative combat-transfer case immediately above, which this
+    // kernel deliberately does route through a trigger for consistency with
+    // Undercity's own stack-based transfer) -- a direct designation change,
+    // mirrored the same way the Initiative transfer above locates its
+    // triggering damage event.
+    if let Some(holder) = state.monarch {
+        let transfer_player = state.engine.event_log[event_start..]
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CombatDamageToPlayer {
+                    source,
+                    player,
+                    amount,
+                    ..
+                } if *player == holder
+                    && *amount > 0
+                    && state.objects.try_get(*source).is_some_and(|object| {
+                        object.zone == Zone::Battlefield
+                            && object_has_type(state, *source, CardType::Creature)
+                    }) =>
+                {
+                    Some(state.objects.get(*source).controller)
+                }
+                _ => None,
+            });
+        if let Some(player) = transfer_player {
+            state.monarch = Some(player);
         }
     }
     collect_and_queue_triggers(state);
@@ -12941,6 +13184,15 @@ fn begin_cast_ex(
         && state.objects.get(spell_id).owner == player
         && def.plot_cost.is_some()
         && plotted_turn.is_some_and(|turn| turn < state.turn);
+    // Fang Dragon's creature face, cast straight from exile while
+    // `on_adventure` is set -- see that flag's doc. Read before
+    // `move_to_stack` clears it, then re-stamped across this exact
+    // Exile -> Stack attempt the same way `is_plotted` restamps
+    // `plotted_turn` below.
+    let is_adventure_exile = forced_cast_method.is_none()
+        && origin_zone == Zone::Exile
+        && state.objects.get(spell_id).owner == player
+        && state.objects.get(spell_id).v4.on_adventure;
     let target_spec = def.target_spec;
     let cast_method = forced_cast_method.unwrap_or_else(|| {
         if origin_zone == Zone::Graveyard {
@@ -12963,6 +13215,9 @@ fn begin_cast_ex(
         },
         CastMethodV4::Madness => SpellCastRouteV4::Madness,
         CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+        CastMethodV4::Normal if origin_zone == Zone::Exile && is_adventure_exile => {
+            SpellCastRouteV4::AdventureExile
+        }
         CastMethodV4::Normal if origin_zone == Zone::Exile => {
             let permission = active_permission_for(player, spell_id, state)
                 .expect("an ordinary Exile cast was offered through an exact play permission");
@@ -13012,6 +13267,15 @@ fn begin_cast_ex(
         // default. Keep it only across the active Exile -> Stack attempt so
         // source validation and an abort-to-Exile retry retain the marker.
         state.objects.get_mut(spell_id).plotted_turn = plotted_turn;
+    }
+    if is_adventure_exile {
+        // `move_to_stack` also resets `ObjectStateV4::on_adventure` to
+        // `false` by default. Restamp it across the active Exile -> Stack
+        // attempt the same way `is_plotted` restamps `plotted_turn` above,
+        // so source validation and an abort-to-Exile retry retain the
+        // permission; it clears for good only once the creature genuinely
+        // leaves exile onward (battlefield or graveyard).
+        state.objects.get_mut(spell_id).v4.on_adventure = true;
     }
     // `move_to_stack` resets incarnation-local object state. Install the
     // independently frozen pre-move evidence only after that reset, before
@@ -13274,9 +13538,14 @@ fn finalize_owned_cast(
             }
         }
         CastMethodV4::Omen => {
-            let omen = supported_omen(def)
-                .expect("validated Omen cast has definition-owned spell characteristics");
-            let Some(plan) = mana::can_pay(&omen.cost, x_value, pending.controller, state) else {
+            let cost = if let Some(adventure) = supported_adventure(def) {
+                adventure.cost
+            } else {
+                supported_omen(def)
+                    .expect("validated Omen cast has definition-owned spell characteristics")
+                    .cost
+            };
+            let Some(plan) = mana::can_pay(&cost, x_value, pending.controller, state) else {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
             };
@@ -13385,9 +13654,13 @@ fn finalize_owned_cast(
         reference.power_lki = Some(power);
     }
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
-        supported_omen(def)
-            .expect("validated Omen cast retains its definition")
-            .target_spec
+        if let Some(adventure) = supported_adventure(def) {
+            adventure.target_spec
+        } else {
+            supported_omen(def)
+                .expect("validated Omen cast retains its definition")
+                .target_spec
+        }
     } else if cast_method == CastMethodV4::Bestow {
         supported_bestow(def)
             .expect("validated Bestow cast retains its definition")
@@ -13428,9 +13701,9 @@ fn finalize_owned_cast(
     item.v4.target_spec = Some(selected_target_spec);
     item.v4.target_contracts = pending.target_contracts;
     item.discarded = discarded;
-    // The Omen selection is canonicalized into `cast_method`; the spell's
-    // own modal index remains zero because the front-face mode2 program is
-    // unrelated to the alternative Omen characteristics.
+    // The Omen/Adventure selection is canonicalized into `cast_method`; the
+    // spell's own modal index remains zero because the front-face mode2
+    // program is unrelated to the alternative characteristics.
     item.mode_chosen = if matches!(cast_method, CastMethodV4::Omen | CastMethodV4::Bestow) {
         0
     } else {
@@ -13522,6 +13795,10 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     );
     let owner = state.objects.get(pending.spell).owner;
     let plotted_turn = state.objects.get(pending.spell).plotted_turn;
+    let is_adventure_exile = pending
+        .source_contract
+        .spell_cast_origin
+        .is_some_and(|origin| matches!(origin.route, SpellCastRouteV4::AdventureExile));
     let to_zone = if cast_method == CastMethodV4::Madness {
         Zone::Graveyard
     } else {
@@ -13549,6 +13826,12 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         object
             .v4
             .reset_for_zone_change(object.card_def, to_zone, turn);
+        if is_adventure_exile && to_zone == Zone::Exile {
+            // Same restamp `begin_cast_ex` applies across a live attempt:
+            // an aborted Adventure-exile cast returns to the exact exile
+            // incarnation it started from and must retain its permission.
+            object.v4.on_adventure = true;
+        }
     }
     if to_zone == Zone::Hand {
         for observer in [PlayerId::P0, PlayerId::P1] {

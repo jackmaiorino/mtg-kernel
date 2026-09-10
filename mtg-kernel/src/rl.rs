@@ -7061,3 +7061,117 @@ mod delver_of_secrets_reveal_tests {
         }
     }
 }
+
+/// Fang Dragon's Adventure (Forktail Sweep, cast from hand) and its creature
+/// face (cast from exile via `ObjectStateV4::on_adventure`) both reach the
+/// RL surface through the existing `Decision::CastSpellOrPass` ->
+/// `castable_spells` -> `ActionSemanticV1::CastSpell` -> `Action::
+/// CastSpell(ObjectId)` path (`core_surface_action_candidates_v1`'s
+/// `CastSpellOrPass` arm, unmodified): `engine::castable_spells` already
+/// offers Fang Dragon's one stable `ObjectId` from either zone once it is
+/// legal there, so neither new cast option needed a distinct action kind or
+/// any `flat_policy_v2.rs` change.
+#[cfg(test)]
+mod adventure_and_monarch_rl_tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::state::{Counters, ObjectStateV4, Step};
+
+    fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
+        let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"));
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: player,
+            controller: player,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        match zone {
+            Zone::Hand => state.players[player.index()].hand.push(id),
+            Zone::Exile => state.exile.push(id),
+            other => panic!("test helper does not construct objects in {other:?}"),
+        }
+        id
+    }
+
+    fn cast_spell_candidate_for(
+        candidates: &[LegalActionCandidateV1],
+        id: ObjectId,
+    ) -> &LegalActionCandidateV1 {
+        candidates
+            .iter()
+            .find(|candidate| {
+                matches!(
+                    candidate.surface_action,
+                    SurfaceAction::Action(Action::CastSpell(candidate_id)) if candidate_id == id
+                )
+            })
+            .unwrap_or_else(|| panic!("expected a CastSpell({id:?}) candidate among {candidates:?}"))
+    }
+
+    #[test]
+    fn forktail_sweep_adventure_cast_is_a_legal_action_candidate_from_hand() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0x4144_5645_4e54_5552);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Hand);
+        // Exactly {1}{R}: only Forktail Sweep is payable.
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+
+        let decision = engine::advance_until_decision(&mut state);
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state).unwrap();
+        let cast_candidate = cast_spell_candidate_for(&candidates, fang_dragon);
+
+        let SurfaceAction::Action(action) = cast_candidate.surface_action.clone() else {
+            panic!("expected a direct Action candidate");
+        };
+        let mut applied = state.clone();
+        engine::step(&mut applied, action)
+            .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        assert!(
+            applied.stack.iter().any(|item| item.source == fang_dragon),
+            "the adventure cast reached the stack"
+        );
+    }
+
+    #[test]
+    fn fang_dragon_exile_cast_is_a_legal_action_candidate_via_on_adventure() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0x4144_5645_4e54_5552);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Exile);
+        state.objects.get_mut(fang_dragon).v4.on_adventure = true;
+        // {5}{R}{R}: the printed creature cost.
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 5;
+
+        let decision = engine::advance_until_decision(&mut state);
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state).unwrap();
+        let cast_candidate = cast_spell_candidate_for(&candidates, fang_dragon);
+
+        let SurfaceAction::Action(action) = cast_candidate.surface_action.clone() else {
+            panic!("expected a direct Action candidate");
+        };
+        let mut applied = state.clone();
+        engine::step(&mut applied, action)
+            .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        assert!(
+            applied.stack.iter().any(|item| item.source == fang_dragon),
+            "the exile cast reached the stack"
+        );
+    }
+}

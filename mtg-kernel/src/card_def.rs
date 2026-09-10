@@ -933,6 +933,22 @@ pub struct BestowDef {
     pub target_spec: TargetSpec,
 }
 
+/// Adventure's alternative spell characteristics (Fang Dragon's Forktail
+/// Sweep). Form zero remains the ordinary creature spell, castable from hand
+/// at its own printed timing; this form is the named instant/sorcery,
+/// castable from hand at sorcery/instant speed per its own `types`. Unlike
+/// Bestow/Omen, resolving this form does not send the physical card to its
+/// normal post-resolution zone: `engine::finish_resolved_stack_item` exiles
+/// it and stamps `ObjectStateV4::on_adventure = true` instead, so the
+/// creature face may later be cast from exile -- see that flag's doc.
+pub struct AdventureDef {
+    pub name: &'static str,
+    pub cost: Cost,
+    pub types: &'static [CardType],
+    pub target_spec: TargetSpec,
+    pub effect: fn() -> EffectOp,
+}
+
 /// A deterministic value sampled while deriving a spell's total generic
 /// mana cost. Kept data-driven and card-name-neutral so the same cast-cost
 /// path can serve battlefield reducers (Affinity), graveyard reducers
@@ -1206,6 +1222,16 @@ pub struct CardDef {
     /// remains stable; see `mana::delve_payment_plan` for the payment-time
     /// mechanics and `build.rs`'s `delve_for` for the source table.
     pub delve: bool,
+    /// Alternative Adventure spell characteristics, if any. Appended so
+    /// every earlier generated field identity remains stable; see
+    /// `AdventureDef`'s doc and `build.rs`'s `adventure_for` for the source
+    /// table.
+    pub adventure: Option<AdventureDef>,
+    /// True iff this permanent can't be blocked by creatures controlled by
+    /// whoever currently holds the monarchy (Azure Fleet Admiral). Read by
+    /// `engine::legal_blockers_for`. Appended so every earlier generated
+    /// field identity remains stable.
+    pub cant_be_blocked_by_monarchs_creatures: bool,
 }
 
 impl CardDef {
@@ -1513,8 +1539,10 @@ mod tests {
         // Infiltrator, Webweaver Changeling, and Glint Hawk are appended as
         // ids 172-178, again without renumbering earlier ids. Delver of
         // Secrets is appended as id 179, again without renumbering earlier
-        // ids.
-        assert_eq!(CARD_DEFS.len(), 182);
+        // ids. Gurmag Angler and Viridian Longbow are appended as ids
+        // 180-181. Fang Dragon and Azure Fleet Admiral are appended as ids
+        // 182-183, again without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 184);
     }
 
     #[test]
@@ -1578,10 +1606,12 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v32_is_frozen() {
-        // Version 32 appends the final pool trio and Skeleton token after the
-        // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x555d_ca6a_adfb_7b66);
+    fn card_db_hash_v33_is_frozen() {
+        // Version 33 folds in Fang Dragon's Adventure characteristics/effect
+        // (Forktail Sweep) and Azure Fleet Admiral's
+        // `cant_be_blocked_by_monarchs_creatures` static flag, appended after
+        // `delve` without renumbering prior definitions.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x9378_c4e1_705d_5875);
     }
 
     #[test]
@@ -1816,7 +1846,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 182, "169 pool cards plus thirteen required tokens");
+        assert_eq!(full, 184, "171 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

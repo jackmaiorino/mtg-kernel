@@ -466,6 +466,13 @@ pub enum CommittedEvent {
     InitiativeTrigger {
         binding: crate::state::InitiativeTriggerBindingV1,
     },
+    /// Nonreplaceable marker for one engine-owned monarch end-step draw
+    /// trigger (306.3). `history_index` is self-authenticating against the
+    /// permanent event history before the resulting ability may be placed
+    /// on the stack, the same discipline `InitiativeTrigger` uses.
+    MonarchTrigger {
+        binding: crate::state::MonarchTriggerBindingV1,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -989,6 +996,42 @@ pub fn log_initiative_trigger(
         kind,
     };
     let committed = CommittedEvent::InitiativeTrigger { binding };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+    Ok(binding)
+}
+
+/// Logs one engine-owned monarch end-step draw trigger (306.3). Unlike
+/// `log_initiative_trigger`, `source` is not validated against one fixed
+/// card name: Azure Fleet Admiral's ETB grant and a combat-damage transfer
+/// (see `engine::deal_combat_damage`) both freeze whichever object caused
+/// the transfer into `EngineState::monarch_source`, and either is a valid
+/// source here as long as it is still a real object incarnation.
+pub fn log_monarch_trigger(
+    state: &mut GameState,
+    player: PlayerId,
+    mut source: crate::state::AbilitySourceContractV4,
+) -> Result<crate::state::MonarchTriggerBindingV1, String> {
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Monarch designation source no longer exists")?;
+    if live.card_def != source.card_def
+        || live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
+        || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
+    {
+        return Err("Monarch designation source contract is malformed".to_string());
+    }
+    source.controller = player;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Monarch event history exceeds u32".to_string())?;
+    let binding = crate::state::MonarchTriggerBindingV1 {
+        history_index,
+        player,
+        source,
+    };
+    let committed = CommittedEvent::MonarchTrigger { binding };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     Ok(binding)

@@ -133,6 +133,23 @@ pub struct ObjectStateV4 {
     /// restored state reject a unilateral rewrite of either value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
+    /// True iff this exact incarnation is a physical Adventure card sitting
+    /// in exile after its Adventure spell resolved (Fang Dragon after
+    /// Forktail Sweep resolves), granting its owner permission to cast the
+    /// creature face straight from exile. Deliberately distinct from
+    /// `face_index` (reserved for transform): an Adventure card never
+    /// changes battlefield face, only its cast-from-exile eligibility.
+    /// Cleared to `false` by every ordinary zone change
+    /// (`reset_for_zone_change`), including the Exile -> Stack move of
+    /// casting the creature itself; `engine::begin_cast_ex` and
+    /// `engine::abort_cast` re-stamp it `true` across an aborted retry the
+    /// same way `GameObject::plotted_turn` survives one, so only a zone
+    /// change that is not itself this permission's own cast/retry cycle
+    /// (i.e. actually leaving exile, or entering exile any other way) can
+    /// make it stick at `false`. A card exiled by any other means never has
+    /// this set.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub on_adventure: bool,
 }
 
 impl ObjectStateV4 {
@@ -174,6 +191,7 @@ impl ObjectStateV4 {
             landwalk_mask: 0,
             spell_cast_origin: None,
             finalized_cast_binding: None,
+            on_adventure: false,
         }
     }
 
@@ -348,6 +366,25 @@ pub struct InitiativeTriggerBindingV1 {
     pub kind: InitiativeTriggerKindV1,
 }
 
+/// Self-indexed provenance for one engine-owned monarch end-step draw
+/// trigger (306.3), bound the same way `InitiativeTriggerBindingV1` binds
+/// the undercity trigger. `source` is whichever object most recently made
+/// `player` the monarch (Azure Fleet Admiral's own `AbilitySourceContractV4`
+/// for the ETB grant, or the attacking creature's for a combat-damage
+/// transfer -- see `engine::EngineState::monarch_source`); unlike
+/// Initiative's Avenging-Hunter-only source, this is never validated
+/// against one fixed card name. There is only one monarch trigger kind, so
+/// no `kind` field is carried. The crown itself can also change hands by
+/// combat damage without this binding at all (306.4 does not use the
+/// stack): `engine::deal_combat_damage` mutates `GameState::monarch`
+/// directly for that case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MonarchTriggerBindingV1 {
+    pub history_index: u32,
+    pub player: PlayerId,
+    pub source: AbilitySourceContractV4,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerState {
     pub life: i32,
@@ -445,6 +482,14 @@ pub enum CastMethodV4 {
     Plotted,
     Escape,
     Bestow,
+    /// The alternative-characteristics form-1 cast: either a real Omen card
+    /// (Sagu Wildling) or an Adventure card's named spell (Fang Dragon's
+    /// Forktail Sweep) -- see `card_def::OmenDef`/`AdventureDef`. Shared
+    /// rather than split into a separate `Adventure` variant so this enum
+    /// (encoded by the frozen `flat_policy_v2.rs`) gains no new discriminant;
+    /// every consumer that dispatches on this tag further distinguishes the
+    /// two by which of `CardDef::omen`/`CardDef::adventure` the resolving
+    /// source actually carries (mutually exclusive per card).
     Omen,
 }
 
@@ -465,6 +510,14 @@ pub enum SpellCastRouteV4 {
     },
     Madness,
     GraveyardEscape,
+    /// Casting an Adventure card's creature face straight from exile while
+    /// `ObjectStateV4::on_adventure` is set -- see that flag's doc. Always
+    /// `CastMethodV4::Normal`, deliberately distinct from
+    /// `ExilePermission`: this permission is derived from the card's own
+    /// incarnation-local flag rather than a separately granted/expiring
+    /// `engine::PlayPermission`, and a card exiled by any other means never
+    /// carries it.
+    AdventureExile,
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -1182,6 +1235,14 @@ pub struct GameState {
     pub command: Vec<ObjectId>,
     /// The player who currently holds the initiative, if any.
     pub initiative: Option<PlayerId>,
+    /// The player who currently holds the monarchy, if any (306). Added
+    /// after the pre-existing fields above and defaulted on deserialize so
+    /// an older serialized snapshot without it still loads as "no monarch".
+    /// Deliberately unobserved by the frozen `flat_policy_v2` encoder this
+    /// wave -- see `card_def::CardDef::cant_be_blocked_by_monarchs_creatures`
+    /// and this crate's `rl` module doc.
+    #[serde(default)]
+    pub monarch: Option<PlayerId>,
     /// Observer x library-owner knowledge. Each inner vector is sorted by
     /// `position` and contains no duplicate positions or object incarnations.
     /// This is full engine state (and therefore snapshot/hash state), but RL
@@ -1220,6 +1281,7 @@ impl Hash for GameState {
         self.exile.hash(state);
         self.command.hash(state);
         self.initiative.hash(state);
+        self.monarch.hash(state);
         self.library_knowledge.hash(state);
         self.hand_knowledge.hash(state);
         self.randomness.hash(state);
@@ -1351,6 +1413,7 @@ impl GameState {
             exile: Vec::new(),
             command: Vec::new(),
             initiative: None,
+            monarch: None,
             library_knowledge: std::array::from_fn(|_| {
                 std::array::from_fn(|_| Vec::<LibraryKnowledgeEntry>::new())
             }),
@@ -3301,7 +3364,7 @@ mod tests {
         assert!(
             diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":8,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0xa921_902d_e1a8_d8ce);
+        assert_eq!(state.diagnostic_state_hash(), 0x3313_5945_dcb9_4ed1);
     }
 
     /// Draws to different players don't interact, so interleaving order
