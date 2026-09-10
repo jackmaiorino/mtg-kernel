@@ -1,0 +1,219 @@
+{
+  "schema": "kernel_removal_counterspell_tags/v1",
+  "generated_from": "data/cards_v1.json",
+  "source_digest_sha256": "561aa07cbe789d53ff330ba0b53589338eaca54caba27139d2980be517d9db5a",
+  "cards": [
+    {
+      "card_id": 0,
+      "name": "Annul",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target"
+      ]
+    },
+    {
+      "card_id": 7,
+      "name": "Blue Elemental Blast",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target",
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 11,
+      "name": "Cast Down",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 12,
+      "name": "Cast into the Fire",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "exile_target"
+      ]
+    },
+    {
+      "card_id": 15,
+      "name": "Cleansing Wildfire",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 17,
+      "name": "Counterspell",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target"
+      ]
+    },
+    {
+      "card_id": 22,
+      "name": "Dispel",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target"
+      ]
+    },
+    {
+      "card_id": 25,
+      "name": "Dust to Dust",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "exile_target"
+      ]
+    },
+    {
+      "card_id": 28,
+      "name": "Envelop",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_spell"
+      ]
+    },
+    {
+      "card_id": 38,
+      "name": "Force Spike",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target"
+      ]
+    },
+    {
+      "card_id": 57,
+      "name": "Hydroblast",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target",
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 90,
+      "name": "Pyroblast",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target",
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 95,
+      "name": "Red Elemental Blast",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target",
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 109,
+      "name": "Spell Pierce",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_target"
+      ]
+    },
+    {
+      "card_id": 113,
+      "name": "Steel Sabotage",
+      "requires_target": true,
+      "is_counterspell": true,
+      "source_mechanics": [
+        "counter_spell"
+      ]
+    },
+    {
+      "card_id": 118,
+      "name": "Thraben Charm",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target",
+        "exile_target"
+      ]
+    },
+    {
+      "card_id": 151,
+      "name": "Dread Return",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "graveyard_target"
+      ]
+    },
+    {
+      "card_id": 162,
+      "name": "Terminate",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 163,
+      "name": "Ancient Grudge",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 169,
+      "name": "Arms of Hadar",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "target_player"
+      ]
+    },
+    {
+      "card_id": 170,
+      "name": "Smash to Smithereens",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 171,
+      "name": "Raze",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    },
+    {
+      "card_id": 172,
+      "name": "Snuff Out",
+      "requires_target": true,
+      "is_counterspell": false,
+      "source_mechanics": [
+        "destroy_target"
+      ]
+    }
+  ]
+}
