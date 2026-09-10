@@ -548,7 +548,7 @@ def normalize_registry(
     expected_token_names = {name for name, _producers in TOKEN_DEPENDENCIES}
     if non_token_count != 171 or token_names != expected_token_names:
         raise ManifestError(
-            f"registry baseline drift: expected 150 deck cards and tokens "
+            f"registry baseline drift: expected 171 deck cards and tokens "
             f"{sorted(expected_token_names)!r}, got {non_token_count} and {sorted(token_names)!r}"
         )
     registry["pool_decks"] = [spec.filename for spec in REGISTRATION_SPECS]

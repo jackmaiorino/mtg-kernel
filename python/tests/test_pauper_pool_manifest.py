@@ -455,7 +455,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             with self.assertRaisesRegex(manifests.ManifestError, "source drifted"):
                 manifests._validate_java_factory(Path(temporary))
 
-    def test_registry_membership_exactly_matches_all_nine_rosters(self) -> None:
+    def test_registry_membership_exactly_matches_all_eighteen_rosters(self) -> None:
         self.assertEqual(self.registry["version"], manifests.REGISTRY_SCHEMA_VERSION)
         expected_pool_decks = [spec[2] for spec in EXPECTED_SPECS]
         self.assertEqual(self.registry["pool_decks"], expected_pool_decks)

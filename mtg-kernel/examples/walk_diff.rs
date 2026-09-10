@@ -1783,7 +1783,13 @@ mod activated_ability_text_tests {
 ///   `HarnessSurfaceV2`'s `OptionalCostReshape`: the `(discard_payable,
 ///   sacrifice_payable)` sentinel this function reads below (`(false,
 ///   false)` = the `Use` gate, `(true, true)` = `Which`) is that reshape's
-///   own presentation contract, not a real engine state combination.
+///   own presentation contract, not a real engine state combination -- with
+///   one exception, added when AffinityV2 registered Glint Hawk: a raw,
+///   unreshaped return-permanent decision (`return_permanent_payable`) also
+///   surfaces with `discard_payable`/`sacrifice_payable` both `false`, and
+///   is a real `Yes`/`No` (`ReturnPermanent`/`Decline`) choice answered
+///   through the engine's direct one-shot `Action::ChooseOptionalCost`
+///   bypass, not the `Use`-stage `ChooseOptionalCostStage` reshape below.
 /// - `ChooseCastMode`, `ChooseSpellMode`, `OrderTriggers`: UNVERIFIED
 ///   best-effort placeholder text (see each arm below) -- flagged
 ///   explicitly for the Java-side agent; these are the decisions
@@ -1869,14 +1875,28 @@ fn decision_texts(
             sacrifice_payable,
             ..
         }) => {
-            // See this function's doc: `(false, false)` is `HarnessSurfaceV2`'s
-            // `OptionalCostReshape` `Use`-stage sentinel (Yes/No: pay this
-            // cost at all?); any other combination only ever reaches here
-            // as `(true, true)`, the `Which`-stage sentinel (pick between
-            // the two payable sub-costs) -- see `OptionalCostReshape`'s doc
-            // for why the engine itself never emits a real `Decision::
-            // ChooseOptionalCost` with `(false, false)`.
-            if !*discard_payable && !*sacrifice_payable {
+            // See this function's doc: `(false, false)` is usually
+            // `HarnessSurfaceV2`'s `OptionalCostReshape` `Use`-stage
+            // sentinel (Yes/No: pay this cost at all?); any other
+            // combination only ever reaches here as `(true, true)`, the
+            // `Which`-stage sentinel (pick between the two payable
+            // sub-costs) -- see `OptionalCostReshape`'s doc for why the
+            // reshape itself never presents a real `(false, false)`. The
+            // one exception is a raw, unreshaped return-permanent decision
+            // (Glint Hawk), which also reports `(false, false)` here but is
+            // answered differently below (not a `ChooseOptionalCostStage`
+            // Use-gate at all); the return-permanent flag lives on
+            // `state.engine.pending_optional_cost`, not on this presented
+            // `Decision`, exactly as `pending_optional_cost_payable`'s own
+            // doc explains for `discard_payable`/`sacrifice_payable`.
+            let return_permanent_payable = state
+                .engine
+                .pending_optional_cost
+                .as_ref()
+                .is_some_and(|pending| pending.return_permanent_payable);
+            if return_permanent_payable {
+                Some(("CHOOSE_USE", vec!["Yes".to_string(), "No".to_string()]))
+            } else if !*discard_payable && !*sacrifice_payable {
                 Some(("CHOOSE_USE", vec!["Yes".to_string(), "No".to_string()]))
             } else {
                 Some((
@@ -2053,17 +2073,41 @@ fn apply_by_indices(
             )
             .map_err(|e| format!("engine-step-error:walk:ChooseMadnessCast:{e}")),
         SurfaceDecision::Decision(Decision::ChooseOptionalCost { .. }) => {
-            // Answers whichever stage `decision_texts` just rendered
-            // (`["Yes","No"]` at `Use`, `["Discard a card","Sacrifice a
-            // land"]` at `Which`) -- index 0 is always "yes"/"the first
-            // option" in both shapes, so `i0 == 0` is the right generic
-            // answer regardless of stage. See `OptionalCostReshape`'s doc.
-            surface
-                .apply(
-                    state,
-                    SurfaceAction::Action(Action::ChooseOptionalCostStage(i0 == 0)),
-                )
-                .map_err(|e| format!("engine-step-error:walk:ChooseOptionalCost:{e}"))
+            // Answers whichever text `decision_texts` just rendered
+            // (`["Yes","No"]` at `Use` or for a raw return-permanent
+            // decision, `["Discard a card","Sacrifice a land"]` at `Which`)
+            // -- index 0 is always "yes"/"the first option" in every shape,
+            // so `i0 == 0` is the right generic answer. See
+            // `OptionalCostReshape`'s doc, and this function's own doc's
+            // return-permanent exception, for why a raw return-permanent
+            // decision is answered through the direct one-shot
+            // `Action::ChooseOptionalCost` bypass instead of
+            // `ChooseOptionalCostStage`, which `surface.apply` rejects for
+            // it ("no ChooseOptionalCost decision is pending", since that
+            // decision was never staged into `HarnessSurfaceV2`'s own
+            // reshape state to begin with).
+            let return_permanent_payable = state
+                .engine
+                .pending_optional_cost
+                .as_ref()
+                .is_some_and(|pending| pending.return_permanent_payable);
+            if return_permanent_payable {
+                let choice = if i0 == 0 {
+                    OptionalCostChoice::ReturnPermanent
+                } else {
+                    OptionalCostChoice::Decline
+                };
+                surface
+                    .apply(state, SurfaceAction::Action(Action::ChooseOptionalCost(choice)))
+                    .map_err(|e| format!("engine-step-error:walk:ChooseOptionalCost:{e}"))
+            } else {
+                surface
+                    .apply(
+                        state,
+                        SurfaceAction::Action(Action::ChooseOptionalCostStage(i0 == 0)),
+                    )
+                    .map_err(|e| format!("engine-step-error:walk:ChooseOptionalCost:{e}"))
+            }
         }
         SurfaceDecision::Decision(Decision::ChooseCastMode { options, .. }) => {
             let m = *options
@@ -2543,6 +2587,72 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Proves the `walk_diff.rs` review fix (round 1): a raw, unreshaped
+    /// return-permanent `ChooseOptionalCost` decision (Glint Hawk, now
+    /// registered via AffinityV2) must render as a real `Yes`/`No` choice
+    /// (not mislabeled as if `(false, false)` could only mean "nothing is
+    /// payable"), and answering it must apply through the engine's direct
+    /// one-shot `Action::ChooseOptionalCost`, not the staged
+    /// `Action::ChooseOptionalCostStage` `surface.apply` rejects for it
+    /// ("no ChooseOptionalCost decision is pending", since a raw
+    /// return-permanent decision is never staged into `HarnessSurfaceV2`'s
+    /// own reshape state to begin with). Builds the decision directly
+    /// rather than driving a full game to Glint Hawk's ETB, since
+    /// `Decline` never touches `poc.source`/`poc.otherwise` when
+    /// `otherwise` is `None`, so no real permanent or trigger consequence
+    /// is needed to exercise the routing bug.
+    #[test]
+    fn choose_optional_cost_return_permanent_routes_to_the_direct_action_not_the_staged_one() {
+        use mtg_kernel::effect::EffectOp;
+        use mtg_kernel::engine::PendingOptionalCost;
+
+        let mut state = GameState::new_from_libraries(
+            &[],
+            &[],
+            |id| CARD_DEFS[id as usize].name.to_string(),
+            0x9e37_0001,
+        );
+        state.engine.pending_optional_cost = Some(PendingOptionalCost {
+            player: PlayerId::P0,
+            source: ObjectId(0),
+            discard: 0,
+            sacrifice_lands: 0,
+            return_permanent_filter: None,
+            discard_payable: false,
+            sacrifice_payable: false,
+            return_permanent_payable: true,
+            then: EffectOp::Sequence(vec![]),
+            otherwise: None,
+            spell_resume: None,
+        });
+        let decision = SurfaceDecision::Decision(Decision::ChooseOptionalCost {
+            player: PlayerId::P0,
+            discard_payable: false,
+            sacrifice_payable: false,
+            return_permanent_payable: true,
+        });
+
+        let (kind, texts) = decision_texts(&state, &decision, "P0", "P1")
+            .expect("a return-permanent decision must render text, not be silently skipped");
+        assert_eq!(kind, "CHOOSE_USE");
+        assert_eq!(
+            texts,
+            vec!["Yes".to_string(), "No".to_string()],
+            "must not be mislabeled as the discard/sacrifice Which-stage text"
+        );
+
+        let mut surface = HarnessSurfaceV2::new();
+        apply_by_indices(&mut surface, &mut state, &decision, &[1]).expect(
+            "Decline must apply through the direct Action::ChooseOptionalCost bypass, not the \
+             staged Action::ChooseOptionalCostStage (which surface.apply rejects for a raw, \
+             unstaged return-permanent decision)",
+        );
+        assert!(
+            state.engine.pending_optional_cost.is_none(),
+            "the decision must have actually resolved"
+        );
+    }
 
     #[test]
     fn flashback_candidate_costs_preserve_xmage_display_contract() {
