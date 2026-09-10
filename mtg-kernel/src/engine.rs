@@ -836,9 +836,21 @@ pub struct PendingOptionalCost {
     pub source: ObjectId,
     pub discard: u8,
     pub sacrifice_lands: u8,
+    /// `Some` iff this optional cost also offers returning one controlled
+    /// permanent matching this filter to its owner's hand (Glint Hawk's
+    /// "unless you return an artifact you control"). `None` for every
+    /// pre-existing consumer (Highway Robbery, Abandon Attachments).
+    pub return_permanent_filter: Option<PermanentFilterDef>,
     pub discard_payable: bool,
     pub sacrifice_payable: bool,
+    pub return_permanent_payable: bool,
     pub then: EffectOp,
+    /// Runs iff the controller declines every payable option (or none is
+    /// payable at all). `None` for every pre-existing consumer: declining
+    /// Highway Robbery/Abandon Attachments simply skips `then`, with no
+    /// separate consequence. Glint Hawk is the first consumer
+    /// (`Some(EffectOp::Sacrifice { object: ObjectRef::ThisSource })`).
+    pub otherwise: Option<EffectOp>,
     /// `Some((source, to_zone))` iff this optional cost is itself part of
     /// `source`'s own spell resolution (Highway Robbery's "you may... if
     /// you do, draw two cards" -- `EffectOp::MayPayCostThen` staged this
@@ -911,13 +923,18 @@ pub struct PendingSpellCopy {
 }
 
 /// The answer to a `Decision::ChooseOptionalCost`. Declining is always
-/// legal (matches `DoIfCostPaid`'s optional "may" framing); the other two
-/// are only legal when the matching `PendingOptionalCost` field is true.
+/// legal (matches `DoIfCostPaid`'s optional "may" framing); the other
+/// three are only legal when the matching `PendingOptionalCost` field is
+/// true.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OptionalCostChoice {
     Decline,
     Discard,
     SacrificeLand,
+    /// Return one controlled permanent matching `PendingOptionalCost::
+    /// return_permanent_filter` to its owner's hand. Glint Hawk is the
+    /// first consumer.
+    ReturnPermanent,
 }
 
 /// This turn's combat. Reset at every `Step::BeginCombat`. An attacker
@@ -1052,16 +1069,17 @@ pub enum Decision {
         legal_targets: Vec<Target>,
         can_finish: bool,
     },
-    /// Highway Robbery only, this increment: a resolution-time optional
-    /// cost (`effect::EffectOp::MayPayCostThen`). Always a real choice with
-    /// at least 2 options (`Decline` plus whichever of `Discard`/
-    /// `SacrificeLand` `PendingOptionalCost` marked payable) -- declining
-    /// is always legal, so this is never auto-resolved for "no real
-    /// option" the way `CastSpellOrPass` is.
+    /// A resolution-time optional cost (`effect::EffectOp::MayPayCostThen`,
+    /// Highway Robbery/Abandon Attachments/Glint Hawk). Always a real
+    /// choice with at least 2 options (`Decline` plus whichever of
+    /// `Discard`/`SacrificeLand`/`ReturnPermanent` `PendingOptionalCost`
+    /// marked payable) -- declining is always legal, so this is never
+    /// auto-resolved for "no real option" the way `CastSpellOrPass` is.
     ChooseOptionalCost {
         player: PlayerId,
         discard_payable: bool,
         sacrifice_payable: bool,
+        return_permanent_payable: bool,
     },
     /// Chain Lightning's affected player may pay {R}{R} to create the next
     /// link. The offer only exists when a concrete payment plan is available.
@@ -1311,7 +1329,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
-        | TargetSpec::CreatureOtherThanSource => 1,
+        | TargetSpec::CreatureOtherThanSource
+        | TargetSpec::NonblackCreature => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2439,6 +2458,12 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::NonblackCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature) && !is_color(state, id, mana::ManaColor::B)
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::ArtifactPermanent => permanent_targets_with_type(state, CardType::Artifact),
         TargetSpec::ExactlyTwoArtifactPermanents => {
             permanent_targets_with_type(state, CardType::Artifact)
@@ -3335,6 +3360,7 @@ fn permanent_matches_return_filter(
             definition.has_type(CardType::Creature)
                 && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
         }
+        PermanentFilterDef::Artifact => definition.has_type(CardType::Artifact),
     }
 }
 
@@ -3366,7 +3392,7 @@ fn tap_permanent_cost_candidates(
         .collect()
 }
 
-fn return_permanent_cost_candidates(
+pub(crate) fn return_permanent_cost_candidates(
     player: PlayerId,
     state: &GameState,
     filter: PermanentFilterDef,
@@ -3786,6 +3812,13 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
     }
 }
 
+/// Zone-changes `id` to its owner's hand -- the actual payment half of a
+/// `MayPayCostThen` return-permanent sub-cost (Glint Hawk's "return an
+/// artifact you control to its owner's hand").
+fn commit_return_to_hand(state: &mut GameState, id: ObjectId) {
+    event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Hand));
+}
+
 /// Exiles the exact graveyard cards already selected for an escape cost.
 /// All candidates and the mana plan are validated before this helper runs,
 /// so no failed cast can leave behind a partially paid graveyard cost.
@@ -4020,6 +4053,31 @@ fn validate_optional_additional_paid_refs(
     Ok(())
 }
 
+/// Whether an `AltCostDef::condition` currently holds against `player`'s
+/// own battlefield. Evaluated independently at offer time
+/// (`payable_cast_modes`/`is_castable_now`) and again at payment time
+/// (`remaining_cast_payment_is_payable`) -- a Swamp present when the cast
+/// began could leave play (destroyed, sacrificed to another cost) before
+/// payment completes, and Snuff Out's alternative cost must stop being
+/// offered/payable the instant that happens, same as any other cost
+/// legality recheck.
+fn alt_cost_condition_met(
+    condition: card_def::AltCostCondition,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    match condition {
+        card_def::AltCostCondition::Always => true,
+        card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
+            let subtype_id = subtype.stable_id();
+            state.players[player.index()]
+                .battlefield
+                .iter()
+                .any(|&id| effective_subtype_ids(state, id).binary_search(&subtype_id).is_ok())
+        }
+    }
+}
+
 /// How many lands (0 if none) the cast currently staged in `pending`
 /// still needs sacrificed to pay its cost: Fireblast's alt cost, once
 /// `cast_mode` has resolved to `Alternative`; Lava Dart's flashback cost,
@@ -4043,7 +4101,7 @@ fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 
     }
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(alt) = def.alt_cost {
-            for c in alt {
+            for c in alt.components {
                 if let CostComponent::SacrificeLands(n) = c {
                     return *n;
                 }
@@ -4067,7 +4125,10 @@ fn cast_tap_permanent_filter_needed(
         }
     }
     if pending.cast_mode == Some(CastMode::Alternative) {
-        if let Some(filter) = def.alt_cost.and_then(tap_permanent_filter_in) {
+        if let Some(filter) = def
+            .alt_cost
+            .and_then(|alt| tap_permanent_filter_in(alt.components))
+        {
             return Some(filter);
         }
     }
@@ -4582,8 +4643,9 @@ fn payable_cast_modes(
         modes.push(CastMode::Normal);
     }
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && def.alt_cost.is_some_and(|components| {
-            can_pay_components(components, pending.controller, pending.spell, state)
+        && def.alt_cost.is_some_and(|alt| {
+            alt_cost_condition_met(alt.condition, pending.controller, state)
+                && can_pay_components(alt.components, pending.controller, pending.spell, state)
         })
     {
         modes.push(CastMode::Alternative);
@@ -4683,7 +4745,11 @@ fn is_castable_now(
                 main_timing_ok && mana::can_pay(&normal_cost, 0, player, state).is_some();
             let alt_ok = def
                 .alt_cost
-                .map(|c| main_timing_ok && can_pay_components(c, player, id, state))
+                .map(|alt| {
+                    main_timing_ok
+                        && alt_cost_condition_met(alt.condition, player, state)
+                        && can_pay_components(alt.components, player, id, state)
+                })
                 .unwrap_or(false);
             let main_ok = !viable_printed_spell_modes(def, id, player, state).is_empty()
                 && (normal_ok || alt_ok)
@@ -5751,8 +5817,9 @@ fn remaining_cast_payment_is_payable(
                 mana::can_pay(&normal, x_value, pending.controller, state).is_some()
             }
         }
-        CastMethodV4::Alternative => def.alt_cost.is_some_and(|components| {
-            can_pay_components(components, pending.controller, pending.spell, state)
+        CastMethodV4::Alternative => def.alt_cost.is_some_and(|alt| {
+            alt_cost_condition_met(alt.condition, pending.controller, state)
+                && can_pay_components(alt.components, pending.controller, pending.spell, state)
         }),
         CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
             can_pay_components(flashback.cost, pending.controller, pending.spell, state)
@@ -6128,6 +6195,7 @@ fn drain_pending_optional_cost_or_decide(state: &mut GameState) -> Option<Decisi
         player: poc.player,
         discard_payable: poc.discard_payable,
         sacrifice_payable: poc.sacrifice_payable,
+        return_permanent_payable: poc.return_permanent_payable,
     })
 }
 
@@ -11609,6 +11677,13 @@ fn apply_choose_optional_cost(
         .ok_or("no optional cost is pending")?;
     match choice {
         OptionalCostChoice::Decline => {
+            // Glint Hawk's "sacrifice it unless..." consequence: `otherwise`
+            // runs iff the controller declines. `None` for every
+            // pre-existing consumer, so their decline stays a plain no-op.
+            if let Some(otherwise) = &poc.otherwise {
+                let ctx = ExecCtx::no_targets(poc.source, poc.player);
+                effect::execute(otherwise, &ctx, state);
+            }
             // See `PendingOptionalCost::spell_resume`'s doc: declining
             // still means the spell this cost belongs to is now fully
             // resolved (there's no `then` to run either way), so its
@@ -11651,6 +11726,36 @@ fn apply_choose_optional_cost(
                 then: poc.then,
                 spell_resume: poc.spell_resume,
             });
+            Ok(())
+        }
+        OptionalCostChoice::ReturnPermanent => {
+            if !poc.return_permanent_payable {
+                return Err(
+                    "returning a permanent is not currently a payable option for this optional cost"
+                        .to_string(),
+                );
+            }
+            let filter = poc
+                .return_permanent_filter
+                .expect("return_permanent_payable implies a filter is set");
+            let candidates = return_permanent_cost_candidates(poc.player, state, filter, &[]);
+            // A single-step commit rather than staging its own follow-up
+            // `Decision::ChooseCostTargets` (unlike `SacrificeLand` above):
+            // this pool's sole consumer (Glint Hawk) never has more than
+            // one legal candidate, so an arbitrary (but deterministic)
+            // candidate is taken instead of adding an interactive
+            // multi-candidate sub-decision no card here exercises yet.
+            let Some(chosen) = candidates.first().map(|binding| binding.object) else {
+                return Err(
+                    "no legal permanent remains to return for this optional cost".to_string(),
+                );
+            };
+            commit_return_to_hand(state, chosen);
+            let ctx = ExecCtx::no_targets(poc.source, poc.player);
+            effect::execute(&poc.then, &ctx, state);
+            if let Some((spell, to_zone)) = poc.spell_resume {
+                event::propose_and_commit(state, ProposedEvent::zone_change(spell, to_zone));
+            }
             Ok(())
         }
     }
@@ -12911,7 +13016,7 @@ fn finalize_owned_cast(
                 state,
                 pending.controller,
                 pending.spell,
-                alt,
+                alt.components,
                 base_object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
@@ -14879,6 +14984,7 @@ mod tests {
                 player,
                 discard_payable,
                 sacrifice_payable,
+                ..
             } => {
                 assert_eq!(player, PlayerId::P0);
                 assert!(

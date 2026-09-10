@@ -747,6 +747,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Creature
                 | TargetSpec::CreatureOtherThanSource
                 | TargetSpec::NonlegendaryCreature
+                | TargetSpec::NonblackCreature
                 | TargetSpec::ArtifactPermanent
                 | TargetSpec::EnchantmentPermanent
                 | TargetSpec::ControlledCreature

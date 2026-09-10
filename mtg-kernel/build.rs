@@ -2478,6 +2478,10 @@ enum Special {
     /// can't be regenerated" clause has no kernel equivalent (the engine
     /// has no regeneration substrate), so this is a plain destroy.
     DestroyCreature,
+    /// Destroy target creature whose printed colors do not include black.
+    /// Snuff Out is the sole consumer; its conditional alternative cost is
+    /// modeled independently in `alt_cost_for`.
+    DestroyNonblackCreature,
     /// Destroy target artifact. Ancient Grudge is the first consumer;
     /// flashback {G} is modeled independently in `flashback_for`.
     DestroyArtifact,
@@ -2765,6 +2769,7 @@ impl Special {
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
             Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
             Special::DestroyCreature => "destroy_creature".to_string(),
+            Special::DestroyNonblackCreature => "destroy_nonblack_creature".to_string(),
             Special::DestroyArtifact => "destroy_artifact".to_string(),
             Special::GrantCantBeBlockedUntilEndOfTurn => {
                 "grant_cant_be_blocked_until_end_of_turn".to_string()
@@ -3017,6 +3022,7 @@ fn special_for(name: &str) -> Special {
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
         "Terminate" => Special::DestroyCreature,
+        "Snuff Out" => Special::DestroyNonblackCreature,
         "Ancient Grudge" => Special::DestroyArtifact,
         "Artful Dodge" => Special::GrantCantBeBlockedUntilEndOfTurn,
         "Abandon Attachments" => Special::MayDiscardThenDraw { draw: 2 },
@@ -3175,6 +3181,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DestroyCreature => {
             "target=Creature;spell=DestroyObject(Target0);mana=None".to_string()
         }
+        Special::DestroyNonblackCreature => {
+            "target=NonblackCreature;spell=DestroyObject(Target0);mana=None".to_string()
+        }
         Special::DestroyArtifact => {
             "target=ArtifactPermanent;spell=DestroyObject(Target0);mana=None".to_string()
         }
@@ -3272,8 +3281,9 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sagu Wildling"
         | "Squadron Hawk"
         | "Balustrade Spy"
-        | "Spellstutter Sprite" => keywords.push("Keywords::FLYING"),
-        "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" => {
+        | "Spellstutter Sprite"
+        | "Glint Hawk" => keywords.push("Keywords::FLYING"),
+        "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" | "Webweaver Changeling" => {
             keywords.push("Keywords::REACH")
         }
         "Spinewoods Paladin" | "Avenging Hunter" => keywords.push("Keywords::TRAMPLE"),
@@ -3426,12 +3436,16 @@ fn kicker_cost_for(name: &str) -> String {
 }
 
 /// `Some` alternative cost source text (`CardDef::alt_cost`), verified
-/// against Java. Only Fireblast has one this increment ("You may
-/// sacrifice two Mountains rather than pay Fireblast's mana cost.").
+/// against Java. Fireblast and Land Grant's alternative costs are always
+/// offerable (`AltCostCondition::Always`); Snuff Out is the first consumer
+/// whose alternative cost is conditioned on the caster's own battlefield
+/// ("If you control a Swamp, you may pay 4 life rather than pay Snuff
+/// Out's mana cost.").
 fn alt_cost_for(name: &str) -> &'static str {
     match name {
-        "Fireblast" => "Some(&[CostComponent::SacrificeLands(2)])",
-        "Land Grant" => "Some(&[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)])",
+        "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
+        "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
+        "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
         _ => "None",
     }
 }
@@ -4578,7 +4592,7 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
 }
 
 fn changeling_for(name: &str) -> bool {
-    name == "Masked Vandal"
+    name == "Masked Vandal" || name == "Webweaver Changeling"
 }
 
 /// Stable semantic binding for definition-owned triggered abilities. Runtime
@@ -4592,6 +4606,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Generous Ent" => "etb:create_food",
         "Blood Fountain" => "etb:create_blood",
         "Sagu Wildling" | "Healer of the Glade" | "Spinewoods Paladin" => "etb:gain_life:3",
+        "Kessig Flamebreather" => "cast_noncreature:damage_opponent:1",
+        "Gixian Infiltrator" => "sacrifice_another_controlled_permanent:plus_one_counter_on_source",
+        "Webweaver Changeling" => "etb_if_graveyard_creature_cards_at_least_3:gain_life:5",
+        "Glint Hawk" => "etb:unless_return_controlled_artifact_to_hand:sacrifice_source",
         "Gatecreeper Vine" => "etb:search_basic_land_or_gate_to_hand",
         "Sneaky Snacker" => "third_draw:return_source_to_battlefield_tapped",
         "Burning-Tree Emissary" => "etb:add_r_g",
@@ -4745,7 +4763,9 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(out, "    Some(EffectOp::MayPayCostThen {{").unwrap();
                 writeln!(out, "        discard: 1,").unwrap();
                 writeln!(out, "        sacrifice_lands: 0,").unwrap();
+                writeln!(out, "        return_permanent: None,").unwrap();
                 writeln!(out, "        then: Box::new(EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }}),").unwrap();
+                writeln!(out, "        otherwise: None,").unwrap();
                 writeln!(out, "    }})").unwrap();
                 writeln!(out, "}}").unwrap();
                 writeln!(out).unwrap();
@@ -5538,6 +5558,32 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DestroyNonblackCreature))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_destroy_nonblack_creature() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::DestroyArtifact))
     {
         writeln!(out, "fn spell_effect_destroy_artifact() -> Option<EffectOp> {{").unwrap();
@@ -5804,7 +5850,9 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "    Some(EffectOp::MayPayCostThen {{").unwrap();
         writeln!(out, "        discard: 1,").unwrap();
         writeln!(out, "        sacrifice_lands: 1,").unwrap();
+        writeln!(out, "        return_permanent: None,").unwrap();
         writeln!(out, "        then: Box::new(EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 2 }}),").unwrap();
+        writeln!(out, "        otherwise: None,").unwrap();
         writeln!(out, "    }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
@@ -6513,6 +6561,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::DestroyCreature => (
                 "TargetSpec::Creature",
                 "spell_effect_destroy_creature".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DestroyNonblackCreature => (
+                "TargetSpec::NonblackCreature",
+                "spell_effect_destroy_nonblack_creature".to_string(),
                 "no_effect".to_string(),
             ),
             Special::DestroyArtifact => (

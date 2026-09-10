@@ -639,6 +639,7 @@ fn flat_optional_cost_choice_v1(choice: OptionalCostChoice) -> u8 {
         OptionalCostChoice::Decline => 1,
         OptionalCostChoice::Discard => 2,
         OptionalCostChoice::SacrificeLand => 3,
+        OptionalCostChoice::ReturnPermanent => 4,
     }
 }
 
@@ -2201,6 +2202,7 @@ fn flat_validate_origin_decision_v1(
             player,
             discard_payable,
             sacrifice_payable,
+            ..
         } => {
             if current.actor != *player || candidates.len() != 2 {
                 return Err(invalid());
@@ -2468,7 +2470,12 @@ fn flat_validate_semantic_policy_pair_v1(
         ) => match choice {
             OptionalCostChoice::Discard => *actual,
             OptionalCostChoice::SacrificeLand => !*actual,
-            OptionalCostChoice::Decline => false,
+            // Neither reachable through this H2 use-gate/which-gate
+            // sentinel scheme (see `Decision::ChooseOptionalCost`'s match
+            // in `core_surface_action_candidates_v1`): `Decline` never
+            // reaches the "which" stage, and `ReturnPermanent` is not yet
+            // surfaced through it at all.
+            OptionalCostChoice::Decline | OptionalCostChoice::ReturnPermanent => false,
         },
         (
             ActionSemanticV1::ChooseSpellCopyPayment { pay, .. },

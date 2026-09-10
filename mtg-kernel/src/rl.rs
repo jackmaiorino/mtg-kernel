@@ -2408,7 +2408,12 @@ fn core_surface_action_candidates_v1(
                 player,
                 discard_payable,
                 sacrifice_payable,
+                ..
             } => {
+                // `return_permanent_payable` (Glint Hawk) is not yet
+                // surfaced through this H2 use-gate/which-gate sentinel
+                // scheme; it stays a raw `Action::ChooseOptionalCost`
+                // bypass until a future increment extends the RL surface.
                 let actor = (*player).into();
                 match (*discard_payable, *sacrifice_payable) {
                     (false, false) => {

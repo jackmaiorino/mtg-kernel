@@ -16,7 +16,8 @@
 //! crate-level invariants in `lib.rs`).
 
 use crate::card_def::{
-    CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter, Subtype,
+    CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
+    PermanentFilterDef, Subtype,
 };
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
@@ -203,6 +204,13 @@ pub enum EffectCond {
         subtype: Subtype,
         minimum_count: u8,
     },
+    /// True iff `ctx.controller` currently has at least `n` creature cards
+    /// in their own graveyard. Webweaver Changeling's resolution-time half
+    /// of its intervening-if clause ("if there are three or more creature
+    /// cards in your graveyard, you gain 5 life"); the matching trigger-time
+    /// half is `trigger::TriggerCondition::
+    /// EtbIfGraveyardCreatureCardsAtLeast`.
+    ControllerGraveyardCreatureCardsAtLeast(u8),
     /// True iff `ctx.controller` currently controls a battlefield object
     /// with the same card definition as this effect's source, excluding the
     /// exact source object. Faerie Miscreant uses this for the resolution
@@ -302,6 +310,16 @@ pub enum EffectOp {
         object: ObjectRef,
         to_zone: Zone,
     },
+    /// Sacrifices `object` (701.20a: its controller moves it from the
+    /// battlefield to its owner's graveyard as a cost or effect, distinct
+    /// from an ordinary `MoveObject` zone change so
+    /// `TriggerCondition::SacrificeAnotherWithSubtype`/`SacrificeAnother
+    /// Permanent`-style triggers still see it). Fizzle-safe: a no-op if
+    /// `object` has already left the battlefield. Glint Hawk's ETB
+    /// `otherwise` clause ("sacrifice it") is the first consumer.
+    Sacrifice {
+        object: ObjectRef,
+    },
     TapObject {
         object: ObjectRef,
     },
@@ -344,21 +362,29 @@ pub enum EffectOp {
         controller: PlayerRef,
     },
     /// The controller may pay ONE of {discard `discard` cards, sacrifice
-    /// `sacrifice_lands` lands} -- only whichever options are currently
-    /// legal are offered, and declining is always legal too (Highway
-    /// Robbery's `DoIfCostPaid(OrCost(DiscardCardCost, SacrificeTargetCost))`).
-    /// If they do, `then` runs. Like `DiscardCards`, this is deferred:
+    /// `sacrifice_lands` lands, return one controlled permanent matching
+    /// `return_permanent`} -- only whichever options are currently legal
+    /// are offered, and declining is always legal too (Highway Robbery's
+    /// `DoIfCostPaid(OrCost(DiscardCardCost, SacrificeTargetCost))`; Glint
+    /// Hawk's "sacrifice it unless you return an artifact you control" is
+    /// the first consumer of `return_permanent`/`otherwise`). If they do,
+    /// `then` runs; if every offered option is declined (or none is
+    /// payable at all), `otherwise` runs instead (`None` for every
+    /// pre-existing consumer, matching their plain "you may... if you do"
+    /// no-op-on-decline text). Like `DiscardCards`, this is deferred:
     /// `execute` stages `EngineState::pending_optional_cost` and returns
     /// without knowing the outcome yet (`engine::Decision::ChooseOptionalCost`
     /// asks), so **this must be the last leaf in any `Sequence` it appears
     /// in**, same constraint and same reason as `DiscardCards`. A future
-    /// card that needs both sub-costs simultaneously payable (not this
-    /// pool) is out of scope: `discard`/`sacrifice_lands` are mutually
-    /// exclusive choices, never both paid.
+    /// card that needs two or more of these sub-costs simultaneously
+    /// payable (not this pool) is out of scope: they are mutually
+    /// exclusive choices, never more than one paid.
     MayPayCostThen {
         discard: u8,
         sacrifice_lands: u8,
+        return_permanent: Option<PermanentFilterDef>,
         then: Box<EffectOp>,
+        otherwise: Option<Box<EffectOp>>,
     },
     /// "Deals `amount` damage to each opponent and each creature they
     /// control" (End the Festivities). The kernel only ever simulates 1v1
@@ -9730,6 +9756,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
             event::propose_and_commit(state, event::ProposedEvent::zone_change(object, *to_zone));
         }
+        EffectOp::Sacrifice { object } => {
+            let object = ctx.resolve_object(*object);
+            if state.objects.get(object).zone == Zone::Battlefield {
+                event::log_sacrifice(state, object);
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(object, Zone::Graveyard),
+                );
+            }
+        }
         EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target } => {
             let target_index = match target {
                 ObjectRef::Target(index) => usize::from(*index),
@@ -10150,17 +10186,28 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::MayPayCostThen {
             discard,
             sacrifice_lands,
+            return_permanent,
             then,
+            otherwise,
         } => {
             let discard_payable = *discard > 0
                 && state.players[ctx.controller.index()].hand.len() >= *discard as usize;
             let sacrifice_payable = *sacrifice_lands > 0
                 && crate::engine::count_controlled_lands(ctx.controller, state)
                     >= *sacrifice_lands as u32;
-            if !discard_payable && !sacrifice_payable {
+            let return_permanent_payable = return_permanent.is_some_and(|filter| {
+                !crate::engine::return_permanent_cost_candidates(ctx.controller, state, filter, &[])
+                    .is_empty()
+            });
+            if !discard_payable && !sacrifice_payable && !return_permanent_payable {
                 // Nothing payable: DoIfCostPaid's own `cost.canPay(...)`
-                // gate is false too, so the reference never even offers the
-                // "may pay?" prompt here -- matches, no-op.
+                // gate is false too, so the reference never even offers
+                // the "may pay?" prompt here -- runs `otherwise`
+                // immediately (Glint Hawk with no artifact to return), or
+                // no-ops for every pre-existing consumer (`otherwise: None`).
+                if let Some(otherwise) = otherwise {
+                    execute(otherwise, ctx, state);
+                }
                 return;
             }
             state.engine.pending_optional_cost = Some(crate::engine::PendingOptionalCost {
@@ -10168,9 +10215,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 source: ctx.source,
                 discard: *discard,
                 sacrifice_lands: *sacrifice_lands,
+                return_permanent_filter: *return_permanent,
                 discard_payable,
                 sacrifice_payable,
+                return_permanent_payable,
                 then: (**then).clone(),
+                otherwise: otherwise.as_deref().cloned(),
                 // `resolve_top_of_stack` fills this in right after this
                 // call returns, if it's resolving this same spell -- see
                 // `PendingOptionalCost::spell_resume`'s doc.
@@ -11120,6 +11170,19 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 })
                 .count();
             count >= usize::from(*minimum_count)
+        }
+        EffectCond::ControllerGraveyardCreatureCardsAtLeast(n) => {
+            let count = state.players[ctx.controller.index()]
+                .graveyard
+                .iter()
+                .filter(|&&id| {
+                    let object = state.objects.get(id);
+                    !object.v4.is_token
+                        && crate::card_def::CARD_DEFS[object.card_def as usize]
+                            .has_type(crate::card_def::CardType::Creature)
+                })
+                .count();
+            count >= usize::from(*n)
         }
         EffectCond::ControlsAnotherSourceCard => {
             let source_def = state.objects.get(ctx.source).card_def;

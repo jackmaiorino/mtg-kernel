@@ -5344,6 +5344,231 @@
         "destroy_target"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/Raze.java"
+    },
+    {
+      "name": "Snuff Out",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "removal",
+        "destroy_target",
+        "alt_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SnuffOut.java"
+    },
+    {
+      "name": "Contaminated Aquifer",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Island",
+        "Swamp"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "B"
+      ],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "dual_land",
+        "enters_tapped",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ContaminatedAquifer.java"
+    },
+    {
+      "name": "Ice Tunnel",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Island",
+        "Swamp"
+      ],
+      "supertypes": [
+        "Snow"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "B"
+      ],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "dual_land",
+        "enters_tapped",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IceTunnel.java"
+    },
+    {
+      "name": "Kessig Flamebreather",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Madness Burn V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "spell_cast_trigger",
+        "burn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KessigFlamebreather.java"
+    },
+    {
+      "name": "Gixian Infiltrator",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "sacrifice_trigger",
+        "add_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GixianInfiltrator.java"
+    },
+    {
+      "name": "Webweaver Changeling",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Shapeshifter"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Elves V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "changeling",
+        "reach",
+        "etb_trigger",
+        "conditional_effect",
+        "graveyard_count",
+        "life_gain"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WebweaverChangeling.java"
+    },
+    {
+      "name": "Glint Hawk",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Grixis Affinity V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "return_to_hand",
+        "sacrifice_self_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GlintHawk.java"
     }
   ],
   "unresolved": []

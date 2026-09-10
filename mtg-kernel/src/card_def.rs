@@ -487,6 +487,10 @@ pub enum TargetSpec {
     /// announcing player. Appended for Masked Vandal and Troublemaker Ouphe
     /// without changing any existing target identity.
     OpponentArtifactOrEnchantmentPermanent,
+    /// Exactly one creature on either battlefield whose printed colors do
+    /// not include black. Appended for Snuff Out without changing any
+    /// earlier target identity.
+    NonblackCreature,
 }
 
 impl TargetSpec {
@@ -531,6 +535,7 @@ impl TargetSpec {
             TargetSpec::NoncreatureArtifactPermanent => 33,
             TargetSpec::Land => 34,
             TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
+            TargetSpec::NonblackCreature => 36,
         }
     }
 }
@@ -603,7 +608,7 @@ impl std::ops::BitOr for Keywords {
 }
 
 /// Typed filter for a chosen permanent paid as an activation cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PermanentFilterDef {
     /// A permanent with both the Land card type and the named effective
     /// subtype. Control is checked independently from the ownership-oriented
@@ -613,6 +618,10 @@ pub enum PermanentFilterDef {
     /// color. Control and untapped status are checked independently by the
     /// cost component that consumes this filter.
     CreatureWithColor(ManaColor),
+    /// A permanent with the Artifact card type. Appended for Glint Hawk's
+    /// "return an artifact you control" ETB cost without changing any
+    /// existing filter identity.
+    Artifact,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -723,6 +732,33 @@ pub enum OptionalAdditionalCostDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentDef {
     AuraCreature { prevents_untap: bool },
+}
+
+/// The ordered alternative cost you may pay instead of a spell's printed
+/// mana cost (601.2b), plus the condition (if any) required to offer it.
+/// Fireblast and Land Grant's alternative costs are always offerable
+/// (`AltCostCondition::Always`); Snuff Out is the first consumer whose
+/// alternative cost is conditioned on the caster's own battlefield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AltCostDef {
+    pub components: &'static [CostComponent],
+    pub condition: AltCostCondition,
+}
+
+/// Whether an `AltCostDef` may currently be offered and paid. Evaluated
+/// against the caster's battlefield both at offer time
+/// (`engine::payable_cast_modes`/`engine::is_castable_now`) and again at
+/// payment time (`engine::remaining_cast_payment_is_payable`), since a
+/// Swamp present when the cast began could leave play before payment
+/// completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AltCostCondition {
+    /// No condition: the alternative cost is always offerable if payable
+    /// (Fireblast, Land Grant).
+    Always,
+    /// The caster must control a permanent with the named subtype (Snuff
+    /// Out: "If you control a Swamp...").
+    ControlsPermanentWithSubtype(Subtype),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -996,9 +1032,10 @@ pub struct CardDef {
     /// authoritative for multi-color permanents.
     pub mana_ability: fn() -> Option<EffectOp>,
     /// `Some` iff this card has an alternative cost you may pay instead of
-    /// its mana cost (Fireblast). Choosing between them is a real decision
-    /// (`engine::Decision::ChooseCastMode`) when both are legal.
-    pub alt_cost: Option<&'static [CostComponent]>,
+    /// its mana cost (Fireblast, Snuff Out). Choosing between them is a real
+    /// decision (`engine::Decision::ChooseCastMode`) when both are legal;
+    /// `AltCostDef::condition` gates whether the alternative is legal at all.
+    pub alt_cost: Option<AltCostDef>,
     /// `Some` iff this card has Kicker (`KickerAbility`): an optional
     /// additional cost you may pay as you cast it, stamped onto the spell's
     /// own `state::StackItem::kicked` once paid (`engine::finalize_cast`)
@@ -1406,8 +1443,11 @@ mod tests {
         // Acorn Harvest are appended as ids 162-166 and Squirrel Token as
         // id 167, again without renumbering earlier ids. Suffocating Fumes,
         // Arms of Hadar, Smash to Smithereens, and Raze are appended as ids
-        // 168-171, again without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 172);
+        // 168-171, again without renumbering earlier ids. Snuff Out,
+        // Contaminated Aquifer, Ice Tunnel, Kessig Flamebreather, Gixian
+        // Infiltrator, Webweaver Changeling, and Glint Hawk are appended as
+        // ids 172-178, again without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 179);
     }
 
     #[test]
@@ -1455,6 +1495,7 @@ mod tests {
             (TargetSpec::NoncreatureArtifactPermanent, 33),
             (TargetSpec::Land, 34),
             (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
+            (TargetSpec::NonblackCreature, 36),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1473,7 +1514,7 @@ mod tests {
     fn card_db_hash_v32_is_frozen() {
         // Version 32 appends the final pool trio and Skeleton token after the
         // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x2c46_96a5_d4e9_4be4);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x55da_3223_6603_f81f);
     }
 
     #[test]
@@ -1673,7 +1714,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 172, "159 pool cards plus thirteen required tokens");
+        assert_eq!(full, 179, "166 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -2025,7 +2066,23 @@ mod tests {
         let def = &CARD_DEFS[id as usize];
         assert_eq!(
             def.alt_cost,
-            Some([CostComponent::SacrificeLands(2)].as_slice())
+            Some(AltCostDef {
+                components: [CostComponent::SacrificeLands(2)].as_slice(),
+                condition: AltCostCondition::Always,
+            })
+        );
+    }
+
+    #[test]
+    fn snuff_out_has_a_pay_four_life_alt_cost_conditioned_on_a_swamp() {
+        let id = card_id_by_name("Snuff Out").expect("Snuff Out in pool");
+        let def = &CARD_DEFS[id as usize];
+        assert_eq!(
+            def.alt_cost,
+            Some(AltCostDef {
+                components: [CostComponent::PayLife(4)].as_slice(),
+                condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp),
+            })
         );
     }
 

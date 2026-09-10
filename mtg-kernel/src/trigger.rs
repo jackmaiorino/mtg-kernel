@@ -29,6 +29,12 @@ pub enum TriggerCondition {
     /// number of other permanents with the effective subtype. This is the
     /// trigger-time half of an intervening-if condition.
     EtbControlsOtherSubtypeCount { subtype: Subtype, minimum_count: u8 },
+    /// The permanent itself enters while its controller has at least this
+    /// many creature cards in their own graveyard. This is the trigger-time
+    /// half of an intervening-if condition; the matching resolution-time
+    /// recheck is `effect::EffectCond::ControllerGraveyardCreatureCardsAtLeast`.
+    /// Webweaver Changeling is the first consumer.
+    EtbIfGraveyardCreatureCardsAtLeast(u8),
     /// The permanent itself deals damage. Unused by any Burn 16 card this
     /// increment (kept from increment 2's shape -- see `trigger_matches`).
     DealsDamage,
@@ -38,6 +44,12 @@ pub enum TriggerCondition {
     /// instant or sorcery spell"). Matched against
     /// `CommittedEvent::SpellCast`, logged by `engine::finalize_cast`.
     CastInstantOrSorcery,
+    /// The controller casts a noncreature spell -- any such spell, not just
+    /// ones this permanent's controller controls the *source* of (Kessig
+    /// Flamebreather: "whenever you cast a noncreature spell"). The
+    /// noncreature predicate is the same `selected_spell_types` check
+    /// Black Mage's Rod's equipment-granted trigger uses.
+    CastNoncreatureSpell,
     /// This exact source spell is cast. Creature cast triggers function
     /// while their source is on the stack.
     CastSelf,
@@ -66,6 +78,10 @@ pub enum TriggerCondition {
     /// This permanent's controller sacrifices another permanent that had
     /// the named effective subtype immediately before leaving.
     SacrificeAnotherWithSubtype(Subtype),
+    /// This permanent's controller sacrifices another permanent, with no
+    /// subtype restriction (Gixian Infiltrator: "whenever you sacrifice
+    /// another permanent").
+    SacrificeAnotherPermanent,
     /// This creature deals combat damage to a player. The committed marker
     /// carries the source's exact zone-change generation.
     DealsCombatDamageToPlayer,
@@ -207,6 +223,52 @@ fn gain_three_life_effect() -> EffectOp {
     }
 }
 
+fn kessig_flamebreather_effect() -> EffectOp {
+    // Whenever you cast a noncreature spell, it deals 1 damage to each
+    // opponent.
+    EffectOp::DealDamage {
+        target: TargetRef::Opponent,
+        amount: 1,
+    }
+}
+
+fn gixian_infiltrator_effect() -> EffectOp {
+    // Whenever you sacrifice another permanent, put a +1/+1 counter on
+    // Gixian Infiltrator -- the same `BindPlusOnePlusOneCounterToTriggerSource`
+    // shape Writhing Chrysalis's own sacrifice trigger uses.
+    EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+}
+
+fn webweaver_changeling_effect() -> EffectOp {
+    // "When Webweaver Changeling enters the battlefield, if there are
+    // three or more creature cards in your graveyard, you gain 5 life" --
+    // the resolution-time half of the intervening-if is rechecked here,
+    // same shape Gingerbread Cabin's own EtbControlsOtherSubtypeCount
+    // pair uses.
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerGraveyardCreatureCardsAtLeast(3),
+        then: Box::new(EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 5,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn glint_hawk_effect() -> EffectOp {
+    // "When Glint Hawk enters the battlefield, sacrifice it unless you
+    // return an artifact you control to its owner's hand."
+    EffectOp::MayPayCostThen {
+        discard: 0,
+        sacrifice_lands: 0,
+        return_permanent: Some(crate::card_def::PermanentFilterDef::Artifact),
+        then: Box::new(EffectOp::Sequence(Vec::new())),
+        otherwise: Some(Box::new(EffectOp::Sacrifice {
+            object: ObjectRef::ThisSource,
+        })),
+    }
+}
+
 fn gatecreeper_vine_effect() -> EffectOp {
     EffectOp::SearchLibraryToHand {
         player: PlayerRef::Controller,
@@ -318,6 +380,34 @@ const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
     effect: gain_three_life_effect,
+}];
+const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: kessig_flamebreather_effect,
+}];
+const GIXIAN_INFILTRATOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::SacrificeAnotherPermanent,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: gixian_infiltrator_effect,
+}];
+const WEBWEAVER_CHANGELING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbIfGraveyardCreatureCardsAtLeast(3),
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: webweaver_changeling_effect,
+}];
+const GLINT_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: glint_hawk_effect,
 }];
 const GATECREEPER_VINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
@@ -924,6 +1014,10 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Writhing Chrysalis" => &WRITHING_CHRYSALIS_TRIGGERS,
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
+        "Kessig Flamebreather" => &KESSIG_FLAMEBREATHER_TRIGGERS,
+        "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
+        "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
+        "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
         "Balustrade Spy" => &BALUSTRADE_SPY_TRIGGERS,
         "Lotleth Giant" => &LOTLETH_GIANT_TRIGGERS,
@@ -1014,7 +1108,7 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if card.name == "Writhing Chrysalis"
+    if matches!(card.name, "Writhing Chrysalis" | "Gixian Infiltrator")
         && matches!(
             effect,
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
@@ -1824,6 +1918,29 @@ fn trigger_matches(
                 .count();
             count >= usize::from(minimum_count)
         }
+        (
+            TriggerCondition::EtbIfGraveyardCreatureCardsAtLeast(minimum_count),
+            CommittedEvent::ZoneChange {
+                object,
+                to: Zone::Battlefield,
+                ..
+            },
+        ) => {
+            if *object != source {
+                return false;
+            }
+            let count = state.players[controller.index()]
+                .graveyard
+                .iter()
+                .filter(|&&id| {
+                    let candidate = state.objects.get(id);
+                    !candidate.v4.is_token
+                        && crate::card_def::CARD_DEFS[candidate.card_def as usize]
+                            .has_type(crate::card_def::CardType::Creature)
+                })
+                .count();
+            count >= usize::from(minimum_count)
+        }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (
             TriggerCondition::DealsCombatDamageToPlayer,
@@ -1848,6 +1965,16 @@ fn trigger_matches(
                 types.contains(&crate::card_def::CardType::Instant)
                     || types.contains(&crate::card_def::CardType::Sorcery)
             }
+        }
+        (
+            TriggerCondition::CastNoncreatureSpell,
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && !selected_spell_types(state, *spell).contains(&crate::card_def::CardType::Creature)
         }
         (
             TriggerCondition::CastSelf,
@@ -1894,6 +2021,14 @@ fn trigger_matches(
                     .binary_search(&subtype.stable_id())
                     .is_ok()
         }
+        (
+            TriggerCondition::SacrificeAnotherPermanent,
+            CommittedEvent::Sacrificed {
+                object,
+                controller_before,
+                ..
+            },
+        ) => *object != source && *controller_before == controller,
         _ => false,
     }
 }

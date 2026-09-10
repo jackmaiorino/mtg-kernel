@@ -1192,9 +1192,18 @@ impl HarnessSurfaceV2 {
                     player,
                     discard_payable,
                     sacrifice_payable,
-                } => {
+                    return_permanent_payable,
+                } if *discard_payable || *sacrifice_payable => {
                     // See `OptionalCostReshape`'s doc: begin the two-stage
-                    // sequence at the `Use` gate.
+                    // sequence at the `Use` gate. `return_permanent_payable`
+                    // (Glint Hawk) is not yet reshaped by this two-stage
+                    // Discard/SacrificeLand sentinel scheme; a decision
+                    // where it is the *only* payable option falls through
+                    // to the `_` arm below and is surfaced unreshaped, so
+                    // its caller answers with a raw `Action::
+                    // ChooseOptionalCost(OptionalCostChoice::
+                    // ReturnPermanent)` instead.
+                    let _ = return_permanent_payable;
                     self.optional_cost = Some(OptionalCostReshape {
                         player: *player,
                         discard_payable: *discard_payable,
@@ -1591,6 +1600,11 @@ impl HarnessSurfaceV2 {
             player: reshape.player,
             discard_payable,
             sacrifice_payable,
+            // This reshape only ever begins for a decision with a real
+            // Discard/SacrificeLand choice (see the guard in the caller
+            // that populates `self.optional_cost`), so `ReturnPermanent`
+            // is never part of it.
+            return_permanent_payable: false,
         }))
     }
 }
