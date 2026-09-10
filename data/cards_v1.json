@@ -5228,6 +5228,122 @@
       "complexity": "trivial",
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/SquirrelToken.java"
+    },
+    {
+      "name": "Suffocating Fumes",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "static_pump",
+        "until_end_of_turn",
+        "cycling"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SuffocatingFumes.java"
+    },
+    {
+      "name": "Arms of Hadar",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "target_player",
+        "static_pump",
+        "until_end_of_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/ArmsOfHadar.java"
+    },
+    {
+      "name": "Smash to Smithereens",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "artifact_hate",
+        "destroy_target",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SmashToSmithereens.java"
+    },
+    {
+      "name": "Raze",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Red Deck Wins V2.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "sacrifice_cost",
+        "destroy_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/Raze.java"
     }
   ],
   "unresolved": []

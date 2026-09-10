@@ -32,7 +32,7 @@
 
 use crate::effect::{
     CreatureFilter, CreatureSacrificeFilter, EffectCond, EffectOp, ImpulseDuration,
-    LibraryCardFilter, ObjectRef, PlayerRef, TargetRef,
+    LibraryCardFilter, ObjectRef, PlayerRef, PumpControllerScope, TargetRef,
 };
 use crate::mana::{Cost, ManaColor, ManaColorSetV1, Pip};
 use crate::state::Zone;
@@ -615,7 +615,7 @@ pub enum PermanentFilterDef {
     CreatureWithColor(ManaColor),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PermanentFilter {
     /// A controlled permanent whose definition has either the Artifact or
     /// Creature card type. Artifact creatures and artifact lands match once.
@@ -626,6 +626,12 @@ pub enum PermanentFilter {
     /// A controlled permanent with the Creature card type. Appended for
     /// Dread Return's flashback cost.
     Creature,
+    /// A controlled permanent with the Land card type. Appended for Raze's
+    /// "sacrifice a land" additional cost. `Hash`/`Serialize`/`Deserialize`
+    /// were added to this enum's derive list alongside this variant so it
+    /// can be embedded in `effect::EffectOp::PumpAllUntilEndOfTurn`, which
+    /// (like every other `EffectOp` variant) must derive those traits.
+    Land,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -1398,8 +1404,10 @@ mod tests {
         // Token is appended as id 161 without renumbering earlier ids.
         // Terminate, Ancient Grudge, Artful Dodge, Abandon Attachments, and
         // Acorn Harvest are appended as ids 162-166 and Squirrel Token as
-        // id 167, again without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 168);
+        // id 167, again without renumbering earlier ids. Suffocating Fumes,
+        // Arms of Hadar, Smash to Smithereens, and Raze are appended as ids
+        // 168-171, again without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 172);
     }
 
     #[test]
@@ -1465,7 +1473,7 @@ mod tests {
     fn card_db_hash_v32_is_frozen() {
         // Version 32 appends the final pool trio and Skeleton token after the
         // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x5446_bd05_1a02_5568);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x2c46_96a5_d4e9_4be4);
     }
 
     #[test]
@@ -1665,7 +1673,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 168, "155 pool cards plus thirteen required tokens");
+        assert_eq!(full, 172, "159 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

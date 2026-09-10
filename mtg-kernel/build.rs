@@ -2562,6 +2562,31 @@ enum Special {
     /// An X creature that enters with X counters. Bestow is modeled by the
     /// independently generated `CardDef::bestow` characteristics.
     NyxbornHydra,
+    /// "Creatures your opponents control get `power`/`toughness` until end
+    /// of turn." Suffocating Fumes is the first consumer (-1/-1); no
+    /// target is announced (the kernel only ever simulates 1v1 games, so
+    /// "opponents" is always exactly `ctx.controller.opponent()`).
+    PumpOpponentsCreatures {
+        power: i16,
+        toughness: i16,
+    },
+    /// "Creatures target player controls get `power`/`toughness` until end
+    /// of turn." Arms of Hadar is the first consumer (-2/-2); the player is
+    /// announced as the spell's own single target.
+    PumpTargetPlayersCreatures {
+        power: i16,
+        toughness: i16,
+    },
+    /// Destroy target artifact, then deal 3 damage to that artifact's
+    /// controller, reading its last known controller so the damage still
+    /// lands if the destroy step's own `Conditional` guard already found
+    /// the target gone earlier in this same resolution. Smash to
+    /// Smithereens is the sole consumer.
+    SmashToSmithereens,
+    /// Destroy target land. Raze is the sole consumer; its "sacrifice a
+    /// land" additional cost is modeled independently in
+    /// `additional_cost_for`.
+    DestroyLand,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2789,6 +2814,14 @@ impl Special {
                 "monstrous_emergence:chosen_creature_power_damage".to_string()
             }
             Special::NyxbornHydra => "nyxborn_hydra:x_counters_bestow".to_string(),
+            Special::PumpOpponentsCreatures { power, toughness } => {
+                format!("pump_opponents_creatures:{power}:{toughness}")
+            }
+            Special::PumpTargetPlayersCreatures { power, toughness } => {
+                format!("pump_target_players_creatures:{power}:{toughness}")
+            }
+            Special::SmashToSmithereens => "smash_to_smithereens".to_string(),
+            Special::DestroyLand => "destroy_land".to_string(),
         }
     }
 }
@@ -2991,6 +3024,16 @@ fn special_for(name: &str) -> Special {
             token: "Squirrel Token",
             count: 2,
         },
+        "Suffocating Fumes" => Special::PumpOpponentsCreatures {
+            power: -1,
+            toughness: -1,
+        },
+        "Arms of Hadar" => Special::PumpTargetPlayersCreatures {
+            power: -2,
+            toughness: -2,
+        },
+        "Smash to Smithereens" => Special::SmashToSmithereens,
+        "Raze" => Special::DestroyLand,
         "Pulse of Murasa" => Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount: 6 },
         "Breath Weapon" => Special::DamageEachCreatureWithoutSubtype {
             amount: 2,
@@ -3182,6 +3225,18 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::MonstrousEmergence => "target=Creature;spell=DealDamageToTargetEqualToChosenCostCreaturePower;mana=None".to_string(),
         Special::NyxbornHydra => "target=None;spell=PutSourceOntoBattlefieldWithXPlusOneCounters;bestow=Creature:XGG;mana=None".to_string(),
+        Special::PumpOpponentsCreatures { power, toughness } => format!(
+            "target=None;spell=PumpAllUntilEndOfTurn(Creature,Opponents,{power},{toughness});mana=None"
+        ),
+        Special::PumpTargetPlayersCreatures { power, toughness } => format!(
+            "target=AnyPlayer;spell=PumpAllUntilEndOfTurn(Creature,TargetPlayer0,{power},{toughness});mana=None"
+        ),
+        Special::SmashToSmithereens => "target=ArtifactPermanent;spell=Sequence[DestroyObject(Target0),DealDamageToControllerOfTarget(0,3)];mana=None".to_string(),
+        // `target=Land` (not a hypothetical `LandPermanent`) matches the
+        // established recipe token for `TargetSpec::Land` -- see
+        // `Special::CleansingWildfire`'s own recipe two lines above, the
+        // first and (until Raze) only consumer of that same target spec.
+        Special::DestroyLand => "target=Land;spell=DestroyObject(Target0);mana=None".to_string(),
     }
 }
 
@@ -3392,6 +3447,9 @@ fn additional_cost_for(name: &str) -> &'static str {
         }
         "Monstrous Emergence" => {
             "Some(&[CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand])"
+        }
+        "Raze" => {
+            "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
         _ => "None",
     }
@@ -3729,6 +3787,23 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 reveal_selected: true,
                 shuffle: true,
             },
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        // Ordinary Cycling {2}: same discard-self-from-hand shape as Lorien
+        // Revealed's Islandcycling above, minus the search (a plain draw).
+        "Suffocating Fumes" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::DiscardSelf,
+            ],
+            effect: AbilityEffectRecipe::DrawCards(1),
             activation_zone: "Hand",
             sorcery_speed_only: false,
             target_spec: "None",
@@ -4694,6 +4769,39 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(out, "}}").unwrap();
                 writeln!(out).unwrap();
             }
+            Special::PumpOpponentsCreatures { power, toughness } => {
+                // "Creatures your opponents control get power/toughness
+                // until end of turn" -- no target, so `PumpControllerScope`
+                // always reads the effect controller's one opponent.
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some(EffectOp::PumpAllUntilEndOfTurn {{").unwrap();
+                writeln!(out, "        filter: PermanentFilter::Creature,").unwrap();
+                writeln!(out, "        controller: PumpControllerScope::Opponents,").unwrap();
+                writeln!(out, "        power: {power},").unwrap();
+                writeln!(out, "        toughness: {toughness},").unwrap();
+                writeln!(out, "    }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            Special::PumpTargetPlayersCreatures { power, toughness } => {
+                // "Creatures target player controls get power/toughness
+                // until end of turn" -- the player is target index 0.
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some(EffectOp::PumpAllUntilEndOfTurn {{").unwrap();
+                writeln!(out, "        filter: PermanentFilter::Creature,").unwrap();
+                writeln!(
+                    out,
+                    "        controller: PumpControllerScope::TargetPlayer(0),"
+                )
+                .unwrap();
+                writeln!(out, "        power: {power},").unwrap();
+                writeln!(out, "        toughness: {toughness},").unwrap();
+                writeln!(out, "    }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
             _ => {}
         }
     }
@@ -5462,6 +5570,71 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "    Some(EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::CANT_BE_BLOCKED }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DestroyLand))
+    {
+        writeln!(out, "fn spell_effect_destroy_land() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::SmashToSmithereens))
+    {
+        // Destroy target artifact (fizzle-safe, same as every other
+        // `DestroyObject` spell in this pool), then unconditionally deal 3
+        // damage to that artifact's controller -- `DealDamageToControllerOfTarget`
+        // reads the historical target contract, so it still finds the
+        // right player even if the destroy above was skipped because the
+        // artifact already left the battlefield.
+        writeln!(
+            out,
+            "fn spell_effect_smash_to_smithereens() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "            cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "            then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "            else_: Box::new(EffectOp::Sequence(vec![])),"
+        )
+        .unwrap();
+        writeln!(out, "        }},").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DealDamageToControllerOfTarget {{ target: 0, amount: 3 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -6352,12 +6525,32 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_grant_cant_be_blocked_until_end_of_turn".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::MayDiscardThenDraw { .. } | Special::CreateTokens { .. } => (
+            Special::MayDiscardThenDraw { .. }
+            | Special::CreateTokens { .. }
+            | Special::PumpOpponentsCreatures { .. } => (
                 "TargetSpec::None",
                 format!(
                     "spell_effect_{}",
                     c.name.to_ascii_lowercase().replace([' ', '\''], "_")
                 ),
+                "no_effect".to_string(),
+            ),
+            Special::PumpTargetPlayersCreatures { .. } => (
+                "TargetSpec::AnyPlayer",
+                format!(
+                    "spell_effect_{}",
+                    c.name.to_ascii_lowercase().replace([' ', '\''], "_")
+                ),
+                "no_effect".to_string(),
+            ),
+            Special::SmashToSmithereens => (
+                "TargetSpec::ArtifactPermanent",
+                "spell_effect_smash_to_smithereens".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DestroyLand => (
+                "TargetSpec::Land",
+                "spell_effect_destroy_land".to_string(),
                 "no_effect".to_string(),
             ),
             Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => (

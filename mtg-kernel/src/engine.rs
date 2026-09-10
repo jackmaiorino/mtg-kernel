@@ -4094,13 +4094,17 @@ fn sacrificeable_lands(
         .collect()
 }
 
-fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
+/// `pub(crate)` so `effect::execute` (`EffectOp::PumpAllUntilEndOfTurn`) can
+/// reuse the identical type-matching predicate a `SacrificeControlled` cost
+/// uses to find candidates, rather than duplicating it.
+pub(crate) fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
     match filter {
         PermanentFilter::ArtifactOrCreature => {
             def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
         }
         PermanentFilter::Artifact => def.has_type(CardType::Artifact),
         PermanentFilter::Creature => def.has_type(CardType::Creature),
+        PermanentFilter::Land => def.is_land,
     }
 }
 
@@ -4194,6 +4198,7 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         PermanentFilter::ArtifactOrCreature | PermanentFilter::Creature => {
             CostKind::SacrificePermanents
         }
+        PermanentFilter::Land => CostKind::SacrificeLands,
     }
 }
 
@@ -7311,6 +7316,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
                     PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
                     PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
+                    PermanentFilter::Land => CostKind::SacrificeLands,
                 },
                 remaining,
                 candidates,

@@ -15,7 +15,9 @@
 //! (`event::commit`) mutates `GameState` in response to card behavior (see the
 //! crate-level invariants in `lib.rs`).
 
-use crate::card_def::{CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, Subtype};
+use crate::card_def::{
+    CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter, Subtype,
+};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
@@ -135,6 +137,20 @@ pub enum TargetRef {
     /// (Guttersnipe, Voldaren Epicure, Grab the Prize) never needs a
     /// chosen target -- it's always exactly `ctx.controller.opponent()`.
     Opponent,
+}
+
+/// Which player's battlefield `EffectOp::PumpAllUntilEndOfTurn` reads.
+/// Unlike `PlayerRef`, every variant here names a player whose *creatures*
+/// (matched by that op's own `filter`) are affected, never the effect
+/// controller's own board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PumpControllerScope {
+    /// The effect controller's one opponent (Suffocating Fumes). The kernel
+    /// only ever simulates 1v1 games -- see `TargetRef::Opponent`'s doc for
+    /// the same reasoning.
+    Opponents,
+    /// The player announced at the given target index (Arms of Hadar).
+    TargetPlayer(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -822,6 +838,40 @@ pub enum EffectOp {
     /// then shuffle.
     ResolveUndercityThrone {
         binding: InitiativeTriggerBindingV1,
+    },
+    /// A team-wide, until-end-of-turn power/toughness modifier applied to
+    /// every permanent matching `filter` on `controller`'s battlefield --
+    /// not necessarily this effect's own controller's board (Suffocating
+    /// Fumes: "creatures your opponents control get -1/-1 until end of
+    /// turn"; Arms of Hadar: "creatures target player controls get -2/-2
+    /// until end of turn"). Uses the same
+    /// `engine::UntilEndOfTurnEffect::ResolvedSetEffect` mechanism as
+    /// `PumpControlled`: the affected-objects set is locked in at
+    /// resolution (611.2c) and cleared unconditionally at the next
+    /// `Step::Cleanup`, regardless of whose turn it then is.
+    PumpAllUntilEndOfTurn {
+        filter: PermanentFilter,
+        controller: PumpControllerScope,
+        power: i16,
+        toughness: i16,
+    },
+    /// Deal `amount` damage to the controller of the announced target,
+    /// reading the historical `state::StackTargetContractV4` captured when
+    /// the target was announced (`ExecCtx::target_contracts`) rather than
+    /// the live object -- which resets its `controller` field to its owner
+    /// the instant it leaves the battlefield (`event::commit_zone_change`).
+    /// This still finds the right player if the target is destroyed earlier
+    /// in the *same* resolution (Smash to Smithereens' own preceding
+    /// `DestroyObject`, whose `Conditional` guard may have already skipped
+    /// because the object is gone). It is never reached for a target that
+    /// was already gone *before* this spell resolved at all: with a single
+    /// target referenced twice in one card's text, CR 608.2b makes the
+    /// whole spell fizzle first (`engine::stack_targets_still_legal`), the
+    /// same rules-correct behavior the real card's own Gatherer ruling
+    /// describes. Smash to Smithereens is the first consumer.
+    DealDamageToControllerOfTarget {
+        target: u8,
+        amount: i32,
     },
 }
 
@@ -10303,6 +10353,59 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     },
                 );
             }
+        }
+        EffectOp::PumpAllUntilEndOfTurn {
+            filter,
+            controller,
+            power,
+            toughness,
+        } => {
+            let player = match controller {
+                PumpControllerScope::Opponents => ctx.controller.opponent(),
+                PumpControllerScope::TargetPlayer(index) => {
+                    match ctx.targets[*index as usize] {
+                        Target::Player(player) => player,
+                        Target::Object(_) => panic!(
+                            "PumpAllUntilEndOfTurn's TargetPlayer scope expected a player target"
+                        ),
+                    }
+                }
+            };
+            let object_ids: Vec<ObjectId> = state.players[player.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                    crate::engine::permanent_matches_filter(def, *filter)
+                })
+                .collect();
+            if !object_ids.is_empty() {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedSetEffect {
+                        object_ids,
+                        layer: crate::engine::Layers::POWER_TOUGHNESS,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        power: i32::from(*power),
+                        toughness: i32::from(*toughness),
+                        grant_haste: false,
+                    },
+                );
+            }
+        }
+        EffectOp::DealDamageToControllerOfTarget { target, amount } => {
+            let controller = match ctx.target_contracts[*target as usize] {
+                StackTargetContractV4::Object { controller, .. } => controller,
+                StackTargetContractV4::Player(_) => panic!(
+                    "DealDamageToControllerOfTarget expects an object target contract"
+                ),
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::damage(ctx.source, Target::Player(controller), *amount),
+            );
         }
         EffectOp::PumpTargetUntilEndOfTurnDynamic {
             target,
