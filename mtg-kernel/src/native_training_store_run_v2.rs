@@ -2365,13 +2365,29 @@ fn environment_randomization_section_is_exact_v2(
 fn classify_catalog_profile_v1(
     environment: &TrainRunEnvironmentV2,
 ) -> Result<NativeRunCatalogProfileV1> {
-    let historical = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_V2
-        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_V2;
-    let current = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
-        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
-    let pauper_meta_w1 = environment.card_db_hash_u64_hex
-        == FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
-        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
+    classify_catalog_profile_from_identity_v1(
+        &environment.card_db_hash_u64_hex,
+        &environment.runtime_catalog_sha256,
+    )
+}
+
+/// The pure tuple-match at the heart of [`classify_catalog_profile_v1`],
+/// factored out so it can run over any (`card_db_hash_u64_hex`,
+/// `runtime_catalog_sha256`) pair, not only one already embedded in a
+/// decoded `TrainRunEnvironmentV2`. [`classify_catalog_profile_v1`] and
+/// [`live_catalog_profile_v1`] are its only two callers; see either doc
+/// comment for the tuple/tie-rule semantics, which are unchanged by this
+/// factoring.
+fn classify_catalog_profile_from_identity_v1(
+    card_db_hash_u64_hex: &str,
+    runtime_catalog_sha256: &str,
+) -> Result<NativeRunCatalogProfileV1> {
+    let historical = card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_V2
+        && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_V2;
+    let current = card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
+    let pauper_meta_w1 = card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
+        && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
     match (historical, current, pauper_meta_w1) {
         (true, false, false) => Ok(NativeRunCatalogProfileV1::Historical),
         (false, true, false) => Ok(NativeRunCatalogProfileV1::Current),
@@ -2382,6 +2398,38 @@ fn classify_catalog_profile_v1(
         (false, false, true) => Ok(NativeRunCatalogProfileV1::PauperMetaW1),
         _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
     }
+}
+
+/// The catalog-identity profile the crate's OWN live build constants
+/// classify as, right now, computed through the exact same tuple match
+/// every persisted record's embedded fields go through in
+/// [`classify_catalog_profile_v1`] (via [`live_catalog_build_identity_v1`]
+/// for the live `KERNEL_CARDDB_HASH`/`RUNTIME_DECK_CATALOG_FILE_SHA256`
+/// pair). On the main tree this is `Current`; on the pauper-meta-cards-v1
+/// card lane, once `FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1` has moved
+/// off its CURRENT-tying initial value (Task 13, identity finalisation),
+/// this is `PauperMetaW1`. Tests that need to assert "the live build
+/// classifies as the branch's active catalog profile" call this instead of
+/// hardcoding `NativeRunCatalogProfileV1::Current`, so the same test body
+/// passes on both trees. Panics only if the live constants ever stop
+/// matching any of the three frozen tuples, which would mean the crate
+/// itself is unbuildable under its own frozen-literal discipline (see
+/// `current_frozen_literal_matches_the_live_build_constant` and this wave's
+/// card DB identity re-pin step, which keep that from happening).
+///
+/// Test-only today: every call site is a test assertion (see the doc above).
+/// `#[cfg(test)]`, not a bare `pub(crate)`, so a plain (non-test) build never
+/// warns about it going unused; drop the attribute if a production call site
+/// ever needs the live classification as a value rather than as a boundary
+/// check (`current_profile_matches_live_build_identity_v1` already covers
+/// the boundary-check shape production code actually needs).
+#[cfg(test)]
+pub(crate) fn live_catalog_profile_v1() -> NativeRunCatalogProfileV1 {
+    let (card_db_hash_u64_hex, runtime_catalog_sha256) = live_catalog_build_identity_v1();
+    classify_catalog_profile_from_identity_v1(&card_db_hash_u64_hex, &runtime_catalog_sha256)
+        .expect(
+            "the crate's live catalog build identity must classify as a known frozen profile",
+        )
 }
 
 /// The crate's actual live catalog-identity build constants, read fresh each
@@ -4935,6 +4983,15 @@ mod tests {
     }
 
     fn fixture_record() -> TrainRunV2 {
+        // Dual-Profile Catalog Successor (collab CLAUDE #220), extended by the
+        // pauper-meta-cards-v1 card lane's schema migration: read live rather
+        // than pin a frozen CURRENT literal, so the default fixture always
+        // matches what production capture actually mints today regardless of
+        // which frozen profile the crate's live build currently ties to (see
+        // the "environment" section below and `live_catalog_profile_v1`'s doc
+        // comment).
+        let (live_card_db_hash_u64_hex, live_runtime_catalog_sha256) =
+            live_catalog_build_identity_v1();
         let value = json!({
             "schema": TRAIN_RUN_SCHEMA_V2,
             "store_identity": NATIVE_TRAINING_STORE_IDENTITY_V2,
@@ -4996,18 +5053,32 @@ mod tests {
                 "build_profile": "release"
             },
             "environment": {
-                // Dual-Profile Catalog Successor (collab CLAUDE #220): the
-                // default fixture builds a CURRENT-profile record (live
-                // nine-deck catalog identity), matching what production
-                // capture actually mints today, so every test built on top
-                // of `fixture_record()` exercises the live science-loop/
-                // publish/resume paths unrejected. `fixture_record_historical()`
-                // below overrides these two fields back to the HISTORICAL
-                // (rev3) literals for the dedicated dual-profile tests.
-                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1,
+                // Dual-Profile Catalog Successor (collab CLAUDE #220), card
+                // lane update: the default fixture embeds the crate's LIVE
+                // catalog identity (`live_catalog_build_identity_v1()`, read
+                // above), not a hardcoded frozen literal, so it always
+                // matches what production capture actually mints today --
+                // `Current` on the main tree, `PauperMetaW1` once this wave's
+                // card additions have moved `KERNEL_CARDDB_HASH` off the
+                // CURRENT/PauperMetaW1 tie -- and every test built on top of
+                // `fixture_record()` keeps exercising the live science-loop/
+                // publish/resume paths unrejected on both. Before this
+                // update the two fields below were the bare
+                // `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`/
+                // `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1` literals; the
+                // live and CURRENT values are identical on the main tree, so
+                // this is a no-op there. `fixture_record_historical()` below
+                // still overrides both fields to the HISTORICAL (rev3)
+                // literals for the dedicated dual-profile tests, and
+                // `current_fixture_decodes_clean_and_classifies_current`
+                // asserts the frozen CURRENT tuple directly (via
+                // `sample_environment_v2_with`, not this default) for the
+                // one test that must pin CURRENT specifically regardless of
+                // what is live.
+                "card_db_hash_u64_hex": live_card_db_hash_u64_hex,
                 "runtime_catalog_schema": FROZEN_RUNTIME_CATALOG_SCHEMA_V2,
                 "runtime_catalog_protocol": FROZEN_RUNTIME_CATALOG_PROTOCOL_V2,
-                "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1,
+                "runtime_catalog_sha256": live_runtime_catalog_sha256,
                 "deck_ids": [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2],
                 "deck_hashes_u64_hex": [FROZEN_RALLY_DECK_HASH_U64_HEX_V2, FROZEN_RALLY_DECK_HASH_U64_HEX_V2],
                 "protocol": FROZEN_PROTOCOL_V2,
@@ -6645,9 +6716,23 @@ mod tests {
         );
     }
 
+    /// Pins the CURRENT profile's own frozen tuple specifically, independent
+    /// of whatever the crate's live build identity happens to be right now
+    /// (`fixture_bytes()`'s default tracks live since the card lane's schema
+    /// migration; see `fixture_record`'s doc comment). Built the same way
+    /// `hybrid_current_card_db_with_historical_catalog_sha_is_rejected` below
+    /// pins an explicit tuple: override both fields on top of the coherent
+    /// fixture, then remint the derived digests.
     #[test]
     fn current_fixture_decodes_clean_and_classifies_current() {
-        let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex = FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+
+        let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
             NativeRunCatalogProfileV1::Current
@@ -6659,6 +6744,29 @@ mod tests {
         assert_eq!(
             validated.record().environment.runtime_catalog_sha256,
             FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+        );
+    }
+
+    /// The default fixture (`fixture_bytes()`), unmodified, decodes clean and
+    /// classifies as whatever profile the crate's OWN live build identity
+    /// currently resolves to (`Current` on the main tree; `PauperMetaW1` on
+    /// the pauper-meta-cards-v1 card lane once its card additions have moved
+    /// `KERNEL_CARDDB_HASH` off the CURRENT/PauperMetaW1 tie) -- this is the
+    /// direct evidence that `fixture_record`'s live-tracking default (see its
+    /// doc comment) actually round-trips through decode, on both trees.
+    #[test]
+    fn default_fixture_decodes_clean_and_classifies_as_the_live_profile() {
+        let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
+        assert_eq!(validated.catalog_profile_v1(), live_catalog_profile_v1());
+        let (live_card_db_hash_u64_hex, live_runtime_catalog_sha256) =
+            live_catalog_build_identity_v1();
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            live_card_db_hash_u64_hex
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            live_runtime_catalog_sha256
         );
     }
 
@@ -7017,17 +7125,36 @@ mod tests {
         // otherwise, so a value change here is expected and is not itself
         // evidence of anything beyond the fixture's own environment fields
         // changing.
+        //
+        // Re-pinned again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): `fixture_record()` now tracks
+        // the crate's LIVE catalog identity (see its doc comment), and the
+        // wave's 21 new cards moved that live identity, so all three
+        // digests below moved again for exactly the same reason this
+        // comment already describes. Old values: semantics
+        // "affcfccc974e48a0da001147812e6ce0f0d106b6d1c8b4a545b8e5512185c8e0",
+        // identity "f118e0a86ab58a145279ec0f4fb7446d1c67adeb7a968eb7d67aa4763d7bf323",
+        // run_bytes sha256
+        // "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
+        // (also shared verbatim by
+        // `population_program_absence_preserves_legacy_bytes_and_run_hash`
+        // and
+        // `response_exploiter_absence_preserves_existing_bytes_and_population_behavior`,
+        // both of which hash the same `fixture_bytes()` directly and are
+        // updated identically). New values are this test's own
+        // live-computed digests, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             semantics,
-            "affcfccc974e48a0da001147812e6ce0f0d106b6d1c8b4a545b8e5512185c8e0"
+            "2ad70a88949312e7df8f26926f0430bc9be93a89a3094cfd15e815bc4ef4665d"
         );
         assert_eq!(
             identity,
-            "f118e0a86ab58a145279ec0f4fb7446d1c67adeb7a968eb7d67aa4763d7bf323"
+            "3374ce8012db4d9c9200c34f996290a3d7d0ceb5f35c11c82b5c5c2b0e164cb3"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
+            "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
         );
     }
 
@@ -7767,7 +7894,7 @@ mod tests {
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
         assert_eq!(
             sha256_hex(&bytes),
-            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
+            "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
         );
         assert!(!String::from_utf8(bytes)
             .unwrap()
@@ -8066,7 +8193,7 @@ mod tests {
         assert!(legacy.record().contracts().response_exploiter_v1.is_none());
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
+            "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()
