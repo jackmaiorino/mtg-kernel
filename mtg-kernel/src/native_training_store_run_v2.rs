@@ -179,7 +179,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
 // it before any store written under this profile is used. See
 // `classify_catalog_profile_v1`'s doc comment for the tie rule this
 // byte-identical initial value requires against CURRENT.
-const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "9378c4e1705d5875";
+const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "de59c501e943f3fd";
 
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;

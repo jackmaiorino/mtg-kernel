@@ -3,16 +3,16 @@
   "protocol": "canonical-mainboard-bo1/v1",
   "inputs": {
     "pool_path": "data/pauper_pool_v1.json",
-    "pool_raw_sha256": "3bb9fb3c11b2134632f4b7bec23faab6c2c4e2d48089e5733a21590d2f8fea3b",
+    "pool_raw_sha256": "f7d6e129a83ee32874a567b47346a66af52c7a7d98fa41cc7ce284ddff8d91c9",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
+    "registry_raw_sha256": "561aa07cbe789d53ff330ba0b53589338eaca54caba27139d2980be517d9db5a"
   },
   "totals": {
-    "pool_cards": 150,
-    "full_cards": 150,
+    "pool_cards": 171,
+    "full_cards": 171,
     "partial_cards": 0,
     "no_effect_cards": 0,
-    "token_dependencies": 12
+    "token_dependencies": 13
   },
   "deck_mainboard_copy_totals": [
     {
@@ -73,6 +73,69 @@
     },
     {
       "deck_id": "Faeries",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "BurnV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "DelverV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "AffinityV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "RallyV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "WildfireV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "ElvesV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "TerrorV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "SpyV2",
+      "full": 60,
+      "partial": 0,
+      "no_effect": 0,
+      "total": 60
+    },
+    {
+      "deck_id": "DimirTerrorV2",
       "full": 60,
       "partial": 0,
       "no_effect": 0,
@@ -225,9 +288,81 @@
       "registry_membership_matches": true,
       "support_status": "full",
       "blockers": []
+    },
+    {
+      "name": "Squirrel Token",
+      "required_by": [
+        "Acorn Harvest"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     }
   ],
   "cards": [
+    {
+      "name": "Abandon Attachments",
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Acorn Harvest",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Spy Combo V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Spy Combo V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Ancient Grudge",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "WildfireV2",
+          "copies": 1
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
     {
       "name": "Annul",
       "mainboard": [],
@@ -239,16 +374,74 @@
         {
           "deck_id": "Faeries",
           "copies": 3
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Arms of Hadar",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Artful Dodge",
+      "mainboard": [
+        {
+          "deck_id": "TerrorV2",
+          "copies": 1
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Mono-Blue Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -260,15 +453,32 @@
         {
           "deck_id": "Elves",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
-      "sideboard": [],
+      "sideboard": [
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
+        }
+      ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -295,20 +505,46 @@
       "blockers": []
     },
     {
+      "name": "Azure Fleet Admiral",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "TerrorV2",
+          "copies": 1
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Mono-Blue Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Mono-Blue Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
       "name": "Balustrade Spy",
       "mainboard": [
         {
           "deck_id": "Spy",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
           "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -360,15 +596,21 @@
         {
           "deck_id": "Affinity",
           "copies": 3
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -384,17 +626,23 @@
         {
           "deck_id": "Affinity",
           "copies": 2
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -419,6 +667,22 @@
         {
           "deck_id": "Faeries",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 1
         }
       ],
       "registry_status": "present",
@@ -426,13 +690,21 @@
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -448,17 +720,35 @@
         {
           "deck_id": "CawGates",
           "copies": 3
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -475,16 +765,22 @@
         {
           "deck_id": "Affinity",
           "copies": 1
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -496,15 +792,21 @@
         {
           "deck_id": "Rally",
           "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -516,15 +818,27 @@
         {
           "deck_id": "Wildfire",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -537,14 +851,26 @@
         {
           "deck_id": "Rally",
           "copies": 3
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -556,15 +882,21 @@
         {
           "deck_id": "Rally",
           "copies": 2
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -596,15 +928,21 @@
         {
           "deck_id": "Wildfire",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -616,15 +954,41 @@
         {
           "deck_id": "Rally",
           "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Contaminated Aquifer",
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -644,6 +1008,18 @@
         {
           "deck_id": "Faeries",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
@@ -651,12 +1027,18 @@
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -668,15 +1050,21 @@
         {
           "deck_id": "Affinity",
           "copies": 1
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 1
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -688,15 +1076,27 @@
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -708,15 +1108,27 @@
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -728,15 +1140,53 @@
         {
           "deck_id": "Terror",
           "copies": 2
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 1
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Delver of Secrets",
+      "mainboard": [
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Mono-Blue Delver V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Mono-Blue Delver V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -751,6 +1201,18 @@
         },
         {
           "deck_id": "Faeries",
+          "copies": 2
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "DimirTerrorV2",
           "copies": 2
         }
       ],
@@ -768,12 +1230,18 @@
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -785,15 +1253,21 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -809,17 +1283,29 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -832,14 +1318,20 @@
         {
           "deck_id": "Wildfire",
           "copies": 3
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -871,15 +1363,21 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -891,15 +1389,21 @@
         {
           "deck_id": "Elves",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -911,6 +1415,10 @@
         {
           "deck_id": "Rally",
           "copies": 1
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 2
         }
       ],
       "sideboard": [
@@ -921,10 +1429,12 @@
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -941,16 +1451,22 @@
         {
           "deck_id": "CawGates",
           "copies": 2
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 1
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -962,15 +1478,21 @@
         {
           "deck_id": "Wildfire",
           "copies": 1
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -982,15 +1504,21 @@
         {
           "deck_id": "Rally",
           "copies": 3
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1003,14 +1531,20 @@
         {
           "deck_id": "Wildfire",
           "copies": 1
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1023,14 +1557,26 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1082,15 +1628,21 @@
         {
           "deck_id": "Burn",
           "copies": 2
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1106,17 +1658,43 @@
         {
           "deck_id": "Affinity",
           "copies": 1
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Fang Dragon",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "SpyV2",
+          "copies": 3
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Spy Combo V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1128,15 +1706,21 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1148,15 +1732,21 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1169,14 +1759,26 @@
         {
           "deck_id": "Spy",
           "copies": 1
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Red Deck Wins V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Red Deck Wins V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1188,15 +1790,27 @@
         {
           "deck_id": "Faeries",
           "copies": 2
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1212,17 +1826,35 @@
         {
           "deck_id": "Spy",
           "copies": 3
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 12
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1254,15 +1886,21 @@
         {
           "deck_id": "Elves",
           "copies": 3
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1278,17 +1916,29 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1300,15 +1950,21 @@
         {
           "deck_id": "Spy",
           "copies": 3
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1324,17 +1980,29 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1342,7 +2010,12 @@
     },
     {
       "name": "Gingerbread Cabin",
-      "mainboard": [],
+      "mainboard": [
+        {
+          "deck_id": "ElvesV2",
+          "copies": 1
+        }
+      ],
       "sideboard": [
         {
           "deck_id": "Elves",
@@ -1351,10 +2024,52 @@
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Gixian Infiltrator",
+      "mainboard": [
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Glint Hawk",
+      "mainboard": [
+        {
+          "deck_id": "AffinityV2",
+          "copies": 3
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Grixis Affinity V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1366,15 +2081,21 @@
         {
           "deck_id": "Rally",
           "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1386,15 +2107,21 @@
         {
           "deck_id": "Rally",
           "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1426,15 +2153,21 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1450,17 +2183,29 @@
         {
           "deck_id": "Affinity",
           "copies": 3
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1487,20 +2232,52 @@
       "blockers": []
     },
     {
+      "name": "Gurmag Angler",
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
       "name": "Gut Shot",
       "mainboard": [],
       "sideboard": [
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1512,15 +2289,21 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1592,15 +2375,21 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1665,6 +2454,22 @@
         {
           "deck_id": "Faeries",
           "copies": 2
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "registry_status": "present",
@@ -1672,13 +2477,41 @@
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Ice Tunnel",
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1694,17 +2527,29 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1744,6 +2589,18 @@
         {
           "deck_id": "Faeries",
           "copies": 18
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 16
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 16
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 10
         }
       ],
       "sideboard": [],
@@ -1751,12 +2608,18 @@
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1783,6 +2646,26 @@
       "blockers": []
     },
     {
+      "name": "Kessig Flamebreather",
+      "mainboard": [
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Madness Burn V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Madness Burn V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
       "name": "Krark-Clan Shaman",
       "mainboard": [
         {
@@ -1792,22 +2675,38 @@
         {
           "deck_id": "Affinity",
           "copies": 3
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 3
         }
       ],
       "sideboard": [
         {
           "deck_id": "Affinity",
           "copies": 1
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 1
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1819,15 +2718,21 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1839,15 +2744,21 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1863,17 +2774,29 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1885,15 +2808,21 @@
         {
           "deck_id": "Wildfire",
           "copies": 3
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1909,17 +2838,29 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1931,15 +2872,21 @@
         {
           "deck_id": "Elves",
           "copies": 2
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1955,17 +2902,35 @@
         {
           "deck_id": "CawGates",
           "copies": 3
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1977,15 +2942,21 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -1997,15 +2968,21 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2021,17 +2998,29 @@
         {
           "deck_id": "Affinity",
           "copies": 1
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 1
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2067,22 +3056,38 @@
         {
           "deck_id": "Spy",
           "copies": 3
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 3
         }
       ],
       "sideboard": [
         {
           "deck_id": "Spy",
           "copies": 1
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2094,15 +3099,33 @@
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2114,20 +3137,30 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
       "sideboard": [
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2139,15 +3172,21 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2207,19 +3246,50 @@
         {
           "deck_id": "Burn",
           "copies": 18
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 18
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 14
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 1
         }
       ],
-      "sideboard": [],
+      "sideboard": [
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
+        }
+      ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2231,15 +3301,34 @@
         {
           "deck_id": "Terror",
           "copies": 2
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 1
         }
       ],
-      "sideboard": [],
+      "sideboard": [
+        {
+          "deck_id": "DelverV2",
+          "copies": 1
+        }
+      ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2251,15 +3340,21 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2275,17 +3370,36 @@
         {
           "deck_id": "Affinity",
           "copies": 3
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 3
         }
       ],
-      "sideboard": [],
+      "sideboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 2
+        }
+      ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2321,17 +3435,29 @@
         {
           "deck_id": "Elves",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2383,15 +3509,21 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2423,15 +3555,27 @@
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2463,15 +3607,21 @@
         {
           "deck_id": "Elves",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2543,6 +3693,18 @@
         {
           "deck_id": "CawGates",
           "copies": 3
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
@@ -2550,13 +3712,19 @@
         "Deck - Jund Wildfire.dek",
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Red Burn.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Red Burn.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2572,17 +3740,29 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2594,15 +3774,41 @@
         {
           "deck_id": "Rally",
           "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Raze",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "RallyV2",
+          "copies": 3
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Red Deck Wins V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2614,15 +3820,21 @@
         {
           "deck_id": "Rally",
           "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 3
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2634,15 +3846,21 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2663,18 +3881,36 @@
         {
           "deck_id": "Burn",
           "copies": 3
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
         "Deck - Grixis Affinity.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
         "Deck - Grixis Affinity.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2690,17 +3926,29 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2717,16 +3965,28 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2758,15 +4018,27 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2798,15 +4070,21 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2843,16 +4121,22 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2864,15 +4148,21 @@
         {
           "deck_id": "Affinity",
           "copies": 2
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2884,15 +4174,21 @@
         {
           "deck_id": "Affinity",
           "copies": 2
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2904,15 +4200,21 @@
         {
           "deck_id": "Wildfire",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2924,15 +4226,53 @@
         {
           "deck_id": "Terror",
           "copies": 2
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Smash to Smithereens",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "BurnV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 2
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2964,15 +4304,27 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -2993,6 +4345,26 @@
       ],
       "declared_decks": [
         "Deck - Elves.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Snuff Out",
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3045,14 +4417,20 @@
         {
           "deck_id": "Elves",
           "copies": 3
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3085,14 +4463,46 @@
         {
           "deck_id": "Faeries",
           "copies": 2
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Suffocating Fumes",
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 1
+        }
+      ],
+      "sideboard": [],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Dimir Terror V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3112,6 +4522,14 @@
         {
           "deck_id": "Spy",
           "copies": 1
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 3
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 1
         }
       ],
       "sideboard": [
@@ -3124,12 +4542,36 @@
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Grixis Affinity.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Grixis Affinity.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Terminate",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "WildfireV2",
+          "copies": 1
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3161,15 +4603,33 @@
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3181,15 +4641,21 @@
         {
           "deck_id": "Affinity",
           "copies": 4
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3221,15 +4687,21 @@
         {
           "deck_id": "Elves",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3261,15 +4733,33 @@
         {
           "deck_id": "Terror",
           "copies": 4
+        },
+        {
+          "deck_id": "DelverV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "TerrorV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3285,17 +4775,29 @@
         {
           "deck_id": "Affinity",
           "copies": 2
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 2
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3328,14 +4830,20 @@
         {
           "deck_id": "Wildfire",
           "copies": 2
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3347,15 +4855,21 @@
         {
           "deck_id": "Wildfire",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3363,19 +4877,36 @@
     },
     {
       "name": "Unexpected Fangs",
-      "mainboard": [],
+      "mainboard": [
+        {
+          "deck_id": "DimirTerrorV2",
+          "copies": 1
+        }
+      ],
       "sideboard": [
         {
           "deck_id": "Affinity",
+          "copies": 1
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 1
+        },
+        {
+          "deck_id": "DimirTerrorV2",
           "copies": 1
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "declared_decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3391,17 +4922,49 @@
         {
           "deck_id": "Affinity",
           "copies": 3
+        },
+        {
+          "deck_id": "AffinityV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 2
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Viridian Longbow",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "ElvesV2",
+          "copies": 2
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Elves V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3418,16 +4981,22 @@
         {
           "deck_id": "Spy",
           "copies": 2
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 3
         }
       ],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3443,17 +5012,29 @@
         {
           "deck_id": "Burn",
           "copies": 4
+        },
+        {
+          "deck_id": "BurnV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "RallyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "declared_decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3465,15 +5046,21 @@
         {
           "deck_id": "Spy",
           "copies": 3
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3486,14 +5073,40 @@
         {
           "deck_id": "Wildfire",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Webweaver Changeling",
+      "mainboard": [],
+      "sideboard": [
+        {
+          "deck_id": "ElvesV2",
+          "copies": 2
+        }
+      ],
+      "registry_status": "present",
+      "expected_decks": [
+        "Deck - Elves V2.dek"
+      ],
+      "declared_decks": [
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3505,15 +5118,26 @@
         {
           "deck_id": "Elves",
           "copies": 2
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 1
         }
       ],
-      "sideboard": [],
+      "sideboard": [
+        {
+          "deck_id": "ElvesV2",
+          "copies": 1
+        }
+      ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "declared_decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3529,17 +5153,29 @@
         {
           "deck_id": "Spy",
           "copies": 4
+        },
+        {
+          "deck_id": "ElvesV2",
+          "copies": 4
+        },
+        {
+          "deck_id": "SpyV2",
+          "copies": 4
         }
       ],
       "sideboard": [],
       "registry_status": "present",
       "expected_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",
@@ -3551,15 +5187,28 @@
         {
           "deck_id": "Wildfire",
           "copies": 4
+        },
+        {
+          "deck_id": "WildfireV2",
+          "copies": 4
         }
       ],
-      "sideboard": [],
+      "sideboard": [
+        {
+          "deck_id": "SpyV2",
+          "copies": 3
+        }
+      ],
       "registry_status": "present",
       "expected_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "declared_decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "registry_membership_matches": true,
       "support_status": "full",

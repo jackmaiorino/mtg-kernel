@@ -148,7 +148,7 @@ fn generated_definitions_ids_and_append_only_token_are_exact() {
     assert_eq!(card_id("Skeleton Token"), 161);
     assert_eq!(Subtype::Skeleton.stable_id(), 69);
     assert_eq!(CARD_DEFS.len(), 184);
-    assert_eq!(KERNEL_CARDDB_HASH, 0x9378_c4e1_705d_5875);
+    assert_eq!(KERNEL_CARDDB_HASH, 0xde59_c501_e943_f3fd);
 
     let monstrous = &CARD_DEFS[74];
     assert_eq!(monstrous.capability, CardCapability::Full);

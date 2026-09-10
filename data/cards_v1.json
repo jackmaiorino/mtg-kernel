@@ -10,7 +10,16 @@
     "Deck - Mono-Red Burn.dek",
     "Deck - Mono-Blue Terror.dek",
     "Deck - Caw-Gates.dek",
-    "Deck - Mono-Blue Faeries.dek"
+    "Deck - Mono-Blue Faeries.dek",
+    "Deck - Madness Burn V2.dek",
+    "Deck - Mono-Blue Delver V2.dek",
+    "Deck - Grixis Affinity V2.dek",
+    "Deck - Red Deck Wins V2.dek",
+    "Deck - Jund Wildfire V2.dek",
+    "Deck - Elves V2.dek",
+    "Deck - Mono-Blue Terror V2.dek",
+    "Deck - Spy Combo V2.dek",
+    "Deck - Dimir Terror V2.dek"
   ],
   "cards": [
     {
@@ -32,7 +41,10 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -63,7 +75,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -189,7 +203,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -222,7 +237,8 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -257,7 +273,11 @@
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -288,7 +308,10 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -317,7 +340,8 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -352,7 +376,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -380,7 +405,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -408,7 +435,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -438,7 +467,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -502,7 +532,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -537,7 +568,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -568,7 +600,10 @@
       "decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -595,7 +630,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -628,7 +664,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -655,7 +693,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -683,7 +723,10 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -714,7 +757,10 @@
       "decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -744,7 +790,9 @@
       ],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -774,7 +822,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -835,7 +884,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -865,7 +915,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -894,7 +945,8 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -921,7 +973,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -950,7 +1003,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -981,7 +1035,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -1073,7 +1128,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1104,7 +1160,8 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1133,7 +1190,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1162,7 +1220,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1192,7 +1251,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1224,7 +1285,10 @@
       ],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -1256,7 +1320,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1287,7 +1352,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1319,7 +1386,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1351,7 +1420,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -1384,7 +1454,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1417,7 +1488,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1477,7 +1549,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1509,7 +1582,9 @@
       ],
       "decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -1566,7 +1641,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -1598,7 +1675,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1697,7 +1775,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -1794,7 +1873,11 @@
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -1823,7 +1906,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1890,7 +1975,10 @@
       "decks": [
         "Deck - Mono-Blue Terror.dek",
         "Deck - Caw-Gates.dek",
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -1951,7 +2039,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -1981,7 +2071,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -2011,7 +2102,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2039,7 +2132,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -2072,7 +2166,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2105,7 +2201,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2136,7 +2233,10 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono-Blue Terror.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2165,7 +2265,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2233,7 +2335,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -2263,7 +2367,10 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2293,7 +2400,8 @@
         "B"
       ],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -2391,7 +2499,12 @@
       "decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -2421,7 +2534,10 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2450,7 +2566,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -2476,7 +2593,10 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -2542,7 +2662,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -2664,7 +2786,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2724,7 +2848,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2817,7 +2942,10 @@
         "Deck - Jund Wildfire.dek",
         "Deck - Grixis Affinity.dek",
         "Deck - Mono-Red Burn.dek",
-        "Deck - Caw-Gates.dek"
+        "Deck - Caw-Gates.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -2850,7 +2978,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -2879,7 +3009,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2907,7 +3038,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono Red Rally.dek"
+        "Deck - Mono Red Rally.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -2934,7 +3066,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -2965,7 +3098,10 @@
       "decks": [
         "Deck - Mono Red Rally.dek",
         "Deck - Grixis Affinity.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -3000,7 +3136,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3030,7 +3168,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -3158,7 +3298,8 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "complex",
@@ -3188,7 +3329,8 @@
         "U"
       ],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -3218,7 +3360,8 @@
         "R"
       ],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3250,7 +3393,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3280,7 +3424,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3340,7 +3486,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -3465,7 +3613,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -3527,7 +3676,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Faeries.dek"
+        "Deck - Mono-Blue Faeries.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -3562,7 +3713,9 @@
       "decks": [
         "Deck - Jund Wildfire.dek",
         "Deck - Grixis Affinity.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -3622,7 +3775,10 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -3650,7 +3806,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3710,7 +3867,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -3743,7 +3901,10 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Mono-Blue Terror.dek"
+        "Deck - Mono-Blue Terror.dek",
+        "Deck - Mono-Blue Delver V2.dek",
+        "Deck - Mono-Blue Terror V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3772,7 +3933,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -3803,7 +3966,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -3835,7 +3999,8 @@
         "C"
       ],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -3866,7 +4031,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Dimir Terror V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "simple",
@@ -3895,7 +4062,9 @@
       ],
       "decks": [
         "Deck - Jund Wildfire.dek",
-        "Deck - Grixis Affinity.dek"
+        "Deck - Grixis Affinity.dek",
+        "Deck - Grixis Affinity V2.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "trivial",
@@ -3927,7 +4096,8 @@
       "produces_mana": [],
       "decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -3961,7 +4131,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Mono Red Rally.dek",
-        "Deck - Mono-Red Burn.dek"
+        "Deck - Mono-Red Burn.dek",
+        "Deck - Madness Burn V2.dek",
+        "Deck - Red Deck Wins V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -3990,7 +4162,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -4019,7 +4192,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Elves.dek"
+        "Deck - Elves.dek",
+        "Deck - Elves V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4049,7 +4223,9 @@
       "produces_mana": [],
       "decks": [
         "Deck - Elves.dek",
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4079,7 +4255,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Jund Wildfire.dek"
+        "Deck - Jund Wildfire.dek",
+        "Deck - Jund Wildfire V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -4234,7 +4412,8 @@
         "B"
       ],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4268,7 +4447,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4301,7 +4481,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4339,7 +4520,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4412,7 +4594,8 @@
         "G"
       ],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "simple",
@@ -4444,7 +4627,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -4536,7 +4721,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -4698,7 +4884,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -4729,7 +4916,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -4759,7 +4947,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -4793,7 +4982,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
@@ -4858,7 +5048,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Elves V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -4891,7 +5083,9 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Red Deck Wins V2.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": true,
       "complexity": "moderate",
@@ -4956,7 +5150,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "Deck - Spy Combo.dek"
+        "Deck - Spy Combo.dek",
+        "Deck - Spy Combo V2.dek"
       ],
       "sideboard_only": false,
       "complexity": "complex",

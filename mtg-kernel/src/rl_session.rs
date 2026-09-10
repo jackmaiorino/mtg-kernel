@@ -2473,10 +2473,28 @@ fn flat_validate_semantic_policy_pair_v1(
             // Neither reachable through this H2 use-gate/which-gate
             // sentinel scheme (see `Decision::ChooseOptionalCost`'s match
             // in `core_surface_action_candidates_v1`): `Decline` never
-            // reaches the "which" stage, and `ReturnPermanent` is not yet
-            // surfaced through it at all.
+            // reaches the "which" stage through the two-stage
+            // `ChooseOptionalCostStage` shape, and `ReturnPermanent` is
+            // never surfaced through it at all.
             OptionalCostChoice::Decline | OptionalCostChoice::ReturnPermanent => false,
         },
+        (
+            ActionSemanticV1::ChooseOptionalCostWhich { choice, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseOptionalCost(actual))),
+        ) => {
+            // `Decline` and `ReturnPermanent` (e.g. Glint Hawk's return-a-
+            // permanent cost, since f013434f) are not decomposed into H2's
+            // two-stage `Use`/`Which` reshape: `core_surface_action_
+            // candidates_v1` presents them as a single candidate answered
+            // by the engine's original one-shot `Action::ChooseOptionalCost`
+            // (see `surface_v2.rs`'s `OptionalCostReshape` doc comment for
+            // why that direct bypass exists). `Discard`/`SacrificeLand`
+            // still only pair through the staged arm above.
+            matches!(
+                choice,
+                OptionalCostChoice::Decline | OptionalCostChoice::ReturnPermanent
+            ) && choice == actual
+        }
         (
             ActionSemanticV1::ChooseSpellCopyPayment { pay, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseSpellCopyPayment(actual))),
@@ -7121,6 +7139,62 @@ mod tests {
     };
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
     use std::collections::HashSet;
+
+    #[test]
+    fn choose_optional_cost_which_pairs_with_the_direct_action_for_decline_and_return_permanent() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        for choice in [OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent] {
+            let candidate = CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseOptionalCostWhich {
+                    actor: PlayerSeatV1::P0,
+                    choice,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseOptionalCost(choice),
+                )),
+            };
+            assert_eq!(
+                flat_validate_semantic_policy_pair_v1(&candidate),
+                Ok(()),
+                "{choice:?} should pair with the direct ChooseOptionalCost action"
+            );
+        }
+
+        // A mismatched direct-action choice must still fail closed.
+        let mismatched = CorePolicyActionCandidateV1 {
+            semantic: ActionSemanticV1::ChooseOptionalCostWhich {
+                actor: PlayerSeatV1::P0,
+                choice: OptionalCostChoice::Decline,
+            },
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                Action::ChooseOptionalCost(OptionalCostChoice::ReturnPermanent),
+            )),
+        };
+        assert_eq!(
+            flat_validate_semantic_policy_pair_v1(&mismatched),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+
+        // Discard/SacrificeLand still only pair through the staged action,
+        // never through the direct one-shot bypass.
+        for choice in [OptionalCostChoice::Discard, OptionalCostChoice::SacrificeLand] {
+            let staged_only = CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseOptionalCostWhich {
+                    actor: PlayerSeatV1::P0,
+                    choice,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseOptionalCost(choice),
+                )),
+            };
+            assert_eq!(
+                flat_validate_semantic_policy_pair_v1(&staged_only),
+                Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+            );
+        }
+    }
 
     fn attacker_state(count: usize) -> GameState {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);

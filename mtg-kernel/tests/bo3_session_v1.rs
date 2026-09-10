@@ -263,6 +263,30 @@ fn completed_checked_in_decks_create_an_executable_postboard_session() {
 }
 
 #[test]
+fn bo3_session_accepts_a_v2_registration() {
+    let mut session =
+        BestOfThreeDeckMatchV1::checked_in_pauper_v1("DimirTerrorV2", "Burn", PlayerId::P0)
+            .unwrap();
+    let game_one = session
+        .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
+        .unwrap();
+    assert_eq!(game_one.start().game_index, 1);
+    assert_eq!(game_one.start().starting_player, PlayerId::P0);
+    for player in [PlayerId::P0, PlayerId::P1] {
+        assert_eq!(
+            game_one.configuration(player).unwrap().mainboard().len(),
+            60
+        );
+        assert_eq!(
+            game_one.configuration(player).unwrap().sideboard().len(),
+            15
+        );
+    }
+    assert!(game_one.sideboard_receipt(PlayerId::P0).is_none());
+    assert!(game_one.sideboard_receipt(PlayerId::P1).is_none());
+}
+
+#[test]
 fn all_81_ordered_runtime_deck_pairs_construct_game_one() {
     let mut pair_count = 0;
     for p0 in RUNTIME_DECKS {

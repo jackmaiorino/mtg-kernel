@@ -35,10 +35,10 @@ MATERIALIZATION_ORDER = "utf8_card_name_then_copy_ordinal"
 RUNTIME_MATERIALIZATION_ORDER = "xmage_xml_row_then_copy_ordinal/v1"
 RUNTIME_CARD_ID_ASSIGNMENT = "zero_based_data_cards_v1_json_cards_array_index/v1"
 RUNTIME_DECK_HASH_ALGORITHM = "fnv1a64-serde-json-u16-array/v1"
-JAVA_FACTORY_FILE_SHA256 = "0273a0cf46d393bb5377a8b5b4a94aee5c4f1f74a0fa1d9ab168f98ed86659fa"
+JAVA_FACTORY_FILE_SHA256 = "f128b3789490c678d4eced9ad08be01085cfa9cc45134f25c58db6c177b4d3e0"
 JAVA_FACTORY_METHOD_SHA256 = "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b"
 JAVA_FACTORY_REGISTRATIONS_METHOD = "DeterminizationSampler.pauperRegistrationsV2"
-JAVA_FACTORY_REGISTRATIONS_METHOD_SHA256 = "5cd95f0bee51f6bd04385cc2c2529eaab147a0b3266dc1702f655a275e95c3eb"
+JAVA_FACTORY_REGISTRATIONS_METHOD_SHA256 = "edf1f74408e4c51b06e858bb40bf0031243595c54d7a486cfb13e0bf3cbf24a9"
 
 XMAGE_ORACLE_PATH = Path("oracle/xmage")
 JAVA_FACTORY_PATH = XMAGE_ORACLE_PATH / "DeterminizationSampler.java"
@@ -90,6 +90,15 @@ REGISTRATION_SPECS = (
     DeckSpec("Terror", "Terror", "Deck - Mono-Blue Terror.dek", "8ba22b67b843bc49a421e1c2814c4dd24a04ab2b45131ec7876a8312115a9fda"),
     DeckSpec("CawGates", "CawGates", "Deck - Caw-Gates.dek", "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14"),
     DeckSpec("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
+    DeckSpec("BurnV2", "BurnV2", "Deck - Madness Burn V2.dek", "ef035bdf1df23b73e42a698f1251c38efb46c4349bac5cbca79062ca7ddaaef4"),
+    DeckSpec("DelverV2", "DelverV2", "Deck - Mono-Blue Delver V2.dek", "18c519f4bcd6b8c0b584e8822e7ccefab43f075c51ba709422af2691b4b7106a"),
+    DeckSpec("AffinityV2", "AffinityV2", "Deck - Grixis Affinity V2.dek", "2197c9d4c9c098ae8048741b213577d69bbed88b385fc7cc643442f3d46e0b1f"),
+    DeckSpec("RallyV2", "RallyV2", "Deck - Red Deck Wins V2.dek", "d9b587af75861db5a908759061c6de9e76d004bd11907fc743961e74d8b23e17"),
+    DeckSpec("WildfireV2", "WildfireV2", "Deck - Jund Wildfire V2.dek", "eba3009276de31a8f5fdb3ef30589517eb501562a52021184d08ef3324135848"),
+    DeckSpec("ElvesV2", "ElvesV2", "Deck - Elves V2.dek", "b34c4999fae902130c8600f9c9f43c1d386dbc98cc42f29887cc98ac76ce28b3"),
+    DeckSpec("TerrorV2", "TerrorV2", "Deck - Mono-Blue Terror V2.dek", "0bd38434f6a7ebf26f8849f01c975c6b82815f9a4224ab44c22c22b34827d862"),
+    DeckSpec("SpyV2", "SpyV2", "Deck - Spy Combo V2.dek", "69447513572f5981b89173c4cae8666ff68e96be96c79fb22779f534ec85345f"),
+    DeckSpec("DimirTerrorV2", "DimirTerrorV2", "Deck - Dimir Terror V2.dek", "ab0beb04541f49ce2da71fe37cddc8b6663a43dcae0fe27c2b6e4dc9b37ba813"),
 )
 
 # Compatibility alias for one release: callers importing the pre-split name
@@ -148,6 +157,15 @@ EXPECTED_MAINBOARD_SUPPORT = {
     "Terror": {"full": 60, "partial": 0, "no_effect": 0},
     "CawGates": {"full": 60, "partial": 0, "no_effect": 0},
     "Faeries": {"full": 60, "partial": 0, "no_effect": 0},
+    "BurnV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "DelverV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "AffinityV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "RallyV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "WildfireV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "ElvesV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "TerrorV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "SpyV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "DimirTerrorV2": {"full": 60, "partial": 0, "no_effect": 0},
 }
 
 
@@ -435,7 +453,7 @@ def build_pool_manifest(repo_root: Path) -> tuple[dict[str, Any], dict[str, tupl
             }
         )
     all_cards = all_main | all_side
-    expected_totals = (9, 121, 36, 150, 540, 135)
+    expected_totals = (18, 134, 52, 171, 1080, 270)
     actual_totals = (
         len(decks),
         len(all_main),
@@ -528,7 +546,7 @@ def normalize_registry(
             raise ManifestError(f"registry-only non-token card {name!r} is outside the pinned pool")
         card["decks"] = list(expected_memberships[name])
     expected_token_names = {name for name, _producers in TOKEN_DEPENDENCIES}
-    if non_token_count != 150 or token_names != expected_token_names:
+    if non_token_count != 171 or token_names != expected_token_names:
         raise ManifestError(
             f"registry baseline drift: expected 150 deck cards and tokens "
             f"{sorted(expected_token_names)!r}, got {non_token_count} and {sorted(token_names)!r}"

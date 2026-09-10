@@ -1611,7 +1611,7 @@ mod tests {
         // (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag, appended after
         // `delve` without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x9378_c4e1_705d_5875);
+        assert_eq!(KERNEL_CARDDB_HASH, 0xde59_c501_e943_f3fd);
     }
 
     #[test]

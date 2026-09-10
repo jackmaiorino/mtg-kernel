@@ -406,7 +406,7 @@ fn checked_in_policy_is_strict_versioned() {
     let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
     assert_eq!(policy.policy_id(), "pauper-registered-75-static/v1");
     assert_eq!(policy.deck_ids().first().unwrap(), "Affinity");
-    assert_eq!(policy.deck_ids().last().unwrap(), "Wildfire");
+    assert_eq!(policy.deck_ids().last().unwrap(), "WildfireV2");
     assert!(policy.plans().is_empty());
 
     let registered = RegisteredDeckV1::new_exact_v1("Rally", vec![1; 60], vec![2; 15]).unwrap();

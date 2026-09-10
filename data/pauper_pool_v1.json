@@ -4,10 +4,10 @@
   "source": {
     "java_factory_path": "oracle/xmage/DeterminizationSampler.java",
     "java_factory_method": "DeterminizationSampler.pauperDefaults",
-    "java_factory_file_sha256": "0273a0cf46d393bb5377a8b5b4a94aee5c4f1f74a0fa1d9ab168f98ed86659fa",
+    "java_factory_file_sha256": "f128b3789490c678d4eced9ad08be01085cfa9cc45134f25c58db6c177b4d3e0",
     "java_factory_method_sha256": "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b",
     "java_factory_registrations_method": "DeterminizationSampler.pauperRegistrationsV2",
-    "java_factory_registrations_method_sha256": "5cd95f0bee51f6bd04385cc2c2529eaab147a0b3266dc1702f655a275e95c3eb",
+    "java_factory_registrations_method_sha256": "edf1f74408e4c51b06e858bb40bf0031243595c54d7a486cfb13e0bf3cbf24a9",
     "source_hash_normalization": "utf8_text_crlf_v1"
   },
   "materialization": {
@@ -15,12 +15,12 @@
     "copy_ordinal_base": 1
   },
   "totals": {
-    "deck_count": 9,
-    "mainboard_unique_cards": 121,
-    "sideboard_unique_cards": 36,
-    "pool_unique_cards": 150,
-    "mainboard_copies": 540,
-    "sideboard_copies": 135
+    "deck_count": 18,
+    "mainboard_unique_cards": 134,
+    "sideboard_unique_cards": 52,
+    "pool_unique_cards": 171,
+    "mainboard_copies": 1080,
+    "sideboard_copies": 270
   },
   "decks": [
     {
@@ -3754,6 +3754,3769 @@
           {
             "name": "Steel Sabotage",
             "copy_ordinal": 2
+          }
+        ]
+      }
+    },
+    {
+      "order": 10,
+      "id": "BurnV2",
+      "source_key": "BurnV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Madness Burn V2.dek",
+      "source_sha256": "ef035bdf1df23b73e42a698f1251c38efb46c4349bac5cbca79062ca7ddaaef4",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 12,
+        "cards": [
+          {
+            "name": "Faithless Looting",
+            "count": 4
+          },
+          {
+            "name": "Fiery Temper",
+            "count": 4
+          },
+          {
+            "name": "Fireblast",
+            "count": 3
+          },
+          {
+            "name": "Grab the Prize",
+            "count": 4
+          },
+          {
+            "name": "Guttersnipe",
+            "count": 3
+          },
+          {
+            "name": "Highway Robbery",
+            "count": 4
+          },
+          {
+            "name": "Kessig Flamebreather",
+            "count": 4
+          },
+          {
+            "name": "Lava Dart",
+            "count": 4
+          },
+          {
+            "name": "Lightning Bolt",
+            "count": 4
+          },
+          {
+            "name": "Mountain",
+            "count": 18
+          },
+          {
+            "name": "Sneaky Snacker",
+            "count": 4
+          },
+          {
+            "name": "Voldaren Epicure",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Faithless Looting",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Faithless Looting",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Faithless Looting",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Faithless Looting",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Fiery Temper",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Fiery Temper",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fiery Temper",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Fiery Temper",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Fireblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Fireblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fireblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Grab the Prize",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Grab the Prize",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Grab the Prize",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Grab the Prize",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Guttersnipe",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Guttersnipe",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Guttersnipe",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Highway Robbery",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Highway Robbery",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Highway Robbery",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Highway Robbery",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Kessig Flamebreather",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Kessig Flamebreather",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Kessig Flamebreather",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Kessig Flamebreather",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Lava Dart",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lava Dart",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lava Dart",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lava Dart",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 5
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 6
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 7
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 8
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 9
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 10
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 11
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 12
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 13
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 14
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 15
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 16
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 17
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 18
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 6,
+        "cards": [
+          {
+            "name": "Cast into the Fire",
+            "count": 2
+          },
+          {
+            "name": "Pyroblast",
+            "count": 4
+          },
+          {
+            "name": "Red Elemental Blast",
+            "count": 1
+          },
+          {
+            "name": "Relic of Progenitus",
+            "count": 3
+          },
+          {
+            "name": "Searing Blaze",
+            "count": 3
+          },
+          {
+            "name": "Smash to Smithereens",
+            "count": 2
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Cast into the Fire",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cast into the Fire",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Red Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Relic of Progenitus",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Relic of Progenitus",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Relic of Progenitus",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Searing Blaze",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Searing Blaze",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Searing Blaze",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Smash to Smithereens",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Smash to Smithereens",
+            "copy_ordinal": 2
+          }
+        ]
+      }
+    },
+    {
+      "order": 11,
+      "id": "DelverV2",
+      "source_key": "DelverV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Mono-Blue Delver V2.dek",
+      "source_sha256": "18c519f4bcd6b8c0b584e8822e7ccefab43f075c51ba709422af2691b4b7106a",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 15,
+        "cards": [
+          {
+            "name": "Brainstorm",
+            "count": 4
+          },
+          {
+            "name": "Counterspell",
+            "count": 4
+          },
+          {
+            "name": "Cryptic Serpent",
+            "count": 4
+          },
+          {
+            "name": "Deem Inferior",
+            "count": 2
+          },
+          {
+            "name": "Deep Analysis",
+            "count": 1
+          },
+          {
+            "name": "Delver of Secrets",
+            "count": 4
+          },
+          {
+            "name": "Dispel",
+            "count": 3
+          },
+          {
+            "name": "Force Spike",
+            "count": 1
+          },
+          {
+            "name": "Island",
+            "count": 16
+          },
+          {
+            "name": "Lorien Revealed",
+            "count": 4
+          },
+          {
+            "name": "Mental Note",
+            "count": 4
+          },
+          {
+            "name": "Ponder",
+            "count": 3
+          },
+          {
+            "name": "Sleep of the Dead",
+            "count": 2
+          },
+          {
+            "name": "Thought Scour",
+            "count": 4
+          },
+          {
+            "name": "Tolarian Terror",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Deem Inferior",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Deem Inferior",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Deep Analysis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Delver of Secrets",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Delver of Secrets",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Delver of Secrets",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Delver of Secrets",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Force Spike",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 5
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 6
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 7
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 8
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 9
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 10
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 11
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 12
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 13
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 14
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 15
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 16
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Ponder",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Ponder",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ponder",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Sleep of the Dead",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Sleep of the Dead",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 6,
+        "cards": [
+          {
+            "name": "Annul",
+            "count": 4
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "count": 2
+          },
+          {
+            "name": "Envelop",
+            "count": 1
+          },
+          {
+            "name": "Gut Shot",
+            "count": 3
+          },
+          {
+            "name": "Hydroblast",
+            "count": 4
+          },
+          {
+            "name": "Murmuring Mystic",
+            "count": 1
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Annul",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Annul",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Annul",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Annul",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Envelop",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Gut Shot",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Gut Shot",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Gut Shot",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Murmuring Mystic",
+            "copy_ordinal": 1
+          }
+        ]
+      }
+    },
+    {
+      "order": 12,
+      "id": "AffinityV2",
+      "source_key": "AffinityV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Grixis Affinity V2.dek",
+      "source_sha256": "2197c9d4c9c098ae8048741b213577d69bbed88b385fc7cc643442f3d46e0b1f",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 21,
+        "cards": [
+          {
+            "name": "Black Mage's Rod",
+            "count": 3
+          },
+          {
+            "name": "Blood Fountain",
+            "count": 2
+          },
+          {
+            "name": "Cryogen Relic",
+            "count": 1
+          },
+          {
+            "name": "Drossforge Bridge",
+            "count": 4
+          },
+          {
+            "name": "Galvanic Blast",
+            "count": 4
+          },
+          {
+            "name": "Glint Hawk",
+            "count": 3
+          },
+          {
+            "name": "Great Furnace",
+            "count": 2
+          },
+          {
+            "name": "Ichor Wellspring",
+            "count": 4
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "count": 3
+          },
+          {
+            "name": "Makeshift Munitions",
+            "count": 1
+          },
+          {
+            "name": "Mistvault Bridge",
+            "count": 4
+          },
+          {
+            "name": "Mountain",
+            "count": 1
+          },
+          {
+            "name": "Myr Enforcer",
+            "count": 4
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "count": 2
+          },
+          {
+            "name": "Reckoner's Bargain",
+            "count": 4
+          },
+          {
+            "name": "Refurbished Familiar",
+            "count": 4
+          },
+          {
+            "name": "Seat of the Synod",
+            "count": 2
+          },
+          {
+            "name": "Silverbluff Bridge",
+            "count": 2
+          },
+          {
+            "name": "Thoughtcast",
+            "count": 4
+          },
+          {
+            "name": "Toxin Analysis",
+            "count": 2
+          },
+          {
+            "name": "Vault of Whispers",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Black Mage's Rod",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Black Mage's Rod",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Black Mage's Rod",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Blood Fountain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Blood Fountain",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Cryogen Relic",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Glint Hawk",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Glint Hawk",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Glint Hawk",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Great Furnace",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Great Furnace",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Makeshift Munitions",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mistvault Bridge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mistvault Bridge",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mistvault Bridge",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mistvault Bridge",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Myr Enforcer",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Myr Enforcer",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Myr Enforcer",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Myr Enforcer",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Reckoner's Bargain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Reckoner's Bargain",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Reckoner's Bargain",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Reckoner's Bargain",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Seat of the Synod",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Seat of the Synod",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Silverbluff Bridge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Silverbluff Bridge",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thoughtcast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Thoughtcast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thoughtcast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Thoughtcast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Toxin Analysis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Toxin Analysis",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Vault of Whispers",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Vault of Whispers",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Vault of Whispers",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Vault of Whispers",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 7,
+        "cards": [
+          {
+            "name": "Blue Elemental Blast",
+            "count": 2
+          },
+          {
+            "name": "Extract a Confession",
+            "count": 2
+          },
+          {
+            "name": "Hydroblast",
+            "count": 4
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "count": 1
+          },
+          {
+            "name": "Pyroblast",
+            "count": 4
+          },
+          {
+            "name": "Red Elemental Blast",
+            "count": 1
+          },
+          {
+            "name": "Unexpected Fangs",
+            "count": 1
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Extract a Confession",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Extract a Confession",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Red Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Unexpected Fangs",
+            "copy_ordinal": 1
+          }
+        ]
+      }
+    },
+    {
+      "order": 13,
+      "id": "RallyV2",
+      "source_key": "RallyV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Red Deck Wins V2.dek",
+      "source_sha256": "d9b587af75861db5a908759061c6de9e76d004bd11907fc743961e74d8b23e17",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 14,
+        "cards": [
+          {
+            "name": "Burning-Tree Emissary",
+            "count": 4
+          },
+          {
+            "name": "Chain Lightning",
+            "count": 2
+          },
+          {
+            "name": "Clockwork Percussionist",
+            "count": 4
+          },
+          {
+            "name": "End the Festivities",
+            "count": 2
+          },
+          {
+            "name": "Experimental Synthesizer",
+            "count": 3
+          },
+          {
+            "name": "Galvanic Blast",
+            "count": 4
+          },
+          {
+            "name": "Goblin Bushwhacker",
+            "count": 4
+          },
+          {
+            "name": "Goblin Tomb Raider",
+            "count": 4
+          },
+          {
+            "name": "Great Furnace",
+            "count": 4
+          },
+          {
+            "name": "Lightning Bolt",
+            "count": 4
+          },
+          {
+            "name": "Mountain",
+            "count": 14
+          },
+          {
+            "name": "Rally at the Hornburg",
+            "count": 4
+          },
+          {
+            "name": "Reckless Impulse",
+            "count": 3
+          },
+          {
+            "name": "Voldaren Epicure",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Burning-Tree Emissary",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Burning-Tree Emissary",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Burning-Tree Emissary",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Burning-Tree Emissary",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Chain Lightning",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Chain Lightning",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Clockwork Percussionist",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Clockwork Percussionist",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Clockwork Percussionist",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Clockwork Percussionist",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "End the Festivities",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "End the Festivities",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Experimental Synthesizer",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Experimental Synthesizer",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Experimental Synthesizer",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Galvanic Blast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Goblin Bushwhacker",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Goblin Bushwhacker",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Goblin Bushwhacker",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Goblin Bushwhacker",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Goblin Tomb Raider",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Goblin Tomb Raider",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Goblin Tomb Raider",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Goblin Tomb Raider",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Great Furnace",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Great Furnace",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Great Furnace",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Great Furnace",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lightning Bolt",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 5
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 6
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 7
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 8
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 9
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 10
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 11
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 12
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 13
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 14
+          },
+          {
+            "name": "Rally at the Hornburg",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Rally at the Hornburg",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Rally at the Hornburg",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Rally at the Hornburg",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Reckless Impulse",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Reckless Impulse",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Reckless Impulse",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Voldaren Epicure",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 6,
+        "cards": [
+          {
+            "name": "Cast into the Fire",
+            "count": 2
+          },
+          {
+            "name": "Flaring Pain",
+            "count": 1
+          },
+          {
+            "name": "Raze",
+            "count": 3
+          },
+          {
+            "name": "Red Elemental Blast",
+            "count": 4
+          },
+          {
+            "name": "Relic of Progenitus",
+            "count": 3
+          },
+          {
+            "name": "Smash to Smithereens",
+            "count": 2
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Cast into the Fire",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cast into the Fire",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Flaring Pain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Raze",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Raze",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Raze",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Red Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Red Elemental Blast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Red Elemental Blast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Red Elemental Blast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Relic of Progenitus",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Relic of Progenitus",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Relic of Progenitus",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Smash to Smithereens",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Smash to Smithereens",
+            "copy_ordinal": 2
+          }
+        ]
+      }
+    },
+    {
+      "order": 14,
+      "id": "WildfireV2",
+      "source_key": "WildfireV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Jund Wildfire V2.dek",
+      "source_sha256": "eba3009276de31a8f5fdb3ef30589517eb501562a52021184d08ef3324135848",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 21,
+        "cards": [
+          {
+            "name": "Cast Down",
+            "count": 4
+          },
+          {
+            "name": "Cleansing Wildfire",
+            "count": 4
+          },
+          {
+            "name": "Drossforge Bridge",
+            "count": 4
+          },
+          {
+            "name": "Eviscerator's Insight",
+            "count": 2
+          },
+          {
+            "name": "Fanatical Offering",
+            "count": 4
+          },
+          {
+            "name": "Forest",
+            "count": 2
+          },
+          {
+            "name": "Gixian Infiltrator",
+            "count": 2
+          },
+          {
+            "name": "Ichor Wellspring",
+            "count": 4
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "count": 3
+          },
+          {
+            "name": "Lembas",
+            "count": 2
+          },
+          {
+            "name": "Makeshift Munitions",
+            "count": 1
+          },
+          {
+            "name": "Mountain",
+            "count": 1
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "count": 3
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "count": 1
+          },
+          {
+            "name": "Refurbished Familiar",
+            "count": 4
+          },
+          {
+            "name": "Slagwoods Bridge",
+            "count": 4
+          },
+          {
+            "name": "Swamp",
+            "count": 3
+          },
+          {
+            "name": "Toxin Analysis",
+            "count": 2
+          },
+          {
+            "name": "Twisted Landscape",
+            "count": 4
+          },
+          {
+            "name": "Vault of Whispers",
+            "count": 2
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Cast Down",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cast Down",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Cast Down",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Cast Down",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Cleansing Wildfire",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cleansing Wildfire",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Cleansing Wildfire",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Cleansing Wildfire",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Drossforge Bridge",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Eviscerator's Insight",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Eviscerator's Insight",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fanatical Offering",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Fanatical Offering",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fanatical Offering",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Fanatical Offering",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Gixian Infiltrator",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Gixian Infiltrator",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Ichor Wellspring",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Krark-Clan Shaman",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lembas",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lembas",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Makeshift Munitions",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Refurbished Familiar",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Slagwoods Bridge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Slagwoods Bridge",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Slagwoods Bridge",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Slagwoods Bridge",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Swamp",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Swamp",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Swamp",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Toxin Analysis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Toxin Analysis",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Twisted Landscape",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Twisted Landscape",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Twisted Landscape",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Twisted Landscape",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Vault of Whispers",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Vault of Whispers",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 7,
+        "cards": [
+          {
+            "name": "Ancient Grudge",
+            "count": 1
+          },
+          {
+            "name": "Breath Weapon",
+            "count": 2
+          },
+          {
+            "name": "Duress",
+            "count": 3
+          },
+          {
+            "name": "Pyroblast",
+            "count": 2
+          },
+          {
+            "name": "Terminate",
+            "count": 1
+          },
+          {
+            "name": "Troublemaker Ouphe",
+            "count": 2
+          },
+          {
+            "name": "Weather the Storm",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Ancient Grudge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Breath Weapon",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Breath Weapon",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Duress",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Duress",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Duress",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Pyroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Terminate",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Troublemaker Ouphe",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Troublemaker Ouphe",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Weather the Storm",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Weather the Storm",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Weather the Storm",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Weather the Storm",
+            "copy_ordinal": 4
+          }
+        ]
+      }
+    },
+    {
+      "order": 15,
+      "id": "ElvesV2",
+      "source_key": "ElvesV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Elves V2.dek",
+      "source_sha256": "b34c4999fae902130c8600f9c9f43c1d386dbc98cc42f29887cc98ac76ce28b3",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 16,
+        "cards": [
+          {
+            "name": "Avenging Hunter",
+            "count": 4
+          },
+          {
+            "name": "Elvish Mystic",
+            "count": 2
+          },
+          {
+            "name": "Forest",
+            "count": 12
+          },
+          {
+            "name": "Fyndhorn Elves",
+            "count": 3
+          },
+          {
+            "name": "Generous Ent",
+            "count": 4
+          },
+          {
+            "name": "Gingerbread Cabin",
+            "count": 1
+          },
+          {
+            "name": "Lead the Stampede",
+            "count": 4
+          },
+          {
+            "name": "Llanowar Elves",
+            "count": 4
+          },
+          {
+            "name": "Masked Vandal",
+            "count": 4
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "count": 4
+          },
+          {
+            "name": "Priest of Titania",
+            "count": 4
+          },
+          {
+            "name": "Quirion Ranger",
+            "count": 4
+          },
+          {
+            "name": "Sagu Wildling",
+            "count": 1
+          },
+          {
+            "name": "Timberwatch Elf",
+            "count": 4
+          },
+          {
+            "name": "Wellwisher",
+            "count": 1
+          },
+          {
+            "name": "Winding Way",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Elvish Mystic",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Elvish Mystic",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 5
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 6
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 7
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 8
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 9
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 10
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 11
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 12
+          },
+          {
+            "name": "Fyndhorn Elves",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Fyndhorn Elves",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fyndhorn Elves",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Gingerbread Cabin",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Llanowar Elves",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Llanowar Elves",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Llanowar Elves",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Llanowar Elves",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Nyxborn Hydra",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Priest of Titania",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Priest of Titania",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Priest of Titania",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Priest of Titania",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Quirion Ranger",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Quirion Ranger",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Quirion Ranger",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Quirion Ranger",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Sagu Wildling",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Timberwatch Elf",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Timberwatch Elf",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Timberwatch Elf",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Timberwatch Elf",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Wellwisher",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 6,
+        "cards": [
+          {
+            "name": "Faerie Macabre",
+            "count": 4
+          },
+          {
+            "name": "Spinewoods Paladin",
+            "count": 3
+          },
+          {
+            "name": "Viridian Longbow",
+            "count": 2
+          },
+          {
+            "name": "Vitu-Ghazi Inspector",
+            "count": 3
+          },
+          {
+            "name": "Webweaver Changeling",
+            "count": 2
+          },
+          {
+            "name": "Wellwisher",
+            "count": 1
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Faerie Macabre",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Faerie Macabre",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Faerie Macabre",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Faerie Macabre",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Spinewoods Paladin",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Spinewoods Paladin",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Spinewoods Paladin",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Viridian Longbow",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Viridian Longbow",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Vitu-Ghazi Inspector",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Vitu-Ghazi Inspector",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Vitu-Ghazi Inspector",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Webweaver Changeling",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Webweaver Changeling",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Wellwisher",
+            "copy_ordinal": 1
+          }
+        ]
+      }
+    },
+    {
+      "order": 16,
+      "id": "TerrorV2",
+      "source_key": "TerrorV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Mono-Blue Terror V2.dek",
+      "source_sha256": "0bd38434f6a7ebf26f8849f01c975c6b82815f9a4224ab44c22c22b34827d862",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 16,
+        "cards": [
+          {
+            "name": "Artful Dodge",
+            "count": 1
+          },
+          {
+            "name": "Brainstorm",
+            "count": 4
+          },
+          {
+            "name": "Counterspell",
+            "count": 4
+          },
+          {
+            "name": "Cryptic Serpent",
+            "count": 4
+          },
+          {
+            "name": "Deem Inferior",
+            "count": 2
+          },
+          {
+            "name": "Deep Analysis",
+            "count": 1
+          },
+          {
+            "name": "Dispel",
+            "count": 2
+          },
+          {
+            "name": "Force Spike",
+            "count": 3
+          },
+          {
+            "name": "Island",
+            "count": 16
+          },
+          {
+            "name": "Lorien Revealed",
+            "count": 4
+          },
+          {
+            "name": "Mental Note",
+            "count": 4
+          },
+          {
+            "name": "Murmuring Mystic",
+            "count": 2
+          },
+          {
+            "name": "Ponder",
+            "count": 3
+          },
+          {
+            "name": "Sleep of the Dead",
+            "count": 2
+          },
+          {
+            "name": "Thought Scour",
+            "count": 4
+          },
+          {
+            "name": "Tolarian Terror",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Artful Dodge",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Cryptic Serpent",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Deem Inferior",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Deem Inferior",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Deep Analysis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Force Spike",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Force Spike",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Force Spike",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 5
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 6
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 7
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 8
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 9
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 10
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 11
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 12
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 13
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 14
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 15
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 16
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Murmuring Mystic",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Murmuring Mystic",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ponder",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Ponder",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ponder",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Sleep of the Dead",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Sleep of the Dead",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 6,
+        "cards": [
+          {
+            "name": "Annul",
+            "count": 2
+          },
+          {
+            "name": "Azure Fleet Admiral",
+            "count": 1
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "count": 2
+          },
+          {
+            "name": "Gut Shot",
+            "count": 3
+          },
+          {
+            "name": "Hydroblast",
+            "count": 4
+          },
+          {
+            "name": "Steel Sabotage",
+            "count": 3
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Annul",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Annul",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Azure Fleet Admiral",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Gut Shot",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Gut Shot",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Gut Shot",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Steel Sabotage",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Steel Sabotage",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Steel Sabotage",
+            "copy_ordinal": 3
+          }
+        ]
+      }
+    },
+    {
+      "order": 17,
+      "id": "SpyV2",
+      "source_key": "SpyV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Spy Combo V2.dek",
+      "source_sha256": "69447513572f5981b89173c4cae8666ff68e96be96c79fb22779f534ec85345f",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 20,
+        "cards": [
+          {
+            "name": "Avenging Hunter",
+            "count": 2
+          },
+          {
+            "name": "Balustrade Spy",
+            "count": 4
+          },
+          {
+            "name": "Dread Return",
+            "count": 2
+          },
+          {
+            "name": "Elves of Deep Shadow",
+            "count": 3
+          },
+          {
+            "name": "Forest",
+            "count": 3
+          },
+          {
+            "name": "Gatecreeper Vine",
+            "count": 3
+          },
+          {
+            "name": "Generous Ent",
+            "count": 4
+          },
+          {
+            "name": "Land Grant",
+            "count": 4
+          },
+          {
+            "name": "Lead the Stampede",
+            "count": 4
+          },
+          {
+            "name": "Lotleth Giant",
+            "count": 2
+          },
+          {
+            "name": "Lotus Petal",
+            "count": 1
+          },
+          {
+            "name": "Masked Vandal",
+            "count": 3
+          },
+          {
+            "name": "Mesmeric Fiend",
+            "count": 2
+          },
+          {
+            "name": "Overgrown Battlement",
+            "count": 4
+          },
+          {
+            "name": "Quirion Ranger",
+            "count": 2
+          },
+          {
+            "name": "Sagu Wildling",
+            "count": 4
+          },
+          {
+            "name": "Saruli Caretaker",
+            "count": 4
+          },
+          {
+            "name": "Swamp",
+            "count": 1
+          },
+          {
+            "name": "Wall of Roots",
+            "count": 4
+          },
+          {
+            "name": "Winding Way",
+            "count": 4
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Balustrade Spy",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Balustrade Spy",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Balustrade Spy",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Balustrade Spy",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Dread Return",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Dread Return",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Elves of Deep Shadow",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Elves of Deep Shadow",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Elves of Deep Shadow",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Forest",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Gatecreeper Vine",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Gatecreeper Vine",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Gatecreeper Vine",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Generous Ent",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Land Grant",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Land Grant",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Land Grant",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Land Grant",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lead the Stampede",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Lotleth Giant",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lotleth Giant",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lotus Petal",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mesmeric Fiend",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mesmeric Fiend",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Overgrown Battlement",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Overgrown Battlement",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Overgrown Battlement",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Overgrown Battlement",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Quirion Ranger",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Quirion Ranger",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Sagu Wildling",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Sagu Wildling",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Sagu Wildling",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Sagu Wildling",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Saruli Caretaker",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Saruli Caretaker",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Saruli Caretaker",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Saruli Caretaker",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Swamp",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Wall of Roots",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Wall of Roots",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Wall of Roots",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Wall of Roots",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Winding Way",
+            "copy_ordinal": 4
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 9,
+        "cards": [
+          {
+            "name": "Acorn Harvest",
+            "count": 1
+          },
+          {
+            "name": "Avenging Hunter",
+            "count": 1
+          },
+          {
+            "name": "Faerie Macabre",
+            "count": 2
+          },
+          {
+            "name": "Fang Dragon",
+            "count": 3
+          },
+          {
+            "name": "Flaring Pain",
+            "count": 1
+          },
+          {
+            "name": "Masked Vandal",
+            "count": 1
+          },
+          {
+            "name": "Mesmeric Fiend",
+            "count": 2
+          },
+          {
+            "name": "Mountain",
+            "count": 1
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "count": 3
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Acorn Harvest",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Avenging Hunter",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Faerie Macabre",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Faerie Macabre",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fang Dragon",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Fang Dragon",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Fang Dragon",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Flaring Pain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Masked Vandal",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mesmeric Fiend",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mesmeric Fiend",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mountain",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Writhing Chrysalis",
+            "copy_ordinal": 3
+          }
+        ]
+      }
+    },
+    {
+      "order": 18,
+      "id": "DimirTerrorV2",
+      "source_key": "DimirTerrorV2",
+      "source_path": "oracle/xmage/decks/Pauper/Deck - Dimir Terror V2.dek",
+      "source_sha256": "ab0beb04541f49ce2da71fe37cddc8b6663a43dcae0fe27c2b6e4dc9b37ba813",
+      "mainboard": {
+        "copy_count": 60,
+        "unique_card_count": 19,
+        "cards": [
+          {
+            "name": "Abandon Attachments",
+            "count": 2
+          },
+          {
+            "name": "Brainstorm",
+            "count": 4
+          },
+          {
+            "name": "Cast Down",
+            "count": 2
+          },
+          {
+            "name": "Contaminated Aquifer",
+            "count": 4
+          },
+          {
+            "name": "Counterspell",
+            "count": 4
+          },
+          {
+            "name": "Deep Analysis",
+            "count": 1
+          },
+          {
+            "name": "Dispel",
+            "count": 2
+          },
+          {
+            "name": "Gurmag Angler",
+            "count": 2
+          },
+          {
+            "name": "Ice Tunnel",
+            "count": 2
+          },
+          {
+            "name": "Island",
+            "count": 10
+          },
+          {
+            "name": "Lorien Revealed",
+            "count": 4
+          },
+          {
+            "name": "Mental Note",
+            "count": 4
+          },
+          {
+            "name": "Murmuring Mystic",
+            "count": 1
+          },
+          {
+            "name": "Sneaky Snacker",
+            "count": 4
+          },
+          {
+            "name": "Snuff Out",
+            "count": 4
+          },
+          {
+            "name": "Suffocating Fumes",
+            "count": 1
+          },
+          {
+            "name": "Thought Scour",
+            "count": 4
+          },
+          {
+            "name": "Tolarian Terror",
+            "count": 4
+          },
+          {
+            "name": "Unexpected Fangs",
+            "count": 1
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Abandon Attachments",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Abandon Attachments",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Brainstorm",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Cast Down",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Cast Down",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Contaminated Aquifer",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Contaminated Aquifer",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Contaminated Aquifer",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Contaminated Aquifer",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Counterspell",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Deep Analysis",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Dispel",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Gurmag Angler",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Gurmag Angler",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Ice Tunnel",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Ice Tunnel",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 5
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 6
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 7
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 8
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 9
+          },
+          {
+            "name": "Island",
+            "copy_ordinal": 10
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Lorien Revealed",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Mental Note",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Murmuring Mystic",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Sneaky Snacker",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Snuff Out",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Snuff Out",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Snuff Out",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Snuff Out",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Suffocating Fumes",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Thought Scour",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Tolarian Terror",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Unexpected Fangs",
+            "copy_ordinal": 1
+          }
+        ]
+      },
+      "sideboard": {
+        "copy_count": 15,
+        "unique_card_count": 7,
+        "cards": [
+          {
+            "name": "Annul",
+            "count": 2
+          },
+          {
+            "name": "Arms of Hadar",
+            "count": 2
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "count": 1
+          },
+          {
+            "name": "Hydroblast",
+            "count": 4
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "count": 2
+          },
+          {
+            "name": "Steel Sabotage",
+            "count": 3
+          },
+          {
+            "name": "Unexpected Fangs",
+            "count": 1
+          }
+        ],
+        "materialized_cards": [
+          {
+            "name": "Annul",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Annul",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Arms of Hadar",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Arms of Hadar",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Blue Elemental Blast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Hydroblast",
+            "copy_ordinal": 4
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Nihil Spellbomb",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Steel Sabotage",
+            "copy_ordinal": 1
+          },
+          {
+            "name": "Steel Sabotage",
+            "copy_ordinal": 2
+          },
+          {
+            "name": "Steel Sabotage",
+            "copy_ordinal": 3
+          },
+          {
+            "name": "Unexpected Fangs",
+            "copy_ordinal": 1
           }
         ]
       }
