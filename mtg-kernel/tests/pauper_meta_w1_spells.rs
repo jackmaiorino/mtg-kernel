@@ -329,6 +329,43 @@ fn artful_dodge_makes_the_target_unblockable_this_turn_and_flashes_back() {
     }
 }
 
+// covers: Artful Dodge: flashback_from_graveyard_for_u
+#[test]
+fn artful_dodge_flashes_back_for_u_from_the_graveyard() {
+    // Seeded directly in the graveyard (the established pattern for
+    // flashback-from-graveyard tests in this wave, e.g. Ancient Grudge's
+    // and Acorn Harvest's own flashback halves): a resolved flashback cast
+    // is castable for {U} alone, targets normally, and exiles the card
+    // instead of returning it to the graveyard on resolution.
+    let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
+    let dodge = put_object(&mut state, PlayerId::P0, "Artful Dodge", Zone::Graveyard);
+    put_object(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
+    let creature = put_object(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+
+    let offer = engine::advance_until_decision(&mut state);
+    assert!(
+        matches!(
+            offer,
+            Decision::CastSpellOrPass { ref castable_spells, .. } if castable_spells.contains(&dodge)
+        ),
+        "flashback should be offered from the graveyard with U available"
+    );
+    engine::step(&mut state, Action::CastSpell(dodge)).unwrap();
+    match engine::advance_until_decision(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(creature)));
+        }
+        other => panic!("{other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
+    pass_until_stack_empty(&mut state);
+    assert_eq!(
+        state.objects[dodge].zone,
+        Zone::Exile,
+        "a resolved flashback cast exiles the card instead of returning it to the graveyard"
+    );
+}
+
 #[test]
 fn abandon_attachments_draws_two_only_if_a_card_is_discarded() {
     for accept in [false, true] {
