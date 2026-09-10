@@ -2408,39 +2408,64 @@ fn core_surface_action_candidates_v1(
                 player,
                 discard_payable,
                 sacrifice_payable,
-                ..
+                return_permanent_payable,
             } => {
-                // `return_permanent_payable` (Glint Hawk) is not yet
-                // surfaced through this H2 use-gate/which-gate sentinel
-                // scheme; it stays a raw `Action::ChooseOptionalCost`
-                // bypass until a future increment extends the RL surface.
                 let actor = (*player).into();
-                match (*discard_payable, *sacrifice_payable) {
-                    (false, false) => {
-                        for use_cost in [false, true] {
-                            push_action(
-                                &mut out,
-                                ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost },
-                                SurfaceAction::Action(Action::ChooseOptionalCostStage(use_cost)),
-                            )?;
-                        }
+                if *return_permanent_payable {
+                    // Glint Hawk: `HarnessSurfaceV2::next_decision` never
+                    // captures a decision like this into its Discard/
+                    // SacrificeLand-only `OptionalCostReshape` (a reshaped
+                    // decision always reports `return_permanent_payable:
+                    // false` -- see `next_optional_cost_subdecision`'s
+                    // doc), so this is always the real, raw decision, with
+                    // exactly two real choices and no further staging
+                    // needed. Offer both directly through the engine's
+                    // one-shot `Action::ChooseOptionalCost` bypass rather
+                    // than through the Discard/SacrificeLand-only Use/
+                    // Which stage scheme below (whose `(false, false)`/
+                    // `(true, true)` sentinels this decision's own
+                    // `discard_payable`/`sacrifice_payable` would
+                    // otherwise collide with).
+                    for choice in [OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent]
+                    {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
+                            SurfaceAction::Action(Action::ChooseOptionalCost(choice)),
+                        )?;
                     }
-                    (true, true) => {
-                        for (choice, use_it) in [
-                            (OptionalCostChoice::Discard, true),
-                            (OptionalCostChoice::SacrificeLand, false),
-                        ] {
-                            push_action(
-                                &mut out,
-                                ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
-                                SurfaceAction::Action(Action::ChooseOptionalCostStage(use_it)),
-                            )?;
+                } else {
+                    match (*discard_payable, *sacrifice_payable) {
+                        (false, false) => {
+                            for use_cost in [false, true] {
+                                push_action(
+                                    &mut out,
+                                    ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost },
+                                    SurfaceAction::Action(Action::ChooseOptionalCostStage(
+                                        use_cost,
+                                    )),
+                                )?;
+                            }
                         }
-                    }
-                    other => {
-                        return Err(RlContractError(format!(
-                            "unsupported surfaced ChooseOptionalCost flags {other:?}; expected H2 use-gate or which-gate sentinel"
-                        )));
+                        (true, true) => {
+                            for (choice, use_it) in [
+                                (OptionalCostChoice::Discard, true),
+                                (OptionalCostChoice::SacrificeLand, false),
+                            ] {
+                                push_action(
+                                    &mut out,
+                                    ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
+                                    SurfaceAction::Action(Action::ChooseOptionalCostStage(
+                                        use_it,
+                                    )),
+                                )?;
+                            }
+                        }
+                        other => {
+                            return Err(RlContractError(format!(
+                                "unsupported surfaced ChooseOptionalCost flags {other:?}; expected H2 use-gate or which-gate sentinel"
+                            )));
+                        }
                     }
                 }
             }
@@ -6835,5 +6860,110 @@ mod policy_v5_artifact_tests {
         .unwrap_err()
         .to_string()
         .contains("legacy aggregate combat semantic"));
+    }
+}
+
+/// Glint Hawk's ETB `Decision::ChooseOptionalCost` (`return_permanent_
+/// payable: true`, `discard_payable`/`sacrifice_payable` both false) is
+/// never captured by `HarnessSurfaceV2`'s Discard/SacrificeLand-only
+/// `OptionalCostReshape` (see `surface_v2.rs`'s reshape guard), so it
+/// always reaches `core_surface_action_candidates_v1` as the raw engine
+/// decision. Fix-round coverage for the bug where that function's match
+/// only inspected `(discard_payable, sacrifice_payable)`, collided this
+/// real decision with the reshape's own `(false, false)` "Use gate"
+/// sentinel, and offered `Action::ChooseOptionalCostStage` candidates that
+/// fail on application (that action is presentation-only, requiring a live
+/// `OptionalCostReshape` this decision never has).
+#[cfg(test)]
+mod glint_hawk_optional_cost_tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::state::{Counters, ObjectStateV4, Step};
+
+    fn put_object(state: &mut GameState, name: &str, zone: Zone) -> ObjectId {
+        let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"));
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        match zone {
+            Zone::Hand => state.players[0].hand.push(id),
+            Zone::Battlefield => state.players[0].battlefield.push(id),
+            other => panic!("test helper does not construct objects in {other:?}"),
+        }
+        id
+    }
+
+    #[test]
+    fn glint_hawk_etb_offers_decline_and_return_permanent_as_direct_actions() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0x476c_696e_7448_6177);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+
+        let hawk = put_object(&mut state, "Glint Hawk", Zone::Hand);
+        put_object(&mut state, "Ichor Wellspring", Zone::Battlefield);
+        state.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
+
+        engine::step(&mut state, Action::CastSpell(hawk)).unwrap();
+        let decision = loop {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                other => break other,
+            }
+        };
+        match &decision {
+            Decision::ChooseOptionalCost {
+                player,
+                discard_payable,
+                sacrifice_payable,
+                return_permanent_payable,
+            } => {
+                assert_eq!(*player, PlayerId::P0);
+                assert!(!discard_payable);
+                assert!(!sacrifice_payable);
+                assert!(return_permanent_payable);
+            }
+            other => panic!("expected ChooseOptionalCost, got {other:?}"),
+        }
+
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision.clone()), &state)
+                .unwrap();
+        let choices: Vec<OptionalCostChoice> = candidates
+            .iter()
+            .map(|candidate| match &candidate.surface_action {
+                SurfaceAction::Action(Action::ChooseOptionalCost(choice)) => *choice,
+                other => panic!("expected a direct Action::ChooseOptionalCost, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            choices,
+            vec![OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent],
+            "exactly the decline and the return actions, in that order"
+        );
+
+        for candidate in &candidates {
+            let SurfaceAction::Action(action) = candidate.surface_action.clone() else {
+                panic!("expected a direct Action candidate");
+            };
+            let mut applied = state.clone();
+            engine::step(&mut applied, action)
+                .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        }
     }
 }

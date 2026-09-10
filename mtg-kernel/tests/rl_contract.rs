@@ -321,9 +321,12 @@ fn rl_contract_keeps_both_optional_cost_refs_for_a_detached_resolving_spell() {
         source,
         discard: 1,
         sacrifice_lands: 1,
+        return_permanent_filter: None,
         discard_payable: true,
         sacrifice_payable: false,
+        return_permanent_payable: false,
         then: EffectOp::Sequence(Vec::new()),
+        otherwise: None,
         spell_resume: Some((source, Zone::Graveyard)),
     });
 
@@ -353,9 +356,12 @@ fn rl_contract_nonresolving_optional_cost_sources_keep_normal_visibility() {
         source: hidden,
         discard: 1,
         sacrifice_lands: 0,
+        return_permanent_filter: None,
         discard_payable: true,
         sacrifice_payable: false,
+        return_permanent_payable: false,
         then: EffectOp::Sequence(Vec::new()),
+        otherwise: None,
         spell_resume: None,
     });
     let optional = observe_for_test(&state, PlayerId::P0, 0)
@@ -413,9 +419,12 @@ fn rl_contract_detached_source_declassification_requires_exact_stack_binding() {
         source: hidden,
         discard: 1,
         sacrifice_lands: 0,
+        return_permanent_filter: None,
         discard_payable: true,
         sacrifice_payable: false,
+        return_permanent_payable: false,
         then: EffectOp::Sequence(Vec::new()),
+        otherwise: None,
         spell_resume: Some((other, Zone::Graveyard)),
     });
     let mismatch = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 0)

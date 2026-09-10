@@ -5,8 +5,9 @@
 //! `DreadReturn.java`, `LandGrant.java`, and `LotlethGiant.java`.
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, CardType, CostComponent,
-    DynamicValueDef, Keywords, PermanentFilter, Subtype, TargetSpec, CARD_DEFS,
+    card_id_by_name, preflight_fully_supported_deck, AltCostCondition, AltCostDef, CardCapability,
+    CardType, CostComponent, DynamicValueDef, Keywords, PermanentFilter, Subtype, TargetSpec,
+    CARD_DEFS,
 };
 use mtg_kernel::effect::{
     EffectOp, EffectTargetSelectionPurpose, LibraryCardFilter, ObjectRef, PendingEffectChoice,
@@ -168,7 +169,10 @@ fn registry_appends_exact_spy_combo_core_definitions() {
     let grant = &CARD_DEFS[ids[2] as usize];
     assert_eq!(
         grant.alt_cost,
-        Some(&[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)][..])
+        Some(AltCostDef {
+            components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)],
+            condition: AltCostCondition::Always,
+        })
     );
     assert_eq!(
         (grant.spell_effect)(),
