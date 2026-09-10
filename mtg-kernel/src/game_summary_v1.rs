@@ -7,7 +7,7 @@ use crate::event::CommittedEvent;
 use crate::ids::PlayerId;
 use crate::rl_session::{RlEpisodeSessionV1, RlSessionDecisionV1, RlSessionResponseV1};
 use crate::rl::ActionSemanticV1;
-use crate::state::Zone;
+use crate::state::{Target, Zone};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -40,7 +40,16 @@ pub struct ResourceCurveV1 {
     /// but the live field it is sourced from is `i32`, so this plan widens
     /// the type to match the real source rather than truncating on push.
     pub life_by_turn: [Vec<i32>; 2],
-    pub first_attack_turn: Option<u32>,
+    /// Fix round 1, item 2: the fix brief indexes this as `first_attack_turn[seat]`
+    /// in the same sentence as `damage_dealt_total`/`damage_taken_total`, both
+    /// genuinely `[T; 2]`; the pre-fix declaration here was a bare
+    /// `Option<u32>`, which cannot hold two independent seats. Widened to
+    /// match its siblings and the design's per-seat "indexed by the turn
+    /// watermark" framing (section 3): each seat's own first-attack turn is
+    /// independently meaningful (an aggro deck's curve looks nothing like a
+    /// control deck's), and collapsing them to one shared value would silently
+    /// discard which seat attacked first.
+    pub first_attack_turn: [Option<u32>; 2],
     pub damage_dealt_total: [i64; 2],
     pub damage_taken_total: [i64; 2],
 }
@@ -118,6 +127,20 @@ fn build_object_card_def_map_v1(
     state.objects.iter().map(|(id, object)| (id, object.card_def)).collect()
 }
 
+/// Same one-pass-over-the-terminal-arena rationale as
+/// `build_object_card_def_map_v1` immediately above, but for `owner`
+/// (`GameObject.owner: PlayerId`, `state.rs:234`) instead of `card_def`:
+/// `owner` is fixed at object creation and never reassigned by a
+/// control-change effect (only `controller` moves), so the terminal value is
+/// exactly the value at any earlier point in the game too. Item 2 (fix round
+/// 1) needs this to attribute `Damage`/`CombatDamageToPlayer` events to the
+/// seat that owns the dealing or receiving object.
+fn build_object_owner_map_v1(
+    state: &crate::state::GameState,
+) -> BTreeMap<crate::ids::ObjectId, PlayerId> {
+    state.objects.iter().map(|(id, object)| (id, object.owner)).collect()
+}
+
 /// Every non-token object this game whose `owner` is `seat`: exactly the
 /// distinct card ids of that seat's own registered 60 (a copy count > 1
 /// collapses to one entry, which is what `own_card_outcomes`, keyed by
@@ -156,11 +179,37 @@ fn turn_for_event_index_v1(turn_watermarks: &[(usize, u32)], final_turn: u32, ev
 /// This task's operational proxy for "this specific cast resolved without
 /// ever choosing a target": no `CommittedEvent` variant links a `Targeted`
 /// event back to the spell that caused it (`Targeted::targeting_stack_item`
-/// is a `StackItemId`, not this spell's `ObjectId`), so the proxy is
-/// windowed on the casting object's own time on the stack (from its
-/// `SpellCast` event at `cast_index` to its next `ZoneChange` away from
-/// `Zone::Stack`) rather than a direct causal link. True iff no `Targeted`
-/// event appears anywhere in that window.
+/// is a `StackItemId`, and `CommittedEvent::SpellCast` carries no
+/// `StackItemId` at all), so exact stack-item identity is not recoverable
+/// from `event_history` alone (this function never sees `GameState.stack`
+/// either, which is empty by the terminal state this extractor actually
+/// runs against). This proxy is windowed instead.
+///
+/// Fix round 1, item 1 (Critical): the pre-fix window was `[cast_index,
+/// leave_index)`, forward only. But `finalize_owned_cast` (`engine.rs`, the
+/// sole call site of `event::log_spell_cast`) calls
+/// `log_final_targeting_events` *immediately* before `event::log_spell_cast`,
+/// with nothing else logged in between -- so in real play, a cast's own
+/// `Targeted` events (one per battlefield-zone target contract;
+/// `log_final_targeting_events` only emits `Targeted` for
+/// `StackTargetContractV4::Object { zone: Zone::Battlefield, .. }`, so a
+/// targeted player or a targeted spell/ability on the stack never produces a
+/// `Targeted` event at all) are committed directly *before* that cast's own
+/// `SpellCast`, not after it. The forward-only window therefore missed
+/// nearly every real targeted cast, inverting the field.
+///
+/// The window now also searches backward from `cast_index`, down to the
+/// index right after the nearest preceding `SpellCast` (a natural
+/// stack-relevant boundary: the last time a different spell was cast), or
+/// down to the start of history if this is the first cast of the game. It
+/// still searches forward to `leave_index` too, unioned with the backward
+/// span, in case a later retargeting or trigger-driven `Targeted` event is
+/// logged while this spell is still on the stack. Known imprecision, accepted
+/// because stack-item identity is unrecoverable: an unrelated ability's own
+/// final-targeting burst, if activated in the gap between the previous cast
+/// and this one with nothing else logged in between, would be misattributed
+/// to this cast as "had a target". This is a narrower failure mode than the
+/// pre-fix behavior, which was wrong for nearly every real targeted cast.
 fn spell_resolved_with_no_traced_target_v1(
     event_history: &[CommittedEvent],
     cast_index: usize,
@@ -179,7 +228,14 @@ fn spell_resolved_with_no_traced_target_v1(
         })
         .map(|(index, _)| index)
         .unwrap_or(event_history.len());
-    !event_history[cast_index..leave_index]
+    let boundary_index = event_history[..cast_index]
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, event)| matches!(event, CommittedEvent::SpellCast { .. }))
+        .map(|(index, _)| index + 1)
+        .unwrap_or(0);
+    !event_history[boundary_index..leave_index]
         .iter()
         .any(|event| matches!(event, CommittedEvent::Targeted { .. }))
 }
@@ -215,18 +271,45 @@ fn fold_event_history_v1(
     final_turn: u32,
     turn_watermarks: &[(usize, u32)],
     object_card_def: &BTreeMap<crate::ids::ObjectId, u16>,
+    object_owner: &BTreeMap<crate::ids::ObjectId, PlayerId>,
     own_registered_ids: &[std::collections::BTreeSet<u16>; 2],
     end_of_game_hand_card_ids: &[std::collections::BTreeSet<u16>; 2],
     offered_as_cast: &[std::collections::BTreeSet<u16>; 2],
     tags: &RemovalCounterspellTagsV1,
+    resource_curve: &mut ResourceCurveV1,
 ) -> ([Vec<OpponentEvidenceRowV1>; 2], [BTreeMap<u16, OwnCardOutcomeV1>; 2]) {
     let mut opponent_first_seen: [BTreeMap<u16, u32>; 2] = Default::default();
     let mut opponent_end_of_game_zone: [BTreeMap<u16, Zone>; 2] = Default::default();
     let mut times_drawn: [BTreeMap<u16, u8>; 2] = Default::default();
     let mut cast_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
     let mut cast_no_target: [std::collections::BTreeSet<u16>; 2] = Default::default();
-    let mut ever_dealt_damage: std::collections::BTreeSet<crate::ids::ObjectId> = Default::default();
+    // Item 3 (Important): keyed by `(ObjectId, incarnation)`, not `ObjectId`
+    // alone -- the engine reuses an `ObjectId` across incarnations
+    // (`CardStableRefV1`/`Targeted`/`SagaChapter`/`CombatDamageToPlayer` all
+    // carry a `zone_change_count` for exactly this reason). `object_incarnation`
+    // below is this fold's own running per-object incarnation counter, since
+    // `Damage` and `ZoneChange` carry no such count directly.
+    let mut ever_dealt_damage: std::collections::BTreeSet<(crate::ids::ObjectId, u32)> = Default::default();
     let mut died_without_damage: [std::collections::BTreeSet<u16>; 2] = Default::default();
+    // Tracks each object's incarnation number as this fold walks
+    // `event_history` forward, incremented once per `ZoneChange` event that
+    // names it (mirroring `GameObject.zone_change_count`'s own per-move
+    // increment, `state.rs:1447` and siblings). This never sees the two zone
+    // moves the engine special-cases as uncommitted (a private
+    // library-to-hand draw, and an announced cast's Hand->Stack move -- see
+    // this module's own privacy-proof test doc), so its absolute values can
+    // run behind the engine's true `zone_change_count` by a constant offset
+    // picked up before an object's first appearance on a public zone. That
+    // offset does not affect correctness here: `CombatDamageToPlayer`
+    // resyncs this tracker to the engine's own authoritative
+    // `source_zone_change_count` the moment it is observed (see below), and
+    // once an object is battlefield-resident every zone move away from a
+    // public zone is itself a committed, visible `ZoneChange`, so the
+    // tracker and the engine agree for the remainder of that object's life.
+    // This is exactly what item 3's own required test exercises: a creature
+    // that deals damage, dies, returns, and dies again without damage must
+    // key its two deaths differently.
+    let mut object_incarnation: BTreeMap<crate::ids::ObjectId, u32> = Default::default();
 
     for (index, event) in event_history.iter().enumerate() {
         match event {
@@ -249,11 +332,75 @@ fn fold_event_history_v1(
                     }
                 }
             }
-            CommittedEvent::Damage { source, .. } => {
-                ever_dealt_damage.insert(*source);
+            CommittedEvent::Damage { source, target, amount } => {
+                // Item 4 (Important): only a positive amount counts as
+                // "dealt damage" toward `ever_dealt_damage` / the
+                // `died_without_dealing_damage` signal it feeds.
+                if *amount > 0 {
+                    let incarnation = *object_incarnation.get(source).unwrap_or(&0);
+                    ever_dealt_damage.insert((*source, incarnation));
+                }
+                // Item 2 (Important): `damage_dealt_total`/`damage_taken_total`
+                // fold from `Damage` only, not also `CombatDamageToPlayer`.
+                // `CombatDamageToPlayer` is a nonreplaceable marker built
+                // directly from the just-committed `Damage` events of the
+                // same combat-damage batch (`engine.rs`, the combat-damage
+                // step collects `event_log` for `Damage { target:
+                // Target::Player, .. }` immediately after committing them,
+                // then logs one `CombatDamageToPlayer` per such event with
+                // the same `source`/`player`/`amount`) -- so a player-facing
+                // combat-damage instance produces *both* events for the same
+                // damage. Summing both here would double-count every
+                // player-facing combat hit relative to damage to a permanent
+                // or non-combat damage to a player, which only ever produce
+                // a `Damage` event. `Damage` alone already covers every
+                // damage instance in the game (combat and non-combat, to a
+                // player or a permanent); `CombatDamageToPlayer` is used
+                // below only for its own extra, `Damage`-lacking information
+                // (an authoritative `source_zone_change_count`, and "this
+                // was combat damage to a player" for `first_attack_turn`).
+                if let Some(&owner) = object_owner.get(source) {
+                    resource_curve.damage_dealt_total[seat_index_from_player_id_v1(owner)] +=
+                        i64::from(*amount);
+                }
+                match target {
+                    Target::Player(player) => {
+                        resource_curve.damage_taken_total[seat_index_from_player_id_v1(*player)] +=
+                            i64::from(*amount);
+                    }
+                    Target::Object(target_object) => {
+                        if let Some(&owner) = object_owner.get(target_object) {
+                            resource_curve.damage_taken_total[seat_index_from_player_id_v1(owner)] +=
+                                i64::from(*amount);
+                        }
+                    }
+                }
             }
-            CommittedEvent::CombatDamageToPlayer { source, .. } => {
-                ever_dealt_damage.insert(*source);
+            CommittedEvent::CombatDamageToPlayer { source, source_zone_change_count, player: _, amount } => {
+                if *amount > 0 {
+                    ever_dealt_damage.insert((*source, *source_zone_change_count));
+                }
+                // Resync this fold's own incarnation tracker to the engine's
+                // authoritative value now that it is known (see the
+                // `object_incarnation` doc above).
+                object_incarnation.insert(*source, *source_zone_change_count);
+                // Item 2: `first_attack_turn[seat]` is the watermark turn of
+                // the first `CombatDamageToPlayer` whose source is owned by
+                // that seat. No `CommittedEvent` variant marks "attackers
+                // declared" (all fourteen-then-fifteen variants checked
+                // against `event.rs`, confirmed against the design doc's own
+                // enumeration), so `CombatDamageToPlayer` -- combat damage
+                // that actually landed on a player -- is the earliest
+                // available signal and the one the brief names first.
+                if *amount > 0 {
+                    if let Some(&owner) = object_owner.get(source) {
+                        let seat = seat_index_from_player_id_v1(owner);
+                        if resource_curve.first_attack_turn[seat].is_none() {
+                            resource_curve.first_attack_turn[seat] =
+                                Some(turn_for_event_index_v1(turn_watermarks, final_turn, index));
+                        }
+                    }
+                }
             }
             CommittedEvent::ZoneChange { object, from, to, controller_before } => {
                 let Some(&card_id) = object_card_def.get(object) else { continue };
@@ -277,10 +424,18 @@ fn fold_event_history_v1(
 
                 if is_died {
                     let owner_seat = seat_index_from_player_id_v1(*controller_before);
-                    if own_registered_ids[owner_seat].contains(&card_id) && !ever_dealt_damage.contains(object) {
+                    let incarnation = *object_incarnation.get(object).unwrap_or(&0);
+                    if own_registered_ids[owner_seat].contains(&card_id)
+                        && !ever_dealt_damage.contains(&(*object, incarnation))
+                    {
                         died_without_damage[owner_seat].insert(card_id);
                     }
                 }
+                // Advance this object's tracked incarnation for every zone
+                // move (not just deaths), so a later re-entry onto the
+                // battlefield under the same `ObjectId` starts a fresh
+                // incarnation number for the next death check.
+                *object_incarnation.entry(*object).or_insert(0) += 1;
             }
             _ => {}
         }
@@ -325,6 +480,39 @@ fn fold_event_history_v1(
     (opponent_evidence, own_card_outcomes)
 }
 
+/// Item 7 (Minor): the watermark-recording step run once per decision
+/// boundary, factored out of `run_episode_with_summary_v1`'s driver loop so
+/// a test can drive a real session and inspect the resulting
+/// `turn_watermarks` directly (this exact function, not a re-implementation
+/// of it), instead of only exercising it indirectly through the full
+/// `GameSummaryV1` it eventually feeds. Appends one `(event_history.len(),
+/// turn)` pair the first time a new turn is reached, and pushes this turn's
+/// `lands_by_turn`/`hand_size_by_turn`/`life_by_turn` entries onto
+/// `resource_curve` in the same step (unchanged from the pre-fix inline
+/// logic).
+fn record_turn_watermark_if_new_v1(
+    session: &RlEpisodeSessionV1,
+    turn_watermarks: &mut Vec<(usize, u32)>,
+    last_turn: &mut u32,
+    resource_curve: &mut ResourceCurveV1,
+) {
+    let turn = session.game_state().turn;
+    if turn != *last_turn || turn_watermarks.is_empty() {
+        let state = session.game_state();
+        turn_watermarks.push((state.engine.event_history.len(), turn));
+        resource_curve.lands_by_turn.push(count_lands_v1(state));
+        for seat in 0..2 {
+            resource_curve.hand_size_by_turn[seat]
+                .push(state.players[seat].hand.len() as u32);
+            // `PlayerState.life: i32` (`state.rs:353`) matches
+            // `ResourceCurveV1.life_by_turn: [Vec<i32>; 2]`
+            // exactly; no cast, no truncation.
+            resource_curve.life_by_turn[seat].push(state.players[seat].life);
+        }
+        *last_turn = turn;
+    }
+}
+
 pub fn run_episode_with_summary_v1(
     session: &mut RlEpisodeSessionV1,
     checkpoint_weights_hash: &str,
@@ -341,6 +529,7 @@ pub fn run_episode_with_summary_v1(
             RlSessionResponseV1::Terminal(terminal) => {
                 let final_state = session.game_state();
                 let object_card_def = build_object_card_def_map_v1(final_state);
+                let object_owner = build_object_owner_map_v1(final_state);
                 let own_registered_ids = [
                     own_registered_card_ids_v1(final_state, 0),
                     own_registered_card_ids_v1(final_state, 1),
@@ -354,10 +543,12 @@ pub fn run_episode_with_summary_v1(
                     final_state.turn,
                     &turn_watermarks,
                     &object_card_def,
+                    &object_owner,
                     &own_registered_ids,
                     &end_of_game_hand_card_ids,
                     &offered_as_cast,
                     tags,
+                    &mut resource_curve,
                 );
                 let winner = match terminal.winner {
                     None => None,
@@ -375,21 +566,7 @@ pub fn run_episode_with_summary_v1(
                 };
             }
             RlSessionResponseV1::Decision(decision) => {
-                let turn = session.game_state().turn;
-                if turn != last_turn || turn_watermarks.is_empty() {
-                    let state = session.game_state();
-                    turn_watermarks.push((state.engine.event_history.len(), turn));
-                    resource_curve.lands_by_turn.push(count_lands_v1(state));
-                    for seat in 0..2 {
-                        resource_curve.hand_size_by_turn[seat]
-                            .push(state.players[seat].hand.len() as u32);
-                        // `PlayerState.life: i32` (`state.rs:353`) matches
-                        // `ResourceCurveV1.life_by_turn: [Vec<i32>; 2]`
-                        // exactly; no cast, no truncation.
-                        resource_curve.life_by_turn[seat].push(state.players[seat].life);
-                    }
-                    last_turn = turn;
-                }
+                record_turn_watermark_if_new_v1(session, &mut turn_watermarks, &mut last_turn, &mut resource_curve);
                 for legal_action in &decision.legal_actions {
                     if let ActionSemanticV1::CastSpell { actor, source } = &legal_action.semantic {
                         if was_card_offered_as_hand_cast_v1(&legal_action.semantic, source.card_db_id) {
@@ -534,16 +711,20 @@ mod tests {
             requires_target: [200u16].into_iter().collect(),
             is_counterspell: Default::default(),
         };
+        let object_owner: BTreeMap<ObjectId, PlayerId> = Default::default();
+        let mut resource_curve = ResourceCurveV1::default();
 
         let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
             &event_history,
             final_turn,
             &turn_watermarks,
             &object_card_def,
+            &object_owner,
             &own_registered_ids,
             &end_of_game_hand_card_ids,
             &offered_as_cast,
             &tags,
+            &mut resource_curve,
         );
 
         // P0's evidence about the opponent (P1's card_id 100): first seen
@@ -571,6 +752,290 @@ mod tests {
         assert!(!outcome.stuck_in_hand);
         assert!(outcome.removal_no_target, "cast with no traced target must be recorded");
         assert!(!outcome.counterspell_held, "not tagged is_counterspell, so this field is always false here");
+    }
+
+    #[test]
+    fn fold_event_history_records_removal_no_target_false_when_targeted_precedes_spell_cast_in_real_engine_order() {
+        use crate::ids::{ObjectId, StackItemId};
+
+        // Item 1 (Critical): the real engine order. `finalize_owned_cast`
+        // (`engine.rs`) calls `log_final_targeting_events` *immediately*
+        // before `event::log_spell_cast`, so a cast's own `Targeted` event
+        // is committed *before* its `SpellCast`, not after -- the opposite
+        // of the previous test's synthetic order. P0's removal spell
+        // (card_id 200, requires_target) targets P1's creature (card_id
+        // 100, already on the battlefield) and resolves to the graveyard.
+        let event_history = vec![
+            CommittedEvent::ZoneChange {
+                object: ObjectId(10),
+                from: Zone::Library,
+                to: Zone::Battlefield,
+                controller_before: PlayerId::P1,
+            }, // index 0: P1's card_id 100 enters play
+            CommittedEvent::Targeted {
+                target: ObjectId(10),
+                target_zone_change_count: 0,
+                targeting_stack_item: StackItemId(1),
+                targeting_controller: PlayerId::P0,
+            }, // index 1: declared before this cast's own SpellCast
+            CommittedEvent::SpellCast { spell: ObjectId(20), controller: PlayerId::P0 }, // index 2
+            CommittedEvent::ZoneChange {
+                object: ObjectId(20),
+                from: Zone::Stack,
+                to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
+            }, // index 3: resolves, having traced a target
+        ];
+        let turn_watermarks = vec![(0usize, 1u32)];
+        let final_turn = 1u32;
+        let object_card_def: BTreeMap<ObjectId, u16> =
+            [(ObjectId(10), 100u16), (ObjectId(20), 200u16)].into_iter().collect();
+        let object_owner: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(10), PlayerId::P1), (ObjectId(20), PlayerId::P0)].into_iter().collect();
+        let own_registered_ids: [std::collections::BTreeSet<u16>; 2] = [
+            [200u16].into_iter().collect(),
+            [100u16].into_iter().collect(),
+        ];
+        let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let offered_as_cast: [std::collections::BTreeSet<u16>; 2] =
+            [[200u16].into_iter().collect(), Default::default()];
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: [200u16].into_iter().collect(),
+            is_counterspell: Default::default(),
+        };
+        let mut resource_curve = ResourceCurveV1::default();
+
+        let (_opponent_evidence, own_card_outcomes) = fold_event_history_v1(
+            &event_history,
+            final_turn,
+            &turn_watermarks,
+            &object_card_def,
+            &object_owner,
+            &own_registered_ids,
+            &end_of_game_hand_card_ids,
+            &offered_as_cast,
+            &tags,
+            &mut resource_curve,
+        );
+
+        let outcome = &own_card_outcomes[0][&200];
+        assert!(outcome.cast);
+        assert!(
+            !outcome.removal_no_target,
+            "a Targeted event logged before this cast's own SpellCast (the real engine order) must still count as a traced target"
+        );
+    }
+
+    #[test]
+    fn fold_event_history_populates_resource_curve_damage_and_first_attack_turn_fields() {
+        use crate::ids::ObjectId;
+
+        // Item 2 (Important): exact-value coverage for `first_attack_turn`,
+        // `damage_dealt_total`, `damage_taken_total`. P0's creature
+        // (ObjectId 40) deals 2 non-combat damage to P1's creature (ObjectId
+        // 41, a permanent target), then attacks P1 for 3 (turn 2) and again
+        // for 1 (turn 3, via `turn_for_event_index_v1`'s fallback-to-final_turn
+        // branch, exercising that the second attack does not overwrite
+        // `first_attack_turn`); P1's creature retaliates for 5 (turn 3).
+        let event_history = vec![
+            CommittedEvent::Damage { source: ObjectId(40), target: Target::Object(ObjectId(41)), amount: 2 }, // index 0
+            CommittedEvent::Damage { source: ObjectId(40), target: Target::Player(PlayerId::P1), amount: 3 }, // index 1
+            CommittedEvent::CombatDamageToPlayer {
+                source: ObjectId(40),
+                source_zone_change_count: 0,
+                player: PlayerId::P1,
+                amount: 3,
+            }, // index 2
+            CommittedEvent::Damage { source: ObjectId(41), target: Target::Player(PlayerId::P0), amount: 5 }, // index 3
+            CommittedEvent::CombatDamageToPlayer {
+                source: ObjectId(41),
+                source_zone_change_count: 0,
+                player: PlayerId::P0,
+                amount: 5,
+            }, // index 4
+            CommittedEvent::Damage { source: ObjectId(40), target: Target::Player(PlayerId::P1), amount: 1 }, // index 5
+            CommittedEvent::CombatDamageToPlayer {
+                source: ObjectId(40),
+                source_zone_change_count: 1,
+                player: PlayerId::P1,
+                amount: 1,
+            }, // index 6
+        ];
+        // Turn 1 at index 0; turn 2 at index 3; turn 3 at index 6; the game
+        // ends turn 3. Per `turn_for_event_index_v1`'s own documented
+        // semantics (the earliest turn boundary reached *after* the event),
+        // indices 0-2 resolve to turn 2, indices 3-5 resolve to turn 3, and
+        // index 6 falls back to `final_turn` (also turn 3).
+        let turn_watermarks = vec![(0usize, 1u32), (3usize, 2u32), (6usize, 3u32)];
+        let final_turn = 3u32;
+        let object_card_def: BTreeMap<ObjectId, u16> = Default::default();
+        let object_owner: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(40), PlayerId::P0), (ObjectId(41), PlayerId::P1)].into_iter().collect();
+        let own_registered_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let mut resource_curve = ResourceCurveV1::default();
+
+        fold_event_history_v1(
+            &event_history,
+            final_turn,
+            &turn_watermarks,
+            &object_card_def,
+            &object_owner,
+            &own_registered_ids,
+            &end_of_game_hand_card_ids,
+            &offered_as_cast,
+            &tags,
+            &mut resource_curve,
+        );
+
+        assert_eq!(resource_curve.damage_dealt_total[0], 6, "P0's creature dealt 2 + 3 + 1 across three Damage events, CombatDamageToPlayer not double-counted");
+        assert_eq!(resource_curve.damage_dealt_total[1], 5, "P1's creature dealt 5");
+        assert_eq!(resource_curve.damage_taken_total[0], 5, "P0 took 5 combat damage to the player");
+        assert_eq!(resource_curve.damage_taken_total[1], 6, "P1 took 3 + 1 to the player and 2 to its own permanent");
+        assert_eq!(resource_curve.first_attack_turn[0], Some(2), "P0's first CombatDamageToPlayer landed turn 2");
+        assert_eq!(resource_curve.first_attack_turn[1], Some(3), "P1's first (and only) CombatDamageToPlayer landed turn 3");
+    }
+
+    #[test]
+    fn fold_event_history_scopes_died_without_dealing_damage_by_incarnation_and_ignores_zero_amount_damage() {
+        use crate::ids::ObjectId;
+
+        // Items 3, 4, 5 (Important): card_id 501 (ObjectId 50) lives once,
+        // deals damage, and dies -- `died_without_dealing_damage` must read
+        // `false`. card_id 502 (ObjectId 51, the engine reusing one
+        // `ObjectId` across incarnations) lives twice: its first life deals
+        // damage and dies; its second life deals only a *zero*-amount
+        // `Damage` event (item 4: must not count as "dealt damage") and
+        // dies -- `died_without_dealing_damage` must read `true` for the
+        // second death, not fall back to the first life's damage credit
+        // (the pre-fix bug this item exists to close).
+        let event_history = vec![
+            // Card A (501): single life, deals damage, dies -> false.
+            CommittedEvent::ZoneChange {
+                object: ObjectId(50),
+                from: Zone::Library,
+                to: Zone::Battlefield,
+                controller_before: PlayerId::P0,
+            },
+            CommittedEvent::Damage { source: ObjectId(50), target: Target::Player(PlayerId::P1), amount: 4 },
+            CommittedEvent::ZoneChange {
+                object: ObjectId(50),
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
+            },
+            // Card B (502): first life deals damage and dies.
+            CommittedEvent::ZoneChange {
+                object: ObjectId(51),
+                from: Zone::Library,
+                to: Zone::Battlefield,
+                controller_before: PlayerId::P0,
+            },
+            CommittedEvent::Damage { source: ObjectId(51), target: Target::Player(PlayerId::P1), amount: 2 },
+            CommittedEvent::ZoneChange {
+                object: ObjectId(51),
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
+            },
+            // Card B (502): reanimated (same ObjectId, new incarnation),
+            // deals zero damage, dies without ever dealing damage this life.
+            CommittedEvent::ZoneChange {
+                object: ObjectId(51),
+                from: Zone::Graveyard,
+                to: Zone::Battlefield,
+                controller_before: PlayerId::P0,
+            },
+            CommittedEvent::Damage { source: ObjectId(51), target: Target::Player(PlayerId::P1), amount: 0 },
+            CommittedEvent::ZoneChange {
+                object: ObjectId(51),
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                controller_before: PlayerId::P0,
+            },
+        ];
+        let turn_watermarks = vec![(0usize, 1u32)];
+        let final_turn = 1u32;
+        let object_card_def: BTreeMap<ObjectId, u16> =
+            [(ObjectId(50), 501u16), (ObjectId(51), 502u16)].into_iter().collect();
+        let object_owner: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(50), PlayerId::P0), (ObjectId(51), PlayerId::P0)].into_iter().collect();
+        let own_registered_ids: [std::collections::BTreeSet<u16>; 2] =
+            [[501u16, 502u16].into_iter().collect(), Default::default()];
+        let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let mut resource_curve = ResourceCurveV1::default();
+
+        let (_opponent_evidence, own_card_outcomes) = fold_event_history_v1(
+            &event_history,
+            final_turn,
+            &turn_watermarks,
+            &object_card_def,
+            &object_owner,
+            &own_registered_ids,
+            &end_of_game_hand_card_ids,
+            &offered_as_cast,
+            &tags,
+            &mut resource_curve,
+        );
+
+        assert!(
+            !own_card_outcomes[0][&501].died_without_dealing_damage,
+            "card 501 dealt damage before it died (false case)"
+        );
+        assert!(
+            own_card_outcomes[0][&502].died_without_dealing_damage,
+            "card 502's second incarnation died without dealing damage; its first life's damage credit must not carry over (true case)"
+        );
+    }
+
+    #[test]
+    fn run_episode_records_turn_watermarks_monotonically_and_the_final_turn_matches_the_session() {
+        // Item 7 (Minor): exercises the real `record_turn_watermark_if_new_v1`
+        // function -- the same one `run_episode_with_summary_v1` calls, not
+        // a re-implementation of it -- against a real, full episode, rather
+        // than only the hand-authored `turn_watermarks` the exact-value
+        // tests above use.
+        let mainboards = burn_and_rally();
+        let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
+        let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            4, 0x9999_9999_9999_9999, 2000, 200_000, deck_ids, mainboards,
+        )
+        .unwrap();
+        let mut rng = SplitMix64::seed(0xaaaa_aaaa_aaaa_aaaa);
+        let mut resource_curve = ResourceCurveV1::default();
+        let mut turn_watermarks: Vec<(usize, u32)> = Vec::new();
+        let mut last_turn = session.game_state().turn;
+
+        let final_turn = loop {
+            match session.current_response() {
+                RlSessionResponseV1::Terminal(_) => break session.game_state().turn,
+                RlSessionResponseV1::Decision(decision) => {
+                    record_turn_watermark_if_new_v1(&session, &mut turn_watermarks, &mut last_turn, &mut resource_curve);
+                    let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+                    let selected_action_id = decision.legal_actions[index].stable_id.clone();
+                    session
+                        .step(decision.episode_id, decision.step, index as u32, &selected_action_id)
+                        .expect("policy-selected action is legal by construction");
+                }
+            }
+        };
+
+        assert!(!turn_watermarks.is_empty(), "a real episode reaches at least one decision");
+        for pair in turn_watermarks.windows(2) {
+            let (prev_index, prev_turn) = pair[0];
+            let (next_index, next_turn) = pair[1];
+            assert!(next_index >= prev_index, "event_history length must be monotone non-decreasing between watermarks");
+            assert!(next_turn >= prev_turn, "turn must be monotone non-decreasing between watermarks");
+        }
+        assert_eq!(
+            turn_watermarks.last().unwrap().1,
+            final_turn,
+            "the last recorded watermark's turn must match the session's own turn counter at termination"
+        );
     }
 
     #[test]
@@ -648,16 +1113,20 @@ mod tests {
             [Default::default(), [300u16].into_iter().collect()];
         let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
         let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let object_owner: BTreeMap<ObjectId, PlayerId> = Default::default();
+        let mut resource_curve = ResourceCurveV1::default();
 
         let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
             &event_history,
             final_turn,
             &turn_watermarks,
             &object_card_def,
+            &object_owner,
             &own_registered_ids,
             &end_of_game_hand_card_ids,
             &offered_as_cast,
             &tags,
+            &mut resource_curve,
         );
 
         // P0's evidence about P1: exactly the discarded card, never the
@@ -677,5 +1146,126 @@ mod tests {
         assert!(own_card_outcomes[1][&300].stuck_in_hand);
         assert_eq!(own_card_outcomes[1][&301].times_drawn, 1);
         assert!(!own_card_outcomes[1][&301].stuck_in_hand);
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RealTagFileRowV1 {
+        card_id: u16,
+        requires_target: bool,
+        is_counterspell: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RealTagFileV1 {
+        cards: Vec<RealTagFileRowV1>,
+    }
+
+    /// Item 6 (Important): loads the real, committed tag file the same way
+    /// `mtg-kernel/tests/removal_counterspell_tags_v1.rs` (Task C's own
+    /// ratified cross-check against the live engine) does: `include_str!`,
+    /// so the committed JSON is embedded at compile time with no
+    /// working-directory ambiguity between `cargo test` invocations. This
+    /// module does not import that integration test's types directly (it is
+    /// a separate `tests/` binary, not linked into the lib), so this mirrors
+    /// its `TagFileV1`/`TagRowV1` shape locally instead.
+    fn load_real_removal_counterspell_tags_v1() -> RemovalCounterspellTagsV1 {
+        const TAG_FILE_JSON: &str = include_str!("../../data/pauper_removal_counterspell_tags_v1.json");
+        let document: RealTagFileV1 = serde_json::from_str(TAG_FILE_JSON).expect("tag file parses as RealTagFileV1");
+        let mut requires_target = std::collections::BTreeSet::new();
+        let mut is_counterspell = std::collections::BTreeSet::new();
+        for row in document.cards {
+            if row.requires_target {
+                requires_target.insert(row.card_id);
+            }
+            if row.is_counterspell {
+                is_counterspell.insert(row.card_id);
+            }
+        }
+        RemovalCounterspellTagsV1 { requires_target, is_counterspell }
+    }
+
+    #[test]
+    fn run_episode_with_real_tags_records_removal_no_target_false_for_a_legally_targeted_cast_down() {
+        // Item 6 (Important): `removal_no_target` and `counterspell_held`
+        // were never exercised against the real, committed tag file with
+        // real engine-emitted events -- the Critical bug (item 1) shipped
+        // past both the full-episode test (empty tags) and the exact-value
+        // test (a hand-built history with no preceding `Targeted` event, the
+        // one case that does not expose the bug). `Wildfire`
+        // (`data/runtime_decks_v1.json`) runs four copies of Cast Down
+        // (card_id 11 in the tag file: `requires_target = true,
+        // is_counterspell = false`) and plenty of creatures to target in a
+        // mirror match, so a full random-policy game is very likely to cast
+        // it with a legal target somewhere in the game. Deterministic:
+        // searches a fixed, ordered seed range and asserts on the first game
+        // that actually casts it, rather than a hand-picked magic seed.
+        const CAST_DOWN_CARD_ID: u16 = 11;
+        let tags = load_real_removal_counterspell_tags_v1();
+        let deck_ids = ["Wildfire".to_owned(), "Wildfire".to_owned()];
+        let mainboards = [
+            runtime_deck_by_id("Wildfire").unwrap().card_ids.to_vec(),
+            runtime_deck_by_id("Wildfire").unwrap().card_ids.to_vec(),
+        ];
+
+        for seed in 1u64..=150 {
+            let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+                seed,
+                seed,
+                2000,
+                200_000,
+                deck_ids.clone(),
+                mainboards.clone(),
+            )
+            .unwrap();
+            let mut rng = SplitMix64::seed(seed ^ 0xABCD_EF01_2345_6789);
+            let mut policy = |decision: &RlSessionDecisionV1| {
+                let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+                (index as u32, decision.legal_actions[index].stable_id.clone())
+            };
+            let summary = run_episode_with_summary_v1(&mut session, "fixround1castdown", &tags, &mut policy);
+            for seat in 0..2 {
+                if let Some(outcome) = summary.own_card_outcomes[seat].get(&CAST_DOWN_CARD_ID) {
+                    if outcome.cast {
+                        assert!(
+                            !outcome.removal_no_target,
+                            "seed {seed} seat {seat}: Cast Down was cast but recorded no traced target"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("no seed in 1..=150 cast Cast Down (card_id 11) in a Wildfire mirror; widen the search range or pick a different deck/card");
+    }
+
+    #[test]
+    fn run_episode_with_real_tags_can_record_a_counterspell_held_to_game_end() {
+        // Item 6 (Important, "if feasible within the existing helpers"): a
+        // counterspell that is drawn, never offered as a legal cast (no
+        // spell it could legally and affordably counter ever went on the
+        // stack while it sat in hand), and stays in hand to the end of the
+        // game. `Terror` (`data/runtime_decks_v1.json`) runs Counterspell
+        // (card_id 17, `is_counterspell = true` in the tag file); seed 1 in
+        // a Terror mirror (the first hit of a bounded, ordered seed search)
+        // is a real game where this happens for P0's copy.
+        const COUNTERSPELL_CARD_ID: u16 = 17;
+        let tags = load_real_removal_counterspell_tags_v1();
+        let deck_ids = ["Terror".to_owned(), "Terror".to_owned()];
+        let mainboards = [
+            runtime_deck_by_id("Terror").unwrap().card_ids.to_vec(),
+            runtime_deck_by_id("Terror").unwrap().card_ids.to_vec(),
+        ];
+        let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1, 1, 2000, 200_000, deck_ids, mainboards,
+        )
+        .unwrap();
+        let mut rng = SplitMix64::seed(1 ^ 0x1234_5678_9abc_def0);
+        let mut policy = |decision: &RlSessionDecisionV1| {
+            let index = (rng.next_u64() as usize) % decision.legal_actions.len();
+            (index as u32, decision.legal_actions[index].stable_id.clone())
+        };
+        let summary = run_episode_with_summary_v1(&mut session, "fixround1counterspell", &tags, &mut policy);
+        let outcome = &summary.own_card_outcomes[0][&COUNTERSPELL_CARD_ID];
+        assert!(outcome.counterspell_held, "seed 1 seat 0's Counterspell must read held to game end");
     }
 }
