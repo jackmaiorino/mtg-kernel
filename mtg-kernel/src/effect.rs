@@ -387,8 +387,19 @@ pub enum EffectOp {
     MayPayCostThen {
         discard: u8,
         sacrifice_lands: u8,
+        /// Added after `discard`/`sacrifice_lands` (Glint Hawk, the first
+        /// consumer) and defaulted on deserialize so an older serialized
+        /// snapshot without it still loads as "no return-permanent option
+        /// offered", matching every pre-existing consumer's actual shape.
+        #[serde(default)]
         return_permanent: Option<PermanentFilterDef>,
         then: Box<EffectOp>,
+        /// Added alongside `return_permanent` and defaulted on deserialize
+        /// so an older serialized snapshot without it still loads as "no
+        /// consequence when every option is declined", matching every
+        /// pre-existing consumer's actual (hardcoded no-op-on-decline)
+        /// behavior.
+        #[serde(default)]
         otherwise: Option<Box<EffectOp>>,
     },
     /// "Deals `amount` damage to each opponent and each creature they
@@ -11897,5 +11908,43 @@ mod tests {
         assert_eq!(state.objects.get(card).zone, Zone::Exile);
         assert!(state.exile.contains(&card));
         assert!(state.engine.exile_play_permissions.is_empty());
+    }
+
+    // Final-review fix round item 3: `return_permanent`/`otherwise` are new
+    // fields on `MayPayCostThen` (Glint Hawk, commit bd171ce4). This is a
+    // pre-wave `MayPayCostThen` payload, hand-written exactly as Highway
+    // Robbery/Abandon Attachments would have serialized it before the wave
+    // (only `discard`/`sacrifice_lands`/`then`, no `return_permanent`/
+    // `otherwise` keys at all): it must still deserialize, with the two new
+    // fields defaulting to `None`, or a pre-wave GameState snapshot
+    // captured with either card's cost on the stack fails to load on this
+    // branch.
+    #[test]
+    fn may_pay_cost_then_deserializes_a_pre_wave_payload_missing_the_new_fields() {
+        let pre_wave_json = r#"{"MayPayCostThen":{"discard":1,"sacrifice_lands":0,"then":{"Sequence":[]}}}"#;
+        let op: EffectOp =
+            serde_json::from_str(pre_wave_json).expect("pre-wave MayPayCostThen must deserialize");
+        match op {
+            EffectOp::MayPayCostThen {
+                discard,
+                sacrifice_lands,
+                return_permanent,
+                then,
+                otherwise,
+            } => {
+                assert_eq!(discard, 1);
+                assert_eq!(sacrifice_lands, 0);
+                assert_eq!(
+                    return_permanent, None,
+                    "missing field must default to no return-permanent option"
+                );
+                assert_eq!(*then, EffectOp::Sequence(Vec::new()));
+                assert_eq!(
+                    otherwise, None,
+                    "missing field must default to no decline consequence"
+                );
+            }
+            other => panic!("expected MayPayCostThen, got {other:?}"),
+        }
     }
 }

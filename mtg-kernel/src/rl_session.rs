@@ -2202,34 +2202,60 @@ fn flat_validate_origin_decision_v1(
             player,
             discard_payable,
             sacrifice_payable,
-            ..
+            return_permanent_payable,
         } => {
             if current.actor != *player || candidates.len() != 2 {
                 return Err(invalid());
             }
-            let valid = match (*discard_payable, *sacrifice_payable) {
-                (false, false) => candidates.iter().enumerate().all(|(index, candidate)| {
-                    matches!(
-                        candidate.semantic,
-                        ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
-                            if actor_matches(actor, *player) && use_cost == (index == 1)
-                    )
-                }),
-                (true, true) => matches!(
+            let valid = if *return_permanent_payable {
+                // Glint Hawk's return-a-permanent cost (since f013434f):
+                // offered directly through the engine's one-shot
+                // `Action::ChooseOptionalCost` bypass rather than the
+                // Discard/SacrificeLand-only Use/Which stage scheme below,
+                // mirroring `flat_validate_semantic_policy_pair_v1`'s
+                // `ChooseOptionalCostWhich`/`Action::ChooseOptionalCost`
+                // pairing for `Decline`/`ReturnPermanent`.
+                matches!(
                     (&candidates[0].semantic, &candidates[1].semantic),
                     (
                         ActionSemanticV1::ChooseOptionalCostWhich {
                             actor: first_actor,
-                            choice: OptionalCostChoice::Discard,
+                            choice: OptionalCostChoice::Decline,
                         },
                         ActionSemanticV1::ChooseOptionalCostWhich {
                             actor: second_actor,
-                            choice: OptionalCostChoice::SacrificeLand,
+                            choice: OptionalCostChoice::ReturnPermanent,
                         }
                     ) if actor_matches(*first_actor, *player)
                         && actor_matches(*second_actor, *player)
-                ),
-                _ => false,
+                )
+            } else {
+                match (*discard_payable, *sacrifice_payable) {
+                    (false, false) => {
+                        candidates.iter().enumerate().all(|(index, candidate)| {
+                            matches!(
+                                candidate.semantic,
+                                ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
+                                    if actor_matches(actor, *player) && use_cost == (index == 1)
+                            )
+                        })
+                    }
+                    (true, true) => matches!(
+                        (&candidates[0].semantic, &candidates[1].semantic),
+                        (
+                            ActionSemanticV1::ChooseOptionalCostWhich {
+                                actor: first_actor,
+                                choice: OptionalCostChoice::Discard,
+                            },
+                            ActionSemanticV1::ChooseOptionalCostWhich {
+                                actor: second_actor,
+                                choice: OptionalCostChoice::SacrificeLand,
+                            }
+                        ) if actor_matches(*first_actor, *player)
+                            && actor_matches(*second_actor, *player)
+                    ),
+                    _ => false,
+                }
             };
             if !valid {
                 return Err(invalid());
@@ -7379,7 +7405,7 @@ mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::effect::EffectOp;
-    use crate::engine::PendingOptionalCostSacrifice;
+    use crate::engine::{PendingOptionalCost, PendingOptionalCostSacrifice};
     use crate::policy_surface_v5::{
         reset_test_exact_surface_hash_calls, test_exact_surface_hash_calls,
     };
@@ -7445,6 +7471,111 @@ mod tests {
                 Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
             );
         }
+    }
+
+    // Final-review fix round item 1 (Critical): Glint Hawk's ETB (Task 7)
+    // produces a real `Decision::ChooseOptionalCost` with
+    // `return_permanent_payable: true` and the other two flags false. Task
+    // 12 taught `flat_validate_semantic_policy_pair_v1` (the test just
+    // above) to accept the resulting `ChooseOptionalCostWhich` candidates,
+    // but the sibling `flat_validate_origin_decision_v1` was not updated:
+    // its `ChooseOptionalCost` arm still required `ChooseOptionalCostUse`
+    // whenever `(discard_payable, sacrifice_payable) == (false, false)`,
+    // which is also what Glint Hawk's ETB reports. AffinityV2 registers
+    // three Glint Hawks, so this decision must flat-encode on the live
+    // `flat_build_action_cache_v2` path (contract mode V2, the mode this
+    // wave's own deck/search harnesses always use) or a registered deck has
+    // a decision the training serializer cannot represent.
+    #[test]
+    fn glint_hawk_return_permanent_optional_cost_encodes_in_flat_action_contract_v2() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 82_122);
+        let source_card = card_id_by_name("Glint Hawk").unwrap();
+        let source = state.objects.push(GameObject {
+            card_def: source_card,
+            name: "Glint Hawk".to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(source_card),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[PlayerId::P0.index()].battlefield.push(source);
+        // The artifact Glint Hawk can return, exactly as the Task 7
+        // integration test sets up before the ETB decision (see
+        // `glint_hawk_is_sacrificed_unless_an_artifact_is_returned` in
+        // mtg-kernel/tests/pauper_meta_w1_creatures.rs).
+        add_battlefield_object(&mut state, PlayerId::P0, "Ichor Wellspring");
+        state.engine.pending_optional_cost = Some(PendingOptionalCost {
+            player: PlayerId::P0,
+            source,
+            discard: 0,
+            sacrifice_lands: 0,
+            return_permanent_filter: Some(crate::card_def::PermanentFilterDef::Artifact),
+            discard_payable: false,
+            sacrifice_payable: false,
+            return_permanent_payable: true,
+            then: EffectOp::Sequence(Vec::new()),
+            otherwise: Some(EffectOp::Sacrifice {
+                object: crate::effect::ObjectRef::ThisSource,
+            }),
+            spell_resume: None,
+        });
+        assert!(state.stack.is_empty());
+
+        let mut session = FastActorSessionV1::reset_with_limits(82_122, 41_122, 256, 32_768);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.advance_to_decision_or_terminal();
+
+        let current = session.current.as_ref().expect(
+            "Glint Hawk's return-permanent ChooseOptionalCost must surface as a live \
+             decision, not a terminal",
+        );
+        assert!(
+            matches!(
+                &current.origin_decision,
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    Decision::ChooseOptionalCost {
+                        return_permanent_payable: true,
+                        ..
+                    }
+                ))
+            ),
+            "expected Glint Hawk's return-permanent ChooseOptionalCost, got {:?}",
+            current.origin_decision
+        );
+        assert_eq!(
+            current.flat_action_cache_error_v2, None,
+            "flat_build_action_cache_v2 (contract mode V2) must accept Glint Hawk's \
+             return-permanent optional-cost decision"
+        );
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .expect("the V2 action cache must be built for the return and decline actions");
+        assert_eq!(cache.actions.len(), 2, "Decline and ReturnPermanent");
+        assert!(
+            cache
+                .actions
+                .iter()
+                .all(|action| action.kind == FlatActionKindV1::ChooseOptionalCostWhich),
+            "both actions must encode as the direct ChooseOptionalCostWhich kind"
+        );
     }
 
     fn attacker_state(count: usize) -> GameState {

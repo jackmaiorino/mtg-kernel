@@ -846,10 +846,18 @@ pub struct PendingOptionalCost {
     /// `Some` iff this optional cost also offers returning one controlled
     /// permanent matching this filter to its owner's hand (Glint Hawk's
     /// "unless you return an artifact you control"). `None` for every
-    /// pre-existing consumer (Highway Robbery, Abandon Attachments).
+    /// pre-existing consumer (Highway Robbery, Abandon Attachments). Added
+    /// after the pre-existing fields above and defaulted on deserialize so
+    /// an older serialized snapshot without it still loads as "no
+    /// return-permanent option offered".
+    #[serde(default)]
     pub return_permanent_filter: Option<PermanentFilterDef>,
     pub discard_payable: bool,
     pub sacrifice_payable: bool,
+    /// Added alongside `return_permanent_filter` and defaulted on
+    /// deserialize so an older serialized snapshot without it still loads
+    /// as "not payable".
+    #[serde(default)]
     pub return_permanent_payable: bool,
     pub then: EffectOp,
     /// Runs iff the controller declines every payable option (or none is
@@ -857,6 +865,11 @@ pub struct PendingOptionalCost {
     /// Highway Robbery/Abandon Attachments simply skips `then`, with no
     /// separate consequence. Glint Hawk is the first consumer
     /// (`Some(EffectOp::Sacrifice { object: ObjectRef::ThisSource })`).
+    /// Added alongside `return_permanent_filter`/`return_permanent_payable`
+    /// and defaulted on deserialize so an older serialized snapshot without
+    /// it still loads as "no consequence when every option is declined",
+    /// matching every pre-existing consumer's actual behavior.
+    #[serde(default)]
     pub otherwise: Option<EffectOp>,
     /// `Some((source, to_zone))` iff this optional cost is itself part of
     /// `source`'s own spell resolution (Highway Robbery's "you may... if
@@ -19649,6 +19662,44 @@ mod tests {
             *legacy.legacy_rng().expect("legacy state"),
             expected_rng,
             "the frame commit must advance the RNG exactly as the historical shuffle"
+        );
+    }
+
+    // Final-review fix round item 3: `return_permanent_filter`/
+    // `return_permanent_payable`/`otherwise` are new fields on
+    // `PendingOptionalCost` (Glint Hawk, commit bd171ce4). This is a
+    // pre-wave `PendingOptionalCost` payload, hand-written exactly as
+    // Highway Robbery/Abandon Attachments would have serialized it before
+    // the wave (only the fields that predate it, no `return_permanent_
+    // filter`/`return_permanent_payable`/`otherwise` keys at all): it must
+    // still deserialize, with the three new fields defaulting to "no
+    // return-permanent option, not payable, no decline consequence", or a
+    // pre-wave GameState snapshot captured with either card's optional cost
+    // pending on the stack fails to load on this branch.
+    #[test]
+    fn pending_optional_cost_deserializes_a_pre_wave_payload_missing_the_new_fields() {
+        let pre_wave_json = r#"{"player":0,"source":7,"discard":1,"sacrifice_lands":0,"discard_payable":true,"sacrifice_payable":false,"then":{"Sequence":[]},"spell_resume":null}"#;
+        let poc: PendingOptionalCost = serde_json::from_str(pre_wave_json)
+            .expect("pre-wave PendingOptionalCost must deserialize");
+        assert_eq!(poc.player, PlayerId::P0);
+        assert_eq!(poc.source, ObjectId(7));
+        assert_eq!(poc.discard, 1);
+        assert_eq!(poc.sacrifice_lands, 0);
+        assert!(poc.discard_payable);
+        assert!(!poc.sacrifice_payable);
+        assert_eq!(poc.then, EffectOp::Sequence(Vec::new()));
+        assert_eq!(poc.spell_resume, None);
+        assert_eq!(
+            poc.return_permanent_filter, None,
+            "missing field must default to no return-permanent option"
+        );
+        assert!(
+            !poc.return_permanent_payable,
+            "missing field must default to not payable"
+        );
+        assert_eq!(
+            poc.otherwise, None,
+            "missing field must default to no decline consequence"
         );
     }
 }
