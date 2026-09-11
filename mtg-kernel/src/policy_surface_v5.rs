@@ -1306,12 +1306,15 @@ mod tests {
         // Old value: 0xa921_902d_e1a8_d8ce.
         assert_eq!(legacy.diagnostic_state_hash(), 0x3313_5945_dcb9_4ed1);
         // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
-        // 13, identity finalisation): the wave's 21 new cards moved
-        // KERNEL_CARDDB_HASH, which the SurfaceBinding envelope embeds via
-        // CardDef-shaped state (same root cause as the state-hash re-pin
-        // above). Old value: 0xd281_e56f_4389_60a9. New value is this
-        // test's own live-computed hash, read directly from a failing run
-        // (never hand-typed).
+        // 13, identity finalisation): the SurfaceBinding envelope only
+        // serializes `diagnostic_state_hash` plus surface context, never
+        // any CardDef-shaped state, so this has the same root cause as the
+        // state-hash re-pin directly above (`GameState::monarch`, added in
+        // Task 11, serialized unconditionally and shifting the envelope
+        // for every state), not the wave's new cards moving
+        // KERNEL_CARDDB_HASH. Old value: 0xd281_e56f_4389_60a9. New value
+        // is this test's own live-computed hash, read directly from a
+        // failing run (never hand-typed).
         assert_eq!(
             surface_binding_hash(&legacy, &surface).expect("legacy binding hashes"),
             0x6940_0c4c_9fdc_2b49,

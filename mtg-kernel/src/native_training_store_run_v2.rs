@@ -163,8 +163,8 @@ const FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1: &str = "64c82a261e078f1a";
 const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
-// PAUPER_META_W1 catalog profile (schema migration, design ruling 6
-// pending): the pauper-meta-cards-v1 card lane's third catalog-identity
+// PAUPER_META_W1 catalog profile (schema migration, design ruling 6,
+// approved 2026-09-10): the pauper-meta-cards-v1 card lane's third catalog-identity
 // profile. Later tasks in that wave append cards to data/cards_v1.json,
 // which moves the live card DB hash (`KERNEL_CARDDB_HASH`) while the
 // runtime deck catalog stays unchanged, so this profile pairs its own card

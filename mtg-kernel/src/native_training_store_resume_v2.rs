@@ -668,8 +668,8 @@ fn resume_native_training_store_impl_v1(
     // at this moment, not merely the pinned CURRENT literal -- closing the
     // gap where a record merely claiming that literal, authored by a build
     // whose real identity has since moved past it, could still resume.
-    // PauperMetaW1 (schema migration, card lane, design ruling 6 pending)
-    // shares the CURRENT arm identically: same live-build-identity check,
+    // PauperMetaW1 (schema migration, card lane, design ruling 6, approved
+    // 2026-09-10) shares the CURRENT arm identically: same live-build-identity check,
     // same error kind on mismatch.
     use crate::native_training_store_run_v2::{
         current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
