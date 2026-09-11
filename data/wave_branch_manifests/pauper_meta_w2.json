@@ -1,0 +1,18 @@
+{
+  "schema": "kernel_wave_branch_manifest/v1",
+  "wave": "pauper_meta_w2",
+  "cards": {
+    "Urza's Tower": {
+      "post_board": false,
+      "branches": ["adds_one_colorless_without_the_other_pieces", "adds_three_colorless_with_assembled_tron", "a_second_copy_of_the_same_piece_does_not_assemble_tron", "one_tap_pays_a_three_generic_cost_automatically", "unspent_yield_floats_as_colorless_mana", "yield_returns_to_one_after_a_piece_leaves"]
+    },
+    "Urza's Power Plant": {
+      "post_board": false,
+      "branches": ["adds_one_colorless_without_the_other_pieces", "adds_two_colorless_with_assembled_tron"]
+    },
+    "Urza's Mine": {
+      "post_board": false,
+      "branches": ["adds_one_colorless_without_the_other_pieces", "adds_two_colorless_with_assembled_tron"]
+    }
+  }
+}

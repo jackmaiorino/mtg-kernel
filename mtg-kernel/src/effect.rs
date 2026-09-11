@@ -29,6 +29,13 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Upper bound on `EffectOp::AddManaDynamic`'s evaluated amount, matching
+/// the planner's own `yield_per_tap` ceiling so an explicitly activated
+/// source and an automatically tapped one can never disagree about how much
+/// an extreme board would produce. Well above the largest printed value in
+/// this pool (3, an assembled Urza's Tower).
+const DYNAMIC_MANA_ADD_MAXIMUM: i32 = 8;
+
 /// Immutable cast-time evidence for one Storm trigger. The printed copy
 /// count is frozen immediately after the source cast, while the historical
 /// contract lets the trigger survive that physical spell leaving the stack.
@@ -356,6 +363,16 @@ pub enum EffectOp {
     AddMana {
         player: PlayerRef,
         colors: Vec<ManaColor>,
+    },
+    /// Adds a board-dependent number of mana of one color. The amount is
+    /// sampled at execution against the resolving controller, never at
+    /// announcement, so an Urza land activated after its partners left the
+    /// battlefield adds the smaller amount. Card neutral: the definition
+    /// supplies the `DynamicValueDef`, the engine supplies the evaluation.
+    AddManaDynamic {
+        player: PlayerRef,
+        color: ManaColor,
+        amount: DynamicValueDef,
     },
     /// Creates a fresh token permanent (e.g. Blood) directly on the
     /// battlefield under `controller`'s control. `token_def` indexes
@@ -10418,6 +10435,26 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 event::ProposedEvent::mana_add(player, colors.clone()),
             );
+        }
+        EffectOp::AddManaDynamic {
+            player,
+            color,
+            amount,
+        } => {
+            let player = ctx.resolve_player(*player, state);
+            // The evaluator is the single source of truth shared with
+            // `mana::gather_sources`. Clamped the same way the planner
+            // clamps `yield_per_tap`, except that zero is admitted here: a
+            // future card-neutral consumer may legitimately add nothing,
+            // and no current definition can reach that value.
+            let amount = crate::engine::evaluate_dynamic_value(state, *amount, player)
+                .clamp(0, DYNAMIC_MANA_ADD_MAXIMUM);
+            if amount > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::mana_add(player, vec![*color; amount as usize]),
+                );
+            }
         }
         EffectOp::DiscardCards { player, count } => {
             let player = ctx.resolve_player(*player, state);

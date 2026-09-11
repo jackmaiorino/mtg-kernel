@@ -3411,6 +3411,36 @@ fn saga_for(name: &str) -> &'static str {
     }
 }
 
+/// `CardDef::conditional_tap_yield` source text: the board-dependent amount
+/// one activation of the card's primary printed mana ability adds. Verified
+/// against the Mage fork at `72a08a3b`
+/// (`UrzaTerrainValue.java` blob `57fa2b3f0ce2f8c8e60d68e2dfe9561e2578d71d`,
+/// whose TOWER/MINE/POWER_PLANT constants carry the values 3/2/2 and whose
+/// `calculate` requires one controlled permanent of each of the two *other*
+/// pieces). `None` leaves the legacy one-per-tap contract untouched, which
+/// is every other card in the pool.
+fn conditional_tap_yield_for(name: &str) -> &'static str {
+    match name {
+        "Urza's Tower" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 3, amount_otherwise: 1 })",
+        "Urza's Mine" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::PowerPlant }], amount_when_met: 2, amount_otherwise: 1 })",
+        "Urza's Power Plant" => "Some(DynamicValueDef::AmountIfControllerControlsEach { required: [SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Mine }, SubtypeConjunctionDef { first: Subtype::Urzas, second: Subtype::Tower }], amount_when_met: 2, amount_otherwise: 1 })",
+        _ => "None",
+    }
+}
+
+/// The generated `mana_ability` program function name for a card whose
+/// primary mana ability has a conditional yield. Kept as its own table so
+/// the generated function is emitted exactly once per such card and the
+/// name is derived in one place.
+fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Urza's Tower" => Some("mana_ability_add_urzas_tower"),
+        "Urza's Mine" => Some("mana_ability_add_urzas_mine"),
+        "Urza's Power Plant" => Some("mana_ability_add_urzas_power_plant"),
+        _ => None,
+    }
+}
+
 /// Source for a single printed mana ability that is not exactly tap-and-add
 /// one. The runtime interprets these definitions generically and the same
 /// source fragment is included in the card-database identity below.
@@ -4957,6 +4987,48 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        EffectOp::AddMana {{ player: PlayerRef::Controller, colors: vec![ManaColor::{color}] }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    // Conditional-yield mana programs (the three Urza lands). Same shape as
+    // the fixed programs above with the amount left to the evaluator, so a
+    // hand-activated piece adds exactly what the payment planner would have
+    // taken from it.
+    for card in cards.iter() {
+        if card.engine_capability == EngineCapabilityJson::NoEffect {
+            continue;
+        }
+        let Some(function) = conditional_tap_yield_program_for(&card.name) else {
+            continue;
+        };
+        let colors = primary_mana_ability_colors(card);
+        assert_eq!(
+            colors.len(),
+            1,
+            "cards_v1.json: conditional-yield card {:?} must have exactly one primary mana color",
+            card.name
+        );
+        let color = color_variant(colors[0]);
+        let amount = conditional_tap_yield_for(&card.name);
+        let amount = amount
+            .strip_prefix("Some(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .unwrap_or_else(|| {
+                panic!(
+                    "conditional_tap_yield_for({:?}) must be a Some(...) literal",
+                    card.name
+                )
+            });
+        writeln!(out, "fn {function}() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::TapObject {{ object: ObjectRef::ThisSource }},"
+        )
+        .unwrap();
+        writeln!(out, "        EffectOp::AddManaDynamic {{ player: PlayerRef::Controller, color: ManaColor::{color}, amount: {amount} }},").unwrap();
         writeln!(out, "    ]))").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
@@ -6829,6 +6901,13 @@ fn codegen(cards: &[CardJson]) -> String {
             color_variant(color);
             mana_ability_src = format!("mana_ability_add_{suffix}");
         }
+        // A conditional yield replaces the fixed single-color program with
+        // the evaluator-backed one emitted above.
+        if executable {
+            if let Some(function) = conditional_tap_yield_program_for(&c.name) {
+                mana_ability_src = function.to_string();
+            }
+        }
 
         let has_spell_program = spell_effect_src != "no_effect";
         let has_mana_program = !mana_ability_colors.is_empty();
@@ -7047,6 +7126,16 @@ fn codegen(cards: &[CardJson]) -> String {
             executable && cant_be_blocked_by_monarchs_creatures_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        conditional_tap_yield: {},",
+            if executable {
+                conditional_tap_yield_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -7110,9 +7199,13 @@ fn codegen(cards: &[CardJson]) -> String {
     // engine-owned, not per-card recipes, so they add no new canon token
     // (Azure Fleet Admiral's ETB grant is already covered by the existing
     // `trigger=` token via `etb:become_monarch`).
+    // v34 adds `conditional_tap_yield`, the board-dependent per-tap mana
+    // amount of the three Urza lands, appended after
+    // `cant_be_blocked_by_monarchs_creatures` without renumbering prior
+    // definitions.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v33\n");
+    let mut canon = String::from("kernel_carddb/v34\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -7326,6 +7419,13 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("cant_be_blocked_by_monarchs_creatures=");
         canon.push_str(&cant_be_blocked_by_monarchs_creatures_for(&c.name).to_string());
+        canon.push('|');
+        canon.push_str("conditional_tap_yield=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            conditional_tap_yield_for(&c.name)
+        } else {
+            "None"
+        });
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());
@@ -7455,6 +7555,10 @@ fn subtype_variant(t: &str) -> &'static str {
         "Squirrel" => "Subtype::Squirrel",
         "Lesson" => "Subtype::Lesson",
         "Fish" => "Subtype::Fish",
+        "Urza's" => "Subtype::Urzas",
+        "Tower" => "Subtype::Tower",
+        "Power-Plant" => "Subtype::PowerPlant",
+        "Mine" => "Subtype::Mine",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

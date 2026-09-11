@@ -5918,6 +5918,102 @@
         "blocking_filter"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AzureFleetAdmiral.java"
+    },
+    {
+      "name": "Urza's Tower",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Urza's",
+        "Tower"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UrzasTower.java"
+    },
+    {
+      "name": "Urza's Power Plant",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Urza's",
+        "Power-Plant"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UrzasPowerPlant.java"
+    },
+    {
+      "name": "Urza's Mine",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Urza's",
+        "Mine"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "colorless_mana",
+        "conditional_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UrzasMine.java"
     }
   ],
   "unresolved": []

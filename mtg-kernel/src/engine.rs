@@ -3017,6 +3017,31 @@ pub(crate) fn evaluate_dynamic_value(
                 && card_def::CARD_DEFS[live.card_def as usize].has_type(card_type)
         })
         .count(),
+        // UrzaTerrainValue's shape: every required conjunction must be
+        // matched by at least one battlefield permanent `controller`
+        // controls, and one permanent must carry both subtypes of the pair
+        // it matches. An Urza's Tower therefore never satisfies its own
+        // Mine or Power-Plant requirement, which is why a second copy of the
+        // same piece does not assemble Tron.
+        DynamicValueDef::AmountIfControllerControlsEach {
+            required,
+            amount_when_met,
+            amount_otherwise,
+        } => {
+            let met = required.iter().all(|pair| {
+                state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .any(|&candidate| {
+                        let object = state.objects.get(candidate);
+                        object.controller == controller
+                            && object.zone == Zone::Battlefield
+                            && has_effective_subtype(state, candidate, pair.first)
+                            && has_effective_subtype(state, candidate, pair.second)
+                    })
+            });
+            return i32::from(if met { amount_when_met } else { amount_otherwise });
+        }
     };
     i32::try_from(count).expect("the object arena count fits the engine's signed value range")
 }
@@ -14114,9 +14139,32 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
         event::propose_and_commit(state, ProposedEvent::tap(id));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
     }
-    // Spend: every newly-tapped mana is fully consumed by this cost by
+    // A multi-yield source (an assembled Urza land) added more than the one
+    // mana its own tap paid for. `PaymentPlan::surplus` is exactly the part
+    // of that extra yield the cost did not consume, so adding it here
+    // completes the pool arithmetic: the taps above contributed
+    // `taps(color)`, this contributes `surplus[color]`, and together they
+    // are the full yield that survives the payment. Every addition runs
+    // before any subtraction, so the pool never dips below zero even when
+    // the cost spends surplus credited by an earlier tap in the same plan.
+    // `surplus` is `[0; 6]` for every single-yield plan, so this loop is a
+    // no-op for the whole pre-wave-2 pool.
+    for (index, &amount) in plan.surplus.iter().enumerate() {
+        if amount > 0 {
+            let color = mana::ManaColor::ALL[index];
+            debug_assert_eq!(color.pool_index(), index);
+            event::propose_and_commit(
+                state,
+                ProposedEvent::mana_add(player, vec![color; usize::from(amount)]),
+            );
+        }
+    }
+    // Spend: every newly-tapped mana's own unit is consumed by this cost by
     // construction (the solver only taps what it needs), plus whatever
-    // floating pool the plan says to use.
+    // running pool the plan says to use. `pool_used` can exceed the mana
+    // that was floating before this payment, because the solver may have
+    // spent surplus credited above; it can never exceed
+    // `floating + surplus`, which is why this stays non-negative.
     for &(_, color) in &plan.taps {
         state.players[player.index()].mana_pool[color.pool_index()] -= 1;
     }

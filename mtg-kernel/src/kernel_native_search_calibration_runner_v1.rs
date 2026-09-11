@@ -44,7 +44,7 @@
 //! `validate_train_run_record_v2` construction seam -- there is no second,
 //! separate path that constructs a `ValidatedTrainRunV2`. The failing
 //! comparison is `KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2`
-//! (live `0xde59_c501_e943_f3fd` per `card_def.rs`'s own
+//! (live `0xd5f0_19cb_8d07_6e34` per `card_def.rs`'s own
 //! `card_db_hash_v33_is_frozen` test vs. the frozen rev3 literal
 //! `0xa06f_a956_6106_f0ea`), together with a runtime-catalog SHA mismatch.
 //!

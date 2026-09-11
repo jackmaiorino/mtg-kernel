@@ -206,7 +206,7 @@ fn action_candidates(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0xde59_c501_e943_f3fd);
+    assert_eq!(KERNEL_CARDDB_HASH, 0xd5f0_19cb_8d07_6e34);
     for (name, expected_id) in [
         ("Cleansing Wildfire", 15),
         ("Duress", 24),
@@ -223,7 +223,7 @@ fn definitions_ids_and_generic_programs_are_exact() {
             "{name} is executable"
         );
     }
-    assert_eq!(CARD_DEFS.len(), 184);
+    assert_eq!(CARD_DEFS.len(), 187);
     assert_eq!(Subtype::Clue.stable_id(), 68);
     assert_eq!(TargetSpec::Land.stable_id(), 34);
 

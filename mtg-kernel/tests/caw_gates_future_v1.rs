@@ -126,7 +126,7 @@ fn reference_shuffle(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0xde59_c501_e943_f3fd);
+    assert_eq!(KERNEL_CARDDB_HASH, 0xd5f0_19cb_8d07_6e34);
     let expected_ids = [
         ("Basilisk Gate", 3),
         ("Citadel Gate", 14),
@@ -137,7 +137,7 @@ fn definitions_ids_and_generic_programs_are_exact() {
         ("Sacred Cat Embalmed Token", 148),
         ("Treasure Token", 149),
     ];
-    assert_eq!(CARD_DEFS.len(), 184);
+    assert_eq!(CARD_DEFS.len(), 187);
     for (name, expected_id) in expected_ids {
         let id = card_id(name);
         assert_eq!(id, expected_id, "append-only id for {name}");
