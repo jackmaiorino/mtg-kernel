@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Revision 2** (2026-09-10): panel review round 1 adopted in full (one Critical, nine Important, two Minor). The Critical was cascade's cast route, which revision 1 routed through `CastMethodV4::Plotted`; a read-only engine spike settled it on a new `CastMethodV4::Cascade` (design note B) and Task 6 is re-estimated from 8 to 12 hours.
+
 **Goal:** Register Urzatron (9 percent of the sampled Pauper field, no kernel deck today) as the nineteenth pool registration from the pinned mtgtop8 list 888074, implement the 19 cards it needs plus three shared mechanics (cascade, prototype, station) and the Tron conditional mana rule, and gate the wave with the kernel-side branch-coverage parity check, without changing the active runtime deck set.
 
 **Architecture:** The pool catalog (`data/pauper_pool_v1.json`) grows from eighteen to nineteen registrations while the runtime catalog (`data/runtime_decks_v1.json`, SHA-256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`) stays byte-identical. Cards append to `data/cards_v1.json` (ids are array indexes: 184 definitions today, 203 after this wave, of which 190 are non-token). Card programs follow the existing build.rs tables (`special_for`, `effect_recipe_for`, `trigger_recipe_for`, `activated_ability_recipes_for`, `mana_ability_def_for`, `additional_mana_abilities_for`) plus four new card-neutral mechanic families: conditional multi-mana land yield (Tron), cascade, prototype, and station. Every wave commit records old and new `KERNEL_CARDDB_HASH` (wave 1 finished at `0xde59_c501_e943_f3fd`).
@@ -59,7 +61,7 @@ Already in the registry and reused unchanged: Forest, Generous Ent, Breath Weapo
 
 ### Not registered in this wave
 
-Prophetic Prism is in the spec's W2 candidate list (section 5.1) but is not in the pinned 888074 list, and `build.rs` `EXPECTED_DECKS` refuses registry cards that belong to no pool deck (spec section 3). It is therefore deferred to a wave whose pinned list contains it (887775 plays 4, 888069 plays 2). Record this in the wave record; it is a deliberate consequence of the pin-one-exact-75 rule, not an omission.
+Prophetic Prism is in the spec's W2 candidate list (section 5.1) but is not in the pinned 888074 list, and `build.rs` panics on any non-token registry card whose `decks` list is empty (`c.decks.is_empty() && !c.is_token`, build.rs:1892), so a card that belongs to no pool deck cannot be registered (spec section 3). It is therefore deferred to a wave whose pinned list contains it (887775 plays 4, 888069 plays 2). Record this in the wave record; it is a deliberate consequence of the pin-one-exact-75 rule, not an omission.
 
 ---
 
@@ -148,11 +150,15 @@ Shared ability sources (cite these in the mechanic tasks): `Mage/src/main/java/m
 - The explicit activation path uses a new `EffectOp::AddManaDynamic { player, color, amount: DynamicValueDef }` so a hand-activated Urza's Tower adds the same 1 or 3.
 - No new decision shape and no new action kind: the land is still `Action::ActivateManaAbility(id)` with one color, and payment plans are opaque to `rl.rs` (wave 1 Task 10 established this for delve).
 
-**B. Cascade (Task 6).** `CardDef::cascade: bool`. The trigger reuses the existing `cast_self` trigger kind (precedent: `"Weather the Storm" => "cast_self:storm_copies:frozen_turn_cast_count"`), so cascade resolves above the spell that cast it. Its program is one card-neutral op, `EffectOp::CascadeFromSource`, with no parameters: the comparison value is the resolving source's own mana value, read at resolution.
+**B. Cascade (Task 6).** `CardDef::cascade: bool`. The trigger reuses the existing `cast_self` trigger kind (precedent: `"Weather the Storm" => "cast_self:storm_copies:frozen_turn_cast_count"`), so cascade resolves above the spell that cast it. Its program is one card-neutral op, `EffectOp::CascadeFromSource`, with no parameters: the comparison value is the resolving source's own mana value, read at resolution. The cast route below was settled by a read-only engine spike on 2026-09-10 (review round 1 Critical); every claim here is cited by file and line.
 1. Exile cards from the top of the controller's library one at a time (a separate zone change per card, matching `CascadeEffect`'s sequential `moveCards`) until a nonland card with mana value strictly less than the source's is exiled, or the library is empty.
-2. If such a card was exiled, offer `Decision::ChooseEffectBoolean` with a new `effect::EffectBooleanChoicePurpose::CascadeFreeCast`.
-3. On accept, cast that card from exile for no mana, through the existing free-cast-from-exile route (`CastMethodV4::Plotted`, the only route whose cost check is unconditionally free, engine.rs 6022). Do not add a `CastMethodV4` discriminant: `flat_policy_v2.rs` encodes this enum and is frozen. Audit every `CastMethodV4::Plotted` consumer (engine.rs 1630, 6022, 6827, 13224, 13233, 13464, 13841, 15235) and record the audit in the commit body; in particular `object.plotted_turn` must not be set for a cascade cast (13841 only sets it when the destination is exile).
-4. Put every card still exiled this way on the bottom of the library in a random order, using the same RNG the existing shuffle path uses (`grep -n "fn shuffle" mtg-kernel/src/engine.rs mtg-kernel/src/effect.rs`).
+2. If such a card was exiled, offer `Decision::ChooseEffectBoolean` with a new `effect::EffectBooleanChoicePurpose::CascadeFreeCast`. That fine-grained purpose maps down to `rl::BooleanChoicePurposeV4::OptionalEffect` (rl.rs 606-610), which is the value actually projected (`flat_policy_v2::boolean_purpose_id`, flat_policy_v2.rs 1338-1342, mirrored by `python/mtg_kernel_rl/features.py:117`), so the decision needs no new projected enum value: `core_surface_action_candidates_v1`'s `ChooseEffectBoolean` arm emits exactly `[false, true]` for every purpose unconditionally, which rl.rs 6979-6986 documents for Delver of Secrets.
+3. On accept, cast that card from exile for no mana through a new `CastMethodV4::Cascade`.
+   *Spike result, why not `CastMethodV4::Plotted`.* The Plotted route is closed to any card without a Plot ability at four independent points, so revision 1's instruction would not have compiled or run: `begin_cast_ex`'s `debug_assert!(matches!(forced_cast_method, None | Some(CastMethodV4::Madness)))` (engine.rs 13188-13191) forbids forcing Plotted at all; `is_plotted` (engine.rs 13205-13209) requires `def.plot_cost.is_some()` and `plotted_turn < state.turn`; the route construction `SpellCastRouteV4::Plotted { plotted_turn: plotted_turn.expect(...) }` (engine.rs 13233-13236) panics on `None`; and both `validate_spell_source_contract_fields` (engine.rs 1774-1780) and the pending-cast validator (engine.rs 6825-6836) re-check `def.plot_cost.is_some()` plus the marker on every departure from the stack.
+   *Chosen route.* Append `CastMethodV4::Cascade` (state.rs 476-494; the enum is `#[serde(rename_all = "snake_case")]` with `#[default] Normal`, so appending is backward compatible because no pre-wave payload names `cascade`) and `SpellCastRouteV4::CascadeExile` (state.rs 501-521), modeled verbatim on `AdventureExile`, whose own doc says it is "derived from the card's own incarnation-local flag rather than a separately granted/expiring `engine::PlayPermission`". That flag is a new `ObjectStateV4::cascade_grant: bool` (`#[serde(default)]`, unobserved, like wave 1's `on_adventure`), set when the cascade effect exiles the candidate and restamped across the Exile to Stack move exactly where `is_plotted` and `is_adventure_exile` restamp theirs (engine.rs 13286-13300). `SpellCastRouteV4` appears nowhere in `rl.rs` or `flat_policy_v2.rs`, so the new route costs nothing model-side.
+   *Sites that must learn the variant, counted.* `CastMethodV4::` occurs 225 times across 22 files; the arms and comparisons are marked by the 19 occurrences of the last-declared variant `CastMethodV4::Bestow`: engine.rs 1570, 1585, 1613, 1769, 1783, 2286, 4942, 6032, 6053, 6799, 9115, 9628, 9676, 13575, 13685, 13728, 15247, plus `flat_policy_v1.rs:1163` and `flat_policy_v2.rs:1251`. The exhaustive matches the compiler forces are engine.rs 1769 and 1783 (`validate_spell_source_contract_fields`), 4942, 6032 (`cast_cost_is_payable`), 6053 (`finalized_cast_method`), 6799 (pending-cast validation), 13575 (the payment match), 13728, 15247 (a `#[cfg(test)]` helper), and the two flat mappings. The rest are `==` or `matches!` comparisons specific to Bestow and Omen and are expected to need no change; the implementer confirms each one in the task report. New-arm behavior: `cast_cost_is_payable` gets `CastMethodV4::Cascade => true` (free, exactly as `Plotted => true` at engine.rs 6022); the payment match gets `CastMethodV4::Cascade => {}` (free, exactly as `Plotted => {}` at engine.rs 13463); `validate_spell_source_contract_fields` gets `CastMethodV4::Cascade if source.v4.cascade_grant => {}` plus its rejection arm; the pending-cast validator requires `origin_zone == Zone::Exile`, `source.owner == pending.controller`, `pending.cast_mode == Some(CastMode::Normal)`, and `source.v4.cascade_grant`; `begin_cast_ex`'s debug_assert admits `Some(CastMethodV4::Cascade)` and its `cast_route` match maps it to `SpellCastRouteV4::CascadeExile`.
+   *Model-input migration.* `cast_method_id` gains `Cascade => 9` in both `flat_policy_v1.rs` (1155-1166) and `flat_policy_v2.rs` (1243-1253); `FLAT_POLICY_ENUM_MAPPING_VERSION_V1` (flat_policy_v1.rs:35) and `FLAT_POLICY_ENUM_MAPPING_VERSION_V2` (flat_policy_v2.rs:38) go from 1 to 2; `python/mtg_kernel_rl/features.py:57` `CAST_METHODS` appends `"cascade"`; both golden sets regenerate. Ids 1 to 8 do not move, so no existing feature id is renumbered and a trained checkpoint's input vocabulary is unchanged in every position it already uses. This is the wave's ruling-6 schema migration (ruling 6 is RULED approved) and is recorded as such in the commit body and the wave record.
+4. Put every card still exiled this way on the bottom of the library in a random order with `environment_randomization_v2::shuffle_slice_in_place_v2` (environment_randomization_v2.rs:238) under a new `ShufflePurposeV2::CascadeBottomOrder` variant (the enum, its `as_str` and `parse`, and the `ENVIRONMENT_RANDOMIZATION_PURPOSES_V2` table at environment_randomization_v2.rs 151-171). The whole-library `state.rs:2066 shuffle_library` is the wrong shape, and revision 1's `grep -n "fn shuffle"` pointer matched nothing in engine.rs or effect.rs.
 The free spell's own targeting flows through the ordinary cast decisions. No card-specific pending state: the pending cascade carries the exiled-card list and the source binding in the generic effect continuation, the same way `LookAtTopMayRevealThen` does (wave 1 Task 9).
 
 **C. Prototype (Task 7).** `CardDef::prototype: Option<PrototypeDef { cost: Cost, power: i16, toughness: i16, colors: &'static [ManaColor] }>`. The prototype cast is offered as `CastMode::Alternative` (no new `CastMode` value, so the `rl.rs` `ChooseCastMode` arm and the flat encoding are unchanged) with `CardDef::prototype` as the carrier that distinguishes it from Fireblast's alt cost, exactly as wave 1 distinguished an Adventure from an Omen under one `CastMethodV4::Omen` tag. The cost checks at engine.rs 1763 and 6009 currently require `def.alt_cost.is_some()` for `Alternative`; both gain `|| def.prototype.is_some()`, and the prototype branch pays `PrototypeDef::cost` at sorcery speed only. The resolving permanent carries `ObjectStateV4::prototyped: bool` (`#[serde(default)]`), set when the spell's `cast_method` is `Alternative` and the definition has a prototype, at the same seam where the battlefield incarnation is built (`v4.reset_for_zone_change` clears v4, so the flag is applied after it). `engine::effective_power`/`effective_toughness` use the prototype P/T as the base when the flag is set; `v4.effective_color_mask` is materialized from `PrototypeDef::colors`; mana-value and mana-cost readers use the prototype cost while the object is a spell or a prototyped permanent. Rejected alternative: modeling prototype as a `transform_face`. It would reuse `types_for_face`/`power_for_face`, but wave 1's blanket "no triggers while `face_index != 0`" gate would silence Boulderbranch Golem's ETB, face indexes 1 and 2 already mean "transform back face" and "adventure name" in `card_id_by_visible_name`, and a prototyped permanent keeps its printed name, so a face would add a name the projection must then suppress.
@@ -197,7 +203,7 @@ The free spell's own targeting flows through the ordinary cast decisions. No car
 ```
 uvx uv@0.11.29 run --no-sync python -m unittest python.tests.test_write_dek_from_mtgo_list_v1 -v
 ```
-Expected: FAIL (the tool rejects the 18 pending names).
+Expected: FAIL only on Malevolent Rumble unless `--allow-pending` is passed for it. The tool's registry check applies to a `--substitute` target's new name, not to names copied through from the source list (see the tool's docstring and `apply_substitutions()`), so the other 18 new cards are written verbatim; the `--allow-pending` flags for them in Step 2 are belt and braces and are kept so the command does not depend on that asymmetry.
 
 - [ ] **Step 2: Write the deck file.**
 ```
@@ -242,6 +248,7 @@ git push
 - Modify: `mtg-kernel/src/effect.rs` (`EffectOp::AddManaDynamic`)
 - Modify: `mtg-kernel/build.rs` (`subtype_variant`, `conditional_tap_yield_for`, the mana-ability codegen at 4946 to 4960 and 6820 to 6950, the canon string at 7135)
 - Create: `mtg-kernel/tests/pauper_meta_w2_tron.rs`
+- Create: `data/wave_branch_manifests/pauper_meta_w2.json` (this task creates the wave manifest; Tasks 3 to 9 append to it)
 
 **Interfaces:**
 - Consumes: `ManaAbilityAmountDef::Dynamic`, `engine::evaluate_dynamic_value`, `engine::has_effective_subtype`.
@@ -297,9 +304,15 @@ cargo test --locked -p mtg-kernel --no-run
 ```
 Expected: PASS. Any pinned state-hash literal that moves is re-pinned with its cause recorded in the commit body (this task changes no `GameState` field, so a moved state hash means the card DB hash, which is cause A).
 
-- [ ] **Step 6: Manifest membership note.** `data/cards_v1.json` now lists `Deck - Urzatron.dek`, which is not yet in `REGISTRATION_SPECS`, so `python/tests/test_pauper_pool_manifest.py`'s roster-membership test is expected red until Task 10 (the wave 1 ruling for its Tasks 5 to 11). Record the expected red in the task report; do not "fix" it.
+- [ ] **Step 6: Active-nine invariance.** The planner refactor must not move any existing deck's payments (controller ruling). Add `payment_plans_for_the_active_nine_are_unchanged_by_the_yield_refactor` to `mtg-kernel/tests/pauper_meta_w2_tron.rs`: for each of the nine active runtime deck ids, build a deterministic opening state from `runtime_decks_v1.json` (reuse the deck-seeded environment constructor `tests/rl_contract.rs` uses), and for every castable card in hand assert that `mana::can_pay` returns a `PaymentPlan` whose `taps` and `pool_used` equal the values recorded in a checked-in fixture, with `surplus == [0; 6]` everywhere. Generate the fixture from the pre-refactor build during Step 1, before `mana.rs` is touched, and commit it with the test, so the assertion is a real before-and-after comparison rather than a self-confirming snapshot.
 
-- [ ] **Step 7: Commit.**
+- [ ] **Step 7: Manifest membership note.** `data/cards_v1.json` now lists `Deck - Urzatron.dek`, which is not yet in `REGISTRATION_SPECS`, so `python/tests/test_pauper_pool_manifest.py`'s roster-membership test is expected red until Task 10 (the wave 1 ruling for its Tasks 5 to 11). Record the expected red in the task report; do not "fix" it.
+
+- [ ] **Step 8: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit:
 ```
 git add -A
 git commit -m "cards: Urza's Tower, Urza's Power Plant, Urza's Mine; conditional multi-mana yield in the payment planner
@@ -308,7 +321,7 @@ KERNEL_CARDDB_HASH 0xde59c501e943f3fd -> 0x<new>"
 git push
 ```
 
-**Effort: 6 hours.**
+**Effort: 7 hours** (6 plus 1 for the active-nine invariance fixture and test).
 
 ---
 
@@ -322,6 +335,7 @@ git push
 - Modify: `mtg-kernel/src/engine.rs` (offer a mana ability whose `ManaAbilityCostDef` is `None` under its per-turn cap; surveil resolution beside the scry path)
 - Modify: `mtg-kernel/src/rl.rs` and `mtg-kernel/src/rl_session.rs` if and only if the surveil choice is a decision shape the generic `ChooseEffectBoolean`/`ChooseEffectTargets` vocabulary does not already cover
 - Create: `mtg-kernel/tests/pauper_meta_w2_lands_and_rocks.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
 - Consumes: `AdditionalManaAbilityDef` (Heap Gate), `EffectOp::ExilePlayersGraveyard` (Nihil Spellbomb), `EffectOp::SearchLibraryToHand`, `ActivatedAbilityRecipe` (Nihil Spellbomb's tap-and-sacrifice shape), `Special::ScryThenDraw`'s scry machinery, `trigger_recipe_for`'s targeted ETB form (`"Harrier Strix" => "etb:target_any_permanent:tap"`).
@@ -345,7 +359,11 @@ git push
 
 - [ ] **Step 5: Run** the focused file, the touched module filters, the repin, the two golden generators and their Python tests, and `--no-run`. Expected: PASS.
 
-- [ ] **Step 6: Commit** with the hash line: `git commit -m "cards: Bojuka Bog, Conduit Pylons, Expedition Map, Bonder's Ornament, Barrels of Blasting Jelly"` and push.
+- [ ] **Step 6: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit with the hash line: `git commit -m "cards: Bojuka Bog, Conduit Pylons, Expedition Map, Bonder's Ornament, Barrels of Blasting Jelly"` and push.
 
 **Effort: 5 hours.**
 
@@ -359,6 +377,7 @@ git push
 - Modify: `mtg-kernel/src/effect.rs` (`LookSelectFilter`, `LookRest`, the resumable selection program, `EffectOp::SearchLibraryToBattlefieldUntapped`)
 - Modify: `python/tools/generate_pauper_manifests.py` (`TOKEN_DEPENDENCIES`: Malevolent Rumble as an Eldrazi Spawn Token producer)
 - Create: `mtg-kernel/tests/pauper_meta_w2_green_selection.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
 - Consumes: `Special::LookTopSelectByTypeToHandBottomRest` (Lead the Stampede) and `Special::WindingWay`'s resumable selection interpreter; `CostComponent::SacrificeControlled { filter: PermanentFilter::Land }` (Raze, wave 1 Task 6); `EffectOp::SearchLibraryToBattlefieldTapped`; `EffectOp::CreateToken`.
@@ -383,7 +402,11 @@ git push
 
 - [ ] **Step 5: Run** the focused file, module filters, repin, golden generators and their Python tests, `--no-run`. Expected: PASS.
 
-- [ ] **Step 6: Commit**: `git commit -m "cards: Ancient Stirrings, Malevolent Rumble, Crop Rotation; filtered look-and-take primitive"` and push.
+- [ ] **Step 6: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit: `git commit -m "cards: Ancient Stirrings, Malevolent Rumble, Crop Rotation; filtered look-and-take primitive"` and push.
 
 **Effort: 5 hours.**
 
@@ -397,6 +420,7 @@ git push
 - Modify: `mtg-kernel/src/engine.rs` (offer `activation_zone: Zone::Graveyard` abilities in `available_activatable_abilities`, beside the existing `Zone::Hand` cycling case)
 - Modify: `mtg-kernel/build.rs` (`activated_ability_recipes_for`, `keywords_for`, `trigger_recipe_for`, `effect_recipe_for`)
 - Create: `mtg-kernel/tests/pauper_meta_w2_wurm_and_truths.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
 - Consumes: `ActivatedAbilityDef::activation_zone` (Lorien Revealed's hand-zone cycling), `AbilityEffectRecipe` gain-life shape, `EffectOp::DrawCards`, `EffectOp::CreateToken`.
@@ -416,7 +440,11 @@ git push
 
 - [ ] **Step 5: Run** the focused file, module filters, repin, goldens, `--no-run`. Expected: PASS.
 
-- [ ] **Step 6: Commit**: `git commit -m "cards: Bramble Wurm (graveyard-activated ability), Unfathomable Truths"` and push.
+- [ ] **Step 6: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit: `git commit -m "cards: Bramble Wurm (graveyard-activated ability), Unfathomable Truths"` and push.
 
 **Effort: 3 hours.**
 
@@ -424,19 +452,26 @@ git push
 
 ### Task 6: Cascade and Maelstrom Colossus
 
+The cast route is settled (design note B, spike of 2026-09-10). Implement it as written there; do not substitute `CastMethodV4::Plotted`, which four engine guards reject.
+
 **Files:**
 - Modify: `data/cards_v1.json` (append Maelstrom Colossus)
 - Modify: `mtg-kernel/src/card_def.rs` (`CardDef::cascade: bool`)
+- Modify: `mtg-kernel/src/state.rs` (`CastMethodV4::Cascade`, `SpellCastRouteV4::CascadeExile`, `ObjectStateV4::cascade_grant: bool` with `#[serde(default)]`)
 - Modify: `mtg-kernel/src/effect.rs` (`EffectOp::CascadeFromSource`, the resumable continuation frames it needs, `EffectBooleanChoicePurpose::CascadeFreeCast`)
 - Modify: `mtg-kernel/src/trigger.rs` (a `cast_self:cascade` trigger table beside Weather the Storm's)
-- Modify: `mtg-kernel/src/engine.rs` (free cast from exile during resolution, reusing the `CastMethodV4::Plotted` route)
+- Modify: `mtg-kernel/src/engine.rs` (the free cast from exile during resolution: `begin_cast_ex`'s debug_assert and `cast_route` match, the cascade restamp, `cast_cost_is_payable`, the payment match, `validate_spell_source_contract_fields`, the pending-cast validator)
+- Modify: `mtg-kernel/src/environment_randomization_v2.rs` (`ShufflePurposeV2::CascadeBottomOrder` and its purpose-string table)
+- Modify: `mtg-kernel/src/flat_policy_v1.rs`, `mtg-kernel/src/flat_policy_v2.rs` (`cast_method_id` gains `Cascade => 9`; both `FLAT_POLICY_ENUM_MAPPING_VERSION_*` go 1 to 2)
+- Modify: `python/mtg_kernel_rl/features.py` (`CAST_METHODS` appends `"cascade"`)
 - Modify: `mtg-kernel/src/rl.rs`, `mtg-kernel/src/rl_session.rs` (the `CascadeFreeCast` boolean purpose in the candidate arm and both validators)
 - Modify: `mtg-kernel/build.rs` (`cascade_for`, `trigger_recipe_for`)
 - Create: `mtg-kernel/tests/pauper_meta_w2_cascade.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
-- Consumes: `trigger_recipe_for`'s `cast_self` kind (Weather the Storm), `Decision::ChooseEffectBoolean`, the madness mid-resolution cast path (`apply_choose_madness_cast`), the `CastMethodV4::Plotted` free-cast route, the library shuffle RNG.
-- Produces: `CardDef::cascade`, `EffectOp::CascadeFromSource`, `EffectBooleanChoicePurpose::CascadeFreeCast`.
+- Consumes: `trigger_recipe_for`'s `cast_self` kind (Weather the Storm), `Decision::ChooseEffectBoolean` and its existing `BooleanChoicePurposeV4::OptionalEffect` projection, the Madness mid-resolution cast path (`apply_choose_madness_cast`, the only existing caller that forces a cast method), `SpellCastRouteV4::AdventureExile` as the structural model for an incarnation-flag exile route, `environment_randomization_v2::shuffle_slice_in_place_v2`.
+- Produces: `CardDef::cascade`, `CastMethodV4::Cascade`, `SpellCastRouteV4::CascadeExile`, `ObjectStateV4::cascade_grant`, `EffectOp::CascadeFromSource`, `EffectBooleanChoicePurpose::CascadeFreeCast`, `ShufflePurposeV2::CascadeBottomOrder`.
 
 - [ ] **Step 1: Failing tests** (header cites `MaelstromColossus.java` blob `e1264ffc89857abb8ff65cd526fbd75177504992` and `CascadeAbility.java` blob `45a4ee8634164bde1da98f4f5accfec6d0c89169`), each with its `covers:` line:
   - `cascade_exiles_until_a_cheaper_nonland_and_may_cast_it_free`: library top is Forest, Urza's Mine, Bramble Wurm (mana value 7, less than 8); casting the Colossus triggers cascade, the two lands and the Wurm are exiled in order, the boolean offer appears, accepting puts the Wurm on the stack with no mana paid, and after it resolves the two lands are on the bottom of the library.
@@ -444,20 +479,36 @@ git push
   - `cascade_skips_lands_and_equal_or_greater_mana_values`: top cards are a land and a second Maelstrom Colossus (mana value 8, not less than 8) before the Wurm: only the Wurm is castable.
   - `cascade_resolves_the_free_spell_before_the_cascading_spell`: the Wurm is on the battlefield while the Colossus is still on the stack (assert the stack contents at the moment the free spell resolves).
   - `cascade_with_an_empty_library_does_nothing_and_does_not_halt`.
+  - `cascade_that_exhausts_the_library_without_a_match_bottoms_everything_and_does_not_halt`: a library of three lands only, so the exile loop runs to exhaustion with no qualifying card; no boolean offer appears, all three cards return to the bottom, the library is the same size as before, and the engine is not halted. (The Oracle's loop leaves `cardToCast` null and calls `controller.getLibrary().reset()`; this is a distinct path from the empty-library case.)
   - `cascade_free_cast_targets_are_chosen_normally`: use a cheaper targeted spell (Lightning Bolt, already registered, in the library) and assert the target decision appears for the free cast.
   - `cascade_bottoming_order_is_deterministic_for_a_fixed_seed`: two runs from the same seed produce the same bottom order.
+  - `cascade_cast_method_survives_a_snapshot_round_trip` and `pre_wave_snapshot_without_cascade_grant_still_loads` (the Global Constraints fixture test for the new `ObjectStateV4` field).
 
 - [ ] **Step 2: Run**: FAIL.
 
-- [ ] **Step 3: Implement** per design note B above. Before writing the free-cast path, run `grep -n "CastMethodV4::Plotted" mtg-kernel/src/engine.rs` and write the consumer audit into the task report: for each site, state whether a cascade cast should take that branch. `object.plotted_turn` stays `None`.
+- [ ] **Step 3: Cast method, route, and marker.** Append `CastMethodV4::Cascade` and `SpellCastRouteV4::CascadeExile` in `state.rs` and `ObjectStateV4::cascade_grant`, then let the compiler enumerate the exhaustive matches (design note B lists them: engine.rs 1769, 1783, 4942, 6032, 6053, 6799, 13575, 13728, 15247, plus flat_policy_v1.rs 1163 and flat_policy_v2.rs 1251). Fill each arm with the behavior design note B specifies. Then hand-check the `==` and `matches!` sites it also lists (engine.rs 1570, 1585, 1613, 2286, 9115, 9628, 9676, 13685) and record in the task report, site by site, that each is Bestow-specific or Omen-specific and needs no change. Build with `cargo test --locked -p mtg-kernel --no-run` before writing the effect.
 
-- [ ] **Step 4: RL surface.** Add the `CascadeFreeCast` arm to `rl.rs`'s `Decision::ChooseEffectBoolean` handling (2388) and to both `rl_session.rs` validators, then a test that drives the accept and decline branches through `flat_build_action_cache_v2`. Without this, the first live AffinityV2-style abort repeats for Urzatron.
+- [ ] **Step 4: Model-input migration.** `cast_method_id` gains `Cascade => 9` in both flat modules, both `FLAT_POLICY_ENUM_MAPPING_VERSION_*` constants go 1 to 2, `python/mtg_kernel_rl/features.py:57` appends `"cascade"` to `CAST_METHODS`, then:
+```
+uvx uv@0.11.29 run --no-sync python python/tools/generate_flat_policy_v1_goldens.py
+uvx uv@0.11.29 run --no-sync python python/tools/generate_flat_policy_v2_goldens.py
+uvx uv@0.11.29 run --no-sync python -m unittest python.tests.test_flat_policy_v1_goldens python.tests.test_flat_policy_v2_goldens -v
+```
+Expected: PASS, with the enum-mapping version bump visible in both feature inventories and ids 1 to 8 unmoved. Record in the task report that no existing feature id was renumbered; that is what makes this migration append-only.
 
-- [ ] **Step 5: Run** `--test pauper_meta_w2_cascade`, `--test rl_session`, `--test rl_contract`, the repin, goldens, `--no-run`. Expected: PASS.
+- [ ] **Step 5: Implement the effect** per design note B: the `cast_self:cascade` trigger, `EffectOp::CascadeFromSource`'s exile loop, the `CascadeFreeCast` boolean, the forced cast through `begin_cast_ex`, and the bottoming through `shuffle_slice_in_place_v2` under the new `ShufflePurposeV2::CascadeBottomOrder`.
 
-- [ ] **Step 6: Commit**: `git commit -m "mechanic: cascade (shared machinery) with Maelstrom Colossus"` and push. Record in the body: the `CastMethodV4::Plotted` consumer audit result and the RNG used for the random bottoming.
+- [ ] **Step 6: RL surface.** Add the `CascadeFreeCast` arm to `rl.rs`'s `Decision::ChooseEffectBoolean` handling (2388) and to both `rl_session.rs` validators, then a test that drives the accept and decline branches through `flat_build_action_cache_v2`, plus one that encodes a stack item whose `cast_method` is `Cascade`. Without this, the first live AffinityV2-style abort repeats for Urzatron.
 
-**Effort: 8 hours.**
+- [ ] **Step 7: Run** `--test pauper_meta_w2_cascade`, `--test rl_session`, `--test rl_contract`, the touched module filters, the repin, the goldens, `--no-run`. Expected: PASS.
+
+- [ ] **Step 8: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit: `git commit -m "mechanic: cascade (shared machinery) with Maelstrom Colossus"` and push. Record in the body: the new cast method and route, the per-site audit result, the enum-mapping version bump as this wave's ruling-6 schema migration, and the shuffle purpose used for the random bottoming.
+
+**Effort: 12 hours** (revision 2: 8 hours priced only the effect; the spike added the cast method, the route, the incarnation marker, ten forced match arms with a hand audit of eight more, the two flat mappings with their version bumps and Python enum, and two more tests).
 
 ---
 
@@ -470,6 +521,7 @@ git push
 - Modify: `mtg-kernel/src/engine.rs` (alternative-cost offer at 1763 and 6009, the sorcery-speed gate, the battlefield incarnation seam that applies the flag, `effective_power`/`effective_toughness`/`object_color_mask` materialization, mana-value readers)
 - Modify: `mtg-kernel/build.rs` (`prototype_for`, `trigger_recipe_for` for the power-scaled life gain)
 - Create: `mtg-kernel/tests/pauper_meta_w2_prototype.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
 - Consumes: `CastMode::Alternative` and `CastMethodV4::Alternative`, `Decision::ChooseCastMode`, `ObjectStateV4::reset_for_zone_change`, `engine::sorcery_speed_timing_ok`.
@@ -486,13 +538,19 @@ git push
 
 - [ ] **Step 2: Run**: FAIL.
 
-- [ ] **Step 3: Implement** per design note C above. Enumerate, in the task report, every consumer of `CastMethodV4::Alternative` and `def.alt_cost` that must now also admit `def.prototype` (`grep -n "alt_cost" mtg-kernel/src/engine.rs`), the wave 1 lesson being that the Omen-tag reuse shipped with an incomplete consumer audit and a Critical review finding.
+- [ ] **Step 3: Extend `evaluate_dynamic_value` with a source.** `DynamicValueDef::SourcePermanentPower` names a specific object, but `engine::evaluate_dynamic_value` (engine.rs 2994-3022, an exhaustive match with no wildcard) takes only `(state, value, controller)`. Add a `source: ObjectId` parameter and update its five call sites: engine.rs 5350 (`ManaAbilityAmountDef::Dynamic`, where the source is the activated permanent) and effect.rs 9840, 9953, 10732, 10734 (where it is `ctx.source`). Task 2's `AmountIfControllerControlsEach` ignores the new parameter; only the prototype arm reads it. Run the touched module filters before continuing.
 
-- [ ] **Step 4: RL surface.** `ChooseCastMode` already has an `rl.rs` arm (2203) and validator coverage; add a `rl_session` test that encodes both cast modes for the Golem through `flat_build_action_cache_v2` and asserts the two candidates are distinguishable.
+- [ ] **Step 4: Implement** per design note C above. Enumerate, in the task report, every consumer of `CastMethodV4::Alternative` and `def.alt_cost` that must now also admit `def.prototype` (`grep -n "alt_cost" mtg-kernel/src/engine.rs`), the wave 1 lesson being that the Omen-tag reuse shipped with an incomplete consumer audit and a Critical review finding.
 
-- [ ] **Step 5: Run** `--test pauper_meta_w2_prototype`, `--test rl_session`, module filters, repin, goldens, `--no-run`. Expected: PASS.
+- [ ] **Step 5: RL surface.** `ChooseCastMode` already has an `rl.rs` arm (2203) and validator coverage; add a `rl_session` test that encodes both cast modes for the Golem through `flat_build_action_cache_v2` and asserts the two candidates are distinguishable.
 
-- [ ] **Step 6: Commit**: `git commit -m "mechanic: prototype (shared machinery) with Boulderbranch Golem"` and push.
+- [ ] **Step 6: Run** `--test pauper_meta_w2_prototype`, `--test rl_session`, module filters, repin, goldens, `--no-run`. Expected: PASS.
+
+- [ ] **Step 7: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit: `git commit -m "mechanic: prototype (shared machinery) with Boulderbranch Golem"` and push.
 
 **Effort: 6 hours.**
 
@@ -508,6 +566,7 @@ git push
 - Modify: `mtg-kernel/src/effect.rs` (`EffectOp::PutChargeCountersOnSource`)
 - Modify: `mtg-kernel/build.rs` (`station_for`, `activated_ability_recipes_for` with the new `AbilityCostRecipe`, `trigger_recipe_for` for the ETB damage)
 - Create: `mtg-kernel/tests/pauper_meta_w2_station.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
 - Consumes: `Decision::ChooseCostTargets` with `CostKind::TapPermanents` (Heap Gate), `sorcery_speed_only` (Experimental Synthesizer), the bestow type-change precedent in `object_has_type`.
@@ -516,6 +575,7 @@ git push
 - [ ] **Step 1: Failing tests** (header cites `PinnacleKillShip.java` blob `319a63286f86797a1a06eb00b43802c02c9d35f7`, `StationAbility.java` blob `e918dc283d2531599b9b33673a9fd2c3227219e6`, `StationLevelAbility.java` blob `a021b34bd793bed65bdd84e3be11b7b9b78ae109`), each with its `covers:` line:
   - `kill_ship_etb_deals_ten_to_up_to_one_creature`: with a creature on the battlefield the target may be chosen or declined; with no creature the trigger resolves with no target and does not halt.
   - `station_taps_another_untapped_creature_for_its_power_in_charge_counters`: tapping a 3/3 puts three charge counters on the Ship; the tapped creature is tapped; the Ship itself cannot pay its own cost; a summoning-sick creature may still be tapped for a cost that is not its own tap symbol only if the engine's existing `TapPermanents` rule allows it (mirror `heap_gate_reserves_both_tap_costs_and_treasure_is_exact_one_shot_mana` in `tests/caw_gates_future_v1.rs:429`).
+  - `station_with_a_zero_power_creature_adds_no_counters`: tapping a 0/1 Eldrazi Spawn token (reachable in this very deck through Malevolent Rumble and Unfathomable Truths) is a legal activation that adds zero charge counters, because `StationAbilityEffect` gates on `power > 0 && permanent.addCounters(...)`; the tapped token is still tapped afterwards.
   - `station_is_sorcery_speed_only`.
   - `station_below_the_level_leaves_it_a_noncreature_artifact`: at six counters the Ship is not a creature, cannot attack, and is not a legal target for a creature-only removal spell.
   - `station_at_seven_makes_it_a_seven_seven_flier`: at seven counters it is a creature with flying, power 7, toughness 7, can attack, and is a legal creature target; removing a counter is not possible in this pool, so the reverse direction is exercised by building the state directly at six and at seven.
@@ -535,7 +595,11 @@ For every site, classify it as "definition-only (card in a non-battlefield zone,
 
 - [ ] **Step 6: Run** `--test pauper_meta_w2_station`, `--test rl_session`, `--test burn_combat` and `--test elves_tribal` (combat and creature-count regressions), module filters, repin, goldens, `--no-run`. Expected: PASS. Every moved state-hash literal records `Counters` gaining `charge` as its cause.
 
-- [ ] **Step 7: Commit**: `git commit -m "mechanic: station (shared machinery) with Pinnacle Kill-Ship"` and push, with the type-audit summary in the body.
+- [ ] **Step 7: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit: `git commit -m "mechanic: station (shared machinery) with Pinnacle Kill-Ship"` and push, with the type-audit summary in the body.
 
 **Effort: 7 hours.**
 
@@ -549,6 +613,7 @@ For every site, classify it as "definition-only (card in a non-battlefield zone,
 - Modify: `mtg-kernel/src/effect.rs` (`EffectOp::InstallCombatDamagePreventionThisTurn`, the attacking-creature skip-untap batch)
 - Modify: `mtg-kernel/src/engine.rs` (combat damage prevention consult in `deal_combat_damage` at 10675)
 - Create: `mtg-kernel/tests/pauper_meta_w2_sideboard.rs`
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (this task's cards and their branch lists)
 
 **Interfaces:**
 - Consumes: `Special::DestroyLand` (Raze, wave 1), `FlashbackDef`, `Keywords::FLYING`, `changeling_for` (Webweaver Changeling), `TargetSpec::UpToTwoCardsInGraveyards` and `AbilityEffectRecipe::MoveAllTargetsToExile` (Faerie Macabre), `EffectOp::InstallDamagePreventionFromColor` (Prismatic Strands), `Special::TapAndSkipNextUntap`'s skip-untap state.
@@ -570,7 +635,11 @@ For every site, classify it as "definition-only (card in a non-battlefield zone,
 
 - [ ] **Step 5: Run** the focused file, `--test burn_combat`, `--test rl_session`, module filters, repin, goldens, `--no-run`. Expected: PASS.
 
-- [ ] **Step 6: Commit**: `git commit -m "cards: Earth Rift, Rooftop Percher, Tangle"` and push.
+- [ ] **Step 6: Wave manifest and commit.** Add this task's cards to `data/wave_branch_manifests/pauper_meta_w2.json` (one entry per card: `post_board` plus the exact branch names this task's `covers:` annotations use), then run
+```
+uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json
+```
+Expected: exit 0 over the cards landed so far. Then commit: `git commit -m "cards: Earth Rift, Rooftop Percher, Tangle"` and push.
 
 **Effort: 5 hours.**
 
@@ -603,14 +672,18 @@ uvx uv@0.11.29 run --no-sync python python/tools/generate_flat_policy_v1_goldens
 uvx uv@0.11.29 run --no-sync python python/tools/generate_flat_policy_v2_goldens.py
 uvx uv@0.11.29 run --no-sync python python/tools/repin_card_db_identity_v1.py --check
 ```
-Expected: `deck_count: 19`; `cards_v1.json` `decks` membership includes `Deck - Urzatron.dek` for every shared card; the repin check passes.
+Expected: `deck_count: 19`; `cards_v1.json` `decks` membership includes `Deck - Urzatron.dek` for every shared card. The repin check is expected to FAIL here rather than pass: a card's `decks` list feeds the `KERNEL_CARDDB_HASH` canon string (build.rs:7303), so rewriting membership for every shared card moves the hash again (wave 1 precedent d7ca0972). Run `repin_card_db_identity_v1.py --write`, then the two golden generators again, then `--check`, and record the old and new hash for the commit body.
 
 - [ ] **Step 5: Tests.** Update `test_pauper_pool_manifest.py` totals from the generator output, run the Python manifest and golden suites, then `cargo test --locked -p mtg-kernel --test sideboard_v1 --test bo3_session_v1`, adding `bo3_session_accepts_the_urzatron_registration` in the shape of wave 1's `bo3_session_accepts_a_v2_registration`. Also run `--test rl_session` and `--test rl_contract`: this is the first moment a live flat-encoded session can reach the wave 2 cards, so any missing validator arm surfaces here rather than in production.
 
 - [ ] **Step 6: Commit** with the body listing the deck source SHA, pool totals before and after, and the unchanged runtime catalog SHA:
 ```
 git add -A
-git commit -m "pool: register Urzatron (19 registrations, runtime set unchanged)"
+git commit -m "pool: register Urzatron (19 registrations, runtime set unchanged)
+
+KERNEL_CARDDB_HASH 0x<pre-registration> -> 0x<post-registration>
+pool registrations 18 -> 19; runtime catalog sha256 68e7602f...b851 unchanged
+Deck - Urzatron.dek sha256 <source sha>"
 git push
 ```
 
@@ -653,7 +726,7 @@ Write `docs/research/pauper_meta_wave2_record_2026-09.md` in the shape of `paupe
 ### Task 12: Parity gate (branch manifest, checker, one-seed rerun)
 
 **Files:**
-- Create: `data/wave_branch_manifests/pauper_meta_w2.json` (assembled from the per-task additions; schema `kernel_wave_branch_manifest/v1`, `"wave": "pauper_meta_w2"`)
+- Modify: `data/wave_branch_manifests/pauper_meta_w2.json` (already assembled: Task 2 created it and Tasks 3 to 9 appended to it; this task only completes `unreachable` reasons and verifies)
 - Create: `docs/research/pauper_meta_wave2_parity_2026-09.md` and its `.json` companion
 - Modify: nothing in `mtg-kernel/src`
 
@@ -661,7 +734,7 @@ Write `docs/research/pauper_meta_wave2_record_2026-09.md` in the shape of `paupe
 - Consumes: `python/tools/check_wave_branch_coverage_v1.py` (unchanged), the `covers:` annotations written by Tasks 2 to 9, `mtg-kernel/examples/rollout_record.rs`.
 - Produces: the wave 2 coverage verdict and the one-seed rerun comparison.
 
-- [ ] **Step 1: Complete the manifest.** Every one of the 19 cards has an entry with `post_board` (true for Earth Rift, Rooftop Percher, Tangle) and its full branch list; a branch that is unreachable in this pool goes in the entry's `unreachable` map with its reason rather than being dropped. Run:
+- [ ] **Step 1: Verify the manifest.** The manifest was built incrementally by Tasks 2 to 9, each of which ran the checker over the cards landed so far, so this step audits rather than authors: confirm all 19 cards are present with `post_board` set (true for Earth Rift, Rooftop Percher, Tangle) and that every branch a card task declared in its report appears; a branch that is unreachable in this pool belongs in the entry's `unreachable` map with its reason rather than dropped. Then run the whole-wave check:
 ```
 uvx uv@0.11.29 run --no-sync python python/tools/check_wave_branch_coverage_v1.py data/wave_branch_manifests/pauper_meta_w2.json --json docs/research/pauper_meta_wave2_parity_2026-09.json
 ```
@@ -672,7 +745,7 @@ Expected: exit 0, 19 of 19 cards kernel-covered, zero unexercised branches. An a
 CARGO_TARGET_DIR=E:/cargo-target-pauper-meta TEMP=E:/tmp/lead TMP=E:/tmp/lead cargo run --locked -p mtg-kernel --release --example rollout_record -- --matchup burn_mirror --games 4 --seed 5151 --out E:/pauper-meta-parity/w2_branch_seed5151
 ```
 
-- [ ] **Step 3: Baseline build.** The baseline for wave 2 is the wave 1 tip `1ebb3b6b` (not the pre-wave-1 main tree), so the comparison isolates this wave. Check it out read-only in a separate worktree and run the same command with `CARGO_TARGET_DIR=E:/cargo-target-pauper-meta-w1base` and `--out E:/pauper-meta-parity/w1base_seed5151`.
+- [ ] **Step 3: Baseline (controller ruling: reuse before rebuild).** Compare first against the retained wave 1 artifact `E:/pauper-meta-parity/base_seed5151` (the 75406ffe run, already on disk, no build). Only if that comparison differs outside the excluded fields, build and compare against the wave 1 tip `1ebb3b6b`: check it out read-only in a separate worktree and run the same command with `CARGO_TARGET_DIR=E:/cargo-target-pauper-meta-w1base` and `--out E:/pauper-meta-parity/w1base_seed5151`. Record in the parity record which baseline was used and why.
 
 - [ ] **Step 4: Compare.** Walk every header, decision, and terminal record in `audit_episodes.jsonl`, `policy_episodes.jsonl`, and `manifest.json`, comparing every field except the documented exclusions: `diagnostic_state_hash` and `environment_hash` (cause: `Counters` gained `charge` and `ObjectStateV4` gained `prototyped`, both hashed into the state), `card_db_hash`, `observation_projection_hash`, `observation.visible_projection_hash` (cause: the registry grew by 19 definitions), `git`, `variable_metadata`, `cli_args`. Everything else, including every `legal_actions` entry's full `semantic` object and `stable_id`, must match exactly. Any action or outcome difference is a divergence reported in the record, not fixed here.
 
@@ -699,6 +772,7 @@ Wave 1's final review recorded that "all ledger-deferred minors carry to wave 2"
 - `mtg-kernel/build.rs` `supported_omen`: lacks the adventure and bestow exclusions its siblings have (unreachable today, and Task 7 adds prototype to the same family, so fix it there or here, once).
 - `mtg-kernel/tests/pauper_meta_w1_spells.rs:143`: comment misattributes the `castable_spells` exclusion convention.
 - `python/tools/write_dek_from_mtgo_list_v1.py`: `escape_attr` entity escaping untested.
+- `python/tests/test_repin_card_db_identity_v1.py`: the release-layout test calls `parse_live_hash` directly rather than through the env-var wiring (wave 1 ledger line 41, still unfixed).
 
 - [ ] **Step 1:** Fix each item, adding a test where the item is a tool behavior (the repin tool's `find_occurrences`, the checker's contiguity diagnostic, `escape_attr`).
 - [ ] **Step 2:** `cargo test --locked -p mtg-kernel --no-run` plus the Python tool tests.
@@ -713,11 +787,11 @@ Wave 1's final review recorded that "all ledger-deferred minors carry to wave 2"
 | task | subject | hours |
 |---|---|---|
 | 1 | Pinned 75 and the Urzatron `.dek` | 2 |
-| 2 | Tron lands and conditional mana yield | 6 |
+| 2 | Tron lands and conditional mana yield | 7 |
 | 3 | Utility lands and mana artifacts | 5 |
 | 4 | Green library manipulation | 5 |
 | 5 | Bramble Wurm and Unfathomable Truths | 3 |
-| 6 | Cascade and Maelstrom Colossus | 8 |
+| 6 | Cascade and Maelstrom Colossus | 12 |
 | 7 | Prototype and Boulderbranch Golem | 6 |
 | 8 | Station and Pinnacle Kill-Ship | 7 |
 | 9 | Sideboard cards | 5 |
@@ -725,14 +799,15 @@ Wave 1's final review recorded that "all ledger-deferred minors carry to wave 2"
 | 11 | Identity finalisation and wave record | 4 |
 | 12 | Parity gate | 4 |
 | 13 | Deferred minors and polish | 3 |
-| | **total** | **61** |
+| | **total** | **66** |
 
-Sixty-one implementer-hours, excluding review workflows and fix rounds, which added roughly one hour per task in wave 1. The spec's work-breakdown row 5 estimated "2 to 3 days" for W2; that estimate predates two findings from this plan's research: Pinnacle Kill-Ship's station mechanic needs a type-changing seam (design note D), and the Tron lands need a payment-planner change because the solver models one mana per tap (design note A). At wave 1's dispatch-and-review cadence, 61 hours is about three to four calendar days.
+Sixty-six implementer-hours, excluding review workflows and fix rounds, which added roughly one hour per task in wave 1. The spec's work-breakdown row 5 estimated "2 to 3 days" for W2; that estimate predates three findings: Pinnacle Kill-Ship's station mechanic needs a type-changing seam (design note D), the Tron lands need a payment-planner change because the solver models one mana per tap (design note A), and cascade needs a new cast method, route, and incarnation marker because no existing free-cast route admits a card without a Plot ability (design note B, the revision 2 spike). At wave 1's dispatch-and-review cadence, 66 hours is about four calendar days.
 
 ## Self-review notes
 
-- Spec coverage: section 3's append-only registry and subtype ids (Global Constraints), deck-membership rule (the Prophetic Prism deferral), XMage-absent substitution disclosure (the registration section), visible faces (this wave adds none, stated explicitly); section 5.1's W2 card list (all of it except Prophetic Prism, with the reason); section 5.2's "cascade and prototype are enumerated mechanics with shared machinery priced once at planning time" (design notes B and C, plus station in D, which section 5.2 did not anticipate); section 5.3 step 1 (Tasks 1 and 10), step 2 (Tasks 2 to 9 registry appends), step 3 (the same tasks' programs), step 4 as amended 2026-09-10 (Task 12: `covers:` annotations, the branch manifest, the checker, the one-seed rerun, and the "kernel-covered, not XMage-shadow-certified" label), step 5 (no new faces or tokens, stated in the mechanics section), step 6 (Tasks 10 and 11). Ruling 6's schema-migration surface in this wave is the two new persisted fields (`ObjectStateV4::prototyped`, `Counters::charge`), both with `#[serde(default)]` and pre-wave fixture tests, and no new catalog profile.
+- Spec coverage: section 3's append-only registry and subtype ids (Global Constraints), deck-membership rule (the Prophetic Prism deferral), XMage-absent substitution disclosure (the registration section), visible faces (this wave adds none, stated explicitly); section 5.1's W2 card list (all of it except Prophetic Prism, with the reason); section 5.2's "cascade and prototype are enumerated mechanics with shared machinery priced once at planning time" (design notes B and C, plus station in D, which section 5.2 did not anticipate); section 5.3 step 1 (Tasks 1 and 10), step 2 (Tasks 2 to 9 registry appends), step 3 (the same tasks' programs), step 4 as amended 2026-09-10 (Task 12: `covers:` annotations, the branch manifest, the checker, the one-seed rerun, and the "kernel-covered, not XMage-shadow-certified" label), step 5 (no new faces or tokens, stated in the mechanics section), step 6 (Tasks 10 and 11). Ruling 6's schema-migration surface in this wave is three new persisted fields (`ObjectStateV4::prototyped`, `ObjectStateV4::cascade_grant`, `Counters::charge`), each with `#[serde(default)]` and a pre-wave fixture test, plus the append-only model-input enum migration that `CastMethodV4::Cascade` forces (`cast_method_id` gains id 9 in both flat modules, both `FLAT_POLICY_ENUM_MAPPING_VERSION_*` go 1 to 2, `features.py::CAST_METHODS` appends one entry; ids 1 to 8 do not move). No new catalog profile.
 - Not in this plan: the sideboard plan table and classifier (superseded or deferred by the 2026-09-10 rulings), Bo3 measurement, the shadow-harness generalization (wave 1 ledger Task 14b), the deferred XMage-absent cards (spec W7), and Prophetic Prism.
-- Type names introduced here and reused across tasks: `DynamicValueDef::AmountIfControllerControlsEach`, `DynamicValueDef::SourcePermanentPower`, `DynamicValueDef::BoundCostTargetPower`, `SubtypeConjunctionDef`, `CardDef::conditional_tap_yield`, `CardDef::cascade`, `CardDef::prototype`, `PrototypeDef`, `CardDef::station`, `StationDef`, `ManaSource::yield_per_tap`, `PaymentPlan::surplus`, `ManaAbilityCostDef::None`, `EffectOp::AddManaDynamic`, `EffectOp::CascadeFromSource`, `EffectOp::Surveil`, `EffectOp::SearchLibraryToBattlefieldUntapped`, `EffectOp::EachPlayerControllingDefinitionDrawsCard`, `EffectOp::PutChargeCountersOnSource`, `EffectOp::InstallCombatDamagePreventionThisTurn`, `EffectBooleanChoicePurpose::CascadeFreeCast`, `LibraryCardFilter::AnyLand`, `Special::LookTopSelectFilteredToHandRest`, `LookSelectFilter`, `LookRest`, `CostComponent::ExileSourceFromGraveyard`, `AbilityCostRecipe::TapAnotherUntappedControlledCreature`, `ObjectStateV4::prototyped`, `Counters::charge`, `Subtype::{Urzas, Tower, PowerPlant, Mine, Desert, Spacecraft, Wurm, Golem}`.
-- Cross-task ordering hazards: `Subtype::Golem` is needed by both Task 6 and Task 7 and `Subtype::Wurm` by Task 5; whichever lands first appends it and the later task asserts its presence. Tasks 2 to 9 each leave `python/tests/test_pauper_pool_manifest.py`'s roster-membership test red until Task 10, by the wave 1 ruling. Task 8 moves every pinned state hash (new counter field) and Task 7 moves them again (new `ObjectStateV4` field), so both record their own cause and Task 11 re-verifies rather than re-explaining.
+- Type names introduced here and reused across tasks: `DynamicValueDef::AmountIfControllerControlsEach`, `DynamicValueDef::SourcePermanentPower`, `DynamicValueDef::BoundCostTargetPower`, `SubtypeConjunctionDef`, `CardDef::conditional_tap_yield`, `CardDef::cascade`, `CardDef::prototype`, `PrototypeDef`, `CardDef::station`, `StationDef`, `ManaSource::yield_per_tap`, `PaymentPlan::surplus`, `ManaAbilityCostDef::None`, `EffectOp::AddManaDynamic`, `EffectOp::CascadeFromSource`, `EffectOp::Surveil`, `EffectOp::SearchLibraryToBattlefieldUntapped`, `EffectOp::EachPlayerControllingDefinitionDrawsCard`, `EffectOp::PutChargeCountersOnSource`, `EffectOp::InstallCombatDamagePreventionThisTurn`, `EffectBooleanChoicePurpose::CascadeFreeCast`, `CastMethodV4::Cascade`, `SpellCastRouteV4::CascadeExile`, `ObjectStateV4::cascade_grant`, `ShufflePurposeV2::CascadeBottomOrder`, `LibraryCardFilter::AnyLand`, `Special::LookTopSelectFilteredToHandRest`, `LookSelectFilter`, `LookRest`, `CostComponent::ExileSourceFromGraveyard`, `AbilityCostRecipe::TapAnotherUntappedControlledCreature`, `ObjectStateV4::prototyped`, `Counters::charge`, `Subtype::{Urzas, Tower, PowerPlant, Mine, Desert, Spacecraft, Wurm, Golem}`.
+- Cross-task ordering hazards: `Subtype::Golem` is needed by both Task 6 and Task 7 and `Subtype::Wurm` by Task 5; whichever lands first appends it and the later task asserts its presence. Tasks 2 to 9 each leave `python/tests/test_pauper_pool_manifest.py`'s roster-membership test red until Task 10, by the wave 1 ruling. Tasks 6, 7 and 8 each move every pinned state hash (`ObjectStateV4::cascade_grant`, `ObjectStateV4::prototyped`, `Counters::charge`), so each records its own cause and Task 11 re-verifies rather than re-explaining. Task 7's `evaluate_dynamic_value` signature change touches the call site Task 2 introduced, so Task 7 runs after Task 2, as ordered.
 - Known risk the plan does not remove: station's type-changing audit is the one item that could exceed its estimate. Its fallback (a `partial` capability for Pinnacle Kill-Ship plus a declared unreachable branch) is written down so the decision is made in the open, by the lead, with the support totals changed explicitly rather than silently.
+- Revision 2 changes, for a reviewer comparing against revision 1: design note B rewritten around the spike (new cast method, route, marker, counted match sites, model-input migration, named shuffle target); Task 6 restructured into eight steps at 12 hours with an exhausted-library test; Task 2 gains the active-nine `PaymentPlan` invariance fixture and test (7 hours); Task 7 gains the `evaluate_dynamic_value` source-parameter step with its five call sites and renumbers; Task 8 gains the zero-power station tap test; Tasks 2 to 9 now write `data/wave_branch_manifests/pauper_meta_w2.json` as they land (Task 2 creates it) and run the checker, so Task 12 only verifies; Task 12's baseline reuses the retained `base_seed5151` artifact and builds `1ebb3b6b` only on a difference outside the excluded fields; Task 10 expects the membership rewrite to move the card DB hash again and carries the hash line in its commit body; Task 1's dek-writer expectation corrected; the `EXPECTED_DECKS` prose corrected to build.rs:1892's empty-`decks` panic; Task 13 gains the `parse_live_hash` ledger minor.
