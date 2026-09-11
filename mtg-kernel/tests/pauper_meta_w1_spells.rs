@@ -336,11 +336,18 @@ fn artful_dodge_makes_the_target_unblockable_this_turn_and_flashes_back() {
 // covers: Artful Dodge: flashback_from_graveyard_for_u
 #[test]
 fn artful_dodge_flashes_back_for_u_from_the_graveyard() {
-    // Seeded directly in the graveyard (the established pattern for
-    // flashback-from-graveyard tests in this wave, e.g. Ancient Grudge's
-    // and Acorn Harvest's own flashback halves): a resolved flashback cast
-    // is castable for {U} alone, targets normally, and exiles the card
-    // instead of returning it to the graveyard on resolution.
+    // Seeded directly in the graveyard. This is the first wave test to do
+    // so for a flashback card (Ancient Grudge's and Acorn Harvest's own
+    // flashback tests both cast from hand first and let the spell resolve
+    // into the graveyard before flashing it back); it is valid here
+    // because the engine's flashback route
+    // (`SpellCastRouteV4::GraveyardFlashback`, `engine.rs`) checks only the
+    // object's current zone, owner, and cast method against `CardDef`,
+    // never its cast history, so a card placed directly in the graveyard
+    // is exactly as flashback-eligible as one that got there by resolving.
+    // A resolved flashback cast is castable for {U} alone, targets
+    // normally, and exiles the card instead of returning it to the
+    // graveyard on resolution.
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
     let dodge = put_object(&mut state, PlayerId::P0, "Artful Dodge", Zone::Graveyard);
     put_object(&mut state, PlayerId::P0, "Island", Zone::Battlefield);

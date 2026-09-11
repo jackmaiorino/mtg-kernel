@@ -41,6 +41,17 @@ class Binding:
     test: str
 
 
+@dataclass(frozen=True)
+class ContiguityDiagnostic:
+    """A `covers:`/`#[test]` structural problem, reported in addition to
+    (never instead of) the resulting unexercised-branch failure."""
+
+    kind: str  # "orphaned_covers" or "test_without_fn"
+    file: str
+    line: int
+    message: str
+
+
 @dataclass
 class CardManifest:
     name: str
@@ -92,15 +103,23 @@ def _display_path(path: Path) -> str:
         return path.as_posix()
 
 
-def parse_file(path: Path) -> list[Binding]:
+def parse_file(path: Path) -> tuple[list[Binding], list[ContiguityDiagnostic]]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     bindings: list[Binding] = []
+    diagnostics: list[ContiguityDiagnostic] = []
     display = _display_path(path)
+
+    # Every `covers:`-shaped line in the file, independent of whether it
+    # ends up bound to a test. Anything left over after the #[test] walk
+    # below never had a contiguous #[test] above it.
+    all_covers_lines = {i + 1 for i, ln in enumerate(lines) if _COVERS_RE.match(ln)}
+    consumed_covers_lines: set[int] = set()
 
     for i, line in enumerate(lines):
         if not _TEST_ATTR_RE.match(line):
             continue
+        test_line_no = i + 1
 
         # Find the `fn` this #[test] attaches to, tolerating other
         # attributes (e.g. #[ignore]) in between but not a blank line.
@@ -120,12 +139,13 @@ def parse_file(path: Path) -> list[Binding]:
                 j += 1
                 continue
             break
-        if fn_name is None:
-            continue
 
         # Walk upward from the #[test] line, collecting contiguous
         # `covers:` comments. Other attributes may sit between a covers:
-        # comment and #[test]; a blank line breaks contiguity.
+        # comment and #[test]; a blank line breaks contiguity. This runs
+        # regardless of whether a `fn` was found below: a covers: block is
+        # still "contiguous with a #[test]" even when that #[test] itself
+        # is malformed, which is a separate diagnostic below.
         covers_lines: list[tuple[int, str]] = []
         k = i - 1
         while k >= 0:
@@ -142,6 +162,21 @@ def parse_file(path: Path) -> list[Binding]:
                 continue
             break
         covers_lines.reverse()
+        consumed_covers_lines.update(line_no for line_no, _rest in covers_lines)
+
+        if fn_name is None:
+            diagnostics.append(
+                ContiguityDiagnostic(
+                    kind="test_without_fn",
+                    file=display,
+                    line=test_line_no,
+                    message=(
+                        f"#[test] at {display}:{test_line_no} has no fn signature "
+                        "after its attributes"
+                    ),
+                )
+            )
+            continue
 
         for line_no, rest in covers_lines:
             if ":" not in rest:
@@ -159,17 +194,34 @@ def parse_file(path: Path) -> list[Binding]:
                         test=fn_name,
                     )
                 )
-    return bindings
+
+    for line_no in sorted(all_covers_lines - consumed_covers_lines):
+        diagnostics.append(
+            ContiguityDiagnostic(
+                kind="orphaned_covers",
+                file=display,
+                line=line_no,
+                message=(
+                    f"covers: annotation at {display}:{line_no} is not contiguous "
+                    "with a #[test]"
+                ),
+            )
+        )
+
+    return bindings, diagnostics
 
 
-def scan_roots(roots: Iterable[Path]) -> list[Binding]:
+def scan_roots(roots: Iterable[Path]) -> tuple[list[Binding], list[ContiguityDiagnostic]]:
     bindings: list[Binding] = []
+    diagnostics: list[ContiguityDiagnostic] = []
     for root in roots:
         if not root.exists():
             continue
         for rs_file in sorted(root.rglob("*.rs")):
-            bindings.extend(parse_file(rs_file))
-    return bindings
+            file_bindings, file_diagnostics = parse_file(rs_file)
+            bindings.extend(file_bindings)
+            diagnostics.extend(file_diagnostics)
+    return bindings, diagnostics
 
 
 def build_report(
@@ -177,6 +229,7 @@ def build_report(
     manifest_path: Path,
     cards: dict[str, CardManifest],
     bindings: list[Binding],
+    diagnostics: list[ContiguityDiagnostic] | None = None,
 ) -> dict[str, Any]:
     by_card_branch: dict[tuple[str, str], list[Binding]] = {}
     unknown_card_annotations: list[dict[str, Any]] = []
@@ -220,6 +273,10 @@ def build_report(
             "unreachable": dict(card_manifest.unreachable),
         }
 
+    # Contiguity diagnostics are additive information about *why* an
+    # annotation never became a binding; they never gate the exit code by
+    # themselves (a branch they explain is already counted, or not, by the
+    # unexercised-branch check above -- exit code behavior is unchanged).
     ok = (
         unexercised_total == 0
         and not unknown_card_annotations
@@ -234,6 +291,10 @@ def build_report(
             "unknown_card_annotations": unknown_card_annotations,
             "undeclared_branch_annotations": undeclared_branch_annotations,
         },
+        "contiguity_diagnostics": [
+            {"kind": d.kind, "file": d.file, "line": d.line, "message": d.message}
+            for d in (diagnostics or [])
+        ],
         "summary": {
             "cards_total": len(cards),
             "cards_covered": cards_covered,
@@ -268,6 +329,8 @@ def render_report(report: dict[str, Any]) -> str:
             f"ERROR: undeclared branch {entry['branch']!r} for card {entry['card']!r} at "
             f"{entry['file']}:{entry['line']} ({entry['test']}) is not declared in the manifest"
         )
+    for diag in report["contiguity_diagnostics"]:
+        lines.append(f"WARNING: {diag['message']}")
 
     summary = report["summary"]
     lines.append(
@@ -301,13 +364,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"WAVE_BRANCH_COVERAGE: FAIL: {exc}", file=sys.stderr)
         return 1
 
-    bindings = scan_roots(roots)
-    report = build_report(wave, args.manifest, cards, bindings)
+    bindings, diagnostics = scan_roots(roots)
+    report = build_report(wave, args.manifest, cards, bindings, diagnostics)
     print(render_report(report))
 
     if args.json_out is not None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        # No sort_keys: `report` is already built in the documented order
+        # (cards sorted by name, branches in manifest order) by
+        # build_report; alphabetizing keys here would silently break that
+        # contract for the JSON record while leaving the text output
+        # (which does not go through json.dumps) correctly ordered.
+        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
     return report["exit_code"]
 

@@ -226,6 +226,165 @@ class CheckWaveBranchCoverageTest(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertIn("stacked_card_does_two_things", out)
 
+    def test_json_report_preserves_manifest_branch_order_not_alphabetical(self) -> None:
+        # Fix round 1 item 2: json.dumps(..., sort_keys=True) alphabetized
+        # the JSON record's keys, silently breaking the documented
+        # "branches in manifest order" contract for --json (the text
+        # report was never affected, since it iterates card["branches"]
+        # directly rather than going through json.dumps). Declare branches
+        # in an order that is NOT alphabetical so a regression that
+        # re-adds sort_keys=True (or otherwise re-sorts) is caught.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "manifest.json"
+            _write(
+                manifest_path,
+                json.dumps(
+                    {
+                        "schema": "kernel_wave_branch_manifest/v1",
+                        "wave": "synthetic_w1",
+                        "cards": {
+                            "Order Card": {
+                                "post_board": False,
+                                "branches": ["zeta_branch", "mid_branch", "alpha_branch"],
+                            }
+                        },
+                    }
+                ),
+            )
+            tests_root = root / "tests"
+            _write(
+                tests_root / "fake_order_tests.rs",
+                "\n".join(
+                    [
+                        "// covers: Order Card: zeta_branch, mid_branch, alpha_branch",
+                        "#[test]",
+                        "fn order_card_does_everything() {",
+                        "    assert!(true);",
+                        "}",
+                        "",
+                    ]
+                ),
+            )
+            json_out = root / "report.json"
+
+            code, out = _run(manifest_path, tests_root, json_out=json_out)
+
+            self.assertEqual(code, 0, out)
+            report = json.loads(json_out.read_text(encoding="utf-8"))
+            branch_keys = list(report["cards"]["Order Card"]["branches"].keys())
+            self.assertEqual(
+                branch_keys,
+                ["zeta_branch", "mid_branch", "alpha_branch"],
+                "the JSON record must preserve manifest branch order, not sort it",
+            )
+
+    def test_covers_not_contiguous_with_test_emits_specific_diagnostic(self) -> None:
+        # Fix round 1 item 3: a covers: line separated from #[test] by a
+        # blank line is silently dropped today with no diagnostic
+        # distinguishing it from "never annotated" -- it must instead name
+        # the file and line of the orphaned covers: comment.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "manifest.json"
+            _write(
+                manifest_path,
+                json.dumps(
+                    {
+                        "schema": "kernel_wave_branch_manifest/v1",
+                        "wave": "synthetic_w1",
+                        "cards": {
+                            "Orphan Card": {
+                                "post_board": False,
+                                "branches": ["declared_branch"],
+                            }
+                        },
+                    }
+                ),
+            )
+            tests_root = root / "tests"
+            _write(
+                tests_root / "fake_orphan_tests.rs",
+                "\n".join(
+                    [
+                        "// covers: Orphan Card: declared_branch",
+                        "",
+                        "#[test]",
+                        "fn orphan_card_does_the_thing() {",
+                        "    assert!(true);",
+                        "}",
+                        "",
+                    ]
+                ),
+            )
+
+            code, out = _run(manifest_path, tests_root)
+
+            self.assertEqual(code, 1, out)
+            display = checker._display_path(tests_root / "fake_orphan_tests.rs")
+            self.assertIn(
+                f"covers: annotation at {display}:1 is not contiguous with a #[test]",
+                out,
+            )
+            self.assertIn("declared_branch", out)
+            self.assertIn("[UNEXERCISED]", out)
+
+    def test_test_attribute_without_fn_emits_specific_diagnostic(self) -> None:
+        # Fix round 1 item 3, second diagnostic: a #[test] with no `fn`
+        # after its attributes (nothing to bind any covers: annotation to)
+        # must name its own file and line, distinct from the
+        # not-contiguous-covers diagnostic above.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "manifest.json"
+            _write(
+                manifest_path,
+                json.dumps(
+                    {
+                        "schema": "kernel_wave_branch_manifest/v1",
+                        "wave": "synthetic_w1",
+                        "cards": {
+                            "Fnless Card": {
+                                "post_board": False,
+                                "branches": ["declared_branch"],
+                            }
+                        },
+                    }
+                ),
+            )
+            tests_root = root / "tests"
+            _write(
+                tests_root / "fake_fnless_tests.rs",
+                "\n".join(
+                    [
+                        "// covers: Fnless Card: declared_branch",
+                        "#[test]",
+                        "",
+                        "fn not_a_test_because_of_the_blank_line_above() {",
+                        "    assert!(true);",
+                        "}",
+                        "",
+                    ]
+                ),
+            )
+
+            code, out = _run(manifest_path, tests_root)
+
+            self.assertEqual(code, 1, out)
+            display = checker._display_path(tests_root / "fake_fnless_tests.rs")
+            self.assertIn(
+                f"#[test] at {display}:2 has no fn signature after its attributes",
+                out,
+            )
+            self.assertNotIn(
+                f"covers: annotation at {display}:1 is not contiguous",
+                out,
+                "the covers: line IS contiguous with the #[test]; only the #[test] "
+                "itself is malformed, so the orphaned-covers diagnostic must not fire too",
+            )
+            self.assertIn("declared_branch", out)
+            self.assertIn("[UNEXERCISED]", out)
+
     def test_unknown_card_annotation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
