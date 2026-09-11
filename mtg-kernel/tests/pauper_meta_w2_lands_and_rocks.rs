@@ -446,7 +446,7 @@ fn expedition_map_fetches_any_land_to_hand() {
 // Bonder's Ornament
 // ---------------------------------------------------------------------
 
-// covers: Bonder's Ornament: controller_alone_draws_one, both_players_controlling_the_name_both_draw, only_the_opponent_controls_it_and_only_they_draw
+// covers: Bonder's Ornament: taps_for_any_color, controller_alone_draws_one, both_players_controlling_the_name_both_draw, only_the_opponent_controls_it_and_only_they_draw
 #[test]
 fn bonders_ornament_taps_for_any_color_and_draws_for_four() {
     // The controller taps for any color.
@@ -558,8 +558,10 @@ fn barrels_of_blasting_jelly_adds_any_color_once_per_turn() {
     )
     .is_err());
 
-    // The cap resets next turn (`ability_uses_this_turn` clears at
-    // Cleanup, same mechanism `spy_mana.rs`'s Wall of Roots test drives).
+    // The cap resets next turn (`ability_uses_this_turn` clears in the
+    // Step::Untap entry handler, engine.rs's `run_step_entry_action` around
+    // line 9961, reached here by walking from Cleanup; same mechanism
+    // `spy_mana.rs`'s Wall of Roots test drives).
     state.step = Step::Cleanup;
     state.active_player = PlayerId::P1;
     state.priority_player = PlayerId::P1;

@@ -28,7 +28,7 @@
     },
     "Bonder's Ornament": {
       "post_board": false,
-      "branches": ["controller_alone_draws_one", "both_players_controlling_the_name_both_draw", "only_the_opponent_controls_it_and_only_they_draw"]
+      "branches": ["taps_for_any_color", "controller_alone_draws_one", "both_players_controlling_the_name_both_draw", "only_the_opponent_controls_it_and_only_they_draw"]
     },
     "Barrels of Blasting Jelly": {
       "post_board": false,

@@ -2904,8 +2904,10 @@ enum AbilityEffectRecipe {
         filter: LibrarySearchFilterRecipe,
     },
     /// Each player who controls a permanent with this exact printed name
-    /// draws a card (Bonder's Ornament). Resolved at codegen time to this
-    /// card's own generated definition id via `card_id_by_name`.
+    /// draws a card (Bonder's Ornament). The printed name is fixed at
+    /// codegen time; the generated function resolves it to this card's own
+    /// numeric definition id at runtime via a generated `card_id_by_name`
+    /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
 }
 
