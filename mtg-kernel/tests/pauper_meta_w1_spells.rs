@@ -109,6 +109,7 @@ fn pass_until_next_decision(state: &mut GameState) -> Decision {
     }
 }
 
+// covers: Terminate: destroys_target_creature
 #[test]
 fn terminate_destroys_target_creature() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -135,6 +136,7 @@ fn terminate_destroys_target_creature() {
     assert_eq!(state.objects[terminate].zone, Zone::Graveyard);
 }
 
+// covers: Terminate: no_legal_target_without_a_creature
 #[test]
 fn terminate_has_no_legal_target_without_a_creature() {
     // Only lands on both sides: Terminate's `TargetSpec::Creature` prefix
@@ -164,6 +166,7 @@ fn terminate_has_no_legal_target_without_a_creature() {
     );
 }
 
+// covers: Ancient Grudge: destroys_target_artifact, flashback_from_graveyard_for_g
 #[test]
 fn ancient_grudge_destroys_an_artifact_and_flashes_back_for_g() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -229,6 +232,7 @@ fn advance_ignoring_priority(state: &mut GameState) -> Decision {
     }
 }
 
+// covers: Artful Dodge: grants_target_unblockable_this_turn, unblockable_grant_expires_end_of_turn
 #[test]
 fn artful_dodge_makes_the_target_unblockable_this_turn_and_flashes_back() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -366,6 +370,7 @@ fn artful_dodge_flashes_back_for_u_from_the_graveyard() {
     );
 }
 
+// covers: Abandon Attachments: discard_accepted_draws_two, discard_declined_no_draw
 #[test]
 fn abandon_attachments_draws_two_only_if_a_card_is_discarded() {
     for accept in [false, true] {
@@ -430,6 +435,8 @@ fn abandon_attachments_draws_two_only_if_a_card_is_discarded() {
     }
 }
 
+// covers: Acorn Harvest: creates_two_squirrel_tokens, flashback_from_graveyard_costs_1g_plus_3_life, flashback_unavailable_below_three_life
+// covers: Squirrel Token: token_is_1_1_green
 #[test]
 fn acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);

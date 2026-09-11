@@ -1,0 +1,724 @@
+{
+  "cards": {
+    "Abandon Attachments": {
+      "branches": {
+        "discard_accepted_draws_two": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 375,
+            "test": "abandon_attachments_draws_two_only_if_a_card_is_discarded"
+          }
+        ],
+        "discard_declined_no_draw": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 375,
+            "test": "abandon_attachments_draws_two_only_if_a_card_is_discarded"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Acorn Harvest": {
+      "branches": {
+        "creates_two_squirrel_tokens": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 441,
+            "test": "acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life"
+          }
+        ],
+        "flashback_from_graveyard_costs_1g_plus_3_life": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 441,
+            "test": "acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life"
+          }
+        ],
+        "flashback_unavailable_below_three_life": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 441,
+            "test": "acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Ancient Grudge": {
+      "branches": {
+        "destroys_target_artifact": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 171,
+            "test": "ancient_grudge_destroys_an_artifact_and_flashes_back_for_g"
+          }
+        ],
+        "flashback_from_graveyard_for_g": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 171,
+            "test": "ancient_grudge_destroys_an_artifact_and_flashes_back_for_g"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Arms of Hadar": {
+      "branches": {
+        "targeting_p0_shrinks_p0_creatures_only": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 217,
+            "test": "arms_of_hadar_shrinks_only_the_targeted_players_creatures"
+          }
+        ],
+        "targeting_p1_shrinks_p1_creatures_only": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 217,
+            "test": "arms_of_hadar_shrinks_only_the_targeted_players_creatures"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Artful Dodge": {
+      "branches": {
+        "flashback_from_graveyard_for_u": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 338,
+            "test": "artful_dodge_flashes_back_for_u_from_the_graveyard"
+          }
+        ],
+        "grants_target_unblockable_this_turn": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 237,
+            "test": "artful_dodge_makes_the_target_unblockable_this_turn_and_flashes_back"
+          }
+        ],
+        "unblockable_grant_expires_end_of_turn": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 237,
+            "test": "artful_dodge_makes_the_target_unblockable_this_turn_and_flashes_back"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Azure Fleet Admiral": {
+      "branches": {
+        "combat_damage_to_monarch_transfers_crown": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 366,
+            "test": "combat_damage_to_the_monarch_moves_the_crown"
+          }
+        ],
+        "crown_does_not_move_without_combat_damage": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 309,
+            "test": "azure_fleet_admiral_makes_its_controller_the_monarch_who_draws_at_end_step"
+          }
+        ],
+        "etb_becomes_the_monarch": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 309,
+            "test": "azure_fleet_admiral_makes_its_controller_the_monarch_who_draws_at_end_step"
+          }
+        ],
+        "monarch_draws_at_own_end_step": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 309,
+            "test": "azure_fleet_admiral_makes_its_controller_the_monarch_who_draws_at_end_step"
+          }
+        ],
+        "monarchs_creatures_cannot_block_the_admiral": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 417,
+            "test": "admiral_cannot_be_blocked_by_the_monarchs_creatures"
+          }
+        ],
+        "non_monarch_end_step_no_draw": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 309,
+            "test": "azure_fleet_admiral_makes_its_controller_the_monarch_who_draws_at_end_step"
+          }
+        ],
+        "non_monarchs_creatures_may_block_the_admiral": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 417,
+            "test": "admiral_cannot_be_blocked_by_the_monarchs_creatures"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Contaminated Aquifer": {
+      "branches": {
+        "enters_tapped": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 237,
+            "test": "contaminated_aquifer_enters_tapped_and_taps_for_u_or_b"
+          }
+        ],
+        "taps_for_u_or_b": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 237,
+            "test": "contaminated_aquifer_enters_tapped_and_taps_for_u_or_b"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Delver of Secrets": {
+      "branches": {
+        "non_instant_top_no_transform": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delver.rs",
+            "line": 232,
+            "test": "delver_does_not_transform_on_a_land_or_creature"
+          }
+        ],
+        "reveal_declined_no_transform": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delver.rs",
+            "line": 154,
+            "test": "delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery"
+          }
+        ],
+        "reveal_instant_or_sorcery_transforms": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delver.rs",
+            "line": 154,
+            "test": "delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery"
+          }
+        ],
+        "transformed_face_does_not_retrigger": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delver.rs",
+            "line": 285,
+            "test": "delver_does_not_retrigger_once_transformed"
+          }
+        ],
+        "upkeep_trigger_controller_only": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delver.rs",
+            "line": 258,
+            "test": "delver_trigger_is_controllers_upkeep_only"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Fang Dragon": {
+      "branches": {
+        "adventure_cast_still_triggers_cast_instant_or_sorcery_abilities": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 512,
+            "test": "forktail_sweep_still_triggers_cast_instant_or_sorcery_abilities"
+          }
+        ],
+        "adventure_castable_from_hand_at_sorcery_speed": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 139,
+            "test": "forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile"
+          }
+        ],
+        "adventure_damages_only_creatures_you_dont_control": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 139,
+            "test": "forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile"
+          }
+        ],
+        "adventure_resolution_exiles_card_with_on_adventure_permission": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 139,
+            "test": "forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile"
+          }
+        ],
+        "creature_cast_does_not_trigger_cast_instant_or_sorcery_abilities": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 545,
+            "test": "fang_dragon_cast_as_a_creature_does_not_trigger_cast_instant_or_sorcery_abilities"
+          }
+        ],
+        "creature_castable_directly_from_hand": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 243,
+            "test": "fang_dragon_can_be_cast_directly_from_hand"
+          }
+        ],
+        "creature_face_castable_from_exile_via_on_adventure": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 139,
+            "test": "forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile"
+          }
+        ],
+        "on_adventure_permission_clears_when_creature_enters_battlefield": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 139,
+            "test": "forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile"
+          }
+        ],
+        "plain_exile_placement_never_grants_adventure_permission": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 139,
+            "test": "forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile"
+          }
+        ],
+        "visible_name_resolves_adventure_face_to_face_index_2": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_adventure_and_monarch.rs",
+            "line": 287,
+            "test": "visible_name_resolves_adventure_face"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Gixian Infiltrator": {
+      "branches": {
+        "counter_on_sacrifice_of_another_permanent": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 183,
+            "test": "gixian_infiltrator_grows_when_another_permanent_is_sacrificed"
+          }
+        ],
+        "self_sacrifice_does_not_trigger": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 183,
+            "test": "gixian_infiltrator_grows_when_another_permanent_is_sacrificed"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Glint Hawk": {
+      "branches": {
+        "etb_accept_returns_artifact_keeps_hawk": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 335,
+            "test": "glint_hawk_is_sacrificed_unless_an_artifact_is_returned"
+          }
+        ],
+        "etb_decline_sacrifices_hawk_even_with_artifact_available": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 335,
+            "test": "glint_hawk_is_sacrificed_unless_an_artifact_is_returned"
+          }
+        ],
+        "etb_sacrificed_with_no_artifact_to_return": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 335,
+            "test": "glint_hawk_is_sacrificed_unless_an_artifact_is_returned"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Gurmag Angler": {
+      "branches": {
+        "delve_combines_with_partial_mana_to_pay_remaining_generic": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 246,
+            "test": "gurmag_angler_castable_with_two_graveyard_cards_and_five_swamps_exiling_both"
+          }
+        ],
+        "delve_exiles_oldest_graveyard_cards_first": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 379,
+            "test": "delve_caps_at_six_cards_even_when_mana_is_tight_enough_to_force_it"
+          }
+        ],
+        "delve_never_exceeds_the_printed_generic_amount": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 353,
+            "test": "delve_with_seven_graveyard_cards_and_seven_lands_never_exceeds_the_generic_cap"
+          }
+        ],
+        "delve_pays_generic_by_exiling_all_graveyard_cards": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 181,
+            "test": "gurmag_angler_castable_by_delving_all_six_graveyard_cards_for_one_swamp"
+          }
+        ],
+        "not_castable_when_neither_mana_nor_delve_pays_the_cost": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 224,
+            "test": "gurmag_angler_not_castable_with_two_graveyard_cards_and_one_swamp"
+          }
+        ],
+        "planner_prefers_paying_mana_over_delving_when_both_plans_legal": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 286,
+            "test": "gurmag_angler_prefers_paying_mana_over_delving_when_both_plans_are_legal"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Ice Tunnel": {
+      "branches": {
+        "is_snow_typed_dual_land": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 262,
+            "test": "ice_tunnel_is_snow"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Insectile Aberration": {
+      "branches": {
+        "transformed_face_characteristics": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delver.rs",
+            "line": 154,
+            "test": "delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery"
+          }
+        ],
+        "visible_name_resolves_to_face_index_1": [
+          {
+            "file": "mtg-kernel/src/card_def.rs",
+            "line": 1641,
+            "test": "visible_name_resolves_faces"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Kessig Flamebreather": {
+      "branches": {
+        "creature_spell_cast_no_trigger": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 145,
+            "test": "kessig_flamebreather_pings_each_opponent_on_noncreature_casts_only"
+          }
+        ],
+        "noncreature_spell_cast_damages_each_opponent": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 145,
+            "test": "kessig_flamebreather_pings_each_opponent_on_noncreature_casts_only"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Raze": {
+      "branches": {
+        "not_castable_without_any_land": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 417,
+            "test": "raze_requires_sacrificing_a_land_and_destroys_the_target_land"
+          }
+        ],
+        "sacrifices_a_land_as_additional_cost_and_destroys_the_target_land": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 417,
+            "test": "raze_requires_sacrificing_a_land_and_destroys_the_target_land"
+          }
+        ],
+        "sole_land_pays_mana_and_is_still_sacrificed": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 417,
+            "test": "raze_requires_sacrificing_a_land_and_destroys_the_target_land"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Smash to Smithereens": {
+      "branches": {
+        "deals_three_to_artifacts_controller": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 281,
+            "test": "smash_to_smithereens_destroys_the_artifact_and_burns_its_controller"
+          }
+        ],
+        "destroys_target_artifact": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 281,
+            "test": "smash_to_smithereens_destroys_the_artifact_and_burns_its_controller"
+          }
+        ],
+        "no_legal_target_without_artifact": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 388,
+            "test": "smash_to_smithereens_has_no_legal_target_without_an_artifact"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Snuff Out": {
+      "branches": {
+        "alt_cost_offered_only_with_a_swamp": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 121,
+            "test": "snuff_out_offers_the_life_payment_only_with_a_swamp"
+          }
+        ],
+        "alt_cost_pays_4_life_no_mana": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 121,
+            "test": "snuff_out_offers_the_life_payment_only_with_a_swamp"
+          }
+        ],
+        "cannot_target_black_creatures": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 121,
+            "test": "snuff_out_offers_the_life_payment_only_with_a_swamp"
+          }
+        ],
+        "still_castable_for_printed_mana_cost_without_swamp": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_snuff_out_and_duals.rs",
+            "line": 199,
+            "test": "snuff_out_still_casts_for_mana_without_a_swamp"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Squirrel Token": {
+      "branches": {
+        "token_is_1_1_green": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 441,
+            "test": "acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Suffocating Fumes": {
+      "branches": {
+        "casters_own_creatures_unaffected": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 131,
+            "test": "suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn"
+          }
+        ],
+        "cycling_for_two": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 177,
+            "test": "suffocating_fumes_cycles_for_two"
+          }
+        ],
+        "effect_expires_end_of_turn": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 131,
+            "test": "suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn"
+          }
+        ],
+        "pump_opponents_creatures_minus_one_minus_one": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_black_red.rs",
+            "line": 131,
+            "test": "suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn"
+          }
+        ]
+      },
+      "post_board": false,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Terminate": {
+      "branches": {
+        "destroys_target_creature": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 114,
+            "test": "terminate_destroys_target_creature"
+          }
+        ],
+        "no_legal_target_without_a_creature": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_spells.rs",
+            "line": 141,
+            "test": "terminate_has_no_legal_target_without_a_creature"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Viridian Longbow": {
+      "branches": {
+        "equip_grants_tap_ping_ability": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 429,
+            "test": "viridian_longbow_equips_for_three_and_grants_a_tap_ping"
+          }
+        ],
+        "granted_ability_resolves_after_equipment_destroyed_in_response": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 530,
+            "test": "longbow_ping_resolves_after_the_longbow_is_destroyed_in_response"
+          }
+        ],
+        "granted_ability_resolves_after_equipped_creature_destroyed_in_response": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 593,
+            "test": "longbow_ping_resolves_after_the_equipped_creature_is_destroyed_in_response"
+          }
+        ],
+        "summoning_sick_creature_cannot_activate_granted_ability": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 496,
+            "test": "summoning_sick_equipped_creature_cannot_activate_the_granted_tap_ability"
+          }
+        ],
+        "unequipped_creature_has_no_granted_ability": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_delve_and_longbow.rs",
+            "line": 429,
+            "test": "viridian_longbow_equips_for_three_and_grants_a_tap_ping"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    },
+    "Webweaver Changeling": {
+      "branches": {
+        "changeling_counts_as_every_creature_type": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 309,
+            "test": "webweaver_changeling_has_every_creature_type"
+          }
+        ],
+        "etb_gains_five_life_with_three_or_more_creature_cards": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 225,
+            "test": "webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard"
+          }
+        ],
+        "etb_no_life_gain_below_three_creature_cards": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 225,
+            "test": "webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard"
+          }
+        ],
+        "intervening_if_rechecked_on_resolution": [
+          {
+            "file": "mtg-kernel/tests/pauper_meta_w1_creatures.rs",
+            "line": 225,
+            "test": "webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard"
+          }
+        ]
+      },
+      "post_board": true,
+      "unexercised": [],
+      "unreachable": {}
+    }
+  },
+  "errors": {
+    "undeclared_branch_annotations": [],
+    "unknown_card_annotations": []
+  },
+  "exit_code": 0,
+  "manifest": "data/wave_branch_manifests/pauper_meta_w1.json",
+  "schema": "kernel_wave_branch_coverage_report/v1",
+  "summary": {
+    "cards_covered": 23,
+    "cards_total": 23,
+    "unexercised_branches": 0
+  },
+  "wave": "pauper_meta_w1"
+}

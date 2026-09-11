@@ -1636,6 +1636,7 @@ mod tests {
         assert_eq!(card_id_by_name("Not A Real Card"), None);
     }
 
+    // covers: Insectile Aberration: visible_name_resolves_to_face_index_1
     #[test]
     fn visible_name_resolves_faces() {
         let delver = card_id_by_name("Delver of Secrets").expect("Delver of Secrets in CARD_DEFS");

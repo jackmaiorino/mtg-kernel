@@ -140,6 +140,7 @@ fn pass_until_etb_trigger_is_pending(state: &mut GameState, creature: ObjectId) 
     panic!("ETB trigger did not reach the stack within the bounded priority walk");
 }
 
+// covers: Kessig Flamebreather: noncreature_spell_cast_damages_each_opponent, creature_spell_cast_no_trigger
 #[test]
 fn kessig_flamebreather_pings_each_opponent_on_noncreature_casts_only() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -177,6 +178,7 @@ fn kessig_flamebreather_pings_each_opponent_on_noncreature_casts_only() {
     );
 }
 
+// covers: Gixian Infiltrator: counter_on_sacrifice_of_another_permanent, self_sacrifice_does_not_trigger
 #[test]
 fn gixian_infiltrator_grows_when_another_permanent_is_sacrificed() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -218,6 +220,7 @@ fn gixian_infiltrator_grows_when_another_permanent_is_sacrificed() {
     );
 }
 
+// covers: Webweaver Changeling: etb_no_life_gain_below_three_creature_cards, etb_gains_five_life_with_three_or_more_creature_cards, intervening_if_rechecked_on_resolution
 #[test]
 fn webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard() {
     // Two creature cards: the intervening if fails at trigger time, so no
@@ -301,6 +304,7 @@ fn webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard()
     );
 }
 
+// covers: Webweaver Changeling: changeling_counts_as_every_creature_type
 #[test]
 fn webweaver_changeling_has_every_creature_type() {
     let id = card_id("Webweaver Changeling");
@@ -326,6 +330,7 @@ fn webweaver_changeling_has_every_creature_type() {
     let _ = webweaver;
 }
 
+// covers: Glint Hawk: etb_sacrificed_with_no_artifact_to_return, etb_accept_returns_artifact_keeps_hawk, etb_decline_sacrifices_hawk_even_with_artifact_available
 #[test]
 fn glint_hawk_is_sacrificed_unless_an_artifact_is_returned() {
     // No artifact to return: the ETB resolves by sacrificing the Hawk, with

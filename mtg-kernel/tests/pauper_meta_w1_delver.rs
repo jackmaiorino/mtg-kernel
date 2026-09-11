@@ -148,6 +148,8 @@ fn pass_to_stack_empty(state: &mut GameState) {
     panic!("the stack did not empty within the bounded priority walk");
 }
 
+// covers: Delver of Secrets: reveal_instant_or_sorcery_transforms, reveal_declined_no_transform
+// covers: Insectile Aberration: transformed_face_characteristics
 #[test]
 fn delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery() {
     let (state, delver) = ready_before_upkeep(PlayerId::P0, Some("Ponder"));
@@ -225,6 +227,7 @@ fn delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery() {
     assert!(!engine::has_effective_keyword(&declined, delver, Keywords::FLYING));
 }
 
+// covers: Delver of Secrets: non_instant_top_no_transform
 #[test]
 fn delver_does_not_transform_on_a_land_or_creature() {
     let (state, delver) = ready_before_upkeep(PlayerId::P0, Some("Island"));
@@ -250,6 +253,7 @@ fn delver_does_not_transform_on_a_land_or_creature() {
     assert_eq!(engine::effective_toughness(&accepted, delver), 1);
 }
 
+// covers: Delver of Secrets: upkeep_trigger_controller_only
 #[test]
 fn delver_trigger_is_controllers_upkeep_only() {
     let (mut state, delver) = ready_before_upkeep(PlayerId::P1, None);
@@ -276,6 +280,7 @@ fn delver_trigger_is_controllers_upkeep_only() {
     assert_eq!(object.zone_change_count, original_zone_change_count);
 }
 
+// covers: Delver of Secrets: transformed_face_does_not_retrigger
 #[test]
 fn delver_does_not_retrigger_once_transformed() {
     // DelverOfSecrets.java attaches the upkeep trigger to the front half

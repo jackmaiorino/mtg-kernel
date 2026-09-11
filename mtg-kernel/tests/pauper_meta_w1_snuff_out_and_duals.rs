@@ -116,6 +116,7 @@ fn advance_to_players_next_main1(state: &mut GameState, player: PlayerId) {
     }
 }
 
+// covers: Snuff Out: alt_cost_offered_only_with_a_swamp, alt_cost_pays_4_life_no_mana, cannot_target_black_creatures
 #[test]
 fn snuff_out_offers_the_life_payment_only_with_a_swamp() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -193,6 +194,7 @@ fn snuff_out_offers_the_life_payment_only_with_a_swamp() {
     );
 }
 
+// covers: Snuff Out: still_castable_for_printed_mana_cost_without_swamp
 #[test]
 fn snuff_out_still_casts_for_mana_without_a_swamp() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -230,6 +232,7 @@ fn snuff_out_still_casts_for_mana_without_a_swamp() {
     let _ = CastMode::Normal; // documents which mode this test exercises
 }
 
+// covers: Contaminated Aquifer: enters_tapped, taps_for_u_or_b
 #[test]
 fn contaminated_aquifer_enters_tapped_and_taps_for_u_or_b() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -254,6 +257,7 @@ fn contaminated_aquifer_enters_tapped_and_taps_for_u_or_b() {
     assert_eq!(state.players[0].mana_pool[ManaColor::B.pool_index()], 1);
 }
 
+// covers: Ice Tunnel: is_snow_typed_dual_land
 #[test]
 fn ice_tunnel_is_snow() {
     let id = card_id("Ice Tunnel");

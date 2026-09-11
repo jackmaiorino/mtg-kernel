@@ -176,6 +176,7 @@ fn every_other_equipment_still_has_no_granted_ability() {
 // Delve
 // ---------------------------------------------------------------------
 
+// covers: Gurmag Angler: delve_pays_generic_by_exiling_all_graveyard_cards
 #[test]
 fn gurmag_angler_castable_by_delving_all_six_graveyard_cards_for_one_swamp() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -218,6 +219,7 @@ fn gurmag_angler_castable_by_delving_all_six_graveyard_cards_for_one_swamp() {
     assert!(state.players[0].battlefield.contains(&gurmag));
 }
 
+// covers: Gurmag Angler: not_castable_when_neither_mana_nor_delve_pays_the_cost
 #[test]
 fn gurmag_angler_not_castable_with_two_graveyard_cards_and_one_swamp() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -239,6 +241,7 @@ fn gurmag_angler_not_castable_with_two_graveyard_cards_and_one_swamp() {
     }
 }
 
+// covers: Gurmag Angler: delve_combines_with_partial_mana_to_pay_remaining_generic
 #[test]
 fn gurmag_angler_castable_with_two_graveyard_cards_and_five_swamps_exiling_both() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -278,6 +281,7 @@ fn gurmag_angler_castable_with_two_graveyard_cards_and_five_swamps_exiling_both(
     assert!(state.players[0].battlefield.contains(&gurmag));
 }
 
+// covers: Gurmag Angler: planner_prefers_paying_mana_over_delving_when_both_plans_legal
 #[test]
 fn gurmag_angler_prefers_paying_mana_over_delving_when_both_plans_are_legal() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -344,6 +348,7 @@ fn gurmag_angler_prefers_paying_mana_over_delving_when_both_plans_are_legal() {
     );
 }
 
+// covers: Gurmag Angler: delve_never_exceeds_the_printed_generic_amount
 #[test]
 fn delve_with_seven_graveyard_cards_and_seven_lands_never_exceeds_the_generic_cap() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -369,6 +374,7 @@ fn delve_with_seven_graveyard_cards_and_seven_lands_never_exceeds_the_generic_ca
     );
 }
 
+// covers: Gurmag Angler: delve_exiles_oldest_graveyard_cards_first
 #[test]
 fn delve_caps_at_six_cards_even_when_mana_is_tight_enough_to_force_it() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -418,6 +424,7 @@ fn delve_caps_at_six_cards_even_when_mana_is_tight_enough_to_force_it() {
 // Viridian Longbow
 // ---------------------------------------------------------------------
 
+// covers: Viridian Longbow: equip_grants_tap_ping_ability, unequipped_creature_has_no_granted_ability
 #[test]
 fn viridian_longbow_equips_for_three_and_grants_a_tap_ping() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -484,6 +491,7 @@ fn viridian_longbow_equips_for_three_and_grants_a_tap_ping() {
     assert!(state.objects.get(elf).tapped, "paid its tap cost");
 }
 
+// covers: Viridian Longbow: summoning_sick_creature_cannot_activate_granted_ability
 #[test]
 fn summoning_sick_equipped_creature_cannot_activate_the_granted_tap_ability() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -517,6 +525,7 @@ fn summoning_sick_equipped_creature_cannot_activate_the_granted_tap_ability() {
 // (review finding, fix round 1).
 // ---------------------------------------------------------------------
 
+// covers: Viridian Longbow: granted_ability_resolves_after_equipment_destroyed_in_response
 #[test]
 fn longbow_ping_resolves_after_the_longbow_is_destroyed_in_response() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -579,6 +588,7 @@ fn longbow_ping_resolves_after_the_longbow_is_destroyed_in_response() {
     );
 }
 
+// covers: Viridian Longbow: granted_ability_resolves_after_equipped_creature_destroyed_in_response
 #[test]
 fn longbow_ping_resolves_after_the_equipped_creature_is_destroyed_in_response() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);

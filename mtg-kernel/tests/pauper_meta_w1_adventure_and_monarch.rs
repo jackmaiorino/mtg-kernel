@@ -134,6 +134,7 @@ fn advance_to_step_decision(state: &mut GameState, step: Step, active_player: Pl
 // Adventure
 // ---------------------------------------------------------------------
 
+// covers: Fang Dragon: adventure_castable_from_hand_at_sorcery_speed, adventure_damages_only_creatures_you_dont_control, adventure_resolution_exiles_card_with_on_adventure_permission, creature_face_castable_from_exile_via_on_adventure, on_adventure_permission_clears_when_creature_enters_battlefield, plain_exile_placement_never_grants_adventure_permission
 #[test]
 fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -237,6 +238,7 @@ fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     }
 }
 
+// covers: Fang Dragon: creature_castable_directly_from_hand
 #[test]
 fn fang_dragon_can_be_cast_directly_from_hand() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -280,6 +282,7 @@ fn fang_dragon_can_be_cast_directly_from_hand() {
     ));
 }
 
+// covers: Fang Dragon: visible_name_resolves_adventure_face_to_face_index_2
 #[test]
 fn visible_name_resolves_adventure_face() {
     let fang_dragon_id = card_id("Fang Dragon");
@@ -301,6 +304,7 @@ fn visible_name_resolves_adventure_face() {
 // Monarch
 // ---------------------------------------------------------------------
 
+// covers: Azure Fleet Admiral: etb_becomes_the_monarch, monarch_draws_at_own_end_step, non_monarch_end_step_no_draw, crown_does_not_move_without_combat_damage
 #[test]
 fn azure_fleet_admiral_makes_its_controller_the_monarch_who_draws_at_end_step() {
     let mut state = ready_main1(&["Mountain"; 10], &["Mountain"; 10]);
@@ -357,6 +361,7 @@ fn azure_fleet_admiral_makes_its_controller_the_monarch_who_draws_at_end_step() 
     );
 }
 
+// covers: Azure Fleet Admiral: combat_damage_to_monarch_transfers_crown
 #[test]
 fn combat_damage_to_the_monarch_moves_the_crown() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -407,6 +412,7 @@ fn combat_damage_to_the_monarch_moves_the_crown() {
     );
 }
 
+// covers: Azure Fleet Admiral: monarchs_creatures_cannot_block_the_admiral, non_monarchs_creatures_may_block_the_admiral
 #[test]
 fn admiral_cannot_be_blocked_by_the_monarchs_creatures() {
     // P1 is the monarch: its untapped 3/3 may not block the attacking
@@ -501,6 +507,7 @@ fn admiral_cannot_be_blocked_by_the_monarchs_creatures() {
 // Mystic).
 // ---------------------------------------------------------------------
 
+// covers: Fang Dragon: adventure_cast_still_triggers_cast_instant_or_sorcery_abilities
 #[test]
 fn forktail_sweep_still_triggers_cast_instant_or_sorcery_abilities() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
@@ -533,6 +540,7 @@ fn forktail_sweep_still_triggers_cast_instant_or_sorcery_abilities() {
     assert!(state.players[0].battlefield.contains(&guttersnipe));
 }
 
+// covers: Fang Dragon: creature_cast_does_not_trigger_cast_instant_or_sorcery_abilities
 #[test]
 fn fang_dragon_cast_as_a_creature_does_not_trigger_cast_instant_or_sorcery_abilities() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);

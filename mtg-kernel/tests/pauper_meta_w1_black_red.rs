@@ -126,6 +126,7 @@ fn advance_to_players_next_main1(state: &mut GameState, player: PlayerId) {
     }
 }
 
+// covers: Suffocating Fumes: pump_opponents_creatures_minus_one_minus_one, effect_expires_end_of_turn, casters_own_creatures_unaffected
 #[test]
 fn suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -171,6 +172,7 @@ fn suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn() {
     assert_eq!(engine::effective_toughness(&state, sagu), 3);
 }
 
+// covers: Suffocating Fumes: cycling_for_two
 #[test]
 fn suffocating_fumes_cycles_for_two() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -210,6 +212,7 @@ fn suffocating_fumes_cycles_for_two() {
     );
 }
 
+// covers: Arms of Hadar: targeting_p1_shrinks_p1_creatures_only, targeting_p0_shrinks_p0_creatures_only
 #[test]
 fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
     // Targeting P1 shrinks P1's creature and leaves P0's alone.
@@ -273,6 +276,7 @@ fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
     assert_eq!(engine::effective_toughness(&state2, p1_creature2), 2, "P1's 2/2 is unchanged");
 }
 
+// covers: Smash to Smithereens: destroys_target_artifact, deals_three_to_artifacts_controller
 #[test]
 fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
     // Baseline: the artifact is still on the battlefield at resolution.
@@ -408,6 +412,7 @@ fn smash_to_smithereens_has_no_legal_target_without_an_artifact() {
     );
 }
 
+// covers: Raze: not_castable_without_any_land, sacrifices_a_land_as_additional_cost_and_destroys_the_target_land, sole_land_pays_mana_and_is_still_sacrificed
 #[test]
 fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
     // With zero lands, Raze is castable neither for mana nor for its
