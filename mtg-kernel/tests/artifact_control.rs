@@ -123,7 +123,7 @@ fn generated_definitions_match_the_four_current_mage_cards() {
     assert_eq!(card_id("Makeshift Munitions"), 69);
     assert_eq!(card_id("Nihil Spellbomb"), 79);
     assert_eq!(card_id("Relic of Progenitus"), 97);
-    assert_eq!(CARD_DEFS.len(), 187); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187
+    assert_eq!(CARD_DEFS.len(), 192); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187; wave 2 Task 3: 187 -> 192
 
     for name in [
         "Krark-Clan Shaman",

@@ -2903,6 +2903,10 @@ enum AbilityEffectRecipe {
     SearchLibraryToBattlefieldTapped {
         filter: LibrarySearchFilterRecipe,
     },
+    /// Each player who controls a permanent with this exact printed name
+    /// draws a card (Bonder's Ornament). Resolved at codegen time to this
+    /// card's own generated definition id via `card_id_by_name`.
+    EachPlayerControllingNamedPermanentDrawsCard(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2924,6 +2928,9 @@ enum LibrarySearchFilterRecipe {
     LandWithSubtype(&'static str),
     BasicLand,
     BasicLandWithAnySubtype([&'static str; 3]),
+    /// Any land card, basic or not. Expedition Map's fetch is unrestricted
+    /// by subtype.
+    AnyLand,
 }
 
 #[derive(Clone, Copy)]
@@ -3353,6 +3360,17 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         "Citadel Gate" => vec!["W"],
         "Sea Gate" => vec!["U"],
         "Heap Gate" => vec!["C"],
+        // Conduit Pylons' free printed ability is colorless-only; its paid
+        // any-color ability is the additional rich definition below, same
+        // shape as Heap Gate.
+        "Conduit Pylons" => vec!["C"],
+        // Barrels of Blasting Jelly's only printed mana ability is the
+        // tapless, once-per-turn additional definition below. An empty
+        // primary color list excludes it from
+        // `is_automatic_payment_mana_source`, matching a card whose sole
+        // mana ability the automatic payment planner must never assume is
+        // always available.
+        "Barrels of Blasting Jelly" => vec![],
         _ => card.produces_mana.iter().map(String::as_str).collect(),
     }
 }
@@ -3372,6 +3390,14 @@ fn as_enters_choose_color_other_than(name: &str) -> &'static str {
 fn additional_mana_abilities_for(name: &str) -> &'static str {
     match name {
         "Heap Gate" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Conduit Pylons' "{1}, {T}: Add one mana of any color" is Heap
+        // Gate's paid any-color ability verbatim.
+        "Conduit Pylons" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Barrels of Blasting Jelly's "{1}: Add one mana of any color.
+        // Activate only once each turn." has no tap symbol at all
+        // (`ManaAbilityCostDef::None`); the per-turn cap reuses Wall of
+        // Roots' existing `max_activations_per_turn` enforcement.
+        "Barrels of Blasting Jelly" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) } }]",
         _ => "&[]",
     }
 }
@@ -3682,6 +3708,61 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "AnyPlayer",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Expedition Map" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryToHand {
+                filter: LibrarySearchFilterRecipe::AnyLand,
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Bonder's Ornament" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 4,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(
+                "Bonder's Ornament",
+            ),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Barrels of Blasting Jelly" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 5,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DamageTarget(5),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
@@ -4296,6 +4377,9 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             "search_library_to_battlefield_tapped:{}",
             library_search_filter_token(filter)
         ),
+        AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
+            format!("each_player_controlling_named_permanent_draws_card:{name}")
+        }
     }
 }
 
@@ -4317,6 +4401,7 @@ fn library_search_filter_token(filter: LibrarySearchFilterRecipe) -> String {
         LibrarySearchFilterRecipe::BasicLandWithAnySubtype(subtypes) => {
             format!("basic_land_with_any_subtype:{}", subtypes.join("|"))
         }
+        LibrarySearchFilterRecipe::AnyLand => "any_land".to_string(),
     }
 }
 
@@ -4334,6 +4419,7 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        LibrarySearchFilterRecipe::AnyLand => "LibraryCardFilter::AnyLand".to_string(),
     }
 }
 
@@ -4398,6 +4484,13 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             reveal_selected: true,
             shuffle: true,
         } => "omen_effect_search_basic_land".to_string(),
+        AbilityEffectRecipe::SearchLibraryToHand {
+            filter: LibrarySearchFilterRecipe::AnyLand,
+            min_targets: 0,
+            max_targets: 1,
+            reveal_selected: true,
+            shuffle: true,
+        } => "ability_effect_search_any_land_to_hand".to_string(),
         AbilityEffectRecipe::SearchLibraryToHand { .. } => panic!(
             "SearchLibraryToHand currently supports only optional single-card reveal+shuffle"
         ),
@@ -4439,6 +4532,18 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                 .replace([':', '|'], "_")
                 .to_ascii_lowercase()
         ),
+        AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
+            format!(
+                "ability_effect_each_player_controlling_{}_draws_card",
+                name.chars()
+                    .map(|c| if c.is_ascii_alphanumeric() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    })
+                    .collect::<String>()
+            )
+        }
     }
 }
 
@@ -4736,6 +4841,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Squadron Hawk" => "etb:search_up_to_three_same_definition_reveal_shuffle",
         "Bind the Monster" => "etb:tap_attached_then_attached_deals_power_to_aura_controller",
         "Harrier Strix" => "etb:target_any_permanent:tap",
+        "Bojuka Bog" => "etb:target_player:exile_graveyard",
+        "Conduit Pylons" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Moon-Circuit Hacker" => {
             "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
@@ -5344,6 +5451,10 @@ fn codegen(cards: &[CardJson]) -> String {
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);
                 writeln!(out, "    EffectOp::SearchLibraryToBattlefieldTapped {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
+            }
+            AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
+                writeln!(out, "    let named = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}").unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -7559,6 +7670,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Tower" => "Subtype::Tower",
         "Power-Plant" => "Subtype::PowerPlant",
         "Mine" => "Subtype::Mine",
+        "Desert" => "Subtype::Desert",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

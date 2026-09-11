@@ -575,6 +575,23 @@ fn harrier_strix_etb_effect() -> EffectOp {
     }
 }
 
+/// Bojuka Bog: "When Bojuka Bog enters the battlefield, exile all cards
+/// from target player's graveyard." Reuses `EffectOp::ExilePlayersGraveyard`
+/// (Nihil Spellbomb's activated-ability effect).
+fn bojuka_bog_etb_effect() -> EffectOp {
+    EffectOp::ExilePlayersGraveyard {
+        player: PlayerRef::Target(0),
+    }
+}
+
+/// Conduit Pylons: "When Conduit Pylons enters the battlefield, surveil 1."
+fn conduit_pylons_etb_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
 fn humbling_elder_etb_effect() -> EffectOp {
     EffectOp::PumpTargetUntilEndOfTurnDynamic {
         target: TargetRef::Target(0),
@@ -899,6 +916,22 @@ const HARRIER_STRIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: harrier_strix_etb_effect,
 }];
 
+const BOJUKA_BOG_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: bojuka_bog_etb_effect,
+}];
+
+const CONDUIT_PYLONS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: conduit_pylons_etb_effect,
+}];
+
 const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -1080,6 +1113,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
         "Bind the Monster" => &BIND_THE_MONSTER_TRIGGERS,
         "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
+        "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
+        "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
@@ -1107,6 +1142,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
+        "Bojuka Bog" => TargetSpec::AnyPlayer,
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Saiba Cryptomancer" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {

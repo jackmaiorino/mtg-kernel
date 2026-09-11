@@ -230,6 +230,9 @@ pub enum Subtype {
     PowerPlant,
     /// Appended for Urza's Mine. Not a creature type.
     Mine,
+    /// Appended for Conduit Pylons' printed Desert subtype (pauper meta wave
+    /// 2 Task 3). Not a creature type.
+    Desert,
 }
 
 impl Subtype {
@@ -859,6 +862,11 @@ pub enum ManaAbilityCostDef {
     /// Treasure's printed `{T}, Sacrifice this artifact` cost. Keeping the
     /// combined cost atomic prevents either half from being approximated.
     TapAndSacrificeSelf,
+    /// No object cost at all beyond the ability's own mana cost: Barrels of
+    /// Blasting Jelly's `{1}: Add one mana of any color` has no tap symbol.
+    /// Appended for pauper meta wave 2 Task 3; existing discriminants remain
+    /// fixed.
+    None,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -1605,8 +1613,11 @@ mod tests {
         // 182-183, again without renumbering earlier ids. Urza's Tower,
         // Urza's Power Plant, and Urza's Mine are appended as ids 184-186
         // (pauper meta wave 2 Task 2), again without renumbering earlier
-        // ids.
-        assert_eq!(CARD_DEFS.len(), 187);
+        // ids. Bojuka Bog, Conduit Pylons, Expedition Map, Bonder's
+        // Ornament, and Barrels of Blasting Jelly are appended as ids
+        // 187-191 (pauper meta wave 2 Task 3), again without renumbering
+        // earlier ids.
+        assert_eq!(CARD_DEFS.len(), 192);
     }
 
     #[test]
@@ -1677,7 +1688,7 @@ mod tests {
         // prior definitions. Version 33 folded in Fang Dragon's Adventure
         // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xd5f0_19cb_8d07_6e34);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
     }
 
     #[test]
@@ -1913,7 +1924,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 187, "174 pool cards plus thirteen required tokens");
+        assert_eq!(full, 192, "179 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

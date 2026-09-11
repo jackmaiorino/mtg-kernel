@@ -138,7 +138,7 @@ fn generated_registry_and_recipes_match_current_mage_authority() {
     assert_eq!(card_id("Hunter's Blowgun"), 56);
     assert_eq!(card_id("Unexpected Fangs"), 124);
     assert_eq!(card_id("Hero Token"), 159);
-    assert_eq!(CARD_DEFS.len(), 187); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187
+    assert_eq!(CARD_DEFS.len(), 192); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187; wave 2 Task 3: 187 -> 192
 
     let rod = &CARD_DEFS[card_id("Black Mage's Rod") as usize];
     assert_eq!(rod.capability, CardCapability::Full);

@@ -118,7 +118,7 @@ fn generated_definitions_bind_the_exact_modal_target_shapes_and_programs() {
     assert_eq!(card_id("Cast into the Fire"), 12);
     assert_eq!(card_id("Dust to Dust"), 25);
     assert_eq!(card_id("Thraben Charm"), 118);
-    assert_eq!(CARD_DEFS.len(), 187); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187
+    assert_eq!(CARD_DEFS.len(), 192); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187; wave 2 Task 3: 187 -> 192
 
     let cast = &CARD_DEFS[card_id("Cast into the Fire") as usize];
     assert_eq!(cast.capability, CardCapability::Full);

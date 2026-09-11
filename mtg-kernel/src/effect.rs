@@ -105,6 +105,11 @@ pub enum LibraryCardFilter {
     /// A physical card with the Basic supertype and Land type that carries
     /// at least one of the three requested effective land subtypes.
     BasicLandWithAnySubtype([Subtype; 3]),
+    /// Any card with the Land type, basic or not. Expedition Map's "search
+    /// your library for a land card" is unrestricted by subtype (a nonbasic
+    /// land such as Bojuka Bog is an equally legal find). Appended for
+    /// pauper meta wave 2 Task 3; existing discriminants remain fixed.
+    AnyLand,
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -643,6 +648,26 @@ pub enum EffectOp {
     /// creature and may put a nonland into the graveyard.
     ExploreTarget {
         object: ObjectRef,
+    },
+    /// Looks at the top `count` cards of `player`'s library, one at a time,
+    /// and for each offers a keep-on-top-or-put-into-graveyard choice
+    /// (Conduit Pylons' "surveil 1"). A card kept on top stays there in its
+    /// original relative position; this pool's only consumer surveils
+    /// exactly one card, where the general "any order among kept cards"
+    /// ruling is unobservable. `count` decrements by one per card looked at,
+    /// re-entering this same operation until it reaches zero or the library
+    /// empties. Appended for pauper meta wave 2 Task 3.
+    Surveil {
+        player: PlayerRef,
+        count: u8,
+    },
+    /// Each player who controls a permanent with this exact generated
+    /// card-definition id draws a card (Bonder's Ornament: "each player who
+    /// controls a permanent named Bonder's Ornament draws a card"). A
+    /// deterministic leaf: no decision is offered. Appended for pauper meta
+    /// wave 2 Task 3.
+    EachPlayerControllingDefinitionDrawsCard {
+        card_def: u16,
     },
     /// Interpreter-owned exact-incarnation move used after Explore reveals a
     /// nonland. Generated card programs never contain a pre-bound object.
@@ -1576,6 +1601,17 @@ pub enum EffectOptionChoicePurpose {
         top: EffectObjectBinding,
         canonical_path: Vec<u16>,
     },
+    /// One card of a `EffectOp::Surveil` look: keep on top (option 0) or put
+    /// into the graveyard (option 1). `remaining` is how many more cards
+    /// this surveil still owes after this one is answered; a nonzero value
+    /// re-enters `EffectOp::Surveil` for the next card. Appended for pauper
+    /// meta wave 2 Task 3.
+    SurveilTopCard {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        remaining: u8,
+        canonical_path: Vec<u16>,
+    },
     /// A W/U/B/R/G choice whose public projection uses the already-reserved
     /// color semantic and action identity rather than generic options.
     ChooseColor {
@@ -1813,7 +1849,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
         | EffectOp::ResolveInitiativeTrigger { .. }
         | EffectOp::ResolveUndercityThrone { .. }
-        | EffectOp::LookAtTopMayRevealThen { .. } => true,
+        | EffectOp::LookAtTopMayRevealThen { .. }
+        | EffectOp::Surveil { .. } => true,
         _ => false,
     }
 }
@@ -1889,6 +1926,28 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
             match purpose {
                 EffectOptionChoicePurpose::Generic => {
                     path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::SurveilTopCard {
+                    remaining,
+                    canonical_path,
+                    ..
+                } => {
+                    path.push(option_index);
+                    // Continue to the next card first (pushed first, so it
+                    // pops *after* this card's keep-or-graveyard move below
+                    // -- the stack is LIFO).
+                    if remaining > 0 {
+                        continuation.frames.push(EffectFrame::Program {
+                            op: EffectOp::Surveil {
+                                player: PlayerRef::Controller,
+                                count: remaining,
+                            },
+                            path: canonical_path,
+                        });
+                    }
                     continuation
                         .frames
                         .push(EffectFrame::Program { op: selected, path });
@@ -5842,6 +5901,42 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     );
                 }
             }
+            EffectOptionChoicePurpose::SurveilTopCard {
+                player: surveil_player,
+                top,
+                remaining: _,
+                canonical_path,
+            } => {
+                if player != surveil_player || path != canonical_path {
+                    return Err("surveil choice player or structural path changed".to_string());
+                }
+                let [EffectOp::Sequence(keep), EffectOp::MoveBoundObject {
+                    object,
+                    to_zone: Zone::Graveyard,
+                    preserve_known_identity: true,
+                }] = options.as_slice()
+                else {
+                    return Err(
+                        "surveil choice changed its exact keep-or-graveyard options".to_string()
+                    );
+                };
+                if !keep.is_empty() || object != top {
+                    return Err("surveil choice changed its bound top card".to_string());
+                }
+                validate_effect_object_binding(state, *top)?;
+                if top.expected_zone != Zone::Library
+                    || state.players[surveil_player.index()]
+                        .library
+                        .first()
+                        .copied()
+                        != Some(top.object)
+                    || state.objects.get(top.object).owner != *surveil_player
+                {
+                    return Err(
+                        "surveil choice no longer binds the looked-at top card".to_string()
+                    );
+                }
+            }
             EffectOptionChoicePurpose::ChooseColor {
                 player: color_player,
                 legal_colors,
@@ -8146,6 +8241,42 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::Surveil { player, count } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                if count == 0 {
+                    continue;
+                }
+                let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
+                    // Empty library ends the look silently, same shortcut
+                    // Scry and Explore use.
+                    continue;
+                };
+                // Surveil is a private look: unlike Explore, nothing here is
+                // publicly revealed unless the controller later chooses to
+                // put the card in the (public) graveyard.
+                state.reveal_library_top(player, player, 1);
+                let canonical_path = path.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    path,
+                    options: vec![
+                        EffectOp::Sequence(vec![]),
+                        EffectOp::MoveBoundObject {
+                            object: top,
+                            to_zone: Zone::Graveyard,
+                            preserve_known_identity: true,
+                        },
+                    ],
+                    purpose: EffectOptionChoicePurpose::SurveilTopCard {
+                        player,
+                        top,
+                        remaining: count - 1,
+                        canonical_path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             EffectOp::PutBoundObjectInOwnersLibrary {
                 object,
                 owner,
@@ -9032,6 +9163,7 @@ fn library_filter_matches(
                     .iter()
                     .any(|subtype| subtype_ids.binary_search(&subtype.stable_id()).is_ok())
         }
+        LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
     })
 }
 
@@ -9055,6 +9187,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 4), |hash, subtype| {
                 fnv1a_u64(hash, u64::from(subtype.stable_id()))
             }),
+        LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
     }
 }
 
@@ -9997,6 +10130,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::propose_and_commit(state, event::ProposedEvent::draw(player));
             }
         }
+        EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
+            // APNAP-stable order: P0 then P1. Bonder's Ornament's own
+            // "getPlayersInRange" iteration order never affects the
+            // deterministic outcome here (each player's draw depends only on
+            // their own battlefield), so a fixed iteration order is safe.
+            for player in [PlayerId::P0, PlayerId::P1] {
+                let controls_named = state.players[player.index()]
+                    .battlefield
+                    .iter()
+                    .any(|&id| state.objects.get(id).card_def == *card_def);
+                if controls_named {
+                    event::propose_and_commit(state, event::ProposedEvent::draw(player));
+                }
+            }
+        }
         EffectOp::RevealTopAndPartitionByType {
             player,
             count,
@@ -10230,6 +10378,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::LookAtTopMayRevealThen { .. } => {
             panic!("LookAtTopMayRevealThen must run through the resumable interpreter")
+        }
+        EffectOp::Surveil { .. } => {
+            panic!("Surveil must run through the resumable interpreter")
         }
         EffectOp::MoveBoundObject {
             object,

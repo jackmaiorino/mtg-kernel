@@ -27,7 +27,7 @@ OVERLAY_LAYOUT = ROOT / "mtg-kernel" / "src" / "flat_policy_v2.rs"
 CARD_DEF_SOURCE = ROOT / "mtg-kernel" / "src" / "card_def.rs"
 # Frozen by mtg-kernel/src/card_def.rs::card_db_hash_v33_is_frozen and checked
 # again by the Rust production-commitment golden test.
-KERNEL_CARDDB_HASH = 0xD5F0_19CB_8D07_6E34
+KERNEL_CARDDB_HASH = 0x064A_7C98_9255_AB3C
 # The cross-version comparison is a historical byte fixture, not a current
 # card-database commitment. Keep both sides on the exact v5 authority under
 # which its frozen V1/V2 commitment literals were ratified.

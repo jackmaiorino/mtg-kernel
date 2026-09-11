@@ -5126,9 +5126,9 @@ fn rich_mana_ability_is_payable(
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
             !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
         }
-        ManaAbilityCostDef::SacrificeSelf | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
-            true
-        }
+        ManaAbilityCostDef::SacrificeSelf
+        | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
+        | ManaAbilityCostDef::None => true,
         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
             // The allocating candidate enumeration must stay behind the two
             // cheap checks: the flat-encode zero-allocation contract counts
@@ -5405,6 +5405,7 @@ fn activate_mana_ability_for(
                 event::propose_and_commit(state, ProposedEvent::tap(source));
                 commit_sacrifice(state, &[source]);
             }
+            ManaAbilityCostDef::None => {}
         }
         if amount > 0 {
             event::propose_and_commit(

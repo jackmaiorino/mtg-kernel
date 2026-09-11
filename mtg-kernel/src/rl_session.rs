@@ -8445,6 +8445,80 @@ mod tests {
         ));
     }
 
+    /// Pauper meta wave 2 Task 3, brief Step 4: Barrels of Blasting Jelly's
+    /// `{1}: Add one mana of any color` has no tap symbol
+    /// (`ManaAbilityCostDef::None`) and offers five colors from one source,
+    /// so `legal_action_candidates_v1`'s surface must offer it as
+    /// `Action::ActivateManaAbilityChoice`, not the single-choice
+    /// `Action::ActivateManaAbility` (which Heap Gate's own free ability
+    /// above never reaches either, for the same one-choice-vs-many reason).
+    #[test]
+    fn barrels_of_blasting_jelly_tapless_ability_is_an_activate_mana_ability_choice_candidate() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 94);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let barrels =
+            add_battlefield_object(&mut state, PlayerId::P0, "Barrels of Blasting Jelly");
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+
+        let mut session = FastActorSessionV1::reset_with_limits(24, 94, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+
+        let current = session.current.as_ref().expect("priority decision");
+        flat_validate_origin_decision_v1(current, &session.state)
+            .expect("flat validation shares the live mana-choice contract");
+
+        let mana_actions = current
+            .candidates
+            .iter()
+            .filter_map(
+                |candidate| match (&candidate.semantic, &candidate.policy_action) {
+                    (
+                        ActionSemanticV1::ActivateManaAbility {
+                            source,
+                            mana_choice: Some(color),
+                            cost_target: None,
+                            ..
+                        },
+                        PolicyActionV5::Surface(action),
+                    ) if source.arena_id == barrels.0 => Some((*color, action)),
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mana_actions
+                .iter()
+                .map(|(color, _)| *color)
+                .collect::<Vec<_>>(),
+            vec![
+                ManaColor::W,
+                ManaColor::U,
+                ManaColor::B,
+                ManaColor::R,
+                ManaColor::G,
+            ],
+            "the tapless ability offers all five colors from one source"
+        );
+        assert!(
+            mana_actions.iter().all(|(_, action)| matches!(
+                action,
+                crate::surface::SurfaceAction::Action(
+                    crate::engine::Action::ActivateManaAbilityChoice(source, _)
+                ) if *source == barrels
+            )),
+            "a multi-color source surfaces as ActivateManaAbilityChoice, not ActivateManaAbility"
+        );
+    }
+
     #[test]
     fn shared_core_and_full_v5_fail_identically_on_forbidden_or_duplicate_semantics() {
         reset_test_policy_v5_materialization_calls();

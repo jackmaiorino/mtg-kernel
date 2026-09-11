@@ -128,7 +128,7 @@ fn registry_and_generated_definitions_match_the_three_mage_cards() {
     assert_eq!(card_id("Sagu Wildling"), 142);
     assert_eq!(card_id("Troll of Khazad-dum"), 143);
     assert_eq!(card_id("Food Token"), 144);
-    assert_eq!(CARD_DEFS.len(), 187); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187
+    assert_eq!(CARD_DEFS.len(), 192); // pauper meta wave 1 (Tasks 1-12): 162 -> 184; wave 2 Task 2: 184 -> 187; wave 2 Task 3: 187 -> 192
     assert_eq!(Subtype::Troll.stable_id(), 59);
 
     let ent = &CARD_DEFS[card_id("Generous Ent") as usize];

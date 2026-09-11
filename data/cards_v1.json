@@ -6014,6 +6014,174 @@
         "conditional_mana"
       ],
       "java_file": "Mage.Sets/src/mage/cards/u/UrzasMine.java"
+    },
+    {
+      "name": "Bojuka Bog",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "enters_tapped",
+        "etb_trigger",
+        "target_player",
+        "graveyard_hate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BojukaBog.java"
+    },
+    {
+      "name": "Conduit Pylons",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Desert"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C",
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "etb_trigger",
+        "surveil",
+        "tap_ability",
+        "activated_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ConduitPylons.java"
+    },
+    {
+      "name": "Expedition Map",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "activated_ability",
+        "tap_ability",
+        "sacrifice_cost",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExpeditionMap.java"
+    },
+    {
+      "name": "Bonder's Ornament",
+      "engine_capability": "full",
+      "mana_cost": "{3}",
+      "mana_value": 3,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "any_color_mana",
+        "activated_ability",
+        "tap_ability",
+        "draw_card"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BondersOrnament.java"
+    },
+    {
+      "name": "Barrels of Blasting Jelly",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Urzatron.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "mana_ability",
+        "any_color_mana",
+        "activated_ability",
+        "tap_ability",
+        "sacrifice_cost",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BarrelsOfBlastingJelly.java"
     }
   ],
   "unresolved": []
