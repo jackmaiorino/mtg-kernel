@@ -15,6 +15,23 @@ the Rally mirror on both sides today) is generalized to accept new registrations
 its own plan; until then the wave's ceiling is "kernel-covered, not XMage-shadow-certified".
 Nothing in this record substitutes for either gate.
 
+Task 14a (the kernel-side half of Task 14) is complete:
+`docs/research/pauper_meta_wave1_parity_2026-09.md` (machine-readable twin:
+`docs/research/pauper_meta_wave1_parity_2026-09.json`) records the branch
+coverage manifest (`data/wave_branch_manifests/pauper_meta_w1.json`, 23
+entries: 21 cards, the Insectile Aberration transform face, and the
+Squirrel Token), the `covers:`-annotation checker
+(`python/tools/check_wave_branch_coverage_v1.py`) passing at
+`kernel-covered: 23 of 23 cards, 0 unexercised branches`, and the standing
+one-seed bit-identical rerun (`rollout_record`, `burn_mirror`, seed 5151,
+4 games) matching exactly between this branch and the pre-wave-1 base tree
+(`75406ffe`) once the known identity fields (state hashes moved by the new
+`GameState::monarch` field, and `card_db_hash`/git identities) are
+excluded. This closes the kernel-side half of the spec 5.3 step 4 gate;
+the wave's ceiling is still "kernel-covered, not XMage-shadow-certified"
+until Task 14b (the XMage shadow harness generalization, not yet planned)
+lands, so this wave remains **NOT CERTIFIED** for XMage-shadow parity.
+
 ## Cards added
 
 21 new cards plus 1 token, appended to `data/cards_v1.json` in this order across Tasks 5-11
