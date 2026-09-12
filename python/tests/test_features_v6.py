@@ -100,7 +100,106 @@ def renumber(value, mapping):
     return value
 
 
+def ward_decision(*, abilities: bool = False, queued: bool = False) -> tuple[dict, list]:
+    obs = successor()
+    p = obs["projection"]
+    source = copy.deepcopy(p["battlefield"][1][0]["stable"])
+    template = copy.deepcopy(p["stack"][0])
+    stack = []
+    for index in range(2):
+        item = copy.deepcopy(template)
+        item.update(stack_index=index, controller="p0", targets=[{"target_kind": "object", "object": source}])
+        if abilities:
+            item.update(stack_item_kind="activated_ability", cast_method=None,
+                        source=copy.deepcopy(p["battlefield"][0][0]["stable"]))
+        else:
+            item["source"] = stable_ref(700 + index, 30 + index, "p0", "Stack")
+        stack.append(item)
+    p["stack"] = stack
+    history = [{"context": {"kind": "stack", "stack_index": index},
+                "source": copy.deepcopy(item["source"]), "stack_item_kind": "activated_ability"}
+               for index, item in enumerate(stack)] if abilities else []
+    payment = {"targeting_stack_index": 0, "payer": "p0", "generic": 2}
+    if queued:
+        trigger = copy.deepcopy(template)
+        trigger.update(stack_index=2, source=source, controller="p1", stack_item_kind="triggered_ability",
+                       cast_method=None, targets=[])
+        stack.append(trigger)
+        history.append({"context": {"kind": "stack", "stack_index": 2},
+                        "source": source, "stack_item_kind": "triggered_ability"})
+        obs["extensions"]["queued_ward_payments"] = [{"stack_index": 2, "payment": payment}]
+        actions = legal_actions()
+    else:
+        choice = {"choice_kind": "boolean", "player": "p0", "structural_path": [],
+                  "default": False, "purpose": "pay_cost"}
+        p["engine_context"].update(current_stage="pending_effect",
+                                    pending_effect={"source": source, "controller": "p1", "choice": choice})
+        history.append({"context": {"kind": "pending_effect"}, "source": source,
+                        "stack_item_kind": "triggered_ability"})
+        obs["extensions"]["pending_ward_payment"] = payment
+        actions = [action(index, {"action_kind": "choose_effect_boolean", "source": source, "value": value})
+                   for index, value in enumerate((True, False))]
+    obs["extensions"]["historical_public_sources"] = history
+    return obs, actions
+
+
 class FeaturesV6Tests(unittest.TestCase):
+    def test_ward_binding_distinguishes_simultaneous_spells_and_same_source_abilities(self):
+        for abilities in (False, True):
+            for queued in (False, True):
+                with self.subTest(abilities=abilities, queued=queued):
+                    obs, actions = ward_decision(abilities=abilities, queued=queued)
+                    first = v6.encode_decision(obs, actions)
+                    payment = (obs["extensions"]["queued_ward_payments"][0]["payment"] if queued
+                               else obs["extensions"]["pending_ward_payment"])
+                    payment["targeting_stack_index"] = 1
+                    second = v6.encode_decision(obs, actions)
+                    self.assertFalse(torch.equal(first.state, second.state))
+                    self.assertFalse(torch.equal(first.edge_features, second.edge_features))
+                    if abilities:
+                        # Physical source rows alias, but the stack instances must not.
+                        self.assertTrue(torch.equal(first.edge_target_indices, second.edge_target_indices))
+                    payment["generic"] = 3
+                    cost = v6.encode_decision(obs, actions)
+                    self.assertFalse(torch.equal(second.state, cost.state))
+                    self.assertFalse(torch.equal(second.edge_features, cost.edge_features))
+
+    def test_ward_operational_renumbering_is_invisible(self):
+        for abilities in (False, True):
+            obs, actions = ward_decision(abilities=abilities)
+            ids = {ref["arena_id"] for ref in v6._iter_card_refs_by_schema(obs, v6.OBSERVATION_SPEC)}
+            mapping = {value: 10000 + index for index, value in enumerate(sorted(ids, reverse=True))}
+            changed = renumber(obs, mapping)
+            changed_actions = renumber(actions, mapping)
+            self.assert_tensors_equal(v6.encode_decision(obs, actions), v6.encode_decision(changed, changed_actions))
+            self.assertEqual(v6.canonical_observation_v6(obs), v6.canonical_observation_v6(changed))
+
+    def test_ward_missing_members_stay_absent_and_noncanonical_nulls_are_rejected(self):
+        obs = successor()
+        canonical = v6.canonical_observation_v6(obs)
+        self.assertNotIn("pending_ward_payment", canonical["extensions"])
+        self.assertNotIn("queued_ward_payments", canonical["extensions"])
+        for name, value in (("pending_ward_payment", None), ("queued_ward_payments", [])):
+            malformed = copy.deepcopy(obs)
+            malformed["extensions"][name] = value
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(malformed, legal_actions())
+
+    def test_ward_binding_rejects_bad_stack_payer_and_prompt_context(self):
+        for key, value in (("targeting_stack_index", 99), ("payer", "p1"), ("generic", 256)):
+            obs, actions = ward_decision()
+            obs["extensions"]["pending_ward_payment"][key] = value
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(obs, actions)
+        obs, actions = ward_decision()
+        obs["projection"]["engine_context"]["pending_effect"]["choice"]["purpose"] = "generic"
+        with self.assertRaises(v6.FeatureSchemaError):
+            v6.encode_decision(obs, actions)
+        obs, actions = ward_decision(queued=True)
+        obs["extensions"]["queued_ward_payments"][0]["stack_index"] = 0
+        with self.assertRaises(v6.FeatureSchemaError):
+            v6.encode_decision(obs, actions)
+
     def test_chosen_creature_zone_changes_value_input_and_rejects_other_controller(self):
         obs, _ = escape_decision()
         obs["extensions"]["pending_cast_object_cost"] = None

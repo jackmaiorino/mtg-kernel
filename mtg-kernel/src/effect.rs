@@ -3159,7 +3159,7 @@ fn validate_counter_unless_pays_generic(
     player: PlayerId,
     generic: u8,
     allow_absent: bool,
-    require_public_unambiguous_and_payable: bool,
+    require_payable: bool,
 ) -> Result<Option<StackItem>, String> {
     if generic == 0 {
         return Err("zero-mana Ward is outside the certified payment shape".to_string());
@@ -3216,25 +3216,81 @@ fn validate_counter_unless_pays_generic(
             "the Ward-bound stack item no longer carries its triggering target".to_string(),
         );
     }
-    if require_public_unambiguous_and_payable {
-        let public_candidates = state
-            .stack
-            .iter()
-            .filter(|candidate| candidate.v4.target_contracts.contains(&ward_target))
-            .collect::<Vec<_>>();
-        if public_candidates.len() != 1
-            || public_candidates[0].v4.stack_item_id != targeting_stack_item
-        {
-            return Err(
-                "the current public schema cannot identify the Ward-bound stack item unambiguously"
-                    .to_string(),
-            );
-        }
+    if require_payable {
         if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
             return Err("the staged Ward payment is no longer payable".to_string());
         }
     }
     Ok(Some(item))
+}
+
+/// Authenticates a Ward trigger and its exact live targeter for public
+/// observation. Pending-continuation validation separately requires its
+/// resolver to remain at the live stack top in the current engine. A departed
+/// targeter is valid for a queued trigger that will do nothing.
+pub(crate) fn validated_ward_observation_targeter(
+    state: &GameState,
+    trigger: &StackItem,
+) -> Result<Option<(StackItem, u8)>, String> {
+    let Some(EffectOp::CounterUnlessPaysGeneric {
+        ward_target,
+        targeting_stack_item,
+        generic,
+    }) = trigger.inline_effect.as_ref()
+    else {
+        return Ok(None);
+    };
+    crate::engine::validated_stack_item_target_spec(trigger, state)?;
+    let payer = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+        .map(|item| item.controller)
+        .unwrap_or(trigger.controller.opponent());
+    Ok(validate_counter_unless_pays_generic(
+        state,
+        *ward_target,
+        trigger.controller,
+        *targeting_stack_item,
+        payer,
+        *generic,
+        true,
+        false,
+    )?
+    .map(|item| (item, *generic)))
+}
+
+/// Legacy observations can infer the binding only when exactly one live item
+/// targets the Ward source. Keep this coverage restriction at their boundary,
+/// rather than halting the rules engine for successor-aware consumers.
+pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .map(|pending| &pending.resolving_item);
+    for trigger in state.stack.iter().chain(pending) {
+        let Some((bound, _)) = validated_ward_observation_targeter(state, trigger)? else {
+            continue;
+        };
+        let Some(EffectOp::CounterUnlessPaysGeneric { ward_target, .. }) =
+            trigger.inline_effect.as_ref()
+        else {
+            unreachable!()
+        };
+        let mut candidates = state
+            .stack
+            .iter()
+            .filter(|candidate| candidate.v4.target_contracts.contains(ward_target));
+        if candidates
+            .next()
+            .is_none_or(|item| item.v4.stack_item_id != bound.v4.stack_item_id)
+            || candidates.next().is_some()
+        {
+            return Err("legacy observation cannot identify the Ward-bound stack item unambiguously; the Ward observation successor is required".into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_counter_unless_pays_frame(
@@ -3271,6 +3327,7 @@ fn validate_counter_unless_pays_frame(
     {
         return Err("Ward answer no longer matches its resolving trigger".to_string());
     }
+    validate_ward_resolving_binding(pending, *ward_target, *targeting_stack_item, *generic)?;
     validate_counter_unless_pays_generic(
         state,
         *ward_target,
@@ -3281,6 +3338,24 @@ fn validate_counter_unless_pays_frame(
         false,
         true,
     )?;
+    Ok(())
+}
+
+fn validate_ward_resolving_binding(
+    pending: &EffectContinuation,
+    ward_target: StackTargetContractV4,
+    targeting_stack_item: StackItemId,
+    generic: u8,
+) -> Result<(), String> {
+    if pending.resolving_item.inline_effect.as_ref()
+        != Some(&EffectOp::CounterUnlessPaysGeneric {
+            ward_target,
+            targeting_stack_item,
+            generic,
+        })
+    {
+        return Err("Ward choice binding no longer matches its resolving trigger effect".into());
+    }
     Ok(())
 }
 
@@ -5589,6 +5664,12 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Ward Boolean choice metadata is inconsistent".to_string());
                 }
+                validate_ward_resolving_binding(
+                    pending,
+                    *ward_target,
+                    *targeting_stack_item,
+                    *generic,
+                )?;
                 validate_counter_unless_pays_generic(
                     state,
                     *ward_target,

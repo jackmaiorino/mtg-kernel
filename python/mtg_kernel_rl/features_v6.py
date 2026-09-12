@@ -20,9 +20,9 @@ OPERATIONAL_ONLY = "operational_only"
 FORBIDDEN = "forbidden"
 CLASSIFICATIONS = (MODEL_INPUT, OPERATIONAL_ONLY, FORBIDDEN)
 
-FEATURE_SCHEMA_VERSION = "actor-relative-v6-python-2"
-FEATURE_REGISTRY_VERSION = "rust-observation-v6-action-v5-registry-2"
-ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-14"
+FEATURE_SCHEMA_VERSION = "actor-relative-v6-python-3"
+FEATURE_REGISTRY_VERSION = "rust-observation-v6-action-v5-registry-3"
+ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-15"
 MODEL_CONTRACT_VERSION = "kernel-policy-value-net-8"
 
 STATE_HASH_DIM = 96
@@ -317,6 +317,9 @@ EXTENSION_ENCODING_CONTRACT_V6 = {
     "combat_legal_mask": "current-eligible-attacker-with-visible-active-goad-requires-include-only-at-every-prefix-otherwise-exclude-include",
     "new_cost_category": "ChooseCreatureOrRevealCreature-is-explicit-semantic-category-with-zero-legacy11-onehot-and-distinct-full-string-action-hash",
     "chosen_creature_cost": "controller-only-pending-selected-zone-and-exact-visible-stack-paid-reference-with-refreshed-power-lki-in-canonical-state-hash-no-new-numeric-columns",
+    "ward_payment": "pending-and-queued-public-stack-instance-bindings-with-payer-and-generic-cost-no-arena-identities",
+    "ward_absence": "omit-absent-pending-and-empty-queued-members-to-preserve-revision2-nonward-canonical-bytes-and-all-tensors",
+    "ward_edges": "after-history-edges-pending36-then-queued37-from-ward-source-to-targeter-source-primary-targeter-stack-index-associated-trigger-stack-index-or-zero-for-pending-extra-relative-payer3-and-generic-div32",
 }
 DETACHED_CONTEXT_REF_ALLOWLIST = {
     # rl.rs::pending_discard_semantic_v2 can expose a resolving spell source
@@ -527,6 +530,7 @@ class TupleSpec(Spec):
 @dataclass(frozen=True)
 class ObjectSpec(Spec):
     fields: dict[str, Spec]
+    optional_fields: frozenset[str] = frozenset()
 
     def validate(self, value: Any, path: tuple[str, ...]) -> None:
         ctx = ".".join(path)
@@ -534,13 +538,18 @@ class ObjectSpec(Spec):
             raise FeatureSchemaError(f"{ctx} must be an object")
         expected = set(self.fields)
         actual = set(value)
-        if expected != actual:
-            raise FeatureSchemaError(f"{ctx} fields mismatch: missing={sorted(expected - actual)} extra={sorted(actual - expected)}")
+        missing = expected - actual - self.optional_fields
+        if missing or actual - expected:
+            raise FeatureSchemaError(f"{ctx} fields mismatch: missing={sorted(missing)} extra={sorted(actual - expected)}")
         for key, child in self.fields.items():
-            child.validate(value[key], path + (key,))
+            if key in value:
+                child.validate(value[key], path + (key,))
 
     def describe(self) -> Any:
-        return {"type": "object", "fields": {key: self.fields[key].describe() for key in sorted(self.fields)}}
+        value = {"type": "object", "fields": {key: self.fields[key].describe() for key in sorted(self.fields)}}
+        if self.optional_fields:
+            value["optional_fields"] = sorted(self.optional_fields)
+        return value
 
     def leaf_specs(self, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], ScalarSpec]]:
         out: list[tuple[tuple[str, ...], ScalarSpec]] = []
@@ -1102,13 +1111,24 @@ FINALIZED_CHOSEN_CREATURE_COST_V6 = ObjectSpec({
     "chosen": CARD_STABLE_REF,
     "power_lki": I(MODEL_INPUT, minimum=I32_MIN, maximum=I32_MAX),
 })
+WARD_PAYMENT_V6 = ObjectSpec({
+    "targeting_stack_index": I(MODEL_INPUT, maximum=U32),
+    "payer": Seat(),
+    "generic": I(MODEL_INPUT, maximum=U8),
+})
+QUEUED_WARD_PAYMENT_V6 = ObjectSpec({
+    "stack_index": I(MODEL_INPUT, maximum=U32),
+    "payment": WARD_PAYMENT_V6,
+})
 OBSERVATION_EXTENSIONS_V6 = ObjectSpec({
     "pending_cast_object_cost": Opt(PENDING_CAST_OBJECT_COST_V6),
     "decision_local_library": Opt(DECISION_LOCAL_LIBRARY_V6),
     "historical_public_sources": ListSpec(HISTORICAL_PUBLIC_SOURCE_V6),
     "pending_chosen_creature_cost": Opt(PENDING_CHOSEN_CREATURE_COST_V6),
     "finalized_chosen_creature_costs": ListSpec(FINALIZED_CHOSEN_CREATURE_COST_V6),
-})
+    "pending_ward_payment": WARD_PAYMENT_V6,
+    "queued_ward_payments": ListSpec(QUEUED_WARD_PAYMENT_V6, min_length=1),
+}, optional_fields=frozenset({"pending_ward_payment", "queued_ward_payments"}))
 OBSERVATION_SPEC = ObjectSpec(
     {
         "schema_version": I(OPERATIONAL_ONLY, maximum=U32),
@@ -1278,7 +1298,8 @@ def iter_classified_leaves(value: Any, root: str) -> list[tuple[tuple[str, ...],
                 walk(child, child_spec, path + (str(i),))
         elif isinstance(s, ObjectSpec):
             for key, child_spec in s.fields.items():
-                walk(v[key], child_spec, path + (key,))
+                if key in v:
+                    walk(v[key], child_spec, path + (key,))
         elif isinstance(s, VariantSpec):
             walk(v, s.variants[v[s.tag]], path)
         else:
@@ -1426,7 +1447,8 @@ def _iter_card_refs_by_schema(value: Any, spec: Spec) -> Iterable[dict[str, Any]
         return
     if isinstance(spec, ObjectSpec):
         for key, child_spec in spec.fields.items():
-            yield from _iter_card_refs_by_schema(value[key], child_spec)
+            if key in value:
+                yield from _iter_card_refs_by_schema(value[key], child_spec)
         return
     if isinstance(spec, VariantSpec):
         yield from _iter_card_refs_by_schema(value, spec.variants[value[spec.tag]])
@@ -1477,6 +1499,8 @@ def _canonical_model_value(value: Any, spec: Spec, path: tuple[str, ...], ctx: _
     if isinstance(spec, ObjectSpec):
         out: dict[str, Any] = {}
         for key in sorted(spec.fields):
+            if key not in value:
+                continue
             child_value = _canonical_model_value(value[key], spec.fields[key], path + (key,), ctx)
             if child_value is not _OMIT:
                 out[key] = child_value
@@ -2018,7 +2042,8 @@ def _context_ref_edges(
         return
     if isinstance(spec, ObjectSpec):
         for key, child_spec in spec.fields.items():
-            _context_ref_edges(registry, edge_rows, edge_sources, edge_targets, value[key], child_spec, path + (key,), role, order_counter)
+            if key in value:
+                _context_ref_edges(registry, edge_rows, edge_sources, edge_targets, value[key], child_spec, path + (key,), role, order_counter)
         return
     if isinstance(spec, VariantSpec):
         _context_ref_edges(registry, edge_rows, edge_sources, edge_targets, value, spec.variants[value[spec.tag]], path, role, order_counter)
@@ -2040,7 +2065,8 @@ def _context_refs_with_paths_v6(value: Any, spec: Spec, path: tuple[str, ...]):
             yield from _context_refs_with_paths_v6(child, child_spec, path + (str(index),))
     elif isinstance(spec, ObjectSpec):
         for key, child_spec in spec.fields.items():
-            yield from _context_refs_with_paths_v6(value[key], child_spec, path + (key,))
+            if key in value:
+                yield from _context_refs_with_paths_v6(value[key], child_spec, path + (key,))
     elif isinstance(spec, VariantSpec):
         yield from _context_refs_with_paths_v6(value, spec.variants[value[spec.tag]], path)
 
@@ -2290,6 +2316,21 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
     for ref, role, order, subrole in extension_refs:
         node = registry.resolve_historical_source_v6(ref) if subrole == 35 else registry.resolve(ref)
         _append_edge(edge_rows, edge_sources, edge_targets, node, node, role, order, subrole)
+
+    def ward_edge(payment: dict[str, Any], source: dict[str, Any], subrole: int, trigger_index: int) -> None:
+        targeter = p["stack"][payment["targeting_stack_index"]]
+        source_node = registry.resolve_historical_source_v6(source)
+        target_node = (registry.resolve(targeter["source"]) if targeter["stack_item_kind"] == "spell"
+                       else registry.resolve_historical_source_v6(targeter["source"]))
+        extra = _seat_features(payment["payer"], actor) + [_number(payment["generic"], 32.0)]
+        _append_edge(edge_rows, edge_sources, edge_targets, source_node, target_node,
+                     "pending_context", payment["targeting_stack_index"], subrole, trigger_index, extra)
+
+    ward = extensions.get("pending_ward_payment")
+    if ward is not None:
+        ward_edge(ward, engine["pending_effect"]["source"], 36, 0)
+    for queued in extensions.get("queued_ward_payments", []):
+        ward_edge(queued["payment"], p["stack"][queued["stack_index"]]["source"], 37, queued["stack_index"])
     return registry, registry.rows, registry.tokens, registry.groups, registry.node_ids, edge_rows, edge_sources, edge_targets
 
 
@@ -2477,6 +2518,36 @@ def _validate_extensions_v6(observation: dict[str, Any]) -> None:
     actor = observation["acting_player"]
     projection = observation["projection"]
     engine = projection["engine_context"]
+    stack = projection["stack"]
+
+    def validate_ward(payment: dict[str, Any], source: dict[str, Any]) -> None:
+        index = payment["targeting_stack_index"]
+        if index >= len(stack) or stack[index]["controller"] != payment["payer"]:
+            raise FeatureSchemaError("Ward payment must bind its exact public targeter's controller")
+        if not any(target["target_kind"] == "object"
+                   and _stable_key(target["object"]) == _stable_key(source)
+                   for target in stack[index]["targets"]):
+            raise FeatureSchemaError("Ward targeter must target the Ward source incarnation")
+
+    ward = ext.get("pending_ward_payment")
+    if ward is not None:
+        pending = engine["pending_effect"]
+        choice = pending["choice"] if pending is not None else None
+        if (engine["current_stage"] != "pending_effect" or pending is None
+                or pending["source"] is None or choice is None
+                or choice["choice_kind"] != "boolean" or choice["purpose"] != "pay_cost"
+                or choice["player"] != ward["payer"] or ward["payer"] != actor):
+            raise FeatureSchemaError("pending Ward requires the acting payer's boolean payment choice")
+        validate_ward(ward, pending["source"])
+    previous_ward_index = -1
+    for queued in ext.get("queued_ward_payments", []):
+        index = queued["stack_index"]
+        if (index <= previous_ward_index or index >= len(stack)
+                or stack[index]["stack_item_kind"] != "triggered_ability"
+                or queued["payment"]["targeting_stack_index"] >= index):
+            raise FeatureSchemaError("queued Ward requires unique ascending triggered stack contexts above the targeter")
+        previous_ward_index = index
+        validate_ward(queued["payment"], stack[index]["source"])
     cost = ext["pending_cast_object_cost"]
     pending_cast = engine["pending_cast"]
     pending_chosen = ext["pending_chosen_creature_cost"]

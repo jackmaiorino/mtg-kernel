@@ -3676,7 +3676,8 @@ impl FlatDecisionEncoderV2 {
         use crate::flat_policy_v3::{
             FlatDecisionLocalLibraryV3, FlatFinalizedChosenCreatureCostV3,
             FlatHistoricalPublicSourceV3, FlatPendingCastObjectCostV3,
-            FlatPendingChosenCreatureCostV3, FlatScoringExtensionsV3,
+            FlatPendingChosenCreatureCostV3, FlatQueuedWardPaymentV3, FlatScoringExtensionsV3,
+            FlatWardPaymentV3,
         };
         use crate::policy_observation_v6::HistoricalSourceContextV6;
 
@@ -3887,6 +3888,62 @@ impl FlatDecisionEncoderV2 {
                     chosen_object: self.resolve_reference(&cost.chosen, actor)?,
                     power_lki: cost.power_lki,
                 });
+        }
+        let payment = |ward: &crate::policy_observation_v6::WardPaymentV6,
+                       source: &CardStableRefV1|
+         -> Result<FlatWardPaymentV3, FlatDecisionErrorV2> {
+            let targeting = public_stack
+                .get(ward.targeting_stack_index as usize)
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if targeting.controller != ward.payer {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            Ok(FlatWardPaymentV3 {
+                targeting_stack_index: ward.targeting_stack_index,
+                targeting_source_object: self.resolve_reference(&targeting.source, actor)?,
+                ward_source_object: self.resolve_reference(source, actor)?,
+                payer: relative_player(ward.payer, actor),
+                generic: ward.generic,
+            })
+        };
+        if let Some(ward) = &observation.extensions.pending_ward_payment {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .ok_or(FlatDecisionErrorV2::ObservationContract)?;
+            let source = pending
+                .source
+                .as_ref()
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if ward.payer != actor {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            output.pending_ward_payment = Some(payment(ward, source)?);
+        }
+        for (index, ward) in observation
+            .extensions
+            .queued_ward_payments
+            .iter()
+            .enumerate()
+        {
+            let trigger = public_stack
+                .get(ward.stack_index as usize)
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if trigger.stack_item_kind != StackItemKindV2::TriggeredAbility
+                || ward.payment.targeting_stack_index >= ward.stack_index
+                || observation.extensions.queued_ward_payments[..index]
+                    .iter()
+                    .any(|prior| prior.stack_index >= ward.stack_index)
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            output.queued_ward_payments.push(FlatQueuedWardPaymentV3 {
+                stack_index: ward.stack_index,
+                payment: payment(&ward.payment, &trigger.source)?,
+            });
         }
         self.v3_action_objects = Some(authority_mapping);
         Ok(output)

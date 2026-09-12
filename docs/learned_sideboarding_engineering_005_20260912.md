@@ -2,6 +2,24 @@
 
 September 12, 2026. Source b7ef18d4518943130f8494be0a7b678e1028dab6 in the assigned learned-sideboarding worktree. This is a coverage diagnosis and next integration design, not a playing-strength result or a completed repair.
 
+## Ward successor implementation
+
+The active Multi-Deck BO3 Campaign now implements V3 feature revision 3 with exact pending and queued Ward payment relations. The rules engine retains targeter/source/payer/payment authority checks, with a stronger exact pending-effect binding. Observation ambiguity rejection now belongs to legacy observation consumers. The successor exposes the actual public stack item, payer and cost through rich observations, flat relations and numeric features. Empty Ward fields are omitted, preserving unaffected inputs. The old measured executable and its interrupted results remain unchanged.
+
+| Verification before release build | Result |
+| --- | --- |
+| Focused Rust observation/scorer/feature/import checks | 67 passed |
+| Existing Tolarian Terror rules integration tests | 8 passed |
+| Actual native fixture emitter | Passed; four new Ward cases included |
+| Current Rust/Python parity | 28 fixtures, 38,643 values, all bit-identical |
+| Historical non-Ward compatibility | 24 real fixtures, 32,845 values and canonical bytes identical to revision 2 |
+| Python feature tests / V2 generator tests | 28 passed / 8 passed |
+| Independent source and runner review | No blocking finding; read back compiled commit/feature receipt before dispatch |
+
+The initial compile caught the expected shared V2 source-footprint pin change; the canonical generator refreshed only source/inventory digests, with unchanged V2 golden-case values and action contract. A too-broad test substring also selected an unrelated long Store test; root stopped that owned test process and reran explicitly scoped modules. A queued-state test fixture initially auto-advanced forced passes; it now includes real legal responses and verifies two queued payments before separately testing pending resolution. Original logs are retained. These preparation corrections did not alter frozen measurements or relax a failed rule.
+
+Release build, exact failed-match execution and the complete fresh engineering pilot remain next. Their source/binary/config/output identities will be recorded separately under `engineering-005/ward-successor-001`.
+
 ## Observed result
 
 | Check | Actual outcome |
@@ -23,17 +41,17 @@ Ward applies to the particular spell or ability that triggered it. See the [offi
 
 ## Smallest correct successor
 
-1. Expose a typed public Ward-payment relation with the exact bound targeter represented by its public stack-item position/context plus source object row, payer and generic cost. A source row alone is insufficient: distinct activated abilities can share one source, and current V3 has no dedicated object row for every nonspell stack item. Carry source/resolving-trigger context without pretending a resolving trigger remains a live stack row. Validate internal stack-incarnation authority before projection; do not expose arena IDs or hidden state as model features.
+1. Expose a typed public Ward-payment relation with the exact bound targeter represented by its public stack-item position/context plus source object row, payer and generic cost. A source row alone is insufficient: distinct activated abilities can share one source, and current V3 has no dedicated object row for every nonspell stack item. Carry pending-resolution context for the current payment and queued-trigger context before resolution. Current source inspection corrects the earlier draft: this engine retains the resolving item at the live stack top until completion. Avoid duplicating that item as both queued and pending payment. Validate internal stack-incarnation authority before projection; do not expose arena IDs or hidden state as model features.
 2. Version the rich observation extension, flat scorer relation and numeric feature identity together. Keep legacy consumers rejecting states they cannot represent. Prefer preserving revision-2 canonical bytes and tensors when no Ward record exists, and verify this in both Python and Rust. Adding even a null extension can change full-observation hash features in every state; if the chosen successor remaps those inputs globally, disclose and qualify that broader transfer. Cover simultaneous targeters, payment accepted/declined, countered or departed targeters, and source incarnation changes. Targeter changes must produce distinguishable scorer inputs; hidden-state renumbering must not.
 3. Review CPU/Python encoding parity, generated contracts and strict import compatibility. Shared Net8 dimensions do not establish semantic compatibility. Decide and record any explicit frozen-weight transfer before use. The sideboard head binds source weights/git identity and embeddings, not the complete V3 play-feature contract. Unchanged weights, embeddings and sideboard features can therefore retain the frozen head with a separately recorded play-observation transfer; that does not qualify the new inputs. Preserve the existing fresh head and refit only as a separately identified later fit if play/embedding binding changes.
 4. Qualify the exact failed case and one end-to-end byte-identical repeat with the successor binary. Create a new full engineering pilot identity using the existing seeds, registrations, arms, limits and controls; never combine new-source outputs with the interrupted pilot. The pilot remains a coverage/cost check, without head selection from its outcomes.
 
-The implementation is not yet changed. No replacement pilot, paid allocation or GPU run has started. Current scope is diagnosis and a reviewable observation prerequisite; full production integration still also needs successor-player loading, explicit registered 75s and the remaining CPU/GPU/store/search seams in the [brewing plan](learned_sideboard_production_brewing_plan_v1.md).
+The implementation and focused verification are complete as described above. No replacement pilot, paid allocation or GPU run has started at this checkpoint. Full production integration still also needs successor-player loading, explicit registered 75s and the remaining CPU/GPU/store/search seams in the [brewing plan](learned_sideboard_production_brewing_plan_v1.md).
 
 ## Review and evidence
 
 The diagnostic source, build/replay logs and trace are preserved in [engineering-005/engine-failure](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/engine-failure/pre-fix-trace-001.txt). Diagnostic state dumps are engineering evidence only and must not enter actor training inputs.
 
-Root verified all 11 diagnostic manifest input/artifact hashes. Two failed-game traces are byte-identical, which reproduces the failure; it does not qualify a repaired game's determinism. Independent Codex critique confirmed the missing payment relation and accepted this plan with three material changes incorporated above: retain frozen sideboard heads only under their actual weight/embedding/sideboard-feature binding; account for global hash-feature changes from an added null observation field; and distinguish stack-item instances that share a source object. Root also corrects the diagnostic draft's request for a live resolving-trigger stack index: use pending-resolution context because the trigger has already left the live stack. These are accepted design dispositions; there is no production patch to endorse yet.
+Root verified all 11 diagnostic manifest input/artifact hashes. Two failed-game traces are byte-identical, which reproduces the failure; it does not qualify a repaired game's determinism. Independent Codex critique confirmed the missing payment relation and accepted this plan with three material changes incorporated above: retain frozen sideboard heads only under their actual weight/embedding/sideboard-feature binding; account for global hash-feature changes from an added null observation field; and distinguish stack-item instances that share a source object. Root accepts pending-resolution context for the active payment. Implementation inspection subsequently corrected the earlier claim that the resolving trigger had left the stack: `validate_pending_effect_choice` authenticates it against the live top item. The projection keeps the semantic distinction without changing engine stack lifecycle. These are accepted design dispositions; implementation and code review are now proceeding under the active Multi-Deck BO3 Campaign.
 
 Fresh Fable review session 1ecd593c-24d1-4908-84e1-ee124b0585c5 failed with weekly HTTP429, zero source reads and zero substantive tokens. [Receipts](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/fable-review-001/result.json) establish an unavailable consultation, not feedback or endorsement. Root accepts the causal source/trace diagnosis and preserves the halt. The versioned observation design still needs source-level cross-examination before implementation is treated as qualified. No repeated quota attempt, reset or alternative purchase occurred.

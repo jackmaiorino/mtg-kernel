@@ -633,6 +633,30 @@ fn append_extension_edges_v3(
             35,
         )?;
     }
+    let mut append_ward = |payment: &crate::flat_policy_v3::FlatWardPaymentV3,
+                           subrole: u32,
+                           trigger_index: u32| {
+        let source = projected_required_node_v2(Some(payment.ward_source_object), projection)?;
+        let target = projected_required_node_v2(Some(payment.targeting_source_object), projection)?;
+        let mut extra = relative_features_v2(payment.payer)?.to_vec();
+        extra.push(scaled_i64_v2(i64::from(payment.generic), 32.0));
+        push_edge_v2(
+            edges,
+            source,
+            target,
+            FlatRelationRoleV2::PendingContext,
+            payment.targeting_stack_index,
+            subrole,
+            trigger_index,
+            &extra,
+        )
+    };
+    if let Some(payment) = &view.extensions().pending_ward_payment {
+        append_ward(payment, 36, 0)?;
+    }
+    for queued in &view.extensions().queued_ward_payments {
+        append_ward(&queued.payment, 37, queued.stack_index)?;
+    }
     Ok(())
 }
 
@@ -692,10 +716,41 @@ fn canonical_extensions_v3(
             }))
         })
         .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
-    Ok(serde_json::json!({"pending_cast_object_cost": cost,
+    let mut value = serde_json::json!({"pending_cast_object_cost": cost,
         "decision_local_library": library, "historical_public_sources": historical,
         "pending_chosen_creature_cost": pending_chosen,
-        "finalized_chosen_creature_costs": finalized_chosen}))
+        "finalized_chosen_creature_costs": finalized_chosen});
+    let payment = |ward: &crate::flat_policy_v3::FlatWardPaymentV3|
+     -> Result<Value, NativeFlatTensorErrorV2> {
+        Ok(serde_json::json!({
+            "targeting_stack_index": ward.targeting_stack_index,
+            "payer": relative_player_value_v2(ward.payer, false)?,
+            "generic": ward.generic,
+        }))
+    };
+    // Missing Ward relations retain revision-2 canonical bytes and hashes.
+    // An added null or empty member would perturb every observation's hash.
+    let members = value
+        .as_object_mut()
+        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?;
+    if let Some(ward) = &ext.pending_ward_payment {
+        members.insert("pending_ward_payment".into(), payment(ward)?);
+    }
+    if !ext.queued_ward_payments.is_empty() {
+        members.insert(
+            "queued_ward_payments".into(),
+            Value::Array(
+                ext.queued_ward_payments
+                    .iter()
+                    .map(|queued| {
+                        Ok(serde_json::json!({"stack_index": queued.stack_index,
+                    "payment": payment(&queued.payment)?}))
+                    })
+                    .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?,
+            ),
+        );
+    }
+    Ok(value)
 }
 
 #[cfg(test)]

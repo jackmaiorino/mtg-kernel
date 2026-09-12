@@ -57,6 +57,25 @@ pub struct FlatScoringExtensionsV3 {
     pub historical_public_sources: Vec<FlatHistoricalPublicSourceV3>,
     pub pending_chosen_creature_cost: Option<FlatPendingChosenCreatureCostV3>,
     pub finalized_chosen_creature_costs: Vec<FlatFinalizedChosenCreatureCostV3>,
+    pub pending_ward_payment: Option<FlatWardPaymentV3>,
+    pub queued_ward_payments: Vec<FlatQueuedWardPaymentV3>,
+}
+
+/// Public stack positions retain the instance relation even when two
+/// activated abilities share the same source object row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatWardPaymentV3 {
+    pub targeting_stack_index: u32,
+    pub targeting_source_object: u32,
+    pub ward_source_object: u32,
+    pub payer: FlatRelativePlayerV2,
+    pub generic: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatQueuedWardPaymentV3 {
+    pub stack_index: u32,
+    pub payment: FlatWardPaymentV3,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,6 +550,110 @@ mod tests {
         println!("NATIVE_FLAT_V3_FIXTURE={fixture}");
     }
 
+    fn ward_priority_fixture_state(abilities: bool) -> GameState {
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{
+            put, ward_multi_targeter_state, ward_same_source_abilities_state,
+        };
+        use crate::state::Zone;
+        let mut state = if abilities {
+            ward_same_source_abilities_state().0
+        } else {
+            ward_multi_targeter_state().0
+        };
+        // Fast sessions consume forced Pass actions. Keep a real response
+        // choice available so the queued fixture still contains both triggers
+        // before the engine begins resolving either Ward payment.
+        for player in [PlayerId::P0, PlayerId::P1] {
+            put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            state.players[player.index()].mana_pool[ManaColor::R.pool_index()] += 1;
+        }
+        state
+    }
+
+    #[test]
+    fn ward_bound_stack_instances_reach_flat_and_numeric_inputs() {
+        use crate::policy_observation_v6::tests::reach_ward_payment;
+        for abilities in [false, true] {
+            let mut state = ward_priority_fixture_state(abilities);
+            let queued_session = FastActorSessionV1::from_v3_fixture_state(state.clone());
+            let mut queued_owned = OwnedScoringV3::default();
+            let queued = queued_owned.encode(&queued_session);
+            assert_eq!(queued.extensions.queued_ward_payments.len(), 2);
+            assert!(queued.extensions.pending_ward_payment.is_none());
+            let candidates = queued
+                .extensions
+                .queued_ward_payments
+                .iter()
+                .map(|item| item.payment.targeting_stack_index)
+                .collect::<Vec<_>>();
+            assert_ne!(candidates[0], candidates[1]);
+            if abilities {
+                assert_eq!(
+                    queued.extensions.queued_ward_payments[0]
+                        .payment
+                        .targeting_source_object,
+                    queued.extensions.queued_ward_payments[1]
+                        .payment
+                        .targeting_source_object
+                );
+            }
+            reach_ward_payment(&mut state);
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("Ward fixture needs an actual payment choice");
+            };
+            let observation = session.flat_policy_observation_v3(expected).unwrap();
+            let mut owned = OwnedScoringV3::default();
+            let decision = owned.encode(&session);
+            let current = decision.extensions.pending_ward_payment.as_ref().unwrap();
+            let different_index = *candidates
+                .iter()
+                .find(|&&i| i != current.targeting_stack_index)
+                .unwrap();
+            let mut alternative = observation.clone();
+            alternative
+                .extensions
+                .pending_ward_payment
+                .as_mut()
+                .unwrap()
+                .targeting_stack_index = different_index;
+            let (_, extensions) =
+                encode_observation_owned_tables_for_fixture_v3(&alternative).unwrap();
+            let mut different = decision.clone();
+            different.extensions = extensions;
+            let mut first = NativeFlatDecisionTensorV3::default();
+            let mut second = NativeFlatDecisionTensorV3::default();
+            NativeFlatTensorizerV3::default()
+                .fill(owned.view(&decision), &mut first)
+                .unwrap();
+            NativeFlatTensorizerV3::default()
+                .fill(owned.view(&different), &mut second)
+                .unwrap();
+            assert_ne!(first.common.state, second.common.state);
+            assert_ne!(first.common.edge_features, second.common.edge_features);
+            if abilities {
+                assert_eq!(
+                    first.common.edge_target_indices, second.common.edge_target_indices,
+                    "shared source rows must still retain distinct stack-instance features"
+                );
+            }
+            different
+                .extensions
+                .pending_ward_payment
+                .as_mut()
+                .unwrap()
+                .generic += 1;
+            let mut other_cost = NativeFlatDecisionTensorV3::default();
+            NativeFlatTensorizerV3::default()
+                .fill(owned.view(&different), &mut other_cost)
+                .unwrap();
+            assert_ne!(second.common.state, other_cost.common.state);
+            assert_ne!(second.common.edge_features, other_cost.common.edge_features);
+        }
+    }
+
     #[test]
     #[ignore = "explicit Rust/Python all-thirteen-tensor fixture emitter"]
     fn emit_native_flat_v3_fixtures() {
@@ -543,6 +666,27 @@ mod tests {
         )
         .unwrap();
         emit_fixture("ordinary-opening", &ordinary);
+        for abilities in [false, true] {
+            use crate::policy_observation_v6::tests::reach_ward_payment;
+            let mut state = ward_priority_fixture_state(abilities);
+            emit_fixture(
+                if abilities {
+                    "ward-queued-shared-ability-source"
+                } else {
+                    "ward-queued-two-spells"
+                },
+                &FastActorSessionV1::from_v3_fixture_state(state.clone()),
+            );
+            reach_ward_payment(&mut state);
+            emit_fixture(
+                if abilities {
+                    "ward-pending-shared-ability-source"
+                } else {
+                    "ward-pending-two-spells"
+                },
+                &FastActorSessionV1::from_v3_fixture_state(state),
+            );
+        }
         emit_fixture(
             "forestcycling-search",
             &FastActorSessionV1::from_v3_fixture_state(forest_search_state(

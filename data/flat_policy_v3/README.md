@@ -1,15 +1,21 @@
 # FlatV3 / PythonV6 feature contract
 
 This successor explicitly adds decision-local library search cards, resolving
-public source history, and the pending Escape object-cost prefix. The frozen
+public source history, the pending Escape object-cost prefix, chosen-creature
+cost context, and exact pending/queued Ward payment relations. The frozen
 `python/mtg_kernel_rl/features.py` and its V5 identities remain separate.
 Net8 dimensions stay state 219, object 98, edge 41, action 195, action reference
 25, and 20 object pooling groups. Reusing weights requires explicit feature
 transfer; these dimensions do not establish unchanged identity or learned
 competence with the extensions.
 
-The rich observation requires `extensions` with all three keys, using null or
-an empty list when absent. Canonical state JSON always includes these fields.
+The rich observation requires the five revision-2 `extensions` keys, using null
+or an empty list when absent. Canonical state JSON includes these five fields.
+Revision 3 adds `pending_ward_payment` only when present and
+`queued_ward_payments` only when nonempty. Missing Ward members remain absent
+from canonical JSON, preserving revision-2 non-Ward bytes and all tensors.
+Python rejects explicit null/empty Ward members rather than silently changing
+their representation. The authoritative Rust serializer omits absent members.
 Stable references contribute only card ID, actor-relative owner/controller,
 and zone. The 96 existing hash slots encode the extensions; no layer widens.
 
@@ -38,6 +44,21 @@ after common edges: cost source 32, selected prefix 33, search cards 34,
 historical sources 35. Primary order is respectively zero, selection index,
 public class ordinal, and record index; associated order is zero.
 
+Ward relations identify the exact targeter by its index in the public stack,
+plus payer and generic cost. Queued Ward additionally binds the trigger's
+public stack index; pending Ward uses the existing resolving-source context.
+The source row alone cannot distinguish multiple abilities from one source.
+After historical self-edges, append Ward-source to targeter-source edges with
+subrole 36 for pending and 37 for queued payment. Primary order is targeter
+stack index, associated order is trigger index (zero for pending), and the
+four extra scalars are relative payer's three one-hot values and generic cost
+divided by 32. Full public ordinals also remain in canonical state JSON, so
+numeric order scaling cannot erase the semantic relation. No arena identifier
+or private incarnation counter becomes a model input. Trigger records whose
+bound targeter already departed omit the payment relation and retain the
+ordinary public trigger item. This is a new feature identity despite unchanged
+Net8 dimensions; its new Ward inputs are an explicit frozen-weight transfer.
+
 Public stack targets may retain Battlefield, Stack, or Graveyard provenance,
 including a graveyard target that has since left that public zone. Such a
 reference preserves the captured public facts and does not reveal its current
@@ -58,10 +79,11 @@ The frozen V5 pair contract is unchanged.
 The semantic cost vocabulary explicitly includes
 `ChooseCreatureOrRevealCreature`. Its full name remains in the action hash;
 the historical 11 cost one-hot columns are zero for this exact new category.
-Unknown categories still fail, and action width stays 195. This enum addition
-does not expose the separate pending chosen-creature zone or captured damage
-power. Those value-state omissions require their own observation extension;
-successful execution alone does not establish complete Markov coverage.
+Unknown categories still fail, and action width stays 195. Revision 2 adds
+pending chosen-creature zone and finalized exact spell/source/chosen-object
+relations with refreshed power LKI to the canonical state hash. These fields
+retain their earlier representation in revision 3. Successful execution alone
+does not establish complete Markov coverage.
 
 Python rejects inconsistent JSON and inappropriate references. It cannot
 authenticate a mutually coherent fabricated public-history record. The Rust

@@ -15,7 +15,7 @@ def generate() -> None:
     directory = Path(__file__).resolve().parent
     source_hash = hashlib.sha256(Path(features.__file__).read_bytes()).hexdigest()
     descriptor = {
-        "schema": "flat-policy-v3-feature-contract-2",
+        "schema": "flat-policy-v3-feature-contract-3",
         "rich_observation_schema": 6,
         "legal_action_schema": 5,
         "feature_schema_version": features.FEATURE_SCHEMA_VERSION,
@@ -27,7 +27,8 @@ def generate() -> None:
         "model_contract_version": features.MODEL_CONTRACT_VERSION,
         "dimensions": {"state": 219, "object": 98, "edge": 41, "action": 195, "action_ref": 25, "object_groups": 20},
         "encoding": features.EXTENSION_ENCODING_CONTRACT_V6,
-        "extension_edge_subroles": {"cost_source": 32, "cost_selected": 33, "search_card": 34, "historical_source": 35},
+        "extension_edge_subroles": {"cost_source": 32, "cost_selected": 33, "search_card": 34, "historical_source": 35,
+                                    "pending_ward_payment": 36, "queued_ward_payment": 37},
         "provenance_boundary": "Python validates internal consistency; authoritative Rust production validates actual public history and hidden-state scope.",
         "transfer": "Existing Net8 weights require explicitly labeled feature transfer. Shape equality is not unchanged checkpoint identity or competence evidence.",
     }

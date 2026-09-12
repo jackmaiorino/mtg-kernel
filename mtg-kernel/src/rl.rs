@@ -20,7 +20,8 @@ use crate::mana::ManaColor;
 use crate::policy_observation_v6::{
     DecisionLocalLibraryV6, FinalizedChosenCreatureCostV6, HistoricalPublicSourceV6,
     HistoricalSourceContextV6, ObservationV6, PendingCastObjectCostV6, PendingChosenCreatureCostV6,
-    PolicyObservationExtensionsV6, OBSERVATION_SCHEMA_VERSION_V6,
+    PolicyObservationExtensionsV6, QueuedWardPaymentV6, WardPaymentV6,
+    OBSERVATION_SCHEMA_VERSION_V6,
 };
 use crate::policy_surface_v5::{
     PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
@@ -1513,6 +1514,7 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     let projection = PublicObservationProjectionV1 {
         turn: state.turn,
         phase: state.step.into(),
@@ -1566,6 +1568,7 @@ pub fn observe_v2(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV2> {
+    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     let mut observation = build_observation_v2(
         state,
         surface,
@@ -1731,6 +1734,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_count,
         text_mode,
     } = request;
+    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     #[cfg(test)]
     TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
@@ -2018,7 +2022,38 @@ fn policy_observation_extensions_with_text_v6(
         .transpose()?;
     let mut finalized_chosen_creature_costs = Vec::new();
     let mut historical_public_sources = Vec::new();
+    let mut queued_ward_payments = Vec::new();
+    let ward_payment = |item: &StackItem| -> Result<Option<WardPaymentV6>> {
+        crate::effect::validated_ward_observation_targeter(state, item)
+            .map_err(RlContractError)?
+            .map(|(targeter, generic)| {
+                let index = state
+                    .stack
+                    .iter()
+                    .position(|live| live.v4.stack_item_id == targeter.v4.stack_item_id)
+                    .ok_or_else(|| {
+                        RlContractError("Ward targeter lost public stack membership".into())
+                    })?;
+                Ok(WardPaymentV6 {
+                    targeting_stack_index: u32::try_from(index)
+                        .map_err(|_| RlContractError("Ward targeter index exceeds u32".into()))?,
+                    payer: targeter.controller.into(),
+                    generic,
+                })
+            })
+            .transpose()
+    };
     for (index, item) in state.stack.iter().enumerate() {
+        let resolving = state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            pending.resolving_item.v4.stack_item_id == item.v4.stack_item_id
+        });
+        if let Some(payment) = if resolving { None } else { ward_payment(item)? } {
+            queued_ward_payments.push(QueuedWardPaymentV6 {
+                stack_index: u32::try_from(index)
+                    .map_err(|_| RlContractError("Ward trigger index exceeds u32".into()))?,
+                payment,
+            });
+        }
         // stack_source_ref validates the independent finalized cast binding,
         // including equality with the complete paid-cost record and its LKI.
         if item.kind == StackItemKind::Spell {
@@ -2056,8 +2091,22 @@ fn policy_observation_extensions_with_text_v6(
         }
     }
     let mut decision_local_library = None;
+    let mut pending_ward_payment = None;
     if let Some(pending) = &state.engine.pending_effect {
         crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
+        if matches!(
+            pending.choice.as_ref(),
+            Some(crate::effect::PendingEffectChoice::ChooseBoolean {
+                purpose: crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. },
+                ..
+            })
+        ) {
+            pending_ward_payment = Some(
+                ward_payment(&pending.resolving_item)?.ok_or_else(|| {
+                    RlContractError("pending Ward payment has no live bound targeter".into())
+                })?,
+            );
+        }
         historical_public_sources.push(HistoricalPublicSourceV6 {
             context: HistoricalSourceContextV6::PendingEffect,
             source: stack_source_ref(state, &pending.resolving_item)?,
@@ -2143,6 +2192,8 @@ fn policy_observation_extensions_with_text_v6(
         historical_public_sources,
         pending_chosen_creature_cost,
         finalized_chosen_creature_costs,
+        pending_ward_payment,
+        queued_ward_payments,
     })
 }
 

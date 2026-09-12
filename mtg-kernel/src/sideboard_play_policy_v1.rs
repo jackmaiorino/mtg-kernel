@@ -326,7 +326,7 @@ impl FrozenPlayPolicyV1 {
             destination: transfer.clone(),
             features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
             feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
-            semantics: "rich V6 / flat V3 revision 2; exact public historical sources, chooser-only unordered library candidates, typed object-cost prefixes, private chosen-creature branch and visible refreshed paid power; unchanged imported weights and dimensions; source inference transfer only, no learned competence claim".into(),
+            semantics: "rich V6 / flat V3 revision 3; exact public historical sources, chooser-only unordered library candidates, typed object-cost prefixes, private chosen-creature branch, visible refreshed paid power, and exact pending/queued Ward-to-targeter payment bindings; unchanged imported weights and dimensions; source inference transfer only, no learned competence claim".into(),
         });
         policy.identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
         policy.identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
