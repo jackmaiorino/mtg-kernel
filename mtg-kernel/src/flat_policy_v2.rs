@@ -16,13 +16,15 @@ use crate::engine::CastMode;
 use crate::flat_action_contract_v2::{
     FLAT_ACTION_CONTRACT_SEMANTIC_SHA256_V2, FLAT_ACTION_CONTRACT_SOURCE_SHA256_V2,
 };
+use crate::policy_observation_v6::ObservationV6;
 use crate::policy_surface_v5::PolicySurfaceStageV5;
 use crate::rl::{
     BooleanChoicePurposeV4, CardPrivateV1, CardPublicV2, CardStableRefV1, ContinuousEffectPublicV2,
     DiscardResumeSemanticV2, EffectDurationV2, EngineDecisionStageV2, ExilePlayPermissionPublicV2,
-    ObjectRelationPublicV4, ObservationV5, PendingEffectChoiceSemanticV4, PendingTriggerKindV2,
-    PlayOrCastV2, PlayPermissionExpiryV2, PlayerSeatV1, SpellCopyStageV2, StackItemKindV2,
-    SurfaceDecisionStageV2, TargetRefV1, TargetSelectionPurposeV4, ZoneIndependentStepV1,
+    KnownLibraryCardV4, ObjectRelationPublicV4, ObservationV5, PendingEffectChoiceSemanticV4,
+    PendingTriggerKindV2, PlayOrCastV2, PlayPermissionExpiryV2, PlayerSeatV1,
+    PublicObservationProjectionV5, SpellCopyStageV2, StackItemKindV2, SurfaceDecisionStageV2,
+    TargetRefV1, TargetSelectionPurposeV4, ZoneIndependentStepV1,
 };
 use crate::rl_session::{
     FastActorDecisionV1, FastActorSessionV1, FlatActionCoreV1, FlatActionDecisionBindingV2,
@@ -48,6 +50,42 @@ include!(concat!(env!("OUT_DIR"), "/flat_policy_contract_v2.rs"));
 
 const HISTORICAL_STACK_TARGET_KIND_V1: u8 = 1;
 const HISTORICAL_PAID_COST_KIND_V1: u8 = 2;
+const DECISION_LOCAL_LIBRARY_KIND_V3: u8 = 3;
+const HISTORICAL_PUBLIC_SOURCE_KIND_V3: u8 = 4;
+
+/// Borrowed common fields, without a schema identity or conversion between
+/// observations. Each entry point validates its own version before using this.
+struct FlatCommonObservationView<'a> {
+    v3_source_authority: bool,
+    acting_player: PlayerSeatV1,
+    projection: &'a PublicObservationProjectionV5,
+    own_hand: &'a [CardPrivateV1],
+    known_library_cards: &'a [Vec<KnownLibraryCardV4>; 2],
+    known_hand_cards: &'a [Vec<CardPrivateV1>; 2],
+}
+
+trait FlatCommonObservation {
+    fn flat_common(&self) -> FlatCommonObservationView<'_>;
+}
+
+macro_rules! common_observation_view {
+    ($ty:ty, $v3:expr) => {
+        impl FlatCommonObservation for $ty {
+            fn flat_common(&self) -> FlatCommonObservationView<'_> {
+                FlatCommonObservationView {
+                    v3_source_authority: $v3,
+                    acting_player: self.acting_player,
+                    projection: &self.projection,
+                    own_hand: &self.own_hand,
+                    known_library_cards: &self.known_library_cards,
+                    known_hand_cards: &self.known_hand_cards,
+                }
+            }
+        }
+    };
+}
+common_observation_view!(ObservationV5, false);
+common_observation_view!(ObservationV6, true);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -1090,6 +1128,9 @@ pub struct FlatDecisionEncoderV2 {
     claimed_model_objects: Vec<bool>,
     scorer_actions: Vec<FlatScorerActionCoreV2>,
     scorer_action_refs: Vec<FlatScorerActionRefV2>,
+    /// Present only during the separately versioned V3 builder. V2 never
+    /// obtains a mapping for its deliberately unsupported authority groups.
+    v3_action_objects: Option<Vec<(FlatActionObjectV2, u32)>>,
 }
 
 fn relative_player(seat: PlayerSeatV1, actor: PlayerSeatV1) -> FlatRelativePlayerV2 {
@@ -1376,6 +1417,7 @@ fn context_object_ordinal(context: FlatContextKindV2, order: u32) -> u32 {
 
 impl FlatDecisionEncoderV2 {
     fn clear_typed_cache(&mut self) {
+        self.v3_action_objects = None;
         self.cached_binding = None;
         self.globals = FlatGlobalsV2::default();
         self.objects.clear();
@@ -1769,7 +1811,11 @@ impl FlatDecisionEncoderV2 {
         Ok((start, count))
     }
 
-    fn build_globals(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV2> {
+    fn build_globals(
+        &mut self,
+        observation: &impl FlatCommonObservation,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let observation = observation.flat_common();
         let actor = observation.acting_player;
         let p = &observation.projection.surface;
         let seats = [actor, opponent(actor)];
@@ -2175,7 +2221,11 @@ impl FlatDecisionEncoderV2 {
         }
     }
 
-    fn register_objects(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV2> {
+    fn register_objects(
+        &mut self,
+        observation: &impl FlatCommonObservation,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let observation = observation.flat_common();
         let actor = observation.acting_player;
         let opponent = opponent(actor);
         let p = &observation.projection.surface;
@@ -2217,6 +2267,12 @@ impl FlatDecisionEncoderV2 {
             )?;
         }
         for (order, item) in p.stack.iter().enumerate() {
+            // V3 gives nonspell sources explicit public historical authority.
+            // Existing physical rows are reused; absent sources are registered
+            // from the validated V6 extension after the common object pass.
+            if observation.v3_source_authority && item.stack_item_kind != StackItemKindV2::Spell {
+                continue;
+            }
             self.add_stable(
                 &item.source,
                 actor,
@@ -2685,10 +2741,14 @@ impl FlatDecisionEncoderV2 {
         Ok(())
     }
 
-    fn build_relations(&mut self, observation: &ObservationV5) -> Result<(), FlatDecisionErrorV2> {
-        let actor = observation.acting_player;
+    fn build_relations(
+        &mut self,
+        observation: &impl FlatCommonObservation,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let common = observation.flat_common();
+        let actor = common.acting_player;
         let opponent = opponent(actor);
-        let p = &observation.projection.surface;
+        let p = &common.projection.surface;
 
         let actor_relative_cards = p.battlefield[seat_index(actor)]
             .iter()
@@ -2761,7 +2821,11 @@ impl FlatDecisionEncoderV2 {
         }
         for (stack_order, item) in p.stack.iter().enumerate() {
             let stack_order = usize_u32(stack_order)?;
-            let source = self.resolve_live(&item.source, actor)?;
+            let source = if common.v3_source_authority {
+                self.resolve_reference(&item.source, actor)?
+            } else {
+                self.resolve_live(&item.source, actor)?
+            };
             self.push_relation(
                 FlatRelationRoleV2::StackTarget,
                 Some(source),
@@ -2962,7 +3026,7 @@ impl FlatDecisionEncoderV2 {
             );
         }
         for (relative_owner, seat) in [actor, opponent].into_iter().enumerate() {
-            for entry in &observation.known_library_cards[seat_index(seat)] {
+            for entry in &common.known_library_cards[seat_index(seat)] {
                 let object = self.resolve_reference(&entry.card.stable, actor)?;
                 self.push_relation(
                     FlatRelationRoleV2::KnownLibrary,
@@ -2977,7 +3041,7 @@ impl FlatDecisionEncoderV2 {
                 );
             }
             for (reveal_order, card) in
-                canonical_known_hand_cards(&observation.known_hand_cards[seat_index(seat)], actor)
+                canonical_known_hand_cards(&common.known_hand_cards[seat_index(seat)], actor)
                     .into_iter()
                     .enumerate()
             {
@@ -3002,8 +3066,9 @@ impl FlatDecisionEncoderV2 {
 
     fn build_pending_relations(
         &mut self,
-        observation: &ObservationV5,
+        observation: &impl FlatCommonObservation,
     ) -> Result<(), FlatDecisionErrorV2> {
+        let observation = observation.flat_common();
         let actor = observation.acting_player;
         let engine = &observation.projection.surface.engine_context;
         if let Some(pending) = &engine.pending_cast {
@@ -3303,8 +3368,9 @@ impl FlatDecisionEncoderV2 {
 
     fn build_private_relations(
         &mut self,
-        observation: &ObservationV5,
+        observation: &impl FlatCommonObservation,
     ) -> Result<(), FlatDecisionErrorV2> {
+        let observation = observation.flat_common();
         let actor = observation.acting_player;
         let surface = &observation.projection.surface.surface_context;
         self.push_context_ref(
@@ -3488,6 +3554,296 @@ impl FlatDecisionEncoderV2 {
             }
         }
         Ok(())
+    }
+
+    fn extension_authority_v3(
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        group: FlatActionObjectGroupV1,
+        ordinal: usize,
+    ) -> Result<FlatActionObjectV2, FlatDecisionErrorV2> {
+        Ok(FlatActionObjectV2 {
+            card_token: card_token(stable.card_db_id),
+            group,
+            actor_visible_ordinal: u16::try_from(ordinal)
+                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+            owner_relative: relative_player(stable.owner, actor) as u8,
+            controller_relative: relative_player(stable.controller, actor) as u8,
+            zone: flat_zone(stable.zone) as u8,
+            zone_change_count: if group == FlatActionObjectGroupV1::DecisionLocalLibrary {
+                0
+            } else {
+                stable.zone_change_count
+            },
+        })
+    }
+
+    fn register_extensions_v3(
+        &mut self,
+        observation: &ObservationV6,
+    ) -> Result<crate::flat_policy_v3::FlatScoringExtensionsV3, FlatDecisionErrorV2> {
+        use crate::flat_policy_v3::{
+            FlatDecisionLocalLibraryV3, FlatHistoricalPublicSourceV3, FlatPendingCastObjectCostV3,
+            FlatScoringExtensionsV3,
+        };
+        use crate::policy_observation_v6::HistoricalSourceContextV6;
+
+        let actor = observation.acting_player;
+        let mut output = FlatScoringExtensionsV3::default();
+        let mut authority_mapping = Vec::new();
+        if let Some(search) = &observation.extensions.decision_local_library {
+            if search.chooser != actor {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            let mut object_indices = Vec::with_capacity(search.cards.len());
+            let mut public_class_ordinals = Vec::with_capacity(search.cards.len());
+            let mut previous_class = None;
+            let mut class_ordinal = 0_u32;
+            for (index, card) in search.cards.iter().enumerate() {
+                let stable = &card.stable;
+                let class = (
+                    stable.card_db_id,
+                    seat_index(stable.owner),
+                    seat_index(stable.controller),
+                    flat_zone(stable.zone) as u8,
+                );
+                if stable.zone != Zone::Library
+                    || stable.owner != search.library_owner
+                    || previous_class.is_some_and(|previous| previous > class)
+                    || search.cards[..index].iter().any(|prior| {
+                        prior.stable.arena_id == stable.arena_id
+                            && prior.stable.zone_change_count == stable.zone_change_count
+                    })
+                {
+                    return Err(FlatDecisionErrorV2::ObservationContract);
+                }
+                if previous_class.is_some_and(|previous| previous != class) {
+                    class_ordinal = class_ordinal
+                        .checked_add(1)
+                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+                }
+                previous_class = Some(class);
+                let model_index = match self.resolve_reference(stable, actor) {
+                    Ok(index) => index,
+                    Err(FlatDecisionErrorV2::InvalidReference) => {
+                        let index = self.add_private_card(
+                            card,
+                            actor,
+                            FlatObjectGroupV2::PrivateContext,
+                            FlatObjectSourceKindV2::Private,
+                            class_ordinal,
+                            DECISION_LOCAL_LIBRARY_KIND_V3,
+                        )?;
+                        output.appended_object_indices.push(index);
+                        index
+                    }
+                    Err(error) => return Err(error),
+                };
+                authority_mapping.push((
+                    Self::extension_authority_v3(
+                        stable,
+                        actor,
+                        FlatActionObjectGroupV1::DecisionLocalLibrary,
+                        index,
+                    )?,
+                    model_index,
+                ));
+                object_indices.push(model_index);
+                public_class_ordinals.push(class_ordinal);
+            }
+            output.decision_local_library = Some(FlatDecisionLocalLibraryV3 {
+                chooser: relative_player(search.chooser, actor),
+                library_owner: relative_player(search.library_owner, actor),
+                object_indices,
+                public_class_ordinals,
+            });
+        }
+
+        let public_stack = &observation.projection.surface.stack;
+        for (index, historical) in observation
+            .extensions
+            .historical_public_sources
+            .iter()
+            .enumerate()
+        {
+            if observation.extensions.historical_public_sources[..index]
+                .iter()
+                .any(|prior| prior.context == historical.context)
+            {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            let ordinal = match historical.context {
+                HistoricalSourceContextV6::Stack { stack_index } => {
+                    let item = public_stack
+                        .get(
+                            usize::try_from(stack_index)
+                                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+                        )
+                        .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+                    if historical.stack_item_kind == StackItemKindV2::Spell
+                        || item.source != historical.source
+                        || item.stack_item_kind != historical.stack_item_kind
+                    {
+                        return Err(FlatDecisionErrorV2::InconsistentReference);
+                    }
+                    stack_index
+                }
+                HistoricalSourceContextV6::PendingEffect => {
+                    let pending = observation
+                        .projection
+                        .surface
+                        .engine_context
+                        .pending_effect
+                        .as_ref()
+                        .ok_or(FlatDecisionErrorV2::ObservationContract)?;
+                    if pending.source.as_ref() != Some(&historical.source) {
+                        return Err(FlatDecisionErrorV2::InconsistentReference);
+                    }
+                    usize_u32(public_stack.len())?
+                }
+            };
+            let model_index = match self.resolve_reference(&historical.source, actor) {
+                Ok(index) => index,
+                Err(FlatDecisionErrorV2::InvalidReference) => {
+                    let index = self.add_stable(
+                        &historical.source,
+                        actor,
+                        FlatObjectGroupV2::PendingContext,
+                        FlatObjectSourceKindV2::Pending,
+                        ordinal,
+                        HISTORICAL_PUBLIC_SOURCE_KIND_V3,
+                    )?;
+                    output.appended_object_indices.push(index);
+                    index
+                }
+                Err(error) => return Err(error),
+            };
+            authority_mapping.push((
+                Self::extension_authority_v3(
+                    &historical.source,
+                    actor,
+                    FlatActionObjectGroupV1::HistoricalPublicSource,
+                    index,
+                )?,
+                model_index,
+            ));
+            output
+                .historical_public_sources
+                .push(FlatHistoricalPublicSourceV3 {
+                    context: historical.context.clone(),
+                    stack_item_kind: historical.stack_item_kind,
+                    model_object_index: model_index,
+                });
+        }
+
+        if let Some(cost) = &observation.extensions.pending_cast_object_cost {
+            let selected_count = usize_u32(cost.selected.len())?;
+            if selected_count.checked_add(cost.remaining_count) != Some(cost.required_count)
+                || cost.selected.iter().enumerate().any(|(index, selected)| {
+                    cost.selected[..index].iter().any(|prior| prior == selected)
+                })
+            {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            output.pending_cast_object_cost = Some(FlatPendingCastObjectCostV3 {
+                source_object: self.resolve_reference(&cost.source, actor)?,
+                controller: relative_player(cost.controller, actor),
+                cast_method: cost.cast_method,
+                cost_kind: cost.cost_kind,
+                required_count: cost.required_count,
+                selected_objects: cost
+                    .selected
+                    .iter()
+                    .map(|stable| self.resolve_reference(stable, actor))
+                    .collect::<Result<Vec<_>, _>>()?,
+                remaining_count: cost.remaining_count,
+            });
+        }
+        self.v3_action_objects = Some(authority_mapping);
+        Ok(output)
+    }
+
+    pub(crate) fn build_scoring_owned_v3(
+        &mut self,
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        buffers: &mut FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<crate::flat_policy_v3::FlatDecisionV3, FlatDecisionErrorV2> {
+        self.clear_typed_cache();
+        let action_count = usize::try_from(expected.legal_action_count)
+            .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+        let max_refs = action_count
+            .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+            .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+        self.actions
+            .resize(action_count, FlatActionCoreV1::default());
+        self.action_refs
+            .resize(max_refs, FlatActionRefV2::default());
+        self.action_objects
+            .resize(max_refs, FlatActionObjectV2::default());
+        let action_slice = session.encode_current_flat_action_slice_v3(
+            expected,
+            &mut FlatActionDecisionSliceBuffersV2 {
+                actions: &mut self.actions,
+                refs: &mut self.action_refs,
+                objects: &mut self.action_objects,
+            },
+        )?;
+        self.actions.truncate(
+            usize::try_from(action_slice.active_action_count)
+                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+        );
+        self.action_refs.truncate(
+            usize::try_from(action_slice.active_ref_count)
+                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+        );
+        self.action_objects
+            .truncate(usize::from(action_slice.active_object_count));
+        let observation = session.flat_policy_observation_v3(expected)?;
+        if observation.schema_version != 6
+            || observation.acting_player != expected.acting_player
+            || observation.step_index != expected.step
+            || observation.physical_decision_id != expected.physical_decision_id
+            || observation.substep_index != expected.substep_index
+            || observation.substep_count != expected.substep_count
+            || observation.card_db_hash != action_slice.binding.0.card_db_hash
+        {
+            return Err(FlatDecisionErrorV2::ObservationContract);
+        }
+        self.build_globals(&observation)?;
+        self.register_objects(&observation)?;
+        let extensions = self.register_extensions_v3(&observation)?;
+        self.build_relations(&observation)?;
+        self.validate_cached_tables()?;
+        if self.scorer_actions.len() != self.actions.len()
+            || self.scorer_action_refs.len() != self.action_refs.len()
+        {
+            return Err(FlatDecisionErrorV2::ScorerBindingMismatch);
+        }
+        let decision = crate::flat_policy_v3::FlatDecisionV3 {
+            binding: action_slice.binding,
+            globals: self.globals,
+            extensions,
+        };
+        // Publish all scorer-visible rows only after every authority and
+        // relation has validated. No V2 binding is cached or exposed here.
+        std::mem::swap(&mut self.objects, buffers.objects);
+        std::mem::swap(&mut self.relations, buffers.relations);
+        std::mem::swap(&mut self.object_subtypes, buffers.object_subtypes);
+        std::mem::swap(&mut self.ability_uses, buffers.ability_uses);
+        std::mem::swap(&mut self.goads, buffers.goads);
+        std::mem::swap(&mut self.completed_dungeons, buffers.completed_dungeons);
+        std::mem::swap(
+            &mut self.effect_subtype_changes,
+            buffers.effect_subtype_changes,
+        );
+        std::mem::swap(
+            &mut self.context_path_elements,
+            buffers.context_path_elements,
+        );
+        std::mem::swap(&mut self.scorer_actions, buffers.actions);
+        std::mem::swap(&mut self.scorer_action_refs, buffers.action_refs);
+        Ok(decision)
     }
 
     fn build_cache(
@@ -3731,12 +4087,26 @@ impl FlatDecisionEncoderV2 {
                 .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
             claimed_model_objects.resize(self.objects.len(), false);
             for (action_object_index, action_object) in self.action_objects.iter().enumerate() {
+                let v3_authority = matches!(
+                    action_object.group,
+                    FlatActionObjectGroupV1::DecisionLocalLibrary
+                        | FlatActionObjectGroupV1::HistoricalPublicSource
+                );
+                let v3_model_index = self.v3_action_objects.as_ref().and_then(|mapping| {
+                    mapping.iter().find_map(|(authority, index)| {
+                        (authority == action_object).then_some(*index)
+                    })
+                });
                 let mut matching_model_objects = self
                     .objects
                     .iter()
                     .zip(&self.object_keys)
                     .enumerate()
                     .filter_map(|(model_object_index, (object, key))| {
+                        if v3_authority {
+                            return (v3_model_index == u32::try_from(model_object_index).ok())
+                                .then_some(model_object_index);
+                        }
                         let Some(key) = key else { return None };
                         let group_matches = match action_object.group {
                             FlatActionObjectGroupV1::SelfHand => {
@@ -3772,6 +4142,8 @@ impl FlatDecisionEncoderV2 {
                             FlatActionObjectGroupV1::KnownOpponentLibrary => {
                                 object.group == FlatObjectGroupV2::KnownOpponentLibrary
                             }
+                            FlatActionObjectGroupV1::DecisionLocalLibrary
+                            | FlatActionObjectGroupV1::HistoricalPublicSource => false,
                         };
                         let ordinal_matches = object.group == FlatObjectGroupV2::PendingContext
                             || object.visible_ordinal
@@ -3789,7 +4161,7 @@ impl FlatDecisionEncoderV2 {
                     return Err(FlatDecisionErrorV2::InvalidReference);
                 };
                 if matching_model_objects.next().is_some()
-                    || claimed_model_objects[model_object_index]
+                    || (claimed_model_objects[model_object_index] && !v3_authority)
                     || self.action_refs.iter().any(|reference| {
                         usize::from(reference.object_index) == action_object_index
                             && reference.card_token != action_object.card_token
@@ -3939,6 +4311,41 @@ pub(crate) fn encode_observation_owned_tables_for_fixture_v2(
         effect_subtype_changes: encoder.effect_subtype_changes,
         context_path_elements: encoder.context_path_elements,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn encode_observation_owned_tables_for_fixture_v3(
+    observation: &ObservationV6,
+) -> Result<
+    (
+        FlatObservationOwnedTablesV2,
+        crate::flat_policy_v3::FlatScoringExtensionsV3,
+    ),
+    FlatDecisionErrorV2,
+> {
+    if observation.schema_version != 6 {
+        return Err(FlatDecisionErrorV2::ObservationContract);
+    }
+    let mut encoder = FlatDecisionEncoderV2::default();
+    encoder.build_globals(observation)?;
+    encoder.register_objects(observation)?;
+    let extensions = encoder.register_extensions_v3(observation)?;
+    encoder.build_relations(observation)?;
+    encoder.validate_cached_tables()?;
+    Ok((
+        FlatObservationOwnedTablesV2 {
+            globals: encoder.globals,
+            objects: encoder.objects,
+            relations: encoder.relations,
+            object_subtypes: encoder.object_subtypes,
+            ability_uses: encoder.ability_uses,
+            goads: encoder.goads,
+            completed_dungeons: encoder.completed_dungeons,
+            effect_subtype_changes: encoder.effect_subtype_changes,
+            context_path_elements: encoder.context_path_elements,
+        },
+        extensions,
+    ))
 }
 
 macro_rules! require_capacity {
@@ -4125,6 +4532,7 @@ mod tests {
             .unwrap();
         FlatDecisionEncoderV2 {
             cached_binding: Some(slice.binding),
+            v3_action_objects: None,
             globals: FlatGlobalsV2::default(),
             objects: vec![FlatObjectCoreV2::default()],
             object_keys: vec![None],
@@ -4154,6 +4562,281 @@ mod tests {
         encoder.build_relations(observation)?;
         encoder.validate_cached_tables()?;
         Ok(encoder)
+    }
+
+    fn v3_observation_fixture() -> ObservationV6 {
+        let session = v2_session(93_001, 101);
+        let observation = session
+            .flat_policy_observation_v2(expected(&session))
+            .unwrap();
+        // Test-only common fixture construction. Production accepts V6 only
+        // from its own session entry point and never upgrades a V5 packet.
+        ObservationV6 {
+            schema_version: 6,
+            kernel_version: observation.kernel_version,
+            surface_version: observation.surface_version,
+            policy_surface_version: observation.policy_surface_version,
+            card_db_hash: observation.card_db_hash,
+            acting_player: observation.acting_player,
+            step_index: observation.step_index,
+            physical_decision_id: observation.physical_decision_id,
+            substep_index: observation.substep_index,
+            substep_count: observation.substep_count,
+            projection: observation.projection,
+            own_hand: observation.own_hand,
+            known_library_cards: observation.known_library_cards,
+            known_hand_cards: observation.known_hand_cards,
+            extensions: Default::default(),
+            visible_projection_hash: 0,
+        }
+    }
+
+    fn materialize_v3(
+        observation: &ObservationV6,
+    ) -> Result<
+        (
+            FlatDecisionEncoderV2,
+            crate::flat_policy_v3::FlatScoringExtensionsV3,
+        ),
+        FlatDecisionErrorV2,
+    > {
+        let mut encoder = FlatDecisionEncoderV2::default();
+        encoder.build_globals(observation)?;
+        encoder.register_objects(observation)?;
+        let extensions = encoder.register_extensions_v3(observation)?;
+        encoder.build_relations(observation)?;
+        encoder.validate_cached_tables()?;
+        Ok((encoder, extensions))
+    }
+
+    #[test]
+    fn flat_v3_search_copies_preserve_physical_choices_without_opaque_features() {
+        use crate::policy_observation_v6::DecisionLocalLibraryV6;
+        let mut observation = v3_observation_fixture();
+        let actor = observation.acting_player;
+        let cards = [93_011, 93_012].map(|arena_id| CardPrivateV1 {
+            stable: synthetic_stable(arena_id, 7, actor, actor, Zone::Library),
+            card_name: "not a model feature".into(),
+        });
+        observation.extensions.decision_local_library = Some(DecisionLocalLibraryV6 {
+            chooser: actor,
+            library_owner: actor,
+            cards: cards.to_vec(),
+        });
+        let (mut baseline, extensions) = materialize_v3(&observation).unwrap();
+        let search = extensions.decision_local_library.as_ref().unwrap();
+        assert_ne!(search.object_indices[0], search.object_indices[1]);
+        assert_eq!(search.public_class_ordinals, vec![0, 0]);
+        assert_eq!(
+            baseline.objects[search.object_indices[0] as usize],
+            baseline.objects[search.object_indices[1] as usize]
+        );
+
+        // Private incarnation and opaque-id permutations cannot change any
+        // object feature or scorer reference, but each choice remains bound.
+        let mut permuted = observation.clone();
+        let permuted_cards = &mut permuted
+            .extensions
+            .decision_local_library
+            .as_mut()
+            .unwrap()
+            .cards;
+        permuted_cards.swap(0, 1);
+        permuted_cards[0].stable.zone_change_count = 33;
+        permuted_cards[1].stable.zone_change_count = 91;
+        let (changed, changed_extensions) = materialize_v3(&permuted).unwrap();
+        assert_eq!(baseline.objects, changed.objects);
+        assert_eq!(baseline.relations, changed.relations);
+        assert_eq!(extensions, changed_extensions);
+        baseline.actions = vec![FlatActionCoreV1::default(); 2];
+        baseline.action_objects = baseline
+            .v3_action_objects
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(authority, _)| *authority)
+            .collect();
+        baseline.action_refs = (0..2)
+            .map(|index| FlatActionRefV2 {
+                action_index: index,
+                role: FlatActionRefRoleV1::TargetObject,
+                card_token: 8,
+                object_index: index as u16,
+                ..FlatActionRefV2::default()
+            })
+            .collect();
+        baseline.validate_cached_tables().unwrap();
+        assert_ne!(
+            baseline.scorer_action_refs[0].model_object_index,
+            baseline.scorer_action_refs[1].model_object_index
+        );
+        baseline.v3_action_objects = None;
+        assert_eq!(
+            baseline.validate_cached_tables(),
+            Err(FlatDecisionErrorV2::InvalidReference)
+        );
+    }
+
+    #[test]
+    fn flat_v3_search_reuses_known_card_and_rejects_invalid_authority() {
+        use crate::policy_observation_v6::DecisionLocalLibraryV6;
+        let mut observation = v3_observation_fixture();
+        let actor = observation.acting_player;
+        let card = CardPrivateV1 {
+            stable: synthetic_stable(93_021, 7, actor, actor, Zone::Library),
+            card_name: String::new(),
+        };
+        observation.known_library_cards[seat_index(actor)] = vec![KnownLibraryCardV4 {
+            position: 17,
+            card: card.clone(),
+        }];
+        let (common, _) = materialize_v3(&observation).unwrap();
+        observation.extensions.decision_local_library = Some(DecisionLocalLibraryV6 {
+            chooser: actor,
+            library_owner: actor,
+            cards: vec![card],
+        });
+        let (encoded, extensions) = materialize_v3(&observation).unwrap();
+        assert_eq!(common.objects, encoded.objects);
+        let search = extensions.decision_local_library.unwrap();
+        assert_eq!(search.public_class_ordinals, vec![0]);
+        assert_eq!(
+            encoded.objects[search.object_indices[0] as usize].visible_ordinal,
+            17
+        );
+        observation
+            .extensions
+            .decision_local_library
+            .as_mut()
+            .unwrap()
+            .chooser = opponent(actor);
+        assert!(matches!(
+            materialize_v3(&observation),
+            Err(FlatDecisionErrorV2::ObservationContract)
+        ));
+        observation
+            .extensions
+            .decision_local_library
+            .as_mut()
+            .unwrap()
+            .chooser = actor;
+        let duplicate = observation
+            .extensions
+            .decision_local_library
+            .as_ref()
+            .unwrap()
+            .cards[0]
+            .clone();
+        observation
+            .extensions
+            .decision_local_library
+            .as_mut()
+            .unwrap()
+            .cards
+            .push(duplicate);
+        assert!(matches!(
+            materialize_v3(&observation),
+            Err(FlatDecisionErrorV2::ObservationContract)
+        ));
+    }
+
+    #[test]
+    fn flat_v3_public_historical_source_requires_context_and_preserves_incarnation() {
+        use crate::policy_observation_v6::{HistoricalPublicSourceV6, HistoricalSourceContextV6};
+        let mut observation = v3_observation_fixture();
+        let actor = observation.acting_player;
+        let frozen = synthetic_stable(93_031, 147, actor, actor, Zone::Battlefield);
+        observation.projection.surface.engine_context.pending_effect =
+            Some(crate::rl::PendingEffectSemanticV4 {
+                source: Some(frozen.clone()),
+                controller: actor,
+                choice: None,
+            });
+        // An older public source is absent from all live zones. It is issued
+        // only by the current resolving item's matching historical record.
+        assert!(matches!(
+            materialize_v3(&observation),
+            Err(FlatDecisionErrorV2::InvalidReference)
+        ));
+        observation
+            .extensions
+            .historical_public_sources
+            .push(HistoricalPublicSourceV6 {
+                context: HistoricalSourceContextV6::PendingEffect,
+                source: frozen.clone(),
+                stack_item_kind: StackItemKindV2::ActivatedAbility,
+            });
+        let (mut encoded, extensions) = materialize_v3(&observation).unwrap();
+        let index = extensions.historical_public_sources[0].model_object_index;
+        assert_eq!(
+            encoded.objects[index as usize].group,
+            FlatObjectGroupV2::PendingContext
+        );
+        assert_eq!(
+            encoded.objects[index as usize].zone,
+            Some(FlatZoneV2::Battlefield)
+        );
+        encoded.actions = vec![FlatActionCoreV1::default()];
+        encoded.action_objects = vec![encoded.v3_action_objects.as_ref().unwrap()[0].0];
+        encoded.action_refs = vec![FlatActionRefV2 {
+            card_token: 148,
+            role: FlatActionRefRoleV1::Source,
+            ..FlatActionRefV2::default()
+        }];
+        encoded.validate_cached_tables().unwrap();
+        encoded.action_objects[0].zone_change_count += 1;
+        assert_eq!(
+            encoded.validate_cached_tables(),
+            Err(FlatDecisionErrorV2::InvalidReference)
+        );
+        observation.extensions.historical_public_sources[0]
+            .source
+            .zone = Zone::Graveyard;
+        assert!(matches!(
+            materialize_v3(&observation),
+            Err(FlatDecisionErrorV2::InconsistentReference)
+        ));
+    }
+
+    #[test]
+    fn flat_v3_escape_prefix_is_explicit_and_rejects_inconsistent_counts() {
+        use crate::policy_observation_v6::PendingCastObjectCostV6;
+        let mut observation = v3_observation_fixture();
+        let actor = observation.acting_player;
+        let source = synthetic_stable(93_041, 105, actor, actor, Zone::Graveyard);
+        let selected = synthetic_stable(93_042, 7, actor, actor, Zone::Graveyard);
+        observation.projection.surface.graveyards[seat_index(actor)] = vec![
+            synthetic_public(source.clone()),
+            synthetic_public(selected.clone()),
+        ];
+        observation.extensions.pending_cast_object_cost = Some(PendingCastObjectCostV6 {
+            source,
+            controller: actor,
+            cast_method: CastMethodV4::Escape,
+            cost_kind: crate::engine::CostKind::ExileFromGraveyard,
+            required_count: 3,
+            selected: vec![selected],
+            remaining_count: 2,
+        });
+        let (encoded, extensions) = materialize_v3(&observation).unwrap();
+        let cost = extensions.pending_cast_object_cost.unwrap();
+        assert_eq!(cost.required_count, 3);
+        assert_eq!(cost.remaining_count, 2);
+        assert_eq!(encoded.objects[cost.source_object as usize].card_token, 106);
+        assert_eq!(
+            encoded.objects[cost.selected_objects[0] as usize].card_token,
+            8
+        );
+        observation
+            .extensions
+            .pending_cast_object_cost
+            .as_mut()
+            .unwrap()
+            .remaining_count = 1;
+        assert!(matches!(
+            materialize_v3(&observation),
+            Err(FlatDecisionErrorV2::ObservationContract)
+        ));
     }
 
     fn synthetic_stable(

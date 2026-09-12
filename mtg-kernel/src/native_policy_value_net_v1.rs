@@ -627,11 +627,38 @@ impl NativePolicyValueNetV1 {
     fn forward_with_action_ingress_capture_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
-        mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
+        self.forward_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode)
+    }
 
+    /// Explicit inference-only transfer of unchanged Net8 weights to V3 input
+    /// semantics. The ordinary loader and forward retain their old contracts.
+    pub(crate) fn forward_feature_transfer_v3(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        use crate::native_flat_tensorizer_v3::*;
+        let config = NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V3,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V3,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3,
+            ..self.config
+        };
+        let counts = encoded.validate(config)?;
+        self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
+    }
+
+    fn forward_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
+        mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
             let features_begin = object * OBJECT_FEATURE_DIM_V1;

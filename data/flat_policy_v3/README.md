@@ -1,0 +1,52 @@
+# FlatV3 / PythonV6 feature contract
+
+This successor explicitly adds decision-local library search cards, resolving
+public source history, and the pending Escape object-cost prefix. The frozen
+`python/mtg_kernel_rl/features.py` and its V5 identities remain separate.
+Net8 dimensions stay state 219, object 98, edge 41, action 195, action reference
+25, and 20 object pooling groups. Reusing weights requires explicit feature
+transfer; these dimensions do not establish unchanged identity or learned
+competence with the extensions.
+
+The rich observation requires `extensions` with all three keys, using null or
+an empty list when absent. Canonical state JSON always includes these fields.
+Stable references contribute only card ID, actor-relative owner/controller,
+and zone. The 96 existing hash slots encode the extensions; no layer widens.
+
+Search cards equal the union of the active chooser's selected and legal library
+targets. They contain no library positions. Sort cards by observable card
+class, then selected-prefix index before unselected cards; operational ties
+within an otherwise identical class are erased by model features. Sort legal
+targets/actions by observable class before assigning action indices. Python
+preserves the supplied canonical action indices. Identical copies share their
+class ordinal. A card already exposed by actual prior library knowledge reuses
+its existing node and retains that legitimately known position.
+
+Historical records bind each nonspell public stack context and the active
+resolving context exactly. Announced Hand-origin cycling is valid public
+history. Detached sources do not claim a current arena incarnation. Missing
+search nodes use PrivateContext/Private; missing historical nodes use
+PendingContext/Pending. Register missing search nodes after common nodes, then
+historical nodes. Existing exact incarnations are reused. Append self-edges
+after common edges: cost source 32, selected prefix 33, search cards 34,
+historical sources 35. Primary order is respectively zero, selection index,
+public class ordinal, and record index; associated order is zero.
+
+Escape exposes the announced Stack source, original Graveyard cast origin,
+required count, selected own Graveyard cards, and remaining count. The legacy
+`sacrifice_chosen` projection stays empty. Prefix information reaches the value
+state directly even though the value network does not pool legal actions.
+
+Python rejects inconsistent JSON and inappropriate references. It cannot
+authenticate a mutually coherent fabricated public-history record. The Rust
+producer establishes actual engine prefix validity, search scope, and frozen
+public source provenance. Source and descriptor SHA-256 pins cover the Python
+implementation separately from schema/encoding fingerprints.
+
+Regenerate new pins with `python data/flat_policy_v3/generate_contract.py`.
+Run the focused suite with `PYTHONPATH=python;python/tests` and
+`python -m unittest python/tests/test_features_v6.py -v` on Windows PowerShell.
+Compare actual native fixture output with `PYTHONPATH=python` and
+`python -m mtg_kernel_rl.check_features_v6_parity PATH`.
+Fixture equivalence and privacy checks are engineering validation, with no
+playing-strength, general deck compatibility, or training-result claim.

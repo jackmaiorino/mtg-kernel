@@ -616,6 +616,8 @@ fn operational_object_matches_model_object_v1(
             )
         }
         crate::rl_session::FlatActionObjectGroupV1::Command => (false, false),
+        crate::rl_session::FlatActionObjectGroupV1::DecisionLocalLibrary
+        | crate::rl_session::FlatActionObjectGroupV1::HistoricalPublicSource => (false, false),
         crate::rl_session::FlatActionObjectGroupV1::KnownSelfLibrary => (
             model.group == FlatObjectGroupV2::KnownSelfLibrary,
             model.visible_ordinal == u32::from(operational.actor_visible_ordinal),

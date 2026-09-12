@@ -56,6 +56,8 @@ pub struct LearnedBo3ResultV1 {
     pub schema: String,
     pub config: LearnedBo3RunConfigV1,
     pub play_weights_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub play_observation_contract: Option<String>,
     pub sideboard_policy_identity: String,
     pub outcome: MatchOutcomeV1,
     pub games: Vec<LearnedBo3GameRecordV1>,
@@ -208,6 +210,9 @@ pub fn run_learned_bo3_v1(
                     schema: "kernel_learned_bo3/v1".to_owned(),
                     config,
                     play_weights_sha256: play_weights_sha256.to_owned(),
+                    play_observation_contract: play_policy
+                        .uses_observation_successor_v3()
+                        .then(|| "rich-v6-flat-v3-explicit-frozen-feature-transfer".to_owned()),
                     sideboard_policy_identity: sideboard_policy_identity.to_owned(),
                     outcome,
                     games,
@@ -277,10 +282,21 @@ pub fn run_learned_bo3_v1(
         play_policy
             .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
             .map_err(|error| error.to_string())?;
-        let mut episode = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
-            u64::from(game_index), environment_seed, config.max_physical_decisions, config.max_policy_steps,
-            config.deck_ids.clone(), current.each_ref().map(|c| c.mainboard().to_vec()), prepared.start().starting_player,
-        ).map_err(|error| error.to_string())?;
+        let constructor = if play_policy.uses_observation_successor_v3() {
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1
+        } else {
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1
+        };
+        let mut episode = constructor(
+            u64::from(game_index),
+            environment_seed,
+            config.max_physical_decisions,
+            config.max_policy_steps,
+            config.deck_ids.clone(),
+            current.each_ref().map(|c| c.mainboard().to_vec()),
+            prepared.start().starting_player,
+        )
+        .map_err(|error| error.to_string())?;
         let summary = try_run_fast_episode_with_summary_v1(
             &mut episode,
             play_weights_sha256,

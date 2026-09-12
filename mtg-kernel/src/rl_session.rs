@@ -274,7 +274,12 @@ pub enum FlatActionObjectGroupV1 {
     Command = 8,
     KnownSelfLibrary = 9,
     KnownOpponentLibrary = 10,
+    DecisionLocalLibrary = 11,
+    HistoricalPublicSource = 12,
 }
+
+mod flat_action_v3;
+pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
 pub const FLAT_ACTION_FLAG_CHANGE_TARGET_V1: u16 = 1 << 1;
@@ -1422,12 +1427,12 @@ fn flat_validate_current_decision_relations_v1(
                     )
                 })
             {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             }
         }
         FastActorDecisionKindV1::AttackerInclusion => {
             let [first, second] = current.candidates.as_slice() else {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             let (
                 ActionSemanticV1::ChooseAttackerInclusion {
@@ -1442,11 +1447,11 @@ fn flat_validate_current_decision_relations_v1(
                 },
             ) = (&first.semantic, &second.semantic)
             else {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             if *first_actor != actor || *second_actor != actor || first_attacker != second_attacker
             {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             }
             flat_validate_controller_zone_v1(
                 state,
@@ -1458,7 +1463,7 @@ fn flat_validate_current_decision_relations_v1(
         }
         FastActorDecisionKindV1::BlockerInclusion => {
             let [first, second] = current.candidates.as_slice() else {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             let (
                 ActionSemanticV1::ChooseBlockerInclusion {
@@ -1475,14 +1480,14 @@ fn flat_validate_current_decision_relations_v1(
                 },
             ) = (&first.semantic, &second.semantic)
             else {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             if *first_actor != actor
                 || *second_actor != actor
                 || first_attacker != second_attacker
                 || first_blocker != second_blocker
             {
-        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             }
             flat_validate_controller_zone_v1(
                 state,
@@ -2255,15 +2260,13 @@ fn flat_validate_origin_decision_v1(
                 )
             } else {
                 match (*discard_payable, *sacrifice_payable) {
-                    (false, false) => {
-                        candidates.iter().enumerate().all(|(index, candidate)| {
-                            matches!(
-                                candidate.semantic,
-                                ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
-                                    if actor_matches(actor, *player) && use_cost == (index == 1)
-                            )
-                        })
-                    }
+                    (false, false) => candidates.iter().enumerate().all(|(index, candidate)| {
+                        matches!(
+                            candidate.semantic,
+                            ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
+                                if actor_matches(actor, *player) && use_cost == (index == 1)
+                        )
+                    }),
                     (true, true) => matches!(
                         (&candidates[0].semantic, &candidates[1].semantic),
                         (
@@ -3954,6 +3957,7 @@ pub struct RlEpisodeSessionSnapshotV5(RlEpisodeSessionV1);
 enum FlatActionContractModeV1 {
     V1,
     V2,
+    V3,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -3986,12 +3990,18 @@ impl FastActorSessionV1 {
     /// card identities already known to the acting player in their own hand.
     pub(crate) fn current_offered_hand_cast_ids_v1(&self) -> Vec<u16> {
         self.current.as_ref().map_or_else(Vec::new, |current| {
-            current.candidates.iter().filter_map(|candidate| {
-                match &candidate.semantic {
-                    ActionSemanticV1::CastSpell { source, .. } if source.zone == crate::state::Zone::Hand => Some(source.card_db_id),
+            current
+                .candidates
+                .iter()
+                .filter_map(|candidate| match &candidate.semantic {
+                    ActionSemanticV1::CastSpell { source, .. }
+                        if source.zone == crate::state::Zone::Hand =>
+                    {
+                        Some(source.card_db_id)
+                    }
                     _ => None,
-                }
-            }).collect()
+                })
+                .collect()
         })
     }
 }
@@ -6115,6 +6125,11 @@ impl FastActorSessionV1 {
                 let cache_result = flat_build_action_cache_v2(self, &current, reusable_cache);
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
             }
+            FlatActionContractModeV1::V3 => {
+                self.flat_action_cache_spare_v2 = None;
+                let cache_result = flat_action_v3::prepare_and_build_v3(self, &mut current);
+                flat_install_action_cache_build_result_v2(&mut current, cache_result);
+            }
         }
         self.current = Some(current);
     }
@@ -7287,9 +7302,7 @@ fn supported_runtime_deck_ids() -> String {
         .join(", ")
 }
 
-fn resolve_explicit_decks(
-    mainboards: &[Vec<u16>; 2],
-) -> Result<[Vec<u16>; 2], RlSessionError> {
+fn resolve_explicit_decks(mainboards: &[Vec<u16>; 2]) -> Result<[Vec<u16>; 2], RlSessionError> {
     for (seat, mainboard) in mainboards.iter().enumerate() {
         if mainboard.len() != crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1 {
             return Err(session_error(
@@ -7462,7 +7475,10 @@ mod tests {
         use crate::engine::Action;
         use crate::surface::SurfaceAction;
 
-        for choice in [OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent] {
+        for choice in [
+            OptionalCostChoice::Decline,
+            OptionalCostChoice::ReturnPermanent,
+        ] {
             let candidate = CorePolicyActionCandidateV1 {
                 semantic: ActionSemanticV1::ChooseOptionalCostWhich {
                     actor: PlayerSeatV1::P0,
@@ -7496,7 +7512,10 @@ mod tests {
 
         // Discard/SacrificeLand still only pair through the staged action,
         // never through the direct one-shot bypass.
-        for choice in [OptionalCostChoice::Discard, OptionalCostChoice::SacrificeLand] {
+        for choice in [
+            OptionalCostChoice::Discard,
+            OptionalCostChoice::SacrificeLand,
+        ] {
             let staged_only = CorePolicyActionCandidateV1 {
                 semantic: ActionSemanticV1::ChooseOptionalCostWhich {
                     actor: PlayerSeatV1::P0,
@@ -8557,11 +8576,13 @@ mod tests {
             .expect("live ability offer")
             .candidates
             .iter()
-            .position(|candidate| matches!(
-                &candidate.semantic,
-                ActionSemanticV1::ActivateAbility { source: reference, ability_index: 0, .. }
-                    if reference.arena_id == source.0
-            ))
+            .position(|candidate| {
+                matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ActivateAbility { source: reference, ability_index: 0, .. }
+                        if reference.arena_id == source.0
+                )
+            })
             .expect("engine must actually offer the nonbattlefield ability");
         (session, source, index)
     }
@@ -8599,8 +8620,9 @@ mod tests {
         wrong_zone.state.players[0].battlefield.push(source);
         wrong_zone.state.objects.get_mut(source).zone = Zone::Battlefield;
         let current = wrong_zone.current.as_mut().unwrap();
-        let ActionSemanticV1::ActivateAbility { source: reference, .. } =
-            &mut current.candidates[index].semantic
+        let ActionSemanticV1::ActivateAbility {
+            source: reference, ..
+        } = &mut current.candidates[index].semantic
         else {
             unreachable!()
         };
@@ -12614,8 +12636,14 @@ mod tests {
 
     fn burn_and_rally_explicit_mainboards() -> [Vec<u16>; 2] {
         [
-            runtime_deck_by_id("Burn").expect("Burn is catalog-registered").card_ids.to_vec(),
-            runtime_deck_by_id("Rally").expect("Rally is catalog-registered").card_ids.to_vec(),
+            runtime_deck_by_id("Burn")
+                .expect("Burn is catalog-registered")
+                .card_ids
+                .to_vec(),
+            runtime_deck_by_id("Rally")
+                .expect("Rally is catalog-registered")
+                .card_ids
+                .to_vec(),
         ]
     }
 
@@ -12662,7 +12690,8 @@ mod tests {
     fn resolve_explicit_decks_rejects_an_unsupported_card_id() {
         let mut mainboards = burn_and_rally_explicit_mainboards();
         mainboards[0][0] = u16::MAX;
-        let error = resolve_explicit_decks(&mainboards).expect_err("out-of-range card id must fail preflight");
+        let error = resolve_explicit_decks(&mainboards)
+            .expect_err("out-of-range card id must fail preflight");
         assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
         assert!(error.message.contains("seat 0"), "{}", error.message);
     }
@@ -12673,15 +12702,29 @@ mod tests {
         let deck_ids = ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
         let root = 0x51de_51de_51de_51de;
 
-        let p0_starts = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
-            1, root, 2000, 200_000, deck_ids.clone(), mainboards.clone(), PlayerId::P0,
-        )
-        .expect("P0-starting explicit-deck reset succeeds");
+        let p0_starts =
+            RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+                1,
+                root,
+                2000,
+                200_000,
+                deck_ids.clone(),
+                mainboards.clone(),
+                PlayerId::P0,
+            )
+            .expect("P0-starting explicit-deck reset succeeds");
         assert_eq!(p0_starts.state.active_player, PlayerId::P0);
-        let p1_starts = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
-            1, root, 2000, 200_000, deck_ids.clone(), mainboards.clone(), PlayerId::P1,
-        )
-        .expect("P1-starting explicit-deck reset succeeds");
+        let p1_starts =
+            RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+                1,
+                root,
+                2000,
+                200_000,
+                deck_ids.clone(),
+                mainboards.clone(),
+                PlayerId::P1,
+            )
+            .expect("P1-starting explicit-deck reset succeeds");
         assert_eq!(p1_starts.state.active_player, PlayerId::P1);
         let plain = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
             1, root, 2000, 200_000, deck_ids, mainboards,
@@ -12701,19 +12744,31 @@ mod tests {
                         assert!(
                             matches!(
                                 terminal.terminal_outcome,
-                                TerminalOutcomeV1::P0Win | TerminalOutcomeV1::P1Win | TerminalOutcomeV1::Draw
+                                TerminalOutcomeV1::P0Win
+                                    | TerminalOutcomeV1::P1Win
+                                    | TerminalOutcomeV1::Draw
                             ),
                             "episode reaches a well-formed terminal, not a halt"
                         );
                         break;
                     }
                     RlSessionResponseV1::Decision(decision) => {
-                        assert!(steps < 200_000, "episode must terminate inside the policy-step cap");
+                        assert!(
+                            steps < 200_000,
+                            "episode must terminate inside the policy-step cap"
+                        );
                         steps += 1;
-                        let selected_index = (policy_rng.next_u64() as usize) % decision.legal_actions.len();
-                        let selected_action_id = decision.legal_actions[selected_index].stable_id.clone();
+                        let selected_index =
+                            (policy_rng.next_u64() as usize) % decision.legal_actions.len();
+                        let selected_action_id =
+                            decision.legal_actions[selected_index].stable_id.clone();
                         session
-                            .step(decision.episode_id, decision.step, selected_index as u32, &selected_action_id)
+                            .step(
+                                decision.episode_id,
+                                decision.step,
+                                selected_index as u32,
+                                &selected_action_id,
+                            )
                             .expect("random-policy step succeeds");
                     }
                 }
@@ -12726,21 +12781,43 @@ mod tests {
         let mainboards = burn_and_rally_explicit_mainboards();
         let deck_ids = ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
         let a = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            1, 0x1234_5678_9abc_def0, 8, 1024, deck_ids.clone(), mainboards.clone(),
+            1,
+            0x1234_5678_9abc_def0,
+            8,
+            1024,
+            deck_ids.clone(),
+            mainboards.clone(),
         )
         .unwrap();
         let b = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            1, 0x1234_5678_9abc_def0, 8, 1024, deck_ids.clone(), mainboards.clone(),
+            1,
+            0x1234_5678_9abc_def0,
+            8,
+            1024,
+            deck_ids.clone(),
+            mainboards.clone(),
         )
         .unwrap();
-        assert_eq!(definition_order(&a.state, PlayerId::P0), definition_order(&b.state, PlayerId::P0));
-        assert_eq!(definition_order(&a.state, PlayerId::P1), definition_order(&b.state, PlayerId::P1));
+        assert_eq!(
+            definition_order(&a.state, PlayerId::P0),
+            definition_order(&b.state, PlayerId::P0)
+        );
+        assert_eq!(
+            definition_order(&a.state, PlayerId::P1),
+            definition_order(&b.state, PlayerId::P1)
+        );
         let c = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            1, 0x1234_5678_9abc_def1, 8, 1024, deck_ids, mainboards,
+            1,
+            0x1234_5678_9abc_def1,
+            8,
+            1024,
+            deck_ids,
+            mainboards,
         )
         .unwrap();
         assert_ne!(
-            definition_order(&a.state, PlayerId::P0), definition_order(&c.state, PlayerId::P0),
+            definition_order(&a.state, PlayerId::P0),
+            definition_order(&c.state, PlayerId::P0),
             "a different pair_environment_seed must not coincidentally reproduce the same shuffle"
         );
     }

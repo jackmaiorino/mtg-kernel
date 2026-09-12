@@ -6,7 +6,9 @@
 //! candidate generator (also Task E).
 
 use crate::ids::PlayerId;
-use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, RlSessionError};
+use crate::rl_session::{
+    FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, RlSessionError,
+};
 use crate::state::SplitMix64;
 
 /// The policy's only access to a live episode is its actor-relative scorer
@@ -25,16 +27,24 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         self.decision
     }
 
+    pub(crate) fn encode_scoring_owned_v3(
+        &self,
+        encoder: &mut crate::flat_policy_v3::FlatDecisionEncoderV3,
+        buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<crate::flat_policy_v3::FlatDecisionV3, crate::flat_policy_v2::FlatDecisionErrorV2>
+    {
+        self.session
+            .encode_current_flat_scoring_decision_owned_v3(self.decision, encoder, buffers)
+    }
+
     pub(crate) fn encode_scoring_owned_v2(
         &self,
         encoder: &mut crate::flat_policy_v2::FlatDecisionEncoderV2,
         buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
-    ) -> Result<crate::flat_policy_v2::FlatDecisionV2, crate::flat_policy_v2::FlatDecisionErrorV2> {
-        self.session.encode_current_flat_scoring_decision_owned_v2(
-            self.decision,
-            encoder,
-            buffers,
-        )
+    ) -> Result<crate::flat_policy_v2::FlatDecisionV2, crate::flat_policy_v2::FlatDecisionErrorV2>
+    {
+        self.session
+            .encode_current_flat_scoring_decision_owned_v2(self.decision, encoder, buffers)
     }
 }
 
@@ -42,6 +52,12 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
 /// Implementations reset recurrent state and both sampling streams at every
 /// game boundary. Cache keys must include the episode's observation identity.
 pub trait PairedBo1PolicyV1 {
+    /// The default preserves every existing V2 consumer. V3 is explicit
+    /// inference feature transfer, with independently recorded identities.
+    fn uses_observation_successor_v3(&self) -> bool {
+        false
+    }
+
     fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError>;
 
     fn select_action_v1(
@@ -85,14 +101,20 @@ pub(crate) mod policy_test_support {
             Ok(())
         }
 
-        fn select_action_v1(&mut self, input: PairedBo1PolicyInputV1<'_>) -> Result<u32, RlSessionError> {
+        fn select_action_v1(
+            &mut self,
+            input: PairedBo1PolicyInputV1<'_>,
+        ) -> Result<u32, RlSessionError> {
             let decision = input.decision();
             let seat = match decision.acting_player {
                 crate::rl::PlayerSeatV1::P0 => 0,
                 crate::rl::PlayerSeatV1::P1 => 1,
             };
             let selected = (self.rng[seat].next_u64() as u32) % decision.legal_action_count;
-            self.traces.last_mut().unwrap().push((decision.acting_player, selected));
+            self.traces
+                .last_mut()
+                .unwrap()
+                .push((decision.acting_player, selected));
             Ok(selected)
         }
     }
@@ -150,7 +172,12 @@ fn play_one_side_v1(
         other => panic!("unsupported seat {}", other.0),
     };
     let deck_ids = ["candidate_or_incumbent".to_owned(), "opponent".to_owned()];
-    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
+    let constructor = if policy.uses_observation_successor_v3() {
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1
+    } else {
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1
+    };
+    let mut session = constructor(
         1,
         pair_environment_seed,
         max_physical_decisions,
@@ -163,7 +190,8 @@ fn play_one_side_v1(
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
-                if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural {
+                if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural
+                {
                     return Err(RlSessionError {
                         code: crate::rl_session::RlSessionErrorCode::NonNaturalTerminal,
                         message: format!(
@@ -175,7 +203,8 @@ fn play_one_side_v1(
                 return Ok(terminal.winner == Some(self_seat.into()));
             }
             FastActorResponseV1::Decision(decision) => {
-                let selected_index = policy.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))?;
+                let selected_index =
+                    policy.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))?;
                 session.step(decision.episode_id, decision.step, selected_index)?;
             }
         }
@@ -183,8 +212,15 @@ fn play_one_side_v1(
 }
 
 pub fn paired_mean_delta_v1(outcomes: &[PairedTrialOutcomeV1]) -> f64 {
-    assert!(!outcomes.is_empty(), "mean delta is undefined over zero trials");
-    outcomes.iter().map(|outcome| f64::from(outcome.delta)).sum::<f64>() / outcomes.len() as f64
+    assert!(
+        !outcomes.is_empty(),
+        "mean delta is undefined over zero trials"
+    );
+    outcomes
+        .iter()
+        .map(|outcome| f64::from(outcome.delta))
+        .sum::<f64>()
+        / outcomes.len() as f64
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -241,9 +277,15 @@ pub fn paired_bootstrap_ci_with_alpha_v1(
     sidedness: BootstrapSidednessV1,
     alpha: f64,
 ) -> PairedBootstrapResultV1 {
-    assert!(!deltas.is_empty(), "bootstrap is undefined over zero deltas");
+    assert!(
+        !deltas.is_empty(),
+        "bootstrap is undefined over zero deltas"
+    );
     assert!(resample_count > 0, "resample_count must be positive");
-    assert!(alpha > 0.0 && alpha < 1.0, "alpha must lie strictly inside (0, 1)");
+    assert!(
+        alpha > 0.0 && alpha < 1.0,
+        "alpha must lie strictly inside (0, 1)"
+    );
     let mean = deltas.iter().map(|&delta| f64::from(delta)).sum::<f64>() / deltas.len() as f64;
     let mut rng = SplitMix64::seed(seed);
     let mut resample_means: Vec<f64> = Vec::with_capacity(resample_count as usize);
@@ -259,7 +301,10 @@ pub fn paired_bootstrap_ci_with_alpha_v1(
     let (lower, upper) = match sidedness {
         BootstrapSidednessV1::OneSidedLower => {
             let alpha_index = ((resample_count as f64) * alpha).floor() as usize;
-            (resample_means[alpha_index.min(resample_means.len() - 1)], f64::INFINITY)
+            (
+                resample_means[alpha_index.min(resample_means.len() - 1)],
+                f64::INFINITY,
+            )
         }
         BootstrapSidednessV1::TwoSided => {
             let lower_index = ((resample_count as f64) * (alpha / 2.0)).floor() as usize;
@@ -270,7 +315,14 @@ pub fn paired_bootstrap_ci_with_alpha_v1(
             )
         }
     };
-    PairedBootstrapResultV1 { mean, lower, upper, resample_count, seed, sidedness }
+    PairedBootstrapResultV1 {
+        mean,
+        lower,
+        upper,
+        resample_count,
+        seed,
+        sidedness,
+    }
 }
 
 #[cfg(test)]
@@ -289,8 +341,14 @@ mod tests {
         let deltas = [1i8, 1, 1, 0, -1, 1, 1, 0, 1, 1];
         let a = paired_bootstrap_ci_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower);
         let b = paired_bootstrap_ci_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower);
-        assert_eq!(a, b, "same seed and resample_count must reproduce bit-identically");
-        assert!(a.lower <= a.mean, "the one-sided lower bound never exceeds the sample mean");
+        assert_eq!(
+            a, b,
+            "same seed and resample_count must reproduce bit-identically"
+        );
+        assert!(
+            a.lower <= a.mean,
+            "the one-sided lower bound never exceeds the sample mean"
+        );
         assert!(a.upper.is_infinite());
         // Seed 11, not 43: with only 10 paired deltas the 5th-percentile order
         // statistic is a coarse discrete value (21 possible sums), so most
@@ -299,7 +357,10 @@ mod tests {
         // fixed, deterministic counterexample confirming the estimator is
         // seed-sensitive, not a claim that every other seed differs.
         let c = paired_bootstrap_ci_v1(&deltas, 2000, 11, BootstrapSidednessV1::OneSidedLower);
-        assert_ne!(a.lower, c.lower, "a different seed must not coincidentally reproduce the same bound");
+        assert_ne!(
+            a.lower, c.lower,
+            "a different seed must not coincidentally reproduce the same bound"
+        );
     }
 
     #[test]
@@ -312,12 +373,23 @@ mod tests {
     }
 
     #[test]
-    fn paired_bootstrap_ci_with_alpha_v1_moves_the_bound_and_the_unparameterized_function_delegates_at_0_05() {
+    fn paired_bootstrap_ci_with_alpha_v1_moves_the_bound_and_the_unparameterized_function_delegates_at_0_05(
+    ) {
         let deltas = [1i8, 1, 1, 0, -1, 1, 1, 0, 1, 1];
-        let at_default_alpha =
-            paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower, 0.05);
-        let at_wider_alpha =
-            paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::OneSidedLower, 0.10);
+        let at_default_alpha = paired_bootstrap_ci_with_alpha_v1(
+            &deltas,
+            2000,
+            42,
+            BootstrapSidednessV1::OneSidedLower,
+            0.05,
+        );
+        let at_wider_alpha = paired_bootstrap_ci_with_alpha_v1(
+            &deltas,
+            2000,
+            42,
+            BootstrapSidednessV1::OneSidedLower,
+            0.10,
+        );
         assert_ne!(
             at_default_alpha.lower, at_wider_alpha.lower,
             "a manifest changing bo1_one_sided_alpha from 0.05 to 0.10 must actually move the accept boundary"
@@ -328,8 +400,20 @@ mod tests {
             "paired_bootstrap_ci_v1 must delegate to alpha = 0.05 unchanged (existing callers see identical behavior)"
         );
 
-        let two_sided_default = paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::TwoSided, 0.05);
-        let two_sided_wider = paired_bootstrap_ci_with_alpha_v1(&deltas, 2000, 42, BootstrapSidednessV1::TwoSided, 0.10);
+        let two_sided_default = paired_bootstrap_ci_with_alpha_v1(
+            &deltas,
+            2000,
+            42,
+            BootstrapSidednessV1::TwoSided,
+            0.05,
+        );
+        let two_sided_wider = paired_bootstrap_ci_with_alpha_v1(
+            &deltas,
+            2000,
+            42,
+            BootstrapSidednessV1::TwoSided,
+            0.10,
+        );
         assert!(
             two_sided_default.lower != two_sided_wider.lower || two_sided_default.upper != two_sided_wider.upper,
             "a manifest changing bo3_confidence_level's derived alpha must actually move the two-sided CI"
@@ -344,7 +428,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "alpha must lie strictly inside (0, 1)")]
     fn paired_bootstrap_ci_with_alpha_v1_rejects_alpha_outside_zero_one() {
-        paired_bootstrap_ci_with_alpha_v1(&[1i8, -1], 10, 1, BootstrapSidednessV1::OneSidedLower, 0.0);
+        paired_bootstrap_ci_with_alpha_v1(
+            &[1i8, -1],
+            10,
+            1,
+            BootstrapSidednessV1::OneSidedLower,
+            0.0,
+        );
     }
 
     #[test]
@@ -354,8 +444,14 @@ mod tests {
         let opponent = runtime_deck_by_id("Rally").unwrap().card_ids.to_vec();
         let mut policy = policy_test_support::SeededRandomBo1PolicyV1::default();
         let outcome = run_paired_bo1_trial_v1(
-            &candidate, &incumbent, &opponent, PlayerId::P0,
-            0x5050_5050_5050_5050, PlayerId::P0, 2000, &mut policy,
+            &candidate,
+            &incumbent,
+            &opponent,
+            PlayerId::P0,
+            0x5050_5050_5050_5050,
+            PlayerId::P0,
+            2000,
+            &mut policy,
         )
         .expect("paired trial completes");
         assert_eq!(outcome.delta, 0);
@@ -373,15 +469,28 @@ mod tests {
             fn reset_for_game_v1(&mut self, _: [u64; 2]) -> Result<(), RlSessionError> {
                 Ok(())
             }
-            fn select_action_v1(&mut self, _: PairedBo1PolicyInputV1<'_>) -> Result<u32, RlSessionError> {
+            fn select_action_v1(
+                &mut self,
+                _: PairedBo1PolicyInputV1<'_>,
+            ) -> Result<u32, RlSessionError> {
                 Ok(u32::MAX)
             }
         }
         let deck = runtime_deck_by_id("Rally").unwrap().card_ids;
         let result = run_paired_bo1_trial_v1(
-            deck, deck, deck, PlayerId::P0, 5151, PlayerId::P0, 2000, &mut InvalidPolicy,
+            deck,
+            deck,
+            deck,
+            PlayerId::P0,
+            5151,
+            PlayerId::P0,
+            2000,
+            &mut InvalidPolicy,
         );
-        assert!(result.is_err(), "an invalid scorer output must not become a legal action");
+        assert!(
+            result.is_err(),
+            "an invalid scorer output must not become a legal action"
+        );
     }
 
     #[test]
@@ -389,9 +498,20 @@ mod tests {
         let deck = runtime_deck_by_id("Rally").unwrap().card_ids;
         let mut policy = policy_test_support::SeededRandomBo1PolicyV1::default();
         let error = run_paired_bo1_trial_v1(
-            deck, deck, deck, PlayerId::P0, 5151, PlayerId::P0, 1, &mut policy,
-        ).expect_err("a one-decision cap cannot yield a measured game outcome");
-        assert_eq!(error.code, crate::rl_session::RlSessionErrorCode::NonNaturalTerminal);
+            deck,
+            deck,
+            deck,
+            PlayerId::P0,
+            5151,
+            PlayerId::P0,
+            1,
+            &mut policy,
+        )
+        .expect_err("a one-decision cap cannot yield a measured game outcome");
+        assert_eq!(
+            error.code,
+            crate::rl_session::RlSessionErrorCode::NonNaturalTerminal
+        );
     }
 }
 
@@ -432,8 +552,14 @@ mod calibration {
         for episode in 0..game_count {
             let mut policy = policy_test_support::SeededRandomBo1PolicyV1::default();
             run_paired_bo1_trial_v1(
-                &candidate, &candidate, &opponent, PlayerId::P0,
-                rng.next_u64(), PlayerId::P0, 2000, &mut policy,
+                &candidate,
+                &candidate,
+                &opponent,
+                PlayerId::P0,
+                rng.next_u64(),
+                PlayerId::P0,
+                2000,
+                &mut policy,
             )
             .unwrap_or_else(|error| panic!("calibration episode {episode} failed: {error}"));
         }

@@ -14,8 +14,16 @@ use crate::flat_policy_v2::{
     FlatObjectGoadV2, FlatObjectSubtypeV2, FlatRelationV2, FlatScorerActionCoreV2,
     FlatScorerActionRefV2, FlatScoringDecisionViewV2, FlatScoringOwnedBuffersV2,
 };
+use crate::flat_policy_v3::{
+    FlatDecisionEncoderV3, FlatScoringDecisionViewV3, FlatScoringExtensionsV3,
+};
 use crate::native_checkpoint_inference_v1::encoded_decision_view_v1;
 use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
+use crate::native_flat_tensorizer_v3::{
+    encoded_decision_view_v3, NativeFlatDecisionTensorV3, NativeFlatTensorizerV3,
+    FEATURES_SOURCE_SHA256_V3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3,
+    FEATURE_ENCODING_DIGEST_V3,
+};
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
     NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
@@ -59,6 +67,27 @@ pub struct FrozenPlayPolicyImportV1 {
     pub expected_destination_card_db_hash: String,
 }
 
+/// Required opt-in pins for the successor feature mapping. The source export
+/// is still read with its original strict contract by `load_v1`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenPlayObservationTransferV3 {
+    pub expected_feature_contract_digest: String,
+    pub expected_feature_encoding_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenPlayObservationReceiptV3 {
+    pub schema: String,
+    pub source_feature_contract_digest: String,
+    pub source_feature_encoding_digest: String,
+    pub destination: FrozenPlayObservationTransferV3,
+    pub features_source_sha256: String,
+    pub feature_descriptor_sha256: String,
+    pub semantics: String,
+}
+
 /// Evidence of weight identity and the explicitly changed environment. This
 /// receipt gives no optimizer/resume authority and no cross-deck strength claim.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -84,6 +113,8 @@ pub struct FrozenPlayPolicyIdentityV1 {
     pub feature_encoding_digest: String,
     pub sampler_identity: String,
     pub reader_revalidated_store_chain: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_successor: Option<FrozenPlayObservationReceiptV3>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +136,15 @@ pub struct FrozenPlayPolicyV1 {
     sampler: FastCategoricalScratch,
     seat_rng: [SplitMix64; 2],
     sampling_initialized: bool,
+    successor: Option<FrozenPlaySuccessorStateV3>,
+}
+
+#[derive(Default)]
+struct FrozenPlaySuccessorStateV3 {
+    encoder: FlatDecisionEncoderV3,
+    extensions: FlatScoringExtensionsV3,
+    tensorizer: NativeFlatTensorizerV3,
+    tensor: NativeFlatDecisionTensorV3,
 }
 
 impl FrozenPlayPolicyV1 {
@@ -252,6 +292,7 @@ impl FrozenPlayPolicyV1 {
             feature_encoding_digest: FEATURE_ENCODING_DIGEST_V1.into(),
             sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION.into(),
             reader_revalidated_store_chain: false,
+            observation_successor: None,
         };
         Ok(Self {
             model,
@@ -264,7 +305,33 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            successor: None,
         })
+    }
+
+    pub fn load_feature_transfer_v3(
+        input: &FrozenPlayPolicyImportV1,
+        transfer: &FrozenPlayObservationTransferV3,
+    ) -> Result<Self, String> {
+        require(
+            transfer.expected_feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
+                && transfer.expected_feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3,
+            "explicit V3 destination feature identity differs",
+        )?;
+        let mut policy = Self::load_v1(input)?;
+        policy.identity.observation_successor = Some(FrozenPlayObservationReceiptV3 {
+            schema: "mtg-kernel-frozen-play-observation-transfer/v3".into(),
+            source_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V1.into(),
+            source_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V1.into(),
+            destination: transfer.clone(),
+            features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
+            feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
+            semantics: "rich V6 / flat V3; exact public historical sources, chooser-only unordered library candidates, typed object-cost prefixes; unchanged weights and dimensions; inference transfer only, no learned competence claim".into(),
+        });
+        policy.identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
+        policy.identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
+        policy.successor = Some(FrozenPlaySuccessorStateV3::default());
+        Ok(policy)
     }
 
     pub fn identity_v1(&self) -> &FrozenPlayPolicyIdentityV1 {
@@ -295,6 +362,9 @@ impl FrozenPlayPolicyV1 {
         self.owned = OwnedScoringV1::default();
         self.tensorizer = NativeFlatTensorizerV2::new();
         self.tensor = NativeFlatDecisionTensorV2::default();
+        if self.successor.is_some() {
+            self.successor = Some(FrozenPlaySuccessorStateV3::default());
+        }
     }
 
     /// Scores only the actor-visible projection generated by the session.
@@ -305,6 +375,18 @@ impl FrozenPlayPolicyV1 {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             return Err("cannot score a terminal session".into());
         };
+        if let Some(successor) = &mut self.successor {
+            let encoded = session
+                .encode_current_flat_scoring_decision_owned_v3(
+                    decision,
+                    &mut successor.encoder,
+                    &mut self.owned.buffers(),
+                )
+                .map_err(|e| format!("V3 actor-visible encoding: {e:?}; decision={decision:?}"))?;
+            self.owned.globals = encoded.globals;
+            successor.extensions = encoded.extensions;
+            return self.score_owned();
+        }
         let encoded = session
             .encode_current_flat_scoring_decision_owned_v2(
                 decision,
@@ -329,13 +411,25 @@ impl FrozenPlayPolicyV1 {
     }
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
-        self.tensorizer
-            .fill(self.owned.view(), &mut self.tensor)
-            .map_err(|e| format!("visible tensorization: {e:?}"))?;
-        let output = self
-            .model
-            .forward_v1(encoded_decision_view_v1(&self.tensor))
-            .map_err(|e| format!("frozen scalar inference: {e:?}"))?;
+        let output = if let Some(successor) = &mut self.successor {
+            successor
+                .tensorizer
+                .fill(
+                    FlatScoringDecisionViewV3::new(self.owned.view(), &successor.extensions),
+                    &mut successor.tensor,
+                )
+                .map_err(|e| format!("V3 visible tensorization: {e:?}"))?;
+            self.model
+                .forward_feature_transfer_v3(encoded_decision_view_v3(&successor.tensor))
+                .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?
+        } else {
+            self.tensorizer
+                .fill(self.owned.view(), &mut self.tensor)
+                .map_err(|e| format!("visible tensorization: {e:?}"))?;
+            self.model
+                .forward_v1(encoded_decision_view_v1(&self.tensor))
+                .map_err(|e| format!("frozen scalar inference: {e:?}"))?
+        };
         require(
             output.logits.len() == self.owned.actions.len()
                 && !output.logits.is_empty()
@@ -377,6 +471,9 @@ impl FrozenPlayPolicyV1 {
 }
 
 impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
+    fn uses_observation_successor_v3(&self) -> bool {
+        self.successor.is_some()
+    }
     fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError> {
         self.reset_sampling_v1(policy_seeds);
         Ok(())
@@ -387,14 +484,26 @@ impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
         input: PairedBo1PolicyInputV1<'_>,
     ) -> Result<u32, RlSessionError> {
         let decision = input.decision();
-        let encoded = input
-            .encode_scoring_owned_v2(&mut self.encoder, &mut self.owned.buffers())
-            .map_err(|e| {
-                policy_error(format!(
-                    "actor-visible encoding: {e:?}; decision={decision:?}"
-                ))
-            })?;
-        self.owned.globals = encoded.globals;
+        if let Some(successor) = &mut self.successor {
+            let encoded = input
+                .encode_scoring_owned_v3(&mut successor.encoder, &mut self.owned.buffers())
+                .map_err(|e| {
+                    policy_error(format!(
+                        "V3 actor-visible encoding: {e:?}; decision={decision:?}"
+                    ))
+                })?;
+            self.owned.globals = encoded.globals;
+            successor.extensions = encoded.extensions;
+        } else {
+            let encoded = input
+                .encode_scoring_owned_v2(&mut self.encoder, &mut self.owned.buffers())
+                .map_err(|e| {
+                    policy_error(format!(
+                        "actor-visible encoding: {e:?}; decision={decision:?}"
+                    ))
+                })?;
+            self.owned.globals = encoded.globals;
+        }
         let scores = self.score_owned().map_err(policy_error)?;
         self.sample_scores(
             &scores.logits,

@@ -5,10 +5,14 @@ sideboard model between games. It supports cross-deck BO3 matches, explicit
 static teaching tables, and supervised imitation training. These are research
 tools. Training loss and completed matches do not establish better playing
 strength, BO3 promotion, MTGO readiness, or a trained brewing model.
-Deck registration alone does not establish frozen-policy compatibility; the
-known mechanic gaps below can still stop a batch.
+Deck registration alone does not establish frozen-policy compatibility. The
+explicit rich V6 / flat V3 transfer described in
+[the successor note](sideboarding_observation_successor_v3.md) addresses the
+three original mechanic gaps documented below. Original configurations retain
+the V5 / flat V2 contract and its limitations.
 
-The play model receives the existing actor-relative flat observation. The
+The play model receives an actor-relative flat observation under the selected
+explicit feature contract. The
 sideboard model receives its own registered 75, its own completed-game card
 outcomes, public opponent evidence, available resource summaries, game number,
 and match score. The runner does not pass the opponent's registration or private
@@ -312,7 +316,10 @@ positions; the search identities must expire at the decision boundary. Match
 and training records must pin the new feature hash. Existing play checkpoints
 may supply an explicitly documented warm start after shape and mapping checks;
 their original schema and feature identity must remain part of the provenance.
-No such migration or frozen-contract relaxation is implemented here.
+This migration is now available through the explicit
+`play_observation_transfer_v3` batch option; see the successor note and its
+versioned feature descriptor. The original loader and forward contracts remain
+strict, and the old failure artifacts remain historical evidence.
 
 ## Outputs and bounds
 

@@ -17,6 +17,10 @@ use crate::engine::{
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
+use crate::policy_observation_v6::{
+    DecisionLocalLibraryV6, HistoricalPublicSourceV6, HistoricalSourceContextV6, ObservationV6,
+    PendingCastObjectCostV6, PolicyObservationExtensionsV6, OBSERVATION_SCHEMA_VERSION_V6,
+};
 use crate::policy_surface_v5::{
     PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
     PolicySurfaceV5, POLICY_SURFACE_VERSION,
@@ -1749,19 +1753,8 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let base = build_observation_v2(
-        state,
-        surface.harness_surface(),
-        acting_player,
-        step_index,
-        text_mode,
-    )?;
-    let policy_surface_context = policy_surface_context_v5(
-        state,
-        surface
-            .scan_context_for(acting_player)
-            .map_err(RlContractError)?,
-    )?;
+    let (base, policy_surface_context) =
+        build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
     Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
@@ -1782,6 +1775,339 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         known_hand_cards: base.known_hand_cards,
         visible_projection_hash: 0,
     })
+}
+
+// Shared projection components, not an ObservationV5. Each version applies
+// its own admission rules before assembling its concrete observation type.
+fn build_policy_observation_parts(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let base = build_observation_v2(
+        state,
+        surface.harness_surface(),
+        acting_player,
+        step_index,
+        text_mode,
+    )?;
+    let context = policy_surface_context_v5(
+        state,
+        surface
+            .scan_context_for(acting_player)
+            .map_err(RlContractError)?,
+    )?;
+    Ok((base, context))
+}
+
+pub fn observe_policy_v6(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV6> {
+    let mut observation = build_policy_observation_v6(PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode: ObservationTextModeV2::FullArtifact,
+    })?;
+    observation.visible_projection_hash = visible_projection_hash_v6(&observation)?;
+    Ok(observation)
+}
+
+pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV6> {
+    build_policy_observation_v6(PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode: ObservationTextModeV2::FlatForbiddenElided,
+    })
+}
+
+fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV6> {
+    let PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode,
+    } = request;
+    if substep_count == 0 || substep_index >= substep_count {
+        return Err(RlContractError(format!(
+            "invalid physical decision substep {substep_index}/{substep_count}"
+        )));
+    }
+    let extensions = policy_observation_extensions_with_text_v6(state, acting_player, text_mode)?;
+    let (mut base, policy_surface_context) =
+        build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    if let Some(search) = &extensions.decision_local_library {
+        let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
+            .projection
+            .engine_context
+            .pending_effect
+            .as_mut()
+            .and_then(|pending| pending.choice.as_mut())
+        else {
+            return Err(RlContractError(
+                "decision-local library lost its search context".into(),
+            ));
+        };
+        let ordinal = |target: &TargetRefV1| -> Result<usize> {
+            let TargetRefV1::Object { object } = target else {
+                return Err(RlContractError(
+                    "library search has a non-card target".into(),
+                ));
+            };
+            search
+                .cards
+                .iter()
+                .position(|card| card.stable == *object)
+                .ok_or_else(|| RlContractError("library target has no decision-local card".into()))
+        };
+        let mut ordered = legal_targets
+            .iter()
+            .map(|target| Ok((ordinal(target)?, target.clone())))
+            .collect::<Result<Vec<_>>>()?;
+        ordered.sort_by_key(|(index, _)| *index);
+        *legal_targets = ordered.into_iter().map(|(_, target)| target).collect();
+    }
+    Ok(ObservationV6 {
+        schema_version: OBSERVATION_SCHEMA_VERSION_V6,
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: POLICY_SURFACE_VERSION,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        projection: PublicObservationProjectionV5 {
+            surface: base.projection,
+            policy_surface_context,
+        },
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        extensions,
+        visible_projection_hash: 0,
+    })
+}
+
+/// The action cache needs the same versioned authority once per decision,
+/// without constructing an observation or exposing private engine state.
+pub(crate) fn policy_observation_extensions_v6(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_with_text_v6(
+        state,
+        acting_player,
+        ObservationTextModeV2::FlatForbiddenElided,
+    )
+}
+
+fn policy_observation_extensions_with_text_v6(
+    state: &GameState,
+    acting_player: PlayerId,
+    text_mode: ObservationTextModeV2,
+) -> Result<PolicyObservationExtensionsV6> {
+    let pending_cast_object_cost = if let Some(pending) = &state.engine.pending_cast {
+        engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
+        if pending.source_contract.cast_method == CastMethodV4::Escape {
+            let definition = CARD_DEFS
+                .get(pending.source_contract.card_def as usize)
+                .ok_or_else(|| RlContractError("Escape source definition is absent".into()))?;
+            let escape = definition
+                .escape
+                .as_ref()
+                .ok_or_else(|| RlContractError("Escape cost definition is absent".into()))?;
+            let required_count = escape
+                .cost
+                .iter()
+                .find_map(|component| match component {
+                    crate::card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(count) => {
+                        Some(u32::from(*count))
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| RlContractError("Escape exile cost is absent".into()))?;
+            let mut seen = HashSet::new();
+            let selected = pending
+                .sacrifice_chosen
+                .iter()
+                .map(|&id| {
+                    let reference = card_ref(state, id)?;
+                    if id == pending.spell
+                        || !seen.insert(id)
+                        || reference.owner != pending.controller.into()
+                        || reference.zone != Zone::Graveyard
+                        || !state.players[pending.controller.index()]
+                            .graveyard
+                            .contains(&id)
+                    {
+                        return Err(RlContractError("invalid Escape selection prefix".into()));
+                    }
+                    Ok(reference)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let selected_count = u32::try_from(selected.len())
+                .map_err(|_| RlContractError("Escape prefix exceeds u32".into()))?;
+            let remaining_count = required_count
+                .checked_sub(selected_count)
+                .ok_or_else(|| RlContractError("Escape prefix exceeds its cost".into()))?;
+            Some(PendingCastObjectCostV6 {
+                source: card_ref(state, pending.spell)?,
+                controller: pending.controller.into(),
+                cast_method: CastMethodV4::Escape,
+                cost_kind: CostKind::ExileFromGraveyard,
+                required_count,
+                selected,
+                remaining_count,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut historical_public_sources = Vec::new();
+    for (index, item) in state.stack.iter().enumerate() {
+        if item.kind != StackItemKind::Spell {
+            historical_public_sources.push(HistoricalPublicSourceV6 {
+                context: HistoricalSourceContextV6::Stack {
+                    stack_index: u32::try_from(index)
+                        .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
+                },
+                source: stack_source_ref(state, item)?,
+                stack_item_kind: item.kind.into(),
+            });
+        }
+    }
+    let mut decision_local_library = None;
+    if let Some(pending) = &state.engine.pending_effect {
+        crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
+        historical_public_sources.push(HistoricalPublicSourceV6 {
+            context: HistoricalSourceContextV6::PendingEffect,
+            source: stack_source_ref(state, &pending.resolving_item)?,
+            stack_item_kind: pending.resolving_item.kind.into(),
+        });
+        if let Some(crate::effect::PendingEffectChoice::SelectTargets {
+            player,
+            selected,
+            legal,
+            purpose,
+            ..
+        }) = &pending.choice
+        {
+            use crate::effect::EffectTargetSelectionPurpose;
+            let library_owner = match purpose {
+                EffectTargetSelectionPurpose::SearchLibraryToHand { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryToHandMany { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                    player, ..
+                } => Some(*player),
+                _ => None,
+            };
+            if *player == acting_player {
+                if let Some(library_owner) = library_owner {
+                    let mut seen = HashSet::new();
+                    let mut cards = Vec::new();
+                    for candidate in selected.iter().chain(legal.iter()) {
+                        let Target::Object(id) = candidate.target else {
+                            return Err(RlContractError("library search names a non-card".into()));
+                        };
+                        let object = state.objects.try_get(id).ok_or_else(|| {
+                            RlContractError("library search card is absent".into())
+                        })?;
+                        if object.owner != library_owner
+                            || object.zone != Zone::Library
+                            || !state.players[library_owner.index()].library.contains(&id)
+                            || candidate.expected_object.is_none_or(|binding| {
+                                binding.object != id
+                                    || binding.expected_zone != Zone::Library
+                                    || binding.expected_zone_change_count
+                                        != object.zone_change_count
+                            })
+                        {
+                            return Err(RlContractError(
+                                "invalid decision-local library card".into(),
+                            ));
+                        }
+                        if seen.insert(id) {
+                            cards.push(private_card(state, id, text_mode)?);
+                        }
+                    }
+                    // Only observable card identity determines class order.
+                    // The selected prefix is visible and distinguishes copies.
+                    // Arena ids break ties inside indistinguishable classes
+                    // for private authority; scorers must erase that tie-break.
+                    cards.sort_by_key(|card| {
+                        (
+                            card.stable.card_db_id,
+                            card.stable.owner as u8,
+                            card.stable.controller as u8,
+                            selected
+                                .iter()
+                                .position(|target| {
+                                    matches!(target.target,
+                                Target::Object(id) if id.0 == card.stable.arena_id)
+                                })
+                                .unwrap_or(usize::MAX),
+                            card.stable.arena_id,
+                        )
+                    });
+                    decision_local_library = Some(DecisionLocalLibraryV6 {
+                        chooser: (*player).into(),
+                        library_owner: library_owner.into(),
+                        cards,
+                    });
+                }
+            }
+        }
+    }
+    Ok(PolicyObservationExtensionsV6 {
+        pending_cast_object_cost,
+        decision_local_library,
+        historical_public_sources,
+    })
+}
+
+/// V6 commits every field except the commitment field itself, using canonical
+/// JSON object-key order. V5's original field-order hash is left untouched.
+fn visible_projection_hash_v6(observation: &ObservationV6) -> Result<u64> {
+    let mut value = serde_json::to_value(observation)?;
+    value
+        .as_object_mut()
+        .expect("observation is an object")
+        .remove("visible_projection_hash");
+    stable_hash_json(&value)
 }
 
 fn policy_surface_context_v5(
@@ -2426,8 +2752,10 @@ fn core_surface_action_candidates_v1(
                     // `(true, true)` sentinels this decision's own
                     // `discard_payable`/`sacrifice_payable` would
                     // otherwise collide with).
-                    for choice in [OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent]
-                    {
+                    for choice in [
+                        OptionalCostChoice::Decline,
+                        OptionalCostChoice::ReturnPermanent,
+                    ] {
                         push_action(
                             &mut out,
                             ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
@@ -2455,9 +2783,7 @@ fn core_surface_action_candidates_v1(
                                 push_action(
                                     &mut out,
                                     ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
-                                    SurfaceAction::Action(Action::ChooseOptionalCostStage(
-                                        use_it,
-                                    )),
+                                    SurfaceAction::Action(Action::ChooseOptionalCostStage(use_it)),
                                 )?;
                             }
                         }
@@ -6956,7 +7282,10 @@ mod glint_hawk_optional_cost_tests {
             .collect();
         assert_eq!(
             choices,
-            vec![OptionalCostChoice::Decline, OptionalCostChoice::ReturnPermanent],
+            vec![
+                OptionalCostChoice::Decline,
+                OptionalCostChoice::ReturnPermanent
+            ],
             "exactly the decline and the return actions, in that order"
         );
 
@@ -7115,7 +7444,9 @@ mod adventure_and_monarch_rl_tests {
                     SurfaceAction::Action(Action::CastSpell(candidate_id)) if candidate_id == id
                 )
             })
-            .unwrap_or_else(|| panic!("expected a CastSpell({id:?}) candidate among {candidates:?}"))
+            .unwrap_or_else(|| {
+                panic!("expected a CastSpell({id:?}) candidate among {candidates:?}")
+            })
     }
 
     #[test]

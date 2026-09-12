@@ -12,7 +12,9 @@ use mtg_kernel::learned_sideboard_v1::{
 use mtg_kernel::sideboard::{
     checked_in_pauper_registered_deck_by_id_v1, CardCountV1, DeckConfigurationV1, SideboardPlanV1,
 };
-use mtg_kernel::sideboard_play_policy_v1::{FrozenPlayPolicyImportV1, FrozenPlayPolicyV1};
+use mtg_kernel::sideboard_play_policy_v1::{
+    FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1, FrozenPlayPolicyV1,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -79,6 +81,8 @@ enum CommandV1 {
     },
     RunBatch {
         play_import: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        play_observation_transfer_v3: Option<FrozenPlayObservationTransferV3>,
         output_directory: PathBuf,
         policies: [SeatPolicyV1; 2],
         matches: Vec<LearnedBo3RunConfigV1>,
@@ -273,7 +277,13 @@ fn run() -> Result<(), String> {
     let import_bytes = read_bounded(import_path, MAX_JSON_BYTES)?;
     let import: FrozenPlayPolicyImportV1 =
         serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
-    let mut play = FrozenPlayPolicyV1::load_v1(&import)?;
+    let mut play = match &command {
+        CommandV1::RunBatch {
+            play_observation_transfer_v3: Some(transfer),
+            ..
+        } => FrozenPlayPolicyV1::load_feature_transfer_v3(&import, transfer)?,
+        _ => FrozenPlayPolicyV1::load_v1(&import)?,
+    };
     let copied_embeddings = play.embedding_rows_v1().to_vec();
     let identity = SideboardPlayIdentityV1 {
         weights_sha256: play.identity_v1().weights_sha256.clone(),
@@ -728,6 +738,11 @@ fn compiled_sources() -> Value {
         "learned_sideboard_model":hash(include_bytes!("../learned_sideboard_v1.rs")),
         "learned_bo3":hash(include_bytes!("../learned_bo3_v1.rs")),
         "play_policy":hash(include_bytes!("../sideboard_play_policy_v1.rs")),
+        "observation_v6":hash(include_bytes!("../policy_observation_v6.rs")),
+        "flat_policy_v3":hash(include_bytes!("../flat_policy_v3.rs")),
+        "flat_action_v3":hash(include_bytes!("../rl_session/flat_action_v3.rs")),
+        "tensorizer_v3":hash(include_bytes!("../native_flat_tensorizer_v3.rs")),
+        "feature_descriptor_v3":hash(include_bytes!("../../../data/flat_policy_v3/feature_contract_v3.json")),
         "paired_harness":hash(include_bytes!("../paired_bo1_harness_v1.rs")),
         "game_summary":hash(include_bytes!("../game_summary_v1.rs")),
         "library_registration":hash(include_bytes!("../lib.rs")),

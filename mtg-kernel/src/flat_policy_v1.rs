@@ -3568,6 +3568,8 @@ impl FlatDecisionEncoderV1 {
                                         && object.source_kind == FlatObjectSourceKindV1::Pending)
                             }
                             FlatActionObjectGroupV1::Command => false,
+                            FlatActionObjectGroupV1::DecisionLocalLibrary
+                            | FlatActionObjectGroupV1::HistoricalPublicSource => false,
                             FlatActionObjectGroupV1::KnownSelfLibrary => {
                                 object.group == FlatObjectGroupV1::KnownSelfLibrary
                             }

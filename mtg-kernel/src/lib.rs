@@ -66,7 +66,9 @@ pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
 pub mod flat_policy_v2;
+pub mod flat_policy_v3;
 pub mod ids;
+pub mod policy_observation_v6;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,
 // `run_native_checkpoint_with_search_opponent_eval_v1`
@@ -176,6 +178,7 @@ pub mod native_cuda_qualification_metrics_v1;
 pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
+pub(crate) mod native_flat_tensorizer_v3;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
 // Section 1.5 / Section 5.3 item 3). Test-only, `#[ignore]`d: requires the
 // real de-novo screen checkpoint store on D:, which does not exist in a
@@ -379,15 +382,15 @@ pub mod native_training_store_run_v2;
 pub mod native_training_store_reference_latest_v2;
 // Private-construction persistence receipt and the strict native generation
 // store boundary. The high-level publisher/read/recovery path lands here.
+pub mod game_summary_v1;
+pub mod learned_bo3_v1;
+pub mod learned_sideboard_v1;
 #[cfg(test)]
 mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
 pub mod paired_bo1_harness_v1;
-pub mod game_summary_v1;
-pub mod sideboard_search_campaign_v1;
-pub mod learned_sideboard_v1;
-pub mod learned_bo3_v1;
 pub mod sideboard_play_policy_v1;
+pub mod sideboard_search_campaign_v1;
 // MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by

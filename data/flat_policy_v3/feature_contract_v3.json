@@ -1,0 +1,40 @@
+{
+  "dimensions": {
+    "action": 195,
+    "action_ref": 25,
+    "edge": 41,
+    "object": 98,
+    "object_groups": 20,
+    "state": 219
+  },
+  "encoding": {
+    "empty_extensions": "always-include-required-null-and-empty-fields-in-v6-state-hash",
+    "extension_edge_order": "cost-source-then-selected-then-search-cards-then-historical-sources-after-v5-edges",
+    "historical_nodes": "reuse-exact-incarnation-else-pending-context-without-claiming-live-arena",
+    "historical_sources": "exact-public-stack-context-binding-not-json-provenance-authentication",
+    "new_node_order": "all-common-nodes-including-legacy-detached-context-then-new-search-then-new-history",
+    "object_cost": "declared-cast-method-and-original-zone-prefix-in-state-hash-and-pending-edges",
+    "search_actions": "supplied-actions-follow-canonical-visible-target-order-no-silent-action-reordering",
+    "search_cards": "actor-only-unordered-visible-multiset-no-library-position-no-operational-id-order",
+    "search_copy_roles": "within-public-class-selected-prefix-index-before-unselected-no-id-derived-role-order",
+    "search_objects": "reuse-visible-node-else-private-context-private-source-shared-visible-class-ordinal"
+  },
+  "extension_edge_subroles": {
+    "cost_selected": 33,
+    "cost_source": 32,
+    "historical_source": 35,
+    "search_card": 34
+  },
+  "feature_contract_digest": "a67ef398e332d9d9f83f4c45618b6696a54aa963b4dbcfa5177f9ff5ea3106a7",
+  "feature_encoding_digest": "6884a1900674b0f6ce125b3bda6bc8bfe02dc5775c3cdbd38f80ed336f7448fe",
+  "feature_registry_version": "rust-observation-v6-action-v5-registry-1",
+  "feature_schema_version": "actor-relative-v6-python-1",
+  "features_source_path": "python/mtg_kernel_rl/features_v6.py",
+  "features_source_sha256": "9996a518882adc772b6b25709cd13421aa855c6699c6fbdbc8fb25aa64cd5c20",
+  "legal_action_schema": 5,
+  "model_contract_version": "kernel-policy-value-net-8",
+  "provenance_boundary": "Python validates internal consistency; authoritative Rust production validates actual public history and hidden-state scope.",
+  "rich_observation_schema": 6,
+  "schema": "flat-policy-v3-feature-contract-1",
+  "transfer": "Existing Net8 weights require explicitly labeled feature transfer. Shape equality is not unchanged checkpoint identity or competence evidence."
+}
