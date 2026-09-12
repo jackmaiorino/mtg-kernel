@@ -68,6 +68,26 @@ pub enum SearchCampaignErrorV1 {
     InvalidParameter { name: String, reason: String },
 }
 
+/// The legacy BO3 driver uses projected RL decisions. Sampling and recurrent
+/// state reset at each matched arm, with separate streams for the two seats.
+/// State may persist between physical games within that one match.
+pub trait PairedBo3PolicyV1 {
+    fn reset_for_match_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), SearchCampaignErrorV1>;
+
+    fn select_action_v1(
+        &mut self,
+        input: PairedBo3PolicyInputV1<'_>,
+    ) -> Result<(u32, String), SearchCampaignErrorV1>;
+}
+
+/// Only player-visible decision fields cross the policy boundary. The
+/// episode's true deck IDs and the other seat's deck hash remain withheld.
+pub struct PairedBo3PolicyInputV1<'a> {
+    pub acting_player: crate::rl::PlayerSeatV1,
+    pub observation: &'a crate::rl::ObservationV5,
+    pub legal_actions: &'a [crate::rl::LegalActionV5],
+}
+
 impl std::fmt::Display for SearchCampaignErrorV1 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -172,12 +192,71 @@ pub fn candidate_seed_v1(
     u64::from_be_bytes(digest[0..8].try_into().expect("sha256 digest is at least 8 bytes"))
 }
 
-pub fn embedding_status_v1(card_ids: &[u16]) -> Vec<(u16, bool)> {
-    let trained: std::collections::BTreeSet<u16> = crate::runtime_decks::RUNTIME_DECKS
-        .iter()
-        .flat_map(|deck| deck.card_ids.iter().copied())
-        .collect();
-    card_ids.iter().map(|&card_id| (card_id, trained.contains(&card_id))).collect()
+/// Supplied evidence of card exposure for an exact checkpoint. An inventory
+/// names the training artifact it was derived from, rather than the runtime
+/// catalog. `complete_history` means all training contributing to that
+/// checkpoint is covered, including any warm-start ancestors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingExposureProvenanceV1 {
+    pub checkpoint_weights_sha256: String,
+    pub exposure_artifact_sha256: String,
+    pub observed_card_ids: std::collections::BTreeSet<u16>,
+    pub complete_history: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum EmbeddingExposureStatusV1 {
+    Unknown,
+    ObservedInTraining {
+        checkpoint_weights_sha256: String,
+        exposure_artifact_sha256: String,
+    },
+    NotObservedInCompleteHistory {
+        checkpoint_weights_sha256: String,
+        exposure_artifact_sha256: String,
+    },
+}
+
+/// Catalog membership establishes no training exposure. In the absence of
+/// checkpoint-bound evidence every row remains unknown.
+pub fn embedding_status_v1(card_ids: &[u16]) -> Vec<(u16, EmbeddingExposureStatusV1)> {
+    card_ids.iter().map(|&card_id| (card_id, EmbeddingExposureStatusV1::Unknown)).collect()
+}
+
+pub fn embedding_status_with_provenance_v1(
+    card_ids: &[u16],
+    checkpoint_weights_sha256: &str,
+    provenance: Option<&EmbeddingExposureProvenanceV1>,
+) -> Vec<(u16, EmbeddingExposureStatusV1)> {
+    let Some(provenance) = provenance else {
+        return embedding_status_v1(card_ids);
+    };
+    let valid_hash = |value: &str| {
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    if provenance.checkpoint_weights_sha256 != checkpoint_weights_sha256
+        || !valid_hash(&provenance.checkpoint_weights_sha256)
+        || !valid_hash(&provenance.exposure_artifact_sha256)
+    {
+        return embedding_status_v1(card_ids);
+    }
+    card_ids.iter().map(|&card_id| {
+        let status = if provenance.observed_card_ids.contains(&card_id) {
+            EmbeddingExposureStatusV1::ObservedInTraining {
+                checkpoint_weights_sha256: provenance.checkpoint_weights_sha256.clone(),
+                exposure_artifact_sha256: provenance.exposure_artifact_sha256.clone(),
+            }
+        } else if provenance.complete_history {
+            EmbeddingExposureStatusV1::NotObservedInCompleteHistory {
+                checkpoint_weights_sha256: provenance.checkpoint_weights_sha256.clone(),
+                exposure_artifact_sha256: provenance.exposure_artifact_sha256.clone(),
+            }
+        } else {
+            EmbeddingExposureStatusV1::Unknown
+        };
+        (card_id, status)
+    }).collect()
 }
 
 /// Bounded 1-card swaps: for every mainboard card_id (ascending) and every
@@ -423,7 +502,7 @@ pub fn resolve_opponent_mainboard_for_cell_v1(
 /// accepted-opponent-plan variant was used." Identical trained-check logic
 /// to `embedding_status_v1`, kept as a separately named function so a
 /// receipt row's two lists are never confused with each other by call site.
-pub fn opponent_embedding_status_v1(opponent_plan_cards_in: &[u16]) -> Vec<(u16, bool)> {
+pub fn opponent_embedding_status_v1(opponent_plan_cards_in: &[u16]) -> Vec<(u16, EmbeddingExposureStatusV1)> {
     embedding_status_v1(opponent_plan_cards_in)
 }
 
@@ -442,8 +521,8 @@ pub const CANDIDATE_HASH_CONVENTION_SORTED_EXPLICIT_V1: &str = "sorted-explicit"
 #[derive(Debug, Clone, Serialize)]
 pub struct CandidateReceiptFieldsV1 {
     pub hash_convention: String,
-    pub embedding_status: Vec<(u16, bool)>,
-    pub opponent_embedding_status: Option<Vec<(u16, bool)>>,
+    pub embedding_status: Vec<(u16, EmbeddingExposureStatusV1)>,
+    pub opponent_embedding_status: Option<Vec<(u16, EmbeddingExposureStatusV1)>>,
     pub opponent_resolution_variant: OpponentResolutionVariantV1,
 }
 
@@ -524,7 +603,9 @@ pub fn bo3_ratify_v1(
         deltas, manifest.bootstrap_resample_count, seed, manifest.bo3_bootstrap_sidedness,
         1.0 - manifest.bo3_confidence_level,
     );
-    (result.lower > 0.0 || result.upper < 0.0, result)
+    // Deltas are candidate wins minus incumbent wins. An interval entirely
+    // below zero establishes a worse candidate and must reject it.
+    (result.lower > 0.0, result)
 }
 
 /// Runs `manifest.n_per_cell` paired BO1 trials per candidate (candidate
@@ -542,7 +623,7 @@ pub fn run_bo1_provisional_search_for_cell_v1(
     incumbent: &SideboardPlanV1,
     candidates: &[SideboardPlanV1],
     opponent_mainboard: &[u16],
-    policy_fn: &mut dyn FnMut(&crate::rl_session::FastActorDecisionV1) -> u32,
+    policy: &mut dyn crate::paired_bo1_harness_v1::PairedBo1PolicyV1,
 ) -> Result<Option<SideboardPlanV1>, SearchCampaignErrorV1> {
     load_and_verify_manifest_v1(manifest_path)?;
     let mainboard_for = |plan: &SideboardPlanV1| -> Result<Vec<u16>, SearchCampaignErrorV1> {
@@ -567,7 +648,7 @@ pub fn run_bo1_provisional_search_for_cell_v1(
             );
             let outcome = crate::paired_bo1_harness_v1::run_paired_bo1_trial_v1(
                 &candidate_mainboard, &working_best_mainboard, opponent_mainboard,
-                PlayerId::P0, seed, PlayerId::P0, 2000, policy_fn,
+                PlayerId::P0, seed, PlayerId::P0, 2000, policy,
             )
             .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
             deltas.push(outcome.delta);
@@ -731,7 +812,7 @@ fn play_bo3_match_for_seat_v1(
     pair_environment_seed: u64,
     match_index: u32,
     arm: Bo3RatificationArmV1,
-    policy_fn: &mut dyn FnMut(&crate::rl_session::RlSessionDecisionV1) -> (u32, String),
+    play_policy: &mut dyn PairedBo3PolicyV1,
 ) -> Result<(bool, Vec<Bo3GameTraceV1>), SearchCampaignErrorV1> {
     let self_registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(self_deck_id)
         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
@@ -742,6 +823,7 @@ fn play_bo3_match_for_seat_v1(
     )
     .map_err(|error| SearchCampaignErrorV1::Io(format!("{error:?}")))?;
 
+    play_policy.reset_for_match_v1(crate::paired_bo1_harness_v1::paired_policy_seeds_v1(pair_environment_seed))?;
     let mut trace = Vec::new();
     loop {
         let chooser = match match_session.match_state().phase() {
@@ -787,9 +869,22 @@ fn play_bo3_match_for_seat_v1(
 
         let winner = loop {
             match session.current_response() {
-                crate::rl_session::RlSessionResponseV1::Terminal(terminal) => break terminal.winner,
+                crate::rl_session::RlSessionResponseV1::Terminal(terminal) => {
+                    if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural {
+                        return Err(SearchCampaignErrorV1::InvalidParameter {
+                            name: "terminal_classification".to_owned(),
+                            reason: format!("BO3 game ended as {:?}/{:?}; no match result is recorded",
+                                terminal.terminal_classification, terminal.terminal_outcome),
+                        });
+                    }
+                    break terminal.winner;
+                }
                 crate::rl_session::RlSessionResponseV1::Decision(decision) => {
-                    let (selected_index, selected_action_id) = policy_fn(&decision);
+                    let (selected_index, selected_action_id) = play_policy.select_action_v1(PairedBo3PolicyInputV1 {
+                        acting_player: decision.acting_player,
+                        observation: &decision.observation,
+                        legal_actions: &decision.legal_actions,
+                    })?;
                     session
                         .step(decision.episode_id, decision.step, selected_index, &selected_action_id)
                         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
@@ -838,7 +933,8 @@ fn play_bo3_match_for_seat_v1(
 /// paired-bootstrap CI on match-win delta, at `manifest.bo3_confidence_level`
 /// (fix round 1 item 3: consumed via `paired_bootstrap_ci_with_alpha_v1`'s
 /// `alpha = 1.0 - bo3_confidence_level`, not a hardcoded percentile),
-/// excludes 0 (design section 4, BO3 ratification). Gated on
+/// is entirely above 0. An entirely negative interval rejects the candidate.
+/// Gated on
 /// `load_and_verify_manifest_v1`, exactly like the BO1 stage. Returns the
 /// ratification decision plus every physical game's `Bo3GameTraceV1`
 /// across both arms and every match, for disclosure.
@@ -852,7 +948,7 @@ pub fn run_bo3_ratification_v1(
     candidate_plan: &SideboardPlanV1,
     incumbent_plan: &SideboardPlanV1,
     sideboard_policy: &crate::sideboard::DeterministicSideboardPolicyV1,
-    policy_fn: &mut dyn FnMut(&crate::rl_session::RlSessionDecisionV1) -> (u32, String),
+    play_policy: &mut dyn PairedBo3PolicyV1,
 ) -> Result<(bool, Vec<Bo3GameTraceV1>), SearchCampaignErrorV1> {
     load_and_verify_manifest_v1(manifest_path)?;
     if game_index < 2 {
@@ -869,11 +965,11 @@ pub fn run_bo3_ratification_v1(
         let seed = candidate_seed_v1(manifest.master_seed, self_deck_id, opponent_deck_id, game_index, match_index);
         let (candidate_won, candidate_trace) = play_bo3_match_for_seat_v1(
             self_deck_id, opponent_deck_id, game_index, candidate_plan, sideboard_policy, seed,
-            match_index, Bo3RatificationArmV1::Candidate, policy_fn,
+            match_index, Bo3RatificationArmV1::Candidate, play_policy,
         )?;
         let (incumbent_won, incumbent_trace) = play_bo3_match_for_seat_v1(
             self_deck_id, opponent_deck_id, game_index, incumbent_plan, sideboard_policy, seed,
-            match_index, Bo3RatificationArmV1::Incumbent, policy_fn,
+            match_index, Bo3RatificationArmV1::Incumbent, play_policy,
         )?;
         trace.extend(candidate_trace);
         trace.extend(incumbent_trace);
@@ -963,14 +1059,39 @@ mod tests {
     }
 
     #[test]
-    fn embedding_status_reports_pulse_of_murasa_as_trained_via_wildfire_mainboard() {
-        // design section 1's cross-deck example: Pulse of Murasa is
-        // sideboard-only for Elves but mainboard for Wildfire, so its row
-        // is trained by the global, catalog-wide definition.
+    fn catalog_membership_does_not_establish_checkpoint_training_exposure() {
         let pulse_of_murasa_id = crate::card_def::card_id_by_name("Pulse of Murasa")
             .expect("Pulse of Murasa is registered");
         let status = embedding_status_v1(&[pulse_of_murasa_id]);
-        assert_eq!(status, vec![(pulse_of_murasa_id, true)]);
+        assert_eq!(status, vec![(pulse_of_murasa_id, EmbeddingExposureStatusV1::Unknown)]);
+    }
+
+    #[test]
+    fn exposure_claims_require_matching_checkpoint_provenance_and_complete_history_for_absence() {
+        let checkpoint = "a".repeat(64);
+        let mut provenance = EmbeddingExposureProvenanceV1 {
+            checkpoint_weights_sha256: checkpoint.clone(),
+            exposure_artifact_sha256: "b".repeat(64),
+            observed_card_ids: [1].into_iter().collect(),
+            complete_history: false,
+        };
+        let partial = embedding_status_with_provenance_v1(&[1, 2], &checkpoint, Some(&provenance));
+        assert!(matches!(partial[0].1, EmbeddingExposureStatusV1::ObservedInTraining { .. }));
+        assert_eq!(partial[1].1, EmbeddingExposureStatusV1::Unknown);
+        provenance.complete_history = true;
+        let complete = embedding_status_with_provenance_v1(&[1, 2], &checkpoint, Some(&provenance));
+        assert!(matches!(complete[1].1, EmbeddingExposureStatusV1::NotObservedInCompleteHistory { .. }));
+        assert_eq!(
+            embedding_status_with_provenance_v1(&[1, 2], &"c".repeat(64), Some(&provenance)),
+            embedding_status_v1(&[1, 2]),
+            "another checkpoint's exposure must not be inherited",
+        );
+        provenance.exposure_artifact_sha256.clear();
+        assert_eq!(
+            embedding_status_with_provenance_v1(&[1, 2], &checkpoint, Some(&provenance)),
+            embedding_status_v1(&[1, 2]),
+            "an unattributed inventory establishes no exposure",
+        );
     }
 
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
@@ -1109,11 +1230,11 @@ mod tests {
     }
 
     #[test]
-    fn opponent_embedding_status_reports_pulse_of_murasa_as_trained_via_wildfire_mainboard() {
+    fn opponent_embedding_status_also_requires_training_evidence() {
         let pulse_of_murasa_id = crate::card_def::card_id_by_name("Pulse of Murasa")
             .expect("Pulse of Murasa is registered");
         let status = opponent_embedding_status_v1(&[pulse_of_murasa_id]);
-        assert_eq!(status, vec![(pulse_of_murasa_id, true)]);
+        assert_eq!(status, vec![(pulse_of_murasa_id, EmbeddingExposureStatusV1::Unknown)]);
     }
 
     #[test]
@@ -1128,12 +1249,39 @@ mod tests {
     use crate::bo3_session::BestOfThreeDeckMatchV1;
     use crate::bo3_match::{GameOutcomeV1, PlayDrawChoiceV1};
     use crate::paired_bo1_harness_v1::{run_paired_bo1_trial_v1, PairedTrialOutcomeV1};
-    use crate::rl_session::FastActorDecisionV1;
     use crate::state::SplitMix64;
 
-    fn random_policy_v1(seed: u64) -> impl FnMut(&FastActorDecisionV1) -> u32 {
-        let mut rng = SplitMix64::seed(seed);
-        move |decision: &FastActorDecisionV1| (rng.next_u64() as u32) % decision.legal_action_count.max(1)
+    fn random_policy_v1() -> crate::paired_bo1_harness_v1::policy_test_support::SeededRandomBo1PolicyV1 {
+        // The paired driver supplies and resets both seat streams for every arm.
+        crate::paired_bo1_harness_v1::policy_test_support::SeededRandomBo1PolicyV1::default()
+    }
+
+    struct SeededRandomBo3PolicyV1 {
+        rng: [SplitMix64; 2],
+        resets: Vec<[u64; 2]>,
+    }
+
+    impl Default for SeededRandomBo3PolicyV1 {
+        fn default() -> Self {
+            Self { rng: [SplitMix64::seed(0), SplitMix64::seed(0)], resets: Vec::new() }
+        }
+    }
+
+    impl PairedBo3PolicyV1 for SeededRandomBo3PolicyV1 {
+        fn reset_for_match_v1(&mut self, seeds: [u64; 2]) -> Result<(), SearchCampaignErrorV1> {
+            self.rng = seeds.map(SplitMix64::seed);
+            self.resets.push(seeds);
+            Ok(())
+        }
+
+        fn select_action_v1(&mut self, input: PairedBo3PolicyInputV1<'_>) -> Result<(u32, String), SearchCampaignErrorV1> {
+            let seat = match input.acting_player {
+                crate::rl::PlayerSeatV1::P0 => 0,
+                crate::rl::PlayerSeatV1::P1 => 1,
+            };
+            let index = (self.rng[seat].next_u64() as usize) % input.legal_actions.len();
+            Ok((index as u32, input.legal_actions[index].stable_id.clone()))
+        }
     }
 
     #[test]
@@ -1151,7 +1299,7 @@ mod tests {
             .mainboard()
             .to_vec();
         let seed = candidate_seed_v1(0xABCD, "Burn", "Rally", 2, 0);
-        let mut policy = random_policy_v1(seed);
+        let mut policy = random_policy_v1();
         let outcome: PairedTrialOutcomeV1 = run_paired_bo1_trial_v1(
             candidate_configuration.mainboard(),
             &incumbent_mainboard,
@@ -1188,7 +1336,7 @@ mod tests {
         let p0_mainboard = game.configuration(PlayerId::P0).unwrap().mainboard().to_vec();
         let p1_mainboard = game.configuration(PlayerId::P1).unwrap().mainboard().to_vec();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
-        let mut session = crate::rl_session::RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+        let session = crate::rl_session::RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
             1, 0x9999, 2000, 200_000, deck_ids, [p0_mainboard, p1_mainboard], start.starting_player,
         )
         .expect("bo3-bound explicit-deck reset succeeds");
@@ -1215,17 +1363,27 @@ mod tests {
 
     #[test]
     fn bo3_ratify_boundary_on_synthetic_deltas() {
+        let manifest = sample_manifest();
         let clearly_positive = [1i8; 20];
-        let ratify = crate::paired_bo1_harness_v1::paired_bootstrap_ci_v1(
-            &clearly_positive, 2000, 1, BootstrapSidednessV1::TwoSided,
-        );
-        assert!(ratify.lower > 0.0 || ratify.upper < 0.0, "a uniformly positive series must exclude 0 at the BO3 two-sided CI");
+        let (accepted, _) = bo3_ratify_v1(&clearly_positive, &manifest, 1);
+        assert!(accepted, "a consistently better candidate is eligible for ratification");
 
         let clearly_mixed = [1i8, -1, 1, -1, 1, -1, 1, -1, 1, -1];
-        let reject = crate::paired_bo1_harness_v1::paired_bootstrap_ci_v1(
-            &clearly_mixed, 2000, 1, BootstrapSidednessV1::TwoSided,
-        );
-        assert!(!(reject.lower > 0.0 || reject.upper < 0.0), "a zero-mean series must not exclude 0 at the BO3 two-sided CI");
+        let (accepted, _) = bo3_ratify_v1(&clearly_mixed, &manifest, 1);
+        assert!(!accepted, "a zero-mean series must not ratify");
+    }
+
+    #[test]
+    fn bo3_ratification_rejects_a_confidently_worse_candidate() {
+        // These are actual paired match outcomes in the driver's sign
+        // convention: the candidate loses and the incumbent wins each pair.
+        let paired_winners = [(false, true); 20];
+        let deltas: Vec<i8> = paired_winners.iter()
+            .map(|&(candidate_won, incumbent_won)| i8::from(candidate_won) - i8::from(incumbent_won))
+            .collect();
+        let (accepted, interval) = bo3_ratify_v1(&deltas, &sample_manifest(), 1);
+        assert_eq!((interval.lower, interval.upper), (-1.0, -1.0));
+        assert!(!accepted, "statistically clear harm must reject the candidate");
     }
 
     #[test]
@@ -1245,10 +1403,7 @@ mod tests {
             .registered_configuration()
             .mainboard()
             .to_vec();
-        let mut rng = SplitMix64::seed(0x4141_4141_4141_4141);
-        let mut policy = |decision: &crate::rl_session::FastActorDecisionV1| {
-            (rng.next_u64() as u32) % decision.legal_action_count.max(1)
-        };
+        let mut policy = random_policy_v1();
         let result = run_bo1_provisional_search_for_cell_v1(
             &manifest, &manifest_path, &registered, &incumbent, &candidates, &opponent_mainboard, &mut policy,
         )
@@ -1374,11 +1529,7 @@ mod tests {
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
 
         for seed in 1u64..=150 {
-            let mut rng = SplitMix64::seed(seed ^ 0x1357_9BDF_2468_ACE0);
-            let mut policy_fn = |decision: &crate::rl_session::RlSessionDecisionV1| {
-                let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-                (index as u32, decision.legal_actions[index].stable_id.clone())
-            };
+            let mut policy_fn = SeededRandomBo3PolicyV1::default();
             let (_self_won, trace) = play_bo3_match_for_seat_v1(
                 "Burn", "Rally", 2, &plan_under_test, &policy, seed, 0, Bo3RatificationArmV1::Candidate, &mut policy_fn,
             )
@@ -1472,7 +1623,7 @@ mod tests {
         // refuse 1.
         let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
-        let mut policy_fn = |_decision: &crate::rl_session::RlSessionDecisionV1| (0u32, String::new());
+        let mut policy_fn = SeededRandomBo3PolicyV1::default();
 
         let error = run_bo3_ratification_v1(
             &manifest, &manifest_path, "Burn", "Rally", 1, &incumbent_plan, &incumbent_plan, &policy, &mut policy_fn,
@@ -1499,11 +1650,7 @@ mod tests {
         let candidate_plan = candidates.first().expect("at least one candidate exists").clone();
         let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
-        let mut rng = SplitMix64::seed(0x2323_2323_2323_2323);
-        let mut policy_fn = |decision: &crate::rl_session::RlSessionDecisionV1| {
-            let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-            (index as u32, decision.legal_actions[index].stable_id.clone())
-        };
+        let mut policy_fn = SeededRandomBo3PolicyV1::default();
 
         let (_ratified, trace) = run_bo3_ratification_v1(
             &manifest, &manifest_path, "Burn", "Rally", 2, &candidate_plan, &incumbent_plan, &policy, &mut policy_fn,
@@ -1557,6 +1704,30 @@ mod tests {
     }
 
     #[test]
+    fn identical_bo3_plans_reset_policy_rng_and_reproduce_the_whole_match() {
+        let plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
+        let sideboard_policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
+        let mut play_policy = SeededRandomBo3PolicyV1::default();
+        let (candidate_win, candidate_trace) = play_bo3_match_for_seat_v1(
+            "Burn", "Rally", 2, &plan, &sideboard_policy, 5151, 0,
+            Bo3RatificationArmV1::Candidate, &mut play_policy,
+        ).expect("candidate match completes naturally");
+        let (incumbent_win, mut incumbent_trace) = play_bo3_match_for_seat_v1(
+            "Burn", "Rally", 2, &plan, &sideboard_policy, 5151, 0,
+            Bo3RatificationArmV1::Incumbent, &mut play_policy,
+        ).expect("incumbent match completes naturally");
+        assert_eq!(play_policy.resets.len(), 2);
+        assert_eq!(play_policy.resets[0], play_policy.resets[1]);
+        assert_ne!(play_policy.resets[0][0], play_policy.resets[0][1]);
+        assert_eq!(candidate_win, incumbent_win);
+        for row in &mut incumbent_trace {
+            row.arm = Bo3RatificationArmV1::Candidate;
+        }
+        assert_eq!(candidate_trace, incumbent_trace,
+            "identical plans share every game result and starting-player transition");
+    }
+
+    #[test]
     fn trace_mainboard_hash_matches_the_applied_plan_receipt_hash_and_names_its_convention() {
         // Fix round 2, item 1: the trace's mainboard hashes must be the
         // SAME convention AppliedSideboardReceiptV1.after_mainboard_sha256
@@ -1578,11 +1749,7 @@ mod tests {
         let candidate_plan = candidates.first().expect("at least one candidate exists").clone();
         let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
-        let mut rng = SplitMix64::seed(0x5151_5151_5151_5151);
-        let mut policy_fn = |decision: &crate::rl_session::RlSessionDecisionV1| {
-            let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-            (index as u32, decision.legal_actions[index].stable_id.clone())
-        };
+        let mut policy_fn = SeededRandomBo3PolicyV1::default();
         let (_ratified, trace) = run_bo3_ratification_v1(
             &manifest, &manifest_path, "Burn", "Rally", 2, &candidate_plan, &incumbent_plan, &policy, &mut policy_fn,
         )

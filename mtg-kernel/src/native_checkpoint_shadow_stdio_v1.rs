@@ -2705,6 +2705,7 @@ fn rl_error_code_v1(code: RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
         RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
+        RlSessionErrorCode::NonNaturalTerminal => "non_natural_terminal",
     }
 }
 

@@ -9,6 +9,95 @@ use crate::ids::PlayerId;
 use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1, RlSessionError};
 use crate::state::SplitMix64;
 
+/// The policy's only access to a live episode is its actor-relative scorer
+/// projection. The underlying session and hidden game state stay private.
+pub struct PairedBo1PolicyInputV1<'a> {
+    session: &'a FastActorSessionV1,
+    decision: FastActorDecisionV1,
+}
+
+impl<'a> PairedBo1PolicyInputV1<'a> {
+    pub(crate) fn new(session: &'a FastActorSessionV1, decision: FastActorDecisionV1) -> Self {
+        Self { session, decision }
+    }
+
+    pub fn decision(&self) -> FastActorDecisionV1 {
+        self.decision
+    }
+
+    pub(crate) fn encode_scoring_owned_v2(
+        &self,
+        encoder: &mut crate::flat_policy_v2::FlatDecisionEncoderV2,
+        buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<crate::flat_policy_v2::FlatDecisionV2, crate::flat_policy_v2::FlatDecisionErrorV2> {
+        self.session.encode_current_flat_scoring_decision_owned_v2(
+            self.decision,
+            encoder,
+            buffers,
+        )
+    }
+}
+
+/// A frozen play policy with explicitly reset per-seat sampling streams.
+/// Implementations reset recurrent state and both sampling streams at every
+/// game boundary. Cache keys must include the episode's observation identity.
+pub trait PairedBo1PolicyV1 {
+    fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError>;
+
+    fn select_action_v1(
+        &mut self,
+        input: PairedBo1PolicyInputV1<'_>,
+    ) -> Result<u32, RlSessionError>;
+}
+
+/// Fixed domain separation from the environment seed and independent seat
+/// streams. Candidate and incumbent receive the same pair of policy seeds.
+pub fn paired_policy_seeds_v1(pair_environment_seed: u64) -> [u64; 2] {
+    let mut rng = SplitMix64::seed(pair_environment_seed ^ 0x5041_4952_504f_4c31);
+    [rng.next_u64(), rng.next_u64()]
+}
+
+#[cfg(test)]
+pub(crate) mod policy_test_support {
+    use super::*;
+
+    pub(crate) struct SeededRandomBo1PolicyV1 {
+        rng: [SplitMix64; 2],
+        pub(crate) resets: Vec<[u64; 2]>,
+        pub(crate) traces: Vec<Vec<(crate::rl::PlayerSeatV1, u32)>>,
+    }
+
+    impl Default for SeededRandomBo1PolicyV1 {
+        fn default() -> Self {
+            Self {
+                rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+                resets: Vec::new(),
+                traces: Vec::new(),
+            }
+        }
+    }
+
+    impl PairedBo1PolicyV1 for SeededRandomBo1PolicyV1 {
+        fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError> {
+            self.rng = policy_seeds.map(SplitMix64::seed);
+            self.resets.push(policy_seeds);
+            self.traces.push(Vec::new());
+            Ok(())
+        }
+
+        fn select_action_v1(&mut self, input: PairedBo1PolicyInputV1<'_>) -> Result<u32, RlSessionError> {
+            let decision = input.decision();
+            let seat = match decision.acting_player {
+                crate::rl::PlayerSeatV1::P0 => 0,
+                crate::rl::PlayerSeatV1::P1 => 1,
+            };
+            let selected = (self.rng[seat].next_u64() as u32) % decision.legal_action_count;
+            self.traces.last_mut().unwrap().push((decision.acting_player, selected));
+            Ok(selected)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PairedTrialOutcomeV1 {
     pub delta: i8,
@@ -22,7 +111,7 @@ pub fn run_paired_bo1_trial_v1(
     pair_environment_seed: u64,
     starting_player: PlayerId,
     max_physical_decisions: u64,
-    policy_fn: &mut dyn FnMut(&FastActorDecisionV1) -> u32,
+    policy: &mut dyn PairedBo1PolicyV1,
 ) -> Result<PairedTrialOutcomeV1, RlSessionError> {
     let candidate_win = play_one_side_v1(
         candidate_mainboard,
@@ -31,7 +120,7 @@ pub fn run_paired_bo1_trial_v1(
         pair_environment_seed,
         starting_player,
         max_physical_decisions,
-        policy_fn,
+        policy,
     )?;
     let incumbent_win = play_one_side_v1(
         incumbent_mainboard,
@@ -40,7 +129,7 @@ pub fn run_paired_bo1_trial_v1(
         pair_environment_seed,
         starting_player,
         max_physical_decisions,
-        policy_fn,
+        policy,
     )?;
     let delta = i8::from(candidate_win) - i8::from(incumbent_win);
     Ok(PairedTrialOutcomeV1 { delta })
@@ -53,7 +142,7 @@ fn play_one_side_v1(
     pair_environment_seed: u64,
     starting_player: PlayerId,
     max_physical_decisions: u64,
-    policy_fn: &mut dyn FnMut(&FastActorDecisionV1) -> u32,
+    policy: &mut dyn PairedBo1PolicyV1,
 ) -> Result<bool, RlSessionError> {
     let mainboards = match self_seat {
         PlayerId::P0 => [self_mainboard.to_vec(), opponent_mainboard.to_vec()],
@@ -70,13 +159,23 @@ fn play_one_side_v1(
         mainboards,
         starting_player,
     )?;
+    policy.reset_for_game_v1(paired_policy_seeds_v1(pair_environment_seed))?;
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
+                if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural {
+                    return Err(RlSessionError {
+                        code: crate::rl_session::RlSessionErrorCode::NonNaturalTerminal,
+                        message: format!(
+                            "paired BO1 game has non-natural terminal {:?}/{:?}",
+                            terminal.terminal_classification, terminal.terminal_outcome,
+                        ),
+                    });
+                }
                 return Ok(terminal.winner == Some(self_seat.into()));
             }
             FastActorResponseV1::Decision(decision) => {
-                let selected_index = policy_fn(&decision) % decision.legal_action_count;
+                let selected_index = policy.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))?;
                 session.step(decision.episode_id, decision.step, selected_index)?;
             }
         }
@@ -249,20 +348,50 @@ mod tests {
     }
 
     #[test]
-    fn run_paired_bo1_trial_completes_and_delta_is_in_range() {
+    fn identical_configurations_replay_identical_policy_streams_and_actions() {
         let candidate = runtime_deck_by_id("Burn").unwrap().card_ids.to_vec();
         let incumbent = runtime_deck_by_id("Burn").unwrap().card_ids.to_vec();
         let opponent = runtime_deck_by_id("Rally").unwrap().card_ids.to_vec();
-        let mut rng = SplitMix64::seed(0x1111_2222_3333_4444);
-        let mut policy = |decision: &FastActorDecisionV1| {
-            (rng.next_u64() as u32) % decision.legal_action_count.max(1)
-        };
+        let mut policy = policy_test_support::SeededRandomBo1PolicyV1::default();
         let outcome = run_paired_bo1_trial_v1(
             &candidate, &incumbent, &opponent, PlayerId::P0,
             0x5050_5050_5050_5050, PlayerId::P0, 2000, &mut policy,
         )
         .expect("paired trial completes");
-        assert!((-1..=1).contains(&outcome.delta));
+        assert_eq!(outcome.delta, 0);
+        assert_eq!(policy.resets.len(), 2);
+        assert_eq!(policy.resets[0], policy.resets[1]);
+        assert_ne!(policy.resets[0][0], policy.resets[0][1]);
+        assert!(!policy.traces[0].is_empty());
+        assert_eq!(policy.traces[0], policy.traces[1]);
+    }
+
+    #[test]
+    fn invalid_policy_index_is_rejected_without_modulo_remapping() {
+        struct InvalidPolicy;
+        impl PairedBo1PolicyV1 for InvalidPolicy {
+            fn reset_for_game_v1(&mut self, _: [u64; 2]) -> Result<(), RlSessionError> {
+                Ok(())
+            }
+            fn select_action_v1(&mut self, _: PairedBo1PolicyInputV1<'_>) -> Result<u32, RlSessionError> {
+                Ok(u32::MAX)
+            }
+        }
+        let deck = runtime_deck_by_id("Rally").unwrap().card_ids;
+        let result = run_paired_bo1_trial_v1(
+            deck, deck, deck, PlayerId::P0, 5151, PlayerId::P0, 2000, &mut InvalidPolicy,
+        );
+        assert!(result.is_err(), "an invalid scorer output must not become a legal action");
+    }
+
+    #[test]
+    fn decision_cap_is_not_scored_as_a_paired_loss() {
+        let deck = runtime_deck_by_id("Rally").unwrap().card_ids;
+        let mut policy = policy_test_support::SeededRandomBo1PolicyV1::default();
+        let error = run_paired_bo1_trial_v1(
+            deck, deck, deck, PlayerId::P0, 5151, PlayerId::P0, 1, &mut policy,
+        ).expect_err("a one-decision cap cannot yield a measured game outcome");
+        assert_eq!(error.code, crate::rl_session::RlSessionErrorCode::NonNaturalTerminal);
     }
 }
 
@@ -301,10 +430,7 @@ mod calibration {
         let mut rng = SplitMix64::seed(0xC001_C001_C001_C001);
         let started = Instant::now();
         for episode in 0..game_count {
-            let mut policy_rng = SplitMix64::seed(rng.next_u64());
-            let mut policy = |decision: &FastActorDecisionV1| {
-                (policy_rng.next_u64() as u32) % decision.legal_action_count.max(1)
-            };
+            let mut policy = policy_test_support::SeededRandomBo1PolicyV1::default();
             run_paired_bo1_trial_v1(
                 &candidate, &candidate, &opponent, PlayerId::P0,
                 rng.next_u64(), PlayerId::P0, 2000, &mut policy,

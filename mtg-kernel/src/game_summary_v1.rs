@@ -533,6 +533,20 @@ pub fn run_episode_with_summary_v1(
     tags: &RemovalCounterspellTagsV1,
     policy_fn: &mut dyn FnMut(&RlSessionDecisionV1) -> (u32, String),
 ) -> GameSummaryV1 {
+    try_run_episode_with_summary_v1(session, checkpoint_weights_hash, tags, &mut |decision| {
+        Ok(policy_fn(decision))
+    })
+    .expect("episode summary requires a natural terminal and successful policy steps")
+}
+
+/// The production scorer variant propagates inference and selection failures.
+/// A failed scorer must never be silently converted into a played game.
+pub fn try_run_episode_with_summary_v1(
+    session: &mut RlEpisodeSessionV1,
+    checkpoint_weights_hash: &str,
+    tags: &RemovalCounterspellTagsV1,
+    policy_fn: &mut dyn FnMut(&RlSessionDecisionV1) -> Result<(u32, String), String>,
+) -> Result<GameSummaryV1, String> {
     let mut offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
     let mut resource_curve = ResourceCurveV1::default();
     let mut turn_watermarks: Vec<(usize, u32)> = Vec::new();
@@ -541,6 +555,15 @@ pub fn run_episode_with_summary_v1(
     loop {
         match session.current_response() {
             RlSessionResponseV1::Terminal(terminal) => {
+                if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural
+                {
+                    return Err(format!(
+                        "non-natural game terminal: {:?}, {:?}: {}",
+                        terminal.terminal_classification,
+                        terminal.terminal_code,
+                        terminal.terminal_reason
+                    ));
+                }
                 let final_state = session.game_state();
                 let object_card_def = build_object_card_def_map_v1(final_state);
                 let object_owner = build_object_owner_map_v1(final_state);
@@ -569,7 +592,7 @@ pub fn run_episode_with_summary_v1(
                     Some(crate::rl::PlayerSeatV1::P0) => Some(PlayerId::P0),
                     Some(crate::rl::PlayerSeatV1::P1) => Some(PlayerId::P1),
                 };
-                return GameSummaryV1 {
+                return Ok(GameSummaryV1 {
                     schema_version: GAME_SUMMARY_SCHEMA_V1,
                     checkpoint_weights_hash: checkpoint_weights_hash.to_owned(),
                     checkpoint_git_head: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
@@ -577,22 +600,35 @@ pub fn run_episode_with_summary_v1(
                     opponent_evidence,
                     own_card_outcomes,
                     resource_curve,
-                };
+                });
             }
             RlSessionResponseV1::Decision(decision) => {
-                record_turn_watermark_if_new_v1(session, &mut turn_watermarks, &mut last_turn, &mut resource_curve);
+                record_turn_watermark_if_new_v1(
+                    session,
+                    &mut turn_watermarks,
+                    &mut last_turn,
+                    &mut resource_curve,
+                );
                 for legal_action in &decision.legal_actions {
                     if let ActionSemanticV1::CastSpell { actor, source } = &legal_action.semantic {
-                        if was_card_offered_as_hand_cast_v1(&legal_action.semantic, source.card_db_id) {
+                        if was_card_offered_as_hand_cast_v1(
+                            &legal_action.semantic,
+                            source.card_db_id,
+                        ) {
                             let seat_index = seat_index_v1(*actor);
                             offered_as_cast[seat_index].insert(source.card_db_id);
                         }
                     }
                 }
-                let (selected_index, selected_action_id) = policy_fn(&decision);
+                let (selected_index, selected_action_id) = policy_fn(&decision)?;
                 session
-                    .step(decision.episode_id, decision.step, selected_index, &selected_action_id)
-                    .expect("policy-selected action is legal by construction");
+                    .step(
+                        decision.episode_id,
+                        decision.step,
+                        selected_index,
+                        &selected_action_id,
+                    )
+                    .map_err(|error| error.to_string())?;
             }
         }
     }
@@ -606,6 +642,93 @@ pub fn append_game_summary_jsonl_v1(
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     let line = serde_json::to_string(summary).expect("GameSummaryV1 always serializes");
     writeln!(file, "{line}")
+}
+
+/// Runs the normal flat neural-policy path while collecting a completed game
+/// summary. Inference sees only the actor-relative projection supplied by
+/// PairedBo1PolicyInputV1. The privileged fold remains inside this extractor.
+pub fn try_run_fast_episode_with_summary_v1(
+    session: &mut crate::rl_session::FastActorSessionV1,
+    checkpoint_weights_hash: &str,
+    tags: &RemovalCounterspellTagsV1,
+    policy: &mut dyn crate::paired_bo1_harness_v1::PairedBo1PolicyV1,
+) -> Result<GameSummaryV1, String> {
+    use crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1;
+    use crate::rl_session::FastActorResponseV1;
+    let mut offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
+    let mut resource_curve = ResourceCurveV1::default();
+    let mut turn_watermarks = Vec::new();
+    let mut last_turn = None;
+    loop {
+        match session.current_response() {
+            FastActorResponseV1::Terminal(terminal) => {
+                if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural
+                {
+                    return Err(format!(
+                        "non-natural game terminal: {:?}, {:?}: {}",
+                        terminal.terminal_classification,
+                        terminal.terminal_code,
+                        terminal.terminal_reason
+                    ));
+                }
+                let state = session.game_state();
+                let object_card_def = build_object_card_def_map_v1(state);
+                let object_owner = build_object_owner_map_v1(state);
+                let registered = [
+                    own_registered_card_ids_v1(state, 0),
+                    own_registered_card_ids_v1(state, 1),
+                ];
+                let hands = [
+                    end_of_game_hand_card_ids_v1(state, &object_card_def, 0),
+                    end_of_game_hand_card_ids_v1(state, &object_card_def, 1),
+                ];
+                let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
+                    &state.engine.event_history,
+                    state.turn,
+                    &turn_watermarks,
+                    &object_card_def,
+                    &object_owner,
+                    &registered,
+                    &hands,
+                    &offered_as_cast,
+                    tags,
+                    &mut resource_curve,
+                );
+                return Ok(GameSummaryV1 {
+                    schema_version: GAME_SUMMARY_SCHEMA_V1,
+                    checkpoint_weights_hash: checkpoint_weights_hash.to_owned(),
+                    checkpoint_git_head: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
+                    winner: terminal
+                        .winner
+                        .map(|seat| PlayerId(seat_index_v1(seat) as u8)),
+                    opponent_evidence,
+                    own_card_outcomes,
+                    resource_curve,
+                });
+            }
+            FastActorResponseV1::Decision(decision) => {
+                let state = session.game_state();
+                if last_turn != Some(state.turn) {
+                    turn_watermarks.push((state.engine.event_history.len(), state.turn));
+                    resource_curve.lands_by_turn.push(count_lands_v1(state));
+                    for seat in 0..2 {
+                        resource_curve.hand_size_by_turn[seat]
+                            .push(state.players[seat].hand.len() as u32);
+                        resource_curve.life_by_turn[seat].push(state.players[seat].life);
+                    }
+                    last_turn = Some(state.turn);
+                }
+                offered_as_cast[seat_index_v1(decision.acting_player)]
+                    .extend(session.current_offered_hand_cast_ids_v1());
+                let selected = policy
+                    .select_action_v1(PairedBo1PolicyInputV1::new(session, decision))
+                    .map_err(|error| error.to_string())?;
+                session
+                    .step(decision.episode_id, decision.step, selected)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1255,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn run_episode_with_real_tags_can_record_a_counterspell_held_to_game_end() {
+    fn halted_counterspell_fixture_is_not_a_completed_training_game() {
         // Item 6 (Important, "if feasible within the existing helpers"): a
         // counterspell that is drawn, never offered as a legal cast (no
         // spell it could legally and affordably counter ever went on the
@@ -1263,8 +1386,8 @@ mod tests {
         // game. `Terror` (`data/runtime_decks_v1.json`) runs Counterspell
         // (card_id 17, `is_counterspell = true` in the tag file); seed 1 in
         // a Terror mirror (the first hit of a bounded, ordered seed search)
-        // is a real game where this happens for P0's copy.
-        const COUNTERSPELL_CARD_ID: u16 = 17;
+        // previously appeared to be a real completed game. It actually halts,
+        // and must be rejected rather than providing a training label.
         let tags = load_real_removal_counterspell_tags_v1();
         let deck_ids = ["Terror".to_owned(), "Terror".to_owned()];
         let mainboards = [
@@ -1278,11 +1401,24 @@ mod tests {
         let mut rng = SplitMix64::seed(1 ^ 0x1234_5678_9abc_def0);
         let mut policy = |decision: &RlSessionDecisionV1| {
             let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-            (index as u32, decision.legal_actions[index].stable_id.clone())
+            (
+                index as u32,
+                decision.legal_actions[index].stable_id.clone(),
+            )
         };
-        let summary = run_episode_with_summary_v1(&mut session, "fixround1counterspell", &tags, &mut policy);
-        let outcome = &summary.own_card_outcomes[0][&COUNTERSPELL_CARD_ID];
-        assert!(outcome.counterspell_held, "seed 1 seat 0's Counterspell must read held to game end");
+        let result = try_run_episode_with_summary_v1(
+            &mut session,
+            "fixround1counterspell",
+            &tags,
+            &mut |decision| Ok(policy(decision)),
+        );
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.contains("non-natural game terminal: Halted")),
+            "{result:?}"
+        );
     }
 
     #[test]

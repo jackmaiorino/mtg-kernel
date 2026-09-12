@@ -516,6 +516,7 @@ pub enum RlSessionErrorCode {
     StaleEnvironmentBinding,
     UnsupportedDeck,
     EnvironmentRandomization,
+    NonNaturalTerminal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1421,12 +1422,12 @@ fn flat_validate_current_decision_relations_v1(
                     )
                 })
             {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             }
         }
         FastActorDecisionKindV1::AttackerInclusion => {
             let [first, second] = current.candidates.as_slice() else {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             let (
                 ActionSemanticV1::ChooseAttackerInclusion {
@@ -1441,11 +1442,11 @@ fn flat_validate_current_decision_relations_v1(
                 },
             ) = (&first.semantic, &second.semantic)
             else {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             if *first_actor != actor || *second_actor != actor || first_attacker != second_attacker
             {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             }
             flat_validate_controller_zone_v1(
                 state,
@@ -1457,7 +1458,7 @@ fn flat_validate_current_decision_relations_v1(
         }
         FastActorDecisionKindV1::BlockerInclusion => {
             let [first, second] = current.candidates.as_slice() else {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             let (
                 ActionSemanticV1::ChooseBlockerInclusion {
@@ -1474,14 +1475,14 @@ fn flat_validate_current_decision_relations_v1(
                 },
             ) = (&first.semantic, &second.semantic)
             else {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             };
             if *first_actor != actor
                 || *second_actor != actor
                 || first_attacker != second_attacker
                 || first_blocker != second_blocker
             {
-                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
             }
             flat_validate_controller_zone_v1(
                 state,
@@ -1524,13 +1525,36 @@ fn flat_validate_current_decision_relations_v1(
                     )?;
                 }
             }
-            ActionSemanticV1::ActivateAbility { source, .. } => {
+            ActionSemanticV1::ActivateAbility {
+                source,
+                ability_index,
+                ..
+            } => {
+                let object = state
+                    .objects
+                    .try_get(ObjectId(source.arena_id))
+                    .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+                let definition = crate::card_def::CARD_DEFS
+                    .get(object.card_def as usize)
+                    .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+                let activation_zone = if let Some(ability) =
+                    definition.activated_abilities.get(*ability_index as usize)
+                {
+                    ability.activation_zone
+                } else if *ability_index as usize == definition.activated_abilities.len() {
+                    // The engine reserves exactly the next slot for an
+                    // equipment-granted battlefield ability. The authoritative
+                    // origin check below still requires that actual offer.
+                    Zone::Battlefield
+                } else {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                };
                 flat_validate_controller_zone_v1(
                     state,
                     current.actor,
                     source,
                     current.actor,
-                    Zone::Battlefield,
+                    activation_zone,
                 )?;
             }
             ActionSemanticV1::PlotSpell { source, .. } => {
@@ -3956,6 +3980,21 @@ pub struct FastActorSessionV1 {
 
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
+
+impl FastActorSessionV1 {
+    /// Summary hook over the exact currently offered actions. Returns only
+    /// card identities already known to the acting player in their own hand.
+    pub(crate) fn current_offered_hand_cast_ids_v1(&self) -> Vec<u16> {
+        self.current.as_ref().map_or_else(Vec::new, |current| {
+            current.candidates.iter().filter_map(|candidate| {
+                match &candidate.semantic {
+                    ActionSemanticV1::CastSpell { source, .. } if source.zone == crate::state::Zone::Hand => Some(source.card_db_id),
+                    _ => None,
+                }
+            }).collect()
+        })
+    }
+}
 
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7110,6 +7149,7 @@ fn session_error_code(code: &RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
         RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
+        RlSessionErrorCode::NonNaturalTerminal => "non_natural_terminal",
     }
 }
 
@@ -7575,6 +7615,109 @@ mod tests {
                 .iter()
                 .all(|action| action.kind == FlatActionKindV1::ChooseOptionalCostWhich),
             "both actions must encode as the direct ChooseOptionalCostWhich kind"
+        );
+    }
+
+    /// Records a real unsupported state, not successful frozen-policy support.
+    /// The Map ability is legal after its token ceases to exist, but the V2
+    /// action source contract requires a live zone member at this boundary.
+    #[test]
+    fn flat_v2_rejects_valid_map_explore_after_source_token_ceases() {
+        let nonland = card_id_by_name("Fanatical Offering").unwrap();
+        let mut state = GameState::new_from_libraries(&[nonland], &[], card_name, 82_147);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let map = add_battlefield_object(&mut state, PlayerId::P0, "Map Token");
+        let creature = add_battlefield_object(&mut state, PlayerId::P0, "Voldaren Epicure");
+        state.players[0].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+        crate::engine::step(&mut state, crate::engine::Action::ActivateAbility(map, 0)).unwrap();
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        crate::engine::step(
+            &mut state,
+            crate::engine::Action::ChooseTarget(crate::state::Target::Object(creature)),
+        )
+        .unwrap();
+        let mut reached_choice = false;
+        for _ in 0..16 {
+            match crate::engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    crate::engine::step(&mut state, crate::engine::Action::Pass).unwrap();
+                }
+                Decision::ChooseEffectOption {
+                    player,
+                    source,
+                    option_count: 2,
+                    ..
+                } => {
+                    assert_eq!(player, PlayerId::P0);
+                    assert_eq!(source, map);
+                    reached_choice = true;
+                    break;
+                }
+                _ => panic!("Map must reach the nonland Explore choice"),
+            }
+        }
+        assert!(reached_choice);
+        let pending = state.engine.pending_effect.as_ref().unwrap();
+        assert!(matches!(
+            pending.choice,
+            Some(crate::effect::PendingEffectChoice::ChooseOption {
+                purpose: crate::effect::EffectOptionChoicePurpose::ExploreNonlandTop { .. },
+                ..
+            })
+        ));
+        assert_eq!(state.objects.get(map).card_def, 147);
+        assert!(state.objects.get(map).v4.is_token);
+        assert_eq!(state.objects.get(map).zone, Zone::Graveyard);
+        assert!(!state.players[0].graveyard.contains(&map));
+        assert_eq!(state.objects.get(creature).counters.plus1_plus1, 1);
+
+        // The rules engine can apply both legal choices. Flat inference must
+        // continue rejecting the unsupported source instead of inventing a row.
+        for option in 0..2 {
+            let mut engine_only = state.clone();
+            crate::engine::step(
+                &mut engine_only,
+                crate::engine::Action::ChooseEffectOption(option),
+            )
+            .unwrap();
+        }
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            82_147,
+            82_147,
+            256,
+            32_768,
+            ["Affinity".into(), "Affinity".into()],
+        )
+        .unwrap();
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        let decision = flat_current_decision(&session);
+        assert_eq!(decision.legal_action_count, 2);
+        let mut actions = [FlatActionCoreV1::default(); 2];
+        let mut refs = [FlatActionRefV2::default(); 2];
+        let mut objects = [FlatActionObjectV2::default(); 1];
+        assert_eq!(
+            session.encode_current_flat_action_slice_v2(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV2 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidActionReference)
         );
     }
 
@@ -8375,6 +8518,115 @@ mod tests {
                 .len(),
             candidates.len(),
             "source-distinct actions must not collapse semantically"
+        );
+    }
+
+    fn nonbattlefield_activation_session_v2(
+        name: &str,
+        zone: Zone,
+    ) -> (FastActorSessionV1, ObjectId, usize) {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 93);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        add_battlefield_object(&mut state, PlayerId::P0, "Idyllic Beachfront");
+        let source = add_battlefield_object(&mut state, PlayerId::P0, name);
+        state.players[0].battlefield.retain(|id| *id != source);
+        state.objects.get_mut(source).zone = zone;
+        match zone {
+            Zone::Hand => state.players[0].hand.push(source),
+            Zone::Graveyard => state.players[0].graveyard.push(source),
+            _ => panic!("nonbattlefield ability fixture zone"),
+        }
+
+        let mut session = FastActorSessionV1::reset_with_limits(25, 93, 64, 512);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.advance_to_decision_or_terminal();
+        let index = session
+            .current
+            .as_ref()
+            .expect("live ability offer")
+            .candidates
+            .iter()
+            .position(|candidate| matches!(
+                &candidate.semantic,
+                ActionSemanticV1::ActivateAbility { source: reference, ability_index: 0, .. }
+                    if reference.arena_id == source.0
+            ))
+            .expect("engine must actually offer the nonbattlefield ability");
+        (session, source, index)
+    }
+
+    #[test]
+    fn flat_v2_encodes_hand_and_graveyard_activated_abilities() {
+        for (name, zone, paid_zone) in [
+            ("Lorien Revealed", Zone::Hand, Zone::Graveyard),
+            ("Generous Ent", Zone::Hand, Zone::Graveyard),
+            ("Sacred Cat", Zone::Graveyard, Zone::Exile),
+        ] {
+            let (mut session, source, index) = nonbattlefield_activation_session_v2(name, zone);
+            let current = session.current.as_ref().unwrap();
+            assert_eq!(current.flat_action_cache_error_v2, None, "{name}");
+            assert!(current.flat_action_cache_v2.is_some(), "{name}");
+            flat_validate_origin_decision_v1(current, &session.state)
+                .expect("activation matches the actual engine offer");
+            let decision = flat_current_decision(&session);
+            session
+                .flat_policy_observation_v2(decision)
+                .expect("the neural observation represents the legal activation offer");
+            session
+                .step(decision.episode_id, decision.step, index as u32)
+                .expect("the admitted action executes through the normal session");
+            assert_eq!(session.state.objects.get(source).zone, paid_zone, "{name}");
+        }
+    }
+
+    #[test]
+    fn flat_v2_rejects_activated_ability_wrong_zone_and_index() {
+        let (session, source, index) =
+            nonbattlefield_activation_session_v2("Lorien Revealed", Zone::Hand);
+        let mut wrong_zone = session.clone();
+        wrong_zone.state.players[0].hand.retain(|id| *id != source);
+        wrong_zone.state.players[0].battlefield.push(source);
+        wrong_zone.state.objects.get_mut(source).zone = Zone::Battlefield;
+        let current = wrong_zone.current.as_mut().unwrap();
+        let ActionSemanticV1::ActivateAbility { source: reference, .. } =
+            &mut current.candidates[index].semantic
+        else {
+            unreachable!()
+        };
+        // Keep the reference itself visible and current: the activation-zone
+        // relation, rather than a stale reference, must reject this action.
+        reference.zone = Zone::Battlefield.into();
+        assert_eq!(
+            flat_validate_current_decision_relations_v1(current, &wrong_zone.state),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+
+        let mut wrong_index = session.clone();
+        let current = wrong_index.current.as_mut().unwrap();
+        let ActionSemanticV1::ActivateAbility { ability_index, .. } =
+            &mut current.candidates[index].semantic
+        else {
+            unreachable!()
+        };
+        *ability_index = u8::MAX;
+        assert_eq!(
+            flat_validate_current_decision_relations_v1(current, &wrong_index.state),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+        assert_eq!(
+            flat_validate_origin_decision_v1(current, &wrong_index.state),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
         );
     }
 

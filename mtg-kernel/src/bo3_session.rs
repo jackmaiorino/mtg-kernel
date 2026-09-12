@@ -148,6 +148,38 @@ impl BestOfThreeDeckMatchV1 {
             .record_game_result_v1(outcome)
             .map_err(Into::into)
     }
+
+    /// Prepares a game using configurations selected by live sideboard policies.
+    /// The caller owns policy observations and selection receipts. This method
+    /// only admits complete configurations conserving each seat's registered 75.
+    /// Both seats are validated before the match phase changes, so one policy's
+    /// failure cannot partially advance the match. Game one cannot be sideboarded.
+    pub fn prepare_game_with_configurations_v1(
+        &mut self,
+        chooser: PlayerId,
+        choice: PlayDrawChoiceV1,
+        configurations: [DeckConfigurationV1; 2],
+    ) -> Result<PreparedMatchGameV1, Bo3SessionErrorV1> {
+        let mut next_match_state = self.match_state.clone();
+        let start = next_match_state.choose_play_draw_v1(chooser, choice)?;
+        for (seat, configuration) in configurations.iter().enumerate() {
+            let registered = self.registered_decks[seat].registered_configuration();
+            if configuration.combined_card_counts_v1() != registered.combined_card_counts_v1() {
+                return Err(SideboardErrorV1::RegisteredMultisetChanged.into());
+            }
+            if start.game_index == 1 && configuration != registered {
+                return Err(Bo3SessionErrorV1::GameOneConfigurationChanged {
+                    player: PlayerId(seat as u8),
+                });
+            }
+        }
+        self.match_state = next_match_state;
+        Ok(PreparedMatchGameV1 {
+            start,
+            configurations,
+            sideboard_receipts: [None, None],
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +187,7 @@ pub enum Bo3SessionErrorV1 {
     Match(MatchStateErrorV1),
     Sideboard(SideboardErrorV1),
     MirrorRegistrationMismatch { deck_id: String },
+    GameOneConfigurationChanged { player: PlayerId },
 }
 
 impl From<MatchStateErrorV1> for Bo3SessionErrorV1 {
@@ -177,6 +210,11 @@ impl fmt::Display for Bo3SessionErrorV1 {
             Self::MirrorRegistrationMismatch { deck_id } => write!(
                 formatter,
                 "mirror deck id {deck_id:?} has two different registered 75-card configurations"
+            ),
+            Self::GameOneConfigurationChanged { player } => write!(
+                formatter,
+                "game one must use player {}'s registered mainboard",
+                player.0
             ),
         }
     }
