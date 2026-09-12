@@ -725,7 +725,9 @@ pub fn try_run_fast_episode_with_summary_v1(
                     .map_err(|error| error.to_string())?;
                 session
                     .step(decision.episode_id, decision.step, selected)
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| {
+                        format!("{error}; decision {decision:?}, selected index {selected}")
+                    })?;
             }
         }
     }

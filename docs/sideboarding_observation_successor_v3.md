@@ -47,6 +47,42 @@ unchanged. Shared Rust implementation edits require refreshed implementation
 source pins in the generated flat V2 inventory; the old tensor golden payloads
 must remain unchanged. The build-time pin check remains enabled.
 
+## Further supported decisions and limits
+
+Blood Fountain may announce public Graveyard-origin targets. V3 accepts that
+specific captured provenance, retaining an exact live row or a detached public
+incarnation when the target moves. Hidden Hand and Library targets remain
+rejected, as do inconsistent immutable facts. V2 keeps its historical guard.
+
+Monstrous Emergence's `ChooseCreatureOrRevealCreature` is an explicit new V3
+cost category. Its full name participates in the semantic hash; the eleven
+old cost one-hot columns are zero for this category. Existing action-kind,
+source, candidate, zone and remaining-count features are retained. This
+preserves the 195-dimensional action input without aliasing a sacrifice cost
+or accepting arbitrary unknown categories. The new identity records this
+encoding, and the frozen V2 encoder remains unchanged.
+
+This transfer does not establish complete Markov observations for every new
+mechanic. In particular, the common rich stack observation does not expose
+Monstrous Emergence's separate captured `power_lki` value. If its chosen
+creature changes later, current card features need not recover that publicly
+known historical power. That distinct observation-completeness issue is not
+repaired by the cost-category encoding and is not a competence claim.
+The pending cast also omits the already selected Battlefield/Hand branch.
+The policy sees that branch through candidate zones, but the frozen value
+head does not pool actions and can receive identical state inputs for the two
+branches. A future observation extension must represent these facts before
+claiming complete Markov coverage or evaluating value learning on this mechanic.
+
+V3 attacker inclusion uses the engine's active-goad requirement at each
+candidate's own prefix. A required attacker has one legal action, include.
+Ordinary candidates keep ordered exclude/include actions. V5's original
+candidate pair still supplies the private origin check, and the old V2 path
+is unchanged. Python V6 independently checks this mask against the current
+candidate's public battlefield goad records, including the expiry boundary.
+This fixes the Arena-induced rejected declaration reproduced by Affinity/Elves
+seed 2026091231 at policy step 400; it does not force an action after scoring.
+
 ## Review boundary
 
 Jack explicitly assigned these fixes. A fresh read-only Fable review was
@@ -56,5 +92,17 @@ endorsement. The recorded failure is
 `C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/fable-observation-successor-review-001/`.
 Implementation and bounded CPU verification continue under Jack's assignment;
 independent Fable review remains an explicitly unresolved review limitation.
+A focused fresh goad review, session `b86c9969-f091-4455-9102-e2161dd74f79`,
+also failed HTTP 429 before any source reads or input/output tokens. Its
+receipt is in the sibling `fable-goad-legal-choice-review-001` directory.
+No feedback was available to accept or reject. The correction follows the
+existing engine requirement and is being checked through real action execution
+and independent native/Python feature parity under the same disclosed limitation.
+A fresh review of the Emergence encoding, session
+`ba22de95-abff-4efb-a8f6-b348cf859f57`, also failed HTTP 429 with zero source
+reads and zero tokens; see `fable-emergence-feature-review-001`. The accepted
+Codex review points were to preserve the distinct semantic type, reject other
+unknown categories, keep the original shape and V2 rejection, and disclose
+the separate captured-power limitation. No Fable feedback was available.
 No GPU training, formal strength measurement, checkpoint promotion, or main-branch
 merge is authorized by this note.

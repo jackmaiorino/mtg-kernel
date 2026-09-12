@@ -5,7 +5,6 @@ use super::*;
 use crate::policy_observation_v6::{
     HistoricalSourceContextV6, ObservationV6, PolicyObservationExtensionsV6,
 };
-#[cfg(test)]
 use crate::state::GameState;
 
 const COMMITMENT_DOMAIN_V3: &[u8] = b"mtg-kernel-flat-action-candidate-v3\0";
@@ -44,6 +43,7 @@ fn effect_source_mut(semantic: &mut ActionSemanticV1) -> Option<&mut CardStableR
 fn normalize_candidates(
     candidates: &mut Vec<CorePolicyActionCandidateV1>,
     extension: &PolicyObservationExtensionsV6,
+    state: &GameState,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
     let mut normalized = candidates.clone();
     if let Some(historical) = extension
@@ -83,6 +83,21 @@ fn normalize_candidates(
             .map(|(_, candidate)| candidate)
             .collect();
     }
+    // V5's original pair remains the private origin contract. V3 must not
+    // offer an exclusion that makes the eventual declaration illegal. Apply
+    // the engine's requirement at this creature's own prefix, before scoring.
+    normalized.retain(|candidate| match &candidate.semantic {
+        ActionSemanticV1::ChooseAttackerInclusion {
+            attacker,
+            include: false,
+            ..
+        } => crate::engine::required_goaded_attackers(state, &[ObjectId(attacker.arena_id)])
+            .is_empty(),
+        _ => true,
+    });
+    if normalized.is_empty() {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
     *candidates = normalized;
     Ok(())
 }
@@ -92,7 +107,7 @@ pub(super) fn prepare_and_build_v3(
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<FlatActionDecisionCacheV2, FlatActionDecisionSliceErrorV1> {
     let extension = extensions(session, current)?;
-    normalize_candidates(&mut current.candidates, &extension)?;
+    normalize_candidates(&mut current.candidates, &extension, &session.state)?;
     build_with_extensions(session, current, &extension)
 }
 
@@ -123,7 +138,6 @@ fn build_with_extensions(
     current: &FastActorCurrentDecisionV1,
     extension: &PolicyObservationExtensionsV6,
 ) -> Result<FlatActionDecisionCacheV2, FlatActionDecisionSliceErrorV1> {
-    flat_validate_current_binding_header_v1(session, current)?;
     // Restore the exact engine-origin order in a private validation view.
     // The consumed candidate vector remains V3-canonical and each entry keeps
     // its original executable policy_action, so sorting cannot change intent.
@@ -133,8 +147,9 @@ fn build_with_extensions(
     original.flat_action_cache = None;
     original.flat_action_cache_v2 = None;
     original.candidates = raw;
+    flat_validate_current_binding_header_v1(session, &original)?;
     flat_validate_origin_decision_v1(&original, &session.state)?;
-    normalize_candidates(&mut original.candidates, extension)?;
+    normalize_candidates(&mut original.candidates, extension, &session.state)?;
     if original.candidates != current.candidates {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
@@ -499,6 +514,80 @@ impl FastActorSessionV1 {
     }
 }
 
+/// Resolves a real Arena room trigger, then stages the affected player's next
+/// attack declaration with an ordinary creature on either side of the goaded
+/// one in engine candidate order.
+#[cfg(test)]
+pub(crate) fn goaded_attacker_fixture_state_v3(
+    goad_first: bool,
+) -> (GameState, ObjectId, ObjectId) {
+    use crate::engine::{self, Action, Decision};
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::{
+        AbilitySourceContractV4, InitiativeTriggerKindV1, Step, Target, UndercityRoomV1,
+    };
+
+    let mut state = ready_state();
+    let hunter = put(
+        &mut state,
+        PlayerId::P0,
+        "Avenging Hunter",
+        Zone::Battlefield,
+    );
+    let source = AbilitySourceContractV4::capture(&state, hunter);
+    state.initiative = Some(PlayerId::P0);
+    state.engine.initiative_source = Some(source);
+    let (goaded, ordinary) = if goad_first {
+        let goaded = put(
+            &mut state,
+            PlayerId::P1,
+            "Voldaren Epicure",
+            Zone::Battlefield,
+        );
+        let ordinary = put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
+        (goaded, ordinary)
+    } else {
+        let ordinary = put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
+        let goaded = put(
+            &mut state,
+            PlayerId::P1,
+            "Voldaren Epicure",
+            Zone::Battlefield,
+        );
+        (goaded, ordinary)
+    };
+    crate::event::log_initiative_trigger(
+        &mut state,
+        PlayerId::P0,
+        source,
+        InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Arena),
+    )
+    .unwrap();
+    let triggers = crate::trigger::collect_and_process(&mut state);
+    state.engine.pending_triggers.extend(triggers);
+    assert!(matches!(engine::advance_until_decision(&mut state),
+        Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(goaded))));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(goaded))).unwrap();
+    for _ in 0..48 {
+        let decision = engine::advance_until_decision(&mut state);
+        if !state.objects.get(goaded).v4.goaded_by.is_empty() {
+            state.active_player = PlayerId::P1;
+            state.priority_player = PlayerId::P1;
+            state.step = Step::DeclareAttackers;
+            state.engine.combat = Default::default();
+            return (state, goaded, ordinary);
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::OrderTriggers { ref pending, .. } if pending.len() == 1 => {
+                engine::step(&mut state, Action::OrderTriggers(vec![0])).unwrap()
+            }
+            other => panic!("unexpected Arena goad fixture decision: {other:?}"),
+        }
+    }
+    panic!("Arena goad did not resolve");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,5 +786,87 @@ mod tests {
             session.validated_v3_cache(stale).unwrap_err(),
             FlatActionDecisionSliceErrorV1::StaleEnvironmentRevision
         );
+    }
+
+    #[test]
+    fn v3_active_goad_is_include_only_at_every_prefix_and_v2_pair_is_unchanged() {
+        for goad_first in [true, false] {
+            let (state, goaded, ordinary) = goaded_attacker_fixture_state_v3(goad_first);
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+            for _ in 0..2 {
+                let decision = expected(&session);
+                assert_eq!(
+                    decision.decision_kind,
+                    FastActorDecisionKindV1::AttackerInclusion
+                );
+                let current = session.current.as_ref().unwrap();
+                let ActionSemanticV1::ChooseAttackerInclusion { attacker, .. } =
+                    &current.candidates[0].semantic
+                else {
+                    unreachable!()
+                };
+                let is_goaded = attacker.arena_id == goaded.0;
+                assert_eq!(current.candidates.len(), if is_goaded { 1 } else { 2 });
+                let raw =
+                    core_policy_action_candidates_v5(&current.origin_decision, &session.state)
+                        .unwrap();
+                assert_eq!(raw.len(), 2, "frozen V5 origin remains the original pair");
+                let mut legacy = current.clone();
+                legacy.candidates = raw;
+                assert_eq!(
+                    flat_build_action_cache_v2(&session, &legacy, None)
+                        .unwrap()
+                        .actions
+                        .len(),
+                    2
+                );
+                if is_goaded {
+                    assert!(matches!(
+                        current.candidates[0].semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    ));
+                    let mut tampered = session.clone();
+                    tampered.current.as_mut().unwrap().candidates = legacy.candidates;
+                    assert!(tampered.validated_v3_cache(expected(&tampered)).is_err());
+                }
+                let (slice, _) = encoded(&session);
+                // Index zero means forced include for the goaded creature,
+                // and voluntary exclude for the ordinary creature.
+                session
+                    .consume_current_flat_action_slice_v3(slice.binding, 0)
+                    .unwrap();
+            }
+            assert!(session.state.engine.combat.attackers.contains(&goaded));
+            assert!(!session.state.engine.combat.attackers.contains(&ordinary));
+        }
+    }
+
+    #[test]
+    fn v3_expired_goad_keeps_optional_pair_and_ineligible_creatures_are_not_offered() {
+        let (mut expired, goaded, _) = goaded_attacker_fixture_state_v3(true);
+        expired.turn = expired.objects.get(goaded).v4.goaded_by[0].expires_at_turn + 1;
+        let session = FastActorSessionV1::from_v3_fixture_state(expired);
+        assert_eq!(expected(&session).legal_action_count, 2);
+        assert!(matches!(
+            session.current.as_ref().unwrap().candidates[0].semantic,
+            ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+        ));
+        encoded(&session);
+        for tapped in [true, false] {
+            let (mut state, goaded, ordinary) = goaded_attacker_fixture_state_v3(true);
+            if tapped {
+                state.objects.get_mut(goaded).tapped = true;
+            } else {
+                state.objects.get_mut(goaded).summoning_sick = true;
+            }
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let decision = expected(&session);
+            assert_eq!(decision.substep_count, 1);
+            assert_eq!(decision.legal_action_count, 2);
+            assert!(session.current.as_ref().unwrap().candidates.iter().all(|candidate|
+                matches!(&candidate.semantic, ActionSemanticV1::ChooseAttackerInclusion { attacker, .. }
+                    if attacker.arena_id == ordinary.0)));
+            encoded(&session);
+        }
     }
 }

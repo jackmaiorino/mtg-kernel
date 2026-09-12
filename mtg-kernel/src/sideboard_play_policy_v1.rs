@@ -385,7 +385,9 @@ impl FrozenPlayPolicyV1 {
                 .map_err(|e| format!("V3 actor-visible encoding: {e:?}; decision={decision:?}"))?;
             self.owned.globals = encoded.globals;
             successor.extensions = encoded.extensions;
-            return self.score_owned();
+            return self
+                .score_owned()
+                .map_err(|error| format!("{error}; decision={decision:?}"));
         }
         let encoded = session
             .encode_current_flat_scoring_decision_owned_v2(
@@ -504,7 +506,9 @@ impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
                 })?;
             self.owned.globals = encoded.globals;
         }
-        let scores = self.score_owned().map_err(policy_error)?;
+        let scores = self
+            .score_owned()
+            .map_err(|error| policy_error(format!("{error}; decision={decision:?}")))?;
         self.sample_scores(
             &scores.logits,
             decision.acting_player,

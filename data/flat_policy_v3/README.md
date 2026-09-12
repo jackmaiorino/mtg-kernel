@@ -38,10 +38,30 @@ after common edges: cost source 32, selected prefix 33, search cards 34,
 historical sources 35. Primary order is respectively zero, selection index,
 public class ordinal, and record index; associated order is zero.
 
+Public stack targets may retain Battlefield, Stack, or Graveyard provenance,
+including a graveyard target that has since left that public zone. Such a
+reference preserves the captured public facts and does not reveal its current
+hidden destination. Hand and Library target provenance remain rejected.
+
 Escape exposes the announced Stack source, original Graveyard cast origin,
 required count, selected own Graveyard cards, and remaining count. The legacy
 `sacrifice_chosen` projection stays empty. Prefix information reaches the value
 state directly even though the value network does not pool legal actions.
+
+For attacker selection, V3 removes exclusion whenever the current eligible
+creature has an active visible goad requirement. This applies at every prefix,
+so the last selection cannot inherit an earlier illegal omission. Python
+checks the same include-only mask from the current public card's goad expiry;
+ordinary attacker and blocker choices retain ordered exclude/include pairs.
+The frozen V5 pair contract is unchanged.
+
+The semantic cost vocabulary explicitly includes
+`ChooseCreatureOrRevealCreature`. Its full name remains in the action hash;
+the historical 11 cost one-hot columns are zero for this exact new category.
+Unknown categories still fail, and action width stays 195. This enum addition
+does not expose the separate pending chosen-creature zone or captured damage
+power. Those value-state omissions require their own observation extension;
+successful execution alone does not establish complete Markov coverage.
 
 Python rejects inconsistent JSON and inappropriate references. It cannot
 authenticate a mutually coherent fabricated public-history record. The Rust

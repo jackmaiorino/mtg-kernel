@@ -52,6 +52,7 @@ const HISTORICAL_STACK_TARGET_KIND_V1: u8 = 1;
 const HISTORICAL_PAID_COST_KIND_V1: u8 = 2;
 const DECISION_LOCAL_LIBRARY_KIND_V3: u8 = 3;
 const HISTORICAL_PUBLIC_SOURCE_KIND_V3: u8 = 4;
+const HISTORICAL_STACK_TARGET_KIND_V3: u8 = 5;
 
 /// Borrowed common fields, without a schema identity or conversion between
 /// observations. Each entry point validates its own version before using this.
@@ -1527,7 +1528,7 @@ impl FlatDecisionEncoderV2 {
                 }
             }
         }
-        found.ok_or(FlatDecisionErrorV2::InvalidReference)
+        found.ok_or_else(|| FlatDecisionErrorV2::InvalidReference)
     }
 
     fn resolve_historical_stack_target(
@@ -1535,13 +1536,27 @@ impl FlatDecisionEncoderV2 {
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
     ) -> Result<u32, FlatDecisionErrorV2> {
-        let wanted = Self::private_key(stable, actor, HISTORICAL_STACK_TARGET_KIND_V1);
+        self.resolve_historical_stack_target_common(stable, actor, false)
+    }
+
+    fn resolve_historical_stack_target_common(
+        &self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        version3: bool,
+    ) -> Result<u32, FlatDecisionErrorV2> {
+        let kind = if version3 {
+            HISTORICAL_STACK_TARGET_KIND_V3
+        } else {
+            HISTORICAL_STACK_TARGET_KIND_V1
+        };
+        let wanted = Self::private_key(stable, actor, kind);
         let mut found = None;
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
             if key.arena_id == wanted.arena_id
                 && key.zone_change_count == wanted.zone_change_count
-                && matches!(key.historical_kind, 0 | HISTORICAL_STACK_TARGET_KIND_V1)
+                && (key.historical_kind == 0 || key.historical_kind == kind)
             {
                 if key.card_token != wanted.card_token
                     || key.owner != wanted.owner
@@ -1554,10 +1569,12 @@ impl FlatDecisionEncoderV2 {
                 }
             }
         }
-        if !matches!(wanted.zone, FlatZoneV2::Battlefield | FlatZoneV2::Stack) {
+        if !matches!(wanted.zone, FlatZoneV2::Battlefield | FlatZoneV2::Stack)
+            && !(version3 && wanted.zone == FlatZoneV2::Graveyard)
+        {
             return Err(FlatDecisionErrorV2::InvalidReference);
         }
-        found.ok_or(FlatDecisionErrorV2::InvalidReference)
+        found.ok_or_else(|| FlatDecisionErrorV2::InvalidReference)
     }
 
     fn resolve_paid_cost_reference(
@@ -1585,7 +1602,7 @@ impl FlatDecisionEncoderV2 {
                 }
             }
         }
-        found.ok_or(FlatDecisionErrorV2::InvalidReference)
+        found.ok_or_else(|| FlatDecisionErrorV2::InvalidReference)
     }
 
     fn add_private_card(
@@ -1633,8 +1650,10 @@ impl FlatDecisionEncoderV2 {
                 {
                     continue;
                 }
-                if historical_kind != HISTORICAL_STACK_TARGET_KIND_V1
-                    && key.controller != wanted.controller
+                if !matches!(
+                    historical_kind,
+                    HISTORICAL_STACK_TARGET_KIND_V1 | HISTORICAL_STACK_TARGET_KIND_V3
+                ) && key.controller != wanted.controller
                 {
                     return Err(FlatDecisionErrorV2::InconsistentReference);
                 }
@@ -1643,6 +1662,14 @@ impl FlatDecisionEncoderV2 {
         }
         if historical_kind == HISTORICAL_STACK_TARGET_KIND_V1
             && !matches!(wanted.zone, FlatZoneV2::Battlefield | FlatZoneV2::Stack)
+        {
+            return Err(FlatDecisionErrorV2::InvalidReference);
+        }
+        if historical_kind == HISTORICAL_STACK_TARGET_KIND_V3
+            && !matches!(
+                wanted.zone,
+                FlatZoneV2::Battlefield | FlatZoneV2::Stack | FlatZoneV2::Graveyard
+            )
         {
             return Err(FlatDecisionErrorV2::InvalidReference);
         }
@@ -2354,7 +2381,11 @@ impl FlatDecisionEncoderV2 {
                         FlatObjectGroupV2::HistoricalStackTarget,
                         FlatObjectSourceKindV2::Target,
                         ordinal,
-                        HISTORICAL_STACK_TARGET_KIND_V1,
+                        if observation.v3_source_authority {
+                            HISTORICAL_STACK_TARGET_KIND_V3
+                        } else {
+                            HISTORICAL_STACK_TARGET_KIND_V1
+                        },
                     )?;
                 }
             }
@@ -2854,9 +2885,11 @@ impl FlatDecisionEncoderV2 {
             );
             for (target_order, target) in item.targets.iter().enumerate() {
                 let target_object = match target {
-                    TargetRefV1::Object { object } => {
-                        Some(self.resolve_historical_stack_target(object, actor)?)
-                    }
+                    TargetRefV1::Object { object } => Some(if common.v3_source_authority {
+                        self.resolve_historical_stack_target_common(object, actor, true)?
+                    } else {
+                        self.resolve_historical_stack_target(object, actor)?
+                    }),
                     TargetRefV1::Player { .. } => None,
                 };
                 self.push_relation(

@@ -11,7 +11,7 @@ import torch
 
 from mtg_kernel_rl import features as frozen
 from mtg_kernel_rl import features_v6 as v6
-from fixtures import legal_actions, observation, public_card, stable_ref
+from fixtures import combat_decision_response, legal_actions, observation, public_card, stable_ref
 
 
 TENSORS = ("state", "object_features", "object_card_ids", "object_groups", "object_node_ids",
@@ -287,6 +287,125 @@ class FeaturesV6Tests(unittest.TestCase):
         obs["projection"]["continuous_effects"][0]["source"] = captured
         with self.assertRaises(v6.FeatureSchemaError):
             v6.encode_decision(obs, actions)
+
+    def test_public_graveyard_stack_target_reuses_live_or_keeps_detached_history(self):
+        for detached in (False, True):
+            obs = successor()
+            target = copy.deepcopy(obs["projection"]["graveyards"][1][0]["stable"])
+            obs["projection"]["stack"][0]["targets"] = [{"target_kind": "object", "object": target}]
+            if detached:
+                # The target left the public graveyard. Its hidden destination
+                # and current incarnation are deliberately absent from input.
+                obs["projection"]["graveyards"][1].clear()
+            encoded = v6.encode_decision(obs, legal_actions())
+            rows = [index for index, token in enumerate(encoded.object_card_ids.tolist()) if token == target["card_db_id"] + 1]
+            self.assertEqual(len(rows), 1)
+            group = "stack_target" if detached else "opponent_graveyard"
+            self.assertEqual(encoded.object_groups[rows[0]].item(), v6.OBJECT_GROUPS.index(group))
+            old = copy.deepcopy(obs)
+            old["schema_version"] = 5
+            del old["extensions"]
+            with self.assertRaises(frozen.FeatureSchemaError):
+                frozen.encode_decision(old, legal_actions())
+
+    def test_graveyard_history_does_not_grant_hidden_zone_or_identity_forgery(self):
+        for hidden_zone in ("Hand", "Library"):
+            obs = successor()
+            target = stable_ref(99, 32, "p1", hidden_zone)
+            obs["projection"]["stack"][0]["targets"] = [{"target_kind": "object", "object": target}]
+            with self.assertRaisesRegex(v6.FeatureSchemaError, "provenance"):
+                v6.encode_decision(obs, legal_actions())
+        for field, value in (("card_db_id", 999), ("owner", "p0"), ("zone", "Battlefield")):
+            obs = successor()
+            target = copy.deepcopy(obs["projection"]["graveyards"][1][0]["stable"])
+            target[field] = value
+            obs["projection"]["stack"][0]["targets"] = [{"target_kind": "object", "object": target}]
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(obs, legal_actions())
+
+    def test_explicit_creature_choice_cost_retains_legacy_width_and_distinct_hash(self):
+        obs, _ = escape_decision()
+        obs["extensions"]["pending_cast_object_cost"] = None
+        obs["projection"]["stack"][-1]["cast_method"] = "normal"
+        obs["projection"]["engine_context"]["pending_cast"]["origin_zone"] = "Hand"
+        source = obs["projection"]["engine_context"]["pending_cast"]["source"]
+        obs["own_hand"][0]["stable"]["card_db_id"] = 20
+        self.assertEqual(v6.COST_ONE_HOT_KINDS_V6, frozen.COST_KINDS)
+        for candidate in (obs["projection"]["battlefield"][0][0]["stable"], obs["own_hand"][0]["stable"]):
+            offer = action(0, {"action_kind": "choose_cost_target", "source": source,
+                               "candidate": candidate, "cost_kind": "ChooseCreatureOrRevealCreature", "remaining": 1})
+            encoded = v6.encode_decision(obs, [offer])
+            self.assertEqual(encoded.action_features.shape, (1, 195))
+            start = v6.ACTION_FEATURE_DIM - v6.ACTION_HASH_DIM - len(v6.OPTIONAL_COST_CHOICES) - 11
+            self.assertTrue(torch.equal(encoded.action_features[0, start:start + 11], torch.zeros(11)))
+            legacy = copy.deepcopy(offer)
+            legacy["semantic"]["cost_kind"] = "SacrificeCreatures"
+            old_category = v6.encode_decision(obs, [legacy])
+            self.assertEqual(old_category.action_features[0, start:start + 11].sum().item(), 1.0)
+            self.assertFalse(torch.equal(encoded.action_features[0, -v6.ACTION_HASH_DIM:],
+                                         old_category.action_features[0, -v6.ACTION_HASH_DIM:]))
+            with self.assertRaises(frozen.FeatureSchemaError):
+                frozen.assert_action_classified(offer)
+            unknown = copy.deepcopy(offer)
+            unknown["semantic"]["cost_kind"] = "UnknownCreatureCost"
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(obs, [unknown])
+
+    def test_pending_cast_option_uses_ordinary_source_without_historical_context(self):
+        obs, _ = escape_decision()
+        obs["extensions"]["pending_cast_object_cost"] = None
+        obs["projection"]["stack"][-1]["cast_method"] = "normal"
+        obs["projection"]["engine_context"]["pending_cast"]["origin_zone"] = "Hand"
+        source = obs["projection"]["engine_context"]["pending_cast"]["source"]
+        choices = [action(i, {"action_kind": "choose_effect_option", "source": source,
+                              "option_index": i, "option_count": 2}) for i in range(2)]
+        encoded = v6.encode_decision(obs, choices)
+        self.assertEqual(encoded.action_features.shape, (2, 195))
+        self.assertEqual(obs["extensions"]["historical_public_sources"], [])
+
+    def test_goad_requires_include_at_each_attacker_prefix(self):
+        for cursor in range(3):
+            response = combat_decision_response("v6-goad", 1, cursor, cursor,
+                                                selected_indices=tuple(range(cursor)))
+            obs, pair = response["observation"], response["legal_actions"]
+            obs["schema_version"] = 6
+            obs["extensions"] = copy.deepcopy(successor()["extensions"])
+            current = obs["projection"]["policy_surface_context"]["private_combat_selection"]["current_candidate"]
+            card = next(card for card in obs["projection"]["battlefield"][0] if card["stable"] == current)
+            card["goaded_by"] = [{"player": "p1", "expires_at_turn": obs["projection"]["turn"]}]
+            include_only = [copy.deepcopy(pair[1])]
+            include_only[0]["selected_index"] = 0
+            encoded = v6.encode_decision(obs, include_only)
+            self.assertEqual(encoded.action_features.shape[0], 1)
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(obs, pair)
+            excluded = copy.deepcopy(include_only)
+            excluded[0]["semantic"]["include"] = False
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(obs, excluded)
+            old = copy.deepcopy(obs)
+            old["schema_version"] = 5
+            del old["extensions"]
+            frozen.encode_decision(old, pair)
+            with self.assertRaises(frozen.FeatureSchemaError):
+                frozen.encode_decision(old, include_only)
+
+    def test_singleton_goad_mask_requires_current_visible_active_goad(self):
+        response = combat_decision_response("v6-goad-negative", 1, 0, 0)
+        obs, pair = response["observation"], response["legal_actions"]
+        obs["schema_version"] = 6
+        obs["extensions"] = copy.deepcopy(successor()["extensions"])
+        single = [copy.deepcopy(pair[1])]
+        single[0]["selected_index"] = 0
+        current = obs["projection"]["policy_surface_context"]["private_combat_selection"]["current_candidate"]
+        card = next(card for card in obs["projection"]["battlefield"][0] if card["stable"] == current)
+        for goads in ([], [{"player": "p0", "expires_at_turn": obs["projection"]["turn"]}]):
+            card["goaded_by"] = goads
+            v6.encode_decision(obs, pair)
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(obs, single)
+        card["goaded_by"] = [{"player": "p0", "expires_at_turn": obs["projection"]["turn"] + 1}]
+        v6.encode_decision(obs, single)
 
     def test_escape_value_context_changes_without_pooling_actions(self):
         zero, zero_actions = escape_decision()

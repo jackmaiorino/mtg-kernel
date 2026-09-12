@@ -279,6 +279,8 @@ pub enum FlatActionObjectGroupV1 {
 }
 
 mod flat_action_v3;
+#[cfg(test)]
+pub(crate) use flat_action_v3::goaded_attacker_fixture_state_v3;
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;

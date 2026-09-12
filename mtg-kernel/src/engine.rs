@@ -5561,7 +5561,7 @@ fn goad_is_active(state: &GameState, goad: &crate::state::GoadStateV4) -> bool {
         || (goad.expires_at_turn == state.turn && state.active_player != goad.player)
 }
 
-fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
+pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
     eligible
         .iter()
         .copied()

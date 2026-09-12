@@ -218,6 +218,71 @@ mod tests {
         panic!("initiative transfer did not reach its pending room effect");
     }
 
+    fn blood_fountain_graveyard_target_state(detached: bool) -> GameState {
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+
+        let mut state = ready_state();
+        state.active_player = PlayerId::P1;
+        state.priority_player = PlayerId::P1;
+        let fountain = put(
+            &mut state,
+            PlayerId::P1,
+            "Blood Fountain",
+            Zone::Battlefield,
+        );
+        let creature = put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Graveyard);
+        put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[1].mana_pool[ManaColor::B.pool_index()] = 4;
+        let macabre = detached.then(|| put(&mut state, PlayerId::P0, "Faerie Macabre", Zone::Hand));
+        engine::step(&mut state, Action::ActivateAbility(fountain, 0)).unwrap();
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(creature)),
+        )
+        .unwrap();
+        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        assert!(state.stack.iter().any(|item| item.source == fountain));
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        engine::step(&mut state, Action::Pass).unwrap();
+        if let Some(macabre) = macabre {
+            // A real response exiles the chosen card while Fountain's captured
+            // Graveyard target stays on the stack in its original incarnation.
+            engine::step(&mut state, Action::ActivateAbility(macabre, 0)).unwrap();
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(creature)),
+            )
+            .unwrap();
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+            for _ in 0..32 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.objects.get(creature).zone == Zone::Exile
+                    && state.stack.iter().any(|item| item.source == fountain)
+                {
+                    return state;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    other => panic!("Blood Fountain response fixture: {other:?}"),
+                }
+            }
+            panic!("Faerie Macabre response did not leave Fountain's captured target");
+        }
+        state
+    }
+
     fn tensors(session: &FastActorSessionV1) -> NativeFlatDecisionTensorV3 {
         let mut owned = OwnedScoringV3::default();
         let decision = owned.encode(session);
@@ -345,6 +410,66 @@ mod tests {
         }
     }
 
+    #[test]
+    fn flat_v3_blood_fountain_live_and_detached_graveyard_targets_preserve_v2_rejection() {
+        use crate::ids::PlayerId;
+        use crate::policy_surface_v5::PolicySurfaceV5;
+        use crate::rl::{observe_policy_v5, TargetRefV1};
+        use crate::state::Zone;
+        for detached in [false, true] {
+            let state = blood_fountain_graveyard_target_state(detached);
+            let old_observation =
+                observe_policy_v5(&state, &PolicySurfaceV5::new(), PlayerId::P0, 0, 0, 0, 1)
+                    .unwrap();
+            assert!(matches!(
+                encode_observation_owned_tables_for_fixture_v2(&old_observation),
+                Err(FlatDecisionErrorV2::InvalidReference)
+            ));
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("Blood Fountain detached={detached} needs an actual response choice");
+            };
+            let observation = session.flat_policy_observation_v3(expected).unwrap();
+            let mut owned = OwnedScoringV3::default();
+            let decision = owned.encode(&session);
+            let target = owned
+                .objects
+                .iter()
+                .find(|object| {
+                    object.card_token == 79 && object.zone == Some(FlatZoneV2::Graveyard)
+                })
+                .unwrap();
+            assert_eq!(
+                target.group,
+                if detached {
+                    FlatObjectGroupV2::HistoricalStackTarget
+                } else {
+                    FlatObjectGroupV2::OpponentGraveyard
+                }
+            );
+            let mut output = NativeFlatDecisionTensorV3::default();
+            NativeFlatTensorizerV3::default()
+                .fill(owned.view(&decision), &mut output)
+                .unwrap();
+            for hidden_zone in [Zone::Hand, Zone::Library] {
+                let mut forged = observation.clone();
+                let reference = forged
+                    .projection
+                    .surface
+                    .stack
+                    .iter_mut()
+                    .flat_map(|item| item.targets.iter_mut())
+                    .find_map(|target| match target {
+                        TargetRefV1::Object { object } if object.card_db_id == 78 => Some(object),
+                        _ => None,
+                    })
+                    .unwrap();
+                reference.zone = hidden_zone;
+                assert!(encode_observation_owned_tables_for_fixture_v3(&forged).is_err());
+            }
+        }
+    }
+
     fn emit_fixture(name: &str, session: &FastActorSessionV1) {
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!(
@@ -426,6 +551,58 @@ mod tests {
             "initiative-transfer-pending",
             &FastActorSessionV1::from_v3_fixture_state(initiative_transfer_pending_state()),
         );
+        emit_fixture(
+            "blood-fountain-graveyard-target-live",
+            &FastActorSessionV1::from_v3_fixture_state(blood_fountain_graveyard_target_state(
+                false,
+            )),
+        );
+        emit_fixture(
+            "blood-fountain-graveyard-target-detached",
+            &FastActorSessionV1::from_v3_fixture_state(blood_fountain_graveyard_target_state(true)),
+        );
+        emit_fixture(
+            "monstrous-emergence-zone-choice",
+            &FastActorSessionV1::from_v3_fixture_state(
+                crate::native_flat_tensorizer_v3::monstrous_emergence_zone_fixture_v3(),
+            ),
+        );
+        for own_hand in [false, true] {
+            let (state, _) =
+                crate::native_flat_tensorizer_v3::monstrous_emergence_cost_fixture_v3(own_hand);
+            emit_fixture(
+                if own_hand {
+                    "monstrous-emergence-reveal-own-hand-cost"
+                } else {
+                    "monstrous-emergence-public-creature-cost"
+                },
+                &FastActorSessionV1::from_v3_fixture_state(state),
+            );
+        }
+        for goad_first in [true, false] {
+            let (state, _, _) = crate::rl_session::goaded_attacker_fixture_state_v3(goad_first);
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+            emit_fixture(
+                if goad_first {
+                    "goad-required-first"
+                } else {
+                    "ordinary-before-required"
+                },
+                &session,
+            );
+            let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                panic!("goad fixture must start with an attacker inclusion");
+            };
+            session.step(decision.episode_id, decision.step, 0).unwrap();
+            emit_fixture(
+                if goad_first {
+                    "ordinary-after-required"
+                } else {
+                    "goad-required-last"
+                },
+                &session,
+            );
+        }
         // Completing the third selection advances payment automatically, so
         // prefix 3 is tested above as rich state rather than a policy example.
         for (name, state) in escape_prefix_states().into_iter().take(3) {

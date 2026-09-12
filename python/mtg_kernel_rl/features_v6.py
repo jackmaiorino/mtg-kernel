@@ -91,7 +91,7 @@ ACTION_KINDS = [
     "order_triggers",
 ]
 CAST_MODES = ["Normal", "Alternative"]
-COST_KINDS = [
+COST_ONE_HOT_KINDS_V6 = [
     "SacrificeLands",
     "SacrificePermanents",
     "SacrificeCreatures",
@@ -104,6 +104,7 @@ COST_KINDS = [
     "RemoveCounters",
     "PutCounters",
 ]
+COST_KINDS = COST_ONE_HOT_KINDS_V6 + ["ChooseCreatureOrRevealCreature"]
 OPTIONAL_COST_CHOICES = ["Decline", "Discard", "SacrificeLand"]
 DISCARD_RESUME_STAGES = ["none", "finish_cast", "finish_activation", "finish_spell_resolution", "finish_optional_cost"]
 TRIGGER_KINDS = ["triggered_ability", "madness_offer"]
@@ -205,7 +206,7 @@ ACTION_FEATURE_DIM = (
     + 22
     + 1 + (2 * len(MANA_COLORS))
     + len(CAST_MODES)
-    + len(COST_KINDS)
+    + len(COST_ONE_HOT_KINDS_V6)
     + len(OPTIONAL_COST_CHOICES)
     + ACTION_HASH_DIM
 )
@@ -309,9 +310,12 @@ EXTENSION_ENCODING_CONTRACT_V6 = {
     "search_actions": "supplied-actions-follow-canonical-visible-target-order-no-silent-action-reordering",
     "historical_sources": "exact-public-stack-context-binding-not-json-provenance-authentication",
     "historical_nodes": "reuse-exact-frozen-facts-else-pending-context-without-claiming-live-arena-controller-only-snapshot-divergence",
+    "historical_targets": "validated-public-stack-targets-may-retain-battlefield-stack-or-graveyard-provenance-never-hidden-zones",
     "new_node_order": "all-common-nodes-including-legacy-detached-context-then-new-search-then-new-history",
     "object_cost": "declared-cast-method-and-original-zone-prefix-in-state-hash-and-pending-edges",
     "extension_edge_order": "cost-source-then-selected-then-search-cards-then-historical-sources-after-v5-edges",
+    "combat_legal_mask": "current-eligible-attacker-with-visible-active-goad-requires-include-only-at-every-prefix-otherwise-exclude-include",
+    "new_cost_category": "ChooseCreatureOrRevealCreature-is-explicit-semantic-category-with-zero-legacy11-onehot-and-distinct-full-string-action-hash",
 }
 DETACHED_CONTEXT_REF_ALLOWLIST = {
     # rl.rs::pending_discard_semantic_v2 can expose a resolving spell source
@@ -1201,6 +1205,8 @@ def _encoding_payload() -> dict[str, Any]:
         "combat_attacker_edge_extra": ["was_blocked"],
         "extension_context_subroles_v6": [".".join(path) for path in EXTENSION_CONTEXT_SUBROLES_V6],
         "extension_encoding_contract_v6": EXTENSION_ENCODING_CONTRACT_V6,
+        "semantic_cost_kinds_v6": COST_KINDS,
+        "cost_one_hot_kinds_v6": COST_ONE_HOT_KINDS_V6,
     }
 
 
@@ -2292,7 +2298,7 @@ def _action_card_refs(semantic: dict[str, Any], registry: _NodeRegistry) -> list
             historical_effect = role == "source" and semantic["action_kind"] in (
                 "choose_effect_option", "choose_effect_target", "finish_effect_selection",
                 "choose_effect_color", "choose_effect_number", "choose_effect_boolean",
-            )
+            ) and _historical_source_key_v6(semantic[role]) in registry._historical_source_nodes_v6
             node = (registry.resolve_historical_source_v6(semantic[role]) if historical_effect
                     else registry.resolve(semantic[role]))
             refs.append((role, 0, semantic[role], 0, node))
@@ -2359,7 +2365,9 @@ def _action_features(action: dict[str, Any], actor: str, registry: _NodeRegistry
     color = semantic.get("color")
     features += _one_hot(color, MANA_COLORS) if color is not None else [0.0] * len(MANA_COLORS)
     features += _one_hot(semantic.get("mode", CAST_MODES[0]), CAST_MODES)
-    features += _one_hot(semantic.get("cost_kind", COST_KINDS[0]), COST_KINDS)
+    cost_kind = semantic.get("cost_kind", COST_ONE_HOT_KINDS_V6[0])
+    features += ([0.0] * len(COST_ONE_HOT_KINDS_V6) if cost_kind == "ChooseCreatureOrRevealCreature"
+                 else _one_hot(cost_kind, COST_ONE_HOT_KINDS_V6))
     features += _one_hot(semantic.get("choice", OPTIONAL_COST_CHOICES[0]), OPTIONAL_COST_CHOICES)
     canonical = _canonical_model_value(action, LEGAL_ACTION_SPEC, ("legal_action",), _CanonicalContext(actor))
     features += _digest_features("legal-action", canonical, ACTION_HASH_DIM)
@@ -2967,10 +2975,10 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
         for target in item["targets"]:
             if (
                 target["target_kind"] == "object"
-                and target["object"]["zone"] not in {"Battlefield", "Stack"}
+                and target["object"]["zone"] not in {"Battlefield", "Stack", "Graveyard"}
             ):
                 raise FeatureSchemaError(
-                    "historical object stack targets must have Battlefield or Stack provenance"
+                    "historical object stack targets must have Battlefield, Stack, or Graveyard provenance"
                 )
     combat = p["combat"]
     attacker_keys = [_stable_key(ref) for ref in combat["ordered_attackers"]]
@@ -3320,6 +3328,7 @@ def _validate_policy_surface_legal_actions(
     if len(stable_keys) != len(set(stable_keys)):
         raise FeatureSchemaError("combat policy candidates must be distinct physical objects")
     actor = observation["acting_player"]
+    expected_inclusions = (False, True)
     if stage == "attacker_inclusion":
         if private["attacker"] is not None:
             raise FeatureSchemaError("attacker inclusion context cannot carry a fixed attacker")
@@ -3328,6 +3337,20 @@ def _validate_policy_surface_legal_actions(
         candidate_refs = all_candidates
         if any(ref["controller"] != actor or ref["zone"] != "Battlefield" for ref in candidate_refs):
             raise FeatureSchemaError("attacker inclusion candidates must be actor-controlled battlefield objects")
+        projection = observation["projection"]
+        if projection["active_player"] != actor:
+            raise FeatureSchemaError("attacker inclusion actor must be the active player")
+        current_card = next((card for card in projection["battlefield"][SEATS.index(actor)]
+                             if card["stable"] == private["current_candidate"]), None)
+        if current_card is None:
+            raise FeatureSchemaError("attacker inclusion candidate must match its visible battlefield card")
+        # The candidate is already engine-eligible. Mirror the visible goad
+        # expiry rule from engine::required_goaded_attackers, never omit an
+        # earlier mandatory candidate and defer the failure to final commit.
+        if any(goad["expires_at_turn"] > projection["turn"] or
+               (goad["expires_at_turn"] == projection["turn"] and projection["active_player"] != goad["player"])
+               for goad in current_card["goaded_by"]):
+            expected_inclusions = (True,)
     elif stage == "blocker_inclusion":
         attacker = private["attacker"]
         if attacker is None:
@@ -3345,12 +3368,12 @@ def _validate_policy_surface_legal_actions(
     else:
         raise FeatureSchemaError(f"unknown policy surface stage {stage!r}")
 
-    if len(actions) != 2:
-        raise FeatureSchemaError("combat inclusion decisions require exactly two legal actions")
-    for index, (action, include) in enumerate(zip(actions, (False, True))):
+    if len(actions) != len(expected_inclusions):
+        raise FeatureSchemaError("combat inclusion actions must match the visible mandatory-attack mask")
+    for index, (action, include) in enumerate(zip(actions, expected_inclusions)):
         semantic = action["semantic"]
         if action["selected_index"] != index or semantic["action_kind"] != expected_kind:
-            raise FeatureSchemaError("combat inclusion actions must be ordered exclude then include")
+            raise FeatureSchemaError("combat inclusion actions must follow the validated exclude/include mask order")
         if semantic["actor"] != actor or semantic["include"] is not include:
             raise FeatureSchemaError("combat inclusion action actor/boolean does not match its policy context")
         for field, expected_ref in expected_ref_fields.items():

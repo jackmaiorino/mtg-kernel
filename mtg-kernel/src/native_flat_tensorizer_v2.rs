@@ -112,6 +112,8 @@ const COST_KINDS_V1: [&str; 11] = [
     "RemoveCounters",
     "PutCounters",
 ];
+const CHOSEN_CREATURE_COST_KIND_V3: u8 = 12;
+const CHOSEN_CREATURE_COST_NAME_V3: &str = "ChooseCreatureOrRevealCreature";
 const OPTIONAL_COST_CHOICES_V1: [&str; 3] = ["Decline", "Discard", "SacrificeLand"];
 const PHASE_NAMES_V2: [&str; 12] = [
     "untap",
@@ -551,10 +553,11 @@ pub(crate) fn fill_native_flat_decision_tensors_v3(
     let mut scratch =
         serde_json::to_vec(&canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
     let state = encode_state_v2(decision, &scratch)?;
-    let actions = encode_action_half_with_projection_and_scratch_v2(
+    let actions = encode_action_half_with_projection_and_scratch_contract_v3(
         decision,
         Some(&objects.projection),
         &mut scratch,
+        true,
     )?;
     let output = NativeFlatDecisionTensorV2 {
         state,
@@ -5456,6 +5459,20 @@ fn encode_action_half_with_projection_and_scratch_v2(
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
+    encode_action_half_with_projection_and_scratch_contract_v3(
+        decision,
+        projection,
+        canonical_json,
+        false,
+    )
+}
+
+fn encode_action_half_with_projection_and_scratch_contract_v3(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json: &mut Vec<u8>,
+    allow_chosen_creature_cost_v3: bool,
+) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
     }
@@ -5489,7 +5506,7 @@ fn encode_action_half_with_projection_and_scratch_v2(
         if start != ref_cursor || end > refs.len() {
             return Err(NativeFlatTensorErrorV1::ActionReferenceRange);
         }
-        let encoded = encode_action_with_scratch_v1(
+        let encoded = encode_action_with_scratch_contract_v3(
             decision,
             action_index,
             action,
@@ -5497,6 +5514,7 @@ fn encode_action_half_with_projection_and_scratch_v2(
             projection,
             canonical_json,
             false,
+            allow_chosen_creature_cost_v3,
         )?;
         out.action_features.extend_from_slice(&encoded.features);
         let action_index = i64::try_from(action_index)
@@ -5565,6 +5583,28 @@ fn encode_action_with_scratch_v1<'a>(
     canonical_json_scratch: &mut Vec<u8>,
     retain_canonical_json: bool,
 ) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
+    encode_action_with_scratch_contract_v3(
+        decision,
+        action_index,
+        action,
+        raw_refs,
+        projection,
+        canonical_json_scratch,
+        retain_canonical_json,
+        false,
+    )
+}
+
+fn encode_action_with_scratch_contract_v3<'a>(
+    decision: FlatScoringDecisionViewV1<'a>,
+    action_index: usize,
+    action: &FlatScorerActionCoreV1,
+    raw_refs: &'a [FlatScorerActionRefV1],
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json_scratch: &mut Vec<u8>,
+    retain_canonical_json: bool,
+    allow_chosen_creature_cost_v3: bool,
+) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
     let resolved = resolve_action_refs_v1(decision, action_index, raw_refs)?;
     let mut expected = FlatScorerActionCoreV1 {
         kind: action.kind,
@@ -5630,7 +5670,11 @@ fn encode_action_with_scratch_v1<'a>(
             }
         }
         FlatScorerActionKindV1::ChooseCostTarget => {
-            if action.remaining == 0 || !(1..=11).contains(&action.cost_kind) {
+            if action.remaining == 0
+                || (!(1..=11).contains(&action.cost_kind)
+                    && !(allow_chosen_creature_cost_v3
+                        && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3))
+            {
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.remaining = action.remaining;
@@ -5643,7 +5687,15 @@ fn encode_action_with_scratch_v1<'a>(
             semantic.insert("remaining".to_owned(), Value::from(action.remaining));
             semantic.insert(
                 "cost_kind".to_owned(),
-                Value::String(one_based_name(action.cost_kind, &COST_KINDS_V1)?.to_owned()),
+                Value::String(
+                    if allow_chosen_creature_cost_v3
+                        && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3
+                    {
+                        CHOSEN_CREATURE_COST_NAME_V3.to_owned()
+                    } else {
+                        one_based_name(action.cost_kind, &COST_KINDS_V1)?.to_owned()
+                    },
+                ),
             );
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
             projected_refs.push(projected_singular(candidate, ROLE_CANDIDATE_V1));
@@ -5919,7 +5971,8 @@ fn encode_action_with_scratch_v1<'a>(
     }
     write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
     let (sha512_blocks, hash_features) = action_hash_features_v1(canonical_json_scratch);
-    let mut features = explicit_action_features_v1(action, &resolved)?;
+    let mut features =
+        explicit_action_features_contract_v3(action, &resolved, allow_chosen_creature_cost_v3)?;
     features[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].copy_from_slice(&hash_features);
 
     let mut ref_features = try_vec_capacity(projected_refs.len())?;
@@ -6201,6 +6254,14 @@ fn explicit_action_features_v1(
     action: &FlatScorerActionCoreV1,
     refs: &[ResolvedActionRefV1<'_>],
 ) -> Result<[f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1], NativeFlatTensorErrorV1> {
+    explicit_action_features_contract_v3(action, refs, false)
+}
+
+fn explicit_action_features_contract_v3(
+    action: &FlatScorerActionCoreV1,
+    refs: &[ResolvedActionRefV1<'_>],
+    allow_chosen_creature_cost_v3: bool,
+) -> Result<[f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1], NativeFlatTensorErrorV1> {
     let mut out = [0.0f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1];
     let kind = action.kind as usize;
     if kind >= 27 {
@@ -6304,10 +6365,16 @@ fn explicit_action_features_v1(
     } else {
         usize::from(action.cost_kind - 1)
     };
-    if cost_kind >= COST_KINDS_V1.len() {
-        return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+    if allow_chosen_creature_cost_v3 && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3 {
+        // Preserve the eleven frozen categorical slots. This exact V3-only
+        // category has an all-zero vector and its distinct full type string
+        // in the semantic hash; it is never aliased to a historical cost.
+    } else {
+        if cost_kind >= COST_KINDS_V1.len() {
+            return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+        }
+        out[85 + cost_kind] = 1.0;
     }
-    out[85 + cost_kind] = 1.0;
     let choice = if action.optional_cost_choice == 0 {
         0
     } else {
@@ -6939,6 +7006,76 @@ mod tests {
             );
             assert_eq!(output.action_ref_node_indices, case.action_ref_node_indices);
             validate_native_flat_action_half_v1(&output, 1, refs.len(), objects.len()).unwrap();
+        }
+    }
+
+    #[test]
+    fn v3_chosen_creature_cost_has_explicit_zero_slots_distinct_hash_and_frozen_v2_rejection() {
+        let document = golden();
+        let case = document
+            .cases
+            .iter()
+            .find(|case| case.name == "primary-choose_cost_target")
+            .unwrap();
+        let (globals, objects, mut actions, refs) = parts(&case.flat_input);
+        for cost_kind in 1..=11 {
+            actions[0].cost_kind = cost_kind;
+            let decision = view(&globals, &objects, &actions, &refs);
+            let old = encode_action_v1(decision, 0, &actions[0], &refs, None).unwrap();
+            let new = encode_action_with_scratch_contract_v3(
+                decision,
+                0,
+                &actions[0],
+                &refs,
+                None,
+                &mut Vec::new(),
+                true,
+                true,
+            )
+            .unwrap();
+            assert_eq!(new.features, old.features);
+            assert_eq!(new.canonical_json, old.canonical_json);
+        }
+        actions[0].cost_kind = CHOSEN_CREATURE_COST_KIND_V3;
+        let decision = view(&globals, &objects, &actions, &refs);
+        assert!(matches!(
+            encode_action_v1(decision, 0, &actions[0], &refs, None),
+            Err(NativeFlatTensorErrorV1::InvalidActionRange)
+        ));
+        let encoded = encode_action_with_scratch_contract_v3(
+            decision,
+            0,
+            &actions[0],
+            &refs,
+            None,
+            &mut Vec::new(),
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(encoded.features.len(), 195);
+        assert!(encoded.features[85..96].iter().all(|&value| value == 0.0));
+        let canonical: Value = serde_json::from_slice(&encoded.canonical_json).unwrap();
+        assert_eq!(
+            canonical["semantic"]["cost_kind"],
+            CHOSEN_CREATURE_COST_NAME_V3
+        );
+        for unknown in [13, u8::MAX] {
+            actions[0].cost_kind = unknown;
+            let decision = view(&globals, &objects, &actions, &refs);
+            assert!(matches!(
+                encode_action_with_scratch_contract_v3(
+                    decision,
+                    0,
+                    &actions[0],
+                    &refs,
+                    None,
+                    &mut Vec::new(),
+                    true,
+                    true
+                ),
+                Err(NativeFlatTensorErrorV1::InvalidActionRange)
+            ));
         }
     }
 
