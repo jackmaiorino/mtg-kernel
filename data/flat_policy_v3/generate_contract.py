@@ -15,7 +15,7 @@ def generate() -> None:
     directory = Path(__file__).resolve().parent
     source_hash = hashlib.sha256(Path(features.__file__).read_bytes()).hexdigest()
     descriptor = {
-        "schema": "flat-policy-v3-feature-contract-1",
+        "schema": "flat-policy-v3-feature-contract-2",
         "rich_observation_schema": 6,
         "legal_action_schema": 5,
         "feature_schema_version": features.FEATURE_SCHEMA_VERSION,

@@ -23,7 +23,8 @@ def successor() -> dict:
     obs = observation()
     obs["schema_version"] = 6
     obs["extensions"] = {"pending_cast_object_cost": None, "decision_local_library": None,
-                         "historical_public_sources": []}
+                         "historical_public_sources": [], "pending_chosen_creature_cost": None,
+                         "finalized_chosen_creature_costs": []}
     return obs
 
 
@@ -100,6 +101,55 @@ def renumber(value, mapping):
 
 
 class FeaturesV6Tests(unittest.TestCase):
+    def test_chosen_creature_zone_changes_value_input_and_rejects_other_controller(self):
+        obs, _ = escape_decision()
+        obs["extensions"]["pending_cast_object_cost"] = None
+        obs["projection"]["stack"][-1]["cast_method"] = "normal"
+        pending = obs["projection"]["engine_context"]["pending_cast"]
+        pending["origin_zone"] = "Hand"
+        records = []
+        for zone in ("Battlefield", "Hand"):
+            changed = copy.deepcopy(obs)
+            changed["extensions"]["pending_chosen_creature_cost"] = {
+                "source": copy.deepcopy(pending["source"]), "controller": "p0", "selected_zone": zone}
+            v6.assert_observation_classified(changed)
+            records.append(torch.tensor(v6._state_features(changed)))
+        self.assertFalse(torch.equal(*records))
+        changed["extensions"]["pending_chosen_creature_cost"]["controller"] = "p1"
+        with self.assertRaises(v6.FeatureSchemaError):
+            v6.assert_observation_classified(changed)
+
+    def test_visible_paid_power_changes_value_input_and_binds_exact_spell(self):
+        obs = successor()
+        item = obs["projection"]["stack"][0]
+        chosen = copy.deepcopy(obs["projection"]["battlefield"][0][0]["stable"])
+        item["paid_cost_refs"] = [chosen]
+        record = {"stack_index": 0, "source": copy.deepcopy(item["source"]),
+                  "chosen": copy.deepcopy(chosen), "power_lki": -2}
+        obs["extensions"]["finalized_chosen_creature_costs"] = [record]
+        encoded = v6.encode_decision(obs, legal_actions())
+        record["power_lki"] = 7
+        different = v6.encode_decision(obs, legal_actions())
+        self.assertFalse(torch.equal(encoded.state, different.state))
+        for name in TENSORS[1:]:
+            self.assertTrue(torch.equal(getattr(encoded, name), getattr(different, name)), name)
+        for key, value in (("stack_index", 999), ("source", chosen), ("chosen", item["source"]), ("power_lki", 2**31)):
+            forged = copy.deepcopy(obs)
+            forged["extensions"]["finalized_chosen_creature_costs"][0][key] = value
+            with self.assertRaises(v6.FeatureSchemaError):
+                v6.encode_decision(forged, legal_actions())
+        duplicate = copy.deepcopy(obs)
+        duplicate["extensions"]["finalized_chosen_creature_costs"].append(copy.deepcopy(record))
+        with self.assertRaises(v6.FeatureSchemaError):
+            v6.encode_decision(duplicate, legal_actions())
+
+    def test_old_v6_extension_shape_is_rejected(self):
+        stale = successor()
+        del stale["extensions"]["pending_chosen_creature_cost"]
+        del stale["extensions"]["finalized_chosen_creature_costs"]
+        with self.assertRaises(v6.FeatureSchemaError):
+            v6.encode_decision(stale, legal_actions())
+
     def assert_tensors_equal(self, left, right):
         for name in TENSORS:
             self.assertTrue(torch.equal(getattr(left, name), getattr(right, name)), name)
@@ -332,6 +382,8 @@ class FeaturesV6Tests(unittest.TestCase):
         obs["own_hand"][0]["stable"]["card_db_id"] = 20
         self.assertEqual(v6.COST_ONE_HOT_KINDS_V6, frozen.COST_KINDS)
         for candidate in (obs["projection"]["battlefield"][0][0]["stable"], obs["own_hand"][0]["stable"]):
+            obs["extensions"]["pending_chosen_creature_cost"] = {
+                "source": source, "controller": "p0", "selected_zone": candidate["zone"]}
             offer = action(0, {"action_kind": "choose_cost_target", "source": source,
                                "candidate": candidate, "cost_kind": "ChooseCreatureOrRevealCreature", "remaining": 1})
             encoded = v6.encode_decision(obs, [offer])

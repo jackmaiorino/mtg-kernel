@@ -5,7 +5,7 @@
 //! replace them with actor-visible row handles, never consume arena identities,
 //! incarnation counters, or infer hidden library positions from them.
 
-use crate::engine::CostKind;
+use crate::engine::{ChosenCreatureCostZoneV1, CostKind};
 use crate::rl::{
     CardPrivateV1, CardStableRefV1, KnownLibraryCardV4, PlayerSeatV1,
     PublicObservationProjectionV5, StackItemKindV2,
@@ -42,6 +42,30 @@ pub struct PolicyObservationExtensionsV6 {
     pub pending_cast_object_cost: Option<PendingCastObjectCostV6>,
     pub decision_local_library: Option<DecisionLocalLibraryV6>,
     pub historical_public_sources: Vec<HistoricalPublicSourceV6>,
+    pub pending_chosen_creature_cost: Option<PendingChosenCreatureCostV6>,
+    pub finalized_chosen_creature_costs: Vec<FinalizedChosenCreatureCostV6>,
+}
+
+/// The controller's already selected cost branch, before choosing/revealing a
+/// card. This record grants no other player access to an unfinished hand cost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingChosenCreatureCostV6 {
+    pub source: CardStableRefV1,
+    pub controller: PlayerSeatV1,
+    pub selected_zone: ChosenCreatureCostZoneV1,
+}
+
+/// A visible paid creature bound to one exact validated spell on the stack.
+/// Power is the engine's recorded LKI, refreshed immediately before that exact
+/// battlefield incarnation leaves. It is never read from a later incarnation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FinalizedChosenCreatureCostV6 {
+    pub stack_index: u32,
+    pub source: CardStableRefV1,
+    pub chosen: CardStableRefV1,
+    pub power_lki: i32,
 }
 
 /// A declared cost and its complete current selection prefix. Selected cards
@@ -548,6 +572,87 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn v6_chosen_creature_branch_is_private_and_distinguishes_equal_common_projections() {
+        use crate::native_flat_tensorizer_v3::monstrous_emergence_zone_fixture_v3;
+        let base = monstrous_emergence_zone_fixture_v3();
+        let mut observations = Vec::new();
+        for option in [0, 1] {
+            let mut state = base.clone();
+            engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { .. }
+            ));
+            let visible = observe(&state, PlayerId::P0);
+            assert_eq!(
+                visible
+                    .extensions
+                    .pending_chosen_creature_cost
+                    .as_ref()
+                    .unwrap()
+                    .selected_zone,
+                if option == 0 {
+                    ChosenCreatureCostZoneV1::Battlefield
+                } else {
+                    ChosenCreatureCostZoneV1::Hand
+                }
+            );
+            let opponent = observe(&state, PlayerId::P1);
+            assert!(opponent.extensions.pending_chosen_creature_cost.is_none());
+            assert!(opponent.known_hand_cards.iter().all(Vec::is_empty));
+            observations.push(visible);
+        }
+        assert_eq!(observations[0].projection, observations[1].projection);
+        assert_eq!(observations[0].own_hand, observations[1].own_hand);
+        assert_ne!(
+            observations[0].visible_projection_hash,
+            observations[1].visible_projection_hash
+        );
+    }
+
+    #[test]
+    fn v6_chosen_creature_power_retains_refreshed_lki_and_rejects_foreign_power() {
+        use crate::native_flat_tensorizer_v3::monstrous_emergence_paid_fixture_v3;
+        let mut observations = Vec::new();
+        for bonus in [0, 3] {
+            let (state, chosen) = monstrous_emergence_paid_fixture_v3(false, Some(bonus));
+            let visible = observe(&state, PlayerId::P0);
+            let cost = &visible.extensions.finalized_chosen_creature_costs[0];
+            assert_eq!(cost.power_lki, 4 + i32::from(bonus));
+            assert_eq!(cost.chosen.arena_id, chosen.0);
+            assert_eq!(cost.chosen.zone, Zone::Battlefield);
+            assert!(state.objects.get(chosen).zone_change_count > cost.chosen.zone_change_count);
+            assert_eq!(
+                cost.chosen,
+                visible.projection.surface.stack[cost.stack_index as usize].paid_cost_refs[0]
+            );
+            assert_eq!(
+                observe(&state, PlayerId::P1)
+                    .extensions
+                    .finalized_chosen_creature_costs,
+                visible.extensions.finalized_chosen_creature_costs
+            );
+            let mut forged = state.clone();
+            forged.stack.last_mut().unwrap().v4.paid_cost_refs[0].power_lki = Some(99);
+            assert!(policy_observation_extensions_v6(&forged, PlayerId::P0).is_err());
+            observations.push(visible);
+        }
+        assert_eq!(observations[0].projection, observations[1].projection);
+        assert_ne!(
+            observations[0].visible_projection_hash,
+            observations[1].visible_projection_hash
+        );
+        let (hand, chosen) = monstrous_emergence_paid_fixture_v3(true, None);
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let visible = observe(&hand, actor);
+            let cost = &visible.extensions.finalized_chosen_creature_costs[0];
+            assert_eq!(cost.chosen.arena_id, chosen.0);
+            assert_eq!(cost.chosen.zone, Zone::Hand);
+            assert_eq!(cost.power_lki, 4);
+        }
+    }
+
+    #[test]
     fn v6_explicit_empty_extensions_round_trip_and_commit_to_hash() {
         let state = ready_state();
         let full = observe(&state, PlayerId::P0);
@@ -565,6 +670,20 @@ pub(crate) mod tests {
             value["extensions"]["historical_public_sources"],
             serde_json::json!([])
         );
+        assert_eq!(
+            value["extensions"]["pending_chosen_creature_cost"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["extensions"]["finalized_chosen_creature_costs"],
+            serde_json::json!([])
+        );
+        let mut stale = value.clone();
+        stale["extensions"]
+            .as_object_mut()
+            .unwrap()
+            .remove("finalized_chosen_creature_costs");
+        assert!(serde_json::from_value::<ObservationV6>(stale).is_err());
         assert_eq!(
             serde_json::from_value::<ObservationV6>(value).unwrap(),
             full

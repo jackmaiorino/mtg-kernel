@@ -4,7 +4,7 @@
 //! action binding own a distinct identity. Private source/choice authority is
 //! resolved to model row indices before any scorer receives these extensions.
 
-use crate::engine::CostKind;
+use crate::engine::{ChosenCreatureCostZoneV1, CostKind};
 use crate::flat_policy_v2::{
     FlatDecisionEncoderV2, FlatDecisionErrorV2, FlatGlobalsV2, FlatRelativePlayerV2,
     FlatScoringDecisionViewV2, FlatScoringOwnedBuffersV2,
@@ -55,6 +55,23 @@ pub struct FlatScoringExtensionsV3 {
     pub pending_cast_object_cost: Option<FlatPendingCastObjectCostV3>,
     pub decision_local_library: Option<FlatDecisionLocalLibraryV3>,
     pub historical_public_sources: Vec<FlatHistoricalPublicSourceV3>,
+    pub pending_chosen_creature_cost: Option<FlatPendingChosenCreatureCostV3>,
+    pub finalized_chosen_creature_costs: Vec<FlatFinalizedChosenCreatureCostV3>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatPendingChosenCreatureCostV3 {
+    pub source_object: u32,
+    pub controller: FlatRelativePlayerV2,
+    pub selected_zone: ChosenCreatureCostZoneV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatFinalizedChosenCreatureCostV3 {
+    pub stack_index: u32,
+    pub source_object: u32,
+    pub chosen_object: u32,
+    pub power_lki: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -605,8 +622,67 @@ mod tests {
         }
         // Completing the third selection advances payment automatically, so
         // prefix 3 is tested above as rich state rather than a policy example.
+        for (name, state) in chosen_creature_value_states() {
+            emit_fixture(&name, &FastActorSessionV1::from_v3_fixture_state(state));
+        }
         for (name, state) in escape_prefix_states().into_iter().take(3) {
             emit_fixture(&name, &FastActorSessionV1::from_v3_fixture_state(state));
         }
+    }
+
+    fn chosen_creature_value_states() -> Vec<(String, GameState)> {
+        use crate::native_flat_tensorizer_v3::{
+            monstrous_emergence_paid_fixture_v3, monstrous_emergence_zone_fixture_v3,
+        };
+        let mut states = Vec::new();
+        let base = monstrous_emergence_zone_fixture_v3();
+        for option in [0, 1] {
+            let mut state = base.clone();
+            engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { .. }
+            ));
+            states.push((format!("monstrous-selected-zone-{option}"), state));
+        }
+        for (name, hand, bonus) in [
+            ("monstrous-paid-live", false, None),
+            ("monstrous-paid-departed-power4", false, Some(0)),
+            ("monstrous-paid-departed-power7", false, Some(3)),
+            ("monstrous-paid-revealed-hand", true, None),
+        ] {
+            states.push((
+                name.into(),
+                monstrous_emergence_paid_fixture_v3(hand, bonus).0,
+            ));
+        }
+        states
+    }
+
+    #[test]
+    fn v3_chosen_creature_branch_and_refreshed_lki_reach_value_state_without_width_change() {
+        let values = chosen_creature_value_states()
+            .into_iter()
+            .map(|(_, state)| tensors(&FastActorSessionV1::from_v3_fixture_state(state)).common)
+            .collect::<Vec<_>>();
+        assert_ne!(
+            values[0].state, values[1].state,
+            "selected zone must reach the value input"
+        );
+        assert_ne!(
+            values[3].state, values[4].state,
+            "departed creature LKI must reach the value input"
+        );
+        for value in &values {
+            assert_eq!(value.state.len(), 219);
+            assert_eq!(value.object_features.len() % 98, 0);
+            assert_eq!(value.action_features.len() % 195, 0);
+        }
+        let mut left = values[3].clone();
+        left.state.clone_from(&values[4].state);
+        assert_eq!(
+            left, values[4],
+            "LKI-only fixture difference must not rewrite live objects/actions"
+        );
     }
 }

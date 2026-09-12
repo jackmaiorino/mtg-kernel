@@ -60,6 +60,7 @@ pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
 pub mod engine;
 pub mod event;
+pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
 pub mod fast_sampler;

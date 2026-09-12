@@ -18,8 +18,9 @@ use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::policy_observation_v6::{
-    DecisionLocalLibraryV6, HistoricalPublicSourceV6, HistoricalSourceContextV6, ObservationV6,
-    PendingCastObjectCostV6, PolicyObservationExtensionsV6, OBSERVATION_SCHEMA_VERSION_V6,
+    DecisionLocalLibraryV6, FinalizedChosenCreatureCostV6, HistoricalPublicSourceV6,
+    HistoricalSourceContextV6, ObservationV6, PendingCastObjectCostV6, PendingChosenCreatureCostV6,
+    PolicyObservationExtensionsV6, OBSERVATION_SCHEMA_VERSION_V6,
 };
 use crate::policy_surface_v5::{
     PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
@@ -1997,8 +1998,52 @@ fn policy_observation_extensions_with_text_v6(
         None
     };
 
+    let pending_chosen_creature_cost = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|pending| pending.controller == acting_player)
+        .and_then(|pending| {
+            pending
+                .chosen_creature_cost_zone
+                .map(|zone| (pending, zone))
+        })
+        .map(|(pending, selected_zone)| {
+            Ok::<_, RlContractError>(PendingChosenCreatureCostV6 {
+                source: card_ref(state, pending.spell)?,
+                controller: pending.controller.into(),
+                selected_zone,
+            })
+        })
+        .transpose()?;
+    let mut finalized_chosen_creature_costs = Vec::new();
     let mut historical_public_sources = Vec::new();
     for (index, item) in state.stack.iter().enumerate() {
+        // stack_source_ref validates the independent finalized cast binding,
+        // including equality with the complete paid-cost record and its LKI.
+        if item.kind == StackItemKind::Spell {
+            let source = stack_source_ref(state, item)?;
+            let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
+                .is_some_and(|cost| cost.iter().any(|component| matches!(component,
+                    crate::card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand)));
+            for paid in item
+                .v4
+                .paid_cost_refs
+                .iter()
+                .filter(|paid| chosen_creature_cost && paid.visible_to(acting_player))
+            {
+                let power_lki = paid.power_lki.ok_or_else(|| {
+                    RlContractError("chosen-creature cost lost its recorded power".into())
+                })?;
+                finalized_chosen_creature_costs.push(FinalizedChosenCreatureCostV6 {
+                    stack_index: u32::try_from(index)
+                        .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
+                    source: source.clone(),
+                    chosen: paid_cost_card_refs(&[*paid], acting_player)[0].clone(),
+                    power_lki,
+                });
+            }
+        }
         if item.kind != StackItemKind::Spell {
             historical_public_sources.push(HistoricalPublicSourceV6 {
                 context: HistoricalSourceContextV6::Stack {
@@ -2096,6 +2141,8 @@ fn policy_observation_extensions_with_text_v6(
         pending_cast_object_cost,
         decision_local_library,
         historical_public_sources,
+        pending_chosen_creature_cost,
+        finalized_chosen_creature_costs,
     })
 }
 

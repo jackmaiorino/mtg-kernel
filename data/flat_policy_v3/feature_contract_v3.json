@@ -8,6 +8,7 @@
     "state": 219
   },
   "encoding": {
+    "chosen_creature_cost": "controller-only-pending-selected-zone-and-exact-visible-stack-paid-reference-with-refreshed-power-lki-in-canonical-state-hash-no-new-numeric-columns",
     "combat_legal_mask": "current-eligible-attacker-with-visible-active-goad-requires-include-only-at-every-prefix-otherwise-exclude-include",
     "empty_extensions": "always-include-required-null-and-empty-fields-in-v6-state-hash",
     "extension_edge_order": "cost-source-then-selected-then-search-cards-then-historical-sources-after-v5-edges",
@@ -28,16 +29,16 @@
     "historical_source": 35,
     "search_card": 34
   },
-  "feature_contract_digest": "bd794bda37eace823cee7a8ce12a42107e2d628437b08b3f23f412aa307e0b2e",
-  "feature_encoding_digest": "0111f48e9c2e6f24d186e9059ddede48aa98dd45e9c17e2343145cb408edac88",
-  "feature_registry_version": "rust-observation-v6-action-v5-registry-1",
-  "feature_schema_version": "actor-relative-v6-python-1",
+  "feature_contract_digest": "527db1125fa760076c2e751bb70be74cab21aa4dcb7d558a0b804a597ef8adfd",
+  "feature_encoding_digest": "3ccfd79fe8c4c3916043e931fcb251aed2c3cd8c9c13f31c1112c2af3b855feb",
+  "feature_registry_version": "rust-observation-v6-action-v5-registry-2",
+  "feature_schema_version": "actor-relative-v6-python-2",
   "features_source_path": "python/mtg_kernel_rl/features_v6.py",
-  "features_source_sha256": "1fe7f0d665b1bd030ea571ae678502787fd40ac1e3800c7aeeeec9c09f1edbc9",
+  "features_source_sha256": "5d2c2531bfc4899037379300872d6be3cd9d5d341eace7b7968503a68928d12a",
   "legal_action_schema": 5,
   "model_contract_version": "kernel-policy-value-net-8",
   "provenance_boundary": "Python validates internal consistency; authoritative Rust production validates actual public history and hidden-state scope.",
   "rich_observation_schema": 6,
-  "schema": "flat-policy-v3-feature-contract-1",
+  "schema": "flat-policy-v3-feature-contract-2",
   "transfer": "Existing Net8 weights require explicitly labeled feature transfer. Shape equality is not unchanged checkpoint identity or competence evidence."
 }

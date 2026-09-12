@@ -7332,7 +7332,7 @@ fn resolve_explicit_decks(mainboards: &[Vec<u16>; 2]) -> Result<[Vec<u16>; 2], R
 /// `fnv1a64-serde-json-u16-array/v1` convention. Deliberately does not
 /// reuse `RuntimeDeckDefinition::runtime_deck_hash`: that hash is over the
 /// unsorted `materialized_mainboard` walk order, a different convention.
-fn explicit_deck_hash_v1(mainboard: &[u16]) -> u64 {
+pub(crate) fn explicit_deck_hash_v1(mainboard: &[u16]) -> u64 {
     let mut sorted = mainboard.to_vec();
     sorted.sort_unstable();
     let serialized = serde_json::to_vec(&sorted).expect("a u16 vector always serializes as JSON");

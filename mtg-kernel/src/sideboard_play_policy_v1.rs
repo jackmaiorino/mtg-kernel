@@ -326,7 +326,7 @@ impl FrozenPlayPolicyV1 {
             destination: transfer.clone(),
             features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
             feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
-            semantics: "rich V6 / flat V3; exact public historical sources, chooser-only unordered library candidates, typed object-cost prefixes; unchanged weights and dimensions; inference transfer only, no learned competence claim".into(),
+            semantics: "rich V6 / flat V3 revision 2; exact public historical sources, chooser-only unordered library candidates, typed object-cost prefixes, private chosen-creature branch and visible refreshed paid power; unchanged imported weights and dimensions; source inference transfer only, no learned competence claim".into(),
         });
         policy.identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
         policy.identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
@@ -336,6 +336,51 @@ impl FrozenPlayPolicyV1 {
 
     pub fn identity_v1(&self) -> &FrozenPlayPolicyIdentityV1 {
         &self.identity
+    }
+
+    /// Crate-only warm-start bridge. The caller owns the successor checkpoint
+    /// identity; the original import receipt continues to describe the source.
+    pub(crate) fn training_parameters_v3(&self) -> Vec<NativeNamedParameterV1> {
+        self.model.parameter_snapshot_v1()
+    }
+
+    pub(crate) fn replace_training_parameters_v3(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+    ) -> Result<(), String> {
+        require(
+            self.successor.is_some(),
+            "training requires explicit successor features",
+        )?;
+        self.model
+            .replace_parameter_snapshot_v1(parameters)
+            .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn select_with_training_tensor_v3(
+        &mut self,
+        session: &FastActorSessionV1,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV3), String> {
+        require(
+            self.successor.is_some(),
+            "training requires explicit successor features",
+        )?;
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            return Err("cannot collect a terminal decision".into());
+        };
+        let scores = self.score_fast_session_v1(session)?;
+        let selected = self.sample_scores(
+            &scores.logits,
+            decision.acting_player,
+            decision.legal_action_count,
+        )?;
+        let tensor = self
+            .successor
+            .as_ref()
+            .ok_or("missing successor tensor")?
+            .tensor
+            .clone();
+        Ok((selected, scores, tensor))
     }
     pub fn embedding_rows_v1(&self) -> &[f32] {
         &self.embeddings
@@ -692,6 +737,32 @@ impl OwnedScoringV1 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn previous_v3_feature_identity_rejects_before_export_read() {
+        let absent = PathBuf::from("this-export-must-not-be-read");
+        let input = FrozenPlayPolicyImportV1 {
+            export_directory: absent.clone(),
+            expected_metadata_sha256: String::new(),
+            expected_model_parameter_sha256: String::new(),
+            source_run_path: absent.clone(),
+            source_registry_path: absent,
+            expected_source_registry_sha256: String::new(),
+            source_registry_git_commit: String::new(),
+            expected_destination_card_db_hash: String::new(),
+        };
+        let old = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "bd794bda37eace823cee7a8ce12a42107e2d628437b08b3f23f412aa307e0b2e".into(),
+            expected_feature_encoding_digest:
+                "0111f48e9c2e6f24d186e9059ddede48aa98dd45e9c17e2343145cb408edac88".into(),
+        };
+        let error = match FrozenPlayPolicyV1::load_feature_transfer_v3(&input, &old) {
+            Err(error) => error,
+            Ok(_) => panic!("old V3 unexpectedly accepted"),
+        };
+        assert_eq!(error, "explicit V3 destination feature identity differs");
+    }
 
     #[test]
     fn namespace_accepts_membership_and_appends_but_rejects_reassigned_or_changed_cards() {

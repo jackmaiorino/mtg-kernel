@@ -1,0 +1,868 @@
+//! Explicit V6/V3 expanded-deck rollouts, immutable trajectories and native
+//! CPU updates. This successor starts from an inference export with fresh Adam
+//! or resumes its own checkpoint. It never reads or writes a legacy Store.
+
+use crate::card_def::{Supertype, CARD_DEFS, KERNEL_CARDDB_HASH};
+use crate::durable_publication_v1::{
+    capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
+};
+use crate::fast_sampler::FastCategoricalScratch;
+use crate::ids::PlayerId;
+use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
+use crate::native_flat_tensorizer_v3::{
+    encoded_decision_view_v3, NativeFlatDecisionTensorV3, FEATURE_CONTRACT_DIGEST_V3,
+    FEATURE_ENCODING_DIGEST_V3,
+};
+use crate::native_policy_train_step_v1::{
+    NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+};
+use crate::native_policy_value_net_v1::{
+    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+};
+use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
+use crate::rl::{
+    terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
+};
+use crate::rl_session::{
+    explicit_deck_hash_v1, FastActorResponseV1, FastActorSessionV1, RlSessionTerminalV1,
+    RL_SESSION_SCHEMA_VERSION,
+};
+use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
+use crate::sideboard_play_policy_v1::{
+    FrozenPlayObservationTransferV3, FrozenPlayPolicyIdentityV1, FrozenPlayPolicyImportV1,
+    FrozenPlayPolicyV1,
+};
+use crate::state::SplitMix64;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v1";
+const CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-checkpoint/v1";
+const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedFileV1 {
+    pub path: PathBuf,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpandedModelSourceV1 {
+    pub play_import: PinnedFileV1,
+    pub feature_transfer: FrozenPlayObservationTransferV3,
+    /// None means an explicit fresh-optimizer warm start. A successor
+    /// checkpoint resumes both model and Adam, with the same feature identity.
+    pub checkpoint: Option<PinnedFileV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpandedDeckListV1 {
+    pub label: String,
+    pub mainboard: Vec<u16>,
+    pub sideboard: Vec<u16>,
+}
+
+impl ExpandedDeckListV1 {
+    fn validated(&self) -> Result<RegisteredDeckV1, String> {
+        let deck = RegisteredDeckV1::new_fully_supported_v1(
+            &self.label,
+            self.mainboard.clone(),
+            self.sideboard.clone(),
+        )
+        .map_err(err)?;
+        for row in deck.registered_configuration().combined_card_counts_v1() {
+            ensure(
+                row.count <= 4
+                    || CARD_DEFS[usize::from(row.card_id)]
+                        .supertypes
+                        .contains(&Supertype::Basic),
+                "registration exceeds four copies of a nonbasic card",
+            )?;
+        }
+        Ok(deck)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpandedEpisodeV1 {
+    pub id: String,
+    pub seed: u64,
+    pub starting_player: u8,
+    pub learner_seat: u8,
+    /// Configuration identity is metadata only, never opponent model input.
+    pub registered: [ExpandedDeckListV1; 2],
+    pub selected: [ExpandedDeckListV1; 2],
+    pub postboard: bool,
+    pub max_physical_decisions: u64,
+    pub max_policy_steps: u64,
+}
+
+impl ExpandedEpisodeV1 {
+    fn configurations(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        ensure(
+            !self.id.is_empty() && self.id.len() <= 128,
+            "invalid episode id",
+        )?;
+        ensure(
+            self.starting_player < 2 && self.learner_seat < 2,
+            "invalid player seat",
+        )?;
+        ensure(
+            (1..=100_000).contains(&self.max_physical_decisions)
+                && (1..=1_000_000).contains(&self.max_policy_steps),
+            "invalid episode limits",
+        )?;
+        let mut configs = Vec::new();
+        for seat in 0..2 {
+            let registered = self.registered[seat].validated()?;
+            let selected = self.selected[seat].validated()?;
+            let initial = registered.registered_configuration();
+            let configuration = selected.registered_configuration();
+            ensure(
+                initial.combined_card_counts_v1() == configuration.combined_card_counts_v1(),
+                "postboard configuration changes the registered 75",
+            )?;
+            ensure(
+                self.postboard || initial == configuration,
+                "preboard game differs from registration",
+            )?;
+            configs.push(configuration.clone());
+        }
+        Ok([configs.remove(0), configs.remove(0)])
+    }
+}
+
+/// Raw binary32 bits keep JSON round trips exact, including signed zero.
+/// All fields are actor-visible tensors. No private bindings or GameState.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TensorBitsV1 {
+    state: Vec<u32>,
+    object_features: Vec<u32>,
+    object_card_ids: Vec<i64>,
+    object_groups: Vec<i64>,
+    object_node_ids: Vec<i64>,
+    edge_features: Vec<u32>,
+    edge_source_indices: Vec<i64>,
+    edge_target_indices: Vec<i64>,
+    action_features: Vec<u32>,
+    action_ref_features: Vec<u32>,
+    action_ref_card_ids: Vec<i64>,
+    action_ref_action_indices: Vec<i64>,
+    action_ref_node_indices: Vec<i64>,
+}
+
+fn bits(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|x| x.to_bits()).collect()
+}
+fn floats(values: &[u32]) -> Vec<f32> {
+    values.iter().map(|x| f32::from_bits(*x)).collect()
+}
+impl TensorBitsV1 {
+    fn from_tensor(t: &NativeFlatDecisionTensorV3) -> Self {
+        let t = &t.common;
+        Self {
+            state: bits(&t.state),
+            object_features: bits(&t.object_features),
+            object_card_ids: t.object_card_ids.clone(),
+            object_groups: t.object_groups.clone(),
+            object_node_ids: t.object_node_ids.clone(),
+            edge_features: bits(&t.edge_features),
+            edge_source_indices: t.edge_source_indices.clone(),
+            edge_target_indices: t.edge_target_indices.clone(),
+            action_features: bits(&t.action_features),
+            action_ref_features: bits(&t.action_ref_features),
+            action_ref_card_ids: t.action_ref_card_ids.clone(),
+            action_ref_action_indices: t.action_ref_action_indices.clone(),
+            action_ref_node_indices: t.action_ref_node_indices.clone(),
+        }
+    }
+    fn tensor(&self) -> NativeFlatDecisionTensorV3 {
+        NativeFlatDecisionTensorV3 {
+            common: NativeFlatDecisionTensorV2 {
+                state: floats(&self.state),
+                object_features: floats(&self.object_features),
+                object_card_ids: self.object_card_ids.clone(),
+                object_groups: self.object_groups.clone(),
+                object_node_ids: self.object_node_ids.clone(),
+                edge_features: floats(&self.edge_features),
+                edge_source_indices: self.edge_source_indices.clone(),
+                edge_target_indices: self.edge_target_indices.clone(),
+                action_features: floats(&self.action_features),
+                action_ref_features: floats(&self.action_ref_features),
+                action_ref_card_ids: self.action_ref_card_ids.clone(),
+                action_ref_action_indices: self.action_ref_action_indices.clone(),
+                action_ref_node_indices: self.action_ref_node_indices.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecisionRecordV1 {
+    step: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+    actor: u8,
+    selected: u32,
+    logits: Vec<u32>,
+    value: u32,
+    tensor: TensorBitsV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpandedTrajectoryV1 {
+    schema: String,
+    feature_contract_digest: String,
+    feature_encoding_digest: String,
+    card_db_hash: String,
+    source_import: FrozenPlayPolicyIdentityV1,
+    behavior_state_sha256: String,
+    episode: ExpandedEpisodeV1,
+    configuration_sha256: [String; 2],
+    decisions: Vec<DecisionRecordV1>,
+    terminal: RlSessionTerminalV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParameterBitsV1 {
+    name: String,
+    shape: Vec<usize>,
+    values: Vec<u32>,
+}
+
+impl ParameterBitsV1 {
+    fn from_native(p: &NativeNamedParameterV1) -> Self {
+        Self {
+            name: p.name.into(),
+            shape: p.shape.clone(),
+            values: bits(&p.values),
+        }
+    }
+}
+
+fn restore_parameters(
+    saved: &[ParameterBitsV1],
+    template: &[NativeNamedParameterV1],
+) -> Result<Vec<NativeNamedParameterV1>, String> {
+    ensure(
+        saved.len() == template.len(),
+        "checkpoint parameter count differs",
+    )?;
+    saved
+        .iter()
+        .zip(template)
+        .map(|(s, t)| {
+            ensure(
+                s.name == t.name && s.shape == t.shape && s.values.len() == t.values.len(),
+                "checkpoint parameter layout differs",
+            )?;
+            Ok(NativeNamedParameterV1 {
+                name: t.name,
+                shape: t.shape.clone(),
+                values: floats(&s.values),
+            })
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpandedCheckpointV1 {
+    schema: String,
+    feature_contract_digest: String,
+    feature_encoding_digest: String,
+    card_db_hash: String,
+    source_import: FrozenPlayPolicyIdentityV1,
+    state_sha256: String,
+    adam_step: u64,
+    scorer_bias_anchor_bits: u32,
+    parameters: Vec<ParameterBitsV1>,
+    first_moments: Vec<ParameterBitsV1>,
+    second_moments: Vec<ParameterBitsV1>,
+    trajectories: Vec<PinnedFileV1>,
+    loss_identity: String,
+    learning_rate_bits: u32,
+    value_coefficient_bits: u32,
+}
+
+fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), String> {
+    ensure(
+        contract == FEATURE_CONTRACT_DIGEST_V3 && encoding == FEATURE_ENCODING_DIGEST_V3,
+        "successor feature identity differs",
+    )?;
+    ensure(
+        cards == format!("{KERNEL_CARDDB_HASH:016x}"),
+        "successor card database differs",
+    )
+}
+
+fn initialize(
+    source: &ExpandedModelSourceV1,
+) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
+    let import: FrozenPlayPolicyImportV1 = read_pinned(&source.play_import)?;
+    let mut policy =
+        FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)?;
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(err)?;
+    model
+        .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+        .map_err(err)?;
+    let state = if let Some(pin) = &source.checkpoint {
+        let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+        ensure(
+            saved.schema == CHECKPOINT_SCHEMA,
+            "not an expanded-deck checkpoint",
+        )?;
+        identity_valid(
+            &saved.feature_contract_digest,
+            &saved.feature_encoding_digest,
+            &saved.card_db_hash,
+        )?;
+        ensure(
+            saved.source_import == *policy.identity_v1(),
+            "checkpoint warm-start provenance differs",
+        )?;
+        ensure(
+            saved.loss_identity == "terminal_reinforce_value/v3",
+            "checkpoint loss differs",
+        )?;
+        let template = model.parameter_snapshot_v1();
+        let snapshot = NativePolicyValueTrainSnapshotV1 {
+            adam_step: saved.adam_step,
+            scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+            parameters: restore_parameters(&saved.parameters, &template)?,
+            first_moments: restore_parameters(&saved.first_moments, &template)?,
+            second_moments: restore_parameters(&saved.second_moments, &template)?,
+        };
+        ensure(
+            hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
+            "checkpoint state hash differs",
+        )?;
+        policy.replace_training_parameters_v3(&snapshot.parameters)?;
+        NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?
+    } else {
+        NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?
+    };
+    Ok((policy, state))
+}
+
+fn collect_episode(
+    policy: &mut FrozenPlayPolicyV1,
+    behavior_state: &str,
+    episode: &ExpandedEpisodeV1,
+) -> Result<ExpandedTrajectoryV1, String> {
+    let configs = episode.configurations()?;
+    let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
+    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
+    policy.reset_sampling_v1(paired_policy_seeds_v1(episode.seed));
+    let mut decisions = Vec::new();
+    loop {
+        match session.current_response() {
+            FastActorResponseV1::Terminal(terminal) => {
+                ensure(
+                    terminal.terminal_classification == TerminalClassificationV1::Natural,
+                    "only naturally completed games may become training trajectories",
+                )?;
+                let result = ExpandedTrajectoryV1 {
+                    schema: TRAJECTORY_SCHEMA.into(),
+                    feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                    feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+                    card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+                    source_import: policy.identity_v1().clone(),
+                    behavior_state_sha256: behavior_state.into(),
+                    episode: episode.clone(),
+                    configuration_sha256: config_hashes,
+                    decisions,
+                    terminal,
+                };
+                validate_trajectory(&result)?;
+                return Ok(result);
+            }
+            FastActorResponseV1::Decision(d) => {
+                ensure(
+                    decisions.len() < episode.max_policy_steps as usize,
+                    "policy step limit",
+                )?;
+                let (selected, scores, tensor) = policy.select_with_training_tensor_v3(&session)?;
+                let record = DecisionRecordV1 {
+                    step: d.step,
+                    physical_decision_id: d.physical_decision_id,
+                    substep_index: d.substep_index,
+                    substep_count: d.substep_count,
+                    actor: seat(d.acting_player),
+                    selected,
+                    logits: bits(&scores.logits),
+                    value: scores.value.to_bits(),
+                    tensor: TensorBitsV1::from_tensor(&tensor),
+                };
+                session.step(d.episode_id, d.step, selected).map_err(err)?;
+                decisions.push(record);
+            }
+        }
+    }
+}
+
+fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
+    ensure(
+        t.schema == TRAJECTORY_SCHEMA,
+        "not an expanded-deck trajectory",
+    )?;
+    identity_valid(
+        &t.feature_contract_digest,
+        &t.feature_encoding_digest,
+        &t.card_db_hash,
+    )?;
+    let configs = t.episode.configurations()?;
+    ensure(
+        t.configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
+        "selected deck hash differs",
+    )?;
+    ensure(
+        t.terminal.terminal_classification == TerminalClassificationV1::Natural,
+        "incomplete or halted trajectory",
+    )?;
+    ensure(
+        t.terminal.terminal_code == TerminalSafeCodeV2::NaturalGameOver
+            && terminal_tuple_is_valid_v1(
+                t.terminal.terminal_outcome,
+                t.terminal.terminal_classification,
+                t.terminal.winner,
+                t.terminal.terminal_reward,
+            ),
+        "terminal outcome, code and reward disagree",
+    )?;
+    ensure(
+        t.terminal.schema_version == RL_SESSION_SCHEMA_VERSION && t.terminal.episode_id == 1,
+        "terminal schema or episode binding differs",
+    )?;
+    ensure(
+        t.terminal.deck_ids == t.episode.selected.each_ref().map(|d| d.label.clone())
+            && t.terminal.deck_hashes
+                == configs
+                    .each_ref()
+                    .map(|c| explicit_deck_hash_v1(c.mainboard())),
+        "terminal deck binding differs",
+    )?;
+    ensure(
+        t.terminal.policy_step_count == t.decisions.len() as u64 && !t.decisions.is_empty(),
+        "trajectory step count differs",
+    )?;
+    let expected_rewards = match t.terminal.winner {
+        Some(PlayerSeatV1::P0) => [1, -1],
+        Some(PlayerSeatV1::P1) => [-1, 1],
+        None => [0, 0],
+    };
+    ensure(
+        t.terminal.terminal_reward == expected_rewards,
+        "terminal rewards contradict winner",
+    )?;
+    let mut physical = 0u64;
+    let mut index = 0usize;
+    let mut rng = paired_policy_seeds_v1(t.episode.seed).map(SplitMix64::seed);
+    let mut sampler = FastCategoricalScratch::default();
+    while index < t.decisions.len() {
+        let first = &t.decisions[index];
+        ensure(
+            first.physical_decision_id == physical
+                && first.substep_index == 0
+                && first.substep_count > 0
+                && first.actor < 2,
+            "invalid physical decision start",
+        )?;
+        let end = index
+            .checked_add(first.substep_count as usize)
+            .ok_or("group length overflow")?;
+        ensure(end <= t.decisions.len(), "truncated physical decision")?;
+        for (substep, row) in t.decisions[index..end].iter().enumerate() {
+            ensure(
+                row.step == (index + substep) as u64
+                    && row.physical_decision_id == physical
+                    && row.substep_count == first.substep_count
+                    && row.substep_index == substep as u32
+                    && row.actor == first.actor,
+                "physical decision grouping or step sequence differs",
+            )?;
+            ensure(
+                !row.logits.is_empty()
+                    && (row.selected as usize) < row.logits.len()
+                    && f32::from_bits(row.value).is_finite()
+                    && row.logits.iter().all(|v| f32::from_bits(*v).is_finite()),
+                "invalid captured outputs",
+            )?;
+            let selected = sampler
+                .sample(&floats(&row.logits), rng[row.actor as usize].next_u64())
+                .map_err(err)?;
+            ensure(
+                selected == row.selected as usize,
+                "stored action differs from recorded behavior sampler",
+            )?;
+        }
+        physical += 1;
+        index = end;
+    }
+    ensure(
+        physical == t.terminal.physical_decision_count,
+        "terminal physical count differs",
+    )
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExpandedTrainingCommandV1 {
+    Collect {
+        source: ExpandedModelSourceV1,
+        episodes: Vec<ExpandedEpisodeV1>,
+        output_directory: PathBuf,
+    },
+    Update {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        output_directory: PathBuf,
+    },
+}
+
+pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
+    match command {
+        ExpandedTrainingCommandV1::Collect {
+            source,
+            episodes,
+            output_directory,
+        } => {
+            ensure(
+                !episodes.is_empty() && episodes.len() <= 1024,
+                "invalid collection size",
+            )?;
+            let mut ids = BTreeSet::new();
+            for episode in &episodes {
+                episode.configurations()?;
+                ensure(ids.insert(&episode.id), "duplicate episode id")?;
+            }
+            let (mut policy, state) = initialize(&source)?;
+            let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+            fs::create_dir(&output_directory).map_err(err)?;
+            let mut outputs = Vec::new();
+            for (index, episode) in episodes.iter().enumerate() {
+                eprintln!(
+                    "collect episode {}/{} {}",
+                    index + 1,
+                    episodes.len(),
+                    episode.id
+                );
+                let trajectory = collect_episode(&mut policy, &state_hash, episode)?;
+                let name = format!("episode-{index:04}.json");
+                outputs.push(publish_json(&output_directory, &name, &trajectory)?);
+            }
+            let result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs});
+            publish_json(&output_directory, "collection.json", &result)?;
+            Ok(result)
+        }
+        ExpandedTrainingCommandV1::Update {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            output_directory,
+        } => {
+            ensure(
+                !trajectories.is_empty() && trajectories.len() <= 1024,
+                "invalid update size",
+            )?;
+            ensure(
+                learning_rate.is_finite()
+                    && learning_rate > 0.0
+                    && value_coefficient.is_finite()
+                    && value_coefficient > 0.0,
+                "invalid optimizer configuration",
+            )?;
+            ensure(
+                !output_directory.exists(),
+                "output directory already exists",
+            )?;
+            let (policy, mut state) = initialize(&source)?;
+            let before = hex(&state.state_sha256_v1().map_err(err)?);
+            let mut episodes = Vec::new();
+            let mut ids = BTreeSet::new();
+            let mut hashes = BTreeSet::new();
+            let mut total_bytes = 0u64;
+            for pin in &trajectories {
+                total_bytes = total_bytes
+                    .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
+                    .ok_or("batch size overflow")?;
+                ensure(
+                    total_bytes <= MAX_BATCH_BYTES,
+                    "trajectory batch exceeds 512 MiB CPU ingestion bound",
+                )?;
+            }
+            for pin in &trajectories {
+                ensure(hashes.insert(&pin.sha256), "duplicate trajectory bytes")?;
+                let episode: ExpandedTrajectoryV1 = read_pinned(pin)?;
+                validate_trajectory(&episode)?;
+                ensure(
+                    ids.insert(episode.episode.id.clone()),
+                    "duplicate episode id",
+                )?;
+                ensure(
+                    episode.behavior_state_sha256 == before,
+                    "stale trajectory: behavior optimizer/model state differs",
+                )?;
+                ensure(
+                    episode.source_import == *policy.identity_v1(),
+                    "trajectory source import differs",
+                )?;
+                episodes.push(episode);
+            }
+            // Recompute all actor-visible rows, including opponent decisions,
+            // before constructing learner groups. No private state is decoded.
+            let mut tensor_groups: Vec<(i8, Vec<(&DecisionRecordV1, NativeFlatDecisionTensorV3)>)> =
+                Vec::new();
+            for episode in &episodes {
+                let mut index = 0;
+                while index < episode.decisions.len() {
+                    let first = &episode.decisions[index];
+                    let count = first.substep_count as usize;
+                    let mut group = Vec::new();
+                    for row in &episode.decisions[index..index + count] {
+                        let tensor = row.tensor.tensor();
+                        let output = state
+                            .model_v1()
+                            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
+                            .map_err(err)?;
+                        ensure(
+                            bits(&output.logits) == row.logits
+                                && output.value.to_bits() == row.value,
+                            "stored tensor does not reproduce rollout outputs",
+                        )?;
+                        if first.actor == episode.episode.learner_seat {
+                            group.push((row, tensor));
+                        }
+                    }
+                    if !group.is_empty() {
+                        tensor_groups.push((
+                            episode.terminal.terminal_reward[first.actor as usize] as i8,
+                            group,
+                        ));
+                    }
+                    index += count;
+                }
+            }
+            ensure(!tensor_groups.is_empty(), "no learner decisions")?;
+            let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
+                .iter()
+                .map(|(_, group)| {
+                    group
+                        .iter()
+                        .map(|(row, t)| NativePolicySubstepV1 {
+                            forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                                encoded_decision_view_v3(t),
+                            )),
+                            selected_action_index: row.selected as usize,
+                            expected_raw_action_logit_bits: &row.logits,
+                            expected_value_bits: row.value,
+                        })
+                        .collect()
+                })
+                .collect();
+            let groups: Vec<_> = substeps
+                .iter()
+                .zip(&tensor_groups)
+                .map(
+                    |(substeps, (terminal_return, _))| NativePolicyPhysicalDecisionV1 {
+                        substeps,
+                        terminal_return: *terminal_return,
+                        baseline_bits: 0,
+                    },
+                )
+                .collect();
+            eprintln!(
+                "native CPU update: {} episodes, {} learner physical decisions",
+                episodes.len(),
+                groups.len()
+            );
+            let update = state
+                .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
+                .map_err(err)?;
+            let snapshot = state.snapshot_v1().map_err(err)?;
+            let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+            let checkpoint = ExpandedCheckpointV1 {
+                schema: CHECKPOINT_SCHEMA.into(),
+                feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+                card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+                source_import: policy.identity_v1().clone(),
+                state_sha256: after.clone(),
+                adam_step: snapshot.adam_step,
+                scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
+                parameters: snapshot
+                    .parameters
+                    .iter()
+                    .map(ParameterBitsV1::from_native)
+                    .collect(),
+                first_moments: snapshot
+                    .first_moments
+                    .iter()
+                    .map(ParameterBitsV1::from_native)
+                    .collect(),
+                second_moments: snapshot
+                    .second_moments
+                    .iter()
+                    .map(ParameterBitsV1::from_native)
+                    .collect(),
+                trajectories: trajectories.clone(),
+                loss_identity: "terminal_reinforce_value/v3".into(),
+                learning_rate_bits: learning_rate.to_bits(),
+                value_coefficient_bits: value_coefficient.to_bits(),
+            };
+            fs::create_dir(&output_directory).map_err(err)?;
+            let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
+            // Readback exercises the real same-format continuation loader.
+            let resumed_source = ExpandedModelSourceV1 {
+                checkpoint: Some(checkpoint_pin.clone()),
+                ..source.clone()
+            };
+            let (_, restored) = initialize(&resumed_source)?;
+            ensure(
+                hex(&restored.state_sha256_v1().map_err(err)?) == after,
+                "published checkpoint round trip differs",
+            )?;
+            let result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
+            publish_json(&output_directory, "update.json", &result)?;
+            Ok(result)
+        }
+    }
+}
+
+fn seat(p: PlayerSeatV1) -> u8 {
+    match p {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    }
+}
+fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+fn ensure(ok: bool, message: &str) -> Result<(), String> {
+    if ok {
+        Ok(())
+    } else {
+        Err(message.into())
+    }
+}
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+fn sha(bytes: &[u8]) -> String {
+    hex(&Sha256::digest(bytes))
+}
+
+fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
+    let metadata = fs::metadata(&pin.path).map_err(err)?;
+    ensure(
+        metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+        "input is not a bounded regular file",
+    )?;
+    let bytes = fs::read(&pin.path).map_err(err)?;
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES && sha(&bytes) == pin.sha256,
+        "input file SHA differs",
+    )?;
+    serde_json::from_slice(&bytes).map_err(err)
+}
+
+fn publish_json<T: Serialize>(
+    directory: &Path,
+    name: &str,
+    value: &T,
+) -> Result<PinnedFileV1, String> {
+    let bytes = serde_json::to_vec(value).map_err(err)?;
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "output exceeds file size limit",
+    )?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(err)?;
+    publish_new_file_v1(&parent, format!(".{name}.stage"), name, &bytes, expected).map_err(err)?;
+    Ok(PinnedFileV1 {
+        path: directory.join(name),
+        sha256: sha(&bytes),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
+    fn list(id: &str) -> ExpandedDeckListV1 {
+        let d = checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+        let c = d.registered_configuration();
+        ExpandedDeckListV1 {
+            label: id.into(),
+            mainboard: c.mainboard().to_vec(),
+            sideboard: c.sideboard().to_vec(),
+        }
+    }
+    #[test]
+    fn explicit_configuration_conserves_75_and_accepts_uncatalogued_label() {
+        let mut deck = list("Affinity");
+        deck.label = "candidate-brew".into();
+        let mut e = ExpandedEpisodeV1 {
+            id: "test".into(),
+            seed: 1,
+            starting_player: 0,
+            learner_seat: 0,
+            registered: [deck.clone(), list("Terror")],
+            selected: [deck, list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100,
+            max_policy_steps: 1000,
+        };
+        assert!(e.configurations().is_ok());
+        let swap = e.selected[0].sideboard[0];
+        e.selected[0].sideboard[0] = e.selected[0].mainboard[0];
+        e.selected[0].mainboard[0] = swap;
+        assert!(e.configurations().is_err());
+        e.postboard = true;
+        assert!(e.configurations().is_ok());
+        e.selected[0].mainboard.pop();
+        assert!(e.configurations().is_err());
+    }
+    #[test]
+    fn frozen_feature_identity_cannot_be_relabelled_as_successor() {
+        assert!(identity_valid(
+            crate::native_policy_value_net_v1::FEATURE_CONTRACT_DIGEST_V1,
+            FEATURE_ENCODING_DIGEST_V3,
+            &format!("{KERNEL_CARDDB_HASH:016x}")
+        )
+        .is_err());
+    }
+    #[test]
+    fn persisted_tensor_preserves_every_bit() {
+        let mut t = NativeFlatDecisionTensorV3::default();
+        t.common.state = vec![0.0, -0.0, 1.2345678, f32::MIN_POSITIVE];
+        t.common.object_card_ids = vec![65536];
+        let bytes = serde_json::to_vec(&TensorBitsV1::from_tensor(&t)).unwrap();
+        let saved: TensorBitsV1 = serde_json::from_slice(&bytes).unwrap();
+        let restored = saved.tensor();
+        assert_eq!(bits(&t.common.state), bits(&restored.common.state));
+        assert_eq!(t.common.object_card_ids, restored.common.object_card_ids);
+    }
+}

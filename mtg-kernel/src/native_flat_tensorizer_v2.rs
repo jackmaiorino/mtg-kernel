@@ -674,8 +674,28 @@ fn canonical_extensions_v3(
             }))
         })
         .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
+    let pending_chosen = match &ext.pending_chosen_creature_cost {
+        None => Value::Null,
+        Some(cost) => serde_json::json!({
+            "source": stable(cost.source_object)?,
+            "controller": relative_player_value_v2(cost.controller, false)?,
+            "selected_zone": cost.selected_zone,
+        }),
+    };
+    let finalized_chosen = ext
+        .finalized_chosen_creature_costs
+        .iter()
+        .map(|cost| {
+            Ok(serde_json::json!({
+                "stack_index": cost.stack_index, "source": stable(cost.source_object)?,
+                "chosen": stable(cost.chosen_object)?, "power_lki": cost.power_lki,
+            }))
+        })
+        .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
     Ok(serde_json::json!({"pending_cast_object_cost": cost,
-        "decision_local_library": library, "historical_public_sources": historical}))
+        "decision_local_library": library, "historical_public_sources": historical,
+        "pending_chosen_creature_cost": pending_chosen,
+        "finalized_chosen_creature_costs": finalized_chosen}))
 }
 
 #[cfg(test)]

@@ -20,9 +20,9 @@ OPERATIONAL_ONLY = "operational_only"
 FORBIDDEN = "forbidden"
 CLASSIFICATIONS = (MODEL_INPUT, OPERATIONAL_ONLY, FORBIDDEN)
 
-FEATURE_SCHEMA_VERSION = "actor-relative-v6-python-1"
-FEATURE_REGISTRY_VERSION = "rust-observation-v6-action-v5-registry-1"
-ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-13"
+FEATURE_SCHEMA_VERSION = "actor-relative-v6-python-2"
+FEATURE_REGISTRY_VERSION = "rust-observation-v6-action-v5-registry-2"
+ENCODING_CONTRACT_VERSION = "actor-relative-node-graph-14"
 MODEL_CONTRACT_VERSION = "kernel-policy-value-net-8"
 
 STATE_HASH_DIM = 96
@@ -316,6 +316,7 @@ EXTENSION_ENCODING_CONTRACT_V6 = {
     "extension_edge_order": "cost-source-then-selected-then-search-cards-then-historical-sources-after-v5-edges",
     "combat_legal_mask": "current-eligible-attacker-with-visible-active-goad-requires-include-only-at-every-prefix-otherwise-exclude-include",
     "new_cost_category": "ChooseCreatureOrRevealCreature-is-explicit-semantic-category-with-zero-legacy11-onehot-and-distinct-full-string-action-hash",
+    "chosen_creature_cost": "controller-only-pending-selected-zone-and-exact-visible-stack-paid-reference-with-refreshed-power-lki-in-canonical-state-hash-no-new-numeric-columns",
 }
 DETACHED_CONTEXT_REF_ALLOWLIST = {
     # rl.rs::pending_discard_semantic_v2 can expose a resolving spell source
@@ -1090,10 +1091,23 @@ HISTORICAL_PUBLIC_SOURCE_V6 = ObjectSpec({
     "source": CARD_STABLE_REF,
     "stack_item_kind": E(STACK_KINDS),
 })
+PENDING_CHOSEN_CREATURE_COST_V6 = ObjectSpec({
+    "source": CARD_STABLE_REF,
+    "controller": Seat(),
+    "selected_zone": E(["Battlefield", "Hand"]),
+})
+FINALIZED_CHOSEN_CREATURE_COST_V6 = ObjectSpec({
+    "stack_index": I(MODEL_INPUT, maximum=U32),
+    "source": CARD_STABLE_REF,
+    "chosen": CARD_STABLE_REF,
+    "power_lki": I(MODEL_INPUT, minimum=I32_MIN, maximum=I32_MAX),
+})
 OBSERVATION_EXTENSIONS_V6 = ObjectSpec({
     "pending_cast_object_cost": Opt(PENDING_CAST_OBJECT_COST_V6),
     "decision_local_library": Opt(DECISION_LOCAL_LIBRARY_V6),
     "historical_public_sources": ListSpec(HISTORICAL_PUBLIC_SOURCE_V6),
+    "pending_chosen_creature_cost": Opt(PENDING_CHOSEN_CREATURE_COST_V6),
+    "finalized_chosen_creature_costs": ListSpec(FINALIZED_CHOSEN_CREATURE_COST_V6),
 })
 OBSERVATION_SPEC = ObjectSpec(
     {
@@ -2465,6 +2479,24 @@ def _validate_extensions_v6(observation: dict[str, Any]) -> None:
     engine = projection["engine_context"]
     cost = ext["pending_cast_object_cost"]
     pending_cast = engine["pending_cast"]
+    pending_chosen = ext["pending_chosen_creature_cost"]
+    if pending_chosen is not None:
+        if (pending_cast is None or engine["current_stage"] != "pending_cast"
+                or pending_chosen["controller"] != actor
+                or pending_chosen["controller"] != pending_cast["controller"]
+                or pending_chosen["source"] != pending_cast["source"]):
+            raise FeatureSchemaError("pending chosen-creature branch requires the acting controller's exact pending source")
+    previous_index = -1
+    for record in ext["finalized_chosen_creature_costs"]:
+        index = record["stack_index"]
+        if index <= previous_index or index >= len(projection["stack"]):
+            raise FeatureSchemaError("chosen-creature records require unique ascending public stack indices")
+        previous_index = index
+        item = projection["stack"][index]
+        if (item["stack_item_kind"] != "spell" or item["source"] != record["source"]
+                or item["paid_cost_refs"] != [record["chosen"]]
+                or record["chosen"]["zone"] not in {"Battlefield", "Hand"}):
+            raise FeatureSchemaError("chosen-creature power requires its exact visible paid-cost reference and spell")
     if pending_cast is not None:
         matching_spells = [item for item in projection["stack"]
                            if item["source"] == pending_cast["source"] and item["stack_item_kind"] == "spell"]
@@ -3389,8 +3421,15 @@ def validate_decision_contract(
     _validate_pending_effect_legal_actions(observation, legal_actions)
     _validate_policy_surface_legal_actions(observation, legal_actions)
     cost = observation["extensions"]["pending_cast_object_cost"]
+    chosen_cost = observation["extensions"]["pending_chosen_creature_cost"]
     for action in legal_actions:
         semantic = action["semantic"]
+        if semantic["action_kind"] == "choose_cost_target" and semantic["cost_kind"] == "ChooseCreatureOrRevealCreature":
+            if (chosen_cost is None or semantic["source"] != chosen_cost["source"]
+                    or semantic["remaining"] != 1
+                    or semantic["candidate"]["zone"] != chosen_cost["selected_zone"]
+                    or semantic["candidate"]["controller"] != observation["acting_player"]):
+                raise FeatureSchemaError("chosen-creature action requires its selected cost branch and own candidate")
         if semantic["action_kind"] != "choose_cost_target" or semantic["cost_kind"] != "ExileFromGraveyard":
             continue
         if cost is None:

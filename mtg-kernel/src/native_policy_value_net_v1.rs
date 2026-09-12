@@ -634,21 +634,27 @@ impl NativePolicyValueNetV1 {
         self.forward_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode)
     }
 
-    /// Explicit inference-only transfer of unchanged Net8 weights to V3 input
-    /// semantics. The ordinary loader and forward retain their old contracts.
-    pub(crate) fn forward_feature_transfer_v3(
-        &self,
-        encoded: NativeEncodedDecisionViewV1<'_>,
-    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+    /// Exact input contract for an explicitly recorded Net8 feature transfer.
+    /// This does not change the model's original parameter-layout identity.
+    pub(crate) fn feature_transfer_config_v3(&self) -> NativePolicyValueModelConfigV1 {
         use crate::native_flat_tensorizer_v3::*;
-        let config = NativePolicyValueModelConfigV1 {
+        NativePolicyValueModelConfigV1 {
             feature_schema_version: FEATURE_SCHEMA_VERSION_V3,
             feature_registry_version: FEATURE_REGISTRY_VERSION_V3,
             feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3,
             feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3,
             ..self.config
-        };
-        let counts = encoded.validate(config)?;
+        }
+    }
+
+    /// Explicit evaluation of Net8 parameters under V3 input semantics. The
+    /// ordinary loader and forward retain their old contracts. Successor
+    /// training checkpoints must record their own feature-transfer identity.
+    pub(crate) fn forward_feature_transfer_v3(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v3())?;
         self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
     }
 

@@ -111,6 +111,39 @@ pub(crate) fn monstrous_emergence_cost_fixture_v3(
 }
 
 #[cfg(test)]
+pub(crate) fn monstrous_emergence_paid_fixture_v3(
+    own_hand: bool,
+    departed_power_bonus: Option<i16>,
+) -> (crate::state::GameState, crate::ids::ObjectId) {
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{self, ProposedEvent};
+    use crate::ids::PlayerId;
+    use crate::mana::ManaColor;
+    use crate::policy_observation_v6::tests::put;
+    use crate::state::Zone;
+
+    let (mut state, candidates) = monstrous_emergence_cost_fixture_v3(own_hand);
+    let chosen = candidates[0];
+    engine::step(&mut state, Action::ChooseCostTarget(chosen)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    if let Some(bonus) = departed_power_bonus {
+        assert!(!own_hand);
+        state.objects.get_mut(chosen).counters.plus1_plus1 = bonus;
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(chosen, Zone::Graveyard),
+        );
+    }
+    // Keep an actual priority choice available after payment/departure.
+    put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    (state, chosen)
+}
+
+#[cfg(test)]
 pub(crate) fn monstrous_emergence_zone_fixture_v3() -> crate::state::GameState {
     use crate::engine::{self, Action, Decision};
     use crate::ids::PlayerId;

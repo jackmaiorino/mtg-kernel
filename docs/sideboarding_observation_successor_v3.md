@@ -62,17 +62,27 @@ preserves the 195-dimensional action input without aliasing a sacrifice cost
 or accepting arbitrary unknown categories. The new identity records this
 encoding, and the frozen V2 encoder remains unchanged.
 
-This transfer does not establish complete Markov observations for every new
-mechanic. In particular, the common rich stack observation does not expose
-Monstrous Emergence's separate captured `power_lki` value. If its chosen
-creature changes later, current card features need not recover that publicly
-known historical power. That distinct observation-completeness issue is not
-repaired by the cost-category encoding and is not a competence claim.
-The pending cast also omits the already selected Battlefield/Hand branch.
-The policy sees that branch through candidate zones, but the frozen value
-head does not pool actions and can receive identical state inputs for the two
-branches. A future observation extension must represent these facts before
-claiming complete Markov coverage or evaluating value learning on this mechanic.
+Feature revision 1 omitted Monstrous Emergence's selected Battlefield/Hand
+branch and its recorded chosen-creature power. Revision 2 adds explicit typed
+extensions for both. The branch is shown only to the pending cast's controller;
+the finalized record binds the exact stack index, spell source, visible paid
+creature reference and signed `power_lki`. The engine refreshes that power just
+before the chosen battlefield incarnation leaves. The projection preserves it
+after departure instead of consulting a later incarnation at the same arena id.
+These records enter the canonical value-state hash. Existing numerical columns,
+tensor dimensions and V5/V2 meanings remain unchanged. This removes these two
+known omissions; it does not establish general Markov completeness or learned
+understanding of numeric power encoded through the existing hash features.
+
+The new identities are `actor-relative-v6-python-2`,
+`rust-observation-v6-action-v5-registry-2` and `actor-relative-node-graph-14`.
+The required finalized-record list rejects the old rich JSON shape. The
+descriptor and feature digests change, so previous V3 transfer pins are rejected
+before loading a play export. Historical runs and their pinned identities remain
+unchanged and are not reinterpreted as revision-2 runs. The frozen V2 source
+inventory and enclosing golden hashes are refreshed for shared implementation
+edits; every existing golden case remains identical. See
+[the revision-2 contract note](sideboard_chosen_creature_observation_v2.md).
 
 V3 attacker inclusion uses the engine's active-goad requirement at each
 candidate's own prefix. A required attacker has one legal action, include.

@@ -3674,8 +3674,9 @@ impl FlatDecisionEncoderV2 {
         observation: &ObservationV6,
     ) -> Result<crate::flat_policy_v3::FlatScoringExtensionsV3, FlatDecisionErrorV2> {
         use crate::flat_policy_v3::{
-            FlatDecisionLocalLibraryV3, FlatHistoricalPublicSourceV3, FlatPendingCastObjectCostV3,
-            FlatScoringExtensionsV3,
+            FlatDecisionLocalLibraryV3, FlatFinalizedChosenCreatureCostV3,
+            FlatHistoricalPublicSourceV3, FlatPendingCastObjectCostV3,
+            FlatPendingChosenCreatureCostV3, FlatScoringExtensionsV3,
         };
         use crate::policy_observation_v6::HistoricalSourceContextV6;
 
@@ -3838,6 +3839,54 @@ impl FlatDecisionEncoderV2 {
                     .collect::<Result<Vec<_>, _>>()?,
                 remaining_count: cost.remaining_count,
             });
+        }
+        if let Some(cost) = &observation.extensions.pending_chosen_creature_cost {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_cast
+                .as_ref()
+                .ok_or(FlatDecisionErrorV2::ObservationContract)?;
+            if cost.controller != actor
+                || pending.controller != cost.controller
+                || pending.source.as_ref() != Some(&cost.source)
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            output.pending_chosen_creature_cost = Some(FlatPendingChosenCreatureCostV3 {
+                source_object: self.resolve_reference(&cost.source, actor)?,
+                controller: relative_player(cost.controller, actor),
+                selected_zone: cost.selected_zone,
+            });
+        }
+        for (index, cost) in observation
+            .extensions
+            .finalized_chosen_creature_costs
+            .iter()
+            .enumerate()
+        {
+            let item = public_stack
+                .get(cost.stack_index as usize)
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if item.stack_item_kind != StackItemKindV2::Spell
+                || item.source != cost.source
+                || item.paid_cost_refs.as_slice() != [cost.chosen.clone()]
+                || !matches!(cost.chosen.zone, Zone::Battlefield | Zone::Hand)
+                || observation.extensions.finalized_chosen_creature_costs[..index]
+                    .iter()
+                    .any(|prior| prior.stack_index >= cost.stack_index)
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            output
+                .finalized_chosen_creature_costs
+                .push(FlatFinalizedChosenCreatureCostV3 {
+                    stack_index: cost.stack_index,
+                    source_object: self.resolve_reference(&cost.source, actor)?,
+                    chosen_object: self.resolve_reference(&cost.chosen, actor)?,
+                    power_lki: cost.power_lki,
+                });
         }
         self.v3_action_objects = Some(authority_mapping);
         Ok(output)

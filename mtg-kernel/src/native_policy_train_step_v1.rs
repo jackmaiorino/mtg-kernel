@@ -769,6 +769,10 @@ pub struct NativeGaugeSubstepBoundV1 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyTrainErrorV1 {
     Model(NativePolicyValueErrorV1),
+    FeatureTransferRequiresCanonicalInput {
+        group_index: usize,
+        substep_index: usize,
+    },
     /// Stable CudaBurnDense bridge failure classification.
     CudaBackend {
         code: &'static str,
@@ -1160,6 +1164,41 @@ impl NativePolicyValueTrainStateV1 {
         self.train_step_with_recompute_workers_v1(groups, value_coefficient, learning_rate, 1)
     }
 
+    /// Canonical CPU update under the explicit rich-V6 / flat-V3 input
+    /// contract. Recomputes all captured output bits before backward and
+    /// reuses the existing grouped loss and Adam arithmetic. A successor
+    /// manifest, owned by the caller, must bind these inputs and parameters;
+    /// this is neither admission to nor continuation of a legacy Store V2.
+    pub(crate) fn train_step_feature_transfer_v3(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        for (group_index, group) in groups.iter().enumerate() {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                }
+            }
+        }
+        let input_config = self.model.feature_transfer_config_v3();
+        self.train_step_with_input_config_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            input_config,
+        )
+    }
+
     /// Production entry point for bounded independent packed-tape
     /// recomputation. The scalar entry point above remains the numerical
     /// reference. Every worker result is consumed at its original ordinal
@@ -1257,6 +1296,28 @@ impl NativePolicyValueTrainStateV1 {
         backward_execution: BackwardExecutionV1,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_with_input_config_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            recompute_worker_limit,
+            backward_execution,
+            phase_recorder,
+            self.model.config_v1(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn train_step_with_input_config_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        recompute_worker_limit: usize,
+        backward_execution: BackwardExecutionV1,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+        input_config: NativePolicyValueModelConfigV1,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let forward_loss_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
         if matches!(
             backward_execution,
@@ -1324,7 +1385,7 @@ impl NativePolicyValueTrainStateV1 {
         let recompute_execution_context = PackedRecomputeExecutionContextV1::current_v1();
         let mut parallel_packed_recomputes = collect_parallel_packed_recomputes_v1(
             &parameters,
-            self.model.config_v1(),
+            input_config,
             groups,
             recompute_worker_limit,
             &recompute_execution_context,
@@ -1348,11 +1409,8 @@ impl NativePolicyValueTrainStateV1 {
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let tape = match &substep.forward {
                     NativePolicyForwardInputV1::Encoded(encoded) => {
-                        let recomputed = Box::new(forward_with_tape(
-                            &parameters,
-                            self.model.config_v1(),
-                            **encoded,
-                        )?);
+                        let recomputed =
+                            Box::new(forward_with_tape(&parameters, input_config, **encoded)?);
                         validate_forward_output_bits_v1(
                             &recomputed,
                             substep,
@@ -1376,7 +1434,7 @@ impl NativePolicyValueTrainStateV1 {
                         } else {
                             recompute_execution_context.record_actual_recompute_v1();
                             let independently_recomputed =
-                                forward_with_tape(&parameters, self.model.config_v1(), **encoded)?;
+                                forward_with_tape(&parameters, input_config, **encoded)?;
                             validate_forward_output_bits_v1(
                                 &independently_recomputed,
                                 substep,
@@ -7790,6 +7848,258 @@ mod tests {
                 }
             )
         );
+    }
+
+    fn real_map_training_tensor_v3() -> crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3
+    {
+        use crate::flat_policy_v2::{FlatScoringDecisionViewV2, FlatScoringOwnedBuffersV2};
+        use crate::flat_policy_v3::{FlatDecisionEncoderV3, FlatScoringDecisionViewV3};
+        use crate::native_flat_tensorizer_v3::{
+            NativeFlatDecisionTensorV3, NativeFlatTensorizerV3,
+        };
+        use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+        let session = FastActorSessionV1::from_v3_fixture_state(
+            crate::policy_observation_v6::tests::map_choice_state().0,
+        );
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("real Map fixture requires a policy choice");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        let encoded = session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .unwrap();
+        let common = FlatScoringDecisionViewV2::new(
+            &encoded.globals,
+            &objects,
+            &relations,
+            &object_subtypes,
+            &ability_uses,
+            &goads,
+            &completed_dungeons,
+            &effect_subtype_changes,
+            &context_path_elements,
+            &actions,
+            &action_refs,
+        );
+        let mut tensor = NativeFlatDecisionTensorV3::default();
+        NativeFlatTensorizerV3::default()
+            .fill(
+                FlatScoringDecisionViewV3::new(common, &encoded.extensions),
+                &mut tensor,
+            )
+            .unwrap();
+        tensor
+    }
+
+    #[test]
+    fn v3_cpu_training_real_map_updates_and_legacy_entrypoint_rejects() {
+        use crate::native_flat_tensorizer_v3::encoded_decision_view_v3;
+        let tensor = real_map_training_tensor_v3();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let output = model
+            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
+            .unwrap();
+        let bits = output
+            .logits
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>();
+        let substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v3(
+                &tensor,
+            ))),
+            selected_action_index: 0,
+            expected_raw_action_logit_bits: &bits,
+            expected_value_bits: output.value.to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+            baseline_bits: 0,
+        }];
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = state.state_sha256_v1().unwrap();
+        assert!(matches!(
+            state.train_step_v1(&groups, 0.5, 0.0001),
+            Err(NativePolicyTrainErrorV1::Model(
+                NativePolicyValueErrorV1::SchemaMismatch(_)
+            ))
+        ));
+        assert_eq!(state.state_sha256_v1().unwrap(), before);
+        let result = state
+            .train_step_feature_transfer_v3(&groups, 0.5, 0.0001)
+            .unwrap();
+        assert_eq!(result.adam_step, 1);
+        assert_eq!(state.adam_step_v1(), 1);
+        assert!(result.loss.is_finite());
+        assert_eq!(result.selected_outputs.len(), 1);
+        assert_eq!(
+            result.selected_outputs[0].value.to_bits(),
+            output.value.to_bits()
+        );
+        assert!(result
+            .gradients
+            .iter()
+            .flat_map(|p| &p.values)
+            .any(|v| *v != 0.0));
+        assert_ne!(state.state_sha256_v1().unwrap(), before);
+        state.validate_state_v1().unwrap();
+        // Parameters retain their storage contract; input identity is explicit.
+        assert_eq!(
+            state.model_v1().config_v1(),
+            NativePolicyValueModelConfigV1::contract_v1()
+        );
+    }
+
+    #[test]
+    fn v3_cpu_training_rejects_wrong_contract_shape_and_captured_output_bits_atomically() {
+        use crate::native_flat_tensorizer_v3::encoded_decision_view_v3;
+        let tensor = real_map_training_tensor_v3();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let output = model
+            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
+            .unwrap();
+        assert!(output.logits.len() >= 2);
+        let bits = output
+            .logits
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = state.state_sha256_v1().unwrap();
+        for case in 0..6 {
+            let mut view = encoded_decision_view_v3(&tensor);
+            let mut expected_bits = bits.clone();
+            let mut expected_value_bits = output.value.to_bits();
+            let mut baseline_bits = 0;
+            let mut selected_action_index = 0;
+            match case {
+                0 => view.schema = NativeEncodedDecisionSchemaV1::contract_v1(),
+                1 => view.state = &view.state[..view.state.len() - 1],
+                2 => expected_bits[1] ^= 1, // Includes a non-selected logit.
+                3 => expected_value_bits ^= 1,
+                4 => baseline_bits = 1.0f32.to_bits(),
+                5 => selected_action_index = output.logits.len(),
+                _ => unreachable!(),
+            }
+            let substeps = [NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(view)),
+                selected_action_index,
+                expected_raw_action_logit_bits: &expected_bits,
+                expected_value_bits,
+            }];
+            let groups = [NativePolicyPhysicalDecisionV1 {
+                substeps: &substeps,
+                terminal_return: -1,
+                baseline_bits,
+            }];
+            let error = state
+                .train_step_feature_transfer_v3(&groups, 0.5, 0.0001)
+                .unwrap_err();
+            assert!(
+                match case {
+                    0 => matches!(
+                        error,
+                        NativePolicyTrainErrorV1::Model(NativePolicyValueErrorV1::SchemaMismatch(
+                            _
+                        ))
+                    ),
+                    1 => matches!(error, NativePolicyTrainErrorV1::Model(_)),
+                    2 => matches!(
+                        error,
+                        NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch {
+                            action_index: 1,
+                            ..
+                        }
+                    ),
+                    3 => matches!(
+                        error,
+                        NativePolicyTrainErrorV1::RecomputedValueBitsMismatch { .. }
+                    ),
+                    4 => matches!(
+                        error,
+                        NativePolicyTrainErrorV1::BaselineUnsupportedBackend { .. }
+                    ),
+                    5 => matches!(
+                        error,
+                        NativePolicyTrainErrorV1::SelectedActionOutOfRange { .. }
+                    ),
+                    _ => false,
+                },
+                "case {case}: {error:?}"
+            );
+            assert_eq!(state.state_sha256_v1().unwrap(), before, "case {case}");
+        }
+    }
+
+    #[test]
+    fn v3_cpu_training_rejects_packed_tapes_without_mutation() {
+        let (forward, _) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let builder = NativePolicyPackedForwardBuilderV1::from_model_v1(&model).unwrap();
+        let tape = builder.forward_v1(encoded(case)).unwrap();
+        let bits = tape
+            .logits_v1()
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>();
+        let substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Packed {
+                encoded: Box::new(encoded(case)),
+                tape: &tape,
+            },
+            selected_action_index: 0,
+            expected_raw_action_logit_bits: &bits,
+            expected_value_bits: tape.value_v1().to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+            baseline_bits: 0,
+        }];
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = state.state_sha256_v1().unwrap();
+        assert_eq!(
+            state.train_step_feature_transfer_v3(&groups, 0.5, 0.0001),
+            Err(
+                NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                    group_index: 0,
+                    substep_index: 0,
+                }
+            )
+        );
+        assert_eq!(state.state_sha256_v1().unwrap(), before);
     }
 
     #[test]
