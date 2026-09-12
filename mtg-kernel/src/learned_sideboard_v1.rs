@@ -355,6 +355,34 @@ pub struct SideboardTrainingMetricsV1 {
     pub final_value_mse: Option<f64>,
 }
 
+/// Read-only imitation diagnostics. Greedy results start at the supplied actual
+/// configuration, while action metrics always follow the teacher's states.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SideboardImitationEvaluationV1 {
+    pub teacher_actions: usize,
+    pub teacher_action_correct: usize,
+    pub teacher_movement_actions: usize,
+    pub teacher_movement_correct: usize,
+    pub teacher_done_actions: usize,
+    pub teacher_done_correct: usize,
+    pub teacher_cross_entropy_sum: f64,
+    pub teacher_selected_actions: Vec<SideboardActionV1>,
+    pub done_only_target: bool,
+    pub greedy_legal_terminated: bool,
+    pub greedy_error: Option<String>,
+    pub greedy_actions: Vec<SideboardActionV1>,
+    pub greedy_exact_action_sequence: bool,
+    pub greedy_exact_configuration: bool,
+    pub greedy_exact_exchange: bool,
+    pub target_exchange_cards: usize,
+    pub greedy_exchange_cards: usize,
+    pub correct_exchange_cards: usize,
+    pub target_mainboard: Vec<CardCountV1>,
+    pub target_sideboard: Vec<CardCountV1>,
+    pub greedy_mainboard: Option<Vec<CardCountV1>>,
+    pub greedy_sideboard: Option<Vec<CardCountV1>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoredSideboardDecisionV1 {
     pub ordered_actions: Vec<SideboardActionV1>,
@@ -562,6 +590,128 @@ impl LearnedSideboardModelV1 {
         Ok(metrics)
     }
 
+    /// No mutable model/optimizer reference is taken and no checkpoint is
+    /// selected. Invalid teaching data rejects before any predictions are made.
+    pub fn evaluate_imitation_v1(
+        &self,
+        examples: &[SideboardImitationExampleV1],
+        embeddings: &FrozenSideboardEmbeddingsV1<'_>,
+    ) -> ResultV1<Vec<SideboardImitationEvaluationV1>> {
+        self.check_embeddings(embeddings)?;
+        if examples.is_empty() {
+            return Err(error("imitation evaluation requires examples"));
+        }
+        for example in examples {
+            prepare_example(example, embeddings)?;
+            if example.target_value.is_some() {
+                return Err(error("imitation evaluation does not accept value labels"));
+            }
+        }
+        examples
+            .iter()
+            .map(|example| {
+                let initial = DeckConfigurationV1::new_exact_v1(
+                    example.initial_mainboard.clone(),
+                    example.initial_sideboard.clone(),
+                )
+                .map_err(|e| error(e.to_string()))?;
+                let mut teacher_state = SideboardDeliberationStateV1::new_v1(&initial);
+                let mut selected = Vec::new();
+                let mut correct = 0;
+                let mut movement_correct = 0;
+                let mut done_correct = 0;
+                let mut movement = 0;
+                let mut loss = 0.0;
+                for &target in &example.target_actions {
+                    let decision = self.score_v1(&example.input, &teacher_state, embeddings)?;
+                    let target_index = decision
+                        .ordered_actions
+                        .iter()
+                        .position(|&a| a == target)
+                        .ok_or_else(|| error("illegal evaluation teacher target"))?;
+                    let maximum = decision.logits[argmax(&decision.logits)];
+                    loss += maximum
+                        + decision
+                            .logits
+                            .iter()
+                            .map(|v| (v - maximum).exp())
+                            .sum::<f64>()
+                            .ln()
+                        - decision.logits[target_index];
+                    let agrees = usize::from(decision.selected_action == target);
+                    correct += agrees;
+                    if target == SideboardActionV1::Done {
+                        done_correct += agrees;
+                    } else {
+                        movement += 1;
+                        movement_correct += agrees;
+                    }
+                    selected.push(decision.selected_action);
+                    teacher_state.apply_v1(target)?;
+                }
+                if !loss.is_finite() {
+                    return Err(error("non-finite evaluation loss"));
+                }
+                let target = teacher_state.configuration_v1()?;
+                let target_moves = exchange_counts(&initial, &target)?;
+                let mut row = SideboardImitationEvaluationV1 {
+                    teacher_actions: example.target_actions.len(),
+                    teacher_action_correct: correct,
+                    teacher_movement_actions: movement,
+                    teacher_movement_correct: movement_correct,
+                    teacher_done_actions: example.target_actions.len() - movement,
+                    teacher_done_correct: done_correct,
+                    teacher_cross_entropy_sum: loss,
+                    teacher_selected_actions: selected,
+                    done_only_target: movement == 0,
+                    greedy_legal_terminated: false,
+                    greedy_error: None,
+                    greedy_actions: Vec::new(),
+                    greedy_exact_action_sequence: false,
+                    greedy_exact_configuration: false,
+                    greedy_exact_exchange: false,
+                    target_exchange_cards: target_moves.values().sum(),
+                    greedy_exchange_cards: 0,
+                    correct_exchange_cards: 0,
+                    target_mainboard: count_rows(target.mainboard()),
+                    target_sideboard: count_rows(target.sideboard()),
+                    greedy_mainboard: None,
+                    greedy_sideboard: None,
+                };
+                match self.deliberate_v1(&example.input, &initial, embeddings) {
+                    Ok(greedy) => {
+                        // Independently replay the predicted actions through the legal
+                        // transition boundary before counting a completed submission.
+                        let mut replay = SideboardDeliberationStateV1::new_v1(&initial);
+                        for &action in &greedy.actions {
+                            replay.apply_v1(action)?;
+                        }
+                        if !replay.is_done_v1()
+                            || replay.configuration_v1()? != greedy.configuration
+                        {
+                            return Err(error("greedy evaluation replay differs"));
+                        }
+                        let predicted_moves = exchange_counts(&initial, &greedy.configuration)?;
+                        row.greedy_legal_terminated = true;
+                        row.greedy_exact_action_sequence = greedy.actions == example.target_actions;
+                        row.greedy_exact_configuration = greedy.configuration == target;
+                        row.greedy_exact_exchange = predicted_moves == target_moves;
+                        row.greedy_exchange_cards = predicted_moves.values().sum();
+                        row.correct_exchange_cards = target_moves
+                            .iter()
+                            .map(|(key, &n)| n.min(*predicted_moves.get(key).unwrap_or(&0)))
+                            .sum();
+                        row.greedy_mainboard = Some(count_rows(greedy.configuration.mainboard()));
+                        row.greedy_sideboard = Some(count_rows(greedy.configuration.sideboard()));
+                        row.greedy_actions = greedy.actions;
+                    }
+                    Err(e) => row.greedy_error = Some(e.to_string()),
+                }
+                Ok(row)
+            })
+            .collect()
+    }
+
     fn validate(&self) -> ResultV1<()> {
         validate_identity(&self.play_identity)?;
         if self.schema != SCHEMA
@@ -695,6 +845,26 @@ impl LearnedSideboardModelV1 {
 struct PreparedDecision {
     features: Vec<Vec<f64>>,
     target: usize,
+}
+
+fn count_rows(cards: &[u16]) -> Vec<CardCountV1> {
+    counts(cards)
+        .into_iter()
+        .map(|(card_id, count)| CardCountV1 { card_id, count })
+        .collect()
+}
+
+fn exchange_counts(
+    initial: &DeckConfigurationV1,
+    target: &DeckConfigurationV1,
+) -> ResultV1<BTreeMap<SideboardActionV1, usize>> {
+    let mut result = BTreeMap::new();
+    for action in actions_between_configurations_v1(initial, target)? {
+        if action != SideboardActionV1::Done {
+            *result.entry(action).or_default() += 1;
+        }
+    }
+    Ok(result)
 }
 struct PreparedExample {
     decisions: Vec<PreparedDecision>,
@@ -1345,6 +1515,80 @@ mod tests {
             fixture_table(),
             "imitation must never alter play embeddings"
         );
+    }
+
+    #[test]
+    fn read_only_evaluation_separates_teacher_actions_from_greedy_configuration() {
+        let table = fixture_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let initial = configuration();
+        let mut model = LearnedSideboardModelV1::new_v1(7, &embeddings);
+        // Tied logits choose the first legal action. On teacher states two of
+        // three actions agree, while free running exchanges all fifteen cards.
+        model.policy_weights.fill(0.0);
+        let example = SideboardImitationExampleV1 {
+            input: input(&initial, 3),
+            initial_mainboard: initial.mainboard().to_vec(),
+            initial_sideboard: initial.sideboard().to_vec(),
+            target_value: None,
+            target_actions: vec![
+                SideboardActionV1::MoveOneToSideboard { card_id: 0 },
+                SideboardActionV1::MoveOneToMainboard { card_id: 1 },
+                SideboardActionV1::Done,
+            ],
+        };
+        let before = model.to_json_v1().unwrap();
+        let metrics = model
+            .evaluate_imitation_v1(&[example], &embeddings)
+            .unwrap();
+        assert_eq!(metrics[0].teacher_action_correct, 2);
+        assert_eq!(metrics[0].teacher_movement_correct, 1);
+        assert_eq!(metrics[0].teacher_done_correct, 1);
+        assert!(metrics[0].greedy_legal_terminated);
+        assert!(!metrics[0].greedy_exact_configuration);
+        assert!(!metrics[0].greedy_exact_exchange);
+        assert_eq!(metrics[0].target_exchange_cards, 2);
+        assert_eq!(metrics[0].greedy_exchange_cards, 30);
+        assert_eq!(metrics[0].correct_exchange_cards, 2);
+        assert_eq!(before, model.to_json_v1().unwrap());
+        assert_eq!(model.training_steps_v1(), 0);
+        assert_eq!(table, fixture_table());
+    }
+
+    #[test]
+    fn read_only_evaluation_handles_done_only_game_three_and_rejects_bad_targets() {
+        let table = fixture_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let initial = DeckConfigurationV1::new_exact_v1(vec![0; 60], vec![0; 15]).unwrap();
+        let model = LearnedSideboardModelV1::new_v1(7, &embeddings);
+        let mut visible = input(&initial, 3);
+        visible.next_game_number = 3;
+        let mut example = SideboardImitationExampleV1 {
+            input: visible,
+            initial_mainboard: initial.mainboard().to_vec(),
+            initial_sideboard: initial.sideboard().to_vec(),
+            target_value: None,
+            target_actions: vec![SideboardActionV1::Done],
+        };
+        let row = model
+            .evaluate_imitation_v1(&[example.clone()], &embeddings)
+            .unwrap()
+            .remove(0);
+        assert!(
+            row.done_only_target && row.greedy_exact_configuration && row.greedy_exact_exchange
+        );
+        assert_eq!(row.teacher_action_correct, 1);
+        assert_eq!(row.teacher_movement_actions, 0);
+        assert_eq!(row.greedy_exchange_cards, 0);
+        example.target_actions = vec![SideboardActionV1::MoveOneToSideboard { card_id: 0 }];
+        assert!(model
+            .evaluate_imitation_v1(&[example.clone()], &embeddings)
+            .is_err());
+        example.target_actions = vec![SideboardActionV1::Done];
+        example.target_value = Some(0.2);
+        assert!(model
+            .evaluate_imitation_v1(&[example], &embeddings)
+            .is_err());
     }
 
     #[test]

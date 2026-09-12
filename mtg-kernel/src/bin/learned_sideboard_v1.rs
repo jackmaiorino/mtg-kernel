@@ -27,6 +27,9 @@ const TAG_BYTES: &[u8] = include_bytes!("../../../data/pauper_removal_counterspe
 const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_EXAMPLE_BYTES: usize = 128 * 1024 * 1024;
 
+#[path = "learned_sideboard_v1/evaluation.rs"]
+mod evaluation;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PinnedFileV1 {
@@ -97,6 +100,13 @@ enum CommandV1 {
         initialization: InitializationV1,
         training: SideboardTrainingConfigV1,
     },
+    EvaluateImitation {
+        play_import: PathBuf,
+        output_directory: PathBuf,
+        checkpoint: PinnedFileV1,
+        dataset_inventory: PinnedFileV1,
+        split: evaluation::EvaluationSplitV1,
+    },
 }
 
 impl CommandV1 {
@@ -112,6 +122,11 @@ impl CommandV1 {
                 ..
             }
             | Self::TrainImitation {
+                play_import,
+                output_directory,
+                ..
+            }
+            | Self::EvaluateImitation {
                 play_import,
                 output_directory,
                 ..
@@ -350,6 +365,19 @@ fn execute(
             Ok(json!({"mode":"validate_import", "inference_executed":false,
             "training_executed":false, "inputs":inputs, "play_transfer":play.identity_v1()}))
         }
+        CommandV1::EvaluateImitation {
+            checkpoint,
+            dataset_inventory,
+            split,
+            ..
+        } => evaluation::execute_evaluation(
+            checkpoint,
+            dataset_inventory,
+            *split,
+            output,
+            embeddings,
+            inputs,
+        ),
         CommandV1::RunBatch {
             policies,
             matches,
@@ -736,6 +764,7 @@ fn compiled_sources() -> Value {
     json!({"scope":"compiled integration sources; binary SHA additionally pins the executable",
         "learned_sideboard_v1.rs":hash(include_bytes!("learned_sideboard_v1.rs")),
         "learned_sideboard_model":hash(include_bytes!("../learned_sideboard_v1.rs")),
+        "imitation_evaluator":hash(include_bytes!("learned_sideboard_v1/evaluation.rs")),
         "learned_bo3":hash(include_bytes!("../learned_bo3_v1.rs")),
         "play_policy":hash(include_bytes!("../sideboard_play_policy_v1.rs")),
         "observation_v6":hash(include_bytes!("../policy_observation_v6.rs")),
