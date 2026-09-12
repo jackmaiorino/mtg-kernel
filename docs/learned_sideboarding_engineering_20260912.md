@@ -1,5 +1,7 @@
 # Learned sideboarding engineering result, September 12, 2026
 
+This is the engineering 001 historical result. The mechanic fixes and completed five-deck reruns are recorded in [engineering 002](learned_sideboarding_engineering_002_20260912.md). The V2 failures below remain preserved historical evidence.
+
 The first complete integration runs a real frozen Net8 player through cross-deck BO3, learns a separate sideboard policy from completed-game teacher traces, reloads that checkpoint, and applies its legal exchanges between games. Work is isolated on `codex/learned-sideboarding-integration-v1`, based on completed card wave1 at `1ebb3b6b`; unfinished Urzatron work and the active science campaign are separate. This branch has not landed in main.
 
 ## Completed checks

@@ -11,6 +11,10 @@ explicit rich V6 / flat V3 transfer described in
 three original mechanic gaps documented below. Original configurations retain
 the V5 / flat V2 contract and its limitations.
 
+The [completed fix verification](learned_sideboarding_engineering_002_20260912.md)
+records 28 matches / 70 games, expanded teacher data, exact replays, and the
+remaining value-observation limits. Use its V3 configurations for the expanded decks.
+
 The play model receives an actor-relative flat observation under the selected
 explicit feature contract. The
 sideboard model receives its own registered 75, its own completed-game card
