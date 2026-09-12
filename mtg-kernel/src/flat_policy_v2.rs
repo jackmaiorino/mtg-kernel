@@ -1489,10 +1489,27 @@ impl FlatDecisionEncoderV2 {
         stable: &CardStableRefV1,
         actor: PlayerSeatV1,
     ) -> Result<u32, FlatDecisionErrorV2> {
+        let wanted = Self::private_key(stable, actor, 0);
+        if self.v3_action_objects.is_some() {
+            // A V3 historical source can capture an ability's controller
+            // independently of the live permanent's controller. Resolve its
+            // exact validated view before applying the frozen V2 rules.
+            for (index, key) in self.object_keys.iter().enumerate() {
+                if key.is_some_and(|key| {
+                    key.arena_id == wanted.arena_id
+                        && key.zone_change_count == wanted.zone_change_count
+                        && key.card_token == wanted.card_token
+                        && key.owner == wanted.owner
+                        && key.controller == wanted.controller
+                        && key.zone == wanted.zone
+                }) {
+                    return usize_u32(index);
+                }
+            }
+        }
         if let Ok(index) = self.resolve_live(stable, actor) {
             return Ok(index);
         }
-        let wanted = Self::private_key(stable, actor, 0);
         let mut found = None;
         for (index, key) in self.object_keys.iter().enumerate() {
             let Some(key) = key else { continue };
@@ -3578,6 +3595,47 @@ impl FlatDecisionEncoderV2 {
         })
     }
 
+    /// Called only after the V6 historical record matches its declared public
+    /// stack or pending-effect context. Controller is the sole permitted
+    /// same-incarnation distinction; card, owner, and zone remain immutable.
+    fn add_validated_historical_source_v3(
+        &mut self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        ordinal: u32,
+    ) -> Result<(u32, bool), FlatDecisionErrorV2> {
+        let wanted = Self::private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
+        for (index, key) in self.object_keys.iter().enumerate() {
+            let Some(key) = key else { continue };
+            if key.arena_id != wanted.arena_id || key.zone_change_count != wanted.zone_change_count
+            {
+                continue;
+            }
+            if key.card_token != wanted.card_token
+                || key.owner != wanted.owner
+                || key.zone != wanted.zone
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            if key.controller == wanted.controller {
+                return Ok((usize_u32(index)?, false));
+            }
+        }
+        let index = usize_u32(self.objects.len())?;
+        self.objects.push(FlatObjectCoreV2 {
+            card_token: wanted.card_token,
+            group: FlatObjectGroupV2::PendingContext,
+            source_kind: FlatObjectSourceKindV2::Pending,
+            visible_ordinal: ordinal,
+            owner: wanted.owner,
+            controller: wanted.controller,
+            zone: Some(wanted.zone),
+            ..FlatObjectCoreV2::default()
+        });
+        self.object_keys.push(Some(wanted));
+        Ok((index, true))
+    }
+
     fn register_extensions_v3(
         &mut self,
         observation: &ObservationV6,
@@ -3702,22 +3760,11 @@ impl FlatDecisionEncoderV2 {
                     usize_u32(public_stack.len())?
                 }
             };
-            let model_index = match self.resolve_reference(&historical.source, actor) {
-                Ok(index) => index,
-                Err(FlatDecisionErrorV2::InvalidReference) => {
-                    let index = self.add_stable(
-                        &historical.source,
-                        actor,
-                        FlatObjectGroupV2::PendingContext,
-                        FlatObjectSourceKindV2::Pending,
-                        ordinal,
-                        HISTORICAL_PUBLIC_SOURCE_KIND_V3,
-                    )?;
-                    output.appended_object_indices.push(index);
-                    index
-                }
-                Err(error) => return Err(error),
-            };
+            let (model_index, appended) =
+                self.add_validated_historical_source_v3(&historical.source, actor, ordinal)?;
+            if appended {
+                output.appended_object_indices.push(model_index);
+            }
             authority_mapping.push((
                 Self::extension_authority_v3(
                     &historical.source,
@@ -3770,6 +3817,7 @@ impl FlatDecisionEncoderV2 {
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<crate::flat_policy_v3::FlatDecisionV3, FlatDecisionErrorV2> {
         self.clear_typed_cache();
+        self.v3_action_objects = Some(Vec::new());
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
         let max_refs = action_count

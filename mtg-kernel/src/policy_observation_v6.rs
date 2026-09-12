@@ -380,6 +380,141 @@ pub(crate) mod tests {
         (state, map)
     }
 
+    /// A real combat-transfer trigger keeps the designation's Hunter source,
+    /// while its controller is the player taking the Initiative. The Hunter
+    /// itself stays on the other player's battlefield in the same incarnation.
+    pub(crate) fn initiative_transfer_state() -> GameState {
+        use crate::effect::EffectOp;
+        use crate::state::{AbilitySourceContractV4, InitiativeTriggerKindV1};
+
+        let mut state = ready_state();
+        let hunter = put(
+            &mut state,
+            PlayerId::P1,
+            "Avenging Hunter",
+            Zone::Battlefield,
+        );
+        state.initiative = Some(PlayerId::P1);
+        state.engine.initiative_source = Some(AbilitySourceContractV4::capture(&state, hunter));
+        let attacker = put(
+            &mut state,
+            PlayerId::P0,
+            "Voldaren Epicure",
+            Zone::Battlefield,
+        );
+        // Retain an actual priority choice when the combat-transfer trigger
+        // reaches the stack, rather than relying on suppressed passes.
+        put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+        put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+        state.step = Step::DeclareAttackers;
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::DeclareAttackers {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
+        for _ in 0..64 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.stack.iter().any(|item| {
+                matches!(&item.inline_effect,
+                Some(EffectOp::ResolveInitiativeTrigger { binding })
+                    if binding.kind == InitiativeTriggerKindV1::CombatTransfer)
+            }) {
+                assert_eq!(state.objects.get(hunter).controller, PlayerId::P1);
+                return state;
+            }
+            match decision {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::DeclareBlockers {
+                    player: PlayerId::P1,
+                    ..
+                } => engine::step(&mut state, Action::DeclareBlockers(Vec::new())).unwrap(),
+                Decision::OrderTriggers { ref pending, .. } if pending.len() == 1 => {
+                    engine::step(&mut state, Action::OrderTriggers(vec![0])).unwrap()
+                }
+                other => panic!("unexpected path to Initiative transfer: {other:?}"),
+            }
+        }
+        panic!("combat did not create an Initiative transfer trigger");
+    }
+
+    #[test]
+    fn v6_initiative_transfer_preserves_distinct_live_and_frozen_controllers() {
+        use crate::effect::EffectOp;
+        use crate::event::CommittedEvent;
+        use crate::state::InitiativeTriggerKindV1;
+
+        let state = initiative_transfer_state();
+        let (stack_index, item, binding) = state
+            .stack
+            .iter()
+            .enumerate()
+            .find_map(|(index, item)| {
+                let Some(EffectOp::ResolveInitiativeTrigger { binding }) = &item.inline_effect
+                else {
+                    return None;
+                };
+                (binding.kind == InitiativeTriggerKindV1::CombatTransfer)
+                    .then_some((index, item, *binding))
+            })
+            .unwrap();
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .get(binding.history_index as usize),
+            Some(&CommittedEvent::InitiativeTrigger { binding })
+        );
+        assert!(state.engine.event_history.iter().any(|event| matches!(
+            event,
+            CommittedEvent::CombatDamageToPlayer {
+                player: PlayerId::P1,
+                amount: 1,
+                ..
+            }
+        )));
+        let observation = observe(&state, PlayerId::P0);
+        let historical = observation
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|row| {
+                row.context
+                    == HistoricalSourceContextV6::Stack {
+                        stack_index: stack_index as u32,
+                    }
+            })
+            .unwrap();
+        let live = observation.projection.surface.battlefield[1]
+            .iter()
+            .find(|card| card.stable.arena_id == item.source.0)
+            .unwrap();
+        assert_eq!(historical.source.arena_id, live.stable.arena_id);
+        assert_eq!(
+            historical.source.zone_change_count,
+            live.stable.zone_change_count
+        );
+        assert_eq!(historical.source.card_db_id, live.stable.card_db_id);
+        assert_eq!(historical.source.owner, live.stable.owner);
+        assert_eq!(historical.source.zone, live.stable.zone);
+        assert_eq!(historical.source.controller, PlayerSeatV1::P0);
+        assert_eq!(live.stable.controller, PlayerSeatV1::P1);
+        assert_eq!(
+            historical.source,
+            observation.projection.surface.stack[stack_index].source
+        );
+        let mut forged = state.clone();
+        forged.stack[stack_index]
+            .v4
+            .ability_source_contract
+            .as_mut()
+            .unwrap()
+            .controller = PlayerId::P1;
+        assert!(policy_observation_extensions_v6(&forged, PlayerId::P0).is_err());
+    }
+
     #[test]
     fn v6_historical_map_source_survives_token_cessation_and_rejects_forgery() {
         let (state, map) = map_choice_state();

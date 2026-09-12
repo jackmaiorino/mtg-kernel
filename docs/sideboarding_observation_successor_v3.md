@@ -14,6 +14,13 @@ record. They are not inferred from the current contents of an arena slot.
 Object costs carry their cast method, cost kind, selected prefix, required count,
 and remaining count; the old sacrifice field remains sacrifice-only.
 
+Initiative transfer also requires two simultaneous controller views of Avenging
+Hunter: the creature can remain controlled by the opponent while the transferred
+initiative trigger belongs to the acting player. Exact validated historical
+contexts may therefore add a distinct controller snapshot at the same arena
+incarnation. Card identity, owner and zone must still match; ordinary live
+references retain their consistency checks.
+
 The producer validates the original engine decision, the full candidate set,
 the exact source authority, and the current environment binding. Scorers receive
 only actor-relative rows and row handles. A V3 binding cannot be consumed through

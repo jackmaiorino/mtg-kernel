@@ -20,14 +20,20 @@ within an otherwise identical class are erased by model features. Sort legal
 targets/actions by observable class before assigning action indices. Python
 preserves the supplied canonical action indices. Identical copies share their
 class ordinal. A card already exposed by actual prior library knowledge reuses
-its existing node and retains that legitimately known position.
+its existing node and retains that legitimately known position. The current
+engine contract permits only the chooser's own library.
 
 Historical records bind each nonspell public stack context and the active
 resolving context exactly. Announced Hand-origin cycling is valid public
 history. Detached sources do not claim a current arena incarnation. Missing
 search nodes use PrivateContext/Private; missing historical nodes use
 PendingContext/Pending. Register missing search nodes after common nodes, then
-historical nodes. Existing exact incarnations are reused. Append self-edges
+historical nodes. Exact captured facts are reused. A validated initiative
+transfer may capture a controller different from the live permanent without
+changing its arena or zone generation. That historical view gets a separate
+node; the live node stays unchanged, and card ID, owner, and zone must agree.
+This exception applies only to the declared historical source context.
+Append self-edges
 after common edges: cost source 32, selected prefix 33, search cards 34,
 historical sources 35. Primary order is respectively zero, selection index,
 public class ordinal, and record index; associated order is zero.

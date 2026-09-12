@@ -110,12 +110,12 @@ impl FastActorSessionV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{self, Action};
+    use crate::engine::{self, Action, Decision};
     use crate::flat_policy_v2::*;
     use crate::native_flat_tensorizer_v3::{NativeFlatDecisionTensorV3, NativeFlatTensorizerV3};
     use crate::policy_observation_v6::tests::{
         escape_prefix_state, forest_search_state, forest_search_state_with_hidden_renumbering,
-        map_choice_state,
+        initiative_transfer_state, map_choice_state,
     };
     use crate::rl::make_legal_action_v5;
     use crate::rl_session::FastActorResponseV1;
@@ -195,6 +195,29 @@ mod tests {
         states
     }
 
+    fn initiative_transfer_pending_state() -> GameState {
+        let mut state = initiative_transfer_state();
+        crate::policy_observation_v6::tests::put(
+            &mut state,
+            crate::ids::PlayerId::P0,
+            "Forest",
+            crate::state::Zone::Library,
+        );
+        for _ in 0..64 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::OrderTriggers { pending, .. } if pending.len() == 1 => {
+                    engine::step(&mut state, Action::OrderTriggers(vec![0])).unwrap();
+                }
+                Decision::ChooseEffectTargets { .. } | Decision::ChooseEffectOption { .. } => {
+                    return state
+                }
+                other => panic!("initiative pending fixture: {other:?}"),
+            }
+        }
+        panic!("initiative transfer did not reach its pending room effect");
+    }
+
     fn tensors(session: &FastActorSessionV1) -> NativeFlatDecisionTensorV3 {
         let mut owned = OwnedScoringV3::default();
         let decision = owned.encode(session);
@@ -264,6 +287,62 @@ mod tests {
         let cost = extensions.pending_cast_object_cost.unwrap();
         assert_eq!(cost.selected_objects.len(), 3);
         assert_eq!(cost.remaining_count, 0);
+    }
+
+    #[test]
+    fn flat_v3_initiative_transfer_keeps_live_and_captured_controllers_distinct() {
+        for state in [
+            initiative_transfer_state(),
+            initiative_transfer_pending_state(),
+        ] {
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("initiative fixture must retain an actual policy choice");
+            };
+            let observation = session.flat_policy_observation_v3(expected).unwrap();
+            let mut owned = OwnedScoringV3::default();
+            let decision = owned.encode(&session);
+            let captured = decision
+                .extensions
+                .historical_public_sources
+                .iter()
+                .find(|row| owned.objects[row.model_object_index as usize].card_token == 2)
+                .expect("captured Avenging Hunter initiative source");
+            let historical = &owned.objects[captured.model_object_index as usize];
+            assert_eq!(historical.controller, FlatRelativePlayerV2::SelfPlayer);
+            assert_eq!(historical.group, FlatObjectGroupV2::PendingContext);
+            let live_index = owned
+                .objects
+                .iter()
+                .position(|object| {
+                    object.card_token == 2 && object.group == FlatObjectGroupV2::OpponentBattlefield
+                })
+                .unwrap();
+            assert_ne!(live_index as u32, captured.model_object_index);
+            assert_eq!(
+                owned.objects[live_index].controller,
+                FlatRelativePlayerV2::Opponent
+            );
+            let mut output = NativeFlatDecisionTensorV3::default();
+            NativeFlatTensorizerV3::default()
+                .fill(owned.view(&decision), &mut output)
+                .unwrap();
+
+            // A controller distinction is authorized by the declared public
+            // source context. A changed extension alone cannot create that view.
+            let mut forged = observation;
+            let record = forged
+                .extensions
+                .historical_public_sources
+                .iter_mut()
+                .find(|row| row.source.card_db_id == 1)
+                .unwrap();
+            record.source.controller = crate::rl::PlayerSeatV1::P1;
+            assert!(matches!(
+                encode_observation_owned_tables_for_fixture_v3(&forged),
+                Err(FlatDecisionErrorV2::InconsistentReference)
+            ));
+        }
     }
 
     fn emit_fixture(name: &str, session: &FastActorSessionV1) {
@@ -338,6 +417,14 @@ mod tests {
             &FastActorSessionV1::from_v3_fixture_state(
                 forest_search_state_with_hidden_renumbering(),
             ),
+        );
+        emit_fixture(
+            "initiative-transfer",
+            &FastActorSessionV1::from_v3_fixture_state(initiative_transfer_state()),
+        );
+        emit_fixture(
+            "initiative-transfer-pending",
+            &FastActorSessionV1::from_v3_fixture_state(initiative_transfer_pending_state()),
         );
         // Completing the third selection advances payment automatically, so
         // prefix 3 is tested above as rich state rather than a policy example.

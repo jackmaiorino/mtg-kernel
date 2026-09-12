@@ -2,6 +2,6 @@
 pub(crate) const FEATURE_SCHEMA_VERSION_V3: &str = "actor-relative-v6-python-1";
 pub(crate) const FEATURE_REGISTRY_VERSION_V3: &str = "rust-observation-v6-action-v5-registry-1";
 pub(crate) const FEATURE_CONTRACT_DIGEST_V3: &str = "a67ef398e332d9d9f83f4c45618b6696a54aa963b4dbcfa5177f9ff5ea3106a7";
-pub(crate) const FEATURE_ENCODING_DIGEST_V3: &str = "6884a1900674b0f6ce125b3bda6bc8bfe02dc5775c3cdbd38f80ed336f7448fe";
-pub(crate) const FEATURES_SOURCE_SHA256_V3: &str = "9996a518882adc772b6b25709cd13421aa855c6699c6fbdbc8fb25aa64cd5c20";
-pub(crate) const FEATURE_DESCRIPTOR_SHA256_V3: &str = "402b2ffda49b4550bad95451708206ef07551501840e1bced7383d6bb122e6fc";
+pub(crate) const FEATURE_ENCODING_DIGEST_V3: &str = "303c89c909073ec3476af7332410eabd1369ddcb616819e588cfd61486ed8ef6";
+pub(crate) const FEATURES_SOURCE_SHA256_V3: &str = "81968e00deae29753e7672b46d1a65ce24e6655197a7a6185f1295a70f536b12";
+pub(crate) const FEATURE_DESCRIPTOR_SHA256_V3: &str = "10a1e1e85e66c0806fae33a9433fd25b937e4730ed2d052005d7e2a0b4eb65a6";

@@ -75,6 +75,21 @@ def escape_decision(selected_count: int = 0, required: int = 2) -> tuple[dict, l
     return obs, actions
 
 
+def initiative_source_decision() -> tuple[dict, list]:
+    """Coherent JSON regression for event::log_initiative_trigger's snapshot.
+
+    Actual engine fixture parity is checked separately by the native emitter.
+    """
+    obs, actions = search_decision()
+    source = obs["extensions"]["historical_public_sources"][0]["source"]
+    source.update(card_db_id=1, owner="p1", controller="p0")
+    obs["extensions"]["historical_public_sources"][0]["stack_item_kind"] = "triggered_ability"
+    live = public_card(90, 1, "p1")
+    live["stable"]["zone_change_count"] = 2
+    obs["projection"]["battlefield"][1].append(live)
+    return obs, actions
+
+
 def renumber(value, mapping):
     if isinstance(value, dict):
         return {key: (mapping[child] if key == "arena_id" else child + 19 if key in ("zone_change_count", "zone_change_generation")
@@ -243,6 +258,35 @@ class FeaturesV6Tests(unittest.TestCase):
             obs["extensions"]["historical_public_sources"][0]["stack_item_kind"] = kind
             with self.assertRaises(v6.FeatureSchemaError):
                 v6.encode_decision(obs, actions)
+
+    def test_initiative_snapshot_keeps_live_and_captured_controllers_distinct(self):
+        obs, actions = initiative_source_decision()
+        encoded = v6.encode_decision(obs, actions)
+        rows = [index for index, token in enumerate(encoded.object_card_ids.tolist()) if token == 2]
+        self.assertEqual(len(rows), 2)
+        live, historical = rows
+        self.assertEqual(encoded.object_groups[live].item(), v6.OBJECT_GROUPS.index("opponent_battlefield"))
+        self.assertEqual(encoded.object_groups[historical].item(), v6.OBJECT_GROUPS.index("pending_context"))
+        self.assertFalse(torch.equal(encoded.object_features[live], encoded.object_features[historical]))
+        self.assertEqual(encoded.action_ref_node_indices[0].item(), historical)
+        self.assertEqual(obs["projection"]["battlefield"][1][-1]["stable"]["controller"], "p1")
+        old = copy.deepcopy(obs)
+        old["schema_version"] = 5
+        del old["extensions"]
+        with self.assertRaises(frozen.FeatureSchemaError):
+            frozen.encode_decision(old, actions)
+
+    def test_historical_controller_exception_cannot_change_immutable_or_unrelated_refs(self):
+        for field, value in (("card_db_id", 999), ("owner", "p0"), ("zone", "Graveyard")):
+            obs, actions = initiative_source_decision()
+            obs["extensions"]["historical_public_sources"][0]["source"][field] = value
+            with self.assertRaisesRegex(v6.FeatureSchemaError, "immutable"):
+                v6.encode_decision(obs, actions)
+        obs, actions = initiative_source_decision()
+        captured = copy.deepcopy(obs["extensions"]["historical_public_sources"][0]["source"])
+        obs["projection"]["continuous_effects"][0]["source"] = captured
+        with self.assertRaises(v6.FeatureSchemaError):
+            v6.encode_decision(obs, actions)
 
     def test_escape_value_context_changes_without_pooling_actions(self):
         zero, zero_actions = escape_decision()

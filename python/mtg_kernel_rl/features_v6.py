@@ -308,7 +308,7 @@ EXTENSION_ENCODING_CONTRACT_V6 = {
     "search_objects": "reuse-visible-node-else-private-context-private-source-shared-visible-class-ordinal",
     "search_actions": "supplied-actions-follow-canonical-visible-target-order-no-silent-action-reordering",
     "historical_sources": "exact-public-stack-context-binding-not-json-provenance-authentication",
-    "historical_nodes": "reuse-exact-incarnation-else-pending-context-without-claiming-live-arena",
+    "historical_nodes": "reuse-exact-frozen-facts-else-pending-context-without-claiming-live-arena-controller-only-snapshot-divergence",
     "new_node_order": "all-common-nodes-including-legacy-detached-context-then-new-search-then-new-history",
     "object_cost": "declared-cast-method-and-original-zone-prefix-in-state-hash-and-pending-edges",
     "extension_edge_order": "cost-source-then-selected-then-search-cards-then-historical-sources-after-v5-edges",
@@ -1736,6 +1736,10 @@ def _historical_stack_target_identity(ref: dict[str, Any]) -> tuple[int, str, st
     return (ref["card_db_id"], ref["owner"], ref["zone"])
 
 
+def _historical_source_key_v6(ref: dict[str, Any]) -> tuple:
+    return _stable_key(ref) + _stable_identity(ref)
+
+
 @dataclass
 class _NodeRegistry:
     actor: str
@@ -1750,6 +1754,7 @@ class _NodeRegistry:
         self._identity_by_key: dict[tuple[int, int], tuple[int, str, str, str]] = {}
         self._node_by_arena: dict[int, int] = {}
         self._historical_stack_target_node_by_ref: dict[int, int] = {}
+        self._historical_source_nodes_v6: dict[tuple, int] = {}
 
     def validate_ref(self, ref: dict[str, Any]) -> tuple[int, int]:
         key = _stable_key(ref)
@@ -1848,6 +1853,8 @@ class _NodeRegistry:
             ) from exc
 
     def resolve_context_ref_node(self, ref: dict[str, Any], group: str, order: int, source_kind: str, path: tuple[str, ...]) -> int:
+        if path == ("pending_effect", "source"):
+            return self.resolve_historical_source_v6(ref)
         key = self.validate_ref(ref)
         if key in self._node_by_key:
             return self._node_by_key[key]
@@ -1855,6 +1862,44 @@ class _NodeRegistry:
         if allowed_zones is None or ref["zone"] not in allowed_zones:
             raise FeatureSchemaError(f"context stable reference does not resolve to an observed object node: {'.'.join(path)}")
         return self.add_ref_node(ref, group, order, source_kind)
+
+    def add_historical_source_v6(self, ref: dict[str, Any], order: int) -> int:
+        """Register one validated captured source view without changing live facts.
+
+        Initiative transfers can capture a different controller while the
+        source's arena and zone generation remain unchanged. Only an explicit
+        historical context grants this view; card, owner, and zone stay exact.
+        """
+        full_key = _historical_source_key_v6(ref)
+        if full_key in self._historical_source_nodes_v6:
+            return self._historical_source_nodes_v6[full_key]
+        key = _stable_key(ref)
+        identity = _stable_identity(ref)
+        previous = self._identity_by_key.get(key)
+        if previous is not None and (previous[0], previous[1], previous[3]) != _historical_stack_target_identity(ref):
+            raise FeatureSchemaError("historical source changes immutable facts of the same incarnation")
+        features, token = _card_public_features(
+            _blank_public_from_ref(ref, "pending"), self.actor, order, "pending", self.current_turn,
+        )
+        if previous is None or previous == identity:
+            self.validate_ref(ref)
+            node = self._add_node(key, features, token, "pending_context", register_arena=False)
+        else:
+            # A second historical view has its own model row, while ordinary
+            # lookup continues to identify the unmodified live incarnation.
+            node = len(self.rows)
+            self.rows.append(features)
+            self.tokens.append(token)
+            self.groups.append(_group_id("pending_context"))
+            self.node_ids.append(node)
+        self._historical_source_nodes_v6[full_key] = node
+        return node
+
+    def resolve_historical_source_v6(self, ref: dict[str, Any]) -> int:
+        try:
+            return self._historical_source_nodes_v6[_historical_source_key_v6(ref)]
+        except KeyError as exc:
+            raise FeatureSchemaError("source lacks its exact declared historical context") from exc
 
     def _add_node(self, key: tuple[int, int], features: list[float], token: int, group: str, *, register_arena: bool = True) -> int:
         if key in self._node_by_key:
@@ -2089,11 +2134,7 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
     for record in extensions["historical_public_sources"]:
         ref = record["source"]
         order = record["context"].get("stack_index", len(p["stack"]))
-        key = registry.validate_ref(ref)
-        features, token = _card_public_features(
-            _blank_public_from_ref(ref, "pending"), actor, order, "pending", p["turn"],
-        )
-        registry._add_node(key, features, token, "pending_context", register_arena=False)
+        registry.add_historical_source_v6(ref, order)
 
     attachment_edges: list[tuple[int, int]] = []
     actor_relative_zones = []
@@ -2119,7 +2160,8 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
     for relation_order, (source, target, kind) in enumerate(sorted(relation_edges, key=lambda edge: (edge[2], edge[0], edge[1]))):
         _append_edge(edge_rows, edge_sources, edge_targets, source, target, kind, relation_order)
     for i, item in enumerate(p["stack"]):
-        source = registry.resolve(item["source"])
+        source = (registry.resolve(item["source"]) if item["stack_item_kind"] == "spell"
+                  else registry.resolve_historical_source_v6(item["source"]))
         for target_index, target in enumerate(item["targets"]):
             if target["target_kind"] == "object":
                 target_node = registry.resolve_historical_stack_target_node(target["object"])
@@ -2226,7 +2268,7 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
     extension_refs.extend((record["source"], "pending_context", index, 35)
                           for index, record in enumerate(extensions["historical_public_sources"]))
     for ref, role, order, subrole in extension_refs:
-        node = registry.resolve(ref)
+        node = registry.resolve_historical_source_v6(ref) if subrole == 35 else registry.resolve(ref)
         _append_edge(edge_rows, edge_sources, edge_targets, node, node, role, order, subrole)
     return registry, registry.rows, registry.tokens, registry.groups, registry.node_ids, edge_rows, edge_sources, edge_targets
 
@@ -2247,7 +2289,13 @@ def _action_card_refs(semantic: dict[str, Any], registry: _NodeRegistry) -> list
     refs: list[tuple[str, int, dict[str, Any], int, int]] = []
     for role in ("source", "candidate", "card", "attacker", "blocker"):
         if role in semantic:
-            refs.append((role, 0, semantic[role], 0, registry.resolve(semantic[role])))
+            historical_effect = role == "source" and semantic["action_kind"] in (
+                "choose_effect_option", "choose_effect_target", "finish_effect_selection",
+                "choose_effect_color", "choose_effect_number", "choose_effect_boolean",
+            )
+            node = (registry.resolve_historical_source_v6(semantic[role]) if historical_effect
+                    else registry.resolve(semantic[role]))
+            refs.append((role, 0, semantic[role], 0, node))
     if "target" in semantic and semantic["target"]["target_kind"] == "object":
         target = semantic["target"]["object"]
         refs.append(("target_object", 0, target, 0, registry.resolve(target)))
@@ -2811,9 +2859,18 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
         if target["target_kind"] == "object"
     ]
     historical_stack_target_ids = {id(ref) for ref in historical_stack_target_refs}
+    historical_source_refs_v6 = []
+    for record in observation["extensions"]["historical_public_sources"]:
+        historical_source_refs_v6.append(record["source"])
+        context = record["context"]
+        if context["kind"] == "stack":
+            historical_source_refs_v6.append(p["stack"][context["stack_index"]]["source"])
+        else:
+            historical_source_refs_v6.append(p["engine_context"]["pending_effect"]["source"])
+    historical_source_ids_v6 = {id(ref) for ref in historical_source_refs_v6}
     identity_by_key: dict[tuple[int, int], tuple[int, str, str, str]] = {}
     for ref in _iter_card_refs_by_schema(observation, OBSERVATION_SPEC):
-        if id(ref) in historical_stack_target_ids:
+        if id(ref) in historical_stack_target_ids or id(ref) in historical_source_ids_v6:
             continue
         key = _stable_key(ref)
         identity = _stable_identity(ref)
@@ -2832,6 +2889,13 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
             raise FeatureSchemaError(
                 "inconsistent historical stack target reference for same incarnation"
             )
+        if previous is None:
+            identity_by_key[key] = _stable_identity(ref)
+    for ref in historical_source_refs_v6:
+        key = _stable_key(ref)
+        previous = identity_by_key.get(key)
+        if previous is not None and (previous[0], previous[1], previous[3]) != _historical_stack_target_identity(ref):
+            raise FeatureSchemaError("historical source changes immutable facts of the same incarnation")
         if previous is None:
             identity_by_key[key] = _stable_identity(ref)
     for card in public_cards:
