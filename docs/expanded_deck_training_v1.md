@@ -62,8 +62,10 @@ own reviewed design.
 Focused checks cover actual Map/V3 forward/backward, atomic rejection of bad
 schema/shape/output/action inputs, legacy loss goldens, explicit registration
 conservation, and tensor bit preservation. The native fixture emitter is checked
-with `python/tools/verify_native_flat_v3_fixtures.py`; full-game round-trip and
-checkpoint evidence are recorded separately after execution.
+with `python/tools/verify_native_flat_v3_fixtures.py`. The completed
+[engineering-003 result](learned_sideboarding_engineering_003_20260912.md)
+records a real pre/postboard CPU update, exact trajectory replay, checkpoint
+continuation and damaged/stale input rejection.
 
 Independent review was attempted in fresh read-only Fable session
 `435736f5-f380-444f-a02c-985f7f04819c`. It failed HTTP 429 weekly quota with zero

@@ -45,5 +45,6 @@ live versus departed battlefield costs, and two departed states whose common
 public observations are equal but recorded powers differ. Tests also reject
 foreign spell/payment bindings, altered engine power and obsolete observation
 shapes. The Rust emitter adds six cases for native/Python comparison across all
-13 tensors. Python's 24 focused feature tests pass; coordinated Rust tests and
-fixture parity are pending at implementation time.
+13 tensors. All four focused chosen-creature Rust tests and Python's 24 feature
+tests pass. The full 24-case emitter matches Python exactly across 13 tensors
+and 32,845 scalar values. See the engineering-003 result for full-game checks.

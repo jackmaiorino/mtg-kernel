@@ -1,5 +1,13 @@
 # Sideboarding dataset preparation
 
+The completed engineering-003 expansion now contains 74 examples / 622 action
+targets across all 25 ordered five-deck matchup cells. Dataset-development-002
+has 56 training and 18 imitation holdout examples, with no shared match,
+teacher-plan or duplicate-example groups. The historical 46-example preparation
+below remains preserved as dataset-development-001. See the
+[completed result](learned_sideboarding_engineering_003_20260912.md) for coverage
+and limits, including 24 Done-only examples and no Burn/Rally holdout coverage.
+
 `python/mtg_kernel_rl/sideboard_dataset_v1.py` audits completed static-teacher
 batches and produces a deterministic development split. It never trains, runs
 games, or infers value labels from winners. The split is an imitation diagnostic,
