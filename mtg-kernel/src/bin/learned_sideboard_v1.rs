@@ -34,6 +34,8 @@ const MAX_EXAMPLE_BYTES: usize = 128 * 1024 * 1024;
 
 #[path = "learned_sideboard_v1/evaluation.rs"]
 mod evaluation;
+#[path = "learned_sideboard_v1/population.rs"]
+mod population;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,6 +132,12 @@ enum CommandV1 {
         policies: [SeatPolicyV1; 2],
         matches: Vec<ExpandedBo3MatchV1>,
     },
+    RunPopulationBatch {
+        model_sources: [ExpandedModelSourceV1; 2],
+        output_directory: PathBuf,
+        policies: [SeatPolicyV1; 2],
+        matches: Vec<ExpandedBo3MatchV1>,
+    },
     TrainImitation {
         play_import: PathBuf,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,6 +189,11 @@ impl CommandV1 {
 
     fn paths(&self) -> (&Path, &Path) {
         match self {
+            Self::RunPopulationBatch {
+                model_sources,
+                output_directory,
+                ..
+            } => (&model_sources[0].play_import.path, output_directory),
             Self::RunExpandedBatch {
                 model_source,
                 output_directory,
@@ -385,6 +398,9 @@ fn run() -> Result<(), String> {
     absolute(&path)?;
     let config_bytes = read_bounded(&path, MAX_JSON_BYTES)?;
     let command: CommandV1 = serde_json::from_slice(&config_bytes).map_err(|e| e.to_string())?;
+    if matches!(&command, CommandV1::RunPopulationBatch { .. }) {
+        return population::run_population_command_v1(&path, &config_bytes, &command);
+    }
     let (import_path, output) = command.paths();
     absolute(import_path)?;
     absolute(output)?;
@@ -486,6 +502,9 @@ fn execute(
     inputs: &mut Vec<Value>,
 ) -> Result<Value, String> {
     match command {
+        CommandV1::RunPopulationBatch { .. } => {
+            Err("population commands require their per-seat model loader".into())
+        }
         CommandV1::ValidateImport { .. } => {
             Ok(json!({"mode":"validate_import", "inference_executed":false,
             "training_executed":false, "inputs":inputs, "play_transfer":play.identity_v1()}))
@@ -955,6 +974,7 @@ fn compiled_sources() -> Value {
         "learned_sideboard_v1.rs":hash(include_bytes!("learned_sideboard_v1.rs")),
         "learned_sideboard_model":hash(include_bytes!("../learned_sideboard_v1.rs")),
         "imitation_evaluator":hash(include_bytes!("learned_sideboard_v1/evaluation.rs")),
+        "population_cli":hash(include_bytes!("learned_sideboard_v1/population.rs")),
         "learned_bo3":hash(include_bytes!("../learned_bo3_v1.rs")),
         "play_policy":hash(include_bytes!("../sideboard_play_policy_v1.rs")),
         "expanded_training_and_loader":hash(include_bytes!("../expanded_deck_training_v1.rs")),

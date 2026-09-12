@@ -43,18 +43,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v1";
+const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v2";
 const CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-checkpoint/v1";
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedFileV1 {
     pub path: PathBuf,
     pub sha256: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandedModelSourceV1 {
     pub play_import: PinnedFileV1,
@@ -88,7 +89,16 @@ pub fn load_expanded_inference_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
     let (policy, state) = initialize(source)?;
-    let receipt = ExpandedInferenceIdentityV1 {
+    let receipt = inference_identity_v1(source, &policy, &state)?;
+    Ok((policy, receipt))
+}
+
+fn inference_identity_v1(
+    source: &ExpandedModelSourceV1,
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+) -> Result<ExpandedInferenceIdentityV1, String> {
+    Ok(ExpandedInferenceIdentityV1 {
         schema: "mtg-kernel-expanded-deck-inference/v1".into(),
         source_import: policy.identity_v1().clone(),
         checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
@@ -99,8 +109,51 @@ pub fn load_expanded_inference_v1(
         feature_registry_version: FEATURE_REGISTRY_VERSION_V3.into(),
         features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
         feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
-    };
-    Ok((policy, receipt))
+    })
+}
+
+/// Physical-seat behavior provenance, independent of deck registration.
+/// `source_import` remains ancestry; `identity.model` binds installed weights.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpandedSeatBehaviorV1 {
+    pub source: ExpandedModelSourceV1,
+    pub identity: ExpandedInferenceIdentityV1,
+}
+
+struct LoadedOpponentV1 {
+    policy: FrozenPlayPolicyV1,
+    behavior: ExpandedSeatBehaviorV1,
+}
+
+/// Keep only the most recently used opponent. Evict before loading a new
+/// source so a population roster cannot retain unbounded model/Adam copies.
+#[derive(Default)]
+struct OpponentCacheV1 {
+    entry: Option<LoadedOpponentV1>,
+}
+
+impl OpponentCacheV1 {
+    fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
+        if !self
+            .entry
+            .as_ref()
+            .is_some_and(|e| e.behavior.source == *source)
+        {
+            self.entry = None;
+            let (policy, identity) = load_expanded_inference_v1(source)?;
+            self.entry = Some(LoadedOpponentV1 {
+                policy,
+                behavior: ExpandedSeatBehaviorV1 {
+                    source: source.clone(),
+                    identity,
+                },
+            });
+        }
+        self.entry
+            .as_mut()
+            .ok_or_else(|| "opponent cache is empty".into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +182,10 @@ pub struct ExpandedEpisodeV1 {
     pub seed: u64,
     pub starting_player: u8,
     pub learner_seat: u8,
+    /// None retains common-model self-play. Some pins the other physical
+    /// seat's independently loaded behavior, including an optional checkpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opponent: Option<ExpandedModelSourceV1>,
     /// Configuration identity is metadata only, never opponent model input.
     pub registered: [ExpandedDeckListV1; 2],
     pub selected: [ExpandedDeckListV1; 2],
@@ -261,6 +318,8 @@ struct ExpandedTrajectoryV1 {
     card_db_hash: String,
     source_import: FrozenPlayPolicyIdentityV1,
     behavior_state_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seat_behaviors: Option<[ExpandedSeatBehaviorV1; 2]>,
     episode: ExpandedEpisodeV1,
     configuration_sha256: [String; 2],
     decisions: Vec<DecisionRecordV1>,
@@ -405,15 +464,35 @@ fn restore_checkpoint_state_v1(
 
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
-    behavior_state: &str,
+    learner: &ExpandedSeatBehaviorV1,
+    mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
 ) -> Result<ExpandedTrajectoryV1, String> {
     let configs = episode.configurations()?;
+    ensure(
+        episode.opponent.is_some() == opponent.is_some(),
+        "opponent dispatch source missing",
+    )?;
+    let seat_behaviors = opponent.as_ref().map(|other| {
+        std::array::from_fn(|actor| {
+            if actor == episode.learner_seat as usize {
+                learner.clone()
+            } else {
+                other.behavior.clone()
+            }
+        })
+    });
     let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
     let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
         episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
-    policy.reset_sampling_v1(paired_policy_seeds_v1(episode.seed));
+    let seeds = paired_policy_seeds_v1(episode.seed);
+    policy.reset_sampling_v1(seeds);
+    if let Some(other) = opponent.as_mut() {
+        // Both policies use physical-seat streams, never learner/opponent
+        // roles. Only the acting policy consumes its actor's next sample.
+        other.policy.reset_sampling_v1(seeds);
+    }
     let mut decisions = Vec::new();
     loop {
         match session.current_response() {
@@ -423,12 +502,18 @@ fn collect_episode(
                     "only naturally completed games may become training trajectories",
                 )?;
                 let result = ExpandedTrajectoryV1 {
-                    schema: TRAJECTORY_SCHEMA.into(),
+                    schema: if opponent.is_some() {
+                        POPULATION_TRAJECTORY_SCHEMA
+                    } else {
+                        TRAJECTORY_SCHEMA
+                    }
+                    .into(),
                     feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
                     feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
                     card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
                     source_import: policy.identity_v1().clone(),
-                    behavior_state_sha256: behavior_state.into(),
+                    behavior_state_sha256: learner.identity.state_sha256.clone(),
+                    seat_behaviors,
                     episode: episode.clone(),
                     configuration_sha256: config_hashes,
                     decisions,
@@ -442,7 +527,13 @@ fn collect_episode(
                     decisions.len() < episode.max_policy_steps as usize,
                     "policy step limit",
                 )?;
-                let (selected, scores, tensor) = policy.select_with_training_tensor_v3(&session)?;
+                let acting = acting_policy_v1(
+                    policy,
+                    opponent.as_mut().map(|other| &mut other.policy),
+                    episode.learner_seat,
+                    seat(d.acting_player),
+                )?;
+                let (selected, scores, tensor) = acting.select_with_training_tensor_v3(&session)?;
                 let record = DecisionRecordV1 {
                     step: d.step,
                     physical_decision_id: d.physical_decision_id,
@@ -461,11 +552,82 @@ fn collect_episode(
     }
 }
 
-fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
+fn acting_policy_v1<'a>(
+    learner: &'a mut FrozenPlayPolicyV1,
+    opponent: Option<&'a mut FrozenPlayPolicyV1>,
+    learner_seat: u8,
+    actor: u8,
+) -> Result<&'a mut FrozenPlayPolicyV1, String> {
+    ensure(learner_seat < 2 && actor < 2, "invalid behavior seat")?;
+    if actor == learner_seat {
+        Ok(learner)
+    } else {
+        Ok(opponent.unwrap_or(learner))
+    }
+}
+
+fn validate_behavior_shape_v1(t: &ExpandedTrajectoryV1) -> Result<(), String> {
+    match (&t.episode.opponent, &t.seat_behaviors) {
+        (None, None) => ensure(
+            t.schema == TRAJECTORY_SCHEMA,
+            "self-play trajectory schema differs",
+        ),
+        (Some(opponent), Some(behaviors)) => {
+            ensure(
+                t.schema == POPULATION_TRAJECTORY_SCHEMA,
+                "population trajectory schema differs",
+            )?;
+            ensure(t.episode.learner_seat < 2, "invalid learner seat")?;
+            let learner_seat = t.episode.learner_seat as usize;
+            ensure(
+                behaviors[1 - learner_seat].source == *opponent,
+                "opponent source differs from episode",
+            )?;
+            ensure(
+                behaviors[learner_seat].identity.state_sha256 == t.behavior_state_sha256
+                    && behaviors[learner_seat].identity.source_import == t.source_import,
+                "learner behavior identity differs from trajectory",
+            )
+        }
+        _ => {
+            Err("opponent source and per-seat behavior identities must be present together".into())
+        }
+    }
+}
+
+fn validate_actual_behaviors_v1(
+    t: &ExpandedTrajectoryV1,
+    learner: &ExpandedSeatBehaviorV1,
+    opponent: Option<&ExpandedSeatBehaviorV1>,
+) -> Result<(), String> {
+    validate_behavior_shape_v1(t)?;
     ensure(
-        t.schema == TRAJECTORY_SCHEMA,
-        "not an expanded-deck trajectory",
+        t.behavior_state_sha256 == learner.identity.state_sha256,
+        "stale trajectory: behavior optimizer/model state differs",
     )?;
+    ensure(
+        t.source_import == learner.identity.source_import,
+        "trajectory source import differs",
+    )?;
+    match (&t.seat_behaviors, opponent) {
+        (None, None) => Ok(()),
+        (Some(recorded), Some(other)) => {
+            let learner_seat = t.episode.learner_seat as usize;
+            ensure(
+                recorded[learner_seat] == *learner,
+                "actual learner behavior identity differs",
+            )?;
+            ensure(
+                recorded[1 - learner_seat] == *other,
+                "actual opponent behavior identity differs",
+            )
+        }
+        _ => Err("actual opponent source missing or unexpected".into()),
+    }
+}
+
+fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
+    validate_behavior_shape_v1(t)?;
     identity_valid(
         &t.feature_contract_digest,
         &t.feature_encoding_digest,
@@ -565,6 +727,53 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     )
 }
 
+type LearnerTensorGroupV1<'a> = (i8, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV3)>);
+
+/// Validate every stored actor-visible forward before returning learner-only
+/// physical decisions. Opponent tensors never enter the optimizer input.
+fn replay_learner_groups_v1<'a>(
+    t: &'a ExpandedTrajectoryV1,
+    learner: &FrozenPlayPolicyV1,
+    opponent: Option<&FrozenPlayPolicyV1>,
+) -> Result<Vec<LearnerTensorGroupV1<'a>>, String> {
+    validate_trajectory(t)?;
+    ensure(
+        t.episode.opponent.is_some() == opponent.is_some(),
+        "opponent replay source missing",
+    )?;
+    let mut groups = Vec::new();
+    let mut index = 0;
+    while index < t.decisions.len() {
+        let first = &t.decisions[index];
+        let count = first.substep_count as usize;
+        let mut group = Vec::new();
+        for row in &t.decisions[index..index + count] {
+            let tensor = row.tensor.tensor();
+            let acting = if row.actor == t.episode.learner_seat {
+                learner
+            } else {
+                opponent.unwrap_or(learner)
+            };
+            let output = acting.score_training_tensor_v3(&tensor)?;
+            ensure(
+                bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
+                "stored tensor does not reproduce rollout outputs",
+            )?;
+            if row.actor == t.episode.learner_seat {
+                group.push((row, tensor));
+            }
+        }
+        if !group.is_empty() {
+            groups.push((
+                t.terminal.terminal_reward[first.actor as usize] as i8,
+                group,
+            ));
+        }
+        index += count;
+    }
+    Ok(groups)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExpandedTrainingCommandV1 {
@@ -600,6 +809,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             }
             let (mut policy, state) = initialize(&source)?;
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+            let learner = ExpandedSeatBehaviorV1 {
+                source: source.clone(),
+                identity: inference_identity_v1(&source, &policy, &state)?,
+            };
+            drop(state);
+            let mut opponent_cache = OpponentCacheV1::default();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
             for (index, episode) in episodes.iter().enumerate() {
@@ -609,7 +824,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                     episodes.len(),
                     episode.id
                 );
-                let trajectory = collect_episode(&mut policy, &state_hash, episode)?;
+                let opponent = episode
+                    .opponent
+                    .as_ref()
+                    .map(|s| opponent_cache.load(s))
+                    .transpose()?;
+                let trajectory = collect_episode(&mut policy, &learner, opponent, episode)?;
                 let name = format!("episode-{index:04}.json");
                 outputs.push(publish_json(&output_directory, &name, &trajectory)?);
             }
@@ -641,6 +861,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             )?;
             let (policy, mut state) = initialize(&source)?;
             let before = hex(&state.state_sha256_v1().map_err(err)?);
+            let learner = ExpandedSeatBehaviorV1 {
+                source: source.clone(),
+                identity: inference_identity_v1(&source, &policy, &state)?,
+            };
             let mut episodes = Vec::new();
             let mut ids = BTreeSet::new();
             let mut hashes = BTreeSet::new();
@@ -674,38 +898,27 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             }
             // Recompute all actor-visible rows, including opponent decisions,
             // before constructing learner groups. No private state is decoded.
-            let mut tensor_groups: Vec<(i8, Vec<(&DecisionRecordV1, NativeFlatDecisionTensorV3)>)> =
-                Vec::new();
+            let mut tensor_groups = Vec::new();
+            let mut opponent_cache = OpponentCacheV1::default();
             for episode in &episodes {
-                let mut index = 0;
-                while index < episode.decisions.len() {
-                    let first = &episode.decisions[index];
-                    let count = first.substep_count as usize;
-                    let mut group = Vec::new();
-                    for row in &episode.decisions[index..index + count] {
-                        let tensor = row.tensor.tensor();
-                        let output = state
-                            .model_v1()
-                            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
-                            .map_err(err)?;
-                        ensure(
-                            bits(&output.logits) == row.logits
-                                && output.value.to_bits() == row.value,
-                            "stored tensor does not reproduce rollout outputs",
-                        )?;
-                        if first.actor == episode.episode.learner_seat {
-                            group.push((row, tensor));
-                        }
-                    }
-                    if !group.is_empty() {
-                        tensor_groups.push((
-                            episode.terminal.terminal_reward[first.actor as usize] as i8,
-                            group,
-                        ));
-                    }
-                    index += count;
-                }
+                let opponent = episode
+                    .episode
+                    .opponent
+                    .as_ref()
+                    .map(|s| opponent_cache.load(s))
+                    .transpose()?;
+                validate_actual_behaviors_v1(
+                    episode,
+                    &learner,
+                    opponent.as_ref().map(|o| &o.behavior),
+                )?;
+                tensor_groups.extend(replay_learner_groups_v1(
+                    episode,
+                    &policy,
+                    opponent.as_ref().map(|o| &o.policy),
+                )?);
             }
+            drop(opponent_cache);
             ensure(!tensor_groups.is_empty(), "no learner decisions")?;
             let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
                 .iter()
@@ -852,6 +1065,374 @@ fn publish_json<T: Serialize>(
 mod tests {
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
+
+    fn test_state(policy: &FrozenPlayPolicyV1) -> NativePolicyValueTrainStateV1 {
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        model
+            .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+            .unwrap();
+        NativePolicyValueTrainStateV1::new_v1(model).unwrap()
+    }
+
+    fn test_behavior(policy: &FrozenPlayPolicyV1, checkpoint: bool) -> ExpandedSeatBehaviorV1 {
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: "test-import.json".into(),
+                sha256: "a".repeat(64),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            },
+            checkpoint: checkpoint.then(|| PinnedFileV1 {
+                path: "test-opponent.json".into(),
+                sha256: "b".repeat(64),
+            }),
+        };
+        ExpandedSeatBehaviorV1 {
+            identity: inference_identity_v1(&source, policy, &test_state(policy)).unwrap(),
+            source,
+        }
+    }
+
+    fn distinct_opponent() -> FrozenPlayPolicyV1 {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut parameters = policy.training_parameters_v3();
+        for value in &mut parameters
+            .iter_mut()
+            .find(|p| p.name == "scorer.2.weight")
+            .unwrap()
+            .values
+        {
+            *value = -*value * 2.0;
+        }
+        parameters
+            .iter_mut()
+            .find(|p| p.name == "value_head.2.bias")
+            .unwrap()
+            .values[0] += 0.25;
+        policy.replace_training_parameters_v3(&parameters).unwrap();
+        policy
+    }
+
+    fn actor_session(actor: u8) -> FastActorSessionV1 {
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Zone;
+        let mut state = ready_state();
+        state.active_player = PlayerId(actor);
+        state.priority_player = PlayerId(actor);
+        put(&mut state, PlayerId(actor), "Lightning Bolt", Zone::Hand);
+        state.players[actor as usize].mana_pool[ManaColor::R.pool_index()] = 1;
+        for player in [PlayerId::P0, PlayerId::P1] {
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            panic!("live fixture")
+        };
+        assert_eq!(seat(d.acting_player), actor);
+        assert!(d.legal_action_count > 1);
+        session
+    }
+
+    fn test_episode(
+        learner_seat: u8,
+        opponent: Option<ExpandedModelSourceV1>,
+    ) -> ExpandedEpisodeV1 {
+        ExpandedEpisodeV1 {
+            id: "population-test".into(),
+            seed: 918_337,
+            starting_player: 0,
+            learner_seat,
+            opponent,
+            registered: [list("Affinity"), list("Terror")],
+            selected: [list("Affinity"), list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100,
+            max_policy_steps: 1000,
+        }
+    }
+
+    /// Real actor-visible decision tensors sampled in a test-only grouping
+    /// container. The synthetic terminal supplies reward/shape metadata only;
+    /// this fixture is not a completed game or playing-strength measurement.
+    fn replay_fixture(
+        learner: &mut FrozenPlayPolicyV1,
+        mut opponent: Option<&mut FrozenPlayPolicyV1>,
+        learner_seat: u8,
+        actors: &[u8],
+    ) -> (
+        ExpandedTrajectoryV1,
+        ExpandedSeatBehaviorV1,
+        Option<ExpandedSeatBehaviorV1>,
+    ) {
+        let learner_behavior = test_behavior(learner, false);
+        let opponent_behavior = opponent.as_ref().map(|p| test_behavior(p, true));
+        let episode = test_episode(
+            learner_seat,
+            opponent_behavior.as_ref().map(|b| b.source.clone()),
+        );
+        let seeds = paired_policy_seeds_v1(episode.seed);
+        learner.reset_sampling_v1(seeds);
+        if let Some(other) = opponent.as_mut() {
+            other.reset_sampling_v1(seeds);
+        }
+        let sessions = [actor_session(0), actor_session(1)];
+        let mut decisions = Vec::new();
+        for (index, &actor) in actors.iter().enumerate() {
+            let acting =
+                acting_policy_v1(learner, opponent.as_deref_mut(), learner_seat, actor).unwrap();
+            let (selected, scores, tensor) = acting
+                .select_with_training_tensor_v3(&sessions[actor as usize])
+                .unwrap();
+            decisions.push(DecisionRecordV1 {
+                step: index as u64,
+                physical_decision_id: index as u64,
+                substep_index: 0,
+                substep_count: 1,
+                actor,
+                selected,
+                logits: bits(&scores.logits),
+                value: scores.value.to_bits(),
+                tensor: TensorBitsV1::from_tensor(&tensor),
+            });
+        }
+        let configs = episode.configurations().unwrap();
+        let trajectory = ExpandedTrajectoryV1 {
+            schema: if opponent.is_some() {
+                POPULATION_TRAJECTORY_SCHEMA
+            } else {
+                TRAJECTORY_SCHEMA
+            }
+            .into(),
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            source_import: learner.identity_v1().clone(),
+            behavior_state_sha256: learner_behavior.identity.state_sha256.clone(),
+            seat_behaviors: opponent_behavior.as_ref().map(|other| {
+                std::array::from_fn(|actor| {
+                    if actor == learner_seat as usize {
+                        learner_behavior.clone()
+                    } else {
+                        other.clone()
+                    }
+                })
+            }),
+            configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
+            terminal: RlSessionTerminalV1 {
+                schema_version: RL_SESSION_SCHEMA_VERSION,
+                deck_ids: episode.selected.each_ref().map(|d| d.label.clone()),
+                deck_hashes: configs
+                    .each_ref()
+                    .map(|c| explicit_deck_hash_v1(c.mainboard())),
+                episode_id: 1,
+                terminal_outcome: crate::rl::TerminalOutcomeV1::P0Win,
+                terminal_classification: TerminalClassificationV1::Natural,
+                terminal_code: TerminalSafeCodeV2::NaturalGameOver,
+                winner: Some(PlayerSeatV1::P0),
+                terminal_reward: [1, -1],
+                terminal_reason: "synthetic unit-test grouping fixture".into(),
+                policy_step_count: decisions.len() as u64,
+                physical_decision_count: decisions.len() as u64,
+            },
+            episode,
+            decisions,
+        };
+        (trajectory, learner_behavior, opponent_behavior)
+    }
+
+    #[test]
+    fn population_routes_distinct_parameters_and_physical_seat_rng_for_both_learner_seats() {
+        for learner_seat in [0, 1] {
+            let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+            let mut opponent = distinct_opponent();
+            assert_eq!(learner.identity_v1(), opponent.identity_v1());
+            assert_ne!(
+                learner.actual_model_identity_v1(),
+                opponent.actual_model_identity_v1()
+            );
+            let actors: Vec<u8> = [0, 1, 1, 0, 1, 0, 0, 1].repeat(4);
+            let (trajectory, learner_behavior, opponent_behavior) =
+                replay_fixture(&mut learner, Some(&mut opponent), learner_seat, &actors);
+            validate_actual_behaviors_v1(
+                &trajectory,
+                &learner_behavior,
+                opponent_behavior.as_ref(),
+            )
+            .unwrap();
+            validate_trajectory(&trajectory).unwrap();
+            let mut rng = paired_policy_seeds_v1(trajectory.episode.seed).map(SplitMix64::seed);
+            let mut sampler = FastCategoricalScratch::default();
+            for row in &trajectory.decisions {
+                let tensor = row.tensor.tensor();
+                let expected = if row.actor == learner_seat {
+                    &learner
+                } else {
+                    &opponent
+                }
+                .score_training_tensor_v3(&tensor)
+                .unwrap();
+                let wrong = if row.actor == learner_seat {
+                    &opponent
+                } else {
+                    &learner
+                }
+                .score_training_tensor_v3(&tensor)
+                .unwrap();
+                assert_eq!(row.logits, bits(&expected.logits));
+                assert_eq!(row.value, expected.value.to_bits());
+                assert_ne!(row.logits, bits(&wrong.logits));
+                assert_ne!(row.value, wrong.value.to_bits());
+                assert_eq!(
+                    row.selected as usize,
+                    sampler
+                        .sample(&expected.logits, rng[row.actor as usize].next_u64())
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn population_replay_checks_opponent_identity_outputs_and_tensors_before_learner_filter() {
+        for learner_seat in [0, 1] {
+            let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+            let mut opponent = distinct_opponent();
+            let (trajectory, learner_behavior, opponent_behavior) =
+                replay_fixture(&mut learner, Some(&mut opponent), learner_seat, &[0, 1]);
+            let groups = replay_learner_groups_v1(&trajectory, &learner, Some(&opponent)).unwrap();
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].0, if learner_seat == 0 { 1 } else { -1 });
+            assert!(groups[0].1.iter().all(|(row, _)| row.actor == learner_seat));
+            assert!(replay_learner_groups_v1(&trajectory, &learner, Some(&learner)).is_err());
+            let mut changed = trajectory.clone();
+            let other = (1 - learner_seat) as usize;
+            changed.seat_behaviors.as_mut().unwrap()[other]
+                .identity
+                .model
+                .weights_sha256 = "0".repeat(64);
+            assert_eq!(
+                validate_actual_behaviors_v1(
+                    &changed,
+                    &learner_behavior,
+                    opponent_behavior.as_ref()
+                )
+                .unwrap_err(),
+                "actual opponent behavior identity differs"
+            );
+            changed = trajectory.clone();
+            changed.seat_behaviors.as_mut().unwrap()[other]
+                .source
+                .checkpoint
+                .as_mut()
+                .unwrap()
+                .sha256 = "0".repeat(64);
+            assert!(validate_actual_behaviors_v1(
+                &changed,
+                &learner_behavior,
+                opponent_behavior.as_ref()
+            )
+            .is_err());
+            changed = trajectory.clone();
+            changed.decisions[other].tensor.state[0] = f32::NAN.to_bits();
+            assert!(replay_learner_groups_v1(&changed, &learner, Some(&opponent)).is_err());
+            changed = trajectory.clone();
+            changed.decisions[other].value ^= 1;
+            assert!(replay_learner_groups_v1(&changed, &learner, Some(&opponent)).is_err());
+            changed = trajectory.clone();
+            let row = &mut changed.decisions[other];
+            row.selected = (row.selected + 1) % row.logits.len() as u32;
+            assert!(validate_trajectory(&changed).is_err());
+        }
+    }
+
+    #[test]
+    fn population_gradient_ignores_opponent_rows_and_updated_learner_rejects_stale_data() {
+        for learner_seat in [0, 1] {
+            let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+            let mut opponent = distinct_opponent();
+            let (short, _, _) =
+                replay_fixture(&mut learner, Some(&mut opponent), learner_seat, &[0, 1]);
+            let actors = if learner_seat == 0 {
+                vec![0, 1, 1]
+            } else {
+                vec![0, 0, 1]
+            };
+            let (long, learner_behavior, opponent_behavior) =
+                replay_fixture(&mut learner, Some(&mut opponent), learner_seat, &actors);
+            let opponent_before = opponent.actual_model_identity_v1();
+            let mut updated_hashes = Vec::new();
+            for trajectory in [&short, &long] {
+                let captured =
+                    replay_learner_groups_v1(trajectory, &learner, Some(&opponent)).unwrap();
+                assert_eq!(captured.len(), 1);
+                let steps: Vec<_> = captured[0]
+                    .1
+                    .iter()
+                    .map(|(row, tensor)| NativePolicySubstepV1 {
+                        forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                            encoded_decision_view_v3(tensor),
+                        )),
+                        selected_action_index: row.selected as usize,
+                        expected_raw_action_logit_bits: &row.logits,
+                        expected_value_bits: row.value,
+                    })
+                    .collect();
+                let groups = [NativePolicyPhysicalDecisionV1 {
+                    substeps: &steps,
+                    terminal_return: captured[0].0,
+                    baseline_bits: 0,
+                }];
+                let mut state = test_state(&learner);
+                state
+                    .train_step_feature_transfer_v3(&groups, 0.5, 0.001)
+                    .unwrap();
+                let after = hex(&state.state_sha256_v1().unwrap());
+                assert_ne!(after, learner_behavior.identity.state_sha256);
+                let mut updated = learner_behavior.clone();
+                updated.identity.state_sha256 = after.clone();
+                assert_eq!(
+                    validate_actual_behaviors_v1(trajectory, &updated, opponent_behavior.as_ref())
+                        .unwrap_err(),
+                    "stale trajectory: behavior optimizer/model state differs"
+                );
+                updated_hashes.push(after);
+            }
+            assert_eq!(updated_hashes[0], updated_hashes[1]);
+            assert_eq!(opponent.actual_model_identity_v1(), opponent_before);
+        }
+    }
+
+    #[test]
+    fn legacy_self_play_defaults_omit_new_fields_and_keep_both_seat_streams() {
+        let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+        let (trajectory, behavior, _) = replay_fixture(&mut learner, None, 1, &[0, 1, 1, 0]);
+        let value = serde_json::to_value(&trajectory).unwrap();
+        assert!(value.get("seat_behaviors").is_none());
+        assert!(value["episode"].get("opponent").is_none());
+        assert_eq!(value["schema"], TRAJECTORY_SCHEMA);
+        let decoded: ExpandedTrajectoryV1 = serde_json::from_value(value.clone()).unwrap();
+        assert!(decoded.episode.opponent.is_none());
+        assert!(decoded.seat_behaviors.is_none());
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), value);
+        validate_actual_behaviors_v1(&decoded, &behavior, None).unwrap();
+        assert_eq!(
+            replay_learner_groups_v1(&decoded, &learner, None)
+                .unwrap()
+                .len(),
+            2
+        );
+        let mut changed = decoded.clone();
+        changed.schema = POPULATION_TRAJECTORY_SCHEMA.into();
+        assert!(validate_trajectory(&changed).is_err());
+        changed = decoded;
+        changed.episode.opponent = Some(behavior.source);
+        assert!(validate_trajectory(&changed).is_err());
+    }
 
     fn checkpoint_fixture_v1() -> (
         FrozenPlayPolicyV1,
@@ -1036,6 +1617,7 @@ mod tests {
             seed: 1,
             starting_player: 0,
             learner_seat: 0,
+            opponent: None,
             registered: [deck.clone(), list("Terror")],
             selected: [deck, list("Terror")],
             postboard: false,

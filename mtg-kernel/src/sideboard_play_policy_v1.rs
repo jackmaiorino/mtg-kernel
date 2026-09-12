@@ -458,6 +458,26 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
+    /// Read-only replay of an actor-visible training tensor against the
+    /// installed model. This does not consume either physical seat's RNG.
+    pub(crate) fn score_training_tensor_v3(
+        &self,
+        tensor: &NativeFlatDecisionTensorV3,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        require(
+            self.successor.is_some(),
+            "training requires explicit successor features",
+        )?;
+        let output = self
+            .model
+            .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
+            .map_err(|e| e.to_string())?;
+        Ok(FrozenPlayDecisionScoresV1 {
+            logits: output.logits,
+            value: output.value,
+        })
+    }
+
     pub(crate) fn select_with_training_tensor_v3(
         &mut self,
         session: &FastActorSessionV1,

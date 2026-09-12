@@ -6,6 +6,7 @@ use crate::bo3_match::{
     GameOutcomeV1, GameStartV1, MatchOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1,
 };
 use crate::bo3_session::BestOfThreeDeckMatchV1;
+use crate::expanded_deck_training_v1::ExpandedInferenceIdentityV1;
 use crate::game_summary_v1::{
     try_run_fast_episode_with_summary_v1, GameSummaryV1, RemovalCounterspellTagsV1,
 };
@@ -15,9 +16,12 @@ use crate::learned_sideboard_v1::{
     SideboardGameResourceV1, SideboardOpponentEvidenceV1, SideboardOwnCardOutcomeV1,
     VisibleEvidenceZoneV1,
 };
-use crate::paired_bo1_harness_v1::{paired_policy_seeds_v1, PairedBo1PolicyV1};
-use crate::rl_session::FastActorSessionV1;
+use crate::paired_bo1_harness_v1::{
+    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1,
+};
+use crate::rl_session::{FastActorSessionV1, RlSessionError};
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
+use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -76,6 +80,105 @@ pub struct LearnedBo3RegistrationRecordV1 {
     pub registered_75_sha256: String,
     pub mainboard_sha256: String,
     pub sideboard_sha256: String,
+}
+
+/// Population results deliberately have no single-player weight identity.
+/// Every array is ordered by physical seat, including actual model receipts.
+#[derive(Clone, Debug, Serialize)]
+pub struct LearnedPopulationBo3ResultV1 {
+    pub schema: String,
+    pub config: LearnedBo3RunConfigV1,
+    pub explicit_registrations: [LearnedBo3RegistrationRecordV1; 2],
+    pub play_models: [ExpandedInferenceIdentityV1; 2],
+    pub sideboard_policy_identities: [String; 2],
+    pub outcome: MatchOutcomeV1,
+    pub games: Vec<LearnedBo3GameRecordV1>,
+    pub sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
+}
+
+/// Each policy sees only the input belonging to its assigned physical seat.
+/// Both models receive the declared seed pair at a game boundary. A policy's
+/// other seat stream is never advanced by the router.
+pub struct SeatRoutedBo3PlayPolicyV1<'a> {
+    policies: [&'a mut dyn PairedBo1PolicyV1; 2],
+    uses_v3: bool,
+}
+
+impl<'a> SeatRoutedBo3PlayPolicyV1<'a> {
+    pub fn new_v1(policies: [&'a mut dyn PairedBo1PolicyV1; 2]) -> Result<Self, String> {
+        let uses_v3 = policies[0].uses_observation_successor_v3();
+        if uses_v3 != policies[1].uses_observation_successor_v3() {
+            return Err("per-seat BO3 policies require the same observation contract".into());
+        }
+        Ok(Self { policies, uses_v3 })
+    }
+}
+
+impl PairedBo1PolicyV1 for SeatRoutedBo3PlayPolicyV1<'_> {
+    fn uses_observation_successor_v3(&self) -> bool {
+        self.uses_v3
+    }
+
+    fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
+        self.policies[0].reset_for_game_v1(seeds)?;
+        self.policies[1].reset_for_game_v1(seeds)
+    }
+
+    fn select_action_v1(
+        &mut self,
+        input: PairedBo1PolicyInputV1<'_>,
+    ) -> Result<u32, RlSessionError> {
+        let seat = match input.decision().acting_player {
+            crate::rl::PlayerSeatV1::P0 => 0,
+            crate::rl::PlayerSeatV1::P1 => 1,
+        };
+        self.policies[seat].select_action_v1(input)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Bo3ModelProvenanceV1<'a> {
+    Shared(&'a str),
+    PerSeat([&'a str; 2]),
+}
+
+impl<'a> Bo3ModelProvenanceV1<'a> {
+    fn weights_for_seat(self, seat: usize) -> &'a str {
+        match self {
+            Self::Shared(value) => value,
+            Self::PerSeat(values) => values[seat],
+        }
+    }
+}
+
+struct Bo3ExecutionV1 {
+    config: LearnedBo3RunConfigV1,
+    outcome: MatchOutcomeV1,
+    games: Vec<LearnedBo3GameRecordV1>,
+    sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
+}
+
+impl Bo3ExecutionV1 {
+    fn into_legacy(
+        self,
+        registrations: Option<[LearnedBo3RegistrationRecordV1; 2]>,
+        weights: &str,
+        sideboard_identity: &str,
+        uses_v3: bool,
+    ) -> LearnedBo3ResultV1 {
+        LearnedBo3ResultV1 {
+            schema: "kernel_learned_bo3/v1".into(),
+            config: self.config,
+            explicit_registrations: registrations,
+            play_weights_sha256: weights.to_owned(),
+            play_observation_contract: uses_v3
+                .then(|| "rich-v6-flat-v3-explicit-frozen-feature-transfer".into()),
+            sideboard_policy_identity: sideboard_identity.to_owned(),
+            outcome: self.outcome,
+            games: self.games,
+            sideboard_decisions: self.sideboard_decisions,
+        }
+    }
 }
 
 impl LearnedBo3RegistrationRecordV1 {
@@ -212,16 +315,21 @@ pub fn run_learned_bo3_v1(
         config.game_one_chooser,
     )
     .map_err(|error| error.to_string())?;
-    run_learned_bo3_session_v1(
+    let uses_v3 = play_policy.uses_observation_successor_v3();
+    Ok(run_learned_bo3_session_v1(
         config,
         match_session,
-        None,
-        play_weights_sha256,
-        sideboard_policy_identity,
+        Bo3ModelProvenanceV1::Shared(play_weights_sha256),
         tags,
         play_policy,
         sideboard_policies,
-    )
+    )?
+    .into_legacy(
+        None,
+        play_weights_sha256,
+        sideboard_policy_identity,
+        uses_v3,
+    ))
 }
 
 /// Executes the same BO3 loop with the supplied supported registered 75s.
@@ -252,16 +360,94 @@ pub fn run_learned_bo3_with_registrations_v1(
             match_session.registered_deck(seat).unwrap(),
         )
     });
-    run_learned_bo3_session_v1(
+    let uses_v3 = play_policy.uses_observation_successor_v3();
+    Ok(run_learned_bo3_session_v1(
         config,
         match_session,
-        Some(receipts),
-        play_weights_sha256,
-        sideboard_policy_identity,
+        Bo3ModelProvenanceV1::Shared(play_weights_sha256),
         tags,
         play_policy,
         sideboard_policies,
-    )
+    )?
+    .into_legacy(
+        Some(receipts),
+        play_weights_sha256,
+        sideboard_policy_identity,
+        uses_v3,
+    ))
+}
+
+/// Evaluate separately loaded current/historical players without substituting
+/// either seat's model or registration. The strict CLI loader supplies the
+/// checkpoint receipts; this boundary also checks them against installed model
+/// parameters, embeddings and import ancestry before any gameplay.
+pub fn run_population_bo3_v1(
+    config: LearnedBo3RunConfigV1,
+    registered_decks: [RegisteredDeckV1; 2],
+    play_models: [ExpandedInferenceIdentityV1; 2],
+    sideboard_policy_identities: [String; 2],
+    tags: &RemovalCounterspellTagsV1,
+    play_policies: &mut [FrozenPlayPolicyV1; 2],
+    sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
+) -> Result<LearnedPopulationBo3ResultV1, String> {
+    validate_run_limits_v1(&config)?;
+    for seat in 0..2 {
+        if !play_policies[seat].uses_observation_successor_v3()
+            || play_models[seat].feature_schema_version
+                != crate::native_flat_tensorizer_v3::FEATURE_SCHEMA_VERSION_V3
+            || play_models[seat].feature_registry_version
+                != crate::native_flat_tensorizer_v3::FEATURE_REGISTRY_VERSION_V3
+            || play_models[seat].features_source_sha256
+                != crate::native_flat_tensorizer_v3::FEATURES_SOURCE_SHA256_V3
+            || play_models[seat].feature_descriptor_sha256
+                != crate::native_flat_tensorizer_v3::FEATURE_DESCRIPTOR_SHA256_V3
+        {
+            return Err(format!(
+                "seat {seat} population model requires the current V3 feature contract"
+            ));
+        }
+        if registered_decks[seat].deck_id() != config.deck_ids[seat] {
+            return Err(format!(
+                "seat {seat} registration label differs from match metadata"
+            ));
+        }
+        if play_models[seat].model != play_policies[seat].actual_model_identity_v1()
+            || &play_models[seat].source_import != play_policies[seat].identity_v1()
+        {
+            return Err(format!(
+                "seat {seat} population receipt differs from installed model"
+            ));
+        }
+    }
+    let registrations = registered_decks
+        .each_ref()
+        .map(LearnedBo3RegistrationRecordV1::from_registered_v1);
+    let session = BestOfThreeDeckMatchV1::new_live_v1(registered_decks, config.game_one_chooser)
+        .map_err(|error| error.to_string())?;
+    let [p0, p1] = play_policies;
+    let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([p0, p1])?;
+    let played = run_learned_bo3_session_v1(
+        config,
+        session,
+        Bo3ModelProvenanceV1::PerSeat(
+            play_models
+                .each_ref()
+                .map(|r| r.model.weights_sha256.as_str()),
+        ),
+        tags,
+        &mut router,
+        sideboard_policies,
+    )?;
+    Ok(LearnedPopulationBo3ResultV1 {
+        schema: "kernel_population_bo3/v1".into(),
+        config: played.config,
+        explicit_registrations: registrations,
+        play_models,
+        sideboard_policy_identities,
+        outcome: played.outcome,
+        games: played.games,
+        sideboard_decisions: played.sideboard_decisions,
+    })
 }
 
 fn validate_run_limits_v1(config: &LearnedBo3RunConfigV1) -> Result<(), String> {
@@ -280,13 +466,11 @@ fn validate_run_limits_v1(config: &LearnedBo3RunConfigV1) -> Result<(), String> 
 fn run_learned_bo3_session_v1(
     config: LearnedBo3RunConfigV1,
     mut match_session: BestOfThreeDeckMatchV1,
-    explicit_registrations: Option<[LearnedBo3RegistrationRecordV1; 2]>,
-    play_weights_sha256: &str,
-    sideboard_policy_identity: &str,
+    model_provenance: Bo3ModelProvenanceV1<'_>,
     tags: &RemovalCounterspellTagsV1,
     play_policy: &mut dyn PairedBo1PolicyV1,
     sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
-) -> Result<LearnedBo3ResultV1, String> {
+) -> Result<Bo3ExecutionV1, String> {
     let registered = [PlayerId::P0, PlayerId::P1].map(|seat| {
         match_session
             .registered_deck(seat)
@@ -295,22 +479,15 @@ fn run_learned_bo3_session_v1(
             .clone()
     });
     let mut current = registered.clone();
-    let mut summaries = Vec::new();
+    let mut summaries: [Vec<GameSummaryV1>; 2] = [Vec::new(), Vec::new()];
     let mut games = Vec::new();
     let mut sideboard_decisions = Vec::new();
     let mut seed_stream = SplitMix64::seed(config.seed);
     loop {
         let (game_index, chooser) = match match_session.match_state().phase() {
             MatchPhaseV1::Complete { outcome } => {
-                return Ok(LearnedBo3ResultV1 {
-                    schema: "kernel_learned_bo3/v1".to_owned(),
+                return Ok(Bo3ExecutionV1 {
                     config,
-                    explicit_registrations,
-                    play_weights_sha256: play_weights_sha256.to_owned(),
-                    play_observation_contract: play_policy
-                        .uses_observation_successor_v3()
-                        .then(|| "rich-v6-flat-v3-explicit-frozen-feature-transfer".to_owned()),
-                    sideboard_policy_identity: sideboard_policy_identity.to_owned(),
                     outcome,
                     games,
                     sideboard_decisions,
@@ -338,7 +515,7 @@ fn run_learned_bo3_session_v1(
                 let input = project_sideboard_input_v1(
                     &registered[seat.index()],
                     seat,
-                    &summaries,
+                    &summaries[seat.index()],
                     game_index,
                     wins,
                 )?;
@@ -396,7 +573,7 @@ fn run_learned_bo3_session_v1(
         .map_err(|error| error.to_string())?;
         let summary = try_run_fast_episode_with_summary_v1(
             &mut episode,
-            play_weights_sha256,
+            model_provenance.weights_for_seat(0),
             tags,
             play_policy,
         )
@@ -420,7 +597,13 @@ fn run_learned_bo3_session_v1(
         let outcome = summary
             .winner
             .map_or(GameOutcomeV1::Draw, |winner| GameOutcomeV1::Win { winner });
-        summaries.push(summary);
+        // Summary provenance belongs to the perspective receiving its own
+        // history. Never label a two-player population with a composite hash
+        // in a single-model weight field. Raw summaries remain runner-private.
+        let mut second_summary = summary.clone();
+        second_summary.checkpoint_weights_hash = model_provenance.weights_for_seat(1).to_owned();
+        summaries[0].push(summary);
+        summaries[1].push(second_summary);
         match_session
             .record_game_result_v1(outcome)
             .map_err(|error| error.to_string())?;
@@ -436,6 +619,133 @@ mod tests {
     use super::*;
     use crate::game_summary_v1::{OpponentEvidenceRowV1, OwnCardOutcomeV1, ResourceCurveV1};
     use crate::state::Zone;
+
+    struct RoutingSpy {
+        uses_v3: bool,
+        resets: Vec<[u64; 2]>,
+        actors: Vec<crate::rl::PlayerSeatV1>,
+        rng: [SplitMix64; 2],
+    }
+
+    impl RoutingSpy {
+        fn new(uses_v3: bool) -> Self {
+            Self {
+                uses_v3,
+                resets: vec![],
+                actors: vec![],
+                rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            }
+        }
+    }
+
+    impl PairedBo1PolicyV1 for RoutingSpy {
+        fn uses_observation_successor_v3(&self) -> bool {
+            self.uses_v3
+        }
+        fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
+            self.resets.push(seeds);
+            self.rng = seeds.map(SplitMix64::seed);
+            Ok(())
+        }
+        fn select_action_v1(
+            &mut self,
+            input: PairedBo1PolicyInputV1<'_>,
+        ) -> Result<u32, RlSessionError> {
+            let decision = input.decision();
+            self.actors.push(decision.acting_player);
+            let seat = match decision.acting_player {
+                crate::rl::PlayerSeatV1::P0 => 0,
+                crate::rl::PlayerSeatV1::P1 => 1,
+            };
+            Ok((self.rng[seat].next_u64() as u32) % decision.legal_action_count)
+        }
+    }
+
+    #[test]
+    fn population_router_delivers_only_acting_seat_and_preserves_seed_streams() {
+        use crate::rl::PlayerSeatV1::{P0, P1};
+        let session = FastActorSessionV1::reset(7, 92, 1);
+        let crate::rl_session::FastActorResponseV1::Decision(base) = session.current_response()
+        else {
+            panic!("initial actor decision required")
+        };
+        let mut policies = [RoutingSpy::new(true), RoutingSpy::new(true)];
+        let seeds = paired_policy_seeds_v1(4242);
+        let mut expected_rng = seeds.map(SplitMix64::seed);
+        let actors = [P1, P0, P1, P0, P1];
+        let expected: Vec<_> = actors
+            .iter()
+            .map(|actor| {
+                let seat = if *actor == P0 { 0 } else { 1 };
+                (expected_rng[seat].next_u64() as u32) % 32
+            })
+            .collect();
+        {
+            let [p0, p1] = &mut policies;
+            let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([p0, p1]).unwrap();
+            for _ in 0..2 {
+                router.reset_for_game_v1(seeds).unwrap();
+                let actual: Vec<_> = actors
+                    .iter()
+                    .map(|actor| {
+                        // This routing spy consumes only decision metadata. The
+                        // real adapter remains the sole scorer-input producer.
+                        let decision = crate::rl_session::FastActorDecisionV1 {
+                            acting_player: *actor,
+                            legal_action_count: 32,
+                            ..base
+                        };
+                        router
+                            .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                            .unwrap()
+                    })
+                    .collect();
+                assert_eq!(actual, expected);
+            }
+        }
+        assert_eq!(policies[0].actors, vec![P0; 4]);
+        assert_eq!(policies[1].actors, vec![P1; 6]);
+        assert_eq!(policies[0].resets, vec![seeds; 2]);
+        assert_eq!(policies[1].resets, vec![seeds; 2]);
+    }
+
+    #[test]
+    fn population_router_rejects_mixed_observation_contracts_before_reset() {
+        let mut p0 = RoutingSpy::new(false);
+        let mut p1 = RoutingSpy::new(true);
+        assert!(SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0, &mut p1]).is_err());
+        assert!(p0.resets.is_empty());
+        assert!(p1.resets.is_empty());
+    }
+
+    #[test]
+    fn legacy_result_serialization_retains_exact_single_model_fields() {
+        let output = Bo3ExecutionV1 {
+            config: LearnedBo3RunConfigV1 {
+                deck_ids: ["Rally".into(), "Burn".into()],
+                seed: 17,
+                game_one_chooser: PlayerId::P0,
+                max_physical_games: 3,
+                max_physical_decisions: 4000,
+                max_policy_steps: 40000,
+            },
+            outcome: MatchOutcomeV1::Winner {
+                winner: PlayerId::P0,
+            },
+            games: vec![],
+            sideboard_decisions: vec![],
+        }
+        .into_legacy(None, "weights", "sideboard", false);
+        let expected = serde_json::json!({
+            "schema":"kernel_learned_bo3/v1", "config":output.config,
+            "play_weights_sha256":"weights", "sideboard_policy_identity":"sideboard",
+            "outcome":output.outcome, "games":[], "sideboard_decisions":[]
+        });
+        assert_eq!(serde_json::to_value(&output).unwrap(), expected);
+        assert_eq!(serde_json::to_vec(&output).unwrap(),
+            br#"{"schema":"kernel_learned_bo3/v1","config":{"deck_ids":["Rally","Burn"],"seed":17,"game_one_chooser":0,"max_physical_games":3,"max_physical_decisions":4000,"max_policy_steps":40000},"play_weights_sha256":"weights","sideboard_policy_identity":"sideboard","outcome":{"winner":{"winner":0}},"games":[],"sideboard_decisions":[]}"#);
+    }
+
     fn summary() -> GameSummaryV1 {
         GameSummaryV1 {
             schema_version: 1,
