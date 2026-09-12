@@ -4,6 +4,10 @@ September 12, 2026. Assigned worktree `E:/mtg-kernel-learned-sideboarding-codex`
 
 **Primary end goal:** propose a supported registered 75, learn to play and sideboard it, then evaluate it against a diverse opponent population on fresh matches. A fixed list of deck classes or successful exchanges within an existing 75 is only part of that goal.
 
+**Added near-term calibration goal, September 12:** compare agent matchup win rates with human matchup win rates, then compare aggregate deck rates under the same opponent-frequency weights. Align format, BO3 match outcome, rules/date window, deck variants and event population. Show human, agent and difference heatmaps with counts and uncertainty; leave unsupported cells visibly missing. Agreement would support matchup plausibility, but would not by itself demonstrate strong play. Use human rates as an external diagnostic, not a training target. Better play and successful brewing may eventually justify departures from the human baseline. A human dataset and numerical comparison gates have not yet been selected. See [evaluation note](E:/mtg-kernel-learned-sideboarding-evidence/evaluation-breadth-20260912/NOTE.md).
+
+**Current engineering prerequisite:** the approved 400-match pilot stopped on September 12 after 30 completed matches and 67 games. Terror versus Rally reached a payable Ward trigger with two spells targeting the same Terror; the current observation cannot identify the spell bound to that payment. This occurred before sideboarding and is an observation-coverage failure, not a sideboard result. Preserve pilot-001 and the frozen fits. A versioned Ward observation and feature contract must be integrated before a fresh pilot can qualify broader BO3 coverage. See [diagnosis and successor plan](learned_sideboarding_engineering_005_20260912.md). The unexecuted-preparation descriptions below describe the earlier engineering-004 snapshot.
+
 ```mermaid
 flowchart LR
   A[Grouped sideboard fit and diagnostic] --> B[Fixed-player BO3 comparison]
