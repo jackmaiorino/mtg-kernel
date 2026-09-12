@@ -297,6 +297,13 @@ fn run() -> Result<(), String> {
         &json!({
             "schema":"kernel-learned-sideboard-cli-start/v1", "command":command,
             "inputs":inputs, "binary":binary_receipt()?, "compiled_sources":compiled_sources(),
+            "build": {
+                "git_commit": env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+                "git_clean": env!("MTG_KERNEL_BUILD_GIT_CLEAN"),
+                "tracked_tree_sha256": env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+                "toolchain_pin": include_str!("../../../rust-toolchain.toml")
+            },
+            "execution": {"device":"cpu", "gpu_ordinal":null},
             "tag_file_sha256":hash(TAG_BYTES), "embedding_table_sha256":embeddings.table_sha256_v1(),
             "nonclaims":["research implementation, no strength or promotion claim", "play weights and embeddings remain frozen"]
         }),
