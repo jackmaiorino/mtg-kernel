@@ -117,6 +117,22 @@ pub struct FrozenPlayPolicyIdentityV1 {
     pub observation_successor: Option<FrozenPlayObservationReceiptV3>,
 }
 
+/// Identity of the parameters actually installed for inference. The separate
+/// frozen import receipt remains ancestry after a successor update.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PlayModelIdentityV1 {
+    pub schema: String,
+    /// Flattened named-layout parameter values as binary32 little-endian,
+    /// matching the frozen export's parameter-section hash semantics.
+    pub weights_sha256: String,
+    pub model_parameter_sha256: String,
+    pub embedding_table_sha256: String,
+    pub feature_contract_digest: String,
+    pub feature_encoding_digest: String,
+    pub card_db_hash: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct FrozenPlayDecisionScoresV1 {
     pub logits: Vec<f32>,
@@ -148,6 +164,60 @@ struct FrozenPlaySuccessorStateV3 {
 }
 
 impl FrozenPlayPolicyV1 {
+    #[cfg(test)]
+    pub(crate) fn training_fixture_v3() -> Self {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let parameters = model.parameter_snapshot_v1();
+        let embeddings = parameters
+            .iter()
+            .find(|p| p.name == "card_embedding.weight")
+            .unwrap()
+            .values
+            .clone();
+        let mut policy = Self {
+            model,
+            embeddings,
+            identity: FrozenPlayPolicyIdentityV1 {
+                schema: "test-only-import-ancestry".into(),
+                source_export_schema: EXPORT_SCHEMA.into(),
+                source_metadata_sha256: "a".repeat(64),
+                weights_sha256: String::new(),
+                model_parameter_sha256: String::new(),
+                source_run_sha256: "b".repeat(64),
+                source_generation: 7,
+                source_git_commit: "1".repeat(40),
+                source_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+                destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+                source_registry_sha256: "c".repeat(64),
+                destination_registry_sha256: hash(DESTINATION_REGISTRY),
+                source_card_count: crate::card_def::CARD_DEFS.len(),
+                destination_card_count: crate::card_def::CARD_DEFS.len(),
+                source_training_deck_ids: vec!["Rally".into(), "Rally".into()],
+                namespace_rule: "test fixture".into(),
+                appended_rows: "test fixture".into(),
+                feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+                sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION.into(),
+                reader_revalidated_store_chain: false,
+                observation_successor: None,
+            },
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: Some(FrozenPlaySuccessorStateV3::default()),
+        };
+        let installed = policy.actual_model_identity_v1();
+        policy.identity.weights_sha256 = installed.weights_sha256;
+        policy.identity.model_parameter_sha256 = installed.model_parameter_sha256;
+        policy
+    }
+
     pub fn load_v1(input: &FrozenPlayPolicyImportV1) -> Result<Self, String> {
         let metadata_bytes = read_bounded(&input.export_directory.join("metadata.json"), 65_536)?;
         require(
@@ -338,6 +408,29 @@ impl FrozenPlayPolicyV1 {
         &self.identity
     }
 
+    pub fn actual_model_identity_v1(&self) -> PlayModelIdentityV1 {
+        let mut weights = Sha256::new();
+        let mut embeddings = Sha256::new();
+        self.model.visit_parameters_v1(|name, _, values| {
+            for value in values {
+                let bytes = value.to_bits().to_le_bytes();
+                weights.update(bytes);
+                if name == "card_embedding.weight" {
+                    embeddings.update(bytes);
+                }
+            }
+        });
+        PlayModelIdentityV1 {
+            schema: "mtg-kernel-actual-play-model/v1".into(),
+            weights_sha256: format!("{:x}", weights.finalize()),
+            model_parameter_sha256: self.model.parameter_manifest_sha256_v1(),
+            embedding_table_sha256: format!("{:x}", embeddings.finalize()),
+            feature_contract_digest: self.identity.feature_contract_digest.clone(),
+            feature_encoding_digest: self.identity.feature_encoding_digest.clone(),
+            card_db_hash: self.identity.destination_card_db_hash.clone(),
+        }
+    }
+
     /// Crate-only warm-start bridge. The caller owns the successor checkpoint
     /// identity; the original import receipt continues to describe the source.
     pub(crate) fn training_parameters_v3(&self) -> Vec<NativeNamedParameterV1> {
@@ -354,7 +447,15 @@ impl FrozenPlayPolicyV1 {
         )?;
         self.model
             .replace_parameter_snapshot_v1(parameters)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // Replacement validates the whole model before committing. Copy the
+        // installed table so sideboard inputs cannot retain ancestral rows.
+        self.model.visit_parameters_v1(|name, _, values| {
+            if name == "card_embedding.weight" {
+                self.embeddings = values.to_vec();
+            }
+        });
+        Ok(())
     }
 
     pub(crate) fn select_with_training_tensor_v3(
@@ -737,6 +838,89 @@ impl OwnedScoringV1 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn successor_parameter_install_refreshes_embeddings_and_preserves_ancestry() {
+        use crate::learned_sideboard_v1::{
+            FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1, SideboardPlayIdentityV1,
+        };
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let ancestry = policy.identity_v1().clone();
+        let before = policy.actual_model_identity_v1();
+        let head = {
+            let embeddings = FrozenSideboardEmbeddingsV1::new_v1(
+                policy.embedding_rows_v1(),
+                SideboardPlayIdentityV1 {
+                    weights_sha256: before.weights_sha256.clone(),
+                    git_head: ancestry.source_git_commit.clone(),
+                },
+            )
+            .unwrap();
+            assert_eq!(embeddings.table_sha256_v1(), before.embedding_table_sha256);
+            LearnedSideboardModelV1::new_v1(19, &embeddings)
+        };
+        let mut replacement = policy.training_parameters_v3();
+        let embedding = replacement
+            .iter_mut()
+            .find(|p| p.name == "card_embedding.weight")
+            .unwrap();
+        embedding.values[CARD_EMBEDDING_DIM_V1] = 0.375;
+        let expected_bits = embedding
+            .values
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>();
+        policy.replace_training_parameters_v3(&replacement).unwrap();
+        let after = policy.actual_model_identity_v1();
+        assert_ne!(before.weights_sha256, after.weights_sha256);
+        assert_ne!(before.model_parameter_sha256, after.model_parameter_sha256);
+        assert_ne!(before.embedding_table_sha256, after.embedding_table_sha256);
+        assert_eq!(policy.identity_v1(), &ancestry);
+        assert_eq!(
+            policy
+                .embedding_rows_v1()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            expected_bits
+        );
+        assert_eq!(
+            policy
+                .training_parameters_v3()
+                .iter()
+                .find(|p| p.name == "card_embedding.weight")
+                .unwrap()
+                .values
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            expected_bits
+        );
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(
+            policy.embedding_rows_v1(),
+            SideboardPlayIdentityV1 {
+                weights_sha256: after.weights_sha256.clone(),
+                git_head: ancestry.source_git_commit.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(embeddings.table_sha256_v1(), after.embedding_table_sha256);
+        assert!(head.validate_frozen_embeddings_v1(&embeddings).is_err());
+
+        // The rejected install changes neither live parameters nor their copy.
+        replacement[0].values[0] = f32::NAN;
+        assert!(policy.replace_training_parameters_v3(&replacement).is_err());
+        assert_eq!(policy.actual_model_identity_v1(), after);
+        assert_eq!(policy.identity_v1(), &ancestry);
+        assert_eq!(
+            policy
+                .embedding_rows_v1()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            expected_bits
+        );
+    }
 
     #[test]
     fn previous_v3_feature_identity_rejects_before_export_read() {

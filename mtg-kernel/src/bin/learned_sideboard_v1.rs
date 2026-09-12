@@ -1,8 +1,12 @@
 //! JSON-config entry point for frozen-play, visible-input sideboarding research.
 
+use mtg_kernel::expanded_deck_training_v1::{
+    load_expanded_inference_v1, ExpandedDeckListV1, ExpandedModelSourceV1,
+};
 use mtg_kernel::game_summary_v1::RemovalCounterspellTagsV1;
 use mtg_kernel::learned_bo3_v1::{
-    run_learned_bo3_v1, LearnedBo3RunConfigV1, SideboardSelectionV1, VisibleSideboardPolicyV1,
+    run_learned_bo3_v1, run_learned_bo3_with_registrations_v1, LearnedBo3RunConfigV1,
+    SideboardSelectionV1, VisibleSideboardPolicyV1,
 };
 use mtg_kernel::learned_sideboard_v1::{
     actions_between_configurations_v1, FrozenSideboardEmbeddingsV1, LearnedSideboardInputV1,
@@ -10,7 +14,8 @@ use mtg_kernel::learned_sideboard_v1::{
     SideboardPlayIdentityV1, SideboardTrainingConfigV1,
 };
 use mtg_kernel::sideboard::{
-    checked_in_pauper_registered_deck_by_id_v1, CardCountV1, DeckConfigurationV1, SideboardPlanV1,
+    checked_in_pauper_registered_deck_by_id_v1, CardCountV1, DeckConfigurationV1, RegisteredDeckV1,
+    SideboardPlanV1,
 };
 use mtg_kernel::sideboard_play_policy_v1::{
     FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1, FrozenPlayPolicyV1,
@@ -76,6 +81,34 @@ enum InitializationV1 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpandedBo3MatchV1 {
+    config: LearnedBo3RunConfigV1,
+    registered: [ExpandedDeckListV1; 2],
+}
+
+impl ExpandedBo3MatchV1 {
+    fn registrations(&self) -> Result<[RegisteredDeckV1; 2], String> {
+        validate_match(&self.config)?;
+        let build = |seat: usize| {
+            let list = &self.registered[seat];
+            if list.label != self.config.deck_ids[seat] {
+                return Err(format!(
+                    "seat {seat} registration label differs from match metadata"
+                ));
+            }
+            RegisteredDeckV1::new_executable_v1(
+                &list.label,
+                list.mainboard.clone(),
+                list.sideboard.clone(),
+            )
+            .map_err(|e| e.to_string())
+        };
+        Ok([build(0)?, build(1)?])
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum CommandV1 {
     ValidateImport {
@@ -91,8 +124,16 @@ enum CommandV1 {
         matches: Vec<LearnedBo3RunConfigV1>,
         collect_static_imitation_examples: bool,
     },
+    RunExpandedBatch {
+        model_source: ExpandedModelSourceV1,
+        output_directory: PathBuf,
+        policies: [SeatPolicyV1; 2],
+        matches: Vec<ExpandedBo3MatchV1>,
+    },
     TrainImitation {
         play_import: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expanded_model_source: Option<ExpandedModelSourceV1>,
         output_directory: PathBuf,
         examples: PinnedFileV1,
         teacher_provenance: TeacherProvenanceV1,
@@ -102,6 +143,10 @@ enum CommandV1 {
     },
     EvaluateImitation {
         play_import: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expanded_model_source: Option<ExpandedModelSourceV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        example_embedding_transfer: Option<evaluation::ImitationEmbeddingTransferV1>,
         output_directory: PathBuf,
         checkpoint: PinnedFileV1,
         dataset_inventory: PinnedFileV1,
@@ -110,8 +155,37 @@ enum CommandV1 {
 }
 
 impl CommandV1 {
+    fn expanded_source(&self) -> Result<Option<&ExpandedModelSourceV1>, String> {
+        match self {
+            Self::RunExpandedBatch { model_source, .. } => Ok(Some(model_source)),
+            Self::TrainImitation {
+                play_import,
+                expanded_model_source: Some(source),
+                ..
+            }
+            | Self::EvaluateImitation {
+                play_import,
+                expanded_model_source: Some(source),
+                ..
+            } => {
+                if play_import != &source.play_import.path {
+                    return Err(
+                        "expanded model source and play_import must name the same import".into(),
+                    );
+                }
+                Ok(Some(source))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn paths(&self) -> (&Path, &Path) {
         match self {
+            Self::RunExpandedBatch {
+                model_source,
+                output_directory,
+                ..
+            } => (&model_source.play_import.path, output_directory),
             Self::ValidateImport {
                 play_import,
                 output_directory,
@@ -201,6 +275,31 @@ impl VisibleSideboardPolicyV1 for BoundPolicyV1<'_> {
 }
 
 impl PreparedPolicyV1 {
+    fn bind_explicit<'a>(
+        &self,
+        config: &LearnedBo3RunConfigV1,
+        registered: &[RegisteredDeckV1; 2],
+        seat: usize,
+        embeddings: &'a FrozenSideboardEmbeddingsV1<'a>,
+    ) -> Result<BoundPolicyV1<'a>, String> {
+        // Existing teacher rows describe a particular canonical matchup.
+        // Verify both actual 75s before using its label-indexed table.
+        if matches!(self, Self::Static { .. }) {
+            for (index, actual) in registered.iter().enumerate() {
+                let canonical = checked_in_pauper_registered_deck_by_id_v1(&config.deck_ids[index])
+                    .map_err(|_| {
+                        "static teacher requires canonical registrations for both seats".to_owned()
+                    })?;
+                if canonical.registered_configuration() != actual.registered_configuration() {
+                    return Err(format!(
+                        "static teacher is not bound to seat {index}'s explicit registration"
+                    ));
+                }
+            }
+        }
+        self.bind(config, seat, embeddings)
+    }
+
     fn bind<'a>(
         &self,
         config: &LearnedBo3RunConfigV1,
@@ -292,16 +391,30 @@ fn run() -> Result<(), String> {
     let import_bytes = read_bounded(import_path, MAX_JSON_BYTES)?;
     let import: FrozenPlayPolicyImportV1 =
         serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
-    let mut play = match &command {
-        CommandV1::RunBatch {
-            play_observation_transfer_v3: Some(transfer),
-            ..
-        } => FrozenPlayPolicyV1::load_feature_transfer_v3(&import, transfer)?,
-        _ => FrozenPlayPolicyV1::load_v1(&import)?,
+    let expanded_source = command.expanded_source()?;
+    let (mut play, expanded_identity) = if let Some(source) = expanded_source {
+        let (play, receipt) = load_expanded_inference_v1(source)?;
+        (play, Some(receipt))
+    } else {
+        (
+            match &command {
+                CommandV1::RunBatch {
+                    play_observation_transfer_v3: Some(transfer),
+                    ..
+                } => FrozenPlayPolicyV1::load_feature_transfer_v3(&import, transfer)?,
+                _ => FrozenPlayPolicyV1::load_v1(&import)?,
+            },
+            None,
+        )
     };
     let copied_embeddings = play.embedding_rows_v1().to_vec();
     let identity = SideboardPlayIdentityV1 {
-        weights_sha256: play.identity_v1().weights_sha256.clone(),
+        weights_sha256: expanded_identity.as_ref().map_or_else(
+            || play.identity_v1().weights_sha256.clone(),
+            |receipt| receipt.model.weights_sha256.clone(),
+        ),
+        // This existing field records import ancestry. The expanded receipt
+        // separately identifies the installed model and checkpoint state.
         git_head: play.identity_v1().source_git_commit.clone(),
     };
     let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&copied_embeddings, identity)
@@ -310,6 +423,14 @@ fn run() -> Result<(), String> {
         file_receipt(&path, &config_bytes),
         file_receipt(import_path, &import_bytes),
     ];
+    if let (Some(model_source), Some(receipt)) = (expanded_source, &expanded_identity) {
+        if let Some(pin) = &model_source.checkpoint {
+            // The strict loader already checked these bytes with its own
+            // 512 MiB bound. Do not reread them through the 16 MiB JSON path.
+            inputs.push(json!({"path":pin.path,"sha256":receipt.checkpoint_sha256,
+                "validated_by":"load_expanded_inference_v1"}));
+        }
+    }
     let output = output.to_path_buf();
     // A failed/interrupted directory is retained for inspection. Resuming means
     // a new directory and a new declared run, never replacing existing results.
@@ -317,6 +438,9 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("fresh output directory {}: {e}", output.display()))?;
     write_new(&output.join("config.json"), &config_bytes)?;
     write_json(&output.join("play-transfer.json"), play.identity_v1())?;
+    if let Some(receipt) = &expanded_identity {
+        write_json(&output.join("expanded-play-identity.json"), receipt)?;
+    }
     write_json(
         &output.join("run-start.json"),
         &json!({
@@ -330,6 +454,7 @@ fn run() -> Result<(), String> {
             },
             "execution": {"device":"cpu", "gpu_ordinal":null},
             "tag_file_sha256":hash(TAG_BYTES), "embedding_table_sha256":embeddings.table_sha256_v1(),
+            "expanded_play_identity":expanded_identity,
             "nonclaims":["research implementation, no strength or promotion claim", "play weights and embeddings remain frozen"]
         }),
     )?;
@@ -369,15 +494,25 @@ fn execute(
             checkpoint,
             dataset_inventory,
             split,
+            expanded_model_source,
+            example_embedding_transfer,
             ..
-        } => evaluation::execute_evaluation(
-            checkpoint,
-            dataset_inventory,
-            *split,
-            output,
-            embeddings,
-            inputs,
-        ),
+        } => {
+            if example_embedding_transfer.is_some() && expanded_model_source.is_none() {
+                return Err(
+                    "example_embedding_transfer requires an explicit expanded_model_source".into(),
+                );
+            }
+            evaluation::execute_evaluation(
+                checkpoint,
+                dataset_inventory,
+                *split,
+                example_embedding_transfer.as_ref(),
+                output,
+                embeddings,
+                inputs,
+            )
+        }
         CommandV1::RunBatch {
             policies,
             matches,
@@ -498,6 +633,61 @@ fn execute(
                 json!({"mode":"run_batch", "completed_matches":matches.len(), "physical_games":total_games,
                 "static_imitation_examples":example_count, "examples":examples_pin, "inputs":inputs,
                 "no_training_performed":true, "strength_claim":false}),
+            )
+        }
+        CommandV1::RunExpandedBatch {
+            policies, matches, ..
+        } => {
+            if matches.is_empty() || matches.len() > 1024 {
+                return Err("match count must be 1..1024".into());
+            }
+            let prepared = [
+                prepare_policy(&policies[0], inputs)?,
+                prepare_policy(&policies[1], inputs)?,
+            ];
+            let registrations = matches
+                .iter()
+                .map(ExpandedBo3MatchV1::registrations)
+                .collect::<Result<Vec<_>, _>>()?;
+            for (item, registered) in matches.iter().zip(&registrations) {
+                for seat in 0..2 {
+                    let _ =
+                        prepared[seat].bind_explicit(&item.config, registered, seat, embeddings)?;
+                }
+            }
+            write_json(&output.join("inputs.json"), &inputs)?;
+            let tags = checked_in_tags()?;
+            let policy_identity = hash(&serde_json::to_vec(policies).map_err(|e| e.to_string())?);
+            let actual_identity = play.actual_model_identity_v1();
+            let mut total_games = 0usize;
+            for (index, (item, registered)) in matches.iter().zip(registrations).enumerate() {
+                let mut seat0 =
+                    prepared[0].bind_explicit(&item.config, &registered, 0, embeddings)?;
+                let mut seat1 =
+                    prepared[1].bind_explicit(&item.config, &registered, 1, embeddings)?;
+                let mut result = run_learned_bo3_with_registrations_v1(
+                    item.config.clone(),
+                    registered,
+                    &actual_identity.weights_sha256,
+                    &policy_identity,
+                    &tags,
+                    play,
+                    [&mut seat0, &mut seat1],
+                )?;
+                result.play_observation_contract =
+                    Some("rich-v6-flat-v3-expanded-inference".into());
+                total_games += result.games.len();
+                write_json(&output.join(format!("match-{index:06}.json")), &result)?;
+                println!(
+                    "{}",
+                    json!({"completed_match":index,"physical_games":result.games.len(),
+                    "artifact":format!("match-{index:06}.json")})
+                );
+            }
+            Ok(
+                json!({"mode":"run_expanded_batch","completed_matches":matches.len(),
+                "physical_games":total_games,"inputs":inputs,"actual_play_model":actual_identity,
+                "no_training_performed":true,"strength_claim":false}),
             )
         }
         CommandV1::TrainImitation {
@@ -767,6 +957,9 @@ fn compiled_sources() -> Value {
         "imitation_evaluator":hash(include_bytes!("learned_sideboard_v1/evaluation.rs")),
         "learned_bo3":hash(include_bytes!("../learned_bo3_v1.rs")),
         "play_policy":hash(include_bytes!("../sideboard_play_policy_v1.rs")),
+        "expanded_training_and_loader":hash(include_bytes!("../expanded_deck_training_v1.rs")),
+        "registration":hash(include_bytes!("../sideboard.rs")),
+        "bo3_session":hash(include_bytes!("../bo3_session.rs")),
         "observation_v6":hash(include_bytes!("../policy_observation_v6.rs")),
         "flat_policy_v3":hash(include_bytes!("../flat_policy_v3.rs")),
         "flat_action_v3":hash(include_bytes!("../rl_session/flat_action_v3.rs")),
@@ -859,6 +1052,102 @@ mod tests {
         let value = json!({"mode":"validate_import","play_import":"C:/inputs.json","output_directory":"C:/new","silent_fallback":true});
         assert!(serde_json::from_value::<CommandV1>(value).is_err());
     }
+
+    #[test]
+    fn successor_fit_source_cannot_disagree_with_import_and_is_optional_for_legacy() {
+        let mut value = json!({"mode":"evaluate_imitation","play_import":"C:/input.json",
+            "output_directory":"C:/new", "checkpoint":{"path":"C:/head.json","sha256":"a".repeat(64)},
+            "dataset_inventory":{"path":"C:/inventory.json","sha256":"b".repeat(64)},
+            "split":"imitation_eval"});
+        let legacy: CommandV1 = serde_json::from_value(value.clone()).unwrap();
+        assert!(legacy.expanded_source().unwrap().is_none());
+        value["expanded_model_source"] = json!({
+            "play_import":{"path":"C:/different.json","sha256":"c".repeat(64)},
+            "feature_transfer":{"expected_feature_contract_digest":"d".repeat(64),
+                "expected_feature_encoding_digest":"e".repeat(64)}, "checkpoint":null });
+        let wrong: CommandV1 = serde_json::from_value(value.clone()).unwrap();
+        assert!(wrong.expanded_source().unwrap_err().contains("same import"));
+        value["expanded_model_source"]["play_import"]["path"] = json!("C:/input.json");
+        let valid: CommandV1 = serde_json::from_value(value).unwrap();
+        assert!(valid.expanded_source().unwrap().is_some());
+    }
+
+    #[test]
+    fn explicit_teacher_checks_both_actual_registrations() {
+        let values = vec![0.0; 65537 * 16];
+        let embeddings =
+            FrozenSideboardEmbeddingsV1::new_v1(&values, test_play_identity()).unwrap();
+        let config = test_match();
+        let canonical = config
+            .deck_ids
+            .clone()
+            .map(|id| checked_in_pauper_registered_deck_by_id_v1(&id).unwrap());
+        let policy = PreparedPolicyV1::Static {
+            rows: (2..=3)
+                .map(|game| StaticRowV1 {
+                    self_deck_id: "Rally".into(),
+                    opponent_deck_id: "Burn".into(),
+                    game_index: game,
+                    cards_in: vec![],
+                    cards_out: vec![],
+                })
+                .collect(),
+            table_sha256: [0; 32],
+            carry: true,
+        };
+        assert!(policy
+            .bind_explicit(&config, &canonical, 0, &embeddings)
+            .is_ok());
+        for changed_seat in 0..2 {
+            let mut modified = canonical.clone();
+            let original = modified[changed_seat].registered_configuration();
+            let mut main = original.mainboard().to_vec();
+            let mut side = original.sideboard().to_vec();
+            let pair = main
+                .iter()
+                .enumerate()
+                .find_map(|(i, card)| side.iter().position(|other| other != card).map(|j| (i, j)))
+                .unwrap();
+            std::mem::swap(&mut main[pair.0], &mut side[pair.1]);
+            modified[changed_seat] =
+                RegisteredDeckV1::new_executable_v1(&config.deck_ids[changed_seat], main, side)
+                    .unwrap();
+            let error = policy
+                .bind_explicit(&config, &modified, 0, &embeddings)
+                .err()
+                .unwrap();
+            assert!(error.contains(&format!("seat {changed_seat}'s explicit registration")));
+            assert!(PreparedPolicyV1::Keep
+                .bind_explicit(&config, &modified, 0, &embeddings)
+                .is_ok());
+        }
+    }
+
+    #[test]
+    fn explicit_match_requires_matching_labels_and_executable_lists() {
+        let config = test_match();
+        let lists = config.deck_ids.clone().map(|label| {
+            let deck = checked_in_pauper_registered_deck_by_id_v1(&label).unwrap();
+            let cards = deck.registered_configuration();
+            ExpandedDeckListV1 {
+                label,
+                mainboard: cards.mainboard().to_vec(),
+                sideboard: cards.sideboard().to_vec(),
+            }
+        });
+        let mut item = ExpandedBo3MatchV1 {
+            config,
+            registered: lists,
+        };
+        assert!(item.registrations().is_ok());
+        item.registered[0].label = "Rally custom".into();
+        assert!(item.registrations().unwrap_err().contains("label differs"));
+        item.config.deck_ids[0] = "Rally custom".into();
+        assert!(item.registrations().is_ok());
+        item.registered[0].mainboard.pop();
+        assert!(item.registrations().is_err());
+    }
+
     #[test]
     fn missing_static_matchup_is_an_error() {
         let embedding_values = vec![0.0; 65537 * 16];

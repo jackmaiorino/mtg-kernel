@@ -20,6 +20,47 @@ impl EvaluationSplitV1 {
     }
 }
 
+/// Re-encode unchanged public imitation examples with a successor player's
+/// embeddings. Their behavior-player provenance and grouped split stay intact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ImitationEmbeddingTransferV1 {
+    expected_behavior_play_weights_sha256: String,
+    expected_embedding_play_weights_sha256: String,
+}
+
+fn validate_example_play_identity(
+    records: &[Value],
+    embedding_weights: &str,
+    transfer: Option<&ImitationEmbeddingTransferV1>,
+) -> Result<(), String> {
+    let expected_behavior = if let Some(transfer) = transfer {
+        for pin in [
+            &transfer.expected_behavior_play_weights_sha256,
+            &transfer.expected_embedding_play_weights_sha256,
+        ] {
+            require(
+                pin.len() == 64 && pin.bytes().all(|b| b.is_ascii_hexdigit()),
+                "imitation embedding transfer requires exact SHA-256 identities",
+            )?;
+        }
+        require(
+            transfer.expected_embedding_play_weights_sha256 == embedding_weights,
+            "imitation embedding transfer target differs from actual loaded player",
+        )?;
+        transfer.expected_behavior_play_weights_sha256.as_str()
+    } else {
+        embedding_weights
+    };
+    for record in records {
+        require(
+            string(record, "play_weights_sha256")? == expected_behavior,
+            "dataset behavior play identity differs from expected example source",
+        )?;
+    }
+    Ok(())
+}
+
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value, String> {
     value
         .get(key)
@@ -452,6 +493,7 @@ pub(super) fn execute_evaluation(
     checkpoint: &PinnedFileV1,
     inventory_pin: &PinnedFileV1,
     split: EvaluationSplitV1,
+    embedding_transfer: Option<&ImitationEmbeddingTransferV1>,
     output: &Path,
     embeddings: &FrozenSideboardEmbeddingsV1<'_>,
     inputs: &mut Vec<Value>,
@@ -463,12 +505,11 @@ pub(super) fn execute_evaluation(
     let mut cache = BTreeMap::new();
     verify_pins(&inventory, &mut cache, inputs)?;
     let dataset = audit_dataset(&inventory, split, &cache)?;
-    for record in &dataset.records {
-        require(
-            string(record, "play_weights_sha256")? == embeddings.identity_v1().weights_sha256,
-            "dataset and frozen embedding play identity differ",
-        )?;
-    }
+    validate_example_play_identity(
+        &dataset.records,
+        &embeddings.identity_v1().weights_sha256,
+        embedding_transfer,
+    )?;
     let evaluated = model
         .evaluate_imitation_v1(&dataset.examples, embeddings)
         .map_err(|e| e.to_string())?;
@@ -552,6 +593,7 @@ pub(super) fn execute_evaluation(
         })
         .collect();
     let metrics = json!({"schema":"kernel-sideboard-imitation-evaluation/v1", "split":split,
+        "example_embedding_transfer":embedding_transfer,
         "independent_connected_groups":dataset.components,"aggregate":total.json(),"strata":strata,
         "metric_definitions":{"teacher_forced":"greedy action at each teacher-replayed state; action-weighted agreement and cross entropy",
             "greedy_free_running":"greedy rollout starts from the actual initial configuration and uses only its own chosen actions",
@@ -567,6 +609,7 @@ pub(super) fn execute_evaluation(
         "checkpoint_input_sha256":checkpoint.sha256,"model_state_sha256_before":before,"model_state_sha256_after":before,
         "training_steps":model.training_steps_v1(),"training_executed":false,"optimizer_mutated":false,
         "play_weights_unchanged":true,"checkpoint_file_unchanged":true,
+        "example_embedding_transfer":embedding_transfer,
         "nonclaims":["hand-authored imitation agreement is not playing strength", "checkpoint prior teacher exposure must be audited separately",
             "inspected grouped development split is not a secret final test", "no checkpoint selection, tuning or promotion", "not brewing or value learning"]}),
     )
@@ -575,6 +618,27 @@ pub(super) fn execute_evaluation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_player_examples_require_exact_source_and_target_opt_in() {
+        let old = "a".repeat(64);
+        let current = "b".repeat(64);
+        let records = vec![json!({"play_weights_sha256":old})];
+        assert!(validate_example_play_identity(&records, &old, None).is_ok());
+        assert!(validate_example_play_identity(&records, &current, None).is_err());
+        let mut transfer = ImitationEmbeddingTransferV1 {
+            expected_behavior_play_weights_sha256: old.clone(),
+            expected_embedding_play_weights_sha256: current.clone(),
+        };
+        assert!(validate_example_play_identity(&records, &current, Some(&transfer)).is_ok());
+        assert!(validate_example_play_identity(&records, &old, Some(&transfer)).is_err());
+        let mixed = vec![records[0].clone(), json!({"play_weights_sha256":current})];
+        assert!(validate_example_play_identity(&mixed, &current, Some(&transfer)).is_err());
+        transfer.expected_behavior_play_weights_sha256 = "c".repeat(64);
+        assert!(validate_example_play_identity(&records, &current, Some(&transfer)).is_err());
+        transfer.expected_behavior_play_weights_sha256 = "not-a-hash".into();
+        assert!(validate_example_play_identity(&records, &current, Some(&transfer)).is_err());
+    }
 
     fn dataset_fixture() -> (Value, BTreeMap<PathBuf, Vec<u8>>) {
         let registrations = json!({"A":{"mainboard":vec![0u16;60],"sideboard":vec![1u16;15]},

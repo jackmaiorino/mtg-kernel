@@ -1,6 +1,19 @@
-# BO3 pilot interruption and Ward observation prerequisite
+# Ward successor and completed BO3 engineering pilot
 
-September 12, 2026. Source b7ef18d4518943130f8494be0a7b678e1028dab6 in the assigned learned-sideboarding worktree. This is a coverage diagnosis and next integration design, not a playing-strength result or a completed repair.
+September 12, 2026. Measured Ward successor source `0f479bad488628840b8ec0b1c0e626926d692318` in the assigned learned-sideboarding worktree. The earlier interruption at source `b7ef18d4518943130f8494be0a7b678e1028dab6` is preserved below as historical diagnosis. The repair and engineering pilot are complete; playing strength, production integration and the full Multi-Deck BO3 Campaign remain unqualified.
+
+## Completed successor pilot
+
+| Check | Actual outcome |
+| --- | --- |
+| Fresh engineering pilot | 400/400 matches, 927 physical games, zero unresolved matches |
+| Coverage | All 25 ordered matchups in each of four arms, both candidate seats and both initial choosers |
+| End-to-end replay | Extra first-match result byte-identical, outside the 400-match denominator |
+| Runtime | 262.3207898 seconds including wrapper and replay |
+| Evidence closure | 401 match-file hashes verified by root; all recorded pilot children reaped |
+| Previously failing match | Completed two games in a separate verification outside the pilot denominator |
+
+The immutable binary SHA is `6838d98a97949cecfc8cb9fae57e8af68adc6cf359ac0b8d2f5b985724c32ec5`. [Result](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/ward-successor-001/RESULT.md), [summary](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/ward-successor-001/pilot-summary.json), and [completion](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/ward-successor-001/bo3-pilot-001/completion.json) bind the new execution. Original registrations, seeds, arms, limits, frozen play parameters, sideboard heads and static opponent were retained under the explicit Ward feature transfer. No candidate head was selected and no win-rate or production-promotion claim follows. Original fit and native measurements remain unchanged.
 
 ## Ward successor implementation
 
@@ -18,9 +31,9 @@ The active Multi-Deck BO3 Campaign now implements V3 feature revision 3 with exa
 
 The initial compile caught the expected shared V2 source-footprint pin change; the canonical generator refreshed only source/inventory digests, with unchanged V2 golden-case values and action contract. A too-broad test substring also selected an unrelated long Store test; root stopped that owned test process and reran explicitly scoped modules. A queued-state test fixture initially auto-advanced forced passes; it now includes real legal responses and verifies two queued payments before separately testing pending resolution. Original logs are retained. These preparation corrections did not alter frozen measurements or relax a failed rule.
 
-Release build, exact failed-match execution and the complete fresh engineering pilot remain next. Their source/binary/config/output identities will be recorded separately under `engineering-005/ward-successor-001`.
+Release build, exact formerly failing-match execution and the complete fresh engineering pilot subsequently passed under the separately recorded identity above. New successor-loader and explicit-registration code now in the dirty worktree was not compiled into that measured binary. Root's CLI integration, focused build, compatibility checks and new end-to-end registered-deck execution remain next.
 
-## Observed result
+## Historical original pilot interruption
 
 | Check | Actual outcome |
 | --- | --- |
@@ -35,7 +48,7 @@ The original output is [engineering-004/bo3-pilot-001](E:/mtg-kernel-learned-sid
 
 ## Cause and consequence
 
-`effect.rs::validate_counter_unless_pays_generic` rejects a payable Ward prompt when multiple live stack items target the same permanent. Here Fireblast and Lightning Bolt both target Tolarian Terror. The resolving Ward trigger retains the exact bound stack item internally, but `rl.rs::pending_effect_semantic` reduces its choice to generic `PayCost`. Neither V6 extensions nor flat V3 revision 2 expose the missing relation. A scorer therefore cannot distinguish which spell accepting payment would preserve. This is an intentional coverage guard, not evidence that the binding was corrupted.
+In the original measured source, `effect.rs::validate_counter_unless_pays_generic` rejected a payable Ward prompt when multiple live stack items targeted the same permanent. Here Fireblast and Lightning Bolt both targeted Tolarian Terror. The resolving Ward trigger retained the exact bound stack item internally, but `rl.rs::pending_effect_semantic` reduced its choice to generic `PayCost`. Neither the then-current V6 extensions nor flat V3 revision 2 exposed the missing relation. A scorer therefore could not distinguish which spell accepting payment would preserve. This was an intentional coverage guard, not evidence that the binding was corrupted. The successor moves this coverage restriction to legacy observation boundaries and supplies the missing relation.
 
 Ward applies to the particular spell or ability that triggered it. See the [official Ward rules explanation](https://magic.wizards.com/en/news/feature/strixhaven-school-mages-and-commander-2021-edition-release-notes-2021-04-16). Removing the guard, always declining payment, suppressing the halt or replacing the seed would change the task without repairing the observation. Existing source references, target arrays and structural paths must retain their meanings.
 
@@ -46,12 +59,12 @@ Ward applies to the particular spell or ability that triggered it. See the [offi
 3. Review CPU/Python encoding parity, generated contracts and strict import compatibility. Shared Net8 dimensions do not establish semantic compatibility. Decide and record any explicit frozen-weight transfer before use. The sideboard head binds source weights/git identity and embeddings, not the complete V3 play-feature contract. Unchanged weights, embeddings and sideboard features can therefore retain the frozen head with a separately recorded play-observation transfer; that does not qualify the new inputs. Preserve the existing fresh head and refit only as a separately identified later fit if play/embedding binding changes.
 4. Qualify the exact failed case and one end-to-end byte-identical repeat with the successor binary. Create a new full engineering pilot identity using the existing seeds, registrations, arms, limits and controls; never combine new-source outputs with the interrupted pilot. The pilot remains a coverage/cost check, without head selection from its outcomes.
 
-The implementation and focused verification are complete as described above. No replacement pilot, paid allocation or GPU run has started at this checkpoint. Full production integration still also needs successor-player loading, explicit registered 75s and the remaining CPU/GPU/store/search seams in the [brewing plan](learned_sideboard_production_brewing_plan_v1.md).
+The Ward implementation, focused verification and replacement engineering pilot are complete as described above. No paid allocation or GPU run was started. Strict successor-player loading and explicit registered-75 code are the next uncommitted, uncompiled phase; root's CLI connection and end-to-end qualification remain pending. Full production integration still needs these seams plus CPU/GPU/store/search work in the [brewing plan](learned_sideboard_production_brewing_plan_v1.md).
 
 ## Review and evidence
 
 The diagnostic source, build/replay logs and trace are preserved in [engineering-005/engine-failure](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/engine-failure/pre-fix-trace-001.txt). Diagnostic state dumps are engineering evidence only and must not enter actor training inputs.
 
-Root verified all 11 diagnostic manifest input/artifact hashes. Two failed-game traces are byte-identical, which reproduces the failure; it does not qualify a repaired game's determinism. Independent Codex critique confirmed the missing payment relation and accepted this plan with three material changes incorporated above: retain frozen sideboard heads only under their actual weight/embedding/sideboard-feature binding; account for global hash-feature changes from an added null observation field; and distinguish stack-item instances that share a source object. Root accepts pending-resolution context for the active payment. Implementation inspection subsequently corrected the earlier claim that the resolving trigger had left the stack: `validate_pending_effect_choice` authenticates it against the live top item. The projection keeps the semantic distinction without changing engine stack lifecycle. These are accepted design dispositions; implementation and code review are now proceeding under the active Multi-Deck BO3 Campaign.
+Root verified all 11 diagnostic manifest input/artifact hashes. Two failed-game traces are byte-identical, which reproduces the failure; it does not qualify a repaired game's determinism. Independent Codex critique confirmed the missing payment relation and accepted this plan with three material changes incorporated above: retain frozen sideboard heads only under their actual weight/embedding/sideboard-feature binding; account for global hash-feature changes from an added null observation field; and distinguish stack-item instances that share a source object. Root accepts pending-resolution context for the active payment. Implementation inspection subsequently corrected the earlier claim that the resolving trigger had left the stack: `validate_pending_effect_choice` authenticates it against the live top item. The projection keeps the semantic distinction without changing engine stack lifecycle. These are accepted design dispositions; implementation and independent Codex source/runner review completed for the measured Ward successor. The Multi-Deck BO3 Campaign remains active.
 
-Fresh Fable review session 1ecd593c-24d1-4908-84e1-ee124b0585c5 failed with weekly HTTP429, zero source reads and zero substantive tokens. [Receipts](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/fable-review-001/result.json) establish an unavailable consultation, not feedback or endorsement. Root accepts the causal source/trace diagnosis and preserves the halt. The versioned observation design still needs source-level cross-examination before implementation is treated as qualified. No repeated quota attempt, reset or alternative purchase occurred.
+Fresh Fable Ward review session `1ecd593c-24d1-4908-84e1-ee124b0585c5` failed with weekly HTTP429, zero source reads and zero substantive tokens. [Receipts](E:/mtg-kernel-learned-sideboarding-evidence/engineering-005/fable-review-001/result.json) establish an unavailable consultation, not feedback or endorsement. Independent Codex source/runner review found no blocking Ward finding; root proceeded within the assigned engineering scope while recording the absent Fable consultation. The separate successor-integration review `6063b7ec-e34e-4728-b107-e93a4c71a25e` also failed weekly HTTP429 with zero source reads/tokens, as recorded in its [receipt](E:/mtg-kernel-learned-sideboarding-evidence/engineering-006/successor-bo3-001/fable-review-001/result.json). That failure supplies no endorsement for the dirty next-phase code. No quota reset or alternative purchase occurred.

@@ -44,7 +44,7 @@ impl PreparedMatchGameV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BestOfThreeDeckMatchV1 {
     registered_decks: [RegisteredDeckV1; 2],
-    sideboard_policy: DeterministicSideboardPolicyV1,
+    sideboard_policy: Option<DeterministicSideboardPolicyV1>,
     match_state: BestOfThreeMatchStateV1,
 }
 
@@ -80,7 +80,24 @@ impl BestOfThreeDeckMatchV1 {
         sideboard_policy.plan_for_v1(p1.deck_id(), p0.deck_id(), 2)?;
         Ok(Self {
             registered_decks: [p0, p1],
-            sideboard_policy,
+            sideboard_policy: Some(sideboard_policy),
+            match_state: BestOfThreeMatchStateV1::new_v1(game_one_chooser)?,
+        })
+    }
+
+    /// Creates a match whose configurations are supplied by live policies.
+    /// No static teacher is fabricated or used. Labels are metadata, so two
+    /// seats may share a label while registering different actual 75s.
+    pub fn new_live_v1(
+        registered_decks: [RegisteredDeckV1; 2],
+        game_one_chooser: PlayerId,
+    ) -> Result<Self, Bo3SessionErrorV1> {
+        for deck in &registered_decks {
+            deck.validate_executable_v1()?;
+        }
+        Ok(Self {
+            registered_decks,
+            sideboard_policy: None,
             match_state: BestOfThreeMatchStateV1::new_v1(game_one_chooser)?,
         })
     }
@@ -89,8 +106,8 @@ impl BestOfThreeDeckMatchV1 {
         self.registered_decks.get(player.index())
     }
 
-    pub fn sideboard_policy(&self) -> &DeterministicSideboardPolicyV1 {
-        &self.sideboard_policy
+    pub fn sideboard_policy(&self) -> Option<&DeterministicSideboardPolicyV1> {
+        self.sideboard_policy.as_ref()
     }
 
     pub fn match_state(&self) -> &BestOfThreeMatchStateV1 {
@@ -102,6 +119,10 @@ impl BestOfThreeDeckMatchV1 {
         chooser: PlayerId,
         choice: PlayDrawChoiceV1,
     ) -> Result<PreparedMatchGameV1, Bo3SessionErrorV1> {
+        let sideboard_policy = self
+            .sideboard_policy
+            .as_ref()
+            .ok_or(Bo3SessionErrorV1::LiveConfigurationsRequired)?;
         // Advance a clone first. Any match-phase or sideboard failure leaves
         // `self.match_state` byte-for-byte unchanged.
         let mut next_match_state = self.match_state.clone();
@@ -116,12 +137,12 @@ impl BestOfThreeDeckMatchV1 {
                 [None, None],
             )
         } else {
-            let (p0_configuration, p0_receipt) = self.sideboard_policy.apply_v1(
+            let (p0_configuration, p0_receipt) = sideboard_policy.apply_v1(
                 &self.registered_decks[0],
                 self.registered_decks[1].deck_id(),
                 start.game_index,
             )?;
-            let (p1_configuration, p1_receipt) = self.sideboard_policy.apply_v1(
+            let (p1_configuration, p1_receipt) = sideboard_policy.apply_v1(
                 &self.registered_decks[1],
                 self.registered_decks[0].deck_id(),
                 start.game_index,
@@ -188,6 +209,7 @@ pub enum Bo3SessionErrorV1 {
     Sideboard(SideboardErrorV1),
     MirrorRegistrationMismatch { deck_id: String },
     GameOneConfigurationChanged { player: PlayerId },
+    LiveConfigurationsRequired,
 }
 
 impl From<MatchStateErrorV1> for Bo3SessionErrorV1 {
@@ -215,6 +237,9 @@ impl fmt::Display for Bo3SessionErrorV1 {
                 formatter,
                 "game one must use player {}'s registered mainboard",
                 player.0
+            ),
+            Self::LiveConfigurationsRequired => formatter.write_str(
+                "this match requires live configurations; no static sideboard policy is installed",
             ),
         }
     }

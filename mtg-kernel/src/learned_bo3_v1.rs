@@ -17,7 +17,7 @@ use crate::learned_sideboard_v1::{
 };
 use crate::paired_bo1_harness_v1::{paired_policy_seeds_v1, PairedBo1PolicyV1};
 use crate::rl_session::FastActorSessionV1;
-use crate::sideboard::DeckConfigurationV1;
+use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -55,6 +55,10 @@ pub struct LearnedBo3GameRecordV1 {
 pub struct LearnedBo3ResultV1 {
     pub schema: String,
     pub config: LearnedBo3RunConfigV1,
+    /// Present only for explicit-registration runs. These are the original
+    /// registered zones, distinct from each physical game's selected 60.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explicit_registrations: Option<[LearnedBo3RegistrationRecordV1; 2]>,
     pub play_weights_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub play_observation_contract: Option<String>,
@@ -62,6 +66,30 @@ pub struct LearnedBo3ResultV1 {
     pub outcome: MatchOutcomeV1,
     pub games: Vec<LearnedBo3GameRecordV1>,
     pub sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LearnedBo3RegistrationRecordV1 {
+    pub label: String,
+    pub mainboard: Vec<u16>,
+    pub sideboard: Vec<u16>,
+    pub registered_75_sha256: String,
+    pub mainboard_sha256: String,
+    pub sideboard_sha256: String,
+}
+
+impl LearnedBo3RegistrationRecordV1 {
+    pub fn from_registered_v1(registered: &RegisteredDeckV1) -> Self {
+        let configuration = registered.registered_configuration();
+        Self {
+            label: registered.deck_id().to_owned(),
+            mainboard: configuration.mainboard().to_vec(),
+            sideboard: configuration.sideboard().to_vec(),
+            registered_75_sha256: hex_v1(&registered.registered_75_sha256_v1()),
+            mainboard_sha256: hex_v1(&configuration.mainboard_sha256_v1()),
+            sideboard_sha256: hex_v1(&configuration.sideboard_sha256_v1()),
+        }
+    }
 }
 
 /// Project each completed game for the acting player. A raw GameSummaryV1
@@ -177,6 +205,66 @@ pub fn run_learned_bo3_v1(
     play_policy: &mut dyn PairedBo1PolicyV1,
     sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
 ) -> Result<LearnedBo3ResultV1, String> {
+    validate_run_limits_v1(&config)?;
+    let match_session = BestOfThreeDeckMatchV1::checked_in_pauper_v1(
+        &config.deck_ids[0],
+        &config.deck_ids[1],
+        config.game_one_chooser,
+    )
+    .map_err(|error| error.to_string())?;
+    run_learned_bo3_session_v1(
+        config,
+        match_session,
+        None,
+        play_weights_sha256,
+        sideboard_policy_identity,
+        tags,
+        play_policy,
+        sideboard_policies,
+    )
+}
+
+/// Executes the same BO3 loop with the supplied supported registered 75s.
+/// Labels must match the configuration metadata, but are never used to look
+/// up or substitute a catalog registration. Callback visibility is unchanged.
+pub fn run_learned_bo3_with_registrations_v1(
+    config: LearnedBo3RunConfigV1,
+    registered_decks: [RegisteredDeckV1; 2],
+    play_weights_sha256: &str,
+    sideboard_policy_identity: &str,
+    tags: &RemovalCounterspellTagsV1,
+    play_policy: &mut dyn PairedBo1PolicyV1,
+    sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
+) -> Result<LearnedBo3ResultV1, String> {
+    validate_run_limits_v1(&config)?;
+    for (seat, registered) in registered_decks.iter().enumerate() {
+        if registered.deck_id() != config.deck_ids[seat] {
+            return Err(format!(
+                "player {seat} registration label does not match configured deck metadata"
+            ));
+        }
+    }
+    let match_session =
+        BestOfThreeDeckMatchV1::new_live_v1(registered_decks, config.game_one_chooser)
+            .map_err(|error| error.to_string())?;
+    let receipts = [PlayerId::P0, PlayerId::P1].map(|seat| {
+        LearnedBo3RegistrationRecordV1::from_registered_v1(
+            match_session.registered_deck(seat).unwrap(),
+        )
+    });
+    run_learned_bo3_session_v1(
+        config,
+        match_session,
+        Some(receipts),
+        play_weights_sha256,
+        sideboard_policy_identity,
+        tags,
+        play_policy,
+        sideboard_policies,
+    )
+}
+
+fn validate_run_limits_v1(config: &LearnedBo3RunConfigV1) -> Result<(), String> {
     if config.max_physical_games < 3
         || config.max_physical_decisions == 0
         || config.max_policy_steps == 0
@@ -185,12 +273,20 @@ pub fn run_learned_bo3_v1(
             "positive episode limits and at least three physical games are required".to_owned(),
         );
     }
-    let mut match_session = BestOfThreeDeckMatchV1::checked_in_pauper_v1(
-        &config.deck_ids[0],
-        &config.deck_ids[1],
-        config.game_one_chooser,
-    )
-    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_learned_bo3_session_v1(
+    config: LearnedBo3RunConfigV1,
+    mut match_session: BestOfThreeDeckMatchV1,
+    explicit_registrations: Option<[LearnedBo3RegistrationRecordV1; 2]>,
+    play_weights_sha256: &str,
+    sideboard_policy_identity: &str,
+    tags: &RemovalCounterspellTagsV1,
+    play_policy: &mut dyn PairedBo1PolicyV1,
+    sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
+) -> Result<LearnedBo3ResultV1, String> {
     let registered = [PlayerId::P0, PlayerId::P1].map(|seat| {
         match_session
             .registered_deck(seat)
@@ -209,6 +305,7 @@ pub fn run_learned_bo3_v1(
                 return Ok(LearnedBo3ResultV1 {
                     schema: "kernel_learned_bo3/v1".to_owned(),
                     config,
+                    explicit_registrations,
                     play_weights_sha256: play_weights_sha256.to_owned(),
                     play_observation_contract: play_policy
                         .uses_observation_successor_v3()

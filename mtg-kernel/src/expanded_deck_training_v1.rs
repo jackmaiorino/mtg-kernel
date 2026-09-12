@@ -2,7 +2,7 @@
 //! CPU updates. This successor starts from an inference export with fresh Adam
 //! or resumes its own checkpoint. It never reads or writes a legacy Store.
 
-use crate::card_def::{Supertype, CARD_DEFS, KERNEL_CARDDB_HASH};
+use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
@@ -10,8 +10,9 @@ use crate::fast_sampler::FastCategoricalScratch;
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::{
-    encoded_decision_view_v3, NativeFlatDecisionTensorV3, FEATURE_CONTRACT_DIGEST_V3,
-    FEATURE_ENCODING_DIGEST_V3,
+    encoded_decision_view_v3, NativeFlatDecisionTensorV3, FEATURES_SOURCE_SHA256_V3,
+    FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3, FEATURE_ENCODING_DIGEST_V3,
+    FEATURE_REGISTRY_VERSION_V3, FEATURE_SCHEMA_VERSION_V3,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
@@ -31,7 +32,7 @@ use crate::rl_session::{
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::{
     FrozenPlayObservationTransferV3, FrozenPlayPolicyIdentityV1, FrozenPlayPolicyImportV1,
-    FrozenPlayPolicyV1,
+    FrozenPlayPolicyV1, PlayModelIdentityV1,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,45 @@ pub struct ExpandedModelSourceV1 {
     pub checkpoint: Option<PinnedFileV1>,
 }
 
+/// Inference identity after exact current-feature model/optimizer validation.
+/// Adam state is checked for checkpoint integrity but is not used by inference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpandedInferenceIdentityV1 {
+    pub schema: String,
+    pub source_import: FrozenPlayPolicyIdentityV1,
+    pub checkpoint_sha256: Option<String>,
+    pub model: PlayModelIdentityV1,
+    pub state_sha256: String,
+    pub adam_step: u64,
+    pub feature_schema_version: String,
+    pub feature_registry_version: String,
+    pub features_source_sha256: String,
+    pub feature_descriptor_sha256: String,
+}
+
+/// Reuses the bounded, pinned continuation reader and its exact feature,
+/// ancestry, parameter, optimizer and state checks. No artifacts are written,
+/// no training runs, and predecessor feature identities are not migrated.
+pub fn load_expanded_inference_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    let (policy, state) = initialize(source)?;
+    let receipt = ExpandedInferenceIdentityV1 {
+        schema: "mtg-kernel-expanded-deck-inference/v1".into(),
+        source_import: policy.identity_v1().clone(),
+        checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
+        model: policy.actual_model_identity_v1(),
+        state_sha256: hex(&state.state_sha256_v1().map_err(err)?),
+        adam_step: state.adam_step_v1(),
+        feature_schema_version: FEATURE_SCHEMA_VERSION_V3.into(),
+        feature_registry_version: FEATURE_REGISTRY_VERSION_V3.into(),
+        features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
+        feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
+    };
+    Ok((policy, receipt))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandedDeckListV1 {
@@ -73,22 +113,12 @@ pub struct ExpandedDeckListV1 {
 
 impl ExpandedDeckListV1 {
     fn validated(&self) -> Result<RegisteredDeckV1, String> {
-        let deck = RegisteredDeckV1::new_fully_supported_v1(
+        RegisteredDeckV1::new_executable_v1(
             &self.label,
             self.mainboard.clone(),
             self.sideboard.clone(),
         )
-        .map_err(err)?;
-        for row in deck.registered_configuration().combined_card_counts_v1() {
-            ensure(
-                row.count <= 4
-                    || CARD_DEFS[usize::from(row.card_id)]
-                        .supertypes
-                        .contains(&Supertype::Basic),
-                "registration exceeds four copies of a nonbasic card",
-            )?;
-        }
-        Ok(deck)
+        .map_err(err)
     }
 }
 
@@ -325,41 +355,52 @@ fn initialize(
         .map_err(err)?;
     let state = if let Some(pin) = &source.checkpoint {
         let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
-        ensure(
-            saved.schema == CHECKPOINT_SCHEMA,
-            "not an expanded-deck checkpoint",
-        )?;
-        identity_valid(
-            &saved.feature_contract_digest,
-            &saved.feature_encoding_digest,
-            &saved.card_db_hash,
-        )?;
-        ensure(
-            saved.source_import == *policy.identity_v1(),
-            "checkpoint warm-start provenance differs",
-        )?;
-        ensure(
-            saved.loss_identity == "terminal_reinforce_value/v3",
-            "checkpoint loss differs",
-        )?;
-        let template = model.parameter_snapshot_v1();
-        let snapshot = NativePolicyValueTrainSnapshotV1 {
-            adam_step: saved.adam_step,
-            scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
-            parameters: restore_parameters(&saved.parameters, &template)?,
-            first_moments: restore_parameters(&saved.first_moments, &template)?,
-            second_moments: restore_parameters(&saved.second_moments, &template)?,
-        };
-        ensure(
-            hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
-            "checkpoint state hash differs",
-        )?;
-        policy.replace_training_parameters_v3(&snapshot.parameters)?;
-        NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?
+        restore_checkpoint_state_v1(&saved, &mut policy, model)?
     } else {
         NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?
     };
     Ok((policy, state))
+}
+
+fn restore_checkpoint_state_v1(
+    saved: &ExpandedCheckpointV1,
+    policy: &mut FrozenPlayPolicyV1,
+    model: NativePolicyValueNetV1,
+) -> Result<NativePolicyValueTrainStateV1, String> {
+    ensure(
+        saved.schema == CHECKPOINT_SCHEMA,
+        "not an expanded-deck checkpoint",
+    )?;
+    identity_valid(
+        &saved.feature_contract_digest,
+        &saved.feature_encoding_digest,
+        &saved.card_db_hash,
+    )?;
+    ensure(
+        saved.source_import == *policy.identity_v1(),
+        "checkpoint warm-start provenance differs",
+    )?;
+    ensure(
+        saved.loss_identity == "terminal_reinforce_value/v3",
+        "checkpoint loss differs",
+    )?;
+    let template = model.parameter_snapshot_v1();
+    let snapshot = NativePolicyValueTrainSnapshotV1 {
+        adam_step: saved.adam_step,
+        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+        parameters: restore_parameters(&saved.parameters, &template)?,
+        first_moments: restore_parameters(&saved.first_moments, &template)?,
+        second_moments: restore_parameters(&saved.second_moments, &template)?,
+    };
+    ensure(
+        hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
+        "checkpoint state hash differs",
+    )?;
+    // Validate the model's gauge anchor and full optimizer state before the
+    // live policy or copied sideboard embeddings are replaced.
+    let state = NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
+    policy.replace_training_parameters_v3(&snapshot.parameters)?;
+    Ok(state)
 }
 
 fn collect_episode(
@@ -811,6 +852,172 @@ fn publish_json<T: Serialize>(
 mod tests {
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
+
+    fn checkpoint_fixture_v1() -> (
+        FrozenPlayPolicyV1,
+        NativePolicyValueNetV1,
+        ExpandedCheckpointV1,
+    ) {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        model
+            .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+            .unwrap();
+        let state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let mut snapshot = state.snapshot_v1().unwrap();
+        snapshot
+            .parameters
+            .iter_mut()
+            .find(|p| p.name == "card_embedding.weight")
+            .unwrap()
+            .values[16] = 0.4375;
+        let saved = ExpandedCheckpointV1 {
+            schema: CHECKPOINT_SCHEMA.into(),
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            source_import: policy.identity_v1().clone(),
+            state_sha256: hex(&snapshot.state_sha256_v1().unwrap()),
+            adam_step: snapshot.adam_step,
+            scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
+            parameters: snapshot
+                .parameters
+                .iter()
+                .map(ParameterBitsV1::from_native)
+                .collect(),
+            first_moments: snapshot
+                .first_moments
+                .iter()
+                .map(ParameterBitsV1::from_native)
+                .collect(),
+            second_moments: snapshot
+                .second_moments
+                .iter()
+                .map(ParameterBitsV1::from_native)
+                .collect(),
+            trajectories: Vec::new(),
+            loss_identity: "terminal_reinforce_value/v3".into(),
+            learning_rate_bits: 0.001_f32.to_bits(),
+            value_coefficient_bits: 0.5_f32.to_bits(),
+        };
+        (policy, model, saved)
+    }
+
+    #[test]
+    fn inference_restore_preserves_exact_successor_parameters_embeddings_and_ancestry() {
+        let (mut policy, model, saved) = checkpoint_fixture_v1();
+        let ancestry = policy.identity_v1().clone();
+        let original = policy.actual_model_identity_v1();
+        let restored = restore_checkpoint_state_v1(&saved, &mut policy, model).unwrap();
+        let actual = policy.actual_model_identity_v1();
+        assert_eq!(
+            hex(&restored.state_sha256_v1().unwrap()),
+            saved.state_sha256
+        );
+        assert_eq!(
+            actual.model_parameter_sha256,
+            restored.model_v1().parameter_manifest_sha256_v1()
+        );
+        assert_ne!(
+            actual.model_parameter_sha256,
+            original.model_parameter_sha256
+        );
+        assert_ne!(
+            actual.embedding_table_sha256,
+            original.embedding_table_sha256
+        );
+        assert_eq!(policy.identity_v1(), &ancestry);
+        assert_eq!(
+            bits(policy.embedding_rows_v1()),
+            saved
+                .parameters
+                .iter()
+                .find(|p| p.name == "card_embedding.weight")
+                .unwrap()
+                .values
+        );
+        let parameters = policy.training_parameters_v3();
+        assert_eq!(parameters.len(), saved.parameters.len());
+        for (actual, expected) in parameters.iter().zip(&saved.parameters) {
+            assert_eq!(actual.name, expected.name);
+            assert_eq!(actual.shape, expected.shape);
+            assert_eq!(bits(&actual.values), expected.values);
+        }
+    }
+
+    #[test]
+    fn inference_restore_rejects_stale_features_malformed_state_and_ancestry() {
+        let (mut policy, model, saved) = checkpoint_fixture_v1();
+        let original = policy.actual_model_identity_v1();
+        let ancestry = policy.identity_v1().clone();
+        let cases: [(&str, fn(&mut ExpandedCheckpointV1)); 8] = [
+            ("revision2", |s| {
+                s.feature_contract_digest =
+                    "527db1125fa760076c2e751bb70be74cab21aa4dcb7d558a0b804a597ef8adfd".into();
+                s.feature_encoding_digest =
+                    "3ccfd79fe8c4c3916043e931fcb251aed2c3cd8c9c13f31c1112c2af3b855feb".into();
+            }),
+            ("card database", |s| s.card_db_hash = "0".repeat(16)),
+            ("ancestry", |s| {
+                s.source_import.weights_sha256 = "0".repeat(64)
+            }),
+            ("loss", |s| s.loss_identity = "another-loss".into()),
+            ("state digest", |s| s.state_sha256 = "0".repeat(64)),
+            ("parameter layout", |s| s.parameters[0].shape[0] += 1),
+            ("parameter nonfinite", |s| {
+                s.parameters[0].values[16] = f32::NAN.to_bits()
+            }),
+            ("optimizer nonfinite", |s| {
+                s.first_moments[0].values[16] = f32::NAN.to_bits()
+            }),
+        ];
+        for (name, mutate) in cases {
+            let mut changed = saved.clone();
+            mutate(&mut changed);
+            assert!(
+                restore_checkpoint_state_v1(&changed, &mut policy, model.clone()).is_err(),
+                "{name}"
+            );
+            assert_eq!(policy.actual_model_identity_v1(), original, "{name}");
+            assert_eq!(policy.identity_v1(), &ancestry, "{name}");
+        }
+    }
+
+    #[test]
+    fn inference_entrypoint_uses_existing_pinned_reader_before_import_decode() {
+        let path = std::env::temp_dir().join(format!(
+            "expanded-inference-pin-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bytes = b"{\"not_an_import\":true}";
+        fs::write(&path, bytes).unwrap();
+        let mut source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: path.clone(),
+                sha256: "0".repeat(64),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            },
+            checkpoint: None,
+        };
+        let error = match load_expanded_inference_v1(&source) {
+            Ok(_) => panic!("mismatched source pin accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error, "input file SHA differs");
+        source.play_import.sha256 = sha(bytes);
+        assert!(load_expanded_inference_v1(&source).is_err());
+        fs::remove_file(path).unwrap();
+    }
+
     fn list(id: &str) -> ExpandedDeckListV1 {
         let d = checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
         let c = d.registered_configuration();
