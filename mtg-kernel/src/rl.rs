@@ -5717,7 +5717,10 @@ fn continuous_effects_public_v2(
 fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPermissionPublicV2>> {
     let mut out = Vec::new();
     for perm in &state.engine.exile_play_permissions {
-        if engine::active_permission_for(perm.holder, perm.object, state).is_none() {
+        // Validate this grant's incarnation. Looking up any active grant for
+        // the same holder/object can incorrectly revive an older grant when
+        // the card leaves exile and later returns with a fresh permission.
+        if perm.zone_change_generation != state.objects.get(perm.object).zone_change_count {
             continue;
         }
         out.push(ExilePlayPermissionPublicV2 {

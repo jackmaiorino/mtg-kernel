@@ -238,6 +238,96 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reexiled_card_keeps_only_current_generation_permissions_in_v3_scoring() {
+        use crate::engine::{PlayOrCast, PlayPermission, PlayPermissionExpiry};
+        use crate::event::{self, ProposedEvent};
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Zone;
+
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            state.starting_player = actor;
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 4;
+            let card = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+            let old = PlayPermission {
+                object: card,
+                holder: actor,
+                zone_change_generation: state.objects.get(card).zone_change_count,
+                play_or_cast: PlayOrCast::Cast,
+                expiry: PlayPermissionExpiry::UntilHoldersNextTurn {
+                    holder_turn_started: true,
+                },
+            };
+            state.engine.exile_play_permissions.push(old.clone());
+            for zone in [Zone::Hand, Zone::Graveyard, Zone::Library, Zone::Exile] {
+                event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, zone));
+            }
+            // A later exile alone must not resurrect the old permission.
+            assert!(engine::active_permission_for(actor, card, &state).is_none());
+            let observe = |state: &GameState, seat| {
+                crate::rl::observe_policy_v6(
+                    state,
+                    &crate::policy_surface_v5::PolicySurfaceV5::new(),
+                    seat,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap()
+            };
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                assert!(observe(&state, seat)
+                    .projection
+                    .surface
+                    .exile_play_permissions
+                    .is_empty());
+            }
+            let current_generation = state.objects.get(card).zone_change_count;
+            assert_eq!(old.zone_change_generation, 1);
+            assert_eq!(current_generation, 5);
+            state.engine.exile_play_permissions.push(PlayPermission {
+                zone_change_generation: current_generation,
+                expiry: PlayPermissionExpiry::EndOfTurn,
+                ..old.clone()
+            });
+            // Two grants for the same current incarnation may coexist. Keep
+            // both; removing stale grants is not deduplication or action pruning.
+            state.engine.exile_play_permissions.push(PlayPermission {
+                zone_change_generation: current_generation,
+                ..old
+            });
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                let observation = observe(&state, seat);
+                let permissions = &observation.projection.surface.exile_play_permissions;
+                assert_eq!(permissions.len(), 2);
+                assert!(permissions
+                    .iter()
+                    .all(|permission| permission.zone_change_generation == 5
+                        && permission.object.zone_change_count == 5));
+            }
+            assert_eq!(state.engine.exile_play_permissions.len(), 3);
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                panic!("current permission must permit a real decision");
+            };
+            assert_eq!(decision.acting_player, actor.into());
+            assert!(decision.legal_action_count > 1);
+            let mut owned = OwnedScoringV3::default();
+            let encoded = owned.encode(&session);
+            let mut tensor = NativeFlatDecisionTensorV3::default();
+            NativeFlatTensorizerV3::default()
+                .fill(owned.view(&encoded), &mut tensor)
+                .unwrap();
+        }
+    }
+
     fn escape_prefix_states() -> Vec<(String, GameState)> {
         let (mut state, _, picks) = escape_prefix_state();
         let mut states = Vec::new();
