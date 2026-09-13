@@ -1,6 +1,8 @@
 # Multi-Deck BO3 Campaign
 
-Jack's project objective is to complete the Multi-Deck BO3 Campaign. The app's broad goal setting was verified paused during this continuation and remains unchanged; Jack separately authorized native human play preparation and the local overnight development run. Campaign scope is broader deck competence plus learned sideboarding, evaluated through self-play, human matchup calibration and games against Jack. Brewing remains the longer-term end goal this campaign supports. Completion of a repair or an engineering pilot does not complete this campaign.
+Jack's active project goal is to complete the Multi-Deck BO3 Campaign. It was resumed after the overnight monitor reported a stopped training run. Campaign scope is broader deck competence plus learned sideboarding, evaluated through self-play, human matchup calibration and games against Jack. Brewing remains the longer-term end goal this campaign supports. Completion of a repair or an engineering pilot does not complete this campaign.
+
+Current September13 continuation: source `0f7bd388` corrects historical-attachment validation; all targeted tests and exact replay checks pass. Training continuation003 resumes full Adam119 after116preserved updates, keeping the remaining3,640episodes unchanged. The corrected Adam3 human package is live at http://127.0.0.1:56128/. See [repair and recovery](attachment_recovery_20260913.md) for current source/evidence and limits; older row evidence below remains historical until a new strength measurement is completed.
 
 | Requirement | Current evidence | Remaining deliverable |
 | --- | --- | --- |
