@@ -1,13 +1,13 @@
-//! Explicit original-time BO3 capture or read-only native batch preparation.
-//! No optimizer, checkpoint publication, training loop or campaign dispatch.
+//! Explicit BO3 capture, read-only batch preparation, or one CPU update.
+//! Update durability/recovery belongs to the library; no training loop or dispatch.
 use mtg_kernel::durable_publication_v1::{
     DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
 };
 use mtg_kernel::expanded_deck_training_v1::PinnedFileV1;
 use mtg_kernel::phase1_bo3_learning_v1::{
-    Bo3GameplayPreparationReportV1, Bo3GameplayPreparationRequestV1,
+    Bo3GameplayPreparationReportV1, Bo3GameplayPreparationRequestV1, Bo3GameplayUpdateRequestV1,
     MAX_BO3_PREPARATION_REQUEST_BYTES_V1, TrainableBo3RequestV1, collect_trainable_bo3_v1,
-    prepare_bo3_gameplay_batch_v1,
+    prepare_bo3_gameplay_batch_v1, update_bo3_gameplay_v1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -18,18 +18,36 @@ use std::path::PathBuf;
 const COLLECT_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const COLLECT_ENVELOPE_BYTES: u64 = 16 * 1024 * 1024;
 const PREPARE_REPORT_BYTES: u64 = 4 * 1024 * 1024;
+const UPDATE_REQUEST_BYTES: usize = 1024 * 1024;
+const UPDATE_RESULT_BYTES: u64 = 4 * 1024 * 1024;
+const WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Command {
     Collect,
     Prepare,
+    Update,
 }
 struct Arguments {
     command: Command,
     request: PathBuf,
-    output: PathBuf,
+    output: Option<PathBuf>,
 }
 fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
+    if args.first().is_some_and(|mode| mode == "update") {
+        if args.len() != 3 || args[1] != "--request" {
+            return Err("usage: phase1_bo3_trainable_v1 update --request absolute-request.json; output_directory belongs to the request".into());
+        }
+        let request = PathBuf::from(&args[2]);
+        if !request.is_absolute() {
+            return Err("request path must be absolute".into());
+        }
+        return Ok(Arguments {
+            command: Command::Update,
+            request,
+            output: None,
+        });
+    }
     if args.len() != 5 || args[1] != "--request" || args[3] != "--output" {
         return Err("usage: phase1_bo3_trainable_v1 collect|prepare --request absolute-request.json --output absolute-new-result.json".into());
     }
@@ -38,7 +56,7 @@ fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
     } else if args[0] == "prepare" {
         Command::Prepare
     } else {
-        return Err("only collect and prepare are supported; no optimizer command exists".into());
+        return Err("only collect, prepare and update are supported".into());
     };
     let request = PathBuf::from(&args[2]);
     let output = PathBuf::from(&args[4]);
@@ -48,7 +66,7 @@ fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
     Ok(Arguments {
         command,
         request,
-        output,
+        output: Some(output),
     })
 }
 
@@ -116,18 +134,30 @@ struct PreparationReceipt {
 
 fn run() -> Result<(), String> {
     let args = arguments(std::env::args_os().skip(1).collect())?;
-    let parent_path = args
-        .output
+    if args.command == Command::Update {
+        let (input, _) = read_request(&args.request, UPDATE_REQUEST_BYTES)?;
+        let request = Bo3GameplayUpdateRequestV1::from_json_v1(
+            std::str::from_utf8(&input).map_err(|e| e.to_string())?,
+        )?;
+        drop(input);
+        // The library owns exactly this operation's durable output and recovery.
+        // No second output target, checkpoint copy, retry or loop is introduced.
+        let result = update_bo3_gameplay_v1(request)?;
+        let bytes = bounded_json(&result, UPDATE_RESULT_BYTES)?;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(&bytes).map_err(|e| e.to_string())?;
+        stdout.write_all(b"\n").map_err(|e| e.to_string())?;
+        return stdout.flush().map_err(|e| e.to_string());
+    }
+    let output = args.output.as_ref().ok_or("artifact output missing")?;
+    let parent_path = output
         .parent()
         .ok_or("output requires an existing parent")?;
     let parent = capture_existing_publication_parent_v1(parent_path).map_err(|e| e.to_string())?;
-    let final_name = args
-        .output
-        .file_name()
-        .ok_or("output requires a filename")?;
+    let final_name = output.file_name().ok_or("output requires a filename")?;
     let mut stage_name = final_name.to_os_string();
     stage_name.push(".stage");
-    if args.output.try_exists().map_err(|e| e.to_string())?
+    if output.try_exists().map_err(|e| e.to_string())?
         || parent_path
             .join(&stage_name)
             .try_exists()
@@ -140,6 +170,7 @@ fn run() -> Result<(), String> {
     let input_limit = match args.command {
         Command::Collect => COLLECT_REQUEST_BYTES,
         Command::Prepare => MAX_BO3_PREPARATION_REQUEST_BYTES_V1,
+        Command::Update => return Err("update does not publish an artifact output".into()),
     };
     let (input, input_pin) = read_request(&args.request, input_limit)?;
     let text = std::str::from_utf8(&input).map_err(|e| e.to_string())?;
@@ -175,6 +206,7 @@ fn run() -> Result<(), String> {
                 MAX_BO3_PREPARATION_REQUEST_BYTES_V1 as u64 + PREPARE_REPORT_BYTES,
             )?
         }
+        Command::Update => return Err("update does not publish an artifact output".into()),
     };
     let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(|e| e.to_string())?;
     let receipt = publish_new_file_v1(&parent, &stage_name, final_name, &bytes, expected)
@@ -192,8 +224,18 @@ fn run() -> Result<(), String> {
     );
     Ok(())
 }
+fn run_worker() -> Result<(), String> {
+    std::thread::Builder::new()
+        .name("phase1-bo3-worker".into())
+        .stack_size(WORKER_STACK_BYTES)
+        .spawn(run)
+        .map_err(|error| format!("could not start BO3 worker: {error}"))?
+        .join()
+        .map_err(|_| "BO3 worker panicked; see the panic diagnostic".to_owned())?
+}
+
 fn main() {
-    if let Err(error) = run() {
+    if let Err(error) = run_worker() {
         eprintln!("{error}");
         std::process::exit(1);
     }
@@ -204,7 +246,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn trainable_cli_only_exposes_two_explicit_commands() {
+    fn trainable_cli_preserves_collect_and_prepare_argument_contracts() {
         let root = std::env::temp_dir();
         let args = |mode: &str| {
             vec![
@@ -224,9 +266,34 @@ mod tests {
             Command::Prepare
         );
         assert!(arguments(args("update")).is_err());
+        assert!(arguments(args("unknown")).is_err());
         assert!(arguments(Vec::new()).is_err());
         let mut relative = args("collect");
         relative[2] = "relative-request.json".into();
+        assert!(arguments(relative).is_err());
+    }
+
+    #[test]
+    fn trainable_cli_update_requires_only_one_absolute_request() {
+        let path = std::env::temp_dir().join("update-request.json");
+        let input = vec![
+            "update".into(),
+            "--request".into(),
+            path.clone().into_os_string(),
+        ];
+        let parsed = arguments(input.clone()).unwrap();
+        assert_eq!(parsed.command, Command::Update);
+        assert_eq!(parsed.request, path);
+        assert!(parsed.output.is_none());
+        assert!(arguments(input[..2].to_vec()).is_err());
+        let mut extra = input.clone();
+        extra.extend(["--output".into(), "another.json".into()]);
+        assert!(arguments(extra).is_err());
+        let mut wrong_flag = input.clone();
+        wrong_flag[1] = "--output".into();
+        assert!(arguments(wrong_flag).is_err());
+        let mut relative = input;
+        relative[2] = "relative.json".into();
         assert!(arguments(relative).is_err());
     }
 
@@ -256,6 +323,22 @@ mod tests {
             )
             .unwrap_err()
             .contains("exceeds 1 MiB")
+        );
+    }
+
+    #[test]
+    fn trainable_cli_update_uses_strict_bounded_request_parser() {
+        assert!(
+            Bo3GameplayUpdateRequestV1::from_json_v1(
+                r#"{"input":{"kind":"bo3_checkpoint","kind":"ordinary_checkpoint_transition"}}"#
+            )
+            .unwrap_err()
+            .contains("duplicate JSON object key")
+        );
+        assert!(
+            Bo3GameplayUpdateRequestV1::from_json_v1(&" ".repeat(UPDATE_REQUEST_BYTES + 1))
+                .unwrap_err()
+                .contains("exceeds 1 MiB")
         );
     }
 }
