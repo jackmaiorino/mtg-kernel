@@ -6,7 +6,9 @@ use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
-use crate::fast_sampler::FastCategoricalScratch;
+use crate::fast_sampler::{
+    WideCategoricalScratchV1, FAST_CATEGORICAL_MAX_ACTIONS, WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
+};
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::{
@@ -392,6 +394,14 @@ struct DecisionRecordV1 {
     logits: Vec<u32>,
     value: u32,
     tensor: TensorBitsV1,
+    /// Absent for the frozen narrow behavior, preserving archived JSON bytes.
+    /// Wide menus require an explicit runtime receipt, not an ancestry edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sampler_identity: Option<String>,
+}
+
+fn decision_sampler_identity_v1(width: usize) -> Option<&'static str> {
+    (width > FAST_CATEGORICAL_MAX_ACTIONS).then_some(WIDE_CATEGORICAL_SAMPLER_VERSION_V1)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -629,6 +639,8 @@ fn collect_episode(
                     logits: bits(&scores.logits),
                     value: scores.value.to_bits(),
                     tensor: TensorBitsV1::from_tensor(&tensor),
+                    sampler_identity: decision_sampler_identity_v1(scores.logits.len())
+                        .map(str::to_owned),
                 };
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
                 decisions.push(record);
@@ -765,7 +777,7 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     let mut physical = 0u64;
     let mut index = 0usize;
     let mut rng = paired_policy_seeds_v1(t.episode.seed).map(SplitMix64::seed);
-    let mut sampler = FastCategoricalScratch::default();
+    let mut sampler = WideCategoricalScratchV1::default();
     while index < t.decisions.len() {
         let first = &t.decisions[index];
         ensure(
@@ -794,6 +806,10 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
                     && f32::from_bits(row.value).is_finite()
                     && row.logits.iter().all(|v| f32::from_bits(*v).is_finite()),
                 "invalid captured outputs",
+            )?;
+            ensure(
+                row.sampler_identity.as_deref() == decision_sampler_identity_v1(row.logits.len()),
+                "stored decision sampler identity differs from action width",
             )?;
             let selected = sampler
                 .sample(&floats(&row.logits), rng[row.actor as usize].next_u64())
@@ -1181,6 +1197,68 @@ mod tests {
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
 
     #[test]
+    fn wide_trajectory_sampler_receipt_is_required_only_for_wide_decisions() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let (mut trajectory, _, _) = replay_fixture(&mut policy, None, 0, &[0, 1, 0, 1, 1, 0]);
+        let narrow_bytes = serde_json::to_vec(&trajectory).unwrap();
+        for row in &trajectory.decisions {
+            assert!(row.sampler_identity.is_none());
+            assert!(serde_json::to_value(row)
+                .unwrap()
+                .get("sampler_identity")
+                .is_none());
+        }
+        let roundtrip: ExpandedTrajectoryV1 = serde_json::from_slice(&narrow_bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&roundtrip).unwrap(), narrow_bytes);
+        validate_trajectory(&roundtrip).unwrap();
+
+        // Exercise the stored sampling envelope independently of tensor/model
+        // replay. These synthetic logits are not claimed as real forwards.
+        let mut rng = paired_policy_seeds_v1(trajectory.episode.seed).map(SplitMix64::seed);
+        for (row, width) in trajectory
+            .decisions
+            .iter_mut()
+            .zip([64, 120, 257, 5_040, 3, 65])
+        {
+            row.logits = vec![0.0f32.to_bits(); width];
+            row.sampler_identity = decision_sampler_identity_v1(width).map(str::to_owned);
+            let draw = u128::from(crate::fast_sampler::splitmix64_first(
+                rng[row.actor as usize].next_u64(),
+            ));
+            let total = 1u128 << 64;
+            let quotient = total / width as u128;
+            let residual = total % width as u128;
+            let prefix = (quotient + 1) * residual;
+            row.selected = if draw < prefix {
+                draw / (quotient + 1)
+            } else {
+                residual + (draw - prefix) / quotient
+            } as u32;
+        }
+        validate_trajectory(&trajectory).unwrap();
+        let wide_bytes = serde_json::to_vec(&trajectory).unwrap();
+        let roundtrip: ExpandedTrajectoryV1 = serde_json::from_slice(&wide_bytes).unwrap();
+        validate_trajectory(&roundtrip).unwrap();
+        for receipt in [None, Some("wrong-sampler".into())] {
+            let mut changed = trajectory.clone();
+            changed.decisions[1].sampler_identity = receipt;
+            assert!(validate_trajectory(&changed)
+                .unwrap_err()
+                .contains("sampler identity"));
+        }
+        let mut changed = trajectory.clone();
+        changed.decisions[0].sampler_identity = Some(WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into());
+        assert!(validate_trajectory(&changed)
+            .unwrap_err()
+            .contains("sampler identity"));
+        let mut changed = trajectory;
+        changed.decisions[2].selected = (changed.decisions[2].selected + 1) % 257;
+        assert!(validate_trajectory(&changed)
+            .unwrap_err()
+            .contains("recorded behavior sampler"));
+    }
+
+    #[test]
     fn update_receipt_requires_declared_backend_device_and_loss_provenance() {
         let cpu = ExpandedUpdateBackendV1::Cpu;
         let cuda = ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 };
@@ -1379,6 +1457,8 @@ mod tests {
                 logits: bits(&scores.logits),
                 value: scores.value.to_bits(),
                 tensor: TensorBitsV1::from_tensor(&tensor),
+                sampler_identity: decision_sampler_identity_v1(scores.logits.len())
+                    .map(str::to_owned),
             });
         }
         let configs = episode.configurations().unwrap();
@@ -1447,7 +1527,7 @@ mod tests {
             .unwrap();
             validate_trajectory(&trajectory).unwrap();
             let mut rng = paired_policy_seeds_v1(trajectory.episode.seed).map(SplitMix64::seed);
-            let mut sampler = FastCategoricalScratch::default();
+            let mut sampler = WideCategoricalScratchV1::default();
             for row in &trajectory.decisions {
                 let tensor = row.tensor.tensor();
                 let expected = if row.actor == learner_seat {

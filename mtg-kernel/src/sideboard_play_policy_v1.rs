@@ -7,7 +7,11 @@
 //! retained exactly as exported and are not claimed to have been trained.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
-use crate::fast_sampler::{FastCategoricalScratch, FAST_CATEGORICAL_SAMPLER_VERSION};
+use crate::fast_sampler::{
+    FastCategoricalScratch, WideCategoricalScratchV1, FAST_CATEGORICAL_MAX_ACTIONS,
+    FAST_CATEGORICAL_SAMPLER_VERSION, WIDE_CATEGORICAL_MAX_ACTIONS_V1,
+    WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
+};
 use crate::flat_policy_v2::{
     FlatCompletedDungeonV2, FlatContextPathElementV2, FlatDecisionEncoderV2,
     FlatEffectSubtypeChangeV2, FlatGlobalsV2, FlatObjectAbilityUseV2, FlatObjectCoreV2,
@@ -161,6 +165,7 @@ struct FrozenPlaySuccessorStateV3 {
     extensions: FlatScoringExtensionsV3,
     tensorizer: NativeFlatTensorizerV3,
     tensor: NativeFlatDecisionTensorV3,
+    sampler: WideCategoricalScratchV1,
 }
 
 impl FrozenPlayPolicyV1 {
@@ -408,6 +413,24 @@ impl FrozenPlayPolicyV1 {
         &self.identity
     }
 
+    /// Active runtime capability, separate from the historical import receipt.
+    /// Narrow decisions still execute the frozen sampler verbatim.
+    pub fn runtime_sampler_identity_v1(&self) -> &'static str {
+        if self.successor.is_some() {
+            WIDE_CATEGORICAL_SAMPLER_VERSION_V1
+        } else {
+            FAST_CATEGORICAL_SAMPLER_VERSION
+        }
+    }
+
+    pub fn runtime_sampler_max_actions_v1(&self) -> usize {
+        if self.successor.is_some() {
+            WIDE_CATEGORICAL_MAX_ACTIONS_V1
+        } else {
+            FAST_CATEGORICAL_MAX_ACTIONS
+        }
+    }
+
     pub fn actual_model_identity_v1(&self) -> PlayModelIdentityV1 {
         let mut weights = Sha256::new();
         let mut embeddings = Sha256::new();
@@ -528,8 +551,12 @@ impl FrozenPlayPolicyV1 {
         self.owned = OwnedScoringV1::default();
         self.tensorizer = NativeFlatTensorizerV2::new();
         self.tensor = NativeFlatDecisionTensorV2::default();
-        if self.successor.is_some() {
-            self.successor = Some(FrozenPlaySuccessorStateV3::default());
+        if let Some(successor) = &mut self.successor {
+            let sampler = std::mem::take(&mut successor.sampler);
+            *successor = FrozenPlaySuccessorStateV3 {
+                sampler,
+                ..FrozenPlaySuccessorStateV3::default()
+            };
         }
     }
 
@@ -630,10 +657,12 @@ impl FrozenPlayPolicyV1 {
             PlayerSeatV1::P1 => 1,
         };
         let seed = self.seat_rng[index].next_u64();
-        let selected = self
-            .sampler
-            .sample(logits, seed)
-            .map_err(|e| e.to_string())?;
+        let selected = if let Some(successor) = &mut self.successor {
+            successor.sampler.sample(logits, seed)
+        } else {
+            self.sampler.sample(logits, seed)
+        }
+        .map_err(|e| e.to_string())?;
         u32::try_from(selected).map_err(|e| e.to_string())
     }
 }
@@ -858,6 +887,63 @@ impl OwnedScoringV1 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn wide_runtime_sampling_preserves_import_and_each_physical_seat_rng() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let ancestry = policy.identity_v1().clone();
+        assert_eq!(
+            policy.runtime_sampler_identity_v1(),
+            WIDE_CATEGORICAL_SAMPLER_VERSION_V1
+        );
+        assert_eq!(policy.runtime_sampler_max_actions_v1(), 65_536);
+        let seeds = [17, 829];
+        for _ in 0..2 {
+            policy.reset_sampling_v1(seeds);
+            let mut rng = seeds.map(SplitMix64::seed);
+            let mut old = FastCategoricalScratch::default();
+            for (actor, width) in [(0, 64), (1, 120), (1, 257), (0, 5_040), (1, 3), (0, 2)] {
+                let seed = rng[actor].next_u64();
+                let logits = vec![0.0; width];
+                let expected = if width <= 64 {
+                    old.sample(&logits, seed).unwrap()
+                } else {
+                    // Independent uniform-quota inverse CDF, including the
+                    // extra Hamilton units at the earliest legal indices.
+                    let total = 1u128 << 64;
+                    let quotient = total / width as u128;
+                    let residual = total % width as u128;
+                    let draw = u128::from(crate::fast_sampler::splitmix64_first(seed));
+                    let prefix = (quotient + 1) * residual;
+                    if draw < prefix {
+                        (draw / (quotient + 1)) as usize
+                    } else {
+                        (residual + (draw - prefix) / quotient) as usize
+                    }
+                };
+                let seat = if actor == 0 {
+                    PlayerSeatV1::P0
+                } else {
+                    PlayerSeatV1::P1
+                };
+                assert_eq!(
+                    policy.sample_scores(&logits, seat, width as u32).unwrap() as usize,
+                    expected
+                );
+            }
+            assert_eq!(policy.identity_v1(), &ancestry);
+        }
+        policy.successor = None;
+        assert_eq!(
+            policy.runtime_sampler_identity_v1(),
+            FAST_CATEGORICAL_SAMPLER_VERSION
+        );
+        assert_eq!(policy.runtime_sampler_max_actions_v1(), 64);
+        assert!(policy
+            .sample_scores(&[0.0; 65], PlayerSeatV1::P0, 65)
+            .unwrap_err()
+            .contains("maximum 64"));
+    }
 
     #[test]
     fn successor_parameter_install_refreshes_embeddings_and_preserves_ancestry() {

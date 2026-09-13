@@ -1,4 +1,6 @@
-//! Bounded, allocation-free categorical sampling from finite binary32 logits.
+//! Bounded categorical sampling from finite binary32 logits. The frozen
+//! 64-action sampler remains allocation-free; its explicit wide successor
+//! uses reusable heap scratch only above that width.
 //!
 //! This is a new sampler identity. It does not reinterpret artifacts produced
 //! by `decimal-softmax-hamilton-splitmix64-v1`.
@@ -33,6 +35,13 @@ pub const FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256: &str =
     "407a08fb9b9bb5012f14d779d0878c986ce0f16530820a89f5bd54c33d5e7456";
 pub const FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256: &str =
     "69fe3e72dd8fdb245e59e1959359aff3cb6c326fab9f7f2b2ab56e3744d4f3de";
+
+/// Separate runtime identity, never a replacement for the frozen import receipt.
+pub const WIDE_CATEGORICAL_SAMPLER_VERSION_V1: &str = "f32-q8-expq63-hamilton-splitmix64-wide-v1";
+/// Resource bound, not a claim about the maximum possible engine action menu.
+/// In particular this admits the existing seven-trigger 7! = 5,040 menu.
+pub const WIDE_CATEGORICAL_MAX_ACTIONS_V1: usize = 65_536;
+pub const WIDE_CATEGORICAL_SAMPLER_CONTRACT_JSON_V1: &str = r#"{"sampler_version":"f32-q8-expq63-hamilton-splitmix64-wide-v1","input":"1..65536 finite IEEE-754 binary32 logits in legal-action order","narrow_path":"widths 1..64 delegate exactly to f32-q8-expq63-hamilton-splitmix64-v1","narrow_contract_sha256":"276407494966b195b7c011caf984d2354484f7532161107b19ecc83388de92b6","wide_path":"same exact binary32 Q8 gaps, Q63 table, Hamilton 2**64 mass, first SplitMix64 draw and inverse CDF; descending integer remainder then ascending legal index","scratch":"lazy reusable heap arrays above width 64; usize indices; O(n log n) in-place total-order sort; at most 3 MiB array elements on 64-bit targets"}"#;
 
 const Q63_SCALE: u128 = 1_u128 << 63;
 const Q63_HALF: u128 = 1_u128 << 62;
@@ -227,6 +236,128 @@ impl FastCategoricalScratch {
     }
 }
 
+/// V3 runtime successor. Legacy callers retain `FastCategoricalScratch` and its
+/// original width bound, contract bytes, layout and execution path unchanged.
+#[derive(Clone, Default)]
+pub struct WideCategoricalScratchV1 {
+    narrow: FastCategoricalScratch,
+    weights: Vec<u64>,
+    remainders: Vec<u128>,
+    masses: Vec<u128>,
+    order: Vec<usize>,
+}
+
+impl WideCategoricalScratchV1 {
+    pub fn apportion(&mut self, logits: &[f32]) -> Result<&[u128], FastCategoricalError> {
+        if logits.len() <= FAST_CATEGORICAL_MAX_ACTIONS {
+            return self.narrow.apportion(logits);
+        }
+        self.apportion_wide(logits)
+    }
+
+    fn apportion_wide(&mut self, logits: &[f32]) -> Result<&[u128], FastCategoricalError> {
+        let width = logits.len();
+        if width > WIDE_CATEGORICAL_MAX_ACTIONS_V1 {
+            return Err(FastCategoricalError::WidthExceeded {
+                width,
+                maximum: WIDE_CATEGORICAL_MAX_ACTIONS_V1,
+            });
+        }
+        let mut maximum_bits = logits[0].to_bits();
+        let mut maximum_key = finite_order_key(maximum_bits);
+        for (index, logit) in logits.iter().copied().enumerate() {
+            let bits = logit.to_bits();
+            if bits & F32_EXP_MASK == F32_EXP_MASK {
+                return Err(FastCategoricalError::NonFinite { index, bits });
+            }
+            let key = finite_order_key(bits);
+            if key > maximum_key {
+                maximum_bits = bits;
+                maximum_key = key;
+            }
+        }
+        // No large stack arrays or allocation for narrow calls. On 64-bit
+        // targets these four arrays request at most 48 * 65,536 = 3 MiB;
+        // retained capacity never grows beyond the declared element bound.
+        resize_wide_scratch(&mut self.weights, width)?;
+        resize_wide_scratch(&mut self.remainders, width)?;
+        resize_wide_scratch(&mut self.masses, width)?;
+        resize_wide_scratch(&mut self.order, width)?;
+        let mut weight_total = 0_u128;
+        for (index, logit) in logits.iter().copied().enumerate() {
+            let gap = quantized_gap_q8(maximum_bits, logit.to_bits())? as usize;
+            let weight = FAST_CATEGORICAL_EXP_TABLE_Q63[gap];
+            self.weights[index] = weight;
+            weight_total += u128::from(weight);
+        }
+        // Each weight <= 2**63: total <= 2**79 and each numerator <=
+        // 2**127. Both are exact in u128 at the declared maximum width.
+        let mut apportioned_total = 0_u128;
+        for index in 0..width {
+            let numerator = u128::from(self.weights[index]) * FAST_CATEGORICAL_MASS_TOTAL;
+            self.masses[index] = numerator / weight_total;
+            self.remainders[index] = numerator % weight_total;
+            apportioned_total += self.masses[index];
+            self.order[index] = index;
+        }
+        // This is a total order (including legal-index ties). Unstable sort
+        // therefore produces the same Hamilton order without quadratic work
+        // or an additional allocation for wide trigger-order menus.
+        let remainders = &self.remainders;
+        self.order
+            .sort_unstable_by(|a, b| remainders[*b].cmp(&remainders[*a]).then_with(|| a.cmp(b)));
+        let residual = FAST_CATEGORICAL_MASS_TOTAL
+            .checked_sub(apportioned_total)
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|&n| n < width)
+            .ok_or(FastCategoricalError::InternalInvariant {
+                code: "wide-hamilton-residual-out-of-range",
+            })?;
+        for &index in &self.order[..residual] {
+            self.masses[index] += 1;
+        }
+        if self.masses.iter().copied().sum::<u128>() != FAST_CATEGORICAL_MASS_TOTAL {
+            return Err(FastCategoricalError::InternalInvariant {
+                code: "wide-hamilton-mass-total",
+            });
+        }
+        Ok(&self.masses)
+    }
+
+    pub fn sample(&mut self, logits: &[f32], seed: u64) -> Result<usize, FastCategoricalError> {
+        if logits.len() <= FAST_CATEGORICAL_MAX_ACTIONS {
+            return self.narrow.sample(logits, seed);
+        }
+        let draw = u128::from(splitmix64_first(seed));
+        let masses = self.apportion_wide(logits)?;
+        let mut cumulative = 0_u128;
+        for (index, mass) in masses.iter().copied().enumerate() {
+            cumulative += mass;
+            if draw < cumulative {
+                return Ok(index);
+            }
+        }
+        Err(FastCategoricalError::InternalInvariant {
+            code: "wide-inverse-cdf-not-total",
+        })
+    }
+}
+
+fn resize_wide_scratch<T: Default + Clone>(
+    values: &mut Vec<T>,
+    width: usize,
+) -> Result<(), FastCategoricalError> {
+    if width > values.len() {
+        values
+            .try_reserve_exact(width - values.len())
+            .map_err(|_| FastCategoricalError::InternalInvariant {
+                code: "wide-scratch-allocation",
+            })?;
+    }
+    values.resize(width, T::default());
+    Ok(())
+}
+
 /// Return the first SplitMix64-v1 output from the supplied seed.
 #[inline]
 pub fn splitmix64_first(seed: u64) -> u64 {
@@ -378,6 +509,159 @@ fn quantized_gap_q8(maximum_bits: u32, value_bits: u32) -> Result<u16, FastCateg
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_sampler_delegates_every_legacy_width_and_preserves_exact_bytes_and_draws() {
+        let mut old = FastCategoricalScratch::default();
+        let mut wide = WideCategoricalScratchV1::default();
+        for width in 1..=64 {
+            let logits: Vec<f32> = (0..width)
+                .map(|i| match i % 9 {
+                    0 => f32::MAX,
+                    1 => -f32::MAX,
+                    2 => -0.0,
+                    3 => f32::from_bits(1),
+                    _ => (i as f32 - 32.0) / 512.0,
+                })
+                .collect();
+            let expected: Vec<u8> = old
+                .apportion(&logits)
+                .unwrap()
+                .iter()
+                .flat_map(|n| n.to_le_bytes())
+                .collect();
+            let actual: Vec<u8> = wide
+                .apportion(&logits)
+                .unwrap()
+                .iter()
+                .flat_map(|n| n.to_le_bytes())
+                .collect();
+            assert_eq!(actual, expected, "width={width}");
+            for seed in [0, 1, 9, 127, 0x0123_4567_89ab_cdef, u64::MAX] {
+                assert_eq!(wide.sample(&logits, seed), old.sample(&logits, seed));
+            }
+        }
+        assert_eq!(wide.weights.capacity(), 0);
+        assert_eq!(wide.remainders.capacity(), 0);
+        assert_eq!(wide.masses.capacity(), 0);
+        assert_eq!(wide.order.capacity(), 0);
+    }
+
+    #[test]
+    fn wide_sampler_uniform_hamilton_ties_and_full_index_range_are_exact() {
+        let mut scratch = WideCategoricalScratchV1::default();
+        for width in [65, 120, 256, 257, 5_040, 65_536] {
+            let logits = vec![0.0; width];
+            let quotient = FAST_CATEGORICAL_MASS_TOTAL / width as u128;
+            let residual = (FAST_CATEGORICAL_MASS_TOTAL % width as u128) as usize;
+            let expected: Vec<u128> = (0..width)
+                .map(|i| quotient + u128::from(i < residual))
+                .collect();
+            assert_eq!(scratch.apportion(&logits).unwrap(), expected);
+            for seed in [0, 1, 2, u64::MAX] {
+                let draw = u128::from(splitmix64_first(seed));
+                let extra_prefix = (quotient + 1) * residual as u128;
+                let selected = if draw < extra_prefix {
+                    draw / (quotient + 1)
+                } else {
+                    residual as u128 + (draw - extra_prefix) / quotient
+                } as usize;
+                assert_eq!(scratch.sample(&logits, seed).unwrap(), selected);
+            }
+        }
+        // All 65,536 actions survive, including indices that cannot fit u8.
+        let mut logits = vec![-f32::MAX; 65_536];
+        logits[65_535] = f32::MAX;
+        assert_eq!(scratch.sample(&logits, 0).unwrap(), 65_535);
+        assert_eq!(
+            scratch.apportion(&logits).unwrap().iter().sum::<u128>(),
+            1u128 << 64
+        );
+    }
+
+    #[test]
+    fn wide_sampler_permutation_preserves_quotas_and_legal_order_tie_breaks() {
+        let mut scratch = WideCategoricalScratchV1::default();
+        // Two exact weight classes, with ties interleaved in legal order.
+        let logits: Vec<f32> = (0..120)
+            .map(|i| if i % 3 == 0 { 0.0 } else { -1.0 })
+            .collect();
+        let high = u128::from(FAST_CATEGORICAL_EXP_TABLE_Q63[0]);
+        let low = u128::from(FAST_CATEGORICAL_EXP_TABLE_Q63[256]);
+        let total = 40 * high + 80 * low;
+        let floor_high = high * FAST_CATEGORICAL_MASS_TOTAL / total;
+        let floor_low = low * FAST_CATEGORICAL_MASS_TOTAL / total;
+        let residual = FAST_CATEGORICAL_MASS_TOTAL - 40 * floor_high - 80 * floor_low;
+        let high_first =
+            high * FAST_CATEGORICAL_MASS_TOTAL % total >= low * FAST_CATEGORICAL_MASS_TOTAL % total;
+        for shift in [0, 1, 2, 37, 119] {
+            let mut permuted = logits.clone();
+            permuted.rotate_left(shift);
+            let masses = scratch.apportion(&permuted).unwrap();
+            let mut priority: Vec<usize> = (0..120)
+                .filter(|&i| (permuted[i] == 0.0) == high_first)
+                .collect();
+            priority.extend((0..120).filter(|&i| (permuted[i] == 0.0) != high_first));
+            let mut expected: Vec<u128> = permuted
+                .iter()
+                .map(|&x| if x == 0.0 { floor_high } else { floor_low })
+                .collect();
+            for &i in &priority[..residual as usize] {
+                expected[i] += 1;
+            }
+            assert_eq!(masses, expected, "rotation={shift}");
+        }
+    }
+
+    #[test]
+    fn wide_sampler_rejects_invalid_inputs_and_bounds_reused_heap_scratch() {
+        let mut scratch = WideCategoricalScratchV1::default();
+        assert_eq!(scratch.apportion(&[]), Err(FastCategoricalError::Empty));
+        assert_eq!(
+            scratch.apportion(&vec![0.0; 65_537]),
+            Err(FastCategoricalError::WidthExceeded {
+                width: 65_537,
+                maximum: 65_536,
+            })
+        );
+        assert_eq!(scratch.weights.capacity(), 0);
+        for bits in [
+            f32::INFINITY.to_bits(),
+            f32::NEG_INFINITY.to_bits(),
+            0x7fc0_0123,
+        ] {
+            let mut logits = vec![0.0; 257];
+            logits[256] = f32::from_bits(bits);
+            assert_eq!(
+                scratch.apportion(&logits),
+                Err(FastCategoricalError::NonFinite { index: 256, bits })
+            );
+        }
+        assert_eq!(scratch.weights.capacity(), 0);
+        for width in [65, 120, 257, 32_769, 65_536, 65] {
+            scratch.apportion(&vec![0.0; width]).unwrap();
+            assert!(scratch.weights.capacity() <= WIDE_CATEGORICAL_MAX_ACTIONS_V1);
+            assert!(scratch.remainders.capacity() <= WIDE_CATEGORICAL_MAX_ACTIONS_V1);
+            assert!(scratch.masses.capacity() <= WIDE_CATEGORICAL_MAX_ACTIONS_V1);
+            assert!(scratch.order.capacity() <= WIDE_CATEGORICAL_MAX_ACTIONS_V1);
+        }
+        let mut old = FastCategoricalScratch::default();
+        assert_eq!(
+            scratch.sample(&[0.0, 1.0, 2.0], 17),
+            old.sample(&[0.0, 1.0, 2.0], 17)
+        );
+        assert!(old.apportion(&[0.0; 65]).is_err());
+        let contract: serde_json::Value =
+            serde_json::from_str(WIDE_CATEGORICAL_SAMPLER_CONTRACT_JSON_V1).unwrap();
+        assert_eq!(
+            contract["narrow_contract_sha256"],
+            FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256
+        );
+        assert_eq!(
+            contract["sampler_version"],
+            WIDE_CATEGORICAL_SAMPLER_VERSION_V1
+        );
+    }
 
     #[test]
     fn q63_recurrence_endpoints_are_pinned() {
