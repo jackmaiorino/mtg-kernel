@@ -6,9 +6,11 @@ use super::visible::Handles;
 use super::HumanDecisionErrorV1 as Error;
 use crate::card_def::{self, CostComponent, ManaAbilityAmountDef, ManaAbilityCostDef};
 use crate::engine::{CastMode, ChosenCreatureCostZoneV1, CostKind, OptionalCostChoice};
+use crate::effect::{CreatureFilter, EffectCond, EffectOp, ImpulseDuration, ObjectRef, PlayerRef, TargetRef};
 use crate::mana::{Cost, ManaColor, Pip};
-use crate::policy_observation_v6::ObservationV6;
-use crate::rl::{ActionSemanticV1 as A, CardStableRefV1, PlayerSeatV1, TargetRefV1};
+use crate::policy_observation_v6::{HistoricalSourceContextV6, ObservationV6};
+use crate::rl::{ActionSemanticV1 as A, BooleanChoicePurposeV4, CardStableRefV1, PendingEffectChoiceSemanticV4, PendingTriggerKindV2, PlayerSeatV1, SpellCopyStageV2, StackItemKindV2, TargetRefV1};
+use crate::state::Zone;
 
 fn color(color: ManaColor) -> &'static str {
     match color {
@@ -69,6 +71,154 @@ fn cost_components(components: &[CostComponent]) -> Result<String, Error> {
         return Err(Error::UnsupportedPrompt);
     }
     Ok(parts.join("; "))
+}
+
+fn activation_cost(components: &[CostComponent], source: &str) -> Result<String, Error> {
+    if components.is_empty() { return Ok("pay {0}".into()); }
+    components.iter().map(|component| match component {
+        CostComponent::Tap => Ok(format!("tap {source}")),
+        CostComponent::SacrificeSelf => Ok(format!("sacrifice {source}")),
+        CostComponent::ExileSelf => Ok(format!("exile {source}")),
+        CostComponent::DiscardSelf => Ok(format!("discard {source}")),
+        other => cost_components(std::slice::from_ref(other)),
+    }).collect::<Result<Vec<_>, _>>().map(|parts| parts.join("; "))
+}
+
+// Definition programs contain no runtime objects or hidden card identities.
+// Unsupported operations deliberately have no Debug/string fallback.
+fn effect_player(player: PlayerRef) -> Result<&'static str, Error> {
+    match player {
+        PlayerRef::Controller => Ok("its controller"),
+        PlayerRef::Opponent => Ok("its controller's opponent"),
+        PlayerRef::Target(0) => Ok("the chosen player"),
+        _ => Err(Error::UnsupportedPrompt),
+    }
+}
+
+fn effect_target(target: TargetRef) -> Result<&'static str, Error> {
+    match target {
+        TargetRef::ThisSource => Ok("this source"),
+        TargetRef::Target(0) => Ok("the chosen target"),
+        TargetRef::Opponent => Ok("its controller's opponent"),
+        _ => Err(Error::UnsupportedPrompt),
+    }
+}
+
+fn effect_object(object: ObjectRef) -> Result<&'static str, Error> {
+    match object {
+        ObjectRef::ThisSource => Ok("this source"),
+        ObjectRef::Target(0) => Ok("the chosen object"),
+        _ => Err(Error::UnsupportedPrompt),
+    }
+}
+
+fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
+    Ok(match condition {
+        EffectCond::WasKicked => "this spell was kicked".into(),
+        EffectCond::ControlsArtifactCount(n) => format!("its controller controls at least {n} artifacts"),
+        EffectCond::TargetIsColor(0, c) => format!("the chosen target is {}", color(*c)),
+        EffectCond::TargetInZone(0, Zone::Battlefield) => "the chosen target is on the battlefield".into(),
+        EffectCond::TargetInZone(0, Zone::Stack) => "the chosen target is on the stack".into(),
+        EffectCond::And(a, b) => format!("{} and {}", effect_condition(a)?, effect_condition(b)?),
+        _ => return Err(Error::UnsupportedPrompt),
+    })
+}
+
+fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
+    Ok(match effect {
+        EffectOp::Sequence(ops) if ops.is_empty() => "do nothing".into(),
+        EffectOp::Sequence(ops) => ops.iter().map(describe_effect).collect::<Result<Vec<_>, _>>()?.join("; then "),
+        EffectOp::Conditional { cond, then, else_ } => format!("if {}, {}; otherwise {}", effect_condition(cond)?, describe_effect(then)?, describe_effect(else_)?),
+        EffectOp::DealDamage { target, amount } => format!("deal {amount} damage to {}", effect_target(*target)?),
+        EffectOp::DrawCards { player, count } => format!("{} draws {count} cards", effect_player(*player)?),
+        EffectOp::DiscardCards { player, count } => format!("{} discards {count} cards", effect_player(*player)?),
+        EffectOp::GainLife { player, amount } => format!("{} gains {amount} life", effect_player(*player)?),
+        EffectOp::LoseLife { player, amount } => format!("{} loses {amount} life", effect_player(*player)?),
+        EffectOp::AddMana { player, colors } => format!("{} adds {}", effect_player(*player)?, colors.iter().map(|c| format!("{{{}}}", color(*c))).collect::<String>()),
+        EffectOp::CreateToken { token_def, controller } => {
+            let token = card_def::CARD_DEFS.get(*token_def as usize).ok_or(Error::UnsupportedPrompt)?;
+            if !token.is_token { return Err(Error::UnsupportedPrompt); }
+            let stats = match (token.power, token.toughness) {
+                (Some(p), Some(t)) => format!(" ({p}/{t})"),
+                (None, None) => String::new(),
+                _ => return Err(Error::UnsupportedPrompt),
+            };
+            // The named token is an exact pinned definition, not a hidden
+            // runtime card. Include its relevant printed keyword explicitly.
+            let keyword = if token.keywords == card_def::Keywords::NONE { "" }
+                else if token.keywords == card_def::Keywords::VIGILANCE { " with vigilance" }
+                else if token.keywords == card_def::Keywords::HASTE { " with haste" }
+                else if token.keywords == card_def::Keywords::FLYING { " with flying" }
+                else { return Err(Error::UnsupportedPrompt); };
+            format!("{} creates {}{stats}{keyword}", effect_player(*controller)?, token.name)
+        }
+        EffectOp::ImpulseDraw { count, duration } => format!("exile the top {count} cards of its controller's library; that player may play them {}", match duration {
+            ImpulseDuration::EndOfTurn => "until end of turn",
+            ImpulseDuration::UntilOwnersNextTurn => "until the end of their next turn",
+        }),
+        EffectOp::PumpControlled { filter, power, toughness, grant_haste } => {
+            let creatures = match filter {
+                CreatureFilter::AnyControlled => "creatures its controller controls",
+                CreatureFilter::ControlledWithSubtype(card_def::Subtype::Human) => "Humans its controller controls",
+                _ => return Err(Error::UnsupportedPrompt),
+            };
+            format!("{creatures} get {power:+}/{toughness:+}{} until end of turn", if *grant_haste { " and gain haste" } else { "" })
+        }
+        EffectOp::MoveObject { object, to_zone } => {
+            let destination = match to_zone {
+                Zone::Graveyard => "its owner's graveyard",
+                Zone::Hand => "its owner's hand",
+                Zone::Exile => "exile",
+                _ => return Err(Error::UnsupportedPrompt),
+            };
+            format!("put {} into {destination}", effect_object(*object)?)
+        }
+        EffectOp::DestroyObject { object } => format!("destroy {}", effect_object(*object)?),
+        EffectOp::Sacrifice { object } => format!("sacrifice {}", effect_object(*object)?),
+        EffectOp::TapObject { object } => format!("tap {}", effect_object(*object)?),
+        EffectOp::UntapObject { object } => format!("untap {}", effect_object(*object)?),
+        EffectOp::DamageOpponentAndTheirCreatures { amount } => format!("deal {amount} damage to its controller's opponent and each creature that opponent controls"),
+        EffectOp::OfferAffectedPlayerSpellCopy { affected: TargetRef::Target(0) } => "the affected player may pay {R}{R} to copy this spell and may choose a new target".into(),
+        _ => return Err(Error::UnsupportedPrompt),
+    })
+}
+
+fn program_at_path<'a>(mut program: &'a EffectOp, path: &[u16]) -> Result<&'a EffectOp, Error> {
+    for component in path {
+        program = match program {
+            EffectOp::Sequence(ops) => ops.get(*component as usize),
+            EffectOp::Choice { options, .. } => options.get(*component as usize),
+            EffectOp::Conditional { then, else_, .. } => match component {
+                0 => Some(then.as_ref()), 1 => Some(else_.as_ref()), _ => None,
+            },
+            _ => None,
+        }.ok_or(Error::UnsupportedPrompt)?;
+    }
+    Ok(program)
+}
+
+// The public DTO does not carry a runtime effect program or an ability
+// selector for a resolving effect. Accept definition reconstruction only
+// when every possible printed program agrees at this structural path.
+fn pending_program(source: &CardStableRefV1, path: &[u16], observation: &ObservationV6) -> Result<EffectOp, Error> {
+    if !observation.extensions.historical_public_sources.iter().any(|record|
+        record.context == HistoricalSourceContextV6::PendingEffect && record.source == *source && record.stack_item_kind == StackItemKindV2::Spell) {
+        return Err(Error::UnsupportedPrompt);
+    }
+    let def = definition(source)?;
+    // Alternate spell forms have distinct programs without a public form
+    // selector on the resolving-effect DTO. Do not assume the front face.
+    if def.omen.is_some() || def.adventure.is_some() || def.bestow.is_some() { return Err(Error::UnsupportedPrompt); }
+    let mut roots = Vec::new();
+    if let Some(root) = (def.spell_effect)() { roots.push(root); }
+    for mode in [&def.mode2, &def.mode3].into_iter().flatten() { roots.push((mode.effect)()); }
+    let mut selected = None;
+    for root in roots {
+        let candidate = program_at_path(&root, path)?.clone();
+        if selected.as_ref().is_some_and(|previous| previous != &candidate) { return Err(Error::UnsupportedPrompt); }
+        selected = Some(candidate);
+    }
+    selected.ok_or(Error::UnsupportedPrompt)
 }
 
 fn target(target: &TargetRefV1, handles: &Handles, human: PlayerSeatV1) -> Result<String, Error> {
@@ -155,6 +305,15 @@ pub(super) fn label(
             format!("Play {} as your land for the turn", handles.name(source)?)
         }
         A::CastSpell { source, .. } => format!("Begin casting {}", handles.name(source)?),
+        A::ActivateAbility { source, ability_index, .. } => {
+            let def = definition(source)?;
+            let ability = def.activated_abilities.get(*ability_index as usize)
+                .ok_or(Error::UnsupportedPrompt)?;
+            if ability.activation_zone != source.zone { return Err(Error::UnsupportedPrompt); }
+            let name = handles.name(source)?;
+            format!("Activate {name}: {}: {}{}", activation_cost(ability.cost, &name)?, describe_effect(&(ability.effect)())?,
+                if ability.sorcery_speed_only { "; activate only as a sorcery" } else { "" })
+        }
         A::PlotSpell { source, .. } => {
             let cost = definition(source)?
                 .plot_cost
@@ -325,6 +484,34 @@ pub(super) fn label(
                 handles.name(source)?
             )
         }
+        A::ChooseSpellMode { source, mode_index, mode_count, .. } => {
+            let def = definition(source)?;
+            let count = 1 + u8::from(def.mode2.is_some()) + u8::from(def.mode3.is_some());
+            if count != *mode_count || *mode_index >= count { return Err(Error::UnsupportedPrompt); }
+            let effect = match mode_index {
+                0 => (def.spell_effect)().ok_or(Error::UnsupportedPrompt)?,
+                1 => (def.mode2.as_ref().ok_or(Error::UnsupportedPrompt)?.effect)(),
+                2 => (def.mode3.as_ref().ok_or(Error::UnsupportedPrompt)?.effect)(),
+                _ => return Err(Error::UnsupportedPrompt),
+            };
+            format!("For {}, {}", handles.name(source)?, describe_effect(&effect)?)
+        }
+        A::ChooseEffectOption { source, option_index, option_count, .. } => {
+            let pending = observation.projection.surface.engine_context.pending_effect.as_ref()
+                .ok_or(Error::UnsupportedPrompt)?;
+            let Some(PendingEffectChoiceSemanticV4::Options { player, structural_path, option_count: count }) = &pending.choice else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if pending.source.as_ref() != Some(source) || *player != human || count != option_count {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let EffectOp::Choice { options, .. } = pending_program(source, structural_path, observation)? else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if options.len() != *option_count as usize { return Err(Error::UnsupportedPrompt); }
+            let selected = options.get(*option_index as usize).ok_or(Error::UnsupportedPrompt)?;
+            format!("For {}, {}", handles.name(source)?, describe_effect(selected)?)
+        }
         A::ChooseEffectTarget {
             source,
             target: chosen,
@@ -360,11 +547,27 @@ pub(super) fn label(
             handles.name(source)?
         ),
         A::ChooseEffectBoolean { source, value, .. } => {
-            let ward = observation
-                .extensions
-                .pending_ward_payment
-                .as_ref()
+            let pending = observation.projection.surface.engine_context.pending_effect.as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
+            let Some(PendingEffectChoiceSemanticV4::Boolean { player, structural_path, purpose, .. }) = &pending.choice else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if pending.source.as_ref() != Some(source) || *player != human { return Err(Error::UnsupportedPrompt); }
+            if *purpose == BooleanChoicePurposeV4::Shuffle {
+                return Ok(format!("{} your library for {}", if *value { "Shuffle" } else { "Do not shuffle" }, handles.name(source)?));
+            }
+            let Some(ward) = observation.extensions.pending_ward_payment.as_ref() else {
+                if *purpose != BooleanChoicePurposeV4::PayCost { return Err(Error::UnsupportedPrompt); }
+                let EffectOp::MayPayManaThen { player: PlayerRef::Controller, colored, generic, then } = pending_program(source, structural_path, observation)? else {
+                    return Err(Error::UnsupportedPrompt);
+                };
+                if pending.controller != human { return Err(Error::UnsupportedPrompt); }
+                let mut cost = if generic == 0 { String::new() } else { format!("{{{generic}}}") };
+                for c in colored { cost.push_str(&format!("{{{}}}", color(c))); }
+                if cost.is_empty() { cost.push_str("{0}"); }
+                return Ok(format!("{} {cost} for {}{}{}", if *value { "Pay" } else { "Decline to pay" }, handles.name(source)?,
+                    if *value { ": " } else { "; do not " }, describe_effect(&then)?));
+            };
             if ward.payer != human {
                 return Err(Error::UnsupportedPrompt);
             }
@@ -436,6 +639,20 @@ pub(super) fn label(
             },
             handles.name(source)?
         ),
+        A::ChooseSpellCopyPayment { source, pay, .. } => {
+            let pending = observation.projection.surface.engine_context.pending_spell_copy.as_ref()
+                .ok_or(Error::UnsupportedPrompt)?;
+            if pending.player != human || pending.parent.as_ref() != Some(source) || pending.stage != SpellCopyStageV2::Payment {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let root = (definition(source)?.spell_effect)().ok_or(Error::UnsupportedPrompt)?;
+            let EffectOp::Sequence(ops) = root else { return Err(Error::UnsupportedPrompt); };
+            if !matches!(ops.last(), Some(EffectOp::OfferAffectedPlayerSpellCopy { affected: TargetRef::Target(0) })) {
+                return Err(Error::UnsupportedPrompt);
+            }
+            format!("{} {{R}}{{R}} to copy {} (inherited target: {}; a new target may be chosen after payment)",
+                if *pay { "Attempt to pay" } else { "Decline to pay" }, handles.name(source)?, target(&pending.inherited_target, handles, human)?)
+        }
         A::ChooseMadnessCast { card, cast_it, .. } => {
             if *cast_it {
                 let cost = definition(card)?
@@ -486,15 +703,32 @@ pub(super) fn label(
             handles.name(blocker)?,
             handles.name(attacker)?
         ),
+        A::OrderTriggers { pending_sources, order, .. } => {
+            let pending = &observation.projection.surface.engine_context.pending_triggers;
+            if pending_sources.len() != order.len() || pending_sources.len() < 2 || pending.len() < order.len() {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            if sorted != (0..order.len()).collect::<Vec<_>>() { return Err(Error::UnsupportedPrompt); }
+            let mut descriptions = Vec::new();
+            let mut seen = Vec::new();
+            for &index in order {
+                let source = &pending_sources[index];
+                let trigger = &pending[index];
+                if trigger.source.as_ref() != Some(source) || trigger.controller != human || trigger.trigger_kind != PendingTriggerKindV2::TriggeredAbility {
+                    return Err(Error::UnsupportedPrompt);
+                }
+                if seen.contains(source) { return Err(Error::UnsupportedPrompt); }
+                seen.push(source.clone());
+                descriptions.push(format!("Trigger from {}", handles.name(source)?));
+            }
+            format!("Put triggers on the stack from bottom to top (last resolves first): {}", descriptions.join("; then "))
+        }
         // These visible records do not contain enough human meaning. In
         // particular effect option paths do not describe their outcomes, and
         // same-source triggers require frozen ability provenance, not an index.
-        A::ActivateAbility { .. }
-        | A::ChooseSpellMode { .. }
-        | A::ChooseEffectOption { .. }
-        | A::ChooseEffectNumber { .. }
-        | A::ChooseSpellCopyPayment { .. }
-        | A::OrderTriggers { .. }
+        A::ChooseEffectNumber { .. }
         | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })
 }

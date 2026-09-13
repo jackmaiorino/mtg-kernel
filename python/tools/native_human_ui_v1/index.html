@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Native Arena · Human play</title>
+<style>
+:root{color-scheme:dark;--bg:#11161c;--panel:#192129;--line:#35424e;--muted:#a9b8c4;--ink:#ecf1f5;--gold:#e5b768;--blue:#78bdce;--red:#da8585}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif}button,select,input{font:inherit}button{cursor:pointer;border:1px solid var(--line);background:#24323e;color:var(--ink);border-radius:7px;padding:9px 13px}button:hover{border-color:var(--gold);background:#334453}button:disabled{opacity:.4;cursor:wait}header{padding:20px 28px;border-bottom:1px solid var(--line);display:flex;gap:20px;align-items:center;justify-content:space-between;background:#151d25}h1{font-size:21px;margin:0;font-weight:650;letter-spacing:.03em}.eyebrow{font-size:11px;letter-spacing:.15em;color:var(--gold);text-transform:uppercase}.muted{color:var(--muted)}#status{padding:12px 28px;background:#1d2b31;border-bottom:1px solid var(--line)}#status.error{background:#482e31;color:#ffd8d8}.layout{display:grid;grid-template-columns:minmax(500px,1fr) 360px;gap:18px;padding:20px 28px;max-width:1600px;margin:auto}.panel{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:16px;margin-bottom:16px}.panel h2{font-size:14px;color:var(--muted);margin:0 0 12px;letter-spacing:.05em;font-weight:600}.player{display:flex;align-items:center;gap:18px;margin-bottom:12px}.life{font-size:32px;font-weight:700;min-width:54px;color:var(--gold)}.stats{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted)}.cards{display:flex;gap:9px;flex-wrap:wrap;min-height:65px}.card{width:139px;min-height:118px;padding:10px;text-align:left;display:flex;flex-direction:column;border:1px solid #6b747b;background:#25343d;position:relative;overflow:hidden}.card[data-color="red"]{background:linear-gradient(145deg,#573333,#28303a)}.card[data-color="land"]{background:linear-gradient(145deg,#4b4836,#273339)}.card.tapped{opacity:.66;border-style:dashed}.card.selected{outline:2px solid var(--gold)}.card strong{font-size:13px;line-height:1.3}.card .mana{color:var(--gold);font-size:12px;margin:5px 0}.card .detail{font-size:11px;color:var(--muted);margin-top:auto;padding-top:10px}.card .pt{align-self:flex-end;background:#152027;border-radius:3px;padding:1px 6px;font-weight:600}.empty{font-size:13px;color:#718390;align-self:center;padding:8px}.hand .card{min-height:143px;width:150px}.actions{display:flex;gap:8px;flex-direction:column}.actions button{text-align:left;padding:12px}.actions button:first-child{border-color:#597580}aside{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 30px);overflow:auto}.phase{display:flex;justify-content:space-between;gap:15px;padding:0 0 12px;color:var(--blue)}.small{font-size:12px}.stackitem{padding:8px 10px;border-left:3px solid var(--gold);background:#25303a;margin-bottom:6px}.log{max-height:190px;overflow:auto;font-size:12px;color:var(--muted)}.log p{margin:0;padding:5px 0;border-bottom:1px solid #2b3944}details{margin:10px 0;color:var(--muted)}summary{cursor:pointer}#cardInfo{font-size:13px;white-space:pre-line}#cardInfo strong{color:var(--ink)}.controls{display:flex;gap:8px;flex-wrap:wrap}.danger{color:#ffc8c8;background:#462e35}.badge{font-size:12px;background:#243a42;padding:4px 8px;border-radius:20px;color:#bfe2df}.sideboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}.deckrow{display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;gap:6px}.deckrow button{padding:3px 8px}footer{padding:4px 28px 20px;color:#8296a5;font-size:12px}@media(max-width:1000px){.layout{grid-template-columns:1fr;padding:14px}aside{position:static;max-height:none}header{padding:16px}.card{width:125px}.hand .card{width:130px}}
+</style></head><body>
+<header><div><div class="eyebrow">Human evaluation · Native engine</div><h1>Native Arena</h1></div><div class="controls"><span id="score" class="badge">Loading match</span><button id="refresh">Refresh</button><button id="concede" class="danger">Concede game</button></div></header>
+<div id="status" role="status" aria-live="polite">Connecting to your match…</div>
+<main class="layout"><section><div class="phase"><span id="phase"></span><span id="turn"></span></div>
+<div id="pregame" class="panel" hidden></div>
+<div id="gameSummary" class="panel" hidden></div>
+<div id="board" hidden>
+<div class="panel"><div class="player"><div id="opponentLife" class="life">20</div><div><h2>Opponent</h2><div id="opponentStats" class="stats"></div></div></div><div id="opponentBattlefield" class="cards"></div><details><summary>Opponent graveyard</summary><div id="opponentGraveyard" class="cards"></div></details></div>
+<div id="stackPanel" class="panel" hidden><h2>Stack · resolves from the top</h2><div id="stack"></div></div>
+<div id="combatPanel" class="panel" hidden><h2>Combat</h2><div id="combat"></div></div>
+<div class="panel"><div class="player"><div id="yourLife" class="life">20</div><div><h2>You</h2><div id="yourStats" class="stats"></div></div></div><div id="yourBattlefield" class="cards"></div><details><summary>Your graveyard</summary><div id="yourGraveyard" class="cards"></div></details></div>
+<div class="panel hand"><h2>Your hand</h2><div id="hand" class="cards"></div></div><details class="panel"><summary>Exile and revealed information</summary><div id="exile" class="cards"></div><div id="known"></div></details></div>
+</section><aside><div class="panel"><h2 id="actionTitle">Your choices</h2><div id="actions" class="actions"></div><button id="clearFilter" hidden style="margin-top:10px">Show all choices</button></div><div class="panel"><h2>Card details</h2><div id="cardInfo" class="muted">Select a visible card to read its text and find its available choices.</div></div><div class="panel"><h2>Match log</h2><div id="log" class="log"></div></div></aside></main>
+<footer><p id="setupNotice"></p><p>Native play automates some priority passes. Please report any timing choice you cannot make during these feedback games.</p>Your opponent’s hidden cards and model scores are not sent to this page. Feedback games are recorded separately from later formal evaluation.</footer>
+<script>
+'use strict';
+const TOKEN='__SESSION_TOKEN__';let cardDB={},view=null,busy=false,needsRefresh=true,filter=null,lastPrompt=null,lastGameKey=null,logLines=[],deckEdit=null,bottomSelection=[],openingKey=null;
+const $=id=>document.getElementById(id), el=(tag,text,cls)=>{let x=document.createElement(tag);if(text!==undefined)x.textContent=text;if(cls)x.className=cls;return x};
+function log(text){if(logLines[0]!==text){logLines.unshift(text);logLines=logLines.slice(0,70)}$('log').replaceChildren(...logLines.map(t=>el('p',t)))}
+function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error)}
+async function refresh(){if(busy)return;busy=true;syncControls();try{let r=await fetch('/api/state');render(await r.json())}catch(e){needsRefresh=true;status('Could not reach the local match process. Refresh before taking another action.',true)}finally{busy=false;syncControls()}}
+function syncControls(){const blocked=busy||needsRefresh||!view;document.querySelectorAll('button').forEach(b=>{if(b.id==='refresh'){b.disabled=busy;return}if(blocked&&!b.disabled){b.dataset.waiting='1';b.disabled=true}else if(!blocked&&b.dataset.waiting){delete b.dataset.waiting;b.disabled=false}})}
+async function send(command,description){if(busy||needsRefresh||!view)return;busy=true;syncControls();status('Applying your choice…');try{let r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json','X-Session-Token':TOKEN},body:JSON.stringify(command)});let data=await r.json();if(data.response?.ok&&description)log(description);render(data)}catch(e){needsRefresh=true;status('The response was interrupted. Refresh before taking another action.',true)}finally{busy=false;syncControls()}}
+function ref(card){return card.stable||card.card?.stable||card}
+function showCard(card){const c=ref(card),d=cardDB[c.name]||{},box=$('cardInfo');box.replaceChildren(el('strong',c.name||'Card'));for(let text of [d.mana_cost,[(d.types||[]).join(' '),(d.subtypes||[]).join(' ')].filter(Boolean).join(' · '),d.oracle_text||d.rules_text||d.text||'Rules text is unavailable in the loaded card reference.']){if(text)box.append(el('p',text))}filter=view?.phase==='decision'?(c.handle||null):null;drawActions()}
+function drawCards(id,cards){
+ const box=$(id);box.replaceChildren();if(!cards?.length){box.append(el('span','None','empty'));return}
+ for(let card of cards){
+  const c=ref(card),d=cardDB[c.name]||{},b=el('button',undefined,'card'+(card.tapped?' tapped':''));
+  b.dataset.color=(d.types||[]).includes('Land')?'land':(d.colors||[]).includes('R')?'red':'other';
+  b.append(el('strong',c.name||'Visible card'));if(d.mana_cost)b.append(el('span',d.mana_cost,'mana'));
+  let notes=[];if(c.handle)notes.push('['+c.handle+']');if(card.tapped)notes.push('Tapped');if(card.summoning_sick)notes.push('Summoning sick');if(card.damage)notes.push(card.damage+' damage');
+  if(card.counters){for(let [k,v]of Object.entries(card.counters))if(v)notes.push(v+' '+k.replaceAll('_',' '))}
+  const ch=card.characteristics;
+  for(const [key,value] of Object.entries(ch?.effective_keywords||{}))if(value===true)notes.push(key.replaceAll('_',' '));
+  if(ch?.effective_keywords?.ward_generic)notes.push('Ward {'+ch.effective_keywords.ward_generic+'}');
+  if(card.attachments?.length)notes.push('Attached: '+card.attachments.map(a=>a.name+' ['+a.handle+']').join(', '));
+  b.append(el('span',notes.join(' · ')||c.zone||'','detail'));
+  if(ch?.effective_power!==null&&ch?.effective_power!==undefined)b.append(el('span',ch.effective_power+'/'+ch.effective_toughness,'pt'));
+  b.title=c.name+(c.handle?' ['+c.handle+']':'');b.onclick=()=>showCard(card);box.append(b);
+ }
+}
+function stats(id,p,index){let pools=p.mana_pools?.[index]||[];let mana=pools.map((n,i)=>n?`${n}${['W','U','B','R','G','C'][i]}`:'').filter(Boolean).join(' ');$(id).replaceChildren(el('span',`${p.hand_counts?.[index]??'?'} in hand`),el('span',`${p.library_counts?.[index]??'?'} in library`),el('span','Mana '+(mana||'0')))}
+function seatIndex(seat){return seat==='p1'||seat===1?1:0}
+function drawActions(){let box=$('actions');box.replaceChildren();$('clearFilter').hidden=!filter;if(!view)return;let d=view.decision;$('actionTitle').textContent=view.phase==='decision'?'Your choices':view.phase==='complete'?'Match result':view.phase==='stopped'?'Session stopped':'Before the game';if(view.phase!=='decision'||!d){box.append(el('span',view.phase==='complete'?matchResult(view.winner):view.phase==='stopped'?(view.message||'The session has stopped.'):'Use the controls above the board to continue.','muted'));return}let actions=d.actions||[];if(filter)actions=actions.filter(a=>a.label.includes('['+filter+']'));if(!actions.length)box.append(el('span','No current choices refer to this card.','muted'));for(let a of actions){let b=el('button',a.label);b.onclick=()=>send({command:'action',prompt_seq:d.prompt_seq,action_index:a.action_index},'You: '+a.label);box.append(b)}}
+function drawPregame(){let box=$('pregame');box.replaceChildren();box.hidden=!['sideboard','play_draw','opening','mulligan','bottom'].includes(view.phase);if(box.hidden)return;
+if(view.phase==='play_draw'){box.append(el('h2','Choose play or draw'));for(let choice of ['play','draw']){let b=el('button',choice==='play'?'Play first':'Draw first');b.onclick=()=>send({command:'play_draw',game_index:view.game_index,choice});box.append(b)}}
+else if(view.phase==='sideboard'){box.append(el('h2','Sideboarding'));box.append(el('p','Exchange cards between your main deck and sideboard, then confirm.'));drawSideboard(box)}
+else {
+ box.append(el('h2',view.phase==='bottom'?'Choose cards for the bottom of your library':'Opening hand'));
+ let opening=view.opening||{},cards=opening.hand||[],key=view.game_index+':'+view.opening_revision;
+ if(openingKey!==key){openingKey=key;bottomSelection=[]}
+ box.append(el('p',(seatIndex(opening.starting_player)===seatIndex(view.human_seat)?'You play first. ':'Your opponent plays first. ')+`Mulligans taken: ${opening.mulligans_taken||0}. `+(view.phase==='bottom'?`Select exactly ${opening.required_bottom} cards, then confirm.`:'You may keep or shuffle and draw seven again.')));
+ let hand=el('div',undefined,'cards');hand.id='openingCards';box.append(hand);drawCards('openingCards',cards);
+ const base={game_index:view.game_index,opening_revision:view.opening_revision};
+ if(view.phase==='bottom'){
+   box.append(el('p','Select cards in the order you want them below the rest of your library. The first selected is drawn before the others; the last selected goes on the very bottom. Select a marked card again to remove it.','small muted'));
+   [...hand.children].forEach((button,i)=>{let index=cards[i].index,order=bottomSelection.indexOf(index);button.classList.toggle('selected',order>=0);if(order>=0)button.append(el('span','Bottom '+(order+1),'badge'));button.onclick=()=>{showCard(cards[i]);let chosen=bottomSelection.indexOf(index);if(chosen>=0)bottomSelection.splice(chosen,1);else if(bottomSelection.length<opening.required_bottom)bottomSelection.push(index);drawPregame()}});
+   if(bottomSelection.length){let order=el('ol');for(let index of bottomSelection)order.append(el('li',cards.find(card=>card.index===index).name));box.append(order);let reset=el('button','Clear selection');reset.onclick=()=>{bottomSelection=[];drawPregame()};box.append(reset)}
+   let confirm=el('button',`Confirm bottom ${bottomSelection.length}/${opening.required_bottom} cards`);confirm.disabled=bottomSelection.length!==opening.required_bottom;confirm.onclick=()=>send({command:'bottom',...base,hand_indices:[...bottomSelection]});box.append(confirm);
+ }else{
+   for(let [command,label,enabled] of [['keep','Keep hand',opening.can_keep],['mulligan','Mulligan',opening.can_mulligan]]){let b=el('button',label);b.disabled=!enabled;b.onclick=()=>send({command,...base});box.append(b)}
+ }
+}}
+function drawSideboard(box){let own=view.own_deck;if(!own){box.append(el('p','Waiting for your deck list.'));return}let expand=rows=>rows.flatMap(row=>Array.from({length:row.count},()=>({card_id:row.card_id,name:row.name})));if(!deckEdit||deckEdit.game!==view.game_index)deckEdit={game:view.game_index,mainboard:expand(own.mainboard||[]),sideboard:expand(own.sideboard||[])};let columns=el('div',undefined,'sideboard-grid');box.append(columns);for(let zone of ['mainboard','sideboard']){let col=el('div');col.append(el('h2',(zone==='mainboard'?'Main deck':'Sideboard')+' · '+deckEdit[zone].length));let counted=new Map;for(let c of deckEdit[zone]){let entry=counted.get(c.card_id)||{c,count:0};entry.count++;counted.set(c.card_id,entry)}for(let [id,{c,count}] of counted){let row=el('div',undefined,'deckrow');row.append(el('span',count+' × '+c.name));let b=el('button',zone==='mainboard'?'→':'←');b.onclick=()=>{let i=deckEdit[zone].findIndex(c=>c.card_id===id);deckEdit[zone==='mainboard'?'sideboard':'mainboard'].push(deckEdit[zone].splice(i,1)[0]);drawPregame()};row.append(b);col.append(row)}columns.append(col)}let submit=el('button','Confirm sideboard');submit.disabled=deckEdit.mainboard.length!==60||deckEdit.sideboard.length!==15;submit.onclick=()=>send({command:'sideboard',game_index:view.game_index,mainboard:deckEdit.mainboard.map(c=>c.card_id),sideboard:deckEdit.sideboard.map(c=>c.card_id)});box.append(submit)}
+function matchResult(winner){return winner==='human'?'You won the match.':winner==='opponent'?'Your opponent won the match.':winner==='draw'?'The match ended in a draw.':'Match complete.'}
+function gameResult(game){return 'Game '+game.game_index+': '+(game.winner==='human'?'you won':game.winner==='opponent'?'opponent won':'draw')+(game.reason&&game.reason!=='natural'?' · '+game.reason.replaceAll('_',' '):'')}
+function clearBoard(){
+ $('board').hidden=true;
+ for(let id of ['yourBattlefield','opponentBattlefield','yourGraveyard','opponentGraveyard','hand','exile','known','stack','yourStats','opponentStats'])$(id).replaceChildren();
+ $('yourLife').textContent='';$('opponentLife').textContent='';$('stackPanel').hidden=true;$('combatPanel').hidden=true;$('combat').replaceChildren();
+ $('board').querySelectorAll('details').forEach(detail=>{detail.open=false});
+}
+function drawSummary(human){
+ const box=$('gameSummary'),game=view.last_game;box.replaceChildren();box.hidden=!game||view.phase==='decision';
+ if(!game)return;
+ const key=JSON.stringify([game.game_index,game.winner,game.reason]);
+ if(lastGameKey!==key){log(gameResult(game));lastGameKey=key}
+ if(box.hidden)return;
+ box.append(el('h2',view.phase==='complete'?matchResult(view.winner):'Previous game'),el('p',gameResult(game)));
+ const facts=[];if(Number.isInteger(game.turn))facts.push('Ended on turn '+game.turn);
+ if(Array.isArray(game.life_totals)&&game.life_totals.length===2)facts.push('Final life: you '+game.life_totals[human]+' · opponent '+game.life_totals[1-human]);
+ if(facts.length)box.append(el('p',facts.join(' · '),'muted'));
+}
+function drawKnown(state,human){
+ const box=$('known');box.replaceChildren();let group=0;
+ const append=(title,cards)=>{if(!cards?.length)return;box.append(el('h2',title));const container=el('div',undefined,'cards');container.id='knownCards'+group++;box.append(container);drawCards(container.id,cards)};
+ for(let index of [human,1-human]){
+   append(index===human?'Known cards in your hand':'Revealed cards in opponent’s hand',state.known_hand_cards?.[index]);
+   for(let entry of state.known_library_cards?.[index]||[])append((index===human?'Your library':'Opponent’s library')+' · known position '+(entry.position+1)+' from the top',[entry.card]);
+ }
+ const search=state.extensions?.decision_local_library;
+ if(search)append(seatIndex(search.library_owner)===human?'Your current library search choices':'Current authorized library choices',search.cards);
+ for(let permission of state.public.exile_play_permissions||[]){
+   const expiry=permission.expiry?.expiry_kind==='end_of_turn'?'until end of turn':permission.expiry?.expiry_kind==='until_holders_next_turn'?(permission.expiry.holder_turn_started?'until the end of this turn':'until the end of their next turn'):'for its stated duration';
+   box.append(el('p',(seatIndex(permission.holder)===human?'You may ':'Opponent may ')+(permission.play_or_cast==='cast'?'cast ':'play ')+(permission.object?.name||'the exiled card')+' '+expiry+'.','small'));
+ }
+}
+function drawCombat(state){
+ const combat=state.public.combat,selection=state.policy_context?.private_combat_selection,box=$('combat');box.replaceChildren();
+ const name=card=>card.name+' ['+card.handle+']';
+ for(const attacker of combat?.ordered_attackers||[]){
+  const blocked=(combat.attacker_to_ordered_blockers||[]).find(pair=>pair[0].handle===attacker.handle)?.[1]||[];
+  box.append(el('p',name(attacker)+' attacks'+(blocked.length?' · blocked by '+blocked.map(name).join(', ')+(blocked.length>1?' (damage order)':''):combat.blockers_declared?' · unblocked':' · blockers not yet declared')));
+ }
+ if(selection){
+  box.append(el('p','Choosing '+(selection.attacker?'blockers for '+name(selection.attacker):'attackers')+'. Selected so far: '+(selection.selected.map(name).join(', ')||'none')+'.'));
+  box.append(el('p','Current creature: '+name(selection.current_candidate),'muted'));
+ }
+ $('combatPanel').hidden=!box.childNodes.length;
+}
+function render(data){
+ if(data?.error){needsRefresh=true;status(data.error,true);return}
+ const response=data?.response;
+ if(!response?.view){needsRefresh=true;status(response?.error||'No current match view is available. Refresh to reconnect.',true);return}
+ view=response.view;needsRefresh=false;
+ const human=seatIndex(view.human_seat),opp=1-human,wins=view.wins||[0,0];
+ const key=[view.game_index,view.phase,view.decision?.prompt_seq,view.opening_revision].join(':');
+ if(lastPrompt!==key){filter=null;lastPrompt=key;$('cardInfo').replaceChildren(el('span','Select a visible card to read its text and find its available choices.','muted'))}
+ $('score').textContent=(view.phase==='complete'?'Final score':`Game ${view.game_index??1}`)+` · You ${wins[human]} : ${wins[opp]} Opponent`;
+ $('setupNotice').textContent=view.notice||'';
+ const phaseMessage={decision:'Your turn to choose.',sideboard:'Sideboard for the next game.',play_draw:'You choose who plays first.',mulligan:'Review your opening hand, then keep or mulligan.',bottom:'Choose the cards to put on the bottom of your library.',complete:matchResult(view.winner),stopped:view.message||'The match stopped; its record is preserved.'};
+ status(response.error||phaseMessage[view.phase]||'Choose your opening hand.',Boolean(response.error)||view.phase==='stopped');
+ drawPregame();drawSummary(human);
+ const decision=view.phase==='decision'?view.decision:null;
+ if(decision){
+   const state=decision.state,p=state.public;$('board').hidden=false;
+   $('phase').textContent=({main1:'First main phase',main2:'Second main phase',begin_combat:'Beginning of combat',declare_attackers:'Declare attackers',declare_blockers:'Declare blockers',combat_damage:'Combat damage',end_combat:'End of combat',end_step:'End step'}[p.phase]||p.phase||'').replaceAll('_',' ');
+   $('turn').textContent='Turn '+p.turn+' · '+(seatIndex(p.active_player)===human?'Your turn':'Opponent’s turn');
+   $('yourLife').textContent=p.life_totals[human];$('opponentLife').textContent=p.life_totals[opp];
+   stats('yourStats',p,human);stats('opponentStats',p,opp);
+   drawCards('yourBattlefield',p.battlefield[human]);drawCards('opponentBattlefield',p.battlefield[opp]);
+   drawCards('yourGraveyard',p.graveyards[human]);drawCards('opponentGraveyard',p.graveyards[opp]);
+   drawCards('hand',state.own_hand);drawCards('exile',p.exile);drawKnown(state,human);drawCombat(state);
+   const stack=p.stack||[];$('stackPanel').hidden=!stack.length;
+   $('stack').replaceChildren(...[...stack].reverse().map((item,index)=>{
+     const name=item.source?.name||'Ability',kind=(item.stack_item_kind||'stack item').replaceAll('_',' ');
+     const targets=(item.targets||[]).map(target=>target.object?.name||(target.player!==undefined?(seatIndex(target.player)===human?'you':'your opponent'):'target'));
+     return el('div',(index===0?'Top · ':'')+'#'+(stack.length-index)+' '+name+' ('+kind+')'+(targets.length?' → '+targets.join(', '):''),'stackitem');
+   }));
+ }else{
+   clearBoard();$('phase').textContent=view.phase==='complete'?'Match complete':view.phase==='stopped'?'Session stopped':'Preparing game '+view.game_index;$('turn').textContent='';
+ }
+ drawActions();$('concede').hidden=!['decision','mulligan','bottom','opening'].includes(view.phase);
+}
+$('refresh').onclick=refresh;$('clearFilter').onclick=()=>{filter=null;drawActions()};$('concede').onclick=()=>{if(view&&confirm('Concede this game?'))send({command:'concede',game_index:view.game_index})};
+syncControls();fetch('/api/cards').then(r=>{if(!r.ok)throw new Error('Card reference unavailable');return r.json()}).then(d=>{cardDB=d;refresh()}).catch(()=>refresh());
+</script></body></html>

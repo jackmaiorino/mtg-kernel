@@ -131,6 +131,204 @@ fn human_duplicate_opening_lands_keep_distinct_choices_without_hidden_order() {
     assert_eq!(baseline.state.own_hand.len(), 3);
 }
 
+fn human_impulse_exile_state(
+    actor: PlayerId,
+    holder: PlayerId,
+    reverse: bool,
+    first_expiry: Option<crate::engine::PlayPermissionExpiry>,
+) -> (GameState, crate::ids::ObjectId, crate::ids::ObjectId) {
+    use crate::engine::{PlayOrCast, PlayPermission, PlayPermissionExpiry};
+    use crate::event::{self, ProposedEvent};
+    let mut state = ready_state();
+    state.active_player = actor;
+    state.priority_player = actor;
+    put(&mut state, actor, "Forest", Zone::Hand);
+    put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+    let mut cards = Vec::new();
+    for first in if reverse { [false, true] } else { [true, false] } {
+        let card = put(&mut state, holder, "Mountain", Zone::Hand);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+        if reverse {
+            state.objects.get_mut(card).zone_change_count += 17 + card.0;
+        }
+        let expiry = if first {
+            first_expiry
+        } else {
+            Some(PlayPermissionExpiry::UntilHoldersNextTurn { holder_turn_started: false })
+        };
+        if let Some(expiry) = expiry {
+            state.engine.exile_play_permissions.push(PlayPermission {
+                object: card,
+                holder,
+                zone_change_generation: state.objects.get(card).zone_change_count,
+                play_or_cast: PlayOrCast::Play,
+                expiry,
+            });
+        }
+        cards.push((first, card));
+    }
+    let first = cards.iter().find(|(first, _)| *first).unwrap().1;
+    let second = cards.iter().find(|(first, _)| !*first).unwrap().1;
+    (state, first, second)
+}
+
+#[test]
+fn human_expired_impulse_copy_is_distinguished_and_exact_live_land_is_played() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        // Also exercise the original smoke failure: identical opponent exile
+        // cards, only one of which has a current public play permission.
+        for holder in [actor, actor.opponent()] {
+            let mut expected = None;
+            for reverse in [false, true] {
+                let (state, expired, live) = human_impulse_exile_state(actor, holder, reverse, None);
+                let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+                let mut adapter = HumanDecisionProjectorV1::new(actor.into());
+                let visible = adapter.project_current(&session, decision(&session)).unwrap();
+                assert_eq!(visible.state.public.exile.len(), 2);
+                assert_eq!(visible.state.public.exile_play_permissions.len(), 1);
+                assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
+                if let Some(expected) = &expected {
+                    assert_eq!(&visible, expected);
+                } else {
+                    expected = Some(visible.clone());
+                }
+                let choices: Vec<_> = visible.actions.iter()
+                    .filter(|action| action.label.starts_with("Play Mountain ")).collect();
+                assert_eq!(choices.len(), usize::from(holder == actor));
+                if holder == actor {
+                    let permission = &visible.state.public.exile_play_permissions[0];
+                    assert!(choices[0].label.contains(&format!("[{}]", permission.object.handle)));
+                    adapter.submit(&mut session, HumanActionRequestV1 {
+                        prompt_seq: visible.prompt_seq,
+                        action_index: choices[0].action_index,
+                    }).unwrap();
+                    assert_eq!(session.game_state().objects.get(expired).zone, Zone::Exile);
+                    assert_eq!(session.game_state().objects.get(live).zone, Zone::Battlefield);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn human_equal_and_distinct_impulse_expiries_are_invariant_under_permission_reordering() {
+    use crate::engine::PlayPermissionExpiry;
+    for expiry in [
+        PlayPermissionExpiry::EndOfTurn,
+        PlayPermissionExpiry::UntilHoldersNextTurn { holder_turn_started: false },
+        PlayPermissionExpiry::UntilHoldersNextTurn { holder_turn_started: true },
+    ] {
+        let (first, _, _) = human_impulse_exile_state(PlayerId::P0, PlayerId::P0, false, Some(expiry));
+        let (renamed, _, _) = human_impulse_exile_state(PlayerId::P0, PlayerId::P0, true, Some(expiry));
+        let first = prompt(first, PlayerSeatV1::P0);
+        assert_eq!(first, prompt(renamed, PlayerSeatV1::P0));
+        let choices: Vec<_> = first.actions.iter()
+            .filter(|action| action.label.starts_with("Play Mountain ")).collect();
+        assert_eq!(choices.len(), 2);
+        assert_ne!(choices[0].label, choices[1].label);
+        assert_no_private_keys(&serde_json::to_value(first).unwrap());
+    }
+}
+
+fn human_team_haste_state(reverse: bool, token_count: usize) -> (GameState, Vec<crate::ids::ObjectId>) {
+    use crate::engine::{EffectDuration, Layers, UntilEndOfTurnEffect};
+    let mut state = ready_state();
+    put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
+    put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+    let mut names = vec!["Human Soldier Token"; token_count];
+    names.push("Voldaren Epicure");
+    if reverse { names.reverse(); }
+    let mut affected = Vec::new();
+    let mut tokens = Vec::new();
+    for name in names {
+        let object = put(&mut state, PlayerId::P1, name, Zone::Battlefield);
+        state.objects.get_mut(object).summoning_sick = true;
+        if reverse { state.objects.get_mut(object).zone_change_count += 13 + object.0; }
+        affected.push(object);
+        if name == "Human Soldier Token" { tokens.push(object); }
+    }
+    state.engine.until_end_of_turn.push(UntilEndOfTurnEffect::ResolvedSetEffect {
+        object_ids: affected,
+        layer: Layers::ABILITY_ADDING,
+        timestamp: 1,
+        duration: EffectDuration::EndOfTurn,
+        power: 0,
+        toughness: 0,
+        grant_haste: true,
+    });
+    (state, tokens)
+}
+
+#[test]
+fn human_equivalent_team_haste_tokens_preserve_prompt_and_distinct_target_choices() {
+    for token_count in [2, 3] {
+        for targeting in [false, true] {
+            let mut expected = None;
+            for reverse in [false, true] {
+                let (mut state, _) = human_team_haste_state(reverse, token_count);
+                if targeting {
+                    let bolt = state.players[0].hand.iter().copied()
+                        .find(|id| state.objects.get(*id).name == "Lightning Bolt").unwrap();
+                    crate::engine::step(&mut state, crate::engine::Action::CastSpell(bolt)).unwrap();
+                }
+                let visible = prompt(state, PlayerSeatV1::P0);
+                let tokens: Vec<_> = visible.state.public.battlefield[1].iter()
+                    .filter(|card| card.stable.name == "Human Soldier Token").collect();
+                assert_eq!(tokens.len(), token_count);
+                assert!(tokens.iter().all(|card| card.characteristics.effective_keywords.haste));
+                assert_eq!(visible.state.public.continuous_effects[0].affected_objects.len(), token_count + 1);
+                if targeting {
+                    let choices: Vec<_> = visible.actions.iter()
+                        .filter(|action| action.label.starts_with("Target Human Soldier Token ")).collect();
+                    assert_eq!(choices.len(), token_count);
+                    let unique: std::collections::BTreeSet<_> = choices.iter().map(|action| &action.label).collect();
+                    assert_eq!(unique.len(), token_count);
+                }
+                assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
+                if let Some(expected) = &expected {
+                    assert_eq!(&visible, expected);
+                } else {
+                    expected = Some(visible);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn human_same_characteristics_do_not_erase_asymmetric_effect_membership() {
+    use crate::engine::UntilEndOfTurnEffect;
+    let (mut state, tokens) = human_team_haste_state(false, 2);
+    let mut extra = state.engine.until_end_of_turn[0].clone();
+    let UntilEndOfTurnEffect::ResolvedSetEffect { object_ids, timestamp, .. } = &mut extra else {
+        panic!("team effect fixture");
+    };
+    *object_ids = vec![tokens[0]];
+    *timestamp = 2;
+    // Both tokens still have precisely the same characteristics, but one
+    // appears in a second public effect. Do not erase that public graph fact.
+    state.engine.until_end_of_turn.push(extra);
+    let session = FastActorSessionV1::from_v3_fixture_state(state);
+    let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
+    assert_eq!(adapter.project_current(&session, decision(&session)), Err(HumanDecisionErrorV1::UnsupportedPrompt));
+    assert!(adapter.pending.is_none());
+}
+
+#[test]
+fn human_effect_source_is_not_interchangeable_with_an_equal_affected_card() {
+    let (state, _) = human_team_haste_state(false, 2);
+    let session = FastActorSessionV1::from_v3_fixture_state(state);
+    let (mut observation, actions, _) = session
+        .human_current_decision_input_v1(decision(&session), PlayerSeatV1::P0).unwrap();
+    let token_id = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
+    let token = observation.projection.surface.battlefield[1].iter()
+        .find(|card| card.stable.card_db_id == token_id).unwrap().stable.clone();
+    observation.projection.surface.continuous_effects[0].source = Some(token);
+    assert_eq!(visible::project_decision(&observation, &actions, PlayerSeatV1::P0, 1),
+        Err(HumanDecisionErrorV1::UnsupportedPrompt));
+}
+
 #[test]
 fn human_action_mapping_executes_exact_choice_and_retries_once() {
     let mut state = basic_state(PlayerId::P0, false, true);
@@ -619,4 +817,159 @@ fn human_completed_library_search_drops_temporary_menu() {
         .iter()
         .any(|card| card.stable.name == "Forest"));
     assert!(after.state.known_library_cards.iter().all(Vec::is_empty));
+}
+
+fn submit_label(
+    session: &mut FastActorSessionV1,
+    adapter: &mut HumanDecisionProjectorV1,
+    matches: impl Fn(&str) -> bool,
+) -> HumanDecisionV1 {
+    let visible = adapter.project_current(session, decision(session)).unwrap();
+    let action_index = visible.actions.iter().find(|action| matches(&action.label))
+        .unwrap_or_else(|| panic!("expected label in {:?}", visible.actions)).action_index;
+    adapter.submit(session, HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index }).unwrap();
+    visible
+}
+
+#[test]
+fn human_blood_activation_names_all_costs_and_binds_the_discard() {
+    let mut state = ready_state();
+    let blood = put(&mut state, PlayerId::P0, "Blood Token", Zone::Battlefield);
+    let mountain = put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
+    put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
+    put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Library);
+    put(&mut state, PlayerId::P1, "Fireblast", Zone::Hand);
+    state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+    let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+    let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
+    let before = submit_label(&mut session, &mut adapter, |label| label.starts_with("Activate Blood Token"));
+    let activation = before.actions.iter().find(|action| action.label.starts_with("Activate Blood Token")).unwrap();
+    assert!(activation.label.contains("pay {1}"));
+    assert!(activation.label.contains("tap Blood Token"));
+    assert!(activation.label.contains("sacrifice Blood Token"));
+    assert!(activation.label.contains("discard 1 cards"));
+    assert!(activation.label.contains("draws 1 cards"));
+    assert!(session.game_state().engine.pending_activation.is_some());
+    assert!(session.game_state().engine.pending_discard.is_some());
+    let discard = submit_label(&mut session, &mut adapter, |label| label.starts_with("Discard Mountain"));
+    assert_eq!(session.game_state().objects.get(mountain).zone, Zone::Graveyard);
+    assert_ne!(session.game_state().objects.get(blood).zone, Zone::Battlefield);
+    assert!(session.game_state().engine.pending_activation.is_none());
+    assert!(!serde_json::to_string(&discard).unwrap().contains("Fireblast"));
+    assert_no_private_keys(&serde_json::to_value(&before).unwrap());
+}
+
+#[test]
+fn human_synthesizer_activation_names_payment_token_and_timing() {
+    let mut state = ready_state();
+    let synth = put(&mut state, PlayerId::P0, "Experimental Synthesizer", Zone::Battlefield);
+    put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
+    put(&mut state, PlayerId::P0, "Mountain", Zone::Library);
+    // The harness suppresses P0's fresh-own-stack priority. Give P1 a real
+    // instant response so this assertion observes the announced ability,
+    // before both it and the leaves trigger are automatically resolved.
+    put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    put(&mut state, PlayerId::P1, "Mountain", Zone::Battlefield);
+    state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+    let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+    let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
+    let visible = submit_label(&mut session, &mut adapter, |label| label.starts_with("Activate Experimental Synthesizer"));
+    let activation = visible.actions.iter().find(|action| action.label.starts_with("Activate Experimental Synthesizer")).unwrap();
+    assert!(activation.label.contains("pay {2}{R}"));
+    assert!(activation.label.contains("sacrifice Experimental Synthesizer"));
+    assert!(activation.label.contains("Samurai Token (2/2) with vigilance"));
+    assert!(activation.label.contains("only as a sorcery"));
+    assert_eq!(decision(&session).acting_player, PlayerSeatV1::P1);
+    assert_eq!(session.game_state().objects.get(synth).zone, Zone::Graveyard);
+    assert!(session.game_state().stack.iter().any(|item| matches!(&item.inline_effect,
+        Some(crate::effect::EffectOp::CreateToken { token_def, .. }) if *token_def == crate::card_def::card_id_by_name("Samurai Token").unwrap())));
+}
+
+fn human_chain_payment_state() -> GameState {
+    use crate::engine::{self, Action, Decision};
+    use crate::state::Target;
+    let mut state = ready_state();
+    let chain = put(&mut state, PlayerId::P0, "Chain Lightning", Zone::Hand);
+    put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Forest", Zone::Hand);
+    engine::step(&mut state, Action::CastSpell(chain)).unwrap();
+    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    for _ in 0..16 {
+        match engine::advance_until_decision(&mut state) {
+            Decision::ChooseSpellCopyPayment { player: PlayerId::P1, .. } => return state,
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected Chain payment path: {other:?}"),
+        }
+    }
+    panic!("Chain payment not reached");
+}
+
+#[test]
+fn human_chain_copy_payment_and_retarget_are_distinct_bound_choices() {
+    for pay in [false, true] {
+        let mut session = FastActorSessionV1::from_v3_fixture_state(human_chain_payment_state());
+        let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P1);
+        let visible = submit_label(&mut session, &mut adapter, |label|
+            label.starts_with(if pay { "Attempt to pay {R}{R}" } else { "Decline to pay {R}{R}" }));
+        assert!(visible.actions.iter().all(|action| action.label.contains("inherited target: you")));
+        assert_eq!(visible.state.public.life_totals[1], 17);
+        if pay {
+            let retarget = adapter.project_current(&session, decision(&session)).unwrap();
+            assert!(retarget.actions.iter().any(|action| action.label.starts_with("Keep the inherited target")));
+            assert!(retarget.actions.iter().any(|action| action.label.starts_with("Choose a new target")));
+            assert!(session.game_state().engine.pending_spell_copy.as_ref().unwrap().copy_source.is_some());
+            assert!(session.game_state().players[1].battlefield.iter().all(|id| session.game_state().objects.get(*id).tapped));
+        } else {
+            assert!(session.game_state().engine.pending_spell_copy.is_none());
+            assert!(session.game_state().players[1].battlefield.iter().all(|id| !session.game_state().objects.get(*id).tapped));
+        }
+        assert_no_private_keys(&serde_json::to_value(visible).unwrap());
+    }
+}
+
+fn human_trigger_order_state(repeated_source: bool) -> GameState {
+    use crate::event::{self, ProposedEvent};
+    let mut state = ready_state();
+    put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
+    let first = put(&mut state, PlayerId::P0, "Voldaren Epicure", Zone::Hand);
+    let second = put(&mut state, PlayerId::P0, "Burning-Tree Emissary", Zone::Hand);
+    event::propose_and_commit_batch(&mut state, vec![
+        ProposedEvent::zone_change(first, Zone::Battlefield),
+        ProposedEvent::zone_change(second, Zone::Battlefield),
+    ]);
+    state.engine.pending_triggers = crate::trigger::collect_and_process(&mut state);
+    if repeated_source {
+        let repeated = state.engine.pending_triggers[0].clone();
+        state.engine.pending_triggers = vec![state.engine.pending_triggers[0].clone(), repeated];
+    }
+    state
+}
+
+#[test]
+fn human_trigger_order_uses_neutral_named_sources_and_exact_bottom_to_top_order() {
+    let mut state = human_trigger_order_state(false);
+    // Without an opponent response the surface auto-passes both players
+    // and resolves the stack before submit returns. Keep the exact chosen
+    // placement observable at a genuine P1 priority decision instead.
+    put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    put(&mut state, PlayerId::P1, "Mountain", Zone::Battlefield);
+    let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+    let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
+    let visible = submit_label(&mut session, &mut adapter, |label|
+        label.find("Burning-Tree Emissary").zip(label.find("Voldaren Epicure")).is_some_and(|(a, b)| a < b));
+    assert!(visible.actions.iter().all(|action| action.label.contains("last resolves first")));
+    assert_eq!(decision(&session).acting_player, PlayerSeatV1::P1);
+    assert_eq!(session.game_state().stack.len(), 2);
+    assert_eq!(session.game_state().objects.get(session.game_state().stack[0].source).name, "Burning-Tree Emissary");
+    assert_eq!(session.game_state().objects.get(session.game_state().stack[1].source).name, "Voldaren Epicure");
+}
+
+#[test]
+fn human_repeated_unlabeled_triggers_from_one_source_are_rejected() {
+    let session = FastActorSessionV1::from_v3_fixture_state(human_trigger_order_state(true));
+    let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
+    assert_eq!(adapter.project_current(&session, decision(&session)), Err(HumanDecisionErrorV1::UnsupportedPrompt));
+    assert!(adapter.pending.is_none());
 }

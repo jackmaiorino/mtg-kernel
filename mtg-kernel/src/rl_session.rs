@@ -35,6 +35,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod human_opening_v1;
+
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";

@@ -61,6 +61,7 @@ pub mod effect;
 pub mod engine;
 pub mod event;
 pub mod expanded_deck_training_v1;
+pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
@@ -386,6 +387,7 @@ pub mod native_training_store_reference_latest_v2;
 // store boundary. The high-level publisher/read/recovery path lands here.
 pub mod game_summary_v1;
 pub mod human_bo3_v1;
+pub mod human_match_v1;
 pub mod learned_bo3_v1;
 pub mod learned_sideboard_v1;
 #[cfg(test)]
@@ -418,6 +420,7 @@ pub mod surface;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
+pub mod xmage_observed_inference_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 

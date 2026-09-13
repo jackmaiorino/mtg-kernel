@@ -182,6 +182,19 @@ impl Handles {
                 graph_refs.insert(card.stable.handle.clone());
             }
         }
+        // An exile permission describes one card, including its public expiry.
+        // Treat it as a unary attribute so an expired impulse card and a new
+        // same-name impulse card remain distinguishable without arena order.
+        let mut permissions = BTreeMap::<String, Vec<String>>::new();
+        for permission in &state.public.exile_play_permissions {
+            permissions
+                .entry(permission.object.handle.clone())
+                .or_default()
+                .push(without_handles(permission)?);
+        }
+        for values in permissions.values_mut() {
+            values.sort();
+        }
         let mut keyed = Vec::with_capacity(self.rows.len());
         for (reference, visible) in self.rows.drain(..) {
             let mut visible_roles = roles.remove(&visible.handle).unwrap_or_default();
@@ -189,6 +202,7 @@ impl Handles {
             let key = (
                 without_handles(&visible)?,
                 attributes.remove(&visible.handle),
+                permissions.remove(&visible.handle).unwrap_or_default(),
                 visible_roles,
             );
             keyed.push((
@@ -200,10 +214,13 @@ impl Handles {
         }
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
         for pair in keyed.windows(2) {
-            if pair[0].0 == pair[1].0 && (pair[0].1 || pair[1].1) {
-                // Unreferenced identical copies are interchangeable. A tied
-                // class inside an unordered reference graph needs a fuller
-                // graph canonicalizer; do not choose a hidden arena tie-break.
+            if pair[0].0 == pair[1].0 && (pair[0].1 || pair[1].1)
+                && !interchangeable_effect_targets(state, &pair[0].3.handle, &pair[1].3.handle)
+            {
+                // Equal membership in every unordered effect set permits
+                // swapping truly equivalent team-pumped tokens. Other tied
+                // reference graphs still need a fuller canonicalizer; never
+                // choose a hidden arena tie-break for those graphs.
                 return Err(Error::UnsupportedPrompt);
             }
         }
@@ -213,6 +230,43 @@ impl Handles {
         }
         Ok(())
     }
+}
+
+fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right: &str) -> bool {
+    let is_pair = |card: &HumanCardRefV1| card.handle == left || card.handle == right;
+    for card in state.public.battlefield.iter()
+        .chain(state.public.graveyards.iter()).flatten()
+        .chain(state.public.exile.iter())
+    {
+        if (is_pair(&card.stable) && !card.attachments.is_empty())
+            || card.attachments.iter().any(&is_pair)
+        {
+            return false;
+        }
+    }
+    for relation in &state.public.object_relations {
+        let references = match relation {
+            HumanObjectRelationV1::AttachedTo { object, attached_to } => [object, attached_to],
+            HumanObjectRelationV1::ExiledBy { object, exiled_by } => [object, exiled_by],
+        };
+        if references.into_iter().any(&is_pair) {
+            return false;
+        }
+    }
+    for effect in &state.public.continuous_effects {
+        if effect.source.as_ref().is_some_and(&is_pair) {
+            return false;
+        }
+        let membership = |handle: &str| effect.affected_objects.iter()
+            .filter(|card| card.handle == handle).count();
+        if membership(left) != membership(right) {
+            return false;
+        }
+    }
+    // The existing key already proves equal card attributes, unary exile
+    // permissions, and every ordered reference role. Equal set membership
+    // above makes each adjacent swap leave the complete visible state intact.
+    true
 }
 
 fn without_handles<T: Serialize>(value: &T) -> Result<String, Error> {
@@ -257,12 +311,12 @@ fn collect_roles(
                     || location.starts_with("extensions.decision_local_library.cards.");
                 let unordered_graph = location.starts_with("public.object_relations.")
                     || location.starts_with("public.continuous_effects.")
-                    || location.starts_with("public.exile_play_permissions.")
                     || location.contains(".attachments.");
+                let unary_permission = location.starts_with("public.exile_play_permissions.");
                 if unordered_graph {
                     graph.insert(handle.to_owned());
                 }
-                if !inventory && !unordered_graph {
+                if !inventory && !unordered_graph && !unary_permission {
                     let role = if let Some((prefix, _)) = location.split_once(".legal_targets.") {
                         format!("{prefix}.legal_targets")
                     } else if let Some((prefix, _)) =
@@ -887,20 +941,22 @@ pub(super) fn project_decision(
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    let mut handles = Handles::new(observation)?;
-    let initial = project_state(observation, &mut handles)?;
-    handles.canonicalize(&initial)?;
-    let state = project_state(observation, &mut handles)?;
+    let mut handles = Handles::new(observation).map_err(|error| projection_diagnostic_error("handles_init", error, observation, actions, human, None))?;
+    let initial = project_state(observation, &mut handles).map_err(|error| projection_diagnostic_error("initial_state", error, observation, actions, human, None))?;
+    handles.canonicalize(&initial).map_err(|error| projection_diagnostic_error("canonical_handles", error, observation, actions, human, None))?;
+    let state = project_state(observation, &mut handles).map_err(|error| projection_diagnostic_error("final_state", error, observation, actions, human, None))?;
     let mut choices = Vec::with_capacity(actions.len());
     for (index, action) in actions.iter().enumerate() {
+        let label = super::labels::label(action, observation, &handles, human)
+            .map_err(|error| projection_diagnostic_error("action_label", error, observation, actions, human, Some(&choices)))?;
         choices.push((
-            super::labels::label(action, observation, &handles, human)?,
+            label,
             u32::try_from(index).map_err(|_| Error::InvalidAction)?,
         ));
     }
     choices.sort_by(|a, b| a.0.cmp(&b.0));
     if choices.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err(Error::UnsupportedPrompt);
+        return Err(projection_diagnostic_error("duplicate_labels", Error::UnsupportedPrompt, observation, actions, human, Some(&choices)));
     }
     let engine_indexes = choices
         .iter()
@@ -926,4 +982,23 @@ pub(super) fn project_decision(
         },
         engine_indexes,
     ))
+}
+
+fn projection_diagnostic_error(
+    stage: &str, error: Error, observation: &v6::ObservationV6,
+    actions: &[ActionSemanticV1], human: PlayerSeatV1, labels: Option<&[(String, u32)]>,
+) -> Error {
+    // Opt-in backend-only preflight diagnostic, never a human response.
+    // The first failure owns a fresh path; prior evidence is never overwritten.
+    if let Some(path) = std::env::var_os("MTG_KERNEL_HUMAN_LABEL_DIAGNOSTIC") {
+        if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
+            let _ = serde_json::to_writer(&mut file, &serde_json::json!({
+                "schema":"mtg-kernel-human-projection-preflight-diagnostic/v1",
+                "stage":stage,"error":error,"human_seat":human,"actions":actions,
+                "labels":labels,"actor_visible_observation":observation,
+            }));
+            let _ = file.sync_all();
+        }
+    }
+    error
 }
