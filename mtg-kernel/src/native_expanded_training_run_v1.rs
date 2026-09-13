@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const SCHEMA: &str = "mtg-kernel-native-expanded-training-run/v1";
 const SMALL_CAP: u64 = 16 * 1024 * 1024;
@@ -75,6 +76,11 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "is_serial_collection"
     )]
     pub collection_workers: usize,
+    #[serde(
+        default = "default_collection_workers",
+        skip_serializing_if = "is_serial_collection"
+    )]
+    pub preparation_workers: usize,
     pub output_directory: PathBuf,
 }
 
@@ -103,6 +109,9 @@ impl NativeExpandedTrainingRunV1 {
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         self.update_backend.validate_v1()?;
         crate::expanded_deck_training_v1::validate_collection_workers_v1(self.collection_workers)?;
+        crate::expanded_deck_training_v1::validate_preparation_workers_v1(
+            self.preparation_workers,
+        )?;
         check(
             self.output_directory.is_absolute(),
             "absolute run directory required",
@@ -368,6 +377,29 @@ fn validate_collection(
     Ok(trajectories)
 }
 
+fn validate_preparation_execution(document: &Value, workers: usize) -> Result<(), String> {
+    let telemetry = document.get("update_preparation");
+    if workers == 1 {
+        return check(
+            telemetry.is_none(),
+            "serial run recovered a prepared update",
+        );
+    }
+    let telemetry =
+        telemetry.ok_or("prepared run recovered an update without preparation telemetry")?;
+    let jobs = telemetry["physical_group_jobs"]
+        .as_u64()
+        .ok_or("missing preparation job count")?;
+    check(
+        telemetry["schema"] == "mtg-kernel-ordered-update-preparation/v1"
+            && telemetry["requested_workers"] == workers
+            && (1..=65_536).contains(&jobs)
+            && telemetry["started_workers"] == (workers as u64).min(jobs),
+        "recovered update preparation differs from run configuration",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_update(
     update: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
@@ -376,9 +408,11 @@ fn validate_update(
     learning_rate: f32,
     value_coefficient: f32,
     update_backend: ExpandedUpdateBackendV1,
+    preparation_workers: usize,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     update_backend.validate_update_execution_v1(&document)?;
+    validate_preparation_execution(&document, preparation_workers)?;
     check(
         document["complete"] == true
             && document["source"] == value(source)?
@@ -438,6 +472,38 @@ fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &
     if config.collection_workers > 1 {
         document["collection_backend"] = json!("native-cpu-parallel-episodes-v1");
         document["collection_workers_requested"] = json!(config.collection_workers);
+    }
+    if config.preparation_workers > 1 {
+        document["preparation_backend"] = json!("native-cpu-ordered-physical-groups-v1");
+        document["preparation_workers_requested"] = json!(config.preparation_workers);
+    }
+}
+
+fn update_command(
+    config: &NativeExpandedTrainingRunV1,
+    source: &ExpandedModelSourceV1,
+    trajectories: Vec<PinnedFileV1>,
+    output_directory: PathBuf,
+) -> ExpandedTrainingCommandV1 {
+    if config.preparation_workers == 1 {
+        ExpandedTrainingCommandV1::Update {
+            source: source.clone(),
+            trajectories,
+            learning_rate: config.learning_rate,
+            value_coefficient: config.value_coefficient,
+            update_backend: config.update_backend,
+            output_directory,
+        }
+    } else {
+        ExpandedTrainingCommandV1::UpdatePrepared {
+            source: source.clone(),
+            trajectories,
+            learning_rate: config.learning_rate,
+            value_coefficient: config.value_coefficient,
+            update_backend: config.update_backend,
+            preparation_workers: config.preparation_workers,
+            output_directory,
+        }
     }
 }
 
@@ -539,6 +605,7 @@ pub fn run_native_expanded_training_v1(
                 config.learning_rate,
                 config.value_coefficient,
                 config.update_backend,
+                config.preparation_workers,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -553,6 +620,13 @@ pub fn run_native_expanded_training_v1(
         if max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
             break;
         }
+        // Invocation telemetry stays outside immutable iteration receipts. It
+        // measures wall time, including verification, and never claims CPU use.
+        let iteration_started = Instant::now();
+        let mut collection_validation_seconds = 0.0;
+        let mut update_validation_seconds = 0.0;
+        let mut collection_execution_seconds = 0.0;
+        let mut update_execution_seconds = 0.0;
         fs::create_dir_all(&directory).map_err(err)?;
         // Reuse a fully published phase. A checkpoint without update.json is
         // an incomplete attempt and never becomes the next learner source.
@@ -589,7 +663,9 @@ pub fn run_native_expanded_training_v1(
             let path = attempt.join("collect/collection.json");
             if path.exists() {
                 let candidate = pin(&path)?;
+                let started = Instant::now();
                 validate_collection(&candidate, &current, &episodes, &current_identity)?;
+                collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
             }
             let path = attempt.join("update/update.json");
@@ -600,12 +676,15 @@ pub fn run_native_expanded_training_v1(
                     &read_json(&attempt.join("update-input.json"), SMALL_CAP)?,
                     "collection",
                 )?;
+                let started = Instant::now();
                 let trajectories = validate_collection(
                     &referenced_collection,
                     &current,
                     &episodes,
                     &current_identity,
                 )?;
+                collection_validation_seconds += started.elapsed().as_secs_f64();
+                let started = Instant::now();
                 validate_update(
                     &candidate,
                     &current,
@@ -614,7 +693,9 @@ pub fn run_native_expanded_training_v1(
                     config.learning_rate,
                     config.value_coefficient,
                     config.update_backend,
+                    config.preparation_workers,
                 )?;
+                update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
                 collection_pin = Some(referenced_collection);
                 update_pin = Some(candidate);
@@ -640,33 +721,36 @@ pub fn run_native_expanded_training_v1(
                 collection_command(config, &current, &episodes, attempt.join("collect"));
             publish(&attempt, "collect-command.json", &collect_command)?;
             if collection_pin.is_none() {
+                let started = Instant::now();
                 execute_v1(collect_command)?;
+                collection_execution_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
             }
             let collection = collection_pin.as_ref().unwrap();
+            let started = Instant::now();
             let trajectories =
                 validate_collection(collection, &current, &episodes, &current_identity)?;
+            collection_validation_seconds += started.elapsed().as_secs_f64();
             publish(
                 &attempt,
                 "update-input.json",
                 &json!({"collection":collection}),
             )?;
-            let update_command = ExpandedTrainingCommandV1::Update {
-                source: current.clone(),
-                trajectories,
-                learning_rate: config.learning_rate,
-                value_coefficient: config.value_coefficient,
-                update_backend: config.update_backend,
-                output_directory: attempt.join("update"),
-            };
+            let update_command =
+                update_command(config, &current, trajectories, attempt.join("update"));
             publish(&attempt, "update-command.json", &update_command)?;
+            let started = Instant::now();
             execute_v1(update_command)?;
+            update_execution_seconds += started.elapsed().as_secs_f64();
             update_pin = Some(pin(&attempt.join("update/update.json"))?);
         }
         let collection = collection_pin.unwrap();
         let update = update_pin.unwrap();
+        let started = Instant::now();
         let trajectories =
             validate_collection(&collection, &current, &episodes, &current_identity)?;
+        collection_validation_seconds += started.elapsed().as_secs_f64();
+        let started = Instant::now();
         let (next, after) = validate_update(
             &update,
             &current,
@@ -675,7 +759,9 @@ pub fn run_native_expanded_training_v1(
             config.learning_rate,
             config.value_coefficient,
             config.update_backend,
+            config.preparation_workers,
         )?;
+        update_validation_seconds += started.elapsed().as_secs_f64();
         let receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
@@ -687,7 +773,15 @@ pub fn run_native_expanded_training_v1(
         println!(
             "{}",
             json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
-            "checkpoint":current.checkpoint})
+            "checkpoint":current.checkpoint,
+            "scheduler_timing":{"schema":"phase1-scheduler-wall/v1",
+                "scope":"newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
+                "iteration_wall_seconds":iteration_started.elapsed().as_secs_f64(),
+                "collection_execution_seconds":collection_execution_seconds,
+                "update_execution_seconds":update_execution_seconds,
+                "collection_validation_seconds":collection_validation_seconds,
+                "update_validation_seconds":update_validation_seconds,
+                "cpu_utilization_claim":false}})
         );
     }
     let complete = receipts.len() == config.iterations.len();
@@ -817,6 +911,7 @@ mod tests {
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
             collection_workers: 1,
+            preparation_workers: 1,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -870,6 +965,78 @@ mod tests {
         assert!(parallel.validate_v1().is_err());
         parallel.collection_workers = 1025;
         assert!(parallel.validate_v1().is_err());
+    }
+
+    #[test]
+    fn preparation_workers_preserve_serial_wire_and_bind_parallel_resume() {
+        let serial = schedule();
+        let serial_value = value(&serial).unwrap();
+        assert!(serial_value.get("preparation_workers").is_none());
+        let restored: NativeExpandedTrainingRunV1 =
+            serde_json::from_value(serial_value.clone()).unwrap();
+        assert_eq!(restored.preparation_workers, 1);
+        assert_eq!(value(&restored).unwrap(), serial_value);
+        let trajectories = vec![PinnedFileV1 {
+            path: serial.output_directory.join("trajectory.json"),
+            sha256: "b".repeat(64),
+        }];
+        let output = serial.output_directory.join("update");
+        let serial_command = value(&update_command(
+            &serial,
+            &serial.initial_source,
+            trajectories.clone(),
+            output.clone(),
+        ))
+        .unwrap();
+        assert_eq!(serial_command["mode"], "update");
+        let mut parallel = serial.clone();
+        parallel.preparation_workers = 4;
+        parallel.validate_v1().unwrap();
+        assert_ne!(identity(&serial).unwrap(), identity(&parallel).unwrap());
+        let mut parallel_command = value(&update_command(
+            &parallel,
+            &parallel.initial_source,
+            trajectories,
+            output,
+        ))
+        .unwrap();
+        assert_eq!(parallel_command["mode"], "update_prepared");
+        assert_eq!(
+            parallel_command
+                .as_object_mut()
+                .unwrap()
+                .remove("preparation_workers"),
+            Some(json!(4))
+        );
+        parallel_command["mode"] = json!("update");
+        assert_eq!(parallel_command, serial_command);
+        for invalid in [0, 33, usize::MAX] {
+            parallel.preparation_workers = invalid;
+            assert!(parallel.validate_v1().is_err());
+        }
+    }
+
+    #[test]
+    fn recovered_update_must_match_actual_preparation_mode() {
+        let serial = json!({});
+        validate_preparation_execution(&serial, 1).unwrap();
+        assert!(validate_preparation_execution(&serial, 4).is_err());
+        let prepared = json!({"update_preparation":{
+            "schema":"mtg-kernel-ordered-update-preparation/v1",
+            "requested_workers":4,"started_workers":3,"physical_group_jobs":3}});
+        validate_preparation_execution(&prepared, 4).unwrap();
+        assert!(validate_preparation_execution(&prepared, 1).is_err());
+        assert!(validate_preparation_execution(&prepared, 2).is_err());
+        for (field, bad) in [
+            ("schema", json!("unknown")),
+            ("started_workers", json!(4)),
+            ("physical_group_jobs", json!(0)),
+            ("physical_group_jobs", json!(65_537)),
+        ] {
+            let mut changed = prepared.clone();
+            changed["update_preparation"][field] = bad;
+            assert!(validate_preparation_execution(&changed, 4).is_err());
+        }
     }
 
     #[test]

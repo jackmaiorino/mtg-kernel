@@ -52,6 +52,8 @@ const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
 mod phase1_parallel_collection;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
+mod ordered_update_preparation;
+pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 mod registry_transfer_source;
 pub use registry_transfer_source::{
     ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
@@ -956,6 +958,18 @@ pub enum ExpandedTrainingCommandV1 {
         update_backend: ExpandedUpdateBackendV1,
         output_directory: PathBuf,
     },
+    /// Explicit execution-only preparation. The old Update wire shape and
+    /// sequential reference remain unchanged; backward and Adam are identical.
+    UpdatePrepared {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
+        update_backend: ExpandedUpdateBackendV1,
+        preparation_workers: usize,
+        output_directory: PathBuf,
+    },
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
@@ -1029,222 +1043,270 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             value_coefficient,
             update_backend,
             output_directory,
+        } => execute_update_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            output_directory,
+            None,
+        ),
+        ExpandedTrainingCommandV1::UpdatePrepared {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            preparation_workers,
+            output_directory,
         } => {
-            let update_started = std::time::Instant::now();
-            update_backend.require_compiled_v1()?;
-            ensure(
-                !trajectories.is_empty() && trajectories.len() <= 1024,
-                "invalid update size",
-            )?;
-            ensure(
-                learning_rate.is_finite()
-                    && learning_rate > 0.0
-                    && value_coefficient.is_finite()
-                    && value_coefficient > 0.0,
-                "invalid optimizer configuration",
-            )?;
-            ensure(
-                !output_directory.exists(),
-                "output directory already exists",
-            )?;
-            let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-            if let Some(context) = &transfer {
-                context.validate_scalars(learning_rate, value_coefficient)?;
-            }
-            let before = hex(&state.state_sha256_v1().map_err(err)?);
-            let learner = ExpandedSeatBehaviorV1 {
-                source: source.clone(),
-                identity: inference_identity_v1(&source, &policy, &state)?,
-            };
-            let mut episodes = Vec::new();
-            let mut ids = BTreeSet::new();
-            let mut hashes = BTreeSet::new();
-            let mut total_bytes = 0u64;
-            for pin in &trajectories {
-                total_bytes = total_bytes
-                    .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
-                    .ok_or("batch size overflow")?;
-                ensure(
-                    total_bytes <= MAX_BATCH_BYTES,
-                    "trajectory batch exceeds 512 MiB CPU ingestion bound",
-                )?;
-            }
-            for pin in &trajectories {
-                ensure(hashes.insert(&pin.sha256), "duplicate trajectory bytes")?;
-                let episode: ExpandedTrajectoryV1 = read_pinned(pin)?;
-                validate_trajectory(&episode)?;
-                ensure(
-                    ids.insert(episode.episode.id.clone()),
-                    "duplicate episode id",
-                )?;
-                ensure(
-                    episode.behavior_state_sha256 == before,
-                    "stale trajectory: behavior optimizer/model state differs",
-                )?;
-                ensure(
-                    episode.source_import == *policy.identity_v1(),
-                    "trajectory source import differs",
-                )?;
-                episodes.push(episode);
-            }
-            if let Some(context) = &transfer {
-                let batch: Vec<_> = episodes
-                    .iter()
-                    .map(|trajectory| trajectory.episode.clone())
-                    .collect();
-                context.validate_batch(&batch)?;
-            }
-            let input_read_seconds = update_started.elapsed().as_secs_f64();
-            let replay_started = std::time::Instant::now();
-            // Recompute all actor-visible rows, including opponent decisions,
-            // before constructing learner groups. No private state is decoded.
-            let mut tensor_groups = Vec::new();
-            let mut opponent_cache = OpponentCacheV1::default();
-            for episode in &episodes {
-                let opponent = episode
-                    .episode
-                    .opponent
-                    .as_ref()
-                    .map(|s| opponent_cache.load(s))
-                    .transpose()?;
-                validate_actual_behaviors_v1(
-                    episode,
-                    &learner,
-                    opponent.as_ref().map(|o| &o.behavior),
-                )?;
-                tensor_groups.extend(replay_learner_groups_v1(
-                    episode,
-                    &policy,
-                    opponent.as_ref().map(|o| &o.policy),
-                )?);
-            }
-            drop(opponent_cache);
-            ensure(!tensor_groups.is_empty(), "no learner decisions")?;
-            let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
-                .iter()
-                .map(|(_, group)| {
-                    group
-                        .iter()
-                        .map(|(row, t)| NativePolicySubstepV1 {
-                            forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                                encoded_decision_view_v3(t),
-                            )),
-                            selected_action_index: row.selected as usize,
-                            expected_raw_action_logit_bits: &row.logits,
-                            expected_value_bits: row.value,
-                        })
-                        .collect()
-                })
-                .collect();
-            let groups: Vec<_> = substeps
-                .iter()
-                .zip(&tensor_groups)
-                .map(
-                    |(substeps, (terminal_return, _))| NativePolicyPhysicalDecisionV1 {
-                        substeps,
-                        terminal_return: *terminal_return,
-                        baseline_bits: 0,
-                    },
-                )
-                .collect();
-            eprintln!(
-                "native {:?} update: {} episodes, {} learner physical decisions",
+            validate_preparation_workers_v1(preparation_workers)?;
+            execute_update_v1(
+                source,
+                trajectories,
+                learning_rate,
+                value_coefficient,
                 update_backend,
-                episodes.len(),
-                groups.len()
-            );
-            let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
-            let learner_started = std::time::Instant::now();
-            let update = match update_backend {
-                ExpandedUpdateBackendV1::Cpu => state
-                    .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
-                    .map_err(err)?,
-                ExpandedUpdateBackendV1::Cuda { device_ordinal } => {
-                    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-                    {
-                        state
-                            .train_step_cuda_feature_transfer_v3(
-                                &groups,
-                                value_coefficient,
-                                learning_rate,
-                                device_ordinal,
-                            )
-                            .map_err(err)?
-                    }
-                    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
-                    {
-                        let _ = device_ordinal;
-                        return Err("CUDA update backend was not compiled".into());
-                    }
-                }
-            };
-            let learner_update_seconds = learner_started.elapsed().as_secs_f64();
-            let checkpoint_started = std::time::Instant::now();
-            let snapshot = state.snapshot_v1().map_err(err)?;
-            let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
-            let checkpoint = ExpandedCheckpointV1 {
-                schema: if transfer.is_some() {
-                    registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER
-                } else {
-                    CHECKPOINT_SCHEMA
-                }
-                .into(),
-                feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
-                feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
-                card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
-                source_import: policy.identity_v1().clone(),
-                state_sha256: after.clone(),
-                adam_step: snapshot.adam_step,
-                scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-                parameters: snapshot
-                    .parameters
-                    .iter()
-                    .map(ParameterBitsV1::from_native)
-                    .collect(),
-                first_moments: snapshot
-                    .first_moments
-                    .iter()
-                    .map(ParameterBitsV1::from_native)
-                    .collect(),
-                second_moments: snapshot
-                    .second_moments
-                    .iter()
-                    .map(ParameterBitsV1::from_native)
-                    .collect(),
-                trajectories: trajectories.clone(),
-                loss_identity: "terminal_reinforce_value/v3".into(),
-                learning_rate_bits: learning_rate.to_bits(),
-                value_coefficient_bits: value_coefficient.to_bits(),
-                registry_transfer: transfer
-                    .as_ref()
-                    .map(|context| context.after_update(snapshot.adam_step))
-                    .transpose()?,
-            };
-            fs::create_dir(&output_directory).map_err(err)?;
-            let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
-            // Readback exercises the real same-format continuation loader.
-            let resumed_source = ExpandedModelSourceV1 {
-                checkpoint: Some(checkpoint_pin.clone()),
-                ..source.clone()
-            };
-            let (_, restored) = initialize(&resumed_source)?;
-            ensure(
-                hex(&restored.state_sha256_v1().map_err(err)?) == after,
-                "published checkpoint round trip differs",
-            )?;
-            let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
-            update_backend.record_update_execution_v1(&mut result);
-            result["input_read_seconds"] = json!(input_read_seconds);
-            result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
-            result["learner_update_seconds"] = json!(learner_update_seconds);
-            result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
-            result["update_elapsed_seconds"] = json!(update_started.elapsed().as_secs_f64());
-            // Timings include checkpoint readback, but not this final receipt's
-            // publication. They never enter checkpoint parameters or state hashes.
-            publish_json(&output_directory, "update.json", &result)?;
-            Ok(result)
+                output_directory,
+                Some(preparation_workers),
+            )
         }
     }
+}
+
+fn execute_update_v1(
+    source: ExpandedModelSourceV1,
+    trajectories: Vec<PinnedFileV1>,
+    learning_rate: f32,
+    value_coefficient: f32,
+    update_backend: ExpandedUpdateBackendV1,
+    output_directory: PathBuf,
+    preparation_workers: Option<usize>,
+) -> Result<Value, String> {
+    let update_started = std::time::Instant::now();
+    update_backend.require_compiled_v1()?;
+    ensure(
+        !trajectories.is_empty() && trajectories.len() <= 1024,
+        "invalid update size",
+    )?;
+    ensure(
+        learning_rate.is_finite()
+            && learning_rate > 0.0
+            && value_coefficient.is_finite()
+            && value_coefficient > 0.0,
+        "invalid optimizer configuration",
+    )?;
+    ensure(
+        !output_directory.exists(),
+        "output directory already exists",
+    )?;
+    let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    if let Some(context) = &transfer {
+        context.validate_scalars(learning_rate, value_coefficient)?;
+    }
+    let before = hex(&state.state_sha256_v1().map_err(err)?);
+    let learner = ExpandedSeatBehaviorV1 {
+        source: source.clone(),
+        identity: inference_identity_v1(&source, &policy, &state)?,
+    };
+    let mut episodes = Vec::new();
+    let mut ids = BTreeSet::new();
+    let mut hashes = BTreeSet::new();
+    let mut total_bytes = 0u64;
+    for pin in &trajectories {
+        total_bytes = total_bytes
+            .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
+            .ok_or("batch size overflow")?;
+        ensure(
+            total_bytes <= MAX_BATCH_BYTES,
+            "trajectory batch exceeds 512 MiB CPU ingestion bound",
+        )?;
+    }
+    for pin in &trajectories {
+        ensure(hashes.insert(&pin.sha256), "duplicate trajectory bytes")?;
+        let episode: ExpandedTrajectoryV1 = read_pinned(pin)?;
+        validate_trajectory(&episode)?;
+        ensure(
+            ids.insert(episode.episode.id.clone()),
+            "duplicate episode id",
+        )?;
+        ensure(
+            episode.behavior_state_sha256 == before,
+            "stale trajectory: behavior optimizer/model state differs",
+        )?;
+        ensure(
+            episode.source_import == *policy.identity_v1(),
+            "trajectory source import differs",
+        )?;
+        episodes.push(episode);
+    }
+    if let Some(context) = &transfer {
+        let batch: Vec<_> = episodes
+            .iter()
+            .map(|trajectory| trajectory.episode.clone())
+            .collect();
+        context.validate_batch(&batch)?;
+    }
+    let input_read_seconds = update_started.elapsed().as_secs_f64();
+    let replay_started = std::time::Instant::now();
+    // Recompute all actor-visible rows, including opponent decisions,
+    // before constructing learner groups. No private state is decoded.
+    let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
+        let prepared =
+            ordered_update_preparation::prepare_v1(&episodes, &policy, &learner, workers)?;
+        (prepared.groups, Some(prepared.telemetry))
+    } else {
+        let mut tensor_groups = Vec::new();
+        let mut opponent_cache = OpponentCacheV1::default();
+        for episode in &episodes {
+            let opponent = episode
+                .episode
+                .opponent
+                .as_ref()
+                .map(|s| opponent_cache.load(s))
+                .transpose()?;
+            validate_actual_behaviors_v1(
+                episode,
+                &learner,
+                opponent.as_ref().map(|o| &o.behavior),
+            )?;
+            tensor_groups.extend(replay_learner_groups_v1(
+                episode,
+                &policy,
+                opponent.as_ref().map(|o| &o.policy),
+            )?);
+        }
+        drop(opponent_cache);
+        (tensor_groups, None)
+    };
+    ensure(!tensor_groups.is_empty(), "no learner decisions")?;
+    let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
+        .iter()
+        .map(|(_, group)| {
+            group
+                .iter()
+                .map(|(row, t)| NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                        encoded_decision_view_v3(t),
+                    )),
+                    selected_action_index: row.selected as usize,
+                    expected_raw_action_logit_bits: &row.logits,
+                    expected_value_bits: row.value,
+                })
+                .collect()
+        })
+        .collect();
+    let groups: Vec<_> = substeps
+        .iter()
+        .zip(&tensor_groups)
+        .map(
+            |(substeps, (terminal_return, _))| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return: *terminal_return,
+                baseline_bits: 0,
+            },
+        )
+        .collect();
+    eprintln!(
+        "native {:?} update: {} episodes, {} learner physical decisions",
+        update_backend,
+        episodes.len(),
+        groups.len()
+    );
+    let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
+    let learner_started = std::time::Instant::now();
+    let update = match update_backend {
+        ExpandedUpdateBackendV1::Cpu => state
+            .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
+            .map_err(err)?,
+        ExpandedUpdateBackendV1::Cuda { device_ordinal } => {
+            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+            {
+                state
+                    .train_step_cuda_feature_transfer_v3(
+                        &groups,
+                        value_coefficient,
+                        learning_rate,
+                        device_ordinal,
+                    )
+                    .map_err(err)?
+            }
+            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+            {
+                let _ = device_ordinal;
+                return Err("CUDA update backend was not compiled".into());
+            }
+        }
+    };
+    let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+    let checkpoint_started = std::time::Instant::now();
+    let snapshot = state.snapshot_v1().map_err(err)?;
+    let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    let checkpoint = ExpandedCheckpointV1 {
+        schema: if transfer.is_some() {
+            registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER
+        } else {
+            CHECKPOINT_SCHEMA
+        }
+        .into(),
+        feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+        feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+        card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+        source_import: policy.identity_v1().clone(),
+        state_sha256: after.clone(),
+        adam_step: snapshot.adam_step,
+        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
+        parameters: snapshot
+            .parameters
+            .iter()
+            .map(ParameterBitsV1::from_native)
+            .collect(),
+        first_moments: snapshot
+            .first_moments
+            .iter()
+            .map(ParameterBitsV1::from_native)
+            .collect(),
+        second_moments: snapshot
+            .second_moments
+            .iter()
+            .map(ParameterBitsV1::from_native)
+            .collect(),
+        trajectories: trajectories.clone(),
+        loss_identity: "terminal_reinforce_value/v3".into(),
+        learning_rate_bits: learning_rate.to_bits(),
+        value_coefficient_bits: value_coefficient.to_bits(),
+        registry_transfer: transfer
+            .as_ref()
+            .map(|context| context.after_update(snapshot.adam_step))
+            .transpose()?,
+    };
+    fs::create_dir(&output_directory).map_err(err)?;
+    let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
+    // Readback exercises the real same-format continuation loader.
+    let resumed_source = ExpandedModelSourceV1 {
+        checkpoint: Some(checkpoint_pin.clone()),
+        ..source.clone()
+    };
+    let (_, restored) = initialize(&resumed_source)?;
+    ensure(
+        hex(&restored.state_sha256_v1().map_err(err)?) == after,
+        "published checkpoint round trip differs",
+    )?;
+    let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
+    update_backend.record_update_execution_v1(&mut result);
+    if let Some(telemetry) = preparation_telemetry {
+        result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
+    }
+    result["input_read_seconds"] = json!(input_read_seconds);
+    result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
+    result["learner_update_seconds"] = json!(learner_update_seconds);
+    result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
+    result["update_elapsed_seconds"] = json!(update_started.elapsed().as_secs_f64());
+    // Timings include checkpoint readback, but not this final receipt's
+    // publication. They never enter checkpoint parameters or state hashes.
+    publish_json(&output_directory, "update.json", &result)?;
+    Ok(result)
 }
 
 fn seat(p: PlayerSeatV1) -> u8 {
