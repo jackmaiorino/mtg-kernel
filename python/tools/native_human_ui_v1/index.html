@@ -34,7 +34,7 @@ function drawCards(id,cards){
   const c=ref(card),d=cardDB[c.name]||{},b=el('button',undefined,'card'+(card.tapped?' tapped':''));
   b.dataset.color=(d.types||[]).includes('Land')?'land':(d.colors||[]).includes('R')?'red':'other';
   b.append(el('strong',c.name||'Visible card'));if(d.mana_cost)b.append(el('span',d.mana_cost,'mana'));
-  let notes=[];if(c.handle)notes.push('['+c.handle+']');if(card.tapped)notes.push('Tapped');if(card.summoning_sick)notes.push('Summoning sick');if(card.damage)notes.push(card.damage+' damage');
+  let notes=[];if(c.handle)notes.push('['+c.handle+']');if(card.tapped)notes.push('Tapped');if(card.summoning_sick&&card.characteristics?.type_flags?.creature&&!card.characteristics?.effective_keywords?.haste)notes.push('Summoning sick');if(card.damage)notes.push(card.damage+' damage');
   if(card.counters){for(let [k,v]of Object.entries(card.counters))if(v)notes.push(v+' '+k.replaceAll('_',' '))}
   const ch=card.characteristics;
   for(const [key,value] of Object.entries(ch?.effective_keywords||{}))if(value===true)notes.push(key.replaceAll('_',' '));

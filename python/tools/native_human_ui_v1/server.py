@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -12,6 +13,11 @@ import threading
 import time
 
 MAX_RESPONSE = 4 * 1024 * 1024
+
+
+def file_sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 class MatchClient:
@@ -153,7 +159,11 @@ def main():
     try:
         client = MatchClient(args.engine.resolve(), args.config.resolve(), args.runtime_dir / "engine-stderr.log")
         url = f"http://127.0.0.1:{server.server_port}/"
-        (args.runtime_dir / "server.json").write_text(json.dumps({"url": url, "started_at": time.time(), "pid": __import__("os").getpid(), "engine_pid": client.process.pid}, indent=2), encoding="utf-8")
+        metadata = {"url": url, "started_at": time.time(), "pid": __import__("os").getpid(),
+                    "engine_pid": client.process.pid, "engine_path": str(args.engine.resolve()),
+                    "engine_sha256": file_sha256(args.engine), "config_sha256": file_sha256(args.config),
+                    "ui_sha256": file_sha256(Path(__file__).parent / "index.html")}
+        (args.runtime_dir / "server.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         print(url, flush=True)
         server.serve_forever()
     finally:
