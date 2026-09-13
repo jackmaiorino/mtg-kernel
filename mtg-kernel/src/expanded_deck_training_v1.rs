@@ -52,6 +52,10 @@ const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
 mod phase1_parallel_collection;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
+mod registry_transfer_source;
+pub use registry_transfer_source::{
+    ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
+};
 
 /// Collection and exact behavior replay remain CPU-based. This selection
 /// changes only the learner's recomputation/backward/Adam implementation.
@@ -148,6 +152,8 @@ pub struct PinnedFileV1 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandedModelSourceV1 {
+    /// Ordinary FrozenPlayPolicyImportV1, or the explicitly versioned
+    /// ExpandedRegistryTransferSourceV1. The outer legacy wire shape is fixed.
     pub play_import: PinnedFileV1,
     pub feature_transfer: FrozenPlayObservationTransferV3,
     /// None means an explicit fresh-optimizer warm start. A successor
@@ -485,6 +491,12 @@ struct ExpandedCheckpointV1 {
     loss_identity: String,
     learning_rate_bits: u32,
     value_coefficient_bits: u32,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "registry_transfer_source::deserialize_present_continuation"
+    )]
+    registry_transfer: Option<registry_transfer_source::ExpandedRegistryContinuationV1>,
 }
 
 fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), String> {
@@ -501,7 +513,29 @@ fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), Str
 fn initialize(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
-    let import: FrozenPlayPolicyImportV1 = read_pinned(&source.play_import)?;
+    let (policy, state, _) = initialize_with_transfer_context(source)?;
+    Ok((policy, state))
+}
+
+fn initialize_with_transfer_context(
+    source: &ExpandedModelSourceV1,
+) -> Result<
+    (
+        FrozenPlayPolicyV1,
+        NativePolicyValueTrainStateV1,
+        Option<registry_transfer_source::TransferTrainingContextV1>,
+    ),
+    String,
+> {
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    if probe.get("schema").and_then(Value::as_str) == Some(registry_transfer_source::SOURCE_SCHEMA)
+    {
+        return registry_transfer_source::initialize(source, &bytes);
+    }
+    // Decode original bytes, preserving the old typed parser's duplicate-field
+    // and unknown-field rejection even though source selection used a probe.
+    let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
     let mut policy =
         FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)?;
     let mut model =
@@ -511,12 +545,23 @@ fn initialize(
         .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
         .map_err(err)?;
     let state = if let Some(pin) = &source.checkpoint {
-        let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+        let saved = read_legacy_checkpoint_v1(pin)?;
         restore_checkpoint_state_v1(&saved, &mut policy, model)?
     } else {
         NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?
     };
-    Ok((policy, state))
+    Ok((policy, state, None))
+}
+
+fn read_legacy_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
+    let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+    // The ordinary checkpoint reader previously rejected this unknown field,
+    // including an explicit null. Preserve that strict wire boundary.
+    ensure(
+        saved.registry_transfer.is_none(),
+        "ordinary checkpoint does not admit registry-transfer metadata",
+    )?;
+    Ok(saved)
 }
 
 fn restore_checkpoint_state_v1(
@@ -525,9 +570,17 @@ fn restore_checkpoint_state_v1(
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
     ensure(
-        saved.schema == CHECKPOINT_SCHEMA,
+        saved.schema == CHECKPOINT_SCHEMA && saved.registry_transfer.is_none(),
         "not an expanded-deck checkpoint",
     )?;
+    restore_checkpoint_fields_v1(saved, policy, model)
+}
+
+fn restore_checkpoint_fields_v1(
+    saved: &ExpandedCheckpointV1,
+    policy: &mut FrozenPlayPolicyV1,
+    model: NativePolicyValueNetV1,
+) -> Result<NativePolicyValueTrainStateV1, String> {
     identity_valid(
         &saved.feature_contract_digest,
         &saved.feature_encoding_digest,
@@ -933,7 +986,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 episode.configurations()?;
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
-            let (mut policy, state) = initialize(&source)?;
+            let (mut policy, state, transfer) = initialize_with_transfer_context(&source)?;
+            if let Some(context) = &transfer {
+                context.validate_batch(&episodes)?;
+            }
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
                 source: source.clone(),
@@ -991,7 +1047,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 !output_directory.exists(),
                 "output directory already exists",
             )?;
-            let (policy, mut state) = initialize(&source)?;
+            let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+            if let Some(context) = &transfer {
+                context.validate_scalars(learning_rate, value_coefficient)?;
+            }
             let before = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
                 source: source.clone(),
@@ -1027,6 +1086,13 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                     "trajectory source import differs",
                 )?;
                 episodes.push(episode);
+            }
+            if let Some(context) = &transfer {
+                let batch: Vec<_> = episodes
+                    .iter()
+                    .map(|trajectory| trajectory.episode.clone())
+                    .collect();
+                context.validate_batch(&batch)?;
             }
             let input_read_seconds = update_started.elapsed().as_secs_f64();
             let replay_started = std::time::Instant::now();
@@ -1117,7 +1183,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let snapshot = state.snapshot_v1().map_err(err)?;
             let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
             let checkpoint = ExpandedCheckpointV1 {
-                schema: CHECKPOINT_SCHEMA.into(),
+                schema: if transfer.is_some() {
+                    registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER
+                } else {
+                    CHECKPOINT_SCHEMA
+                }
+                .into(),
                 feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
                 feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
                 card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
@@ -1144,6 +1215,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 loss_identity: "terminal_reinforce_value/v3".into(),
                 learning_rate_bits: learning_rate.to_bits(),
                 value_coefficient_bits: value_coefficient.to_bits(),
+                registry_transfer: transfer
+                    .as_ref()
+                    .map(|context| context.after_update(snapshot.adam_step))
+                    .transpose()?,
             };
             fs::create_dir(&output_directory).map_err(err)?;
             let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
@@ -1196,6 +1271,11 @@ fn sha(bytes: &[u8]) -> String {
 }
 
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
+    let bytes = read_pinned_bytes(pin)?;
+    serde_json::from_slice(&bytes).map_err(err)
+}
+
+fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
@@ -1206,7 +1286,7 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
         bytes.len() as u64 <= MAX_FILE_BYTES && sha(&bytes) == pin.sha256,
         "input file SHA differs",
     )?;
-    serde_json::from_slice(&bytes).map_err(err)
+    Ok(bytes)
 }
 
 fn publish_json<T: Serialize>(
@@ -1458,7 +1538,7 @@ mod tests {
     /// Real actor-visible decision tensors sampled in a test-only grouping
     /// container. The synthetic terminal supplies reward/shape metadata only;
     /// this fixture is not a completed game or playing-strength measurement.
-    fn replay_fixture(
+    pub(super) fn replay_fixture(
         learner: &mut FrozenPlayPolicyV1,
         mut opponent: Option<&mut FrozenPlayPolicyV1>,
         learner_seat: u8,
@@ -1735,7 +1815,7 @@ mod tests {
         assert!(validate_trajectory(&changed).is_err());
     }
 
-    fn checkpoint_fixture_v1() -> (
+    pub(super) fn checkpoint_fixture_v1() -> (
         FrozenPlayPolicyV1,
         NativePolicyValueNetV1,
         ExpandedCheckpointV1,
@@ -1783,6 +1863,7 @@ mod tests {
             loss_identity: "terminal_reinforce_value/v3".into(),
             learning_rate_bits: 0.001_f32.to_bits(),
             value_coefficient_bits: 0.5_f32.to_bits(),
+            registry_transfer: None,
         };
         (policy, model, saved)
     }

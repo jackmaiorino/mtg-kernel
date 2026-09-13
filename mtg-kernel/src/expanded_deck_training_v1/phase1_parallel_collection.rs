@@ -157,7 +157,10 @@ pub(super) fn collect_parallel_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
-    let (policy, state) = initialize(&source)?;
+    let (policy, state, transfer) = initialize_with_transfer_context(&source)?;
+    if let Some(context) = &transfer {
+        context.validate_batch(&episodes)?;
+    }
     let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
     let learner = ExpandedSeatBehaviorV1 {
         source: source.clone(),

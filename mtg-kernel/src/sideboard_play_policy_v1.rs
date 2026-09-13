@@ -169,6 +169,57 @@ struct FrozenPlaySuccessorStateV3 {
 }
 
 impl FrozenPlayPolicyV1 {
+    /// Explicit construction from the independently verified registry-transfer
+    /// envelope. The old import loader is unchanged and cannot select this path.
+    pub(crate) fn from_registry_transfer_v1(
+        transfer: &crate::phase1_registry_transfer_v1::VerifiedRegistryTransferV1,
+        envelope_sha256: &str,
+    ) -> Result<Self, String> {
+        require(
+            envelope_sha256.len() == 64
+                && envelope_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                && transfer.request_v1().destination_card_db_hash
+                    == format!("{KERNEL_CARDDB_HASH:016x}")
+                && transfer.request_v1().destination_registry_sha256 == hash(DESTINATION_REGISTRY),
+            "registry transfer does not bind this runtime",
+        )?;
+        let model = transfer.model_v1().clone();
+        let embeddings = model
+            .parameter_snapshot_v1()
+            .into_iter()
+            .find(|p| p.name == "card_embedding.weight")
+            .ok_or("embedding tensor absent")?
+            .values;
+        let mut identity = transfer.source_import_v1().clone();
+        // Source export fields remain ancestry. Destination fields describe
+        // the actual installed registry; actual_model_identity_v1 owns weights.
+        identity.schema = "mtg-kernel-registry-transferred-play/v1".into();
+        identity.destination_registry_sha256 =
+            transfer.request_v1().destination_registry_sha256.clone();
+        identity.destination_card_db_hash = transfer.request_v1().destination_card_db_hash.clone();
+        identity.destination_card_count = transfer.receipt_v1().cards.len();
+        identity.namespace_rule = transfer.receipt_v1().mapping_rule.clone();
+        identity.appended_rows = format!(
+            "{}; envelope_sha256={envelope_sha256}",
+            transfer.receipt_v1().initializer
+        );
+        Ok(Self {
+            model,
+            embeddings,
+            identity,
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: Some(FrozenPlaySuccessorStateV3::default()),
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn training_fixture_v3() -> Self {
         let model =

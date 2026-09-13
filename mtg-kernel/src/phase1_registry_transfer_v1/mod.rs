@@ -222,6 +222,14 @@ pub struct VerifiedRegistryTransferV1 {
 }
 
 impl VerifiedRegistryTransferV1 {
+    pub(crate) fn model_v1(&self) -> &NativePolicyValueNetV1 {
+        self.state.model_v1()
+    }
+
+    pub(crate) fn source_import_v1(&self) -> &FrozenPlayPolicyIdentityV1 {
+        &self.envelope.source_import
+    }
+
     pub fn receipt_v1(&self) -> &RegistryTransferReceiptV1 {
         &self.envelope.receipt
     }
