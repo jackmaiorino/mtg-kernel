@@ -1,15 +1,17 @@
 //! Explicit native BO3 capture, preparation and opt-in CPU continuation.
-//! Legacy objectives/readers remain strict. There is no training loop.
+//! Legacy objectives/readers remain strict. The finite runner is explicit opt-in.
 //! Producer artifact verification is distinct from this process's runtime.
 
 mod capture;
 mod continuation;
 mod preparation;
+mod runner;
 pub use capture::*;
 pub(crate) use capture::{CaptureBuffer, PendingNativeCapture};
 pub(crate) use continuation::load_bo3_inference_v1;
 pub use continuation::*;
 pub use preparation::*;
+pub use runner::*;
 
 fn require(condition: bool, message: &str) -> Result<(), String> {
     if condition {

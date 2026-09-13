@@ -242,7 +242,8 @@ struct Progress {
     attempt_progress: AttemptProgress,
     result: ExpandedSeatBehaviorV1,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Bo3GameplayUpdateResultV1 {
     pub progress: PinnedFileV1,
     pub learner: ExpandedSeatBehaviorV1,
@@ -491,15 +492,32 @@ fn prior(
     origin: &ExpandedSeatBehaviorV1,
     completed: u64,
 ) -> Result<Option<Progress>, String> {
-    if let Some(pin) = &request.previous_progress {
+    prior_fields(
+        &request.input,
+        request.previous_progress.as_ref(),
+        request.learning_rate_bits,
+        request.value_coefficient_bits,
+        origin,
+        completed,
+    )
+}
+fn prior_fields(
+    input: &Bo3GameplayUpdateInputV1,
+    previous_progress: Option<&PinnedFileV1>,
+    learning_rate_bits: u32,
+    value_coefficient_bits: u32,
+    origin: &ExpandedSeatBehaviorV1,
+    completed: u64,
+) -> Result<Option<Progress>, String> {
+    if let Some(pin) = previous_progress {
         let progress: Progress = read(pin, MAX_PROGRESS_BYTES)?;
         require(
             progress.schema == PROGRESS_SCHEMA
                 && progress.request.schema == BO3_GAMEPLAY_UPDATE_SCHEMA_V1
                 && progress.request.output_directory.is_absolute()
-                && progress.request.learning_rate_bits == request.learning_rate_bits
-                && progress.request.value_coefficient_bits == request.value_coefficient_bits
-                && progress.result == *request.input.learner_v1()
+                && progress.request.learning_rate_bits == learning_rate_bits
+                && progress.request.value_coefficient_bits == value_coefficient_bits
+                && progress.result == *input.learner_v1()
                 && progress.ordinary_origin == *origin
                 && progress.completed_bo3_updates == completed
                 && progress.attempt_progress.attempted_batches > 0
@@ -572,13 +590,147 @@ fn prior(
         require(
             completed == 0
                 && matches!(
-                    request.input,
+                    input,
                     Bo3GameplayUpdateInputV1::OrdinaryCheckpointTransition { .. }
                 ),
             "BO3 continuation requires previous attempted progress",
         )?;
         Ok(None)
     }
+}
+
+/// Read-only scheduler admission. The ledger is internal state, not a new wire
+/// protocol or a claim that the caller owns the globally latest chain tip.
+pub(super) struct ValidatedBo3TipV1 {
+    pub completed_bo3_updates: u64,
+    pub attempted_batches: u64,
+    pub attempted_matches: usize,
+    pub consumed_physical_keys: BTreeSet<String>,
+}
+pub(super) fn validate_bo3_tip_v1(
+    input: &Bo3GameplayUpdateInputV1,
+    previous_progress: Option<&PinnedFileV1>,
+    learning_rate_bits: u32,
+    value_coefficient_bits: u32,
+) -> Result<ValidatedBo3TipV1, String> {
+    let parent = load_parent(input)?;
+    require(
+        learning_rate_bits == parent.learning_rate_bits
+            && value_coefficient_bits == parent.value_coefficient_bits,
+        "BO3 tip must preserve exact parent scalar bits",
+    )?;
+    let previous = prior_fields(
+        input,
+        previous_progress,
+        learning_rate_bits,
+        value_coefficient_bits,
+        &parent.origin,
+        parent.completed,
+    )?;
+    Ok(ValidatedBo3TipV1 {
+        completed_bo3_updates: parent.completed,
+        attempted_batches: previous
+            .as_ref()
+            .map_or(0, |p| p.attempt_progress.attempted_batches),
+        attempted_matches: previous
+            .as_ref()
+            .map_or(0, |p| p.attempt_progress.ledger.len()),
+        consumed_physical_keys: previous.map_or_else(BTreeSet::new, |p| {
+            p.attempt_progress
+                .ledger
+                .into_iter()
+                .map(|triple| triple[2].clone())
+                .collect()
+        }),
+    })
+}
+
+/// Checks a compact saved operation result against its original progress DTO.
+/// The runner verifies the bytes' pin; this does not load historical tensors or
+/// substitute for full validation of the latest continuation tip.
+pub(super) fn validate_recorded_bo3_result_v1(
+    request: &Bo3GameplayUpdateRequestV1,
+    expected: &Bo3GameplayUpdateResultV1,
+    bytes: &[u8],
+    expected_ledger: Option<&[[String; 3]]>,
+) -> Result<(), String> {
+    require(
+        bytes.len() as u64 <= MAX_PROGRESS_BYTES,
+        "recorded progress exceeds bound",
+    )?;
+    let progress: Progress = strict_json(bytes)?;
+    validate_recorded_progress(request, expected, &progress, expected_ledger)
+}
+fn validate_recorded_progress(
+    request: &Bo3GameplayUpdateRequestV1,
+    expected: &Bo3GameplayUpdateResultV1,
+    progress: &Progress,
+    expected_ledger: Option<&[[String; 3]]>,
+) -> Result<(), String> {
+    require(
+        progress.schema == PROGRESS_SCHEMA
+            && progress.request == *request
+            && expected.progress.path == request.output_directory.join("progress.json")
+            && progress.operation_request
+                == pin_for(
+                    request.output_directory.join("request.json"),
+                    &json(request, MAX_REQUEST_BYTES)?,
+                ),
+        "recorded result does not bind original progress/request",
+    )?;
+    validate_ledger(&progress.attempt_progress.ledger)?;
+    require(
+        expected_ledger.is_none_or(|ledger| ledger == progress.attempt_progress.ledger.as_slice()),
+        "recorded progress ledger differs from exact ordered schedule prefix",
+    )?;
+    require(
+        result(&progress, expected.progress.clone()) == *expected,
+        "recorded result differs from progress learner/counters/disposition",
+    )
+}
+
+/// Compact initial-prefix anchor, using the same saved progress DTO as native
+/// continuation. Caller verifies its exact pin; full learned state is validated
+/// at the reconstructed latest tip, not repeatedly for historical checkpoints.
+pub(super) fn recorded_bo3_tip_v1(
+    input: &Bo3GameplayUpdateInputV1,
+    pin: &PinnedFileV1,
+    bytes: &[u8],
+    learning_rate_bits: u32,
+    value_coefficient_bits: u32,
+) -> Result<
+    (
+        Bo3GameplayUpdateResultV1,
+        Bo3GameplayUpdateRequestV1,
+        Vec<[String; 3]>,
+    ),
+    String,
+> {
+    require(
+        bytes.len() as u64 <= MAX_PROGRESS_BYTES,
+        "recorded tip exceeds bound",
+    )?;
+    let progress: Progress = strict_json(bytes)?;
+    let summary = result(&progress, pin.clone());
+    validate_recorded_progress(&progress.request, &summary, &progress, None)?;
+    require(
+        progress.result == *input.learner_v1()
+            && progress.request.learning_rate_bits == learning_rate_bits
+            && progress.request.value_coefficient_bits == value_coefficient_bits
+            && progress.attempt_progress.attempted_batches > 0
+            && progress.attempt_progress.attempted_batches
+                <= progress.attempt_progress.ledger.len() as u64
+            && match input {
+                Bo3GameplayUpdateInputV1::OrdinaryCheckpointTransition { .. } => {
+                    progress.completed_bo3_updates == 0
+                }
+                Bo3GameplayUpdateInputV1::Bo3Checkpoint { .. } => {
+                    progress.completed_bo3_updates > 0
+                }
+            },
+        "initial recorded tip does not bind exact input/scalars/counters",
+    )?;
+    Ok((summary, progress.request, progress.attempt_progress.ledger))
 }
 fn validate_progress(
     plan: &AttemptProgress,

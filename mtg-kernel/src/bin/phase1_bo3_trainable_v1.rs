@@ -1,13 +1,14 @@
-//! Explicit BO3 capture, read-only batch preparation, or one CPU update.
-//! Update durability/recovery belongs to the library; no training loop or dispatch.
+//! Explicit BO3 capture, read-only preparation, one CPU update, or finite run.
+//! Update and finite-run durability/recovery belong to their library APIs.
 use mtg_kernel::durable_publication_v1::{
     DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
 };
 use mtg_kernel::expanded_deck_training_v1::PinnedFileV1;
 use mtg_kernel::phase1_bo3_learning_v1::{
     Bo3GameplayPreparationReportV1, Bo3GameplayPreparationRequestV1, Bo3GameplayUpdateRequestV1,
-    MAX_BO3_PREPARATION_REQUEST_BYTES_V1, TrainableBo3RequestV1, collect_trainable_bo3_v1,
-    prepare_bo3_gameplay_batch_v1, update_bo3_gameplay_v1,
+    MAX_BO3_PREPARATION_REQUEST_BYTES_V1, MAX_NATIVE_BO3_RUN_REQUEST_BYTES_V1,
+    NativeBo3TrainingRunV1, TrainableBo3RequestV1, collect_trainable_bo3_v1,
+    prepare_bo3_gameplay_batch_v1, run_native_bo3_training_v1, update_bo3_gameplay_v1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -27,13 +28,48 @@ enum Command {
     Collect,
     Prepare,
     Update,
+    Run,
 }
 struct Arguments {
     command: Command,
     request: PathBuf,
     output: Option<PathBuf>,
+    max_new_batches: Option<usize>,
 }
 fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
+    if args.first().is_some_and(|mode| mode == "run") {
+        if !matches!(args.len(), 3 | 5) || args[1] != "--request" {
+            return Err("usage: phase1_bo3_trainable_v1 run --request absolute-run.json [--max-new-batches positive-integer]".into());
+        }
+        let request = PathBuf::from(&args[2]);
+        if !request.is_absolute() {
+            return Err("request path must be absolute".into());
+        }
+        let max_new_batches = if args.len() == 5 {
+            if args[3] != "--max-new-batches" {
+                return Err("run accepts only --max-new-batches after its request".into());
+            }
+            let value = args[4].to_str().ok_or("batch limit is not UTF8")?;
+            if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                return Err("batch limit must be a positive integer".into());
+            }
+            let value: usize = value
+                .parse()
+                .map_err(|_| "batch limit exceeds integer range")?;
+            if value == 0 {
+                return Err("batch limit must be positive".into());
+            }
+            Some(value)
+        } else {
+            None
+        };
+        return Ok(Arguments {
+            command: Command::Run,
+            request,
+            output: None,
+            max_new_batches,
+        });
+    }
     if args.first().is_some_and(|mode| mode == "update") {
         if args.len() != 3 || args[1] != "--request" {
             return Err("usage: phase1_bo3_trainable_v1 update --request absolute-request.json; output_directory belongs to the request".into());
@@ -46,6 +82,7 @@ fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
             command: Command::Update,
             request,
             output: None,
+            max_new_batches: None,
         });
     }
     if args.len() != 5 || args[1] != "--request" || args[3] != "--output" {
@@ -56,7 +93,7 @@ fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
     } else if args[0] == "prepare" {
         Command::Prepare
     } else {
-        return Err("only collect, prepare and update are supported".into());
+        return Err("only collect, prepare, update and run are supported".into());
     };
     let request = PathBuf::from(&args[2]);
     let output = PathBuf::from(&args[4]);
@@ -67,6 +104,7 @@ fn arguments(args: Vec<OsString>) -> Result<Arguments, String> {
         command,
         request,
         output: Some(output),
+        max_new_batches: None,
     })
 }
 
@@ -134,6 +172,19 @@ struct PreparationReceipt {
 
 fn run() -> Result<(), String> {
     let args = arguments(std::env::args_os().skip(1).collect())?;
+    if args.command == Command::Run {
+        let (input, _) = read_request(&args.request, MAX_NATIVE_BO3_RUN_REQUEST_BYTES_V1)?;
+        let request = NativeBo3TrainingRunV1::from_json_v1(
+            std::str::from_utf8(&input).map_err(|e| e.to_string())?,
+        )?;
+        drop(input);
+        let result = run_native_bo3_training_v1(&request, args.max_new_batches)?;
+        let bytes = bounded_json(&result, MAX_NATIVE_BO3_RUN_REQUEST_BYTES_V1 as u64)?;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(&bytes).map_err(|e| e.to_string())?;
+        stdout.write_all(b"\n").map_err(|e| e.to_string())?;
+        return stdout.flush().map_err(|e| e.to_string());
+    }
     if args.command == Command::Update {
         let (input, _) = read_request(&args.request, UPDATE_REQUEST_BYTES)?;
         let request = Bo3GameplayUpdateRequestV1::from_json_v1(
@@ -170,7 +221,7 @@ fn run() -> Result<(), String> {
     let input_limit = match args.command {
         Command::Collect => COLLECT_REQUEST_BYTES,
         Command::Prepare => MAX_BO3_PREPARATION_REQUEST_BYTES_V1,
-        Command::Update => return Err("update does not publish an artifact output".into()),
+        Command::Update | Command::Run => return Err("update/run own their library output".into()),
     };
     let (input, input_pin) = read_request(&args.request, input_limit)?;
     let text = std::str::from_utf8(&input).map_err(|e| e.to_string())?;
@@ -206,7 +257,7 @@ fn run() -> Result<(), String> {
                 MAX_BO3_PREPARATION_REQUEST_BYTES_V1 as u64 + PREPARE_REPORT_BYTES,
             )?
         }
-        Command::Update => return Err("update does not publish an artifact output".into()),
+        Command::Update | Command::Run => return Err("update/run own their library output".into()),
     };
     let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(|e| e.to_string())?;
     let receipt = publish_new_file_v1(&parent, &stage_name, final_name, &bytes, expected)
@@ -244,6 +295,29 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trainable_cli_run_has_explicit_invocation_only_batch_limit() {
+        let base = vec![
+            "run".into(),
+            "--request".into(),
+            std::env::temp_dir().join("run.json").into_os_string(),
+        ];
+        let parsed = arguments(base.clone()).unwrap();
+        assert_eq!(parsed.command, Command::Run);
+        assert_eq!(parsed.max_new_batches, None);
+        assert!(parsed.output.is_none());
+        let mut bounded = base.clone();
+        bounded.extend(["--max-new-batches".into(), "2".into()]);
+        assert_eq!(arguments(bounded.clone()).unwrap().max_new_batches, Some(2));
+        for invalid in ["0", "-1", "two", "+2", ""] {
+            bounded[4] = invalid.into();
+            assert!(arguments(bounded.clone()).is_err());
+        }
+        bounded[3] = "--output".into();
+        assert!(arguments(bounded).is_err());
+        assert!(arguments(base[..2].to_vec()).is_err());
+    }
 
     #[test]
     fn trainable_cli_preserves_collect_and_prepare_argument_contracts() {

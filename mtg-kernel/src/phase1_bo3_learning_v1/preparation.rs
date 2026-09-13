@@ -372,7 +372,7 @@ fn hash_json<T: Serialize>(value: &T) -> Result<String, String> {
 /// Deliberately separate from package/provenance identity. In this fixed
 /// Keep-only slice labels, caps, summary tags, transport paths, ancestry and
 /// Adam history cannot turn the same seeded gameplay into a fresh sample.
-fn physical_match_identity(
+pub(super) fn physical_match_identity(
     config: &Bo3CollectionConfigV1,
     packages: [&CompleteAgentPackageV1; 2],
 ) -> Result<String, String> {
