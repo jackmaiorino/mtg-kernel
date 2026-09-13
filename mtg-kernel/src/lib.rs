@@ -72,6 +72,7 @@ pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod ids;
 pub mod policy_observation_v6;
+pub mod phase1_agent_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,
 // `run_native_checkpoint_with_search_opponent_eval_v1`
