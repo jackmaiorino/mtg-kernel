@@ -1004,6 +1004,7 @@ mod tests {
             max_physical_games: 4,
             max_physical_decisions: 1024,
             max_policy_steps: 2048,
+            opening_protocol: Default::default(),
         }
     }
 

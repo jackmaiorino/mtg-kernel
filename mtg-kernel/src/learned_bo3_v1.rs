@@ -10,6 +10,7 @@ use crate::expanded_deck_training_v1::ExpandedInferenceIdentityV1;
 use crate::game_summary_v1::{
     try_run_fast_episode_with_summary_v1, GameSummaryV1, RemovalCounterspellTagsV1,
 };
+use crate::human_opening_v1::HumanOpeningV1;
 use crate::ids::PlayerId;
 use crate::learned_sideboard_v1::{
     LearnedSideboardInputV1, SideboardActionV1, SideboardDeliberationStateV1,
@@ -26,6 +27,30 @@ use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Opening identity is separate from the observation contract. Omitted values
+/// preserve historical fixed-opening behavior and serialized result bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Bo3OpeningProtocolV1 {
+    #[default]
+    LegacyKeepSevenV1,
+    /// Both players keep seven; setup draws do not count as first-turn draws.
+    KeepSevenV2,
+}
+
+impl Bo3OpeningProtocolV1 {
+    fn is_legacy(&self) -> bool {
+        *self == Self::LegacyKeepSevenV1
+    }
+
+    fn validate_observation_mode(self, uses_v3: bool) -> Result<(), String> {
+        if self == Self::KeepSevenV2 && !uses_v3 {
+            return Err("keep_seven_v2 requires the V3 observation contract".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LearnedBo3RunConfigV1 {
@@ -35,6 +60,8 @@ pub struct LearnedBo3RunConfigV1 {
     pub max_physical_games: u8,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    #[serde(default, skip_serializing_if = "Bo3OpeningProtocolV1::is_legacy")]
+    pub opening_protocol: Bo3OpeningProtocolV1,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -462,6 +489,49 @@ fn validate_run_limits_v1(config: &LearnedBo3RunConfigV1) -> Result<(), String> 
     Ok(())
 }
 
+fn create_bo3_episode_v1(
+    config: &LearnedBo3RunConfigV1,
+    uses_v3: bool,
+    game_index: u8,
+    environment_seed: u64,
+    mainboards: [Vec<u16>; 2],
+    starting_player: PlayerId,
+) -> Result<FastActorSessionV1, String> {
+    config.opening_protocol.validate_observation_mode(uses_v3)?;
+    if config.opening_protocol == Bo3OpeningProtocolV1::KeepSevenV2 {
+        // Reuse the human Keep7 transition, including setup-event cleanup.
+        // P0 only identifies the seat whose explicit keep is submitted here;
+        // the other seat already keeps seven and neither player mulligans.
+        let mut opening = HumanOpeningV1::new(
+            u64::from(game_index),
+            environment_seed,
+            config.max_physical_decisions,
+            config.max_policy_steps,
+            config.deck_ids.clone(),
+            mainboards,
+            starting_player,
+            PlayerId::P0,
+        )?;
+        opening.keep()?;
+        return opening.into_session();
+    }
+    let constructor = if uses_v3 {
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1
+    } else {
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1
+    };
+    constructor(
+        u64::from(game_index),
+        environment_seed,
+        config.max_physical_decisions,
+        config.max_policy_steps,
+        config.deck_ids.clone(),
+        mainboards,
+        starting_player,
+    )
+    .map_err(|error| error.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_learned_bo3_session_v1(
     config: LearnedBo3RunConfigV1,
@@ -471,6 +541,8 @@ fn run_learned_bo3_session_v1(
     play_policy: &mut dyn PairedBo1PolicyV1,
     sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
 ) -> Result<Bo3ExecutionV1, String> {
+    let uses_v3 = play_policy.uses_observation_successor_v3();
+    config.opening_protocol.validate_observation_mode(uses_v3)?;
     let registered = [PlayerId::P0, PlayerId::P1].map(|seat| {
         match_session
             .registered_deck(seat)
@@ -556,21 +628,14 @@ fn run_learned_bo3_session_v1(
         play_policy
             .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
             .map_err(|error| error.to_string())?;
-        let constructor = if play_policy.uses_observation_successor_v3() {
-            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1
-        } else {
-            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1
-        };
-        let mut episode = constructor(
-            u64::from(game_index),
+        let mut episode = create_bo3_episode_v1(
+            &config,
+            uses_v3,
+            game_index,
             environment_seed,
-            config.max_physical_decisions,
-            config.max_policy_steps,
-            config.deck_ids.clone(),
             current.each_ref().map(|c| c.mainboard().to_vec()),
             prepared.start().starting_player,
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         let summary = try_run_fast_episode_with_summary_v1(
             &mut episode,
             model_provenance.weights_for_seat(0),
@@ -728,6 +793,7 @@ mod tests {
                 max_physical_games: 3,
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
+                opening_protocol: Bo3OpeningProtocolV1::LegacyKeepSevenV1,
             },
             outcome: MatchOutcomeV1::Winner {
                 winner: PlayerId::P0,
@@ -744,6 +810,137 @@ mod tests {
         assert_eq!(serde_json::to_value(&output).unwrap(), expected);
         assert_eq!(serde_json::to_vec(&output).unwrap(),
             br#"{"schema":"kernel_learned_bo3/v1","config":{"deck_ids":["Rally","Burn"],"seed":17,"game_one_chooser":0,"max_physical_games":3,"max_physical_decisions":4000,"max_policy_steps":40000},"play_weights_sha256":"weights","sideboard_policy_identity":"sideboard","outcome":{"winner":{"winner":0}},"games":[],"sideboard_decisions":[]}"#);
+    }
+
+    fn opening_test_config() -> LearnedBo3RunConfigV1 {
+        serde_json::from_str(
+            r#"{"deck_ids":["Mountain","Island"],"seed":99,"game_one_chooser":0,"max_physical_games":3,"max_physical_decisions":256,"max_policy_steps":8192}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn opening_protocol_defaults_preserve_legacy_and_reject_unknown_variants() {
+        let mut config = opening_test_config();
+        assert_eq!(
+            config.opening_protocol,
+            Bo3OpeningProtocolV1::LegacyKeepSevenV1
+        );
+        assert!(serde_json::to_value(&config)
+            .unwrap()
+            .get("opening_protocol")
+            .is_none());
+        config.opening_protocol = Bo3OpeningProtocolV1::KeepSevenV2;
+        let mut encoded = serde_json::to_value(&config).unwrap();
+        assert_eq!(encoded["opening_protocol"], "keep_seven_v2");
+        let decoded: LearnedBo3RunConfigV1 = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(decoded.opening_protocol, Bo3OpeningProtocolV1::KeepSevenV2);
+        encoded["opening_protocol"] = "future_unknown".into();
+        assert!(serde_json::from_value::<LearnedBo3RunConfigV1>(encoded).is_err());
+    }
+
+    #[test]
+    fn corrected_keep_seven_matches_human_opening_and_retains_natural_first_draw() {
+        use crate::card_def::card_id_by_name;
+        use crate::rl::ActionSemanticV1;
+        use crate::rl_session::FastActorResponseV1;
+        use crate::state::Step;
+
+        let mut config = opening_test_config();
+        config.opening_protocol = Bo3OpeningProtocolV1::KeepSevenV2;
+        let mainboards = [
+            vec![card_id_by_name("Mountain").unwrap(); 60],
+            vec![card_id_by_name("Island").unwrap(); 60],
+        ];
+        for starting in [PlayerId::P0, PlayerId::P1] {
+            // Physical game 2 checks that the setting is independent of match
+            // position and respects the prepared game's starting player.
+            let mut session =
+                create_bo3_episode_v1(&config, true, 2, 99, mainboards.clone(), starting).unwrap();
+            let mut opening = HumanOpeningV1::new(
+                2,
+                99,
+                256,
+                8192,
+                config.deck_ids.clone(),
+                mainboards.clone(),
+                starting,
+                PlayerId::P1,
+            )
+            .unwrap();
+            opening.keep().unwrap();
+            let human = opening.into_session().unwrap();
+            assert_eq!(
+                serde_json::to_vec(session.game_state()).unwrap(),
+                serde_json::to_vec(human.game_state()).unwrap()
+            );
+            assert_eq!(session.current_response(), human.current_response());
+            assert_eq!(
+                session.diagnostic_current_action_semantics(),
+                human.diagnostic_current_action_semantics()
+            );
+            assert_eq!(session.game_state().starting_player, starting);
+            assert!(session.game_state().engine.event_log.is_empty());
+            for target in [starting, starting.opponent()] {
+                let mut reached = false;
+                for _ in 0..128 {
+                    if session.game_state().active_player == target
+                        && session.game_state().step == Step::Main1
+                    {
+                        reached = true;
+                        break;
+                    }
+                    let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                        panic!("unexpected terminal before first main");
+                    };
+                    let selected = session
+                        .diagnostic_current_action_semantics()
+                        .unwrap()
+                        .iter()
+                        .position(|action| matches!(action, ActionSemanticV1::Pass { .. }))
+                        .expect("all-land fixture offers pass");
+                    session
+                        .step(decision.episode_id, decision.step, selected as u32)
+                        .unwrap();
+                }
+                assert!(reached);
+                let state = session.game_state();
+                assert_eq!(
+                    state.players[target.index()].draws_this_turn,
+                    u32::from(target != starting)
+                );
+                assert_eq!(state.players[target.opponent().index()].draws_this_turn, 0);
+                assert_eq!(
+                    state.players[target.index()].hand.len(),
+                    7 + usize::from(target != starting)
+                );
+                if target == starting {
+                    assert_eq!(
+                        session.diagnostic_current_action_semantics().unwrap().len(),
+                        8
+                    );
+                }
+            }
+            config.opening_protocol = Bo3OpeningProtocolV1::LegacyKeepSevenV1;
+            for uses_v3 in [false, true] {
+                let legacy =
+                    create_bo3_episode_v1(&config, uses_v3, 2, 99, mainboards.clone(), starting)
+                        .unwrap();
+                assert_eq!(legacy.game_state().players[0].draws_this_turn, 7);
+                assert_eq!(legacy.game_state().players[1].draws_this_turn, 7);
+            }
+            config.opening_protocol = Bo3OpeningProtocolV1::KeepSevenV2;
+        }
+    }
+
+    #[test]
+    fn corrected_keep_seven_rejects_v2_before_building_decks() {
+        let mut config = opening_test_config();
+        config.opening_protocol = Bo3OpeningProtocolV1::KeepSevenV2;
+        let error = create_bo3_episode_v1(&config, false, 1, 99, [vec![], vec![]], PlayerId::P0)
+            .err()
+            .unwrap();
+        assert_eq!(error, "keep_seven_v2 requires the V3 observation contract");
     }
 
     fn summary() -> GameSummaryV1 {
