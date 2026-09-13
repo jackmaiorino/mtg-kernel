@@ -140,6 +140,25 @@ impl FastActorSessionV1 {
         encoder
             .common
             .build_scoring_owned_v3(self, expected, buffers)
+            .map_err(|error| {
+                // Opt-in backend evidence only. Preserve the first failure and
+                // capture only the projection belonging to the acting player.
+                if let Some(path) = std::env::var_os("MTG_KERNEL_V3_SCORING_ERROR_CAPTURE") {
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(path)
+                    {
+                        let observation = self.flat_policy_observation_v3(expected);
+                        let value = serde_json::json!({"schema": "v3-scoring-error/v1",
+                            "error": format!("{error:?}"), "decision": format!("{expected:?}"),
+                            "observation": observation.as_ref().ok(),
+                            "observation_error": observation.as_ref().err().map(|e| format!("{e:?}"))});
+                        let _ = serde_json::to_writer(&mut file, &value);
+                    }
+                }
+                error
+            })
     }
 }
 

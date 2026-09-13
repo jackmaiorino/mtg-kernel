@@ -1416,24 +1416,6 @@ fn context_object_ordinal(context: FlatContextKindV2, order: u32) -> u32 {
     0x8000_0000 | (u32::from(context as u8) << 16) | order
 }
 
-/// Opt-in backend diagnostic containing only the failed actor's observation.
-/// It never supplies model input and never overwrites an earlier capture.
-fn capture_scoring_error_v3(stage: &str, observation: &ObservationV6, error: &FlatDecisionErrorV2) {
-    let Some(path) = std::env::var_os("MTG_KERNEL_V3_SCORING_ERROR_CAPTURE") else {
-        return;
-    };
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    else {
-        return;
-    };
-    let value = serde_json::json!({"schema": "v3-scoring-error/v1", "stage": stage,
-        "error": format!("{error:?}"), "observation": observation});
-    let _ = serde_json::to_writer(&mut file, &value);
-}
-
 impl FlatDecisionEncoderV2 {
     fn clear_typed_cache(&mut self) {
         self.v3_action_objects = None;
@@ -4015,26 +3997,11 @@ impl FlatDecisionEncoderV2 {
         {
             return Err(FlatDecisionErrorV2::ObservationContract);
         }
-        self.build_globals(&observation).map_err(|error| {
-            capture_scoring_error_v3("build_globals", &observation, &error);
-            error
-        })?;
-        self.register_objects(&observation).map_err(|error| {
-            capture_scoring_error_v3("register_objects", &observation, &error);
-            error
-        })?;
-        let extensions = self.register_extensions_v3(&observation).map_err(|error| {
-            capture_scoring_error_v3("register_extensions", &observation, &error);
-            error
-        })?;
-        self.build_relations(&observation).map_err(|error| {
-            capture_scoring_error_v3("build_relations", &observation, &error);
-            error
-        })?;
-        self.validate_cached_tables().map_err(|error| {
-            capture_scoring_error_v3("validate_cached_tables", &observation, &error);
-            error
-        })?;
+        self.build_globals(&observation)?;
+        self.register_objects(&observation)?;
+        let extensions = self.register_extensions_v3(&observation)?;
+        self.build_relations(&observation)?;
+        self.validate_cached_tables()?;
         if self.scorer_actions.len() != self.actions.len()
             || self.scorer_action_refs.len() != self.action_refs.len()
         {
