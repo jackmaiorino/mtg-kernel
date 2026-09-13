@@ -119,6 +119,22 @@ pub fn collect_bo3_trajectory_v1(
     config: Bo3CollectionConfigV1,
     packages: [CompleteAgentPackageV1; 2],
 ) -> Result<Bo3CollectionResultV1, String> {
+    collect_public_inner(config, packages, None)
+}
+
+pub(crate) fn collect_bo3_with_native_capture_v1(
+    config: Bo3CollectionConfigV1,
+    packages: [CompleteAgentPackageV1; 2],
+    capture: &mut crate::phase1_bo3_learning_v1::CaptureBuffer,
+) -> Result<Bo3CollectionResultV1, String> {
+    collect_public_inner(config, packages, Some(capture))
+}
+
+fn collect_public_inner(
+    config: Bo3CollectionConfigV1,
+    packages: [CompleteAgentPackageV1; 2],
+    capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
+) -> Result<Bo3CollectionResultV1, String> {
     validate_configuration(&config, packages.each_ref())?;
     let [p0, p1] = packages
         .each_ref()
@@ -127,11 +143,12 @@ pub fn collect_bo3_trajectory_v1(
     let p1 = p1?;
     let mut policies = [p0.gameplay, p1.gameplay];
     let heads = [p0.sideboard, p1.sideboard];
-    let collected = collect_loaded(
+    let collected = collect_loaded_inner(
         &config,
         packages.each_ref(),
         &mut policies,
         heads.each_ref().map(Option::as_ref),
+        capture,
     )?;
     Ok(Bo3CollectionResultV1 {
         schema: BO3_COLLECTION_RESULT_SCHEMA_V1.into(),
@@ -174,7 +191,7 @@ fn registrations(config: &Bo3CollectionConfigV1) -> Result<[RegisteredDeckV1; 2]
     Ok([p0?, p1?])
 }
 
-fn validate_configuration(
+pub(crate) fn validate_configuration(
     config: &Bo3CollectionConfigV1,
     packages: [&CompleteAgentPackageV1; 2],
 ) -> Result<(), String> {
@@ -307,6 +324,16 @@ fn collect_loaded(
     policies: &mut [FrozenPlayPolicyV1; 2],
     heads: [Option<&LearnedSideboardModelV1>; 2],
 ) -> Result<Bo3CollectedMatchV1, String> {
+    collect_loaded_inner(config, packages, policies, heads, None)
+}
+
+pub(crate) fn collect_loaded_inner(
+    config: &Bo3CollectionConfigV1,
+    packages: [&CompleteAgentPackageV1; 2],
+    policies: &mut [FrozenPlayPolicyV1; 2],
+    heads: [Option<&LearnedSideboardModelV1>; 2],
+    mut capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
+) -> Result<Bo3CollectedMatchV1, String> {
     validate_configuration(config, packages)?;
     for i in 0..2 {
         ensure(
@@ -417,6 +444,7 @@ fn collect_loaded(
             &mut game,
             &mut budget,
             &mut diagnostic,
+            capture.as_deref_mut(),
         );
         trajectory.games.push(game);
         match played {
@@ -475,6 +503,7 @@ fn play_game(
     game: &mut Bo3TrainingGameV1,
     budget: &mut RecordBudget,
     diagnostic: &mut Bo3CollectionGameDiagnosticsV1,
+    capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
 ) -> Result<GameSummaryV1, Stop> {
     let wins = [PlayerId::P0, PlayerId::P1].map(|p| match_session.match_state().wins(p).unwrap());
     if game.game_index > 1 {
@@ -583,6 +612,7 @@ fn play_game(
         pending: None,
         recording_cap: false,
         rejected_selections: 0,
+        capture,
     };
     recorder
         .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
@@ -630,6 +660,7 @@ struct Pending {
     step: u64,
     record: Bo3DecisionRecordV1,
     json_size: u64,
+    native: Option<crate::phase1_bo3_learning_v1::PendingNativeCapture>,
 }
 struct RecordingPolicy<'a> {
     policies: &'a mut [FrozenPlayPolicyV1; 2],
@@ -639,6 +670,7 @@ struct RecordingPolicy<'a> {
     pending: Option<Pending>,
     recording_cap: bool,
     rejected_selections: u64,
+    capture: Option<&'a mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
 }
 impl RecordingPolicy<'_> {
     fn finish_game(
@@ -708,6 +740,12 @@ impl RecordingPolicy<'_> {
         if let Some(pending) = self.pending.take() {
             self.budget
                 .append_checked(self.game, pending.record, pending.json_size);
+            if let Some(native) = pending.native {
+                self.capture
+                    .as_deref_mut()
+                    .expect("native pending requires capture sink")
+                    .commit(native);
+            }
         }
         Ok(())
     }
@@ -754,10 +792,30 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
                 return Err(recording_error(stop.message));
             }
         };
+        let native = if let Some(capture) = self.capture.as_deref() {
+            let tensor = self.policies[seat(decision.acting_player)]
+                .last_scored_training_tensor_v3()
+                .map_err(recording_error)?;
+            match capture.prepare(
+                record.decision_index,
+                tensor,
+                &scores,
+                decision.legal_action_count as usize,
+            ) {
+                Ok(native) => Some(native),
+                Err(message) => {
+                    self.recording_cap = true;
+                    return Err(recording_error(message));
+                }
+            }
+        } else {
+            None
+        };
         self.pending = Some(Pending {
             step: decision.step,
             record,
             json_size: size,
+            native,
         });
         self.rejected_selections -= 1;
         Ok(selected)
@@ -765,4 +823,4 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

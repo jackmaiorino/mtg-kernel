@@ -72,7 +72,7 @@ fn package(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAge
     result
 }
 
-fn config(id: &str) -> Bo3CollectionConfigV1 {
+pub(crate) fn config(id: &str) -> Bo3CollectionConfigV1 {
     // A legal all-basic registration loses by actual engine decking. There is
     // no fabricated terminal, reward, forced winner or short-library fixture.
     let forest = crate::card_def::card_id_by_name("Forest").unwrap();
@@ -99,7 +99,7 @@ fn config(id: &str) -> Bo3CollectionConfigV1 {
     }
 }
 
-fn fixtures(
+pub(crate) fn fixtures(
     choices: [PlayDrawChoiceV1; 2],
 ) -> ([FrozenPlayPolicyV1; 2], [CompleteAgentPackageV1; 2]) {
     let policies = [compact_board_policy(), compact_board_policy()];
@@ -509,6 +509,7 @@ fn actual_engine_error_does_not_commit_pending_selection_or_infer_commit_from_co
             error: None,
         };
         let mut recorder = RecordingPolicy {
+            capture: None,
             policies: &mut policies,
             hashes: &hashes,
             game: &mut game,

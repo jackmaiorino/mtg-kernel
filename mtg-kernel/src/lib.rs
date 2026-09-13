@@ -74,6 +74,7 @@ pub mod ids;
 pub mod policy_observation_v6;
 pub mod phase1_agent_v1;
 pub mod phase1_bo3_collection_v1;
+pub mod phase1_bo3_learning_v1;
 pub mod phase1_registry_transfer_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,

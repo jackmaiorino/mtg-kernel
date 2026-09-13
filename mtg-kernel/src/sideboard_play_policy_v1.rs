@@ -576,6 +576,18 @@ impl FrozenPlayPolicyV1 {
         })
     }
 
+    /// Borrow the input retained by the immediately preceding V3 scoring call.
+    /// Recording callers must use it before any subsequent score or reset.
+    /// This accessor performs no encoding, forward pass, or random sampling.
+    pub(crate) fn last_scored_training_tensor_v3(
+        &self,
+    ) -> Result<&NativeFlatDecisionTensorV3, String> {
+        self.successor
+            .as_ref()
+            .map(|state| &state.tensor)
+            .ok_or_else(|| "native capture requires the V3 scorer".into())
+    }
+
     pub(crate) fn select_with_training_tensor_v3(
         &mut self,
         session: &FastActorSessionV1,
