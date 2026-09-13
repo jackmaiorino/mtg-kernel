@@ -98,7 +98,100 @@ fn v3_cuda_direct_bridge_rejects_before_device_creation() {
         )
         .is_err());
         assert_eq!(state.state_sha256_v1().unwrap(), before);
+        assert!(
+            bridge::train_step_cuda_burn_dense_feature_transfer_capture_numerics_v3(
+                &mut state, &groups, 0.5, 0.0001, ordinal,
+            )
+            .is_err()
+        );
+        assert_eq!(state.state_sha256_v1().unwrap(), before);
     }
+}
+
+fn numerical_evidence_fixture() -> bridge::V3CudaNumericalEvidenceV1 {
+    bridge::V3CudaNumericalEvidenceV1 {
+        device_ordinal: 1,
+        normalization_group_count: 2,
+        value_coefficient: 0.5,
+        logit_outputs: vec![0.5, -0.5, 0.25, 1.0, 0.0, -1.0],
+        value_outputs: vec![0.25, -0.5, 0.125],
+        action_offsets: vec![0, 2, 3, 6],
+        selected_action_indices: vec![1, 0, 2],
+        substep_group_indices: vec![0, 0, 1],
+        group_first_substeps: vec![0, 2],
+        terminal_returns: vec![1, -1],
+        chunks: vec![
+            bridge::V3CudaChunkObjectiveV1 {
+                group_begin: 0,
+                group_end: 1,
+                substep_begin: 0,
+                substep_end: 2,
+                device_objective: 0.5,
+            },
+            bridge::V3CudaChunkObjectiveV1 {
+                group_begin: 1,
+                group_end: 2,
+                substep_begin: 2,
+                substep_end: 3,
+                device_objective: -0.25,
+            },
+        ],
+        device_objective_host_sum: 0.25,
+    }
+}
+
+#[test]
+fn v3_cuda_numerical_capture_validates_partitions_and_finite_device_data() {
+    let evidence = numerical_evidence_fixture();
+    bridge::validate_v3_cuda_numerical_evidence_v1(&evidence).unwrap();
+    let corruptions: &[fn(&mut bridge::V3CudaNumericalEvidenceV1)] = &[
+        |e| e.device_ordinal = usize::MAX,
+        |e| e.normalization_group_count = 0,
+        |e| e.value_coefficient = f32::NAN,
+        |e| e.logit_outputs[0] = f32::INFINITY,
+        |e| e.value_outputs[1] = f32::NAN,
+        |e| e.action_offsets[0] = 1,
+        |e| e.action_offsets[2] = 2,
+        |e| e.action_offsets[3] = 7,
+        |e| e.selected_action_indices[1] = 1,
+        |e| e.substep_group_indices[1] = 1,
+        |e| e.group_first_substeps[1] = 1,
+        |e| e.group_first_substeps[1] = usize::MAX,
+        |e| e.terminal_returns[0] = 2,
+        |e| e.chunks.clear(),
+        |e| e.chunks[1].group_begin = 0,
+        |e| e.chunks[1].group_end = 3,
+        |e| e.chunks[0].substep_end = 1,
+        |e| e.chunks[1].substep_begin = 1,
+        |e| e.chunks[1].substep_end = 2,
+        |e| e.chunks[0].device_objective = f32::NAN,
+        |e| {
+            e.chunks.pop();
+        },
+        |e| e.device_objective_host_sum = f64::INFINITY,
+        |e| e.device_objective_host_sum = 0.0,
+    ];
+    for (case, corrupt) in corruptions.iter().enumerate() {
+        let mut changed = evidence.clone();
+        corrupt(&mut changed);
+        assert!(
+            bridge::validate_v3_cuda_numerical_evidence_v1(&changed).is_err(),
+            "corruption {case}"
+        );
+    }
+}
+
+#[test]
+fn v3_cuda_numerical_capture_preserves_actual_chunk_scalars_in_host_sum() {
+    let mut evidence = numerical_evidence_fixture();
+    evidence.chunks[0].device_objective = 100_000_000.0;
+    evidence.chunks[1].device_objective = 1.0;
+    evidence.device_objective_host_sum = 100_000_001.0;
+    bridge::validate_v3_cuda_numerical_evidence_v1(&evidence).unwrap();
+    // A separately rounded f32 sum is not the declared f64 host sum.
+    evidence.device_objective_host_sum =
+        f64::from(evidence.chunks[0].device_objective + evidence.chunks[1].device_objective);
+    assert!(bridge::validate_v3_cuda_numerical_evidence_v1(&evidence).is_err());
 }
 
 fn assert_named_close(
@@ -154,35 +247,94 @@ fn v3_cuda_empty_relation_adam_continuation_requires_explicit_device() {
         let mut gpu =
             NativePolicyValueTrainStateV1::from_snapshot_v1(initial.model_v1().clone(), &snapshot)
                 .unwrap();
-        let tensor = tensor_fixture(empty_edges, empty_refs);
-        let output = cpu
-            .model_v1()
-            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
-            .unwrap();
-        let bits: Vec<_> = output.logits.iter().map(|v| v.to_bits()).collect();
-        let steps = [NativePolicySubstepV1 {
-            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v3(
-                &tensor,
-            ))),
-            selected_action_index: 1,
-            expected_raw_action_logit_bits: &bits,
-            expected_value_bits: output.value.to_bits(),
-        }];
-        let groups = [NativePolicyPhysicalDecisionV1 {
-            substeps: &steps,
-            terminal_return: -1,
-            baseline_bits: 0,
-        }];
+        let mut tensors = [
+            tensor_fixture(empty_edges, empty_refs),
+            tensor_fixture(empty_edges, empty_refs),
+            tensor_fixture(empty_edges, empty_refs),
+        ];
+        tensors[0].common.action_features[0] = -0.125;
+        tensors[1].common.state[0] = -0.25;
+        tensors[2]
+            .common
+            .action_features
+            .truncate(ACTION_FEATURE_DIM_V1);
+        let outputs: Vec<_> = tensors
+            .iter()
+            .map(|tensor| {
+                cpu.model_v1()
+                    .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
+                    .unwrap()
+            })
+            .collect();
+        let bits: Vec<Vec<_>> = outputs
+            .iter()
+            .map(|output| output.logits.iter().map(|v| v.to_bits()).collect())
+            .collect();
+        let selected = [1, 0, 0];
+        let steps: Vec<_> = tensors
+            .iter()
+            .enumerate()
+            .map(|(index, tensor)| NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v3(
+                    tensor,
+                ))),
+                selected_action_index: selected[index],
+                expected_raw_action_logit_bits: &bits[index],
+                expected_value_bits: outputs[index].value.to_bits(),
+            })
+            .collect();
+        let groups = [
+            NativePolicyPhysicalDecisionV1 {
+                substeps: &steps[..2],
+                terminal_return: -1,
+                baseline_bits: 0,
+            },
+            NativePolicyPhysicalDecisionV1 {
+                substeps: &steps[2..],
+                terminal_return: 1,
+                baseline_bits: 0,
+            },
+        ];
         let cpu_result = cpu
             .train_step_feature_transfer_v3(&groups, 0.5, 0.0001)
             .unwrap();
-        let gpu_result = bridge::train_step_cuda_burn_dense_feature_transfer_capture_v3(
+        let captured = bridge::train_step_cuda_burn_dense_feature_transfer_capture_numerics_v3(
             &mut gpu, &groups, 0.5, 0.0001, ordinal,
         )
         .unwrap();
         // These are the existing diagnostic tolerances, not a V3 campaign
-        // acceptance envelope. Full qualification still needs actual CUDA
-        // forward/objective capture and real multi-deck trajectory rows.
+        // acceptance envelope. Full qualification still needs declared
+        // per-layer delta bounds and real multi-deck trajectory rows.
+        let gpu_result = captured.result;
+        let device = captured.device;
+        bridge::validate_v3_cuda_numerical_evidence_v1(&device).unwrap();
+        assert_eq!(device.device_ordinal, ordinal);
+        assert_eq!(device.normalization_group_count, 2);
+        assert_eq!(device.action_offsets, [0, 2, 4, 5]);
+        assert_eq!(device.selected_action_indices, selected);
+        assert_eq!(device.substep_group_indices, [0, 0, 1]);
+        assert_eq!(device.group_first_substeps, [0, 2]);
+        assert_eq!(device.terminal_returns, [-1, 1]);
+        assert_eq!(device.chunks.len(), 1);
+        assert_eq!(device.chunks[0].group_begin, 0);
+        assert_eq!(device.chunks[0].group_end, 2);
+        assert_eq!(device.chunks[0].substep_begin, 0);
+        assert_eq!(device.chunks[0].substep_end, 3);
+        let cpu_logits = outputs.iter().flat_map(|output| &output.logits);
+        for (expected, actual) in cpu_logits.zip(&device.logit_outputs) {
+            assert!((expected - actual).abs() <= 0.005_f32.max(0.005 * expected.abs()));
+        }
+        for (expected, actual) in outputs
+            .iter()
+            .map(|output| output.value)
+            .zip(&device.value_outputs)
+        {
+            assert!((expected - actual).abs() <= 0.005_f32.max(0.005 * expected.abs()));
+        }
+        assert!(
+            (f64::from(cpu_result.loss) - device.device_objective_host_sum).abs()
+                <= 0.005_f64.max(0.005 * f64::from(cpu_result.loss).abs())
+        );
         assert_named_close(&cpu_result.gradients, &gpu_result.gradients, 0.005);
         let cpu_after = cpu.snapshot_v1().unwrap();
         let gpu_after = gpu.snapshot_v1().unwrap();

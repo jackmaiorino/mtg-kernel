@@ -324,6 +324,10 @@ pub(crate) struct ChunkBackwardOutputsV1 {
     pub(crate) raw_gauge_residual: f32,
     pub(crate) logit_outputs: Vec<f32>,
     pub(crate) value_outputs: Vec<f32>,
+    /// The actual scalar supplied to backward, read only by the opt-in V3
+    /// numerical probe. Ordinary and legacy callers retain three readbacks.
+    #[cfg(test)]
+    pub(crate) device_objective: Option<f32>,
 }
 
 impl ExperimentalDeviceTrainStateV1 {
@@ -655,6 +659,46 @@ impl ExperimentalDeviceTrainStateV1 {
         value_coefficient: f32,
         normalization_group_count: f32,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
+        self.chunk_backward_inner_v1(
+            accumulator,
+            batch,
+            plan,
+            value_coefficient,
+            normalization_group_count,
+            #[cfg(test)]
+            false,
+        )
+    }
+
+    /// Additional readback is confined to this explicitly selected test path.
+    #[cfg(test)]
+    pub(crate) fn chunk_backward_capture_objective_v3(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseGroupLossPlanV1,
+        value_coefficient: f32,
+        normalization_group_count: f32,
+    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
+        self.chunk_backward_inner_v1(
+            accumulator,
+            batch,
+            plan,
+            value_coefficient,
+            normalization_group_count,
+            true,
+        )
+    }
+
+    fn chunk_backward_inner_v1(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseGroupLossPlanV1,
+        value_coefficient: f32,
+        normalization_group_count: f32,
+        #[cfg(test)] capture_device_objective: bool,
+    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
         // Capacity-experiment dispatch: `self.wide` records which width
         // `self.model`'s resident tensors were imported as (see the `wide`
         // field doc comment); the wide net needs `forward_wide_v1` (the
@@ -696,6 +740,8 @@ impl ExperimentalDeviceTrainStateV1 {
                 coefficient,
             )?,
         };
+        #[cfg(test)]
+        let device_objective = capture_device_objective.then(|| loss.clone().inner());
         let raw_gradients = loss.backward();
         let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
         if batch.empty_relations_v3 {
@@ -721,7 +767,34 @@ impl ExperimentalDeviceTrainStateV1 {
             .register(logit_outputs)
             .register(value_outputs)
             .register(gauge_gradient.clone());
+        #[cfg(test)]
+        let readback = match device_objective {
+            Some(objective) => readback.register(objective),
+            None => readback,
+        };
         let readback = readback.try_execute()?;
+        #[cfg(test)]
+        let (readback, device_objective) = {
+            let mut readback = readback;
+            let objective = if capture_device_objective {
+                if readback.len() != 4 {
+                    return Err(training_error(
+                        "CUDA V3 objective readback cardinality mismatch",
+                    ));
+                }
+                let objective = readback
+                    .pop()
+                    .expect("four checked readbacks")
+                    .into_vec::<f32>()?;
+                if objective.len() != 1 || !objective[0].is_finite() {
+                    return Err(training_error("CUDA V3 objective is not one finite scalar"));
+                }
+                Some(objective[0])
+            } else {
+                None
+            };
+            (readback, objective)
+        };
         let readback_count = readback.len();
         let [logit_data, value_data, gauge_data]: [TensorData; 3] =
             readback.try_into().map_err(|_| {
@@ -741,6 +814,8 @@ impl ExperimentalDeviceTrainStateV1 {
             raw_gauge_residual: chunk_raw,
             logit_outputs,
             value_outputs,
+            #[cfg(test)]
+            device_objective,
         })
     }
 

@@ -40,6 +40,143 @@ const SCORER_SECOND_BIAS_ORDINAL_V1: usize = 28;
 /// while staying large enough that dense-kernel launch overhead is amortized.
 const BRIDGE_CHUNK_SUBSTEP_TARGET_V1: usize = 8_192;
 
+/// One actual CUDA loss scalar supplied to backward. Every chunk uses the
+/// whole update's group count as its divisor; intervals are half-open.
+#[cfg(test)]
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct V3CudaChunkObjectiveV1 {
+    pub(crate) group_begin: usize,
+    pub(crate) group_end: usize,
+    pub(crate) substep_begin: usize,
+    pub(crate) substep_end: usize,
+    pub(crate) device_objective: f32,
+}
+
+/// Device output evidence from the exact forward/loss used for backward.
+/// This is a capture format, not a numerical acceptance envelope. In
+/// particular, `device_objective_host_sum` is an f64 host sum of actual
+/// device chunk scalars, not a single device reduction or transported loss.
+#[cfg(test)]
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct V3CudaNumericalEvidenceV1 {
+    pub(crate) device_ordinal: usize,
+    pub(crate) normalization_group_count: usize,
+    pub(crate) value_coefficient: f32,
+    pub(crate) logit_outputs: Vec<f32>,
+    pub(crate) value_outputs: Vec<f32>,
+    pub(crate) action_offsets: Vec<usize>,
+    pub(crate) selected_action_indices: Vec<usize>,
+    pub(crate) substep_group_indices: Vec<usize>,
+    pub(crate) group_first_substeps: Vec<usize>,
+    pub(crate) terminal_returns: Vec<i8>,
+    pub(crate) chunks: Vec<V3CudaChunkObjectiveV1>,
+    pub(crate) device_objective_host_sum: f64,
+}
+
+#[cfg(test)]
+pub(crate) struct V3CudaNumericalCaptureV1 {
+    /// Existing receipt fields retain their transported-CPU semantics.
+    pub(crate) result: NativePolicyTrainStepResultV1,
+    pub(crate) device: V3CudaNumericalEvidenceV1,
+}
+
+/// Pure host validation of captured row/group/chunk partitions. This cannot
+/// prove numerical parity, but prevents a malformed capture being published
+/// or used to commit a host update.
+#[cfg(test)]
+pub(crate) fn validate_v3_cuda_numerical_evidence_v1(
+    evidence: &V3CudaNumericalEvidenceV1,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    let invalid = || NativePolicyTrainErrorV1::CudaBackend {
+        code: "cuda-v3-numerical-capture-contract",
+    };
+    let substeps = evidence.value_outputs.len();
+    let groups = evidence.normalization_group_count;
+    if i32::try_from(evidence.device_ordinal).is_err()
+        || substeps == 0
+        || groups == 0
+        || !evidence.value_coefficient.is_finite()
+        || evidence.value_coefficient <= 0.0
+        || evidence.action_offsets.len() != substeps + 1
+        || evidence.action_offsets.first().copied() != Some(0)
+        || evidence.action_offsets.last().copied() != Some(evidence.logit_outputs.len())
+        || evidence.selected_action_indices.len() != substeps
+        || evidence.substep_group_indices.len() != substeps
+        || evidence.group_first_substeps.len() != groups
+        || evidence.group_first_substeps.first().copied() != Some(0)
+        || evidence.terminal_returns.len() != groups
+        || evidence
+            .terminal_returns
+            .iter()
+            .any(|value| !matches!(*value, -1..=1))
+        || evidence
+            .logit_outputs
+            .iter()
+            .chain(&evidence.value_outputs)
+            .any(|value| !value.is_finite())
+        || evidence.chunks.is_empty()
+        || !evidence.device_objective_host_sum.is_finite()
+    {
+        return Err(invalid());
+    }
+    for (substep, offsets) in evidence.action_offsets.windows(2).enumerate() {
+        let count = offsets[1]
+            .checked_sub(offsets[0])
+            .filter(|count| *count > 0)
+            .ok_or_else(invalid)?;
+        if evidence.selected_action_indices[substep] >= count {
+            return Err(invalid());
+        }
+    }
+    for (group, &begin) in evidence.group_first_substeps.iter().enumerate() {
+        let end = evidence
+            .group_first_substeps
+            .get(group + 1)
+            .copied()
+            .unwrap_or(substeps);
+        if begin >= end
+            || end > substeps
+            || evidence.substep_group_indices[begin..end]
+                .iter()
+                .any(|actual| *actual != group)
+        {
+            return Err(invalid());
+        }
+    }
+    let mut next_group = 0;
+    let mut next_substep = 0;
+    let mut objective_sum = 0.0_f64;
+    for chunk in &evidence.chunks {
+        if chunk.group_begin != next_group
+            || chunk.substep_begin != next_substep
+            || chunk.group_end <= chunk.group_begin
+            || chunk.group_end > groups
+            || chunk.substep_end <= chunk.substep_begin
+            || chunk.substep_end > substeps
+            || chunk.substep_begin != evidence.group_first_substeps[chunk.group_begin]
+            || chunk.substep_end
+                != evidence
+                    .group_first_substeps
+                    .get(chunk.group_end)
+                    .copied()
+                    .unwrap_or(substeps)
+            || !chunk.device_objective.is_finite()
+        {
+            return Err(invalid());
+        }
+        next_group = chunk.group_end;
+        next_substep = chunk.substep_end;
+        objective_sum += f64::from(chunk.device_objective);
+    }
+    if next_group != groups
+        || next_substep != substeps
+        || objective_sum.to_bits() != evidence.device_objective_host_sum.to_bits()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn validate_policy_anchor_rows_v1<'a>(
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -369,6 +506,7 @@ fn train_step_cuda_burn_dense_inner_v1(
     #[cfg(test)] anchor_target_probability_rows: Option<&[&[f32]]>,
     #[cfg(test)] policy_anchor_coefficient: Option<f32>,
     #[cfg(test)] capture_named_gradients: bool,
+    #[cfg(test)] capture_v3_numerics: Option<&mut Option<V3CudaNumericalEvidenceV1>>,
 ) -> Result<
     (
         NativePolicyTrainStepResultV1,
@@ -378,6 +516,18 @@ fn train_step_cuda_burn_dense_inner_v1(
 > {
     if groups.is_empty() {
         return Err(NativePolicyTrainErrorV1::EmptyBatch);
+    }
+    #[cfg(test)]
+    if capture_v3_numerics.is_some()
+        && (explicit_v3_device_ordinal.is_none()
+            || wide
+            || !capture_named_gradients
+            || anchor_target_probability_rows.is_some()
+            || policy_anchor_coefficient.is_some())
+    {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-v3-numerical-capture-mode",
+        });
     }
     #[cfg(test)]
     if anchor_target_probability_rows.is_some() != policy_anchor_coefficient.is_some() {
@@ -496,6 +646,8 @@ fn train_step_cuda_burn_dense_inner_v1(
     let mut logit_outputs = Vec::new();
     let mut value_outputs = Vec::with_capacity(views.len());
     let mut global_action_offsets = Vec::with_capacity(views.len() + 1);
+    #[cfg(test)]
+    let mut captured_chunks = Vec::new();
     global_action_offsets.push(0_usize);
     let total_group_count = groups.len() as f32;
     for (ordinal, chunk_start_group) in chunk_group_starts.iter().copied().enumerate() {
@@ -552,6 +704,7 @@ fn train_step_cuda_burn_dense_inner_v1(
         } else {
             DevicePackedBatch::upload(&device, &chunk_workspace)
         };
+        #[cfg(not(test))]
         let chunk_outputs = device_state
             .chunk_backward_v1(
                 &mut accumulator,
@@ -561,6 +714,39 @@ fn train_step_cuda_burn_dense_inner_v1(
                 total_group_count,
             )
             .map_err(bridge_error_v1)?;
+        #[cfg(test)]
+        let chunk_outputs = if capture_v3_numerics.is_some() {
+            device_state.chunk_backward_capture_objective_v3(
+                &mut accumulator,
+                &chunk_batch,
+                &chunk_plan,
+                value_coefficient,
+                total_group_count,
+            )
+        } else {
+            device_state.chunk_backward_v1(
+                &mut accumulator,
+                &chunk_batch,
+                &chunk_plan,
+                value_coefficient,
+                total_group_count,
+            )
+        }
+        .map_err(bridge_error_v1)?;
+        #[cfg(test)]
+        if capture_v3_numerics.is_some() {
+            captured_chunks.push(V3CudaChunkObjectiveV1 {
+                group_begin: chunk_start_group,
+                group_end: chunk_end_group,
+                substep_begin,
+                substep_end,
+                device_objective: chunk_outputs.device_objective.ok_or(
+                    NativePolicyTrainErrorV1::CudaBackend {
+                        code: "cuda-v3-numerical-capture-missing-objective",
+                    },
+                )?,
+            });
+        }
         let chunk_substep_count = substep_end - substep_begin;
         if chunk_workspace.action_offsets.len() != chunk_substep_count + 1 {
             return Err(NativePolicyTrainErrorV1::CudaBackend {
@@ -611,6 +797,29 @@ fn train_step_cuda_burn_dense_inner_v1(
             code: "cuda-burn-dense-bridge-value-cardinality",
         });
     }
+    #[cfg(test)]
+    let captured_device = if capture_v3_numerics.is_some() {
+        let evidence = V3CudaNumericalEvidenceV1 {
+            device_ordinal,
+            normalization_group_count: groups.len(),
+            value_coefficient,
+            logit_outputs: logit_outputs.clone(),
+            value_outputs: value_outputs.clone(),
+            action_offsets: global_action_offsets.clone(),
+            selected_action_indices: selected_action_indices.clone(),
+            substep_group_indices: substep_group_indices.clone(),
+            group_first_substeps: group_first_substeps.clone(),
+            terminal_returns: terminal_returns.clone(),
+            device_objective_host_sum: captured_chunks.iter().fold(0.0_f64, |sum, chunk| {
+                sum + f64::from(chunk.device_objective)
+            }),
+            chunks: captured_chunks,
+        };
+        validate_v3_cuda_numerical_evidence_v1(&evidence)?;
+        Some(evidence)
+    } else {
+        None
+    };
     // The sole accumulated-gradient apply point.
     #[cfg(not(test))]
     device_state
@@ -1121,6 +1330,10 @@ fn train_step_cuda_burn_dense_inner_v1(
     // in the caller; this shared body only owns the device-side update.
     let updated_snapshot = device_state.export_snapshot_v1().map_err(bridge_error_v1)?;
     let adam_step = updated_snapshot.adam_step;
+    #[cfg(test)]
+    if let Some(destination) = capture_v3_numerics {
+        *destination = captured_device;
+    }
     // The update is committed device-side here: park the device state for the
     // next update, keyed by the exact snapshot its tensors now hold. The
     // caller still must commit the CPU-side state before this update is
@@ -1178,6 +1391,8 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         None,
         #[cfg(test)]
         false,
+        #[cfg(test)]
+        None,
     )?;
     *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
         state.model_v1().clone(),
@@ -1238,6 +1453,8 @@ fn train_step_cuda_burn_dense_feature_transfer_inner_v3(
         None,
         #[cfg(test)]
         capture_named_gradients,
+        #[cfg(test)]
+        None,
     )?;
     let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
         state.model_v1().clone(),
@@ -1273,6 +1490,60 @@ pub(crate) fn train_step_cuda_burn_dense_feature_transfer_capture_v3(
         device_ordinal,
         true,
     )
+}
+
+/// Opt-in numerical evidence from the same V3 update's device forward and
+/// backward loss, plus all 33 pre-Adam named gradients. Host assignment is
+/// last: readback, capture validation or reimport failure leaves it intact.
+/// No capture is retained globally or supplied to existing receipt fields.
+#[cfg(test)]
+pub(crate) fn train_step_cuda_burn_dense_feature_transfer_capture_numerics_v3(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<V3CudaNumericalCaptureV1, NativePolicyTrainErrorV1> {
+    state.validate_cuda_feature_transfer_update_v3(
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+    )?;
+    let snapshot = state.snapshot_v1()?;
+    let mut captured = None;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        Some(device_ordinal),
+        groups,
+        value_coefficient,
+        learning_rate,
+        None,
+        None,
+        true,
+        Some(&mut captured),
+    )?;
+    let candidate: Result<_, NativePolicyTrainErrorV1> = (|| {
+        let device = captured.ok_or(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-v3-numerical-capture-missing",
+        })?;
+        validate_v3_cuda_numerical_evidence_v1(&device)?;
+        let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
+            state.model_v1().clone(),
+            &updated_snapshot,
+        )
+        .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-v3-state-reimport-failure",
+        })?;
+        Ok((candidate, device))
+    })();
+    let (candidate, device) = candidate.map_err(|error| {
+        *resident_device_state_slot_v1() = None;
+        error
+    })?;
+    *state = candidate;
+    Ok(V3CudaNumericalCaptureV1 { result, device })
 }
 
 /// Test-only forward-KL policy-anchor sibling of
@@ -1313,6 +1584,7 @@ pub(crate) fn train_step_cuda_burn_dense_policy_anchor_v1(
         Some(flat_anchor_rows.as_slice()),
         Some(policy_anchor_coefficient),
         false,
+        None,
     )?;
     *state = NativePolicyValueTrainStateV1::from_snapshot_v1(
         state.model_v1().clone(),
@@ -1362,6 +1634,7 @@ pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
         #[cfg(test)]
         None,
         true,
+        None,
     )?;
     if result.gradients.len() != 33 || result.gradients.len() != expected_tensor_count {
         return Err(NativePolicyTrainErrorV1::CudaBackend {
@@ -1414,6 +1687,8 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
         None,
         #[cfg(test)]
         false,
+        #[cfg(test)]
+        None,
     )?;
     *state = NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(
         state.model_v1().clone(),

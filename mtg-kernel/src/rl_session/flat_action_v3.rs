@@ -477,6 +477,42 @@ impl FastActorSessionV1 {
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
     }
 
+    /// Private human-adapter input. All three values come from the same
+    /// current V3 binding; the caller must project references before transport.
+    /// A fixed human seat cannot inspect an opponent's current actor view.
+    pub(crate) fn human_current_decision_input_v1(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+    ) -> Result<
+        (
+            ObservationV6,
+            Vec<ActionSemanticV1>,
+            FlatActionDecisionBindingV3,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
+        let cache = self.validated_v3_cache(expected)?;
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        if PlayerSeatV1::from(current.actor) != human_seat {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        let observation = self.flat_policy_observation_v3(expected)?;
+        let actions = current
+            .candidates
+            .iter()
+            .map(|candidate| candidate.semantic.clone())
+            .collect();
+        Ok((
+            observation,
+            actions,
+            FlatActionDecisionBindingV3(cache.binding),
+        ))
+    }
+
     pub(crate) fn flat_policy_validate_cached_binding_v3(
         &self,
         expected: FastActorDecisionV1,

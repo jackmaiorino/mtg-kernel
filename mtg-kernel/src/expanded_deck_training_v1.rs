@@ -1173,6 +1173,9 @@ fn publish_json<T: Serialize>(
 }
 
 #[cfg(test)]
+mod cuda_probe_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
