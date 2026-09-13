@@ -1,11 +1,14 @@
-//! Explicit native BO3 capture and read-only gameplay batch preparation.
-//! No optimizer, checkpoint publication, CLI, or legacy objective is installed.
+//! Explicit native BO3 capture, preparation and opt-in CPU continuation.
+//! Legacy objectives/readers remain strict. There is no training loop.
 //! Producer artifact verification is distinct from this process's runtime.
 
 mod capture;
+mod continuation;
 mod preparation;
 pub use capture::*;
 pub(crate) use capture::{CaptureBuffer, PendingNativeCapture};
+pub(crate) use continuation::load_bo3_inference_v1;
+pub use continuation::*;
 pub use preparation::*;
 
 fn require(condition: bool, message: &str) -> Result<(), String> {

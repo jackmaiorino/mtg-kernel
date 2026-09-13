@@ -1,5 +1,5 @@
-use super::*;
 use super::require;
+use super::*;
 use crate::expanded_deck_training_v1::{
     ExpandedSeatBehaviorV1, PinnedFileV1, load_expanded_inference_v1,
 };
@@ -109,6 +109,7 @@ pub struct PreparedBo3GameplayBatchV1 {
     report: Bo3GameplayPreparationReportV1,
     learner: ExpandedSeatBehaviorV1,
     attempts: Vec<Bo3AttemptInputV1>,
+    attempt_identities: Vec<[String; 3]>,
     pub(crate) groups: Vec<PreparedBo3GroupV1>,
     weights: Vec<f32>,
 }
@@ -121,6 +122,9 @@ impl PreparedBo3GameplayBatchV1 {
     }
     pub fn attempts_v1(&self) -> &[Bo3AttemptInputV1] {
         &self.attempts
+    }
+    pub(crate) fn attempt_identities_v1(&self) -> &[[String; 3]] {
+        &self.attempt_identities
     }
     pub(crate) fn with_native_groups_v1<T>(
         &self,
@@ -219,7 +223,7 @@ fn pin_shape(pin: &PinnedFileV1) -> Result<(), String> {
         "absolute artifact path and lowercase SHA256 required",
     )
 }
-fn read_bytes(pin: &PinnedFileV1, maximum: u64) -> Result<Vec<u8>, String> {
+pub(super) fn read_bytes(pin: &PinnedFileV1, maximum: u64) -> Result<Vec<u8>, String> {
     pin_shape(pin)?;
     let file = std::fs::File::open(&pin.path).map_err(|e| e.to_string())?;
     require(
@@ -261,7 +265,7 @@ fn verify_file(pin: &PinnedFileV1) -> Result<(), String> {
         "producer artifact hash differs",
     )
 }
-fn strict_json<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<T, String> {
+pub(super) fn strict_json<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<T, String> {
     let text = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
     let raw = crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
     let result: T = serde_json::from_str(text).map_err(|e| e.to_string())?;
@@ -293,8 +297,19 @@ pub(crate) fn ordinary_source(behavior: &ExpandedSeatBehaviorV1) -> Result<(), S
         .map_err(|e| format!("ordinary import required; registry-transfer continuation needs an explicit BO3 schedule transition: {e}"))?;
     Ok(())
 }
+pub(crate) fn admitted_source(behavior: &ExpandedSeatBehaviorV1) -> Result<(), String> {
+    let bytes = read_bytes(&behavior.source.play_import, 4 * 1024 * 1024)?;
+    let probe: serde_json::Value = strict_json(&bytes)?;
+    if probe.get("schema").and_then(serde_json::Value::as_str)
+        == Some(super::BO3_GAMEPLAY_SOURCE_SCHEMA_V1)
+    {
+        super::continuation::validate_bo3_source_admission_v1(&behavior.source, &bytes)
+    } else {
+        ordinary_source(behavior)
+    }
+}
 fn load_actual(behavior: &ExpandedSeatBehaviorV1) -> Result<FrozenPlayPolicyV1, String> {
-    ordinary_source(behavior)?;
+    admitted_source(behavior)?;
     let (policy, actual) = load_expanded_inference_v1(&behavior.source)?;
     require(
         actual == behavior.identity
@@ -449,6 +464,7 @@ pub fn prepare_bo3_gameplay_batch_v1(
     let mut result_hashes = BTreeSet::new();
     let mut request_hashes = BTreeSet::new();
     let mut identities = BTreeSet::new();
+    let mut attempt_identities = Vec::new();
     let mut consumed_bytes = 0_u64;
     let mut prepared_bytes = 0_u64;
     let mut substep_count = 0_usize;
@@ -489,13 +505,17 @@ pub fn prepare_bo3_gameplay_batch_v1(
             ids.insert(result.result.config.match_id.clone()),
             "duplicate match id",
         )?;
+        let physical_identity =
+            physical_match_identity(&result.result.config, result.result.packages.each_ref())?;
         require(
-            identities.insert(physical_match_identity(
-                &result.result.config,
-                result.result.packages.each_ref(),
-            )?),
+            identities.insert(physical_identity.clone()),
             "duplicate physical match identity",
         )?;
+        attempt_identities.push([
+            attempt.request.sha256.clone(),
+            attempt.result.sha256.clone(),
+            physical_identity,
+        ]);
         let actor = seat(attempt.learner_seat);
         require(
             result.result.packages[actor].gameplay == request.learner,
@@ -544,6 +564,7 @@ pub fn prepare_bo3_gameplay_batch_v1(
         substep_count,
     )?;
     prepared.attempts = request.attempts;
+    prepared.attempt_identities = attempt_identities;
     Ok(prepared)
 }
 
@@ -587,6 +608,7 @@ fn finish_prepared(
         report,
         learner,
         attempts: Vec::new(),
+        attempt_identities: Vec::new(),
         groups,
         weights,
     })

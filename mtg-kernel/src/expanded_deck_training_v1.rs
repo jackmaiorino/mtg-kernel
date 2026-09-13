@@ -186,12 +186,21 @@ pub struct ExpandedInferenceIdentityV1 {
 pub fn load_expanded_inference_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    // Inference alone admits the explicit BO3 objective. Legacy initialization
+    // and update dispatch keep rejecting its descriptor/checkpoint schemas.
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(crate::phase1_bo3_learning_v1::BO3_GAMEPLAY_SOURCE_SCHEMA_V1)
+    {
+        return crate::phase1_bo3_learning_v1::load_bo3_inference_v1(source);
+    }
     let (policy, state) = initialize(source)?;
     let receipt = inference_identity_v1(source, &policy, &state)?;
     Ok((policy, receipt))
 }
 
-fn inference_identity_v1(
+pub(crate) fn inference_identity_v1(
     source: &ExpandedModelSourceV1,
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
@@ -208,6 +217,34 @@ fn inference_identity_v1(
         features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
         feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
     })
+}
+
+/// Narrow objective-transition seam. An ordinary checkpoint and ordinary
+/// import are mandatory; no registry dispatch or fresh Adam initialization.
+pub(crate) fn load_ordinary_bo3_parent_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<
+    (FrozenPlayPolicyV1, NativePolicyValueTrainStateV1, ExpandedInferenceIdentityV1, u32, u32),
+    String,
+> {
+    let pin = source.checkpoint.as_ref()
+        .ok_or("BO3 transition requires an existing ordinary checkpoint")?;
+    let import: FrozenPlayPolicyImportV1 = read_pinned(&source.play_import)?;
+    let mut policy = FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)?;
+    let mut model = NativePolicyValueNetV1::runner_fixed_v1(
+        NativePolicyValueModelConfigV1::contract_v1(),
+    ).map_err(err)?;
+    model.replace_parameter_snapshot_v1(&policy.training_parameters_v3()).map_err(err)?;
+    let saved = read_legacy_checkpoint_v1(pin)?;
+    for bits in [saved.learning_rate_bits, saved.value_coefficient_bits] {
+        let value = f32::from_bits(bits);
+        ensure(value.is_finite() && value > 0.0,
+            "ordinary checkpoint scalar is not positive finite")?;
+    }
+    let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+    let identity = inference_identity_v1(source, &policy, &state)?;
+    Ok((policy, state, identity, saved.learning_rate_bits,
+        saved.value_coefficient_bits))
 }
 
 /// Physical-seat behavior provenance, independent of deck registration.

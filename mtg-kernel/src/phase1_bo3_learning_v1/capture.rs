@@ -300,7 +300,7 @@ pub fn collect_trainable_bo3_v1(
 ) -> Result<TrainableBo3ResultV1, String> {
     request.validate()?;
     for package in &request.packages {
-        super::preparation::ordinary_source(&package.gameplay)?;
+        super::preparation::admitted_source(&package.gameplay)?;
     }
     let mut capture = CaptureBuffer::new(request.capture_limits.clone())?;
     let result = crate::phase1_bo3_collection_v1::collect_bo3_with_native_capture_v1(
