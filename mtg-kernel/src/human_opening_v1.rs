@@ -146,6 +146,34 @@ impl HumanOpeningV1 {
         }
     }
 
+    /// Coordinator-only projection of the automatic other-seat keep. It is
+    /// captured from this opening's actual hand, before the explicit seat
+    /// keeps. It must never be passed to the explicit seat's policy.
+    pub(crate) fn automatic_keep_seven_view_v1(&self) -> Result<HumanOpeningViewV1, String> {
+        if self.phase != HumanOpeningPhaseV1::Mulligan || self.mulligans_taken != 0 {
+            return Err("automatic keep capture requires the untouched keep-seven opening".into());
+        }
+        let actor = self.human_seat.opponent();
+        let mut view = self.view();
+        view.human_seat = actor.into();
+        view.hand = self.state.players[actor.index()]
+            .hand
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                let card = self.state.objects.get(*id);
+                HumanOpeningCardV1 {
+                    index: index as u32,
+                    card_id: card.card_def,
+                    name: card.name.clone(),
+                }
+            })
+            .collect();
+        view.opponent_hand_count = self.state.players[self.human_seat.index()].hand.len();
+        view.opponent_has_kept = false;
+        Ok(view)
+    }
+
     pub fn mulligan(&mut self) -> Result<(), String> {
         if self.phase != HumanOpeningPhaseV1::Mulligan || self.mulligans_taken >= 7 {
             return Err("mulligan is not available".into());

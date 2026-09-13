@@ -742,19 +742,13 @@ impl FrozenPlayPolicyV1 {
     }
 }
 
-impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
-    fn uses_observation_successor_v3(&self) -> bool {
-        self.successor.is_some()
-    }
-    fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError> {
-        self.reset_sampling_v1(policy_seeds);
-        Ok(())
-    }
-
-    fn select_action_v1(
+impl FrozenPlayPolicyV1 {
+    /// Score and sample exactly once using the legacy arithmetic and seat RNG.
+    /// The BO3 recorder captures probabilities from these actual sampled logits.
+    pub(crate) fn select_paired_with_scores_v1(
         &mut self,
-        input: PairedBo1PolicyInputV1<'_>,
-    ) -> Result<u32, RlSessionError> {
+        input: &PairedBo1PolicyInputV1<'_>,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1), RlSessionError> {
         let decision = input.decision();
         if let Some(successor) = &mut self.successor {
             let encoded = input
@@ -779,12 +773,32 @@ impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
         let scores = self
             .score_owned()
             .map_err(|error| policy_error(format!("{error}; decision={decision:?}")))?;
-        self.sample_scores(
-            &scores.logits,
-            decision.acting_player,
-            decision.legal_action_count,
-        )
-        .map_err(policy_error)
+        let selected = self
+            .sample_scores(
+                &scores.logits,
+                decision.acting_player,
+                decision.legal_action_count,
+            )
+            .map_err(policy_error)?;
+        Ok((selected, scores))
+    }
+}
+
+impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
+    fn uses_observation_successor_v3(&self) -> bool {
+        self.successor.is_some()
+    }
+    fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError> {
+        self.reset_sampling_v1(policy_seeds);
+        Ok(())
+    }
+
+    fn select_action_v1(
+        &mut self,
+        input: PairedBo1PolicyInputV1<'_>,
+    ) -> Result<u32, RlSessionError> {
+        self.select_paired_with_scores_v1(&input)
+            .map(|(selected, _)| selected)
     }
 }
 
