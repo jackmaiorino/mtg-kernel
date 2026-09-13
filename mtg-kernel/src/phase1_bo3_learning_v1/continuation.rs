@@ -335,6 +335,46 @@ fn publish<T: Serialize>(
     }
     Ok(pin_for(directory.join(name), &bytes))
 }
+
+/// Only progress can be reconstructed from an already verified checkpoint (or
+/// validated NoUpdate result). Old progress stages are debris, never state.
+/// Request/source/checkpoint publication deliberately keeps its stricter rules.
+fn publish_progress(directory: &Path, progress: &Progress) -> Result<PinnedFileV1, String> {
+    const NAME: &str = "progress.json";
+    const STAGE: &str = ".progress.json.stage";
+    let bytes = json(progress, MAX_PROGRESS_BYTES)?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(err)?;
+    if progress_entry_exists(&directory.join(NAME))? {
+        // Callers have already checked the final's operation/ledger/state. Its
+        // exact bytes remain authoritative; an unrelated partial stage is not.
+        verify_existing_publication_v1(&parent, NAME, expected).map_err(err)?;
+    } else {
+        let stage = if !progress_entry_exists(&directory.join(STAGE))? {
+            STAGE.into()
+        } else {
+            let mut available = None;
+            for index in 0..1024 {
+                let candidate = format!(".progress.json.stage-recovery-{index:06}");
+                if !progress_entry_exists(&directory.join(&candidate))? {
+                    available = Some(candidate);
+                    break;
+                }
+            }
+            available.ok_or("progress recovery staging names exhausted; preserved all files")?
+        };
+        publish_new_file_v1(&parent, &stage, NAME, &bytes, expected).map_err(err)?;
+    }
+    Ok(pin_for(directory.join(NAME), &bytes))
+}
+fn progress_entry_exists(path: &Path) -> Result<bool, String> {
+    // Unlike try_exists, do not mistake a dangling link for an unused name.
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(err(error)),
+    }
+}
 fn existing_pin(path: &Path, maximum: u64) -> Result<PinnedFileV1, String> {
     let file = std::fs::File::open(path).map_err(err)?;
     let metadata = file.metadata().map_err(err)?;
@@ -926,12 +966,7 @@ fn complete(
     if STOP_BEFORE_PROGRESS.with(|flag| flag.replace(false)) {
         return Err("injected stop after checkpoint readback before progress publication".into());
     }
-    let pin = publish(
-        &request.output_directory,
-        "progress.json",
-        &progress,
-        MAX_PROGRESS_BYTES,
-    )?;
+    let pin = publish_progress(&request.output_directory, &progress)?;
     Ok(result(&progress, pin))
 }
 
@@ -1049,12 +1084,7 @@ pub fn update_bo3_gameplay_v1(
                 "existing progress/checkpoint readback differs",
             )?;
         }
-        let verified = publish(
-            &request.output_directory,
-            "progress.json",
-            &progress,
-            MAX_PROGRESS_BYTES,
-        )?;
+        let verified = publish_progress(&request.output_directory, &progress)?;
         return Ok(result(&progress, verified));
     }
     let checkpoint_path = request.output_directory.join("checkpoint.json");

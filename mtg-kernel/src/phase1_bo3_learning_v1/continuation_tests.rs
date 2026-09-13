@@ -317,6 +317,76 @@ fn bo3_continuation_public_parser_is_bounded_and_preserves_explicit_transition_t
     );
 }
 
+#[test]
+fn bo3_continuation_progress_orphan_recovery_preserves_debris_and_rejects_corrupt_final() {
+    let (mut request, preparation, plan) = accounting_fixture();
+    let directory = std::env::temp_dir().join(format!(
+        "bo3-progress-publication-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    request.output_directory = directory.clone();
+    let progress = Progress {
+        schema: PROGRESS_SCHEMA.into(),
+        operation_request: pin_for(
+            directory.join("request.json"),
+            &json(&request, MAX_REQUEST_BYTES).unwrap(),
+        ),
+        request,
+        ordinary_origin: preparation.learner.clone(),
+        completed_bo3_updates: 0,
+        attempt_progress: plan,
+        result: preparation.learner,
+    };
+    // A publication-only fixture. It is never admitted by the native updater.
+    let orphan = directory.join(".progress.json.stage");
+    let retry_orphan = directory.join(".progress.json.stage-recovery-000000");
+    std::fs::write(&orphan, b"truncated original progress stage").unwrap();
+    std::fs::write(&retry_orphan, b"truncated previous recovery stage").unwrap();
+    let published = publish_progress(&directory, &progress).unwrap();
+    assert_eq!(
+        std::fs::read(&published.path).unwrap(),
+        json(&progress, MAX_PROGRESS_BYTES).unwrap()
+    );
+    assert_eq!(
+        std::fs::read(&orphan).unwrap(),
+        b"truncated original progress stage"
+    );
+    assert_eq!(
+        std::fs::read(&retry_orphan).unwrap(),
+        b"truncated previous recovery stage"
+    );
+    assert_eq!(publish_progress(&directory, &progress).unwrap(), published);
+    std::fs::write(&published.path, b"corrupt final progress").unwrap();
+    assert!(publish_progress(&directory, &progress).is_err());
+    assert_eq!(
+        std::fs::read(&published.path).unwrap(),
+        b"corrupt final progress"
+    );
+    assert_eq!(
+        std::fs::read(&orphan).unwrap(),
+        b"truncated original progress stage"
+    );
+    assert_eq!(
+        std::fs::read(&retry_orphan).unwrap(),
+        b"truncated previous recovery stage"
+    );
+    for name in ["request.json", "source.json", "checkpoint.json"] {
+        let stage = directory.join(format!(".{name}.stage"));
+        std::fs::write(&stage, b"preserved non-progress partial").unwrap();
+        assert!(publish(&directory, name, &vec![1u8, 2, 3], 1024).is_err());
+        assert!(!directory.join(name).exists());
+        assert_eq!(
+            std::fs::read(stage).unwrap(),
+            b"preserved non-progress partial"
+        );
+    }
+}
+
 /// Root supplies a fresh output directory and the exact real producer-backed
 /// preparation pin. This test never creates a fake clean runtime certificate.
 #[test]
@@ -385,6 +455,21 @@ fn bo3_continuation_real_pinned_update_matches_oracle_and_checkpoint_only_recove
     assert!(!request.output_directory.join("progress.json").exists());
     assert_eq!(UPDATE_CALLS.with(|n| n.get()), 1);
     assert_eq!(PREPARATION_CALLS.with(|n| n.get()), 1);
+    let checkpoint_before_recovery = existing_pin(
+        &request.output_directory.join("checkpoint.json"),
+        MAX_CHECKPOINT_BYTES,
+    )
+    .unwrap();
+    let orphan = request.output_directory.join(".progress.json.stage");
+    let retry_orphan = request
+        .output_directory
+        .join(".progress.json.stage-recovery-000000");
+    std::fs::write(
+        &orphan,
+        b"injected truncated progress stage after committed checkpoint",
+    )
+    .unwrap();
+    std::fs::write(&retry_orphan, b"injected truncated retry progress stage").unwrap();
     let recovered = update_bo3_gameplay_v1(request.clone()).unwrap();
     assert_eq!(
         UPDATE_CALLS.with(|n| n.get()),
@@ -406,6 +491,22 @@ fn bo3_continuation_real_pinned_update_matches_oracle_and_checkpoint_only_recove
     assert_eq!(update_bo3_gameplay_v1(request.clone()).unwrap(), recovered);
     assert_eq!(UPDATE_CALLS.with(|n| n.get()), 1);
     assert_eq!(PREPARATION_CALLS.with(|n| n.get()), 1);
+    assert_eq!(
+        existing_pin(
+            &request.output_directory.join("checkpoint.json"),
+            MAX_CHECKPOINT_BYTES
+        )
+        .unwrap(),
+        checkpoint_before_recovery
+    );
+    assert_eq!(
+        std::fs::read(&orphan).unwrap(),
+        b"injected truncated progress stage after committed checkpoint"
+    );
+    assert_eq!(
+        std::fs::read(&retry_orphan).unwrap(),
+        b"injected truncated retry progress stage"
+    );
     assert_eq!(
         StateBits::capture(&load_parent(&request.input).unwrap().state).unwrap(),
         before,
