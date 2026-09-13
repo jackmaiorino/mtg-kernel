@@ -69,6 +69,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+mod weighted_v3;
+
 #[cfg(test)]
 thread_local! {
     static FORWARD_WITH_TAPE_CALL_COUNT_V1: Cell<u64> = const { Cell::new(0) };
@@ -849,6 +851,18 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     },
     InvalidValueCoefficient,
     InvalidLearningRate,
+    WeightedGroupCountMismatch {
+        groups: usize,
+        weights: usize,
+    },
+    InvalidPhysicalGroupWeight {
+        group_index: usize,
+        weight_bits: u32,
+    },
+    WeightedBatchLimit {
+        groups: usize,
+        substeps: usize,
+    },
     ParameterManifest,
     OptimizerState,
     GaugeAnchor,
@@ -7396,7 +7410,7 @@ mod tests {
         (policy_sum + value_coefficient * value_sum) / groups.len() as f32
     }
 
-    fn perturbed_model(
+    pub(super) fn perturbed_model(
         model: &NativePolicyValueNetV1,
         parameter_name: &str,
         value_index: usize,
@@ -7955,7 +7969,7 @@ mod tests {
         );
     }
 
-    fn real_map_training_tensor_v3() -> crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3
+    pub(super) fn real_map_training_tensor_v3() -> crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3
     {
         use crate::flat_policy_v2::{FlatScoringDecisionViewV2, FlatScoringOwnedBuffersV2};
         use crate::flat_policy_v3::{FlatDecisionEncoderV3, FlatScoringDecisionViewV3};
