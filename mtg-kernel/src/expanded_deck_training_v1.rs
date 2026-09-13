@@ -50,6 +50,9 @@ const CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-checkpoint/v1";
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
+mod phase1_parallel_collection;
+pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
+
 /// Collection and exact behavior replay remain CPU-based. This selection
 /// changes only the learner's recomputation/backward/Adam implementation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -883,6 +886,14 @@ pub enum ExpandedTrainingCommandV1 {
         episodes: Vec<ExpandedEpisodeV1>,
         output_directory: PathBuf,
     },
+    /// Explicit execution-only successor. The legacy Collect command and its
+    /// serialized shape remain unchanged. Trajectories join in schedule order.
+    CollectParallel {
+        source: ExpandedModelSourceV1,
+        episodes: Vec<ExpandedEpisodeV1>,
+        workers: usize,
+        output_directory: PathBuf,
+    },
     Update {
         source: ExpandedModelSourceV1,
         trajectories: Vec<PinnedFileV1>,
@@ -896,11 +907,23 @@ pub enum ExpandedTrainingCommandV1 {
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
     match command {
+        ExpandedTrainingCommandV1::CollectParallel {
+            source,
+            episodes,
+            workers,
+            output_directory,
+        } => phase1_parallel_collection::collect_parallel_v1(
+            source,
+            episodes,
+            workers,
+            output_directory,
+        ),
         ExpandedTrainingCommandV1::Collect {
             source,
             episodes,
             output_directory,
         } => {
+            let collection_started = std::time::Instant::now();
             ensure(
                 !episodes.is_empty() && episodes.len() <= 1024,
                 "invalid collection size",
@@ -918,6 +941,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             };
             drop(state);
             let mut opponent_cache = OpponentCacheV1::default();
+            let initialization_seconds = collection_started.elapsed().as_secs_f64();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
             for (index, episode) in episodes.iter().enumerate() {
@@ -936,7 +960,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 let name = format!("episode-{index:04}.json");
                 outputs.push(publish_json(&output_directory, &name, &trajectory)?);
             }
-            let result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs});
+            let result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs,
+                "collection_elapsed_seconds":collection_started.elapsed().as_secs_f64(),
+                "collection_initialization_seconds":initialization_seconds});
             publish_json(&output_directory, "collection.json", &result)?;
             Ok(result)
         }
@@ -948,6 +974,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             update_backend,
             output_directory,
         } => {
+            let update_started = std::time::Instant::now();
             update_backend.require_compiled_v1()?;
             ensure(
                 !trajectories.is_empty() && trajectories.len() <= 1024,
@@ -1001,6 +1028,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 )?;
                 episodes.push(episode);
             }
+            let input_read_seconds = update_started.elapsed().as_secs_f64();
+            let replay_started = std::time::Instant::now();
             // Recompute all actor-visible rows, including opponent decisions,
             // before constructing learner groups. No private state is decoded.
             let mut tensor_groups = Vec::new();
@@ -1058,6 +1087,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 episodes.len(),
                 groups.len()
             );
+            let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
+            let learner_started = std::time::Instant::now();
             let update = match update_backend {
                 ExpandedUpdateBackendV1::Cpu => state
                     .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
@@ -1081,6 +1112,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                     }
                 }
             };
+            let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+            let checkpoint_started = std::time::Instant::now();
             let snapshot = state.snapshot_v1().map_err(err)?;
             let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
             let checkpoint = ExpandedCheckpointV1 {
@@ -1126,6 +1159,13 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             )?;
             let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
             update_backend.record_update_execution_v1(&mut result);
+            result["input_read_seconds"] = json!(input_read_seconds);
+            result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
+            result["learner_update_seconds"] = json!(learner_update_seconds);
+            result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
+            result["update_elapsed_seconds"] = json!(update_started.elapsed().as_secs_f64());
+            // Timings include checkpoint readback, but not this final receipt's
+            // publication. They never enter checkpoint parameters or state hashes.
             publish_json(&output_directory, "update.json", &result)?;
             Ok(result)
         }

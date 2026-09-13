@@ -413,6 +413,30 @@ impl FrozenPlayPolicyV1 {
         &self.identity
     }
 
+    /// A private CPU collector with the same installed weights and ancestry.
+    /// Encoders, tensors, samplers and RNG streams start fresh, rather than
+    /// sharing mutable inference state or carrying a previous episode forward.
+    /// The collector must reset physical-seat sampling before its first action.
+    pub(crate) fn fork_for_collection_v3(&self) -> Result<Self, String> {
+        require(
+            self.successor.is_some(),
+            "parallel collection requires explicit successor features",
+        )?;
+        Ok(Self {
+            model: self.model.clone(),
+            embeddings: self.embeddings.clone(),
+            identity: self.identity.clone(),
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: Some(FrozenPlaySuccessorStateV3::default()),
+        })
+    }
+
     /// Active runtime capability, separate from the historical import receipt.
     /// Narrow decisions still execute the frozen sampler verbatim.
     pub fn runtime_sampler_identity_v1(&self) -> &'static str {
@@ -887,6 +911,52 @@ impl OwnedScoringV1 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn phase1_collection_fork_has_private_weights_embeddings_samplers_and_rng() {
+        let mut original = FrozenPlayPolicyV1::training_fixture_v3();
+        let expected_identity = original.actual_model_identity_v1();
+        let ancestry = original.identity_v1().clone();
+        let seeds = [73, 911];
+        original.reset_sampling_v1(seeds);
+        // The fork must not inherit an already advanced seat stream.
+        original
+            .sample_scores(&[0.0; 64], PlayerSeatV1::P0, 64)
+            .unwrap();
+        let mut first = original.fork_for_collection_v3().unwrap();
+        let mut second = original.fork_for_collection_v3().unwrap();
+        assert!(!first.sampling_initialized);
+        assert!(!second.sampling_initialized);
+        assert_eq!(first.actual_model_identity_v1(), expected_identity);
+        assert_eq!(first.identity_v1(), &ancestry);
+        assert_ne!(first.embeddings.as_ptr(), original.embeddings.as_ptr());
+        first.reset_sampling_v1(seeds);
+        second.reset_sampling_v1(seeds);
+        for (seat, width) in [
+            (PlayerSeatV1::P0, 64),
+            (PlayerSeatV1::P1, 257),
+            (PlayerSeatV1::P1, 120),
+            (PlayerSeatV1::P0, 3),
+        ] {
+            let logits = vec![0.0; width];
+            assert_eq!(
+                first.sample_scores(&logits, seat, width as u32).unwrap(),
+                second.sample_scores(&logits, seat, width as u32).unwrap()
+            );
+        }
+        let mut parameters = first.training_parameters_v3();
+        parameters
+            .iter_mut()
+            .find(|p| p.name == "card_embedding.weight")
+            .unwrap()
+            .values[16] += 0.125;
+        first.replace_training_parameters_v3(&parameters).unwrap();
+        assert_ne!(first.actual_model_identity_v1(), expected_identity);
+        assert_eq!(original.actual_model_identity_v1(), expected_identity);
+        assert_eq!(second.actual_model_identity_v1(), expected_identity);
+        original.successor = None;
+        assert!(original.fork_for_collection_v3().is_err());
+    }
 
     #[test]
     fn wide_runtime_sampling_preserves_import_and_each_physical_seat_rng() {

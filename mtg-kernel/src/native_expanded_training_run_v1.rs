@@ -22,6 +22,14 @@ const SCHEMA: &str = "mtg-kernel-native-expanded-training-run/v1";
 const SMALL_CAP: u64 = 16 * 1024 * 1024;
 const ARTIFACT_CAP: u64 = 512 * 1024 * 1024;
 
+fn default_collection_workers() -> usize {
+    1
+}
+
+fn is_serial_collection(workers: &usize) -> bool {
+    *workers == 1
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NamedExpandedOpponentV1 {
@@ -62,6 +70,11 @@ pub struct NativeExpandedTrainingRunV1 {
     pub value_coefficient: f32,
     #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
     pub update_backend: ExpandedUpdateBackendV1,
+    #[serde(
+        default = "default_collection_workers",
+        skip_serializing_if = "is_serial_collection"
+    )]
+    pub collection_workers: usize,
     pub output_directory: PathBuf,
 }
 
@@ -89,6 +102,7 @@ impl NativeExpandedTrainingRunV1 {
     pub fn validate_v1(&self) -> Result<(), String> {
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         self.update_backend.validate_v1()?;
+        crate::expanded_deck_training_v1::validate_collection_workers_v1(self.collection_workers)?;
         check(
             self.output_directory.is_absolute(),
             "absolute run directory required",
@@ -398,6 +412,35 @@ fn validate_update(
     Ok((next, after))
 }
 
+fn collection_command(
+    config: &NativeExpandedTrainingRunV1,
+    source: &ExpandedModelSourceV1,
+    episodes: &[ExpandedEpisodeV1],
+    output_directory: PathBuf,
+) -> ExpandedTrainingCommandV1 {
+    if config.collection_workers == 1 {
+        ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: episodes.to_vec(),
+            output_directory,
+        }
+    } else {
+        ExpandedTrainingCommandV1::CollectParallel {
+            source: source.clone(),
+            episodes: episodes.to_vec(),
+            workers: config.collection_workers,
+            output_directory,
+        }
+    }
+}
+
+fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &mut Value) {
+    if config.collection_workers > 1 {
+        document["collection_backend"] = json!("native-cpu-parallel-episodes-v1");
+        document["collection_workers_requested"] = json!(config.collection_workers);
+    }
+}
+
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
 /// only at completed iteration boundaries; it never changes the saved plan.
 pub fn run_native_expanded_training_v1(
@@ -430,6 +473,7 @@ pub fn run_native_expanded_training_v1(
         "device":"cpu", "gpu_ordinal":null,
         "implementation_sha256":digest(include_bytes!("native_expanded_training_run_v1.rs"))});
     config.update_backend.record_run_execution_v1(&mut manifest);
+    record_collection_execution(config, &mut manifest);
     let manifest_path = root.join("run.json");
     if manifest_path.exists() {
         check(
@@ -536,11 +580,8 @@ pub fn run_native_expanded_training_v1(
             if !saved_command.exists() {
                 continue;
             }
-            let collect_command = ExpandedTrainingCommandV1::Collect {
-                source: current.clone(),
-                episodes: episodes.clone(),
-                output_directory: attempt.join("collect"),
-            };
+            let collect_command =
+                collection_command(config, &current, &episodes, attempt.join("collect"));
             check(
                 read_json(&saved_command, SMALL_CAP)? == value(&collect_command)?,
                 "interrupted attempt collection command differs",
@@ -595,11 +636,8 @@ pub fn run_native_expanded_training_v1(
                 writeln!(log, "iteration {index}: restart incomplete phase in attempt {number} from the same input state").map_err(err)?;
                 log.sync_all().map_err(err)?;
             }
-            let collect_command = ExpandedTrainingCommandV1::Collect {
-                source: current.clone(),
-                episodes: episodes.clone(),
-                output_directory: attempt.join("collect"),
-            };
+            let collect_command =
+                collection_command(config, &current, &episodes, attempt.join("collect"));
             publish(&attempt, "collect-command.json", &collect_command)?;
             if collection_pin.is_none() {
                 execute_v1(collect_command)?;
@@ -658,6 +696,7 @@ pub fn run_native_expanded_training_v1(
         "actual_identity":current_identity,"device":"cpu","gpu_ordinal":null,
         "loss_identity":"terminal_reinforce_value/v3","strength_claim":false});
     config.update_backend.record_run_execution_v1(&mut result);
+    record_collection_execution(config, &mut result);
     let final_path = root.join("completion.json");
     if complete {
         if final_path.exists() {
@@ -777,8 +816,60 @@ mod tests {
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
+            collection_workers: 1,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
+    }
+
+    #[test]
+    fn collection_workers_preserve_serial_defaults_and_bind_parallel_resume() {
+        let serial = schedule();
+        let serial_value = value(&serial).unwrap();
+        assert!(serial_value.get("collection_workers").is_none());
+        let restored: NativeExpandedTrainingRunV1 =
+            serde_json::from_value(serial_value.clone()).unwrap();
+        assert_eq!(restored.collection_workers, 1);
+        assert_eq!(value(&restored).unwrap(), serial_value);
+        let mut execution = json!({"device":"cpu"});
+        record_collection_execution(&serial, &mut execution);
+        assert_eq!(execution, json!({"device":"cpu"}));
+
+        let episodes = resolve_episodes(&serial, 0, &serial.initial_source, &[]).unwrap();
+        let output = serial.output_directory.join("collect");
+        let serial_command = value(&collection_command(
+            &serial,
+            &serial.initial_source,
+            &episodes,
+            output.clone(),
+        ))
+        .unwrap();
+        assert_eq!(serial_command["mode"], "collect");
+
+        let mut parallel = serial.clone();
+        parallel.collection_workers = 4;
+        parallel.validate_v1().unwrap();
+        assert_ne!(identity(&serial).unwrap(), identity(&parallel).unwrap());
+        let parallel_command = value(&collection_command(
+            &parallel,
+            &parallel.initial_source,
+            &episodes,
+            output,
+        ))
+        .unwrap();
+        assert_eq!(parallel_command["mode"], "collect_parallel");
+        assert_eq!(parallel_command["workers"], 4);
+        assert_eq!(parallel_command["source"], serial_command["source"]);
+        assert_eq!(parallel_command["episodes"], serial_command["episodes"]);
+        record_collection_execution(&parallel, &mut execution);
+        assert_eq!(
+            execution["collection_backend"],
+            "native-cpu-parallel-episodes-v1"
+        );
+        assert_eq!(execution["collection_workers_requested"], 4);
+        parallel.collection_workers = 0;
+        assert!(parallel.validate_v1().is_err());
+        parallel.collection_workers = 1025;
+        assert!(parallel.validate_v1().is_err());
     }
 
     #[test]
