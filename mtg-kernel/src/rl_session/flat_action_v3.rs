@@ -43,8 +43,10 @@ fn effect_source_mut(semantic: &mut ActionSemanticV1) -> Option<&mut CardStableR
 fn normalize_candidates(
     candidates: &mut Vec<CorePolicyActionCandidateV1>,
     extension: &PolicyObservationExtensionsV6,
-    state: &GameState,
+    session: &FastActorSessionV1,
+    origin: &PolicyDecisionV5,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    let state = &session.state;
     let mut normalized = candidates.clone();
     if let Some(historical) = extension
         .historical_public_sources
@@ -95,6 +97,69 @@ fn normalize_candidates(
             .is_empty(),
         _ => true,
     });
+    if let PolicyDecisionV5::BlockerInclusion {
+        player,
+        attacker,
+        blocker,
+        candidate_index,
+        candidate_count,
+    } = origin
+    {
+        // H2 has already removed blockers assigned to earlier attackers. Use
+        // that exact bound scan, never a fresh count of the battlefield or
+        // the engine's initial per-attacker candidate list.
+        let context = session
+            .surface
+            .scan_context_for_owned_revision_v1(state, *player, session.environment_revision)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
+        let scan = context
+            .private_combat_selection
+            .ok_or(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+        if context.current_stage != crate::policy_surface_v5::PolicySurfaceStageV5::BlockerInclusion
+            || scan.attacker != Some(*attacker)
+            || scan.current_candidate != *blocker
+            || scan.candidate_index != *candidate_index
+            || scan.candidate_count != *candidate_count
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        let object = state
+            .objects
+            .try_get(*attacker)
+            .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+        if crate::card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .is_none()
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
+        }
+        let minimum = crate::engine::minimum_blockers_required(state, *attacker);
+        let mut feasible = Vec::with_capacity(normalized.len());
+        for candidate in normalized {
+            flat_validate_semantic_policy_pair_v1(&candidate)?;
+            let PolicyActionV5::ChooseBlockerInclusion {
+                actor,
+                attacker: action_attacker,
+                blocker: action_blocker,
+                include,
+            } = &candidate.policy_action
+            else {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            };
+            if actor != player || action_attacker != attacker || action_blocker != blocker {
+                return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+            }
+            let selected = scan.selected.len() + usize::from(*include);
+            // Declaring zero blockers is legal. A nonempty block must still
+            // be able to reach the minimum using the unanswered suffix. This forces
+            // enough later includes after a partial commitment. The engine's
+            // final aggregate validator remains the mutation-time authority.
+            if selected == 0 || selected + scan.remaining_after_current.len() >= minimum {
+                feasible.push(candidate);
+            }
+        }
+        normalized = feasible;
+    }
     if normalized.is_empty() {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
@@ -107,7 +172,12 @@ pub(super) fn prepare_and_build_v3(
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<FlatActionDecisionCacheV2, FlatActionDecisionSliceErrorV1> {
     let extension = extensions(session, current)?;
-    normalize_candidates(&mut current.candidates, &extension, &session.state)?;
+    normalize_candidates(
+        &mut current.candidates,
+        &extension,
+        session,
+        &current.origin_decision,
+    )?;
     build_with_extensions(session, current, &extension)
 }
 
@@ -149,7 +219,12 @@ fn build_with_extensions(
     original.candidates = raw;
     flat_validate_current_binding_header_v1(session, &original)?;
     flat_validate_origin_decision_v1(&original, &session.state)?;
-    normalize_candidates(&mut original.candidates, extension, &session.state)?;
+    normalize_candidates(
+        &mut original.candidates,
+        extension,
+        session,
+        &original.origin_decision,
+    )?;
     if original.candidates != current.candidates {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
@@ -657,6 +732,216 @@ mod tests {
             .unwrap();
         objects.truncate(usize::from(result.active_object_count));
         (result, objects)
+    }
+
+    fn blocker_prefix_fixture(
+        minimum: u8,
+        defender: PlayerId,
+        blocker_count: usize,
+        earlier_attacker: bool,
+    ) -> (GameState, ObjectId, Vec<ObjectId>, Option<ObjectId>) {
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        let mut state = ready_state();
+        let attacking_player = defender.opponent();
+        let earlier = earlier_attacker.then(|| {
+            put(
+                &mut state,
+                attacking_player,
+                "Tolarian Terror",
+                Zone::Battlefield,
+            )
+        });
+        let attacker = put(
+            &mut state,
+            attacking_player,
+            "Skeleton Token",
+            Zone::Battlefield,
+        );
+        if minimum != 2 {
+            state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(minimum);
+        }
+        assert_eq!(
+            crate::engine::minimum_blockers_required(&state, attacker),
+            usize::from(minimum)
+        );
+        let blockers = (0..blocker_count)
+            .map(|_| put(&mut state, defender, "Myr Enforcer", Zone::Battlefield))
+            .collect();
+        // Keep a real priority choice immediately after declaration so H2
+        // cannot autopass an all-exclude branch through combat and next turn.
+        put(&mut state, attacking_player, "Lightning Bolt", Zone::Hand);
+        state.players[attacking_player.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] =
+            1;
+        state.active_player = attacking_player;
+        state.priority_player = defender;
+        state.step = crate::state::Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.attackers = earlier.into_iter().chain([attacker]).collect();
+        (state, attacker, blockers, earlier)
+    }
+
+    fn assert_original_blocker_pair_remains(session: &FastActorSessionV1) {
+        let current = session.current.as_ref().unwrap();
+        let mut legacy = current.clone();
+        legacy.candidates =
+            core_policy_action_candidates_v5(&current.origin_decision, &session.state).unwrap();
+        assert_eq!(legacy.candidates.len(), 2);
+        assert_eq!(
+            flat_build_action_cache_v2(session, &legacy, None)
+                .unwrap()
+                .actions
+                .len(),
+            2,
+            "legacy V2 retains the original pair"
+        );
+        if current.candidates.len() == 1 {
+            let mut tampered = session.clone();
+            tampered.current.as_mut().unwrap().candidates = legacy.candidates;
+            assert!(tampered.validated_v3_cache(expected(&tampered)).is_err());
+        }
+    }
+
+    #[test]
+    fn v3_blocker_prefixes_preserve_every_engine_legal_completion_for_minima_two_and_three() {
+        use std::collections::BTreeSet;
+        for defender in [PlayerId::P0, PlayerId::P1] {
+            for minimum in [2, 3] {
+                let (state, attacker, blockers, _) =
+                    blocker_prefix_fixture(minimum, defender, 4, false);
+                let mut oracle = BTreeSet::new();
+                for bits in 0..(1usize << blockers.len()) {
+                    let selected: Vec<_> = blockers
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .filter_map(|(index, blocker)| {
+                            ((bits >> index) & 1 == 1).then_some(blocker)
+                        })
+                        .collect();
+                    let aggregate: Vec<_> = selected.iter().map(|id| (*id, attacker)).collect();
+                    if crate::engine::validate_declare_blockers(&state, &aggregate).is_ok() {
+                        oracle.insert(selected);
+                    }
+                }
+                let mut pending = vec![FastActorSessionV1::from_v3_fixture_state(state)];
+                let mut actual = BTreeSet::new();
+                let mut forced_include = false;
+                let mut forced_exclude = false;
+                while let Some(session) = pending.pop() {
+                    assert_eq!(
+                        expected(&session).acting_player,
+                        PlayerSeatV1::from(defender)
+                    );
+                    assert_eq!(
+                        expected(&session).decision_kind,
+                        FastActorDecisionKindV1::BlockerInclusion
+                    );
+                    assert_original_blocker_pair_remains(&session);
+                    let (slice, _) = encoded(&session);
+                    let current = session.current.as_ref().unwrap();
+                    if current.candidates.len() == 1 {
+                        match current.candidates[0].policy_action {
+                            PolicyActionV5::ChooseBlockerInclusion { include: true, .. } => {
+                                forced_include = true;
+                            }
+                            PolicyActionV5::ChooseBlockerInclusion { include: false, .. } => {
+                                forced_exclude = true;
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    for index in 0..current.candidates.len() {
+                        let mut branch = session.clone();
+                        branch
+                            .consume_current_flat_action_slice_v3(slice.binding, index as u32)
+                            .unwrap();
+                        if branch.state.engine.combat.blockers_declared {
+                            let selected = branch
+                                .state
+                                .engine
+                                .combat
+                                .blocked_by
+                                .iter()
+                                .find(|(id, _)| *id == attacker)
+                                .map(|(_, selected)| selected.clone())
+                                .unwrap_or_default();
+                            assert!(
+                                actual.insert(selected),
+                                "each prefix has one execution path"
+                            );
+                        } else {
+                            pending.push(branch);
+                        }
+                    }
+                }
+                assert!(forced_include && forced_exclude);
+                assert_eq!(
+                    actual, oracle,
+                    "V3 must offer exactly the engine's legal assignments"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn v3_blocker_prefix_uses_suffix_after_assignments_to_an_earlier_attacker() {
+        for defender in [PlayerId::P0, PlayerId::P1] {
+            for minimum in [2, 3] {
+                let (state, attacker, blockers, earlier) =
+                    blocker_prefix_fixture(minimum, defender, usize::from(minimum), true);
+                let earlier = earlier.unwrap();
+                let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+                for (ordinal, blocker) in blockers.iter().enumerate() {
+                    let current = session.current.as_ref().unwrap();
+                    assert!(matches!(current.origin_decision,
+                        PolicyDecisionV5::BlockerInclusion { attacker, blocker: actual, .. }
+                        if attacker == earlier && actual == *blocker));
+                    let index = usize::from(ordinal == 0);
+                    let (slice, _) = encoded(&session);
+                    session
+                        .consume_current_flat_action_slice_v3(slice.binding, index as u32)
+                        .unwrap();
+                }
+                // The engine initially saw enough blockers for the Skeleton.
+                // H2 has now assigned one elsewhere, leaving fewer than its
+                // minimum. All remaining choices must exclude from the start.
+                for blocker in &blockers[1..] {
+                    assert_original_blocker_pair_remains(&session);
+                    let current = session.current.as_ref().unwrap();
+                    assert_eq!(current.candidates.len(), 1);
+                    assert!(matches!(current.candidates[0].policy_action,
+                        PolicyActionV5::ChooseBlockerInclusion {
+                            attacker: actual_attacker, blocker: actual_blocker, include: false, ..
+                        } if actual_attacker == attacker && actual_blocker == *blocker));
+                    let (slice, _) = encoded(&session);
+                    session
+                        .consume_current_flat_action_slice_v3(slice.binding, 0)
+                        .unwrap();
+                }
+                assert!(session.state.engine.combat.blockers_declared);
+                assert_eq!(
+                    session.state.engine.combat.blocked_by,
+                    vec![(earlier, vec![blockers[0]])]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn v3_blocker_prefix_rejects_a_scan_bound_to_another_revision_before_changing_candidates() {
+        let (state, _, _, _) = blocker_prefix_fixture(2, PlayerId::P1, 3, false);
+        let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+        let before_state = session.state.clone();
+        session.environment_revision += 1;
+        let mut current = session.current.take().unwrap();
+        current.environment_revision = session.environment_revision;
+        let before_candidates = current.candidates.clone();
+        assert_eq!(
+            prepare_and_build_v3(&session, &mut current).unwrap_err(),
+            FlatActionDecisionSliceErrorV1::CorruptCurrentBinding
+        );
+        assert_eq!(current.candidates, before_candidates);
+        assert_eq!(session.state, before_state);
     }
 
     #[test]
