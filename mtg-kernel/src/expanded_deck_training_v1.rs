@@ -1,5 +1,5 @@
 //! Explicit V6/V3 expanded-deck rollouts, immutable trajectories and native
-//! CPU updates. This successor starts from an inference export with fresh Adam
+//! CPU collection and explicitly selected updates. This successor starts from an inference export with fresh Adam
 //! or resumes its own checkpoint. It never reads or writes a legacy Store.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
@@ -47,6 +47,91 @@ const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/
 const CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-checkpoint/v1";
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Collection and exact behavior replay remain CPU-based. This selection
+/// changes only the learner's recomputation/backward/Adam implementation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExpandedUpdateBackendV1 {
+    #[default]
+    Cpu,
+    Cuda {
+        device_ordinal: usize,
+    },
+}
+
+impl ExpandedUpdateBackendV1 {
+    pub(crate) fn is_cpu(&self) -> bool {
+        matches!(self, Self::Cpu)
+    }
+
+    pub(crate) fn validate_v1(&self) -> Result<(), String> {
+        if let Self::Cuda { device_ordinal } = self {
+            ensure(
+                *device_ordinal <= i32::MAX as usize,
+                "CUDA ordinal exceeds driver index range",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// No device is opened here. Refuse an unavailable compiled backend before
+    /// creating run artifacts or collecting episodes, without a CPU fallback.
+    pub(crate) fn require_compiled_v1(&self) -> Result<(), String> {
+        self.validate_v1()?;
+        ensure(
+            self.is_cpu() || cfg!(feature = "experimental-burn-net8-packed-cuda-v1"),
+            "CUDA update backend was not compiled; explicit CUDA feature required",
+        )
+    }
+
+    pub(crate) fn record_run_execution_v1(&self, document: &mut Value) {
+        if let Self::Cuda { device_ordinal } = self {
+            document["device"] = json!("cpu-collection-cuda-update");
+            document["gpu_ordinal"] = json!(device_ordinal);
+            document["update_backend"] = json!(self);
+            document["collection_backend"] = json!("native-cpu-sequential");
+        }
+    }
+
+    fn record_update_execution_v1(&self, document: &mut Value) {
+        if let Self::Cuda { device_ordinal } = self {
+            document["schema"] = json!("mtg-kernel-expanded-deck-update/v2");
+            document["numerical_backend"] = json!("cuda-burn-dense-feature-transfer-v3");
+            document["update_backend"] = json!(self);
+            document["device"] = json!("cuda");
+            document["gpu_ordinal"] = json!(device_ordinal);
+            document["behavior_backend"] = json!("native-cpu-sequential");
+            document["replay_backend"] = json!("native-cpu-sequential");
+            document["reported_loss_source"] = json!("transported-cpu-outputs");
+        }
+    }
+
+    pub(crate) fn validate_update_execution_v1(&self, document: &Value) -> Result<(), String> {
+        self.validate_v1()?;
+        let mut expected = json!({
+            "schema":"mtg-kernel-expanded-deck-update/v1",
+            "numerical_backend":"native-cpu-sequential"
+        });
+        self.record_update_execution_v1(&mut expected);
+        for key in [
+            "schema",
+            "numerical_backend",
+            "update_backend",
+            "device",
+            "gpu_ordinal",
+            "behavior_backend",
+            "replay_backend",
+            "reported_loss_source",
+        ] {
+            ensure(
+                document.get(key) == expected.get(key),
+                &format!("completed update execution differs at {key}"),
+            )?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -787,6 +872,8 @@ pub enum ExpandedTrainingCommandV1 {
         trajectories: Vec<PinnedFileV1>,
         learning_rate: f32,
         value_coefficient: f32,
+        #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
+        update_backend: ExpandedUpdateBackendV1,
         output_directory: PathBuf,
     },
 }
@@ -842,8 +929,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             trajectories,
             learning_rate,
             value_coefficient,
+            update_backend,
             output_directory,
         } => {
+            update_backend.require_compiled_v1()?;
             ensure(
                 !trajectories.is_empty() && trajectories.len() <= 1024,
                 "invalid update size",
@@ -948,13 +1037,34 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 )
                 .collect();
             eprintln!(
-                "native CPU update: {} episodes, {} learner physical decisions",
+                "native {:?} update: {} episodes, {} learner physical decisions",
+                update_backend,
                 episodes.len(),
                 groups.len()
             );
-            let update = state
-                .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
-                .map_err(err)?;
+            let update = match update_backend {
+                ExpandedUpdateBackendV1::Cpu => state
+                    .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
+                    .map_err(err)?,
+                ExpandedUpdateBackendV1::Cuda { device_ordinal } => {
+                    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                    {
+                        state
+                            .train_step_cuda_feature_transfer_v3(
+                                &groups,
+                                value_coefficient,
+                                learning_rate,
+                                device_ordinal,
+                            )
+                            .map_err(err)?
+                    }
+                    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                    {
+                        let _ = device_ordinal;
+                        return Err("CUDA update backend was not compiled".into());
+                    }
+                }
+            };
             let snapshot = state.snapshot_v1().map_err(err)?;
             let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
             let checkpoint = ExpandedCheckpointV1 {
@@ -998,7 +1108,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 hex(&restored.state_sha256_v1().map_err(err)?) == after,
                 "published checkpoint round trip differs",
             )?;
-            let result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
+            let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
+            update_backend.record_update_execution_v1(&mut result);
             publish_json(&output_directory, "update.json", &result)?;
             Ok(result)
         }
@@ -1065,6 +1176,73 @@ fn publish_json<T: Serialize>(
 mod tests {
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
+
+    #[test]
+    fn update_receipt_requires_declared_backend_device_and_loss_provenance() {
+        let cpu = ExpandedUpdateBackendV1::Cpu;
+        let cuda = ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 };
+        let base = json!({"schema":"mtg-kernel-expanded-deck-update/v1",
+            "numerical_backend":"native-cpu-sequential"});
+        let mut legacy = base.clone();
+        cpu.record_update_execution_v1(&mut legacy);
+        assert_eq!(legacy, base);
+        cpu.validate_update_execution_v1(&legacy).unwrap();
+        assert!(cuda.validate_update_execution_v1(&legacy).is_err());
+        let mut device = base.clone();
+        cuda.record_update_execution_v1(&mut device);
+        cuda.validate_update_execution_v1(&device).unwrap();
+        assert!(cpu.validate_update_execution_v1(&device).is_err());
+        assert_eq!(device["reported_loss_source"], "transported-cpu-outputs");
+        for key in [
+            "schema",
+            "numerical_backend",
+            "update_backend",
+            "device",
+            "gpu_ordinal",
+            "behavior_backend",
+            "replay_backend",
+            "reported_loss_source",
+        ] {
+            let mut missing = device.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(
+                cuda.validate_update_execution_v1(&missing).is_err(),
+                "{key}"
+            );
+            let mut wrong = device.clone();
+            wrong[key] = json!("incorrect");
+            assert!(cuda.validate_update_execution_v1(&wrong).is_err(), "{key}");
+        }
+        let other = ExpandedUpdateBackendV1::Cuda { device_ordinal: 2 };
+        assert!(other.validate_update_execution_v1(&device).is_err());
+        let mut misleading_cpu = legacy;
+        misleading_cpu["gpu_ordinal"] = json!(1);
+        assert!(cpu.validate_update_execution_v1(&misleading_cpu).is_err());
+    }
+
+    #[test]
+    fn update_backend_parser_requires_device_and_preserves_legacy_command_shape() {
+        for invalid in [
+            json!({"kind":"cuda"}),
+            json!({"kind":"cuda", "device_ordinal":-1}),
+            json!({"kind":"unavailable"}),
+            json!({"kind":"cuda", "device_ordinal":1, "fallback":"cpu"}),
+        ] {
+            assert!(serde_json::from_value::<ExpandedUpdateBackendV1>(invalid).is_err());
+        }
+        let source = json!({"play_import":{"path":"test-import.json", "sha256":"a".repeat(64)},
+            "feature_transfer":{"expected_feature_contract_digest":FEATURE_CONTRACT_DIGEST_V3,
+                "expected_feature_encoding_digest":FEATURE_ENCODING_DIGEST_V3}, "checkpoint":null});
+        let command = json!({"mode":"update", "source":source, "trajectories":[],
+            "learning_rate":0.00001_f32, "value_coefficient":0.5_f32,
+            "output_directory":std::env::temp_dir().join("unused-update-output")});
+        let decoded: ExpandedTrainingCommandV1 = serde_json::from_value(command.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), command);
+        let mut explicit = command;
+        explicit["update_backend"] = json!({"kind":"cuda", "device_ordinal":1});
+        let decoded: ExpandedTrainingCommandV1 = serde_json::from_value(explicit.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), explicit);
+    }
 
     fn test_state(policy: &FrozenPlayPolicyV1) -> NativePolicyValueTrainStateV1 {
         let mut model =

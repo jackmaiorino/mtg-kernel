@@ -1199,6 +1199,111 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Host-only validation for the explicit V3 CUDA successor. This must
+    /// finish before creating a device or inspecting the resident GPU cache.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn validate_cuda_feature_transfer_update_v3(
+        &self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        // CUDA's driver device ordinal is signed 32-bit. Never allow a
+        // narrowing cast to turn an explicit request into another device.
+        if i32::try_from(device_ordinal).is_err() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-v3-device-ordinal-out-of-range",
+            });
+        }
+        if groups.is_empty() {
+            return Err(NativePolicyTrainErrorV1::EmptyBatch);
+        }
+        if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
+            return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
+        }
+        if !learning_rate.is_finite() || learning_rate <= 0.0 {
+            return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
+        }
+        self.validate_state_v1()?;
+        self.adam_step
+            .checked_add(1)
+            .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?;
+        exact_group_count_f32(groups.len())?;
+        let input_config = self.model.feature_transfer_config_v3();
+        for (group_index, group) in groups.iter().enumerate() {
+            if group.substeps.is_empty() {
+                return Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index });
+            }
+            physical_substep_count_u32_v1(group_index, group.substeps.len())?;
+            if !matches!(group.terminal_return, -1..=1) {
+                return Err(NativePolicyTrainErrorV1::InvalidTerminalReturn {
+                    group_index,
+                    value: group.terminal_return,
+                });
+            }
+            if group.baseline_bits != 0 {
+                return Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index });
+            }
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                };
+                let counts = encoded.validate(input_config)?;
+                if substep.expected_raw_action_logit_bits.len() != counts.action_count {
+                    return Err(NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
+                        group_index,
+                        substep_index,
+                        expected: counts.action_count,
+                        actual: substep.expected_raw_action_logit_bits.len(),
+                    });
+                }
+                if substep.selected_action_index >= counts.action_count {
+                    return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {
+                        group_index,
+                        substep_index,
+                        selected: substep.selected_action_index,
+                        action_count: counts.action_count,
+                    });
+                }
+                for (index, bits) in substep.expected_raw_action_logit_bits.iter().enumerate() {
+                    finite_scalar("V3 CUDA transported logit", index, f32::from_bits(*bits))?;
+                }
+                finite_scalar(
+                    "V3 CUDA transported value",
+                    substep_index,
+                    f32::from_bits(substep.expected_value_bits),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One guarded current-feature CUDA update. The caller explicitly owns
+    /// device placement and the successor backend receipt. CPU/V2 entry
+    /// points and checkpoint feature identities are not reinterpreted.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn train_step_cuda_feature_transfer_v3(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
+            self,
+            groups,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+        )
+    }
+
     /// Production entry point for bounded independent packed-tape
     /// recomputation. The scalar entry point above remains the numerical
     /// reference. Every worker result is consumed at its original ordinal
@@ -8100,6 +8205,169 @@ mod tests {
             )
         );
         assert_eq!(state.state_sha256_v1().unwrap(), before);
+    }
+
+    #[test]
+    fn v3_cuda_preflight_rejects_invalid_inputs_without_device_or_state_mutation() {
+        use crate::native_flat_tensorizer_v3::encoded_decision_view_v3;
+        let tensor = real_map_training_tensor_v3();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let output = model
+            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
+            .unwrap();
+        let expected: Vec<_> = output.logits.iter().map(|v| v.to_bits()).collect();
+        let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let before = state.state_sha256_v1().unwrap();
+        for case in 0..14 {
+            let mut view = encoded_decision_view_v3(&tensor);
+            let mut logits = expected.clone();
+            let mut value = output.value.to_bits();
+            let mut selected = 0;
+            let mut baseline = 0;
+            let mut reward = 1;
+            let mut coefficient = 0.5;
+            let mut learning_rate = 0.0001;
+            let mut ordinal = 1;
+            match case {
+                0 => view.schema = NativeEncodedDecisionSchemaV1::contract_v1(),
+                1 => view.state = &view.state[..view.state.len() - 1],
+                2 => {
+                    logits.pop();
+                }
+                3 => logits[0] = f32::NAN.to_bits(),
+                4 => value = f32::INFINITY.to_bits(),
+                5 => selected = output.logits.len(),
+                6 => baseline = 1.0_f32.to_bits(),
+                7 => reward = 2,
+                8 => coefficient = 0.0,
+                9 => coefficient = f32::NAN,
+                10 => learning_rate = -0.001,
+                11 => learning_rate = f32::INFINITY,
+                12 => ordinal = usize::MAX,
+                13 => baseline = (-0.0_f32).to_bits(),
+                _ => unreachable!(),
+            }
+            let steps = [NativePolicySubstepV1 {
+                forward: NativePolicyForwardInputV1::Encoded(Box::new(view)),
+                selected_action_index: selected,
+                expected_raw_action_logit_bits: &logits,
+                expected_value_bits: value,
+            }];
+            let groups = [NativePolicyPhysicalDecisionV1 {
+                substeps: &steps,
+                terminal_return: reward,
+                baseline_bits: baseline,
+            }];
+            assert!(
+                state
+                    .validate_cuda_feature_transfer_update_v3(
+                        &groups,
+                        coefficient,
+                        learning_rate,
+                        ordinal,
+                    )
+                    .is_err(),
+                "case {case}"
+            );
+            assert_eq!(state.state_sha256_v1().unwrap(), before, "case {case}");
+        }
+        assert_eq!(
+            state.validate_cuda_feature_transfer_update_v3(&[], 0.5, 0.001, 1),
+            Err(NativePolicyTrainErrorV1::EmptyBatch)
+        );
+        let empty = [NativePolicyPhysicalDecisionV1 {
+            substeps: &[],
+            terminal_return: 0,
+            baseline_bits: 0,
+        }];
+        assert_eq!(
+            state.validate_cuda_feature_transfer_update_v3(&empty, 0.5, 0.001, 1),
+            Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index: 0 })
+        );
+    }
+
+    #[test]
+    fn v3_cuda_preflight_accepts_empty_reductions_and_rejects_packed_tapes() {
+        use crate::native_flat_tensorizer_v3::encoded_decision_view_v3;
+        let mut tensor = real_map_training_tensor_v3();
+        tensor.common.edge_features.clear();
+        tensor.common.edge_source_indices.clear();
+        tensor.common.edge_target_indices.clear();
+        tensor.common.action_ref_features.clear();
+        tensor.common.action_ref_card_ids.clear();
+        tensor.common.action_ref_action_indices.clear();
+        tensor.common.action_ref_node_indices.clear();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let output = model
+            .forward_feature_transfer_v3(encoded_decision_view_v3(&tensor))
+            .unwrap();
+        let expected: Vec<_> = output.logits.iter().map(|v| v.to_bits()).collect();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let before = state.state_sha256_v1().unwrap();
+        let steps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v3(
+                &tensor,
+            ))),
+            selected_action_index: 0,
+            expected_raw_action_logit_bits: &expected,
+            expected_value_bits: output.value.to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &steps,
+            terminal_return: -1,
+            baseline_bits: 0,
+        }];
+        state
+            .validate_cuda_feature_transfer_update_v3(&groups, 0.5, 0.001, 1)
+            .unwrap();
+        assert_eq!(state.state_sha256_v1().unwrap(), before);
+        // CPU oracle confirms absent layers have exactly zero gradients.
+        let cpu = state
+            .train_step_feature_transfer_v3(&groups, 0.5, 0.001)
+            .unwrap();
+        for gradient in &cpu.gradients {
+            if gradient.name.starts_with("edge_encoder.")
+                || gradient.name.starts_with("action_ref_encoder.")
+            {
+                assert!(
+                    gradient.values.iter().all(|v| *v == 0.0),
+                    "{}",
+                    gradient.name
+                );
+            }
+        }
+        let (forward, _) = fixtures();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let builder = NativePolicyPackedForwardBuilderV1::from_model_v1(&model).unwrap();
+        let tape = builder.forward_v1(encoded(case)).unwrap();
+        let logits: Vec<_> = tape.logits_v1().iter().map(|v| v.to_bits()).collect();
+        let packed = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Packed {
+                encoded: Box::new(encoded(case)),
+                tape: &tape,
+            },
+            selected_action_index: 0,
+            expected_raw_action_logit_bits: &logits,
+            expected_value_bits: tape.value_v1().to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &packed,
+            terminal_return: 1,
+            baseline_bits: 0,
+        }];
+        assert_eq!(
+            state.validate_cuda_feature_transfer_update_v3(&groups, 0.5, 0.001, 1),
+            Err(
+                NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                    group_index: 0,
+                    substep_index: 0
+                }
+            )
+        );
     }
 
     #[test]

@@ -183,6 +183,7 @@ fn bridge_error_v1(error: Box<dyn Error>) -> NativePolicyTrainErrorV1 {
 /// path is numerically indistinguishable from a fresh import, and a resumed,
 /// rolled-back, or foreign candidate always falls back to importing.
 struct ResidentDeviceStateV1 {
+    device_ordinal: usize,
     exported: NativePolicyValueTrainSnapshotV1,
     device_state: ExperimentalDeviceTrainStateV1,
 }
@@ -274,6 +275,17 @@ pub(super) fn snapshots_bit_identical_v1(
         && named_tensors_bit_identical_v1(&left.second_moments, &right.second_moments)
 }
 
+/// Placement is part of reuse even when all model/optimizer bits match.
+/// This predicate is host-only and never creates or inspects a device.
+pub(super) fn resident_snapshot_matches_v1(
+    resident_ordinal: usize,
+    requested_ordinal: usize,
+    resident: &NativePolicyValueTrainSnapshotV1,
+    requested: &NativePolicyValueTrainSnapshotV1,
+) -> bool {
+    resident_ordinal == requested_ordinal && snapshots_bit_identical_v1(resident, requested)
+}
+
 pub(super) fn tolerance_ok_v1(actual: f32, expected: f32) -> bool {
     let difference = (actual - expected).abs();
     difference <= TRANSPORTED_OUTPUT_ABSOLUTE_TOLERANCE_V1
@@ -350,6 +362,7 @@ pub(super) fn validate_transported_logit_row_v2(
 fn train_step_cuda_burn_dense_inner_v1(
     snapshot: NativePolicyValueTrainSnapshotV1,
     wide: bool,
+    explicit_v3_device_ordinal: Option<usize>,
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     value_coefficient: f32,
     learning_rate: f32,
@@ -422,10 +435,12 @@ fn train_step_cuda_burn_dense_inner_v1(
     // (process-wide; per-run placement uses one process per device). Absent or
     // unparsable means ordinal 0, the qualified default. Non-authorizing: any
     // evidence path must still capture and pin the actual device identity.
-    let device_ordinal = std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL")
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(0);
+    let device_ordinal = explicit_v3_device_ordinal.unwrap_or_else(|| {
+        std::env::var("MTG_KERNEL_PILOT_CUDA_ORDINAL")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(0)
+    });
     let device = burn_cuda::CudaDevice::new(device_ordinal);
     // Take (not borrow) the resident entry for the whole update: every
     // failure path below leaves the slot empty, so a partially stepped
@@ -435,7 +450,14 @@ fn train_step_cuda_burn_dense_inner_v1(
     // the parked exported snapshot, which `export_snapshot_v1` validated.
     let resident = resident_device_state_slot_v1().take();
     let mut device_state = match resident {
-        Some(resident) if snapshots_bit_identical_v1(&resident.exported, &snapshot) => {
+        Some(resident)
+            if resident_snapshot_matches_v1(
+                resident.device_ordinal,
+                device_ordinal,
+                &resident.exported,
+                &snapshot,
+            ) =>
+        {
             #[cfg(test)]
             RESIDENT_REUSE_COUNT_V1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             resident.device_state
@@ -525,7 +547,11 @@ fn train_step_cuda_burn_dense_inner_v1(
             policy_anchor_coefficient,
         )
         .map_err(bridge_error_v1)?;
-        let chunk_batch = DevicePackedBatch::upload(&device, &chunk_workspace);
+        let chunk_batch = if explicit_v3_device_ordinal.is_some() {
+            DevicePackedBatch::upload_feature_transfer_v3(&device, &chunk_workspace)
+        } else {
+            DevicePackedBatch::upload(&device, &chunk_workspace)
+        };
         let chunk_outputs = device_state
             .chunk_backward_v1(
                 &mut accumulator,
@@ -1104,6 +1130,7 @@ fn train_step_cuda_burn_dense_inner_v1(
     // not-yet-reimported CPU snapshot, falling back to a fresh (correct)
     // import rather than silently diverging.
     *resident_device_state_slot_v1() = Some(ResidentDeviceStateV1 {
+        device_ordinal,
         exported: updated_snapshot.clone(),
         device_state,
     });
@@ -1141,6 +1168,7 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
         snapshot,
         false,
+        None,
         groups,
         value_coefficient,
         learning_rate,
@@ -1159,6 +1187,92 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
         code: "cuda-burn-dense-bridge-state-reimport-failure",
     })?;
     Ok(result)
+}
+
+/// Explicit current-feature adapter. Validation precedes snapshot creation,
+/// device construction, environment lookup and resident-cache access. The
+/// supplied ordinal is the sole placement authority for this entry point.
+pub(crate) fn train_step_cuda_burn_dense_feature_transfer_v3(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    train_step_cuda_burn_dense_feature_transfer_inner_v3(
+        state,
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+        #[cfg(test)]
+        false,
+    )
+}
+
+fn train_step_cuda_burn_dense_feature_transfer_inner_v3(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+    #[cfg(test)] capture_named_gradients: bool,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    state.validate_cuda_feature_transfer_update_v3(
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+    )?;
+    let snapshot = state.snapshot_v1()?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        Some(device_ordinal),
+        groups,
+        value_coefficient,
+        learning_rate,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        capture_named_gradients,
+    )?;
+    let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| {
+        // Never retain a candidate from a failed host commit. The previous
+        // host state remains untouched and can be imported on the next call.
+        *resident_device_state_slot_v1() = None;
+        NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-v3-state-reimport-failure",
+        }
+    })?;
+    *state = candidate;
+    Ok(result)
+}
+
+/// Same V3 update with a read-only, pre-Adam gradient export for explicit
+/// numerical qualification. It does not exist in production builds.
+#[cfg(test)]
+pub(crate) fn train_step_cuda_burn_dense_feature_transfer_capture_v3(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    train_step_cuda_burn_dense_feature_transfer_inner_v3(
+        state,
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+        true,
+    )
 }
 
 /// Test-only forward-KL policy-anchor sibling of
@@ -1192,6 +1306,7 @@ pub(crate) fn train_step_cuda_burn_dense_policy_anchor_v1(
     let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
         snapshot,
         false,
+        None,
         groups,
         value_coefficient,
         learning_rate,
@@ -1238,6 +1353,7 @@ pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
     let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
         snapshot,
         false,
+        None,
         groups,
         value_coefficient,
         learning_rate,
@@ -1288,6 +1404,7 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
     let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
         snapshot,
         true,
+        None,
         groups,
         value_coefficient,
         learning_rate,

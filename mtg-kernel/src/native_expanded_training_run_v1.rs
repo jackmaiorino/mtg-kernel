@@ -1,4 +1,4 @@
-//! Resumable CPU training over explicit V3 registrations and policy opponents.
+//! Resumable training with CPU V3 collection and an explicit update backend.
 //! This successor owns its checkpoints; it does not reinterpret legacy Stores.
 
 use crate::durable_publication_v1::{
@@ -6,7 +6,7 @@ use crate::durable_publication_v1::{
 };
 use crate::expanded_deck_training_v1::{
     execute_v1, load_expanded_inference_v1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
-    ExpandedModelSourceV1, ExpandedTrainingCommandV1, PinnedFileV1,
+    ExpandedModelSourceV1, ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, PinnedFileV1,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -60,6 +60,8 @@ pub struct NativeExpandedTrainingRunV1 {
     pub iterations: Vec<ExpandedRunIterationV1>,
     pub learning_rate: f32,
     pub value_coefficient: f32,
+    #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
+    pub update_backend: ExpandedUpdateBackendV1,
     pub output_directory: PathBuf,
 }
 
@@ -86,6 +88,7 @@ fn identity(value: &impl Serialize) -> Result<String, String> {
 impl NativeExpandedTrainingRunV1 {
     pub fn validate_v1(&self) -> Result<(), String> {
         check(self.schema == SCHEMA, "unknown successor run schema")?;
+        self.update_backend.validate_v1()?;
         check(
             self.output_directory.is_absolute(),
             "absolute run directory required",
@@ -358,8 +361,10 @@ fn validate_update(
     before: &ExpandedInferenceIdentityV1,
     learning_rate: f32,
     value_coefficient: f32,
+    update_backend: ExpandedUpdateBackendV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
+    update_backend.validate_update_execution_v1(&document)?;
     check(
         document["complete"] == true
             && document["source"] == value(source)?
@@ -400,6 +405,7 @@ pub fn run_native_expanded_training_v1(
     max_new_iterations: Option<usize>,
 ) -> Result<Value, String> {
     config.validate_v1()?;
+    config.update_backend.require_compiled_v1()?;
     check(
         max_new_iterations != Some(0),
         "iteration limit must be positive",
@@ -416,13 +422,14 @@ pub fn run_native_expanded_training_v1(
         .map_err(err)?;
     lock.try_lock()
         .map_err(|e| format!("run already has an active writer or cannot lock: {e}"))?;
-    let manifest = json!({"schema":SCHEMA, "config":config,
+    let mut manifest = json!({"schema":SCHEMA, "config":config,
         "git_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
         "tracked_tree_sha256":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
         "feature_contract_digest":FEATURE_CONTRACT_DIGEST_V3,
         "feature_encoding_digest":FEATURE_ENCODING_DIGEST_V3,
         "device":"cpu", "gpu_ordinal":null,
         "implementation_sha256":digest(include_bytes!("native_expanded_training_run_v1.rs"))});
+    config.update_backend.record_run_execution_v1(&mut manifest);
     let manifest_path = root.join("run.json");
     if manifest_path.exists() {
         check(
@@ -487,6 +494,7 @@ pub fn run_native_expanded_training_v1(
                 &current_identity,
                 config.learning_rate,
                 config.value_coefficient,
+                config.update_backend,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -564,6 +572,7 @@ pub fn run_native_expanded_training_v1(
                     &current_identity,
                     config.learning_rate,
                     config.value_coefficient,
+                    config.update_backend,
                 )?;
                 check(document["complete"] == true, "incomplete update receipt")?;
                 collection_pin = Some(referenced_collection);
@@ -609,6 +618,7 @@ pub fn run_native_expanded_training_v1(
                 trajectories,
                 learning_rate: config.learning_rate,
                 value_coefficient: config.value_coefficient,
+                update_backend: config.update_backend,
                 output_directory: attempt.join("update"),
             };
             publish(&attempt, "update-command.json", &update_command)?;
@@ -626,6 +636,7 @@ pub fn run_native_expanded_training_v1(
             &current_identity,
             config.learning_rate,
             config.value_coefficient,
+            config.update_backend,
         )?;
         let receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
@@ -642,10 +653,11 @@ pub fn run_native_expanded_training_v1(
         );
     }
     let complete = receipts.len() == config.iterations.len();
-    let result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
+    let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
         "planned_iterations":config.iterations.len(),"iterations":receipts,"source":current,
         "actual_identity":current_identity,"device":"cpu","gpu_ordinal":null,
         "loss_identity":"terminal_reinforce_value/v3","strength_claim":false});
+    config.update_backend.record_run_execution_v1(&mut result);
     let final_path = root.join("completion.json");
     if complete {
         if final_path.exists() {
@@ -764,8 +776,49 @@ mod tests {
             }],
             learning_rate: 0.00001,
             value_coefficient: 0.5,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
+    }
+
+    #[test]
+    fn update_backend_is_explicit_in_run_identity_and_legacy_cpu_is_unchanged() {
+        let cpu = schedule();
+        let cpu_value = value(&cpu).unwrap();
+        assert!(cpu_value.get("update_backend").is_none());
+        let restored: NativeExpandedTrainingRunV1 = serde_json::from_value(cpu_value).unwrap();
+        assert_eq!(restored.update_backend, ExpandedUpdateBackendV1::Cpu);
+        let mut cuda = cpu.clone();
+        cuda.update_backend = ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 };
+        cuda.validate_v1().unwrap();
+        assert_ne!(identity(&cpu).unwrap(), identity(&cuda).unwrap());
+        let mut another_device = cuda.clone();
+        another_device.update_backend = ExpandedUpdateBackendV1::Cuda { device_ordinal: 2 };
+        assert_ne!(identity(&cuda).unwrap(), identity(&another_device).unwrap());
+        let mut execution = json!({"device":"cpu", "gpu_ordinal":null});
+        cpu.update_backend.record_run_execution_v1(&mut execution);
+        assert_eq!(execution, json!({"device":"cpu", "gpu_ordinal":null}));
+        cuda.update_backend.record_run_execution_v1(&mut execution);
+        assert_eq!(execution["device"], "cpu-collection-cuda-update");
+        assert_eq!(execution["collection_backend"], "native-cpu-sequential");
+        assert_eq!(execution["update_backend"]["device_ordinal"], 1);
+        assert_eq!(execution["gpu_ordinal"], 1);
+    }
+
+    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+    #[test]
+    fn unavailable_cuda_run_rejects_before_artifacts_or_collection() {
+        let mut config = schedule();
+        config.output_directory =
+            std::env::temp_dir().join(format!("native-expanded-no-cuda-{}", std::process::id()));
+        assert!(!config.output_directory.exists());
+        config.update_backend = ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 };
+        let error = run_native_expanded_training_v1(&config, None).unwrap_err();
+        assert!(
+            error.contains("CUDA update backend was not compiled"),
+            "{error}"
+        );
+        assert!(!config.output_directory.exists());
     }
 
     #[test]

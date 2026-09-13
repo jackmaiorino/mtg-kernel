@@ -1,0 +1,25 @@
+# V3 CUDA update preparation
+
+The Multi-Deck BO3 Campaign remains active. This continuation connects an explicit CUDA learner update to the verified CPU V3 collection, exact actor replay and successor checkpoint path. It does not provide GPU actor collection, GPU numerical qualification, a speedup, broader competence or a promoted player. Frozen engineering-007 and earlier outputs remain unchanged.
+
+## Decision and implementation
+
+`ExpandedUpdateBackendV1` defaults to CPU and is omitted from legacy CPU command/config serialization. CUDA requires an explicit device ordinal and the opt-in `experimental-burn-net8-packed-cuda-v1` build feature. A build without that backend rejects the request before output creation or episode collection, without silently selecting CPU. The native coordinator binds the backend and ordinal into its run identity and validates them in every resumed update receipt before adopting a checkpoint.
+
+The update still validates both actors' recorded behavior with their exact CPU models and supplies only learner physical groups to the optimizer. The guarded V3 CUDA entry validates current encoded tensor identity, shape, finite values, group/action bounds, terminal reward, zero baseline, optimizer settings and state before touching a device or resident cache. Explicit device selection avoids the legacy environment-variable fallback, and resident reuse requires the same device plus the exact snapshot. Valid empty-edge and empty-action-reference reductions use mathematical zeros; skipped encoder gradients must remain present as zeros so Adam still decays existing moments. Existing legacy entry points retain their prior nonempty path.
+
+CUDA update receipts use a separate v2 update schema identifying device, numerical backend, CPU behavior/replay and the transported-CPU origin of the reported loss. Run receipts describe CPU collection plus CUDA update. Actual exported model/Adam bits retain the existing checked successor checkpoint format. An inference reader does not need CUDA merely to read those actual checkpoint bits.
+
+## Verification boundary
+
+Source review is in [engineering-008/SOURCE-REVIEW.md](E:/mtg-kernel-learned-sideboarding-evidence/engineering-008/SOURCE-REVIEW.md). Twenty host-only tests passed, including existing population/continuation behavior and new backend/preflight checks. The CUDA-enabled library and its complete test harness compiled in 142.436 seconds; two explicitly selected host-only tests then passed for direct-entry rejection before device creation and cache identity including device/full snapshot. No device test ran. A separately ignored empty-relation/Adam diagnostic is compiled but unexecuted and does not constitute full V3 numerical qualification.
+
+The live CPU compatibility check is prepared but unexecuted. It replays one frozen trajectory, recomputes the same frozen update with omitted and explicit CPU selection, requires exact checkpoint bytes and fresh output receipts, and verifies two uncompiled-CUDA requests reject before output/collection. Independent review identified and root fixed checks that could otherwise accept an old returned artifact path or extra CPU receipt fields. These are reversible engineering checks, not a new playing-strength measurement.
+
+No CUDA command may be labeled numerically qualified from compilation or transported loss equality. Later device verification needs actual CUDA forward outputs, all 33 gradients, parameter deltas, both moment streams and exact Adam/padding/gauge invariants from identical V3 groups and initial state. Include empty relations with nonzero existing moments and multiple policy substeps. Parameter-value tolerances larger than the learning rate could accept a missing update, so compare deltas and per-layer errors with declared floors. Numerical envelopes must be fixed before that separate measurement. Measure complete collect/update time and storage cost before claiming useful acceleration.
+
+Fresh Fable session `814a49e9-0613-4dfd-8832-453a49b1760b` failed weekly HTTP429 with zero source reads or substantive feedback. Root recorded unavailable consultation and continued assigned reversible implementation with independent Codex review. There is no Fable endorsement, new GPU/paid allocation or quota purchase. CPU work keeps E-drive outputs, BelowNormal priority, at most four build jobs and one root cargo owner. GPU runtime qualification remains unperformed.
+
+## Other campaign requirements
+
+The parallel [human-play audit](E:/mtg-kernel-learned-sideboarding-evidence/engineering-008/HUMAN-PLAY-SEAM.md) found that the existing JSONL client does not supply an explicit-registration BO3 human interface or a safe fixed-human-seat projection. Readable legal actions, match control, concessions and executable mulligans remain. A disclosed forced-seven feedback session would not establish ordinary human meta comparability. No interface or game against Jack is complete. Human data alignment, broader learning, sideboard outcome comparisons, independent confirmation, search adaptation and brewing remain within the full campaign scope.

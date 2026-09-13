@@ -698,6 +698,9 @@ impl ExperimentalDeviceTrainStateV1 {
         };
         let raw_gradients = loss.backward();
         let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
+        if batch.empty_relations_v3 {
+            register_empty_relation_gradients_v3(&self.model, batch, &mut gradients)?;
+        }
         if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
             return Err(training_error(format!(
                 "CUDA chunk gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
@@ -890,6 +893,42 @@ impl ExperimentalDeviceTrainStateV1 {
 
 fn elapsed_us(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1.0e6
+}
+
+/// Only the two encoders deliberately skipped for an empty V3 reduction
+/// may lack gradients. Supply mathematical zeros, not frozen parameters:
+/// Adam must still decay their existing moments and apply that update.
+fn register_empty_relation_gradients_v3(
+    model: &ProductionNet8<CudaAutodiffBackendV1>,
+    batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+    gradients: &mut GradientsParams,
+) -> Result<(), Box<dyn Error>> {
+    for encoder in [
+        (batch.edge_count == 0).then_some(&model.edge_encoder),
+        (batch.action_ref_count == 0).then_some(&model.action_ref_encoder),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for linear in [&encoder.first, &encoder.second] {
+            let bias = linear
+                .bias
+                .as_ref()
+                .ok_or_else(|| training_error("empty encoder has no bias"))?;
+            if gradients
+                .get::<CudaBackendV1, 2>(linear.weight.id)
+                .is_some()
+                || gradients.get::<CudaBackendV1, 1>(bias.id).is_some()
+            {
+                return Err(training_error(
+                    "skipped V3 encoder unexpectedly produced gradients",
+                ));
+            }
+            gradients.register(linear.weight.id, linear.weight.val().inner().zeros_like());
+            gradients.register(bias.id, bias.val().inner().zeros_like());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -1833,18 +1872,34 @@ fn inner_readback_batch_v1(
         edge_count: batch.edge_count,
         action_count: batch.action_count,
         action_ref_count: batch.action_ref_count,
+        empty_relations_v3: batch.empty_relations_v3,
         state: batch.state.clone().inner(),
         object_features: batch.object_features.clone().inner(),
         object_card_ids: batch.object_card_ids.clone().inner(),
         object_group_indices: batch.object_group_indices.clone().inner(),
-        edge_features: batch.edge_features.clone().inner(),
-        edge_source_indices: batch.edge_source_indices.clone().inner(),
-        edge_target_indices: batch.edge_target_indices.clone().inner(),
+        edge_features: batch.edge_features.as_ref().map(|t| t.clone().inner()),
+        edge_source_indices: batch
+            .edge_source_indices
+            .as_ref()
+            .map(|t| t.clone().inner()),
+        edge_target_indices: batch
+            .edge_target_indices
+            .as_ref()
+            .map(|t| t.clone().inner()),
         action_features: batch.action_features.clone().inner(),
         action_decision_indices: batch.action_decision_indices.clone().inner(),
-        action_ref_features: batch.action_ref_features.clone().inner(),
-        action_ref_action_indices: batch.action_ref_action_indices.clone().inner(),
-        action_ref_node_indices: batch.action_ref_node_indices.clone().inner(),
+        action_ref_features: batch
+            .action_ref_features
+            .as_ref()
+            .map(|t| t.clone().inner()),
+        action_ref_action_indices: batch
+            .action_ref_action_indices
+            .as_ref()
+            .map(|t| t.clone().inner()),
+        action_ref_node_indices: batch
+            .action_ref_node_indices
+            .as_ref()
+            .map(|t| t.clone().inner()),
     }
 }
 
