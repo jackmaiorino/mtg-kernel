@@ -2170,11 +2170,13 @@ fn validate_ability_source_contract(
         || contract.zone == Zone::Stack
         || source.zone_change_count < contract.zone_change_count
         || (source.zone_change_count == contract.zone_change_count && source.zone != contract.zone)
-        || (source.zone_change_count == contract.zone_change_count
-            && source.v4.attached_to != contract.attached_to)
     {
         return Err("ability source contract is structurally malformed".to_string());
     }
+    // attached_to is frozen last-known information, not a live-incarnation
+    // invariant. Detaching or reattaching Equipment does not change its zone
+    // generation. Keep that historical host for effect-specific provenance
+    // checks even when the live attachment changes while the ability waits.
     Ok(())
 }
 
@@ -2492,7 +2494,8 @@ fn legal_targets_for_controller_from_source(
             .collect(),
         TargetSpec::NonblackCreature => battlefield_objects(state)
             .filter(|&id| {
-                object_has_type(state, id, CardType::Creature) && !is_color(state, id, mana::ManaColor::B)
+                object_has_type(state, id, CardType::Creature)
+                    && !is_color(state, id, mana::ManaColor::B)
             })
             .map(Target::Object)
             .collect(),
@@ -4102,10 +4105,11 @@ fn alt_cost_condition_met(
         card_def::AltCostCondition::Always => true,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
-            state.players[player.index()]
-                .battlefield
-                .iter()
-                .any(|&id| effective_subtype_ids(state, id).binary_search(&subtype_id).is_ok())
+            state.players[player.index()].battlefield.iter().any(|&id| {
+                effective_subtype_ids(state, id)
+                    .binary_search(&subtype_id)
+                    .is_ok()
+            })
         }
     }
 }
@@ -4566,8 +4570,8 @@ fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
 /// at all -- see `castable_spells`' exile loop).
 pub(crate) fn supported_adventure(def: &card_def::CardDef) -> Option<&card_def::AdventureDef> {
     let adventure = def.adventure.as_ref()?;
-    let has_spell_type =
-        adventure.types.contains(&CardType::Instant) || adventure.types.contains(&CardType::Sorcery);
+    let has_spell_type = adventure.types.contains(&CardType::Instant)
+        || adventure.types.contains(&CardType::Sorcery);
     (has_spell_type
         && def.alt_cost.is_none()
         && def.kicker_cost.is_none()
@@ -4792,9 +4796,7 @@ fn pending_cast_selected_mana_cost(
     match pending.mode_chosen {
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
         Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
-        Some(1) if supported_adventure(def).is_some() => {
-            supported_adventure(def).map(|a| a.cost)
-        }
+        Some(1) if supported_adventure(def).is_some() => supported_adventure(def).map(|a| a.cost),
         Some(_) => Some(effective_normal_cast_cost(def, pending.controller, state)),
         None => None,
     }
@@ -4878,8 +4880,8 @@ fn is_castable_now(
         }),
         CastMethodV4::Normal => {
             let normal_cost = effective_normal_cast_cost(def, player, state);
-            let normal_ok = main_timing_ok
-                && normal_cost_is_payable(def, &normal_cost, 0, player, state);
+            let normal_ok =
+                main_timing_ok && normal_cost_is_payable(def, &normal_cost, 0, player, state);
             let alt_ok = def
                 .alt_cost
                 .map(|alt| {
@@ -8152,9 +8154,13 @@ pub(crate) fn validate_pending_activation(
     if !def.is_executable() {
         return Err("pending activation source is not executable".to_string());
     }
-    let ability =
-        resolved_activated_ability(object.card_def, pending.ability_index, state, pending.source)
-            .ok_or_else(|| "pending activation ability index changed".to_string())?;
+    let ability = resolved_activated_ability(
+        object.card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .ok_or_else(|| "pending activation ability index changed".to_string())?;
     let ability = &ability;
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
@@ -10586,8 +10592,7 @@ fn resolved_stack_activated_ability(
     if ability_index as usize != def.activated_abilities.len() {
         return Err("activated stack item carries an out-of-range ability index".to_string());
     }
-    let equipment =
-        granted_by.ok_or("granted activated ability lost its equipment provenance")?;
+    let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
     validate_historical_ability_source_contract(state, equipment)?;
     if host_contract.source == equipment.source
         || host_contract.zone != Zone::Battlefield
@@ -13972,7 +13977,10 @@ fn push_paid_activation(
             equipped_granted_activated_ability_with_equipment(state, pending.source).expect(
                 "callers validate this ability index resolves before pushing the activation",
             );
-        (ability, Some(AbilitySourceContractV4::capture(state, equipment_id)))
+        (
+            ability,
+            Some(AbilitySourceContractV4::capture(state, equipment_id)),
+        )
     };
     let ability = &ability;
     let source = state.objects.get(pending.source);
@@ -14125,6 +14133,10 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
     }
     state.players[player.index()].life -= plan.life_paid;
 }
+
+#[cfg(test)]
+#[path = "engine_attachment_lki_tests.rs"]
+mod attachment_lki_tests;
 
 #[cfg(test)]
 mod tests {

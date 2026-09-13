@@ -5,9 +5,176 @@ use super::*;
 use crate::policy_observation_v6::{
     HistoricalSourceContextV6, ObservationV6, PolicyObservationExtensionsV6,
 };
+#[cfg(test)]
 use crate::state::GameState;
 
 const COMMITMENT_DOMAIN_V3: &[u8] = b"mtg-kernel-flat-action-candidate-v3\0";
+
+// Opt-in backend diagnostics only. Keep errors unchanged and never attach
+// these records to a model observation, human response, or training record.
+fn action_error_value_v3(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    stage: &str,
+    detail: &str,
+    candidate_index: Option<usize>,
+) -> serde_json::Value {
+    // Raw origin order can contain chooser-only library ordering at other
+    // prompts. Detailed action diagnostics are limited to ordinary priority;
+    // all other prompts retain only the stage/count and stack-source audit.
+    let ordinary_priority = matches!(
+        &current.origin_decision,
+        PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass { .. }))
+    );
+    let candidates: Vec<_> = current
+        .candidates
+        .iter()
+        .filter(|_| ordinary_priority)
+        .enumerate()
+        .map(|(index, candidate)| {
+            let mut visible = true;
+            let inspected = flat_action_core_and_refs_v1(
+                &candidate.semantic,
+                current.actor.into(),
+                0,
+                |_, _, _, reference| {
+                    visible &=
+                        flat_visible_action_object_v2(&session.state, current.actor, reference)
+                            .is_ok();
+                    Ok(())
+                },
+            );
+            let semantic = format!("{:?}", candidate.semantic);
+            serde_json::json!({
+                "index": index,
+                "semantic_kind": semantic.split(" {").next().unwrap_or("unknown"),
+                "semantic_debug": (visible && inspected.is_ok()).then_some(&semantic),
+                "semantic_redacted": !visible || inspected.is_err(),
+                "policy_action_debug": format!("{:?}", candidate.policy_action),
+            })
+        })
+        .collect();
+    let stack_sources: Vec<_> = session.state.stack.iter().enumerate().map(|(index, item)| {
+        let live = session.state.objects.try_get(item.source);
+        let public_live_source = live.filter(|source| {
+            matches!(source.zone, Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command)
+                || (source.zone == Zone::Hand && source.owner == current.actor)
+        }).map(|source| serde_json::json!({
+            "card_def": source.card_def,
+            "name": source.name,
+            "owner": source.owner,
+            "controller": source.controller,
+            "zone": source.zone,
+            "zone_change_count": source.zone_change_count,
+            "attached_to": source.v4.attached_to,
+        }));
+        let structural_checks = item.v4.ability_source_contract.and_then(|contract| live.map(|source| {
+            serde_json::json!({
+                "source_id_matches": contract.source == item.source,
+                "card_def_matches": contract.card_def == source.card_def,
+                "owner_matches": contract.owner == source.owner,
+                "controller_matches_item": contract.controller == item.controller,
+                "contract_not_stack": contract.zone != Zone::Stack,
+                "live_generation_not_older": source.zone_change_count >= contract.zone_change_count,
+                "same_generation_zone_matches": source.zone_change_count != contract.zone_change_count || source.zone == contract.zone,
+                "same_generation_attachment_matches": source.zone_change_count != contract.zone_change_count || source.v4.attached_to == contract.attached_to,
+            })
+        }));
+        serde_json::json!({
+            "stack_index": index,
+            "source": item.source,
+            "kind": item.kind,
+            "controller": item.controller,
+            "is_copy": item.is_copy,
+            "is_flashback": item.is_flashback,
+            "madness_offer": item.madness_offer,
+            "kicked": item.kicked,
+            "mode_chosen": item.mode_chosen,
+            "has_inline_effect": item.inline_effect.is_some(),
+            "stack_item_id": item.v4.stack_item_id,
+            "cast_method": item.v4.cast_method,
+            "face_index": item.v4.face_index,
+            "x_value": item.v4.x_value,
+            "activated_ability_index": item.v4.activated_ability_index,
+            "has_hidden_ability_source": item.v4.hidden_ability_source.is_some(),
+            "ability_source_contract": item.v4.ability_source_contract,
+            "granted_by": item.v4.granted_by,
+            "spell_source_identity": item.v4.source_contract.map(|contract| serde_json::json!({
+                "source": contract.source, "card_def": contract.card_def,
+                "owner": contract.owner, "controller": contract.controller,
+                "zone": contract.zone, "zone_change_count": contract.zone_change_count,
+            })),
+            "madness_source_contract": item.v4.madness_source_contract,
+            "live_source_exists": live.is_some(),
+            "public_live_source": public_live_source,
+            "ability_structural_checks": structural_checks,
+            "validation_error": crate::engine::validated_stack_item_target_spec(item, &session.state).err(),
+        })
+    }).collect();
+    serde_json::json!({
+        "schema": "mtg-kernel-v3-action-validation-error/v1",
+        "visibility": "backend-private diagnostic, never a human view",
+        "stage": stage,
+        "detail": detail,
+        "candidate_index": candidate_index,
+        "episode_id": session.episode_id,
+        "policy_step": session.policy_step_count,
+        "physical_decision_count": session.physical_decision_count,
+        "physical_decision_id": current.physical_decision_id,
+        "environment_revision": session.environment_revision,
+        "current_revision": current.environment_revision,
+        "actor": current.actor,
+        "decision_kind": format!("{:?}", current.decision_kind),
+        "substep_index": current.substep_index,
+        "substep_count": current.substep_count,
+        "turn": session.state.turn,
+        "step": session.state.step,
+        "origin_debug": ordinary_priority.then(|| format!("{:?}", current.origin_decision)),
+        "action_details_redacted": !ordinary_priority,
+        "candidate_count": current.candidates.len(),
+        "candidates": candidates,
+        "stack_sources": stack_sources,
+    })
+}
+
+fn capture_action_error_v3(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    stage: &str,
+    detail: &dyn std::fmt::Debug,
+    candidate_index: Option<usize>,
+) {
+    let Some(path) = std::env::var_os("MTG_KERNEL_V3_ACTION_ERROR_CAPTURE") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let result = (|| -> Result<(), String> {
+        if !path.is_absolute() {
+            return Err("absolute V3 action error capture path required".into());
+        }
+        let value = action_error_value_v3(
+            session,
+            current,
+            stage,
+            &format!("{detail:?}"),
+            candidate_index,
+        );
+        let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+        if bytes.len() > 16 * 1024 * 1024 {
+            return Err("V3 action error capture exceeds 16 MiB".into());
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| error.to_string())?;
+        std::io::Write::write_all(&mut file, &bytes).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())
+    })();
+    if let Err(error) = result {
+        eprintln!("V3 action error capture failed: {error}");
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FlatActionDecisionBindingV3(pub(crate) FlatActionDecisionBindingV2);
@@ -24,8 +191,10 @@ fn extensions(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<PolicyObservationExtensionsV6, FlatActionDecisionSliceErrorV1> {
-    crate::rl::policy_observation_extensions_v6(&session.state, current.actor)
-        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+    crate::rl::policy_observation_extensions_v6(&session.state, current.actor).map_err(|error| {
+        capture_action_error_v3(session, current, "observation_extensions", &error, None);
+        FlatActionDecisionSliceErrorV1::InvalidDecisionRelation
+    })
 }
 
 fn effect_source_mut(semantic: &mut ActionSemanticV1) -> Option<&mut CardStableRefV1> {
@@ -177,7 +346,11 @@ pub(super) fn prepare_and_build_v3(
         &extension,
         session,
         &current.origin_decision,
-    )?;
+    )
+    .map_err(|error| {
+        capture_action_error_v3(session, current, "prepare_normalization", &error, None);
+        error
+    })?;
     build_with_extensions(session, current, &extension)
 }
 
@@ -211,21 +384,54 @@ fn build_with_extensions(
     // Restore the exact engine-origin order in a private validation view.
     // The consumed candidate vector remains V3-canonical and each entry keeps
     // its original executable policy_action, so sorting cannot change intent.
-    let raw = core_policy_action_candidates_v5(&current.origin_decision, &session.state)
-        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    let raw = core_policy_action_candidates_v5(&current.origin_decision, &session.state).map_err(
+        |error| {
+            capture_action_error_v3(session, current, "raw_origin_candidates", &error, None);
+            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation
+        },
+    )?;
     let mut original = current.clone();
     original.flat_action_cache = None;
     original.flat_action_cache_v2 = None;
     original.candidates = raw;
-    flat_validate_current_binding_header_v1(session, &original)?;
-    flat_validate_origin_decision_v1(&original, &session.state)?;
+    flat_validate_current_binding_header_v1(session, &original).map_err(|error| {
+        capture_action_error_v3(
+            session,
+            &original,
+            "binding_header_and_relations",
+            &error,
+            None,
+        );
+        error
+    })?;
+    flat_validate_origin_decision_v1(&original, &session.state).map_err(|error| {
+        capture_action_error_v3(
+            session,
+            &original,
+            "origin_decision_relations",
+            &error,
+            None,
+        );
+        error
+    })?;
     normalize_candidates(
         &mut original.candidates,
         extension,
         session,
         &original.origin_decision,
-    )?;
+    )
+    .map_err(|error| {
+        capture_action_error_v3(session, &original, "rebuild_normalization", &error, None);
+        error
+    })?;
     if original.candidates != current.candidates {
+        capture_action_error_v3(
+            session,
+            current,
+            "normalized_candidate_equality",
+            &"normalized original candidates differ from current candidates",
+            None,
+        );
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
 
@@ -233,7 +439,16 @@ fn build_with_extensions(
     let mut pending_refs = Vec::<FlatUnindexedActionRefV2>::new();
     let mut resolved = Vec::<(CardStableRefV1, FlatActionObjectV2)>::new();
     for (action_index, candidate) in current.candidates.iter().enumerate() {
-        flat_validate_semantic_policy_pair_v1(candidate)?;
+        flat_validate_semantic_policy_pair_v1(candidate).map_err(|error| {
+            capture_action_error_v3(
+                session,
+                current,
+                "semantic_policy_pair",
+                &error,
+                Some(action_index),
+            );
+            error
+        })?;
         let action_index = u32::try_from(action_index)
             .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
         let ref_start = u32::try_from(pending_refs.len())
@@ -305,7 +520,17 @@ fn build_with_extensions(
                 });
                 Ok(())
             },
-        )?;
+        )
+        .map_err(|error| {
+            capture_action_error_v3(
+                session,
+                current,
+                "action_core_and_references",
+                &error,
+                Some(action_index as usize),
+            );
+            error
+        })?;
         actions.push(core);
     }
     resolved.sort_by_key(|(_, object)| object.canonical_key());
@@ -483,18 +708,25 @@ impl FastActorSessionV1 {
             .current
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
-        flat_validate_expected_decision_v1(self, current, expected)?;
+        flat_validate_expected_decision_v1(self, current, expected).map_err(|error| {
+            capture_action_error_v3(self, current, "expected_decision_binding", &error, None);
+            error
+        })?;
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
         if let Some(error) = current.flat_action_cache_error_v2 {
+            capture_action_error_v3(self, current, "stored_prepare_error", &error, None);
             return Err(error);
         }
         let cache = current
             .flat_action_cache_v2
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
-        validate_cache(self, current, cache)?;
+        validate_cache(self, current, cache).map_err(|error| {
+            capture_action_error_v3(self, current, "cache_validation", &error, None);
+            error
+        })?;
         Ok(cache)
     }
 
