@@ -77,6 +77,32 @@ pub struct HumanDecisionProjectorV1 {
     accepted: Option<HumanActionReceiptV1>,
 }
 
+/// Offline projection of recorded actor-visible data through the same menu
+/// projection used by the live adapter. This creates no live action binding
+/// and does not prove that the supplied record came from a legal engine state.
+pub(crate) fn project_recorded_decision_v1(
+    observation: &crate::policy_observation_v6::ObservationV6,
+    actions: &[crate::rl::ActionSemanticV1],
+    human: PlayerSeatV1,
+    prompt_seq: u64,
+    selected_engine_index: usize,
+) -> Result<(HumanDecisionV1, u32), HumanDecisionErrorV1> {
+    if selected_engine_index >= actions.len() {
+        return Err(HumanDecisionErrorV1::InvalidAction);
+    }
+    let selected_engine_index = u32::try_from(selected_engine_index)
+        .map_err(|_| HumanDecisionErrorV1::InvalidAction)?;
+    let (visible, engine_indexes) =
+        visible::project_decision(observation, actions, human, prompt_seq)?;
+    let public_index = engine_indexes
+        .iter()
+        .position(|index| *index == selected_engine_index)
+        .ok_or(HumanDecisionErrorV1::InvalidAction)?;
+    let public_index = u32::try_from(public_index)
+        .map_err(|_| HumanDecisionErrorV1::InvalidAction)?;
+    Ok((visible, public_index))
+}
+
 impl HumanDecisionProjectorV1 {
     pub fn new(human_seat: PlayerSeatV1) -> Self {
         Self {

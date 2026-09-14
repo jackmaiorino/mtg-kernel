@@ -74,6 +74,329 @@ pub struct RemovalCounterspellTagsV1 {
     pub is_counterspell: std::collections::BTreeSet<u16>,
 }
 
+/// Backend-only completed history. The existing summary payload and natural
+/// automatic JSON remain V1. In particular, a concession is not an engine
+/// natural terminal. Never expose this privileged wrapper to either player;
+/// use `project_sideboard_input_v1` for the acting model's permitted evidence.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompletedGameSummaryV2 {
+    pub schema: &'static str,
+    pub summary: GameSummaryV1,
+    pub completion: GameSummaryCompletionV2,
+    pub history: GameSummaryHistoryV2,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GameSummaryCompletionV2 {
+    Natural,
+    Concession {
+        conceding_player: PlayerId,
+        stage: GameConcessionStageV2,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GameConcessionStageV2 {
+    Gameplay,
+    Opening {
+        phase: crate::human_opening_v1::HumanOpeningPhaseV1,
+        human_seat: crate::rl::PlayerSeatV1,
+        starting_player: crate::rl::PlayerSeatV1,
+        mulligans_taken: u8,
+        hand_counts: [u32; 2],
+        library_counts: [u32; 2],
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GameSummaryHistoryV2 {
+    pub episode_id: u64,
+    /// Always zero for public full-history extraction. The legacy automatic
+    /// adapter can start partway through a session; it discards this wrapper.
+    pub initial_policy_steps: u64,
+    /// Includes the current offered decision at a gameplay concession, even
+    /// though no action from that decision was committed.
+    pub observed_gameplay_decisions: u64,
+    pub committed_policy_steps: u64,
+    pub committed_physical_decisions: u64,
+    /// The actual append-only history includes initial/London draws. Clearing
+    /// opening `event_log`/turn counters does not clear `event_history`.
+    pub retained_event_count: usize,
+    pub final_turn: u32,
+}
+
+#[derive(Default)]
+struct SummaryHistoryV1 {
+    offered_as_cast: [std::collections::BTreeSet<u16>; 2],
+    resource_curve: ResourceCurveV1,
+    turn_watermarks: Vec<(usize, u32)>,
+    last_turn: Option<u32>,
+}
+
+impl SummaryHistoryV1 {
+    fn observe_turn(&mut self, state: &crate::state::GameState) {
+        if self.last_turn != Some(state.turn) {
+            self.turn_watermarks
+                .push((state.engine.event_history.len(), state.turn));
+            self.resource_curve.lands_by_turn.push(count_lands_v1(state));
+            for seat in 0..2 {
+                self.resource_curve.hand_size_by_turn[seat]
+                    .push(state.players[seat].hand.len() as u32);
+                self.resource_curve.life_by_turn[seat].push(state.players[seat].life);
+            }
+            self.last_turn = Some(state.turn);
+        }
+    }
+
+    fn finish(
+        mut self,
+        state: &crate::state::GameState,
+        winner: Option<PlayerId>,
+        weights: &str,
+        tags: &RemovalCounterspellTagsV1,
+    ) -> GameSummaryV1 {
+        let object_card_def = build_object_card_def_map_v1(state);
+        let object_owner = build_object_owner_map_v1(state);
+        let registered = [
+            own_registered_card_ids_v1(state, 0),
+            own_registered_card_ids_v1(state, 1),
+        ];
+        let hands = [
+            end_of_game_hand_card_ids_v1(state, &object_card_def, 0),
+            end_of_game_hand_card_ids_v1(state, &object_card_def, 1),
+        ];
+        let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
+            &state.engine.event_history,
+            state.turn,
+            &self.turn_watermarks,
+            &object_card_def,
+            &object_owner,
+            &registered,
+            &hands,
+            &self.offered_as_cast,
+            tags,
+            &mut self.resource_curve,
+        );
+        GameSummaryV1 {
+            schema_version: GAME_SUMMARY_SCHEMA_V1,
+            checkpoint_weights_hash: weights.to_owned(),
+            checkpoint_git_head: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
+            winner,
+            opponent_evidence,
+            own_card_outcomes,
+            resource_curve: self.resource_curve,
+        }
+    }
+}
+
+/// One trusted coordinator owns this accumulator with its continuously driven
+/// session. Observe before selection or presentation; refreshes of the same
+/// decision are idempotent. This is not a serialized replay certificate or a
+/// substitute for session ownership. It never samples or changes the engine.
+pub struct FastGameSummaryAccumulatorV1 {
+    history: SummaryHistoryV1,
+    episode_id: u64,
+    initial_policy_steps: u64,
+    last_decision: Option<crate::rl_session::FastActorDecisionV1>,
+    last_event_count: usize,
+    last_observed_turn: u32,
+    observed_decisions: u64,
+}
+
+impl FastGameSummaryAccumulatorV1 {
+    pub fn new_v1(session: &crate::rl_session::FastActorSessionV1) -> Result<Self, String> {
+        if session.policy_step_count() != 0 {
+            return Err("summary collection must begin before the first policy step".into());
+        }
+        Ok(Self::for_legacy_driver_v1(session))
+    }
+
+    // Old public automatic callers were allowed to start midgame. Preserve
+    // their partial turn/offer sampling without claiming full-history capture.
+    fn for_legacy_driver_v1(session: &crate::rl_session::FastActorSessionV1) -> Self {
+        let episode_id = match session.current_response() {
+            crate::rl_session::FastActorResponseV1::Decision(d) => d.episode_id,
+            crate::rl_session::FastActorResponseV1::Terminal(t) => t.episode_id,
+        };
+        Self {
+            history: SummaryHistoryV1::default(),
+            episode_id,
+            initial_policy_steps: session.policy_step_count(),
+            last_decision: None,
+            last_event_count: session.game_state().engine.event_history.len(),
+            last_observed_turn: session.game_state().turn,
+            observed_decisions: 0,
+        }
+    }
+
+    /// Returns false only for an unchanged already-observed current decision.
+    /// A skipped or rewound policy step rejects rather than inventing offers.
+    pub fn observe_current_v1(
+        &mut self,
+        session: &crate::rl_session::FastActorSessionV1,
+    ) -> Result<bool, String> {
+        let crate::rl_session::FastActorResponseV1::Decision(decision) = session.current_response()
+        else {
+            return Err("summary observation requires a current gameplay decision".into());
+        };
+        let state = session.game_state();
+        if decision.episode_id != self.episode_id
+            || state.engine.event_history.len() < self.last_event_count
+            || state.turn < self.last_observed_turn
+        {
+            return Err("summary session history binding changed".into());
+        }
+        if self.last_decision == Some(decision) {
+            if state.engine.event_history.len() != self.last_event_count
+                || state.turn != self.last_observed_turn
+            {
+                return Err("summary decision changed without a policy step".into());
+            }
+            return Ok(false);
+        }
+        if Some(decision.step) != self.initial_policy_steps.checked_add(self.observed_decisions) {
+            return Err("summary requires every gameplay decision in order".into());
+        }
+        let next = self.observed_decisions.checked_add(1).ok_or("summary decision count overflow")?;
+        self.history.observe_turn(state);
+        self.history.offered_as_cast[seat_index_v1(decision.acting_player)]
+            .extend(session.current_offered_hand_cast_ids_v1());
+        self.last_decision = Some(decision);
+        self.last_event_count = state.engine.event_history.len();
+        self.last_observed_turn = state.turn;
+        self.observed_decisions = next;
+        Ok(true)
+    }
+
+    fn finish(
+        self,
+        session: &crate::rl_session::FastActorSessionV1,
+        winner: Option<PlayerId>,
+        completion: GameSummaryCompletionV2,
+        weights: &str,
+        tags: &RemovalCounterspellTagsV1,
+    ) -> CompletedGameSummaryV2 {
+        let state = session.game_state();
+        CompletedGameSummaryV2 {
+            schema: "mtg-kernel-completed-game-summary/v2",
+            history: GameSummaryHistoryV2 {
+                episode_id: self.episode_id,
+                initial_policy_steps: self.initial_policy_steps,
+                observed_gameplay_decisions: self.observed_decisions,
+                committed_policy_steps: session.policy_step_count(),
+                committed_physical_decisions: session.physical_decision_count(),
+                retained_event_count: state.engine.event_history.len(),
+                final_turn: state.turn,
+            },
+            summary: self.history.finish(state, winner, weights, tags),
+            completion,
+        }
+    }
+
+    pub fn finish_natural_v1(
+        self,
+        session: &crate::rl_session::FastActorSessionV1,
+        weights: &str,
+        tags: &RemovalCounterspellTagsV1,
+    ) -> Result<CompletedGameSummaryV2, String> {
+        let crate::rl_session::FastActorResponseV1::Terminal(terminal) = session.current_response()
+        else {
+            return Err("natural summary requires an actual engine terminal".into());
+        };
+        if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural {
+            return Err(format!(
+                "non-natural game terminal: {:?}, {:?}: {}",
+                terminal.terminal_classification, terminal.terminal_code, terminal.terminal_reason
+            ));
+        }
+        if terminal.episode_id != self.episode_id
+            || Some(terminal.policy_step_count)
+                != self.initial_policy_steps.checked_add(self.observed_decisions)
+            || session.game_state().engine.event_history.len() < self.last_event_count
+            || session.game_state().turn < self.last_observed_turn
+        {
+            return Err("natural summary is missing or differs from observed history".into());
+        }
+        Ok(self.finish(
+            session,
+            terminal.winner.map(|seat| PlayerId(seat_index_v1(seat) as u8)),
+            GameSummaryCompletionV2::Natural,
+            weights,
+            tags,
+        ))
+    }
+
+    /// A caller-authorized legal concession at a live decision. It does not
+    /// step the engine or relabel a cap/error terminal as a completed game.
+    pub fn finish_concession_v1(
+        mut self,
+        session: &crate::rl_session::FastActorSessionV1,
+        conceding_player: PlayerId,
+        weights: &str,
+        tags: &RemovalCounterspellTagsV1,
+    ) -> Result<CompletedGameSummaryV2, String> {
+        if conceding_player.0 > 1 {
+            return Err("invalid conceding player".into());
+        }
+        self.observe_current_v1(session)?;
+        Ok(self.finish(
+            session,
+            Some(conceding_player.opponent()),
+            GameSummaryCompletionV2::Concession {
+                conceding_player,
+                stage: GameConcessionStageV2::Gameplay,
+            },
+            weights,
+            tags,
+        ))
+    }
+}
+
+/// Complete a legal opening concession from the actual controlled opening.
+/// No gameplay turn sample or action is fabricated. As for natural summaries,
+/// retained initial/London draw events contribute to `times_drawn`; they are
+/// not the gameplay turn-draw feature, which the Ready handoff resets.
+pub fn finish_opening_concession_v2(
+    opening: &crate::human_opening_v1::HumanOpeningV1,
+    conceding_player: PlayerId,
+    weights: &str,
+    tags: &RemovalCounterspellTagsV1,
+) -> Result<CompletedGameSummaryV2, String> {
+    if conceding_player.0 > 1 {
+        return Err("invalid conceding player".into());
+    }
+    let (state, episode_id) = opening.summary_state_v2()?;
+    let view = opening.view();
+    Ok(CompletedGameSummaryV2 {
+        schema: "mtg-kernel-completed-game-summary/v2",
+        summary: SummaryHistoryV1::default().finish(
+            state, Some(conceding_player.opponent()), weights, tags,
+        ),
+        completion: GameSummaryCompletionV2::Concession {
+            conceding_player,
+            stage: GameConcessionStageV2::Opening {
+                phase: view.phase,
+                human_seat: view.human_seat,
+                starting_player: view.starting_player,
+                mulligans_taken: view.mulligans_taken,
+                hand_counts: std::array::from_fn(|seat| state.players[seat].hand.len() as u32),
+                library_counts: std::array::from_fn(|seat| state.players[seat].library.len() as u32),
+            },
+        },
+        history: GameSummaryHistoryV2 {
+            episode_id,
+            initial_policy_steps: 0,
+            observed_gameplay_decisions: 0,
+            committed_policy_steps: 0,
+            committed_physical_decisions: 0,
+            retained_event_count: state.engine.event_history.len(),
+            final_turn: state.turn,
+        },
+    })
+}
+
 fn was_card_offered_as_hand_cast_v1(semantic: &ActionSemanticV1, card_id: u16) -> bool {
     matches!(
         semantic,
@@ -655,71 +978,16 @@ pub fn try_run_fast_episode_with_summary_v1(
 ) -> Result<GameSummaryV1, String> {
     use crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1;
     use crate::rl_session::FastActorResponseV1;
-    let mut offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
-    let mut resource_curve = ResourceCurveV1::default();
-    let mut turn_watermarks = Vec::new();
-    let mut last_turn = None;
+    let mut summary = FastGameSummaryAccumulatorV1::for_legacy_driver_v1(session);
     loop {
         match session.current_response() {
-            FastActorResponseV1::Terminal(terminal) => {
-                if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural
-                {
-                    return Err(format!(
-                        "non-natural game terminal: {:?}, {:?}: {}",
-                        terminal.terminal_classification,
-                        terminal.terminal_code,
-                        terminal.terminal_reason
-                    ));
-                }
-                let state = session.game_state();
-                let object_card_def = build_object_card_def_map_v1(state);
-                let object_owner = build_object_owner_map_v1(state);
-                let registered = [
-                    own_registered_card_ids_v1(state, 0),
-                    own_registered_card_ids_v1(state, 1),
-                ];
-                let hands = [
-                    end_of_game_hand_card_ids_v1(state, &object_card_def, 0),
-                    end_of_game_hand_card_ids_v1(state, &object_card_def, 1),
-                ];
-                let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
-                    &state.engine.event_history,
-                    state.turn,
-                    &turn_watermarks,
-                    &object_card_def,
-                    &object_owner,
-                    &registered,
-                    &hands,
-                    &offered_as_cast,
-                    tags,
-                    &mut resource_curve,
-                );
-                return Ok(GameSummaryV1 {
-                    schema_version: GAME_SUMMARY_SCHEMA_V1,
-                    checkpoint_weights_hash: checkpoint_weights_hash.to_owned(),
-                    checkpoint_git_head: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
-                    winner: terminal
-                        .winner
-                        .map(|seat| PlayerId(seat_index_v1(seat) as u8)),
-                    opponent_evidence,
-                    own_card_outcomes,
-                    resource_curve,
-                });
+            FastActorResponseV1::Terminal(_) => {
+                return summary
+                    .finish_natural_v1(session, checkpoint_weights_hash, tags)
+                    .map(|completed| completed.summary);
             }
             FastActorResponseV1::Decision(decision) => {
-                let state = session.game_state();
-                if last_turn != Some(state.turn) {
-                    turn_watermarks.push((state.engine.event_history.len(), state.turn));
-                    resource_curve.lands_by_turn.push(count_lands_v1(state));
-                    for seat in 0..2 {
-                        resource_curve.hand_size_by_turn[seat]
-                            .push(state.players[seat].hand.len() as u32);
-                        resource_curve.life_by_turn[seat].push(state.players[seat].life);
-                    }
-                    last_turn = Some(state.turn);
-                }
-                offered_as_cast[seat_index_v1(decision.acting_player)]
-                    .extend(session.current_offered_hand_cast_ids_v1());
+                summary.observe_current_v1(session)?;
                 let selected = policy
                     .select_action_v1(PairedBo1PolicyInputV1::new(session, decision))
                     .map_err(|error| error.to_string())?;
@@ -739,6 +1007,9 @@ struct GameSummaryRoundTripCheckV1 {
     schema_version: u32,
     checkpoint_weights_hash: String,
 }
+
+#[cfg(test)]
+mod incremental_tests;
 
 #[cfg(test)]
 mod tests {

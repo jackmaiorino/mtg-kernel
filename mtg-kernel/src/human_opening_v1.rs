@@ -267,6 +267,13 @@ impl HumanOpeningV1 {
         FastActorSessionV1::from_human_opening_v1(self)
     }
 
+    /// Trusted summary extraction only. This does not advance opening or expose
+    /// a state through the human transport. The episode id binds its provenance.
+    pub(crate) fn summary_state_v2(&self) -> Result<(&GameState, u64), String> {
+        validate_opening_state(&self.state)?;
+        Ok((&self.state, self.episode_id))
+    }
+
     pub(crate) fn into_ready_parts(mut self) -> Result<ReadyHumanOpeningPartsV1, String> {
         if self.phase != HumanOpeningPhaseV1::Ready {
             return Err("complete London opening before gameplay".into());

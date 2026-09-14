@@ -17,6 +17,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub const COMPLETE_AGENT_PACKAGE_SCHEMA_V1: &str = "mtg-kernel-complete-agent-package/v1";
+const MAX_SIDEBOARD_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Runtime identity is explicit and machine-specific. Relocating a file makes a
 /// new package digest; it does not change the installed model's content identity.
@@ -406,9 +407,24 @@ impl CompleteAgentPackageV1 {
                 play_identity,
                 ..
             } => {
-                verify_file(checkpoint)?;
-                let text =
-                    fs::read_to_string(&checkpoint.path).map_err(|error| error.to_string())?;
+                // Bind the bytes actually decoded. A separate hash pass followed
+                // by reopening the path could load an unpinned replacement head.
+                pin_shape(checkpoint)?;
+                let mut bytes = Vec::new();
+                fs::File::open(&checkpoint.path)
+                    .map_err(|error| error.to_string())?
+                    .take(MAX_SIDEBOARD_CHECKPOINT_BYTES + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| error.to_string())?;
+                require(
+                    bytes.len() as u64 <= MAX_SIDEBOARD_CHECKPOINT_BYTES,
+                    "sideboard checkpoint exceeds 64 MiB",
+                )?;
+                require(
+                    format!("{:x}", Sha256::digest(&bytes)) == checkpoint.sha256,
+                    "loaded sideboard checkpoint bytes differ from their pin",
+                )?;
+                let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
                 crate::rl::parse_strict_json_value(&text).map_err(|error| error.to_string())?;
                 let head = LearnedSideboardModelV1::from_json_v1(&text)
                     .map_err(|error| error.to_string())?;

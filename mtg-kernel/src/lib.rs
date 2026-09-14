@@ -392,6 +392,7 @@ pub mod native_training_store_reference_latest_v2;
 pub mod game_summary_v1;
 pub mod human_bo3_v1;
 pub mod human_match_v1;
+pub mod human_match_v2;
 pub mod learned_bo3_v1;
 pub mod learned_sideboard_v1;
 #[cfg(test)]
