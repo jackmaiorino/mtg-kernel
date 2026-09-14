@@ -105,6 +105,14 @@ fn identity(value: &impl Serialize) -> Result<String, String> {
 }
 
 impl NativeExpandedTrainingRunV1 {
+    /// Read-only strict decoding for explicit schedule preparation. This does
+    /// not load any model, open a device or create a run directory.
+    pub fn from_json_v1(input: &str) -> Result<Self, String> {
+        check(input.len() as u64 <= SMALL_CAP, "run config exceeds 16 MiB")?;
+        let value = crate::rl::parse_strict_json_value(input).map_err(err)?;
+        serde_json::from_value(value).map_err(err)
+    }
+
     pub fn validate_v1(&self) -> Result<(), String> {
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         self.update_backend.validate_v1()?;
