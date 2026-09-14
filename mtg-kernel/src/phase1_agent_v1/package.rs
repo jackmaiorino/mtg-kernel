@@ -269,7 +269,7 @@ impl CompleteAgentPackageV1 {
             pin_shape(checkpoint)?;
         }
         require(
-            identity.schema == "mtg-kernel-expanded-deck-inference/v1"
+            identity.has_supported_origin_schema_v1()
                 && model.schema == "mtg-kernel-actual-play-model/v1",
             "unknown installed gameplay identity",
         )?;
@@ -295,8 +295,8 @@ impl CompleteAgentPackageV1 {
         }
         require(
             model.card_db_hash == runtime.card_db_hash
-                && identity.source_import.destination_registry_sha256
-                    == runtime.card_registry_sha256
+                && identity.source_import.destination_registry_sha256_v1()
+                    == runtime.card_registry_sha256.as_str()
                 && model.feature_contract_digest == runtime.feature_contract_digest
                 && model.feature_encoding_digest == runtime.feature_encoding_digest
                 && identity.features_source_sha256 == runtime.features_source_sha256

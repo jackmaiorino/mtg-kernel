@@ -4,7 +4,7 @@ use crate::expanded_deck_training_v1::{
     ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ExpandedSeatBehaviorV1, PinnedFileV1,
 };
 use crate::learned_bo3_v1::{
-    LearnedBo3RunConfigV1, VisibleSideboardPolicyV1, run_learned_bo3_with_registrations_v1,
+    run_learned_bo3_with_registrations_v1, LearnedBo3RunConfigV1, VisibleSideboardPolicyV1,
 };
 use crate::learned_sideboard_v1::{LearnedSideboardInputV1, SideboardPlayIdentityV1};
 use crate::native_flat_tensorizer_v3::*;
@@ -29,7 +29,10 @@ fn package(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAge
         tracked_tree_contract: "test-only-tree".into(),
         build_git_clean: true,
         card_db_hash: model.card_db_hash.clone(),
-        card_registry_sha256: policy.identity_v1().destination_registry_sha256.clone(),
+        card_registry_sha256: policy
+            .identity_v1()
+            .destination_registry_sha256_v1()
+            .to_owned(),
         feature_contract_digest: model.feature_contract_digest.clone(),
         feature_encoding_digest: model.feature_encoding_digest.clone(),
         features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
@@ -196,13 +199,11 @@ fn assert_compact_policy_scores(policy: &mut FrozenPlayPolicyV1) {
             assert!(
                 scores.logits[pass].is_finite() && (15.0..=16.0).contains(&scores.logits[pass])
             );
-            assert!(
-                scores
-                    .logits
-                    .iter()
-                    .enumerate()
-                    .all(|(i, x)| i == pass || *x == 0.0)
-            );
+            assert!(scores
+                .logits
+                .iter()
+                .enumerate()
+                .all(|(i, x)| i == pass || *x == 0.0));
             let probability = record
                 .behavior
                 .selected_probability_v1(ordered_actions.len())
@@ -296,20 +297,15 @@ fn actual_natural_two_and_three_game_returns_replay_legacy_parity_and_equal_matc
         serde_json::to_vec(&three).unwrap(),
         serde_json::to_vec(&replay).unwrap()
     );
-    assert!(
-        three
-            .games
-            .iter()
-            .all(|g| g.error.is_none() && g.discarded_pending_selections == 0)
-    );
-    assert!(
-        three
-            .trajectory
-            .games
-            .iter()
-            .all(|g| g.terminal.as_ref().unwrap().classification
-                == TerminalClassificationV1::Natural)
-    );
+    assert!(three
+        .games
+        .iter()
+        .all(|g| g.error.is_none() && g.discarded_pending_selections == 0));
+    assert!(three
+        .trajectory
+        .games
+        .iter()
+        .all(|g| g.terminal.as_ref().unwrap().classification == TerminalClassificationV1::Natural));
     let new_traces: Vec<Vec<_>> = three
         .trajectory
         .games
@@ -537,11 +533,9 @@ fn actual_engine_error_does_not_commit_pending_selection_or_infer_commit_from_co
             .step(decision.episode_id, decision.step, u32::MAX)
             .unwrap_err();
         assert_eq!(session.policy_step_count(), u64::from(advance_first));
-        assert!(
-            recorder
-                .finish_game(Err(error.to_string()), &mut diagnostic)
-                .is_err()
-        );
+        assert!(recorder
+            .finish_game(Err(error.to_string()), &mut diagnostic)
+            .is_err());
         assert_eq!(diagnostic.discarded_pending_selections, 1);
         assert!(recorder.game.decisions.is_empty());
         assert!(recorder.game.terminal.is_none());
@@ -561,14 +555,12 @@ fn bounded_recording_preserves_valid_prefix_and_public_entry_rejects_unverified_
             reason: IncompleteMatchReasonV1::DecisionCap
         }
     );
-    assert!(
-        result
-            .trajectory
-            .validate_v1(packages.each_ref())
-            .unwrap()
-            .match_return_v1(PlayerSeatV1::P0)
-            .is_none()
-    );
+    assert!(result
+        .trajectory
+        .validate_v1(packages.each_ref())
+        .unwrap()
+        .match_return_v1(PlayerSeatV1::P0)
+        .is_none());
     assert_eq!(result.games[0].discarded_pending_selections, 1);
     assert!(collect_bo3_trajectory_v1(cfg.clone(), packages.clone()).is_err());
     let mut changed = packages.clone();
@@ -698,11 +690,9 @@ fn actual_greedy_sideboard_runs_between_natural_games_with_matching_visible_trac
             reconstructed.configuration_v1().unwrap(),
             expected.configuration
         );
-        assert!(
-            records
-                .iter()
-                .all(|r| matches!(r.behavior, BehaviorDistributionV1::Deterministic { .. }))
-        );
+        assert!(records
+            .iter()
+            .all(|r| matches!(r.behavior, BehaviorDistributionV1::Deterministic { .. })));
         current = expected.configuration;
     }
 }
@@ -726,17 +716,13 @@ fn bounded_public_request_parser_roundtrips_and_rejects_nested_duplicates() {
         1,
     );
     assert_ne!(duplicate, text);
-    assert!(
-        Bo3CollectionRequestV1::from_json_v1(&duplicate)
-            .unwrap_err()
-            .contains("duplicate JSON object key")
-    );
+    assert!(Bo3CollectionRequestV1::from_json_v1(&duplicate)
+        .unwrap_err()
+        .contains("duplicate JSON object key"));
     let oversized = " ".repeat(MAX_BO3_COLLECTION_REQUEST_BYTES_V1 + 1);
-    assert!(
-        Bo3CollectionRequestV1::from_json_v1(&oversized)
-            .unwrap_err()
-            .contains("exceeds 4 MiB")
-    );
+    assert!(Bo3CollectionRequestV1::from_json_v1(&oversized)
+        .unwrap_err()
+        .contains("exceeds 4 MiB"));
     let mut unknown = serde_json::to_value(&request).unwrap();
     unknown["config"]["unrecognized"] = serde_json::json!(true);
     assert!(

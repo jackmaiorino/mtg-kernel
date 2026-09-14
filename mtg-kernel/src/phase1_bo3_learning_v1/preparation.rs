@@ -1,9 +1,10 @@
 use super::require;
 use super::*;
 use crate::expanded_deck_training_v1::{
-    ExpandedSeatBehaviorV1, PinnedFileV1, load_expanded_inference_v1,
+    load_expanded_inference_v1, validate_ordinary_source_descriptor_v1, ExpandedSeatBehaviorV1,
+    PinnedFileV1,
 };
-use crate::fast_sampler::{WIDE_CATEGORICAL_SAMPLER_VERSION_V1, WideCategoricalScratchV1};
+use crate::fast_sampler::{WideCategoricalScratchV1, WIDE_CATEGORICAL_SAMPLER_VERSION_V1};
 use crate::learned_bo3_v1::Bo3OpeningProtocolV1;
 use crate::native_flat_tensorizer_v3::*;
 use crate::native_policy_train_step_v1::{
@@ -11,12 +12,12 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::phase1_agent_v1::*;
-use crate::phase1_bo3_collection_v1::{BO3_COLLECTION_RESULT_SCHEMA_V1, Bo3CollectionConfigV1};
+use crate::phase1_bo3_collection_v1::{Bo3CollectionConfigV1, BO3_COLLECTION_RESULT_SCHEMA_V1};
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
 use crate::rl_session::RlSessionTerminalV1;
-use crate::sideboard_play_policy_v1::{FrozenPlayPolicyImportV1, FrozenPlayPolicyV1};
+use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -210,7 +211,11 @@ struct TrainableResultDto {
     native_capture: Bo3NativeCaptureV1,
 }
 fn seat(actor: PlayerSeatV1) -> usize {
-    if actor == PlayerSeatV1::P0 { 0 } else { 1 }
+    if actor == PlayerSeatV1::P0 {
+        0
+    } else {
+        1
+    }
 }
 fn pin_shape(pin: &PinnedFileV1) -> Result<(), String> {
     require(
@@ -292,10 +297,9 @@ pub(crate) fn ordinary_source(behavior: &ExpandedSeatBehaviorV1) -> Result<(), S
         behavior.source.checkpoint.is_some(),
         "BO3 preparation requires an ordinary existing checkpoint",
     )?;
-    let bytes = read_bytes(&behavior.source.play_import, 4 * 1024 * 1024)?;
-    let _: FrozenPlayPolicyImportV1 = strict_json(&bytes)
-        .map_err(|e| format!("ordinary import required; registry-transfer continuation needs an explicit BO3 schedule transition: {e}"))?;
-    Ok(())
+    // Admission shares the ordinary-parent descriptor dispatch. Actual model,
+    // checkpoint and Adam validation still runs through load_actual below.
+    validate_ordinary_source_descriptor_v1(&behavior.source)
 }
 pub(crate) fn admitted_source(behavior: &ExpandedSeatBehaviorV1) -> Result<(), String> {
     let bytes = read_bytes(&behavior.source.play_import, 4 * 1024 * 1024)?;

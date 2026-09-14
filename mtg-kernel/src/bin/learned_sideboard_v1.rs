@@ -405,13 +405,18 @@ fn run() -> Result<(), String> {
     absolute(import_path)?;
     absolute(output)?;
     let import_bytes = read_bounded(import_path, MAX_JSON_BYTES)?;
-    let import: FrozenPlayPolicyImportV1 =
-        serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
     let expanded_source = command.expanded_source()?;
     let (mut play, expanded_identity) = if let Some(source) = expanded_source {
+        if hash(&import_bytes) != source.play_import.sha256 {
+            return Err("expanded source descriptor bytes differ from their pin".into());
+        }
         let (play, receipt) = load_expanded_inference_v1(source)?;
         (play, Some(receipt))
     } else {
+        // Only the legacy route interprets this path as a frozen Store import.
+        // Expanded sources select their own strict, versioned descriptor reader.
+        let import: FrozenPlayPolicyImportV1 =
+            serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
         (
             match &command {
                 CommandV1::RunBatch {
@@ -426,12 +431,12 @@ fn run() -> Result<(), String> {
     let copied_embeddings = play.embedding_rows_v1().to_vec();
     let identity = SideboardPlayIdentityV1 {
         weights_sha256: expanded_identity.as_ref().map_or_else(
-            || play.identity_v1().weights_sha256.clone(),
+            || play.identity_v1().initial_weights_sha256_v1().to_owned(),
             |receipt| receipt.model.weights_sha256.clone(),
         ),
-        // This existing field records import ancestry. The expanded receipt
-        // separately identifies the installed model and checkpoint state.
-        git_head: play.identity_v1().source_git_commit.clone(),
+        // This field records the imported or initialized origin's producer.
+        // The expanded receipt separately binds the installed model/state.
+        git_head: play.identity_v1().origin_git_commit_v1().to_owned(),
     };
     let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&copied_embeddings, identity)
         .map_err(|e| e.to_string())?;
@@ -568,7 +573,7 @@ fn execute(
             write_json(&output.join("inputs.json"), &inputs)?;
             let tags = checked_in_tags()?;
             let policy_identity = hash(&serde_json::to_vec(policies).map_err(|e| e.to_string())?);
-            let play_weights = play.identity_v1().weights_sha256.clone();
+            let play_weights = play.identity_v1().initial_weights_sha256_v1().to_owned();
             let mut example_files = Vec::new();
             let mut example_count = 0usize;
             let mut example_bytes = 0usize;

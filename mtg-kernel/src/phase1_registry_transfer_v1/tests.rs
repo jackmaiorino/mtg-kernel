@@ -85,6 +85,8 @@ fn checkpoint(
     let count = registry_cards(registry).unwrap().len();
     let mut ancestry = FrozenPlayPolicyV1::training_fixture_v3()
         .identity_v1()
+        .as_imported_v1()
+        .unwrap()
         .clone();
     ancestry.destination_registry_sha256 = sha(registry);
     ancestry.destination_card_count = count;

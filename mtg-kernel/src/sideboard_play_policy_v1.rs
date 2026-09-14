@@ -48,6 +48,11 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+mod origin;
+pub use origin::{
+    FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, FRESH_PLAY_INITIALIZATION_SCHEMA_V1,
+};
+
 const DESTINATION_REGISTRY: &[u8] = include_bytes!("../../data/cards_v1.json");
 const EXPORT_SCHEMA: &str = "mtg-kernel-native-inference-export/v1";
 const PARAMETER_ENCODING: &str = "native-train-state-parameters-section-f32le/v1";
@@ -148,7 +153,7 @@ pub struct FrozenPlayDecisionScoresV1 {
 pub struct FrozenPlayPolicyV1 {
     model: NativePolicyValueNetV1,
     embeddings: Vec<f32>,
-    identity: FrozenPlayPolicyIdentityV1,
+    identity: PlayPolicyOriginV1,
     encoder: FlatDecisionEncoderV2,
     owned: OwnedScoringV1,
     tensorizer: NativeFlatTensorizerV2,
@@ -169,6 +174,98 @@ struct FrozenPlaySuccessorStateV3 {
 }
 
 impl FrozenPlayPolicyV1 {
+    /// Construct a V3 scorer from actual sampled initialization bytes. This
+    /// validates installed state and metadata, not the Python producer's seed
+    /// execution. The pinned artifact loader separately validates that evidence.
+    pub(crate) fn from_fresh_initialization_v1(
+        model: NativePolicyValueNetV1,
+        identity: FreshPlayPolicyIdentityV1,
+    ) -> Result<Self, String> {
+        identity.validate_v1()?;
+        require(
+            model.config_v1() == NativePolicyValueModelConfigV1::contract_v1()
+                && identity.destination_card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}")
+                && identity.destination_registry_sha256 == hash(DESTINATION_REGISTRY)
+                && identity.destination_card_count == crate::card_def::CARD_DEFS.len()
+                && identity.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
+                && identity.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3
+                && identity.features_source_sha256 == FEATURES_SOURCE_SHA256_V3
+                && identity.feature_descriptor_sha256 == FEATURE_DESCRIPTOR_SHA256_V3,
+            "fresh initialization does not bind this runtime and Net8 layout",
+        )?;
+        model.validate_parameters_v1().map_err(|e| e.to_string())?;
+        let parameters = model.parameter_snapshot_v1();
+        let expected: Vec<_> = native_train_state_parameter_layout_v1().collect();
+        require(
+            parameters.len() == expected.len(),
+            "fresh parameter tensor count differs",
+        )?;
+        // Fields are in canonical sorted order; names are frozen ASCII and
+        // shapes/offsets are integers. No trailing newline enters the digest.
+        #[derive(Serialize)]
+        struct Layout<'a> {
+            byte_count: usize,
+            byte_offset: usize,
+            name: &'a str,
+            ordinal: usize,
+            shape: &'a [usize],
+        }
+        let mut offset = 0usize;
+        let mut layout = Vec::with_capacity(parameters.len());
+        let mut weights = Sha256::new();
+        for (ordinal, (parameter, (name, shape))) in parameters.iter().zip(expected).enumerate() {
+            require(
+                parameter.name == name && parameter.shape.as_slice() == shape,
+                "fresh named parameter layout differs",
+            )?;
+            let byte_count = parameter
+                .values
+                .len()
+                .checked_mul(4)
+                .ok_or("parameter byte count overflow")?;
+            layout.push(Layout {
+                byte_count,
+                byte_offset: offset,
+                name,
+                ordinal,
+                shape,
+            });
+            offset = offset
+                .checked_add(byte_count)
+                .ok_or("parameter byte offset overflow")?;
+            for value in &parameter.values {
+                weights.update(value.to_bits().to_le_bytes());
+            }
+        }
+        require(
+            offset == PARAMETER_BYTES
+                && identity.initial_weights_sha256 == format!("{:x}", weights.finalize())
+                && identity.initial_model_parameter_sha256 == model.parameter_manifest_sha256_v1()
+                && identity.parameter_layout_sha256
+                    == hash(&serde_json::to_vec(&layout).map_err(|e| e.to_string())?),
+            "fresh initial parameter bytes or layout identity differs",
+        )?;
+        let embeddings = parameters
+            .iter()
+            .find(|p| p.name == "card_embedding.weight")
+            .ok_or("embedding tensor absent")?
+            .values
+            .clone();
+        Ok(Self {
+            model,
+            embeddings,
+            identity: PlayPolicyOriginV1::fresh_initialization_v1(identity)?,
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: Some(FrozenPlaySuccessorStateV3::default()),
+        })
+    }
+
     /// Explicit construction from the independently verified registry-transfer
     /// envelope. The old import loader is unchanged and cannot select this path.
     pub(crate) fn from_registry_transfer_v1(
@@ -208,7 +305,7 @@ impl FrozenPlayPolicyV1 {
         Ok(Self {
             model,
             embeddings,
-            identity,
+            identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
@@ -258,7 +355,8 @@ impl FrozenPlayPolicyV1 {
                 sampler_identity: FAST_CATEGORICAL_SAMPLER_VERSION.into(),
                 reader_revalidated_store_chain: false,
                 observation_successor: None,
-            },
+            }
+            .into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
@@ -269,8 +367,11 @@ impl FrozenPlayPolicyV1 {
             successor: Some(FrozenPlaySuccessorStateV3::default()),
         };
         let installed = policy.actual_model_identity_v1();
-        policy.identity.weights_sha256 = installed.weights_sha256;
-        policy.identity.model_parameter_sha256 = installed.model_parameter_sha256;
+        let PlayPolicyOriginV1::Imported(identity) = &mut policy.identity else {
+            unreachable!("test fixture constructed an imported origin")
+        };
+        identity.weights_sha256 = installed.weights_sha256;
+        identity.model_parameter_sha256 = installed.model_parameter_sha256;
         policy
     }
 
@@ -423,7 +524,7 @@ impl FrozenPlayPolicyV1 {
         Ok(Self {
             model,
             embeddings,
-            identity,
+            identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
@@ -445,7 +546,10 @@ impl FrozenPlayPolicyV1 {
             "explicit V3 destination feature identity differs",
         )?;
         let mut policy = Self::load_v1(input)?;
-        policy.identity.observation_successor = Some(FrozenPlayObservationReceiptV3 {
+        let PlayPolicyOriginV1::Imported(identity) = &mut policy.identity else {
+            return Err("legacy observation transfer requires imported ancestry".into());
+        };
+        identity.observation_successor = Some(FrozenPlayObservationReceiptV3 {
             schema: "mtg-kernel-frozen-play-observation-transfer/v3".into(),
             source_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V1.into(),
             source_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V1.into(),
@@ -454,13 +558,13 @@ impl FrozenPlayPolicyV1 {
             feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
             semantics: "rich V6 / flat V3 revision 3; exact public historical sources, chooser-only unordered library candidates, typed object-cost prefixes, private chosen-creature branch, visible refreshed paid power, and exact pending/queued Ward-to-targeter payment bindings; unchanged imported weights and dimensions; source inference transfer only, no learned competence claim".into(),
         });
-        policy.identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
-        policy.identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
+        identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
+        identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
         policy.successor = Some(FrozenPlaySuccessorStateV3::default());
         Ok(policy)
     }
 
-    pub fn identity_v1(&self) -> &FrozenPlayPolicyIdentityV1 {
+    pub fn identity_v1(&self) -> &PlayPolicyOriginV1 {
         &self.identity
     }
 
@@ -523,9 +627,9 @@ impl FrozenPlayPolicyV1 {
             weights_sha256: format!("{:x}", weights.finalize()),
             model_parameter_sha256: self.model.parameter_manifest_sha256_v1(),
             embedding_table_sha256: format!("{:x}", embeddings.finalize()),
-            feature_contract_digest: self.identity.feature_contract_digest.clone(),
-            feature_encoding_digest: self.identity.feature_encoding_digest.clone(),
-            card_db_hash: self.identity.destination_card_db_hash.clone(),
+            feature_contract_digest: self.identity.feature_contract_digest_v1().to_owned(),
+            feature_encoding_digest: self.identity.feature_encoding_digest_v1().to_owned(),
+            card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
         }
     }
 
@@ -624,7 +728,7 @@ impl FrozenPlayPolicyV1 {
     /// the fixed padding/unknown row; all ids must exist in this destination.
     pub fn card_embedding_v1(&self, card_id: u16) -> Result<&[f32], String> {
         require(
-            usize::from(card_id) < self.identity.destination_card_count,
+            usize::from(card_id) < self.identity.destination_card_count_v1(),
             "card id outside destination registry",
         )?;
         let start = (usize::from(card_id) + 1) * CARD_EMBEDDING_DIM_V1;
@@ -1105,7 +1209,7 @@ mod tests {
                 policy.embedding_rows_v1(),
                 SideboardPlayIdentityV1 {
                     weights_sha256: before.weights_sha256.clone(),
-                    git_head: ancestry.source_git_commit.clone(),
+                    git_head: ancestry.origin_git_commit_v1().to_owned(),
                 },
             )
             .unwrap();
@@ -1153,7 +1257,7 @@ mod tests {
             policy.embedding_rows_v1(),
             SideboardPlayIdentityV1 {
                 weights_sha256: after.weights_sha256.clone(),
-                git_head: ancestry.source_git_commit.clone(),
+                git_head: ancestry.origin_git_commit_v1().to_owned(),
             },
         )
         .unwrap();
@@ -1260,7 +1364,7 @@ mod tests {
         );
         assert_eq!(first_scores.value.to_bits(), second_scores.value.to_bits());
         assert_eq!(
-            policy.identity_v1().model_parameter_sha256,
+            policy.identity_v1().initial_model_parameter_sha256_v1(),
             input.expected_model_parameter_sha256
         );
         assert_eq!(

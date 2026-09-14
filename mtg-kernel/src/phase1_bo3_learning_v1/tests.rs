@@ -162,7 +162,11 @@ fn assert_structural_complete_multisubstep_group(
     );
     assert_eq!(
         prepared.substeps,
-        prepared.groups.iter().map(|g| g.substeps.len()).sum::<usize>()
+        prepared
+            .groups
+            .iter()
+            .map(|g| g.substeps.len())
+            .sum::<usize>()
     );
     let learner = original.result.packages[0].gameplay.clone();
     let batch = finish_prepared(
@@ -240,11 +244,9 @@ fn phase1_bo3_training_actual_two_three_game_capture_preserves_core_and_equal_ma
     let mut offset = 0;
     for count in counts {
         let expected = (1.0_f64 / 2.0 / count as f64) as f32;
-        assert!(
-            prepared.report.weight_bits[offset..offset + count]
-                .iter()
-                .all(|b| *b == expected.to_bits())
-        );
+        assert!(prepared.report.weight_bits[offset..offset + count]
+            .iter()
+            .all(|b| *b == expected.to_bits()));
         let sum: f64 = prepared.report.weight_bits[offset..offset + count]
             .iter()
             .map(|b| f64::from(f32::from_bits(*b)))
@@ -255,29 +257,21 @@ fn phase1_bo3_training_actual_two_three_game_capture_preserves_core_and_equal_ma
     prepared.with_native_groups_v1(|groups, weights| {
         assert_eq!(groups.len(), counts.iter().sum::<usize>());
         assert_eq!(weights.len(), groups.len());
-        assert!(
-            groups
-                .iter()
-                .all(|g| g.baseline_bits == 0 && matches!(g.terminal_return, -1 | 1))
-        );
-        assert!(
-            groups[..counts[0]]
-                .iter()
-                .all(|g| g.terminal_return == groups[0].terminal_return)
-        );
-        assert!(
-            groups[counts[0]..]
-                .iter()
-                .all(|g| g.terminal_return == groups[counts[0]].terminal_return)
-        );
+        assert!(groups
+            .iter()
+            .all(|g| g.baseline_bits == 0 && matches!(g.terminal_return, -1 | 1)));
+        assert!(groups[..counts[0]]
+            .iter()
+            .all(|g| g.terminal_return == groups[0].terminal_return));
+        assert!(groups[counts[0]..]
+            .iter()
+            .all(|g| g.terminal_return == groups[counts[0]].terminal_return));
         // Opponent rows were replayed, but the borrowed update groups contain
         // only the requested learner's committed actual scorer tensors.
-        assert!(
-            groups
-                .iter()
-                .flat_map(|g| g.substeps)
-                .all(|s| matches!(s.forward, NativePolicyForwardInputV1::Encoded(_)))
-        );
+        assert!(groups
+            .iter()
+            .flat_map(|g| g.substeps)
+            .all(|s| matches!(s.forward, NativePolicyForwardInputV1::Encoded(_))));
     });
 }
 
@@ -357,22 +351,18 @@ fn phase1_bo3_training_native_capture_cap_drops_pending_without_touching_v1_defa
             reason: IncompleteMatchReasonV1::DecisionCap
         }
     ));
-    assert!(
-        result.result.collected.trajectory.games[0]
-            .decisions
-            .iter()
-            .all(|d| !matches!(d.visible, ActorVisibleDecisionV1::Gameplay { .. }))
-    );
+    assert!(result.result.collected.trajectory.games[0]
+        .decisions
+        .iter()
+        .all(|d| !matches!(d.visible, ActorVisibleDecisionV1::Gameplay { .. })));
     // The old core path still runs independently of the native capture bound.
     let (mut policies, packages) = fixtures([PlayDrawChoiceV1::Play; 2]);
     let old =
         collect_loaded_inner(&cfg, packages.each_ref(), &mut policies, [None, None], None).unwrap();
-    assert!(
-        old.trajectory.games[0]
-            .decisions
-            .iter()
-            .any(|d| matches!(d.visible, ActorVisibleDecisionV1::Gameplay { .. }))
-    );
+    assert!(old.trajectory.games[0]
+        .decisions
+        .iter()
+        .any(|d| matches!(d.visible, ActorVisibleDecisionV1::Gameplay { .. })));
 }
 
 #[test]
@@ -473,11 +463,9 @@ fn phase1_bo3_training_strict_reader_rejects_nested_unknowns_and_does_not_mint_r
         serde_json::json!(123);
     assert!(strict_json::<TrainableResultDto>(&serde_json::to_vec(&json).unwrap()).is_err());
     assert!(strict_json::<serde_json::Value>(br#"{"nested":{"x":1,"x":2}}"#).is_err());
-    assert!(
-        ordinary_source(&result.request.packages[0].gameplay)
-            .unwrap_err()
-            .contains("ordinary existing checkpoint")
-    );
+    assert!(ordinary_source(&result.request.packages[0].gameplay)
+        .unwrap_err()
+        .contains("ordinary existing checkpoint"));
     assert!(
         collect_trainable_bo3_v1(result.request).is_err(),
         "public capture cannot accept fixture metadata as an ordinary real checkpoint"
@@ -568,11 +556,12 @@ fn phase1_bo3_training_physical_identity_ignores_caps_transport_and_optimizer_hi
     relocated[1].gameplay.identity.checkpoint_sha256 = Some("f".repeat(64));
     relocated[1].gameplay.identity.state_sha256 = "d".repeat(64);
     relocated[1].gameplay.identity.adam_step += 100;
-    relocated[1]
-        .gameplay
-        .identity
-        .source_import
-        .source_generation += 1;
+    let crate::sideboard_play_policy_v1::PlayPolicyOriginV1::Imported(origin) =
+        &mut relocated[1].gameplay.identity.source_import
+    else {
+        panic!("fixture must retain imported origin")
+    };
+    origin.source_generation += 1;
     let mut shortened = cfg.clone();
     shortened.match_id = "different-label".into();
     shortened.deck_ids = ["other-label-a".into(), "other-label-b".into()];

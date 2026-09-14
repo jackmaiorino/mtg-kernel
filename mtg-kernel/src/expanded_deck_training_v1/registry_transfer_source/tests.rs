@@ -115,8 +115,11 @@ fn fixture() -> Fixture {
     saved.adam_step = snapshot.adam_step;
     saved.learning_rate_bits = LR.to_bits();
     saved.value_coefficient_bits = VC.to_bits();
-    saved.source_import.destination_registry_sha256 = sha(REGISTRY);
-    saved.source_import.observation_successor = Some(FrozenPlayObservationReceiptV3 {
+    let PlayPolicyOriginV1::Imported(origin) = &mut saved.source_import else {
+        panic!("registry transfer fixture must retain imported origin")
+    };
+    origin.destination_registry_sha256 = sha(REGISTRY);
+    origin.observation_successor = Some(FrozenPlayObservationReceiptV3 {
         schema: "mtg-kernel-frozen-play-observation-transfer/v3".into(),
         source_feature_contract_digest: "1".repeat(64),
         source_feature_encoding_digest: "2".repeat(64),
@@ -220,11 +223,13 @@ fn phase1_registry_trainer_real_update_reloads_exact_adam_and_transfer_provenanc
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        policy.identity_v1().schema,
+        policy.identity_v1().as_imported_v1().unwrap().schema,
         "mtg-kernel-registry-transferred-play/v1"
     );
     assert!(policy
         .identity_v1()
+        .as_imported_v1()
+        .unwrap()
         .appended_rows
         .contains(&f.descriptor.transfer_envelope.sha256));
     let first = trajectory(&mut policy, &expected, &f.schedule.batches[0][0]);

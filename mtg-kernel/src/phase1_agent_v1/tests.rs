@@ -91,7 +91,7 @@ fn package() -> CompleteAgentPackageV1 {
             },
             identity: ExpandedInferenceIdentityV1 {
                 schema: "mtg-kernel-expanded-deck-inference/v1".into(),
-                source_import: ancestry,
+                source_import: ancestry.into(),
                 checkpoint_sha256: Some(digest('1')),
                 model,
                 state_sha256: digest('b'),
@@ -285,6 +285,26 @@ fn package_roundtrip_has_exact_identity() {
         value.package_sha256_v1().unwrap(),
         decoded.package_sha256_v1().unwrap()
     );
+    // Imported origins retain their exact pre-enum object wire shape.
+    assert_eq!(
+        serde_json::to_value(&value.gameplay.identity.source_import).unwrap(),
+        serde_json::to_value(
+            value
+                .gameplay
+                .identity
+                .source_import
+                .as_imported_v1()
+                .unwrap()
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn imported_package_cannot_claim_fresh_inference_schema() {
+    let mut value = package();
+    value.gameplay.identity.schema = "mtg-kernel-expanded-deck-inference/v2".into();
+    assert!(value.validate_metadata_v1().is_err());
 }
 
 #[test]
@@ -309,7 +329,12 @@ fn ancestry_weights_cannot_bind_sideboard_head() {
     value.sideboard = AgentSideboardPolicyV1::LearnedGreedyV1 {
         checkpoint: pin("head"),
         play_identity: crate::learned_sideboard_v1::SideboardPlayIdentityV1 {
-            weights_sha256: value.gameplay.identity.source_import.weights_sha256.clone(),
+            weights_sha256: value
+                .gameplay
+                .identity
+                .source_import
+                .initial_weights_sha256_v1()
+                .to_owned(),
             git_head: "a".repeat(40),
         },
         embedding_table_sha256: value.gameplay.identity.model.embedding_table_sha256.clone(),

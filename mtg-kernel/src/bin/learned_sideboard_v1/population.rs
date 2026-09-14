@@ -13,7 +13,7 @@ fn embeddings_for_seat<'a>(
         values,
         SideboardPlayIdentityV1 {
             weights_sha256: receipt.model.weights_sha256.clone(),
-            git_head: receipt.source_import.source_git_commit.clone(),
+            git_head: receipt.source_import.origin_git_commit_v1().to_owned(),
         },
     )
     .map_err(|error| error.to_string())

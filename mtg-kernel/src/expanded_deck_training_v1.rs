@@ -33,8 +33,8 @@ use crate::rl_session::{
 };
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::{
-    FrozenPlayObservationTransferV3, FrozenPlayPolicyIdentityV1, FrozenPlayPolicyImportV1,
-    FrozenPlayPolicyV1, PlayModelIdentityV1,
+    FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1, FrozenPlayPolicyV1,
+    PlayModelIdentityV1, PlayPolicyOriginV1,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,9 @@ use std::path::{Path, PathBuf};
 
 const TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v1";
 const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v2";
+const FRESH_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v3";
 const CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-checkpoint/v1";
+const FRESH_CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-fresh-checkpoint/v1";
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -54,7 +56,9 @@ mod phase1_parallel_collection;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
+mod fresh_initialization_source;
 mod registry_transfer_source;
+pub use fresh_initialization_source::ExpandedFreshInitializationSourceV1;
 pub use registry_transfer_source::{
     ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
 };
@@ -169,7 +173,7 @@ pub struct ExpandedModelSourceV1 {
 #[serde(deny_unknown_fields)]
 pub struct ExpandedInferenceIdentityV1 {
     pub schema: String,
-    pub source_import: FrozenPlayPolicyIdentityV1,
+    pub source_import: PlayPolicyOriginV1,
     pub checkpoint_sha256: Option<String>,
     pub model: PlayModelIdentityV1,
     pub state_sha256: String,
@@ -178,6 +182,28 @@ pub struct ExpandedInferenceIdentityV1 {
     pub feature_registry_version: String,
     pub features_source_sha256: String,
     pub feature_descriptor_sha256: String,
+}
+
+impl ExpandedInferenceIdentityV1 {
+    pub fn has_supported_origin_schema_v1(&self) -> bool {
+        self.schema == inference_schema_v1(&self.source_import)
+    }
+}
+
+fn inference_schema_v1(origin: &PlayPolicyOriginV1) -> &'static str {
+    if origin.is_fresh_v1() {
+        "mtg-kernel-expanded-deck-inference/v2"
+    } else {
+        "mtg-kernel-expanded-deck-inference/v1"
+    }
+}
+
+fn ordinary_checkpoint_schema_v1(origin: &PlayPolicyOriginV1) -> &'static str {
+    if origin.is_fresh_v1() {
+        FRESH_CHECKPOINT_SCHEMA
+    } else {
+        CHECKPOINT_SCHEMA
+    }
 }
 
 /// Reuses the bounded, pinned continuation reader and its exact feature,
@@ -206,7 +232,7 @@ pub(crate) fn inference_identity_v1(
     state: &NativePolicyValueTrainStateV1,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
     Ok(ExpandedInferenceIdentityV1 {
-        schema: "mtg-kernel-expanded-deck-inference/v1".into(),
+        schema: inference_schema_v1(policy.identity_v1()).into(),
         source_import: policy.identity_v1().clone(),
         checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
         model: policy.actual_model_identity_v1(),
@@ -219,32 +245,50 @@ pub(crate) fn inference_identity_v1(
     })
 }
 
-/// Narrow objective-transition seam. An ordinary checkpoint and ordinary
-/// import are mandatory; no registry dispatch or fresh Adam initialization.
+/// Narrow objective-transition seam. An existing game-terminal checkpoint
+/// is mandatory; registry/BO3 sources and fresh Adam resets are not admitted.
 pub(crate) fn load_ordinary_bo3_parent_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<
-    (FrozenPlayPolicyV1, NativePolicyValueTrainStateV1, ExpandedInferenceIdentityV1, u32, u32),
+    (
+        FrozenPlayPolicyV1,
+        NativePolicyValueTrainStateV1,
+        ExpandedInferenceIdentityV1,
+        u32,
+        u32,
+    ),
     String,
 > {
-    let pin = source.checkpoint.as_ref()
+    let pin = source
+        .checkpoint
+        .as_ref()
         .ok_or("BO3 transition requires an existing ordinary checkpoint")?;
-    let import: FrozenPlayPolicyImportV1 = read_pinned(&source.play_import)?;
-    let mut policy = FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)?;
-    let mut model = NativePolicyValueNetV1::runner_fixed_v1(
-        NativePolicyValueModelConfigV1::contract_v1(),
-    ).map_err(err)?;
-    model.replace_parameter_snapshot_v1(&policy.training_parameters_v3()).map_err(err)?;
-    let saved = read_legacy_checkpoint_v1(pin)?;
+    validate_ordinary_source_descriptor_v1(source)?;
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let mut policy = load_ordinary_policy_v1(source, &bytes)?;
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(err)?;
+    model
+        .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+        .map_err(err)?;
+    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
     for bits in [saved.learning_rate_bits, saved.value_coefficient_bits] {
         let value = f32::from_bits(bits);
-        ensure(value.is_finite() && value > 0.0,
-            "ordinary checkpoint scalar is not positive finite")?;
+        ensure(
+            value.is_finite() && value > 0.0,
+            "ordinary checkpoint scalar is not positive finite",
+        )?;
     }
     let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
     let identity = inference_identity_v1(source, &policy, &state)?;
-    Ok((policy, state, identity, saved.learning_rate_bits,
-        saved.value_coefficient_bits))
+    Ok((
+        policy,
+        state,
+        identity,
+        saved.learning_rate_bits,
+        saved.value_coefficient_bits,
+    ))
 }
 
 /// Physical-seat behavior provenance, independent of deck registration.
@@ -459,7 +503,7 @@ struct ExpandedTrajectoryV1 {
     feature_contract_digest: String,
     feature_encoding_digest: String,
     card_db_hash: String,
-    source_import: FrozenPlayPolicyIdentityV1,
+    source_import: PlayPolicyOriginV1,
     behavior_state_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     seat_behaviors: Option<[ExpandedSeatBehaviorV1; 2]>,
@@ -519,7 +563,7 @@ struct ExpandedCheckpointV1 {
     feature_contract_digest: String,
     feature_encoding_digest: String,
     card_db_hash: String,
-    source_import: FrozenPlayPolicyIdentityV1,
+    source_import: PlayPolicyOriginV1,
     state_sha256: String,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
@@ -572,11 +616,7 @@ fn initialize_with_transfer_context(
     {
         return registry_transfer_source::initialize(source, &bytes);
     }
-    // Decode original bytes, preserving the old typed parser's duplicate-field
-    // and unknown-field rejection even though source selection used a probe.
-    let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
-    let mut policy =
-        FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)?;
+    let mut policy = load_ordinary_policy_v1(source, &bytes)?;
     let mut model =
         NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
             .map_err(err)?;
@@ -584,7 +624,7 @@ fn initialize_with_transfer_context(
         .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
         .map_err(err)?;
     let state = if let Some(pin) = &source.checkpoint {
-        let saved = read_legacy_checkpoint_v1(pin)?;
+        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
         restore_checkpoint_state_v1(&saved, &mut policy, model)?
     } else {
         NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?
@@ -592,15 +632,171 @@ fn initialize_with_transfer_context(
     Ok((policy, state, None))
 }
 
+/// Syntax admission only. Actual checkpoint/parameter/Adam binding is checked
+/// by the ordinary parent loader. No general inference dispatch is used here.
+pub(crate) fn validate_ordinary_source_descriptor_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<(), String> {
+    ensure(
+        source.checkpoint.is_some(),
+        "ordinary parent checkpoint is required",
+    )?;
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(fresh_initialization_source::SOURCE_SCHEMA)
+    {
+        fresh_initialization_source::parse_source_v1(&bytes)?;
+    } else {
+        // Decode original bytes. Malformed fresh descriptors cannot fall back
+        // because schema/initialization fields are unknown to the old parser.
+        let _: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
+    }
+    Ok(())
+}
+
+fn load_ordinary_policy_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+) -> Result<FrozenPlayPolicyV1, String> {
+    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(fresh_initialization_source::SOURCE_SCHEMA)
+    {
+        let descriptor = fresh_initialization_source::parse_source_v1(bytes)?;
+        return fresh_initialization_source::load_policy_v1(&descriptor, &source.feature_transfer);
+    }
+    let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
+    FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)
+}
+
+fn read_ordinary_checkpoint_v1(
+    pin: &PinnedFileV1,
+    origin: &PlayPolicyOriginV1,
+) -> Result<ExpandedCheckpointV1, String> {
+    let saved = if origin.is_fresh_v1() {
+        read_pinned(pin)?
+    } else {
+        read_legacy_checkpoint_v1(pin)?
+    };
+    ensure(
+        saved.registry_transfer.is_none()
+            && saved.schema == ordinary_checkpoint_schema_v1(origin)
+            && saved.source_import.is_fresh_v1() == origin.is_fresh_v1(),
+        "ordinary checkpoint schema/origin differs",
+    )?;
+    Ok(saved)
+}
+
 fn read_legacy_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
     let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
     // The ordinary checkpoint reader previously rejected this unknown field,
     // including an explicit null. Preserve that strict wire boundary.
     ensure(
-        saved.registry_transfer.is_none(),
+        saved.registry_transfer.is_none() && !saved.source_import.is_fresh_v1(),
         "ordinary checkpoint does not admit registry-transfer metadata",
     )?;
     Ok(saved)
+}
+
+/// Load and re-export an explicitly fresh origin, without collecting a game
+/// or taking an optimizer step. The state file is an inspection artifact,
+/// not an ordinary checkpoint or a Store export.
+pub fn inspect_fresh_initialization_json_v1(text: &str) -> Result<Value, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        schema: String,
+        source: ExpandedModelSourceV1,
+        output_directory: PathBuf,
+    }
+    ensure(
+        text.len() <= 1024 * 1024,
+        "inspection request exceeds 1 MiB",
+    )?;
+    crate::rl::parse_strict_json_value(text).map_err(err)?;
+    let request: Request = serde_json::from_str(text).map_err(err)?;
+    ensure(
+        request.schema == "phase1-fresh-initialization-inspection-request/v1",
+        "unknown inspection schema",
+    )?;
+    inspect_fresh_initialization_v1(&request.source, &request.output_directory)
+}
+
+pub fn inspect_fresh_initialization_v1(
+    source: &ExpandedModelSourceV1,
+    output_directory: &Path,
+) -> Result<Value, String> {
+    ensure(
+        source.checkpoint.is_none(),
+        "fresh inspection cannot restore a checkpoint",
+    )?;
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let descriptor = fresh_initialization_source::parse_source_v1(&bytes)?;
+    let policy =
+        fresh_initialization_source::load_policy_v1(&descriptor, &source.feature_transfer)?;
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(err)?;
+    model
+        .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+        .map_err(err)?;
+    let state = NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?;
+    let snapshot = state.snapshot_v1().map_err(err)?;
+    ensure(
+        snapshot.adam_step == 0
+            && snapshot
+                .first_moments
+                .iter()
+                .chain(&snapshot.second_moments)
+                .all(|row| row.values.iter().all(|v| v.to_bits() == 0)),
+        "fresh optimizer bootstrap differs",
+    )?;
+    let mut raw = Vec::new();
+    for row in &snapshot.parameters {
+        for value in &row.values {
+            raw.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+    }
+    ensure(
+        sha(&raw) == policy.actual_model_identity_v1().weights_sha256,
+        "re-exported parameter bytes differ from installed policy",
+    )?;
+    let result = json!({
+        "schema":"mtg-kernel-fresh-initialization-inspection/v1",
+        "source":source,
+        "identity":inference_identity_v1(source, &policy, &state)?,
+        "parameters":snapshot.parameters.iter().map(ParameterBitsV1::from_native).collect::<Vec<_>>(),
+        "first_moments":snapshot.first_moments.iter().map(ParameterBitsV1::from_native).collect::<Vec<_>>(),
+        "second_moments":snapshot.second_moments.iter().map(ParameterBitsV1::from_native).collect::<Vec<_>>(),
+        "adam_step":snapshot.adam_step,
+        "scorer_bias_anchor_bits":snapshot.scorer_bias_anchor_bits,
+        "state_sha256":hex(&snapshot.state_sha256_v1().map_err(err)?),
+        "training_started":false,
+        "strength_claim":false,
+    });
+    ensure(
+        output_directory.is_absolute() && !output_directory.exists(),
+        "fresh absolute inspection directory required",
+    )?;
+    fs::create_dir_all(output_directory).map_err(err)?;
+    let parent = capture_existing_publication_parent_v1(output_directory).map_err(err)?;
+    let expected = DurableFileExpectationV1::from_bytes(&raw).map_err(err)?;
+    publish_new_file_v1(
+        &parent,
+        ".parameters.stage",
+        "parameters.f32le",
+        &raw,
+        expected,
+    )
+    .map_err(err)?;
+    let inspection = publish_json(output_directory, "inspection.json", &result)?;
+    Ok(
+        json!({"schema":"mtg-kernel-fresh-initialization-inspection-result/v1",
+        "inspection":inspection,"parameter_sha256":sha(&raw),
+        "adam_step":snapshot.adam_step,"state_sha256":hex(&snapshot.state_sha256_v1().map_err(err)?),
+        "training_started":false}),
+    )
 }
 
 fn restore_checkpoint_state_v1(
@@ -609,7 +805,8 @@ fn restore_checkpoint_state_v1(
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
     ensure(
-        saved.schema == CHECKPOINT_SCHEMA && saved.registry_transfer.is_none(),
+        saved.schema == ordinary_checkpoint_schema_v1(policy.identity_v1())
+            && saved.registry_transfer.is_none(),
         "not an expanded-deck checkpoint",
     )?;
     restore_checkpoint_fields_v1(saved, policy, model)
@@ -692,12 +889,8 @@ fn collect_episode(
                     "only naturally completed games may become training trajectories",
                 )?;
                 let result = ExpandedTrajectoryV1 {
-                    schema: if opponent.is_some() {
-                        POPULATION_TRAJECTORY_SCHEMA
-                    } else {
-                        TRAJECTORY_SCHEMA
-                    }
-                    .into(),
+                    schema: trajectory_schema_v1(policy.identity_v1(), seat_behaviors.as_ref())
+                        .into(),
                     feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
                     feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
                     card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
@@ -759,15 +952,18 @@ fn acting_policy_v1<'a>(
 }
 
 fn validate_behavior_shape_v1(t: &ExpandedTrajectoryV1) -> Result<(), String> {
+    ensure(
+        t.schema == trajectory_schema_v1(&t.source_import, t.seat_behaviors.as_ref()),
+        "trajectory schema/origin differs",
+    )?;
     match (&t.episode.opponent, &t.seat_behaviors) {
-        (None, None) => ensure(
-            t.schema == TRAJECTORY_SCHEMA,
-            "self-play trajectory schema differs",
-        ),
+        (None, None) => Ok(()),
         (Some(opponent), Some(behaviors)) => {
             ensure(
-                t.schema == POPULATION_TRAJECTORY_SCHEMA,
-                "population trajectory schema differs",
+                behaviors
+                    .iter()
+                    .all(|b| b.identity.has_supported_origin_schema_v1()),
+                "behavior inference schema/origin differs",
             )?;
             ensure(t.episode.learner_seat < 2, "invalid learner seat")?;
             let learner_seat = t.episode.learner_seat as usize;
@@ -784,6 +980,21 @@ fn validate_behavior_shape_v1(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         _ => {
             Err("opponent source and per-seat behavior identities must be present together".into())
         }
+    }
+}
+
+fn trajectory_schema_v1(
+    origin: &PlayPolicyOriginV1,
+    behaviors: Option<&[ExpandedSeatBehaviorV1; 2]>,
+) -> &'static str {
+    if origin.is_fresh_v1()
+        || behaviors.is_some_and(|rows| rows.iter().any(|b| b.identity.source_import.is_fresh_v1()))
+    {
+        FRESH_TRAJECTORY_SCHEMA
+    } else if behaviors.is_some() {
+        POPULATION_TRAJECTORY_SCHEMA
+    } else {
+        TRAJECTORY_SCHEMA
     }
 }
 
@@ -1284,7 +1495,7 @@ fn execute_update_v1(
         schema: if transfer.is_some() {
             registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER
         } else {
-            CHECKPOINT_SCHEMA
+            ordinary_checkpoint_schema_v1(policy.identity_v1())
         }
         .into(),
         feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
@@ -1681,27 +1892,23 @@ mod tests {
             });
         }
         let configs = episode.configurations().unwrap();
+        let seat_behaviors = opponent_behavior.as_ref().map(|other| {
+            std::array::from_fn(|actor| {
+                if actor == learner_seat as usize {
+                    learner_behavior.clone()
+                } else {
+                    other.clone()
+                }
+            })
+        });
         let trajectory = ExpandedTrajectoryV1 {
-            schema: if opponent.is_some() {
-                POPULATION_TRAJECTORY_SCHEMA
-            } else {
-                TRAJECTORY_SCHEMA
-            }
-            .into(),
+            schema: trajectory_schema_v1(learner.identity_v1(), seat_behaviors.as_ref()).into(),
             feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
             feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
             card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
             source_import: learner.identity_v1().clone(),
             behavior_state_sha256: learner_behavior.identity.state_sha256.clone(),
-            seat_behaviors: opponent_behavior.as_ref().map(|other| {
-                std::array::from_fn(|actor| {
-                    if actor == learner_seat as usize {
-                        learner_behavior.clone()
-                    } else {
-                        other.clone()
-                    }
-                })
-            }),
+            seat_behaviors,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -2023,7 +2230,10 @@ mod tests {
             }),
             ("card database", |s| s.card_db_hash = "0".repeat(16)),
             ("ancestry", |s| {
-                s.source_import.weights_sha256 = "0".repeat(64)
+                let PlayPolicyOriginV1::Imported(origin) = &mut s.source_import else {
+                    panic!("fixture must retain imported origin")
+                };
+                origin.weights_sha256 = "0".repeat(64)
             }),
             ("loss", |s| s.loss_identity = "another-loss".into()),
             ("state digest", |s| s.state_sha256 = "0".repeat(64)),
