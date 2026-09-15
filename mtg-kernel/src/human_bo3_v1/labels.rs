@@ -389,6 +389,11 @@ pub(super) fn label(
                                     .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
                             )
                         }
+                        // No object cost beyond the ability's own mana cost
+                        // (Barrels of Blasting Jelly's "{1}: Add one mana of
+                        // any color"); `extra_cost` below supplies the "pay"
+                        // phrase, so this base clause stays empty.
+                        ManaAbilityCostDef::None => String::new(),
                     };
                     if !matches!(
                         ability.cost,
@@ -401,7 +406,11 @@ pub(super) fn label(
                 }
             };
             if let Some(extra) = extra_cost {
-                costs.push_str(&format!("; pay {}", mana(extra)));
+                if costs.is_empty() {
+                    costs = format!("Pay {}", mana(extra));
+                } else {
+                    costs.push_str(&format!("; pay {}", mana(extra)));
+                }
             }
             let suffix = if damage == 0 {
                 String::new()
