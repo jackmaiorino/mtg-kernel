@@ -156,15 +156,17 @@ class SanitizedSuccessTests(unittest.TestCase):
                                            api=api, now=NOW)
             self.assertEqual(result, {'schema': pl.CREATED_SCHEMA, 'created_epoch': NOW,
                 'id': 'pod123', 'name': lease()['name'], 'desired_status': 'RUNNING',
-                'cost_per_hour_usd': 1.28, 'data_center_id': 'EU-RO-1',
+                'cost_per_hour_usd': 1.28, 'data_center_id': 'EU-RO-1', 'data_center_id_reported': True,
                 'volume_id': lease()['network_volume_id']})
             saved_text = (output / 'created-pod.json').read_text()
             self.assertNotIn('must-not-be-saved', saved_text)
             self.assertNotIn('secret-machine', saved_text)
             self.assertNotIn('fake-sensitive-key', saved_text)
-            self.assertNotIn('fake-sensitive-key', json.dumps(api.create.call_args.args))
+            for saved in output.iterdir():
+                if saved.is_file():
+                    self.assertNotIn('fake-sensitive-key', saved.read_text())
 
-    def test_placeholder_never_reaches_the_live_client(self):
+    def test_key_is_injected_into_the_posted_env_in_memory_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
@@ -172,7 +174,33 @@ class SanitizedSuccessTests(unittest.TestCase):
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
             (body,) = api.create.call_args.args
-            self.assertEqual(body['env']['RUNPOD_API_KEY'], pl.KEY_PLACEHOLDER)
+            self.assertEqual(body['env']['RUNPOD_API_KEY'], 'fake-sensitive-key')
+            self.assertEqual(pl.prepared_template(output)['env']['RUNPOD_API_KEY'], pl.KEY_PLACEHOLDER)
+            for saved in output.iterdir():
+                if saved.is_file():
+                    self.assertNotIn('fake-sensitive-key', saved.read_text())
+
+    def test_template_without_placeholder_is_refused_before_posting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            api = Mock(); api.create.return_value = pod_response()
+            template = pl.prepared_template(output); template['env']['RUNPOD_API_KEY'] = 'already-filled'
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+                with self.assertRaisesRegex(ValueError, 'key placeholder'):
+                    pl.execute_create(template, output, snapshot, 'testvolume', api=api, now=NOW)
+            api.create.assert_not_called()
+
+    def test_missing_data_center_in_response_is_recorded_as_none(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepared_output(temporary)
+            snapshot = snapshot_path(temporary)
+            api = Mock(); response = pod_response(); response['dataCenterId'] = None
+            api.create.return_value = response
+            with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
+                result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW)
+            self.assertIsNone(result['data_center_id'])
+            self.assertFalse(result['data_center_id_reported'])
 
 
 class FailureRecordingTests(unittest.TestCase):

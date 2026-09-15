@@ -20,6 +20,7 @@ https://docs.runpod.io/llms.txt and the pages it links):
 """
 from __future__ import annotations
 import argparse
+import copy
 import base64
 import json
 import os
@@ -221,13 +222,17 @@ def sanitize_pod(raw):
     require(isinstance(raw['costPerHr'], (int, float)) and not isinstance(raw['costPerHr'], bool)
             and raw['costPerHr'] >= 0, 'invalid pod cost in response')
     data_center = raw.get('dataCenterId')
-    require(isinstance(data_center, str) and data_center, 'pod response missing dataCenterId')
+    # The live create response observed on 2026-09-15 omitted dataCenterId (null); the
+    # request pins the data center and the volume verification confirms it, so absence
+    # is recorded as None rather than rejected.
+    require(data_center is None or (isinstance(data_center, str) and data_center),
+            'pod response dataCenterId malformed')
     nested_volume = raw.get('networkVolume')
     volume_id = raw.get('networkVolumeId') or (nested_volume.get('id') if isinstance(nested_volume, dict) else None)
     require(isinstance(volume_id, str) and volume_id, 'pod response missing network volume id')
     return {'id': raw['id'], 'name': raw['name'], 'desired_status': raw['desiredStatus'],
             'cost_per_hour_usd': raw['costPerHr'], 'data_center_id': data_center,
-            'volume_id': volume_id}
+            'data_center_id_reported': data_center is not None, 'volume_id': volume_id}
 
 
 def _require_execute_key():
@@ -255,7 +260,14 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     # Unlike prepare_volume.py's template, prepare_lease.py saves the raw Pod
     # create-request body directly (no method/url/headers wrapper): the key
     # goes only in the Authorization header, injected by Provider.create().
-    body = template
+    require(template.get('env', {}).get('RUNPOD_API_KEY') == KEY_PLACEHOLDER,
+            'prepared template must carry the key placeholder in env')
+    body = copy.deepcopy(template)
+    # The resident guard reads RUNPOD_API_KEY from the Pod environment for its own
+    # provider lookups, funds checks and the final release DELETE (runbook step 5),
+    # so the key is injected into the posted copy in memory only; the on-disk
+    # template keeps the placeholder and nothing below writes the body.
+    body['env']['RUNPOD_API_KEY'] = key
     require(body.get('networkVolumeId') == volume_id,
             'prepared template volume id differs from --volume-id')
     require_pinned_image(body.get('imageName'), allow_mutable_image)
