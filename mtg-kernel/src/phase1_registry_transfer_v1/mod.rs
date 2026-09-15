@@ -21,7 +21,14 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
+mod fresh;
 mod strict_registry_json;
+
+pub use fresh::{
+    transfer_fresh_expanded_checkpoint_to_current_registry_v1,
+    verify_fresh_registry_transfer_artifact_v1, FreshRegistryTransferReceiptV1,
+    FreshRegistryTransferRequestV1, FreshVerifiedRegistryTransferV1,
+};
 
 const CURRENT_REGISTRY: &[u8] = include_bytes!("../../../data/cards_v1.json");
 const MAX_INPUT_BYTES: usize = 512 * 1024 * 1024;

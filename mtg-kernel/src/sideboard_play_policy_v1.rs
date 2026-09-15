@@ -50,7 +50,8 @@ use std::path::{Path, PathBuf};
 
 mod origin;
 pub use origin::{
-    FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, FRESH_PLAY_INITIALIZATION_SCHEMA_V1,
+    FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,
+    FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
 };
 
 const DESTINATION_REGISTRY: &[u8] = include_bytes!("../../data/cards_v1.json");
@@ -306,6 +307,57 @@ impl FrozenPlayPolicyV1 {
             model,
             embeddings,
             identity: identity.into(),
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: Some(FrozenPlaySuccessorStateV3::default()),
+        })
+    }
+
+    /// Explicit construction from a verified fresh-origin registry-transfer
+    /// candidate. Nests the original fresh ancestry unchanged; the wrapper's
+    /// own destination fields describe the current runtime, not the original
+    /// import's stale ones. Does not call `from_fresh_initialization_v1`: it
+    /// correctly requires the input identity's own destination fields to
+    /// already match this runtime, which a pre-transfer fresh identity (still
+    /// describing the OLD registry) does not have.
+    pub(crate) fn from_fresh_registry_transfer_v1(
+        transfer: &crate::phase1_registry_transfer_v1::FreshVerifiedRegistryTransferV1,
+        envelope_sha256: &str,
+    ) -> Result<Self, String> {
+        require(
+            envelope_sha256.len() == 64
+                && envelope_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                && transfer.request_v1().destination_card_db_hash
+                    == format!("{KERNEL_CARDDB_HASH:016x}")
+                && transfer.request_v1().destination_registry_sha256 == hash(DESTINATION_REGISTRY),
+            "registry transfer does not bind this runtime",
+        )?;
+        let model = transfer.model_v1().clone();
+        let embeddings = model
+            .parameter_snapshot_v1()
+            .into_iter()
+            .find(|p| p.name == "card_embedding.weight")
+            .ok_or("embedding tensor absent")?
+            .values;
+        let identity = TransferredFreshPlayPolicyIdentityV1 {
+            schema: TRANSFERRED_FRESH_PLAY_SCHEMA_V1.into(),
+            original: transfer.source_import_v1().clone(),
+            destination_registry_sha256: transfer.request_v1().destination_registry_sha256.clone(),
+            destination_card_db_hash: transfer.request_v1().destination_card_db_hash.clone(),
+            destination_card_count: transfer.receipt_v1().cards.len(),
+            transfer_envelope_sha256: envelope_sha256.into(),
+        };
+        Ok(Self {
+            model,
+            embeddings,
+            identity: PlayPolicyOriginV1::transferred_fresh_v1(identity)?,
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
@@ -1322,6 +1374,172 @@ mod tests {
         changed = destination;
         changed["cards"][2]["name"] = json!("A");
         assert!(validate_card_namespace(&source, &changed).is_err());
+    }
+
+    #[test]
+    fn from_fresh_registry_transfer_v1_nests_ancestry_and_installs_transferred_model() {
+        use crate::native_flat_tensorizer_v3::{
+            FEATURES_SOURCE_SHA256_V3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3,
+            FEATURE_ENCODING_DIGEST_V3,
+        };
+        use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
+        use crate::phase1_registry_transfer_v1::{
+            transfer_fresh_expanded_checkpoint_to_current_registry_v1, FreshRegistryTransferRequestV1,
+            RegistryTransferFeaturesV1,
+        };
+
+        #[derive(Serialize)]
+        struct Tensor {
+            name: String,
+            shape: Vec<usize>,
+            values: Vec<u32>,
+        }
+        #[derive(Serialize)]
+        struct Checkpoint {
+            schema: String,
+            feature_contract_digest: String,
+            feature_encoding_digest: String,
+            card_db_hash: String,
+            source_import: FreshPlayPolicyIdentityV1,
+            state_sha256: String,
+            adam_step: u64,
+            scorer_bias_anchor_bits: u32,
+            parameters: Vec<Tensor>,
+            first_moments: Vec<Tensor>,
+            second_moments: Vec<Tensor>,
+            trajectories: Vec<serde_json::Value>,
+            loss_identity: String,
+            learning_rate_bits: u32,
+            value_coefficient_bits: u32,
+        }
+        fn to_wire(list: &[NativeNamedParameterV1]) -> Vec<Tensor> {
+            list.iter()
+                .map(|p| Tensor {
+                    name: p.name.into(),
+                    shape: p.shape.clone(),
+                    values: p.values.iter().map(|v| v.to_bits()).collect(),
+                })
+                .collect()
+        }
+
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let snapshot = state.snapshot_v1().unwrap();
+        // Metadata-only synthetic ancestry. This does not attest to a real
+        // transfer, generated model, producer execution or playing strength.
+        let identity = FreshPlayPolicyIdentityV1 {
+            schema: FRESH_PLAY_INITIALIZATION_SCHEMA_V1.into(),
+            initialization_manifest_sha256: "a".repeat(64),
+            lineage_id: "sideboard-play-policy-fixture".into(),
+            initializer: "trainer-seeded-v1".into(),
+            base_seed: 0,
+            model_init_seed: 6_443_515_232_517_447_393,
+            seed_derivation: "kernel-python-rl-trainer-sha256-v2".into(),
+            producer_git_commit: "1".repeat(40),
+            initial_weights_sha256: "b".repeat(64),
+            initial_model_parameter_sha256: "c".repeat(64),
+            parameter_layout_sha256: "d".repeat(64),
+            destination_registry_sha256: hash(DESTINATION_REGISTRY),
+            destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            destination_card_count: crate::card_def::CARD_DEFS.len(),
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
+            feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
+            sampler_identity: crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into(),
+        };
+        let state_hex: String = snapshot
+            .state_sha256_v1()
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let checkpoint = Checkpoint {
+            schema: "mtg-kernel-expanded-deck-fresh-checkpoint/v1".into(),
+            feature_contract_digest: identity.feature_contract_digest.clone(),
+            feature_encoding_digest: identity.feature_encoding_digest.clone(),
+            card_db_hash: identity.destination_card_db_hash.clone(),
+            source_import: identity.clone(),
+            state_sha256: state_hex,
+            adam_step: snapshot.adam_step,
+            scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
+            parameters: to_wire(&snapshot.parameters),
+            first_moments: to_wire(&snapshot.first_moments),
+            second_moments: to_wire(&snapshot.second_moments),
+            trajectories: vec![],
+            loss_identity: "terminal_reinforce_value/v3".into(),
+            learning_rate_bits: 0.00003_f32.to_bits(),
+            value_coefficient_bits: 0.75_f32.to_bits(),
+        };
+        let bytes = serde_json::to_vec(&checkpoint).unwrap();
+        let request = FreshRegistryTransferRequestV1 {
+            source_checkpoint_sha256: hash(&bytes),
+            source_registry_sha256: hash(DESTINATION_REGISTRY),
+            source_state_sha256: checkpoint.state_sha256.clone(),
+            source_adam_step: checkpoint.adam_step,
+            source_card_db_hash: checkpoint.card_db_hash.clone(),
+            destination_registry_sha256: hash(DESTINATION_REGISTRY),
+            destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            features: RegistryTransferFeaturesV1::current_v1(),
+        };
+        let transfer = transfer_fresh_expanded_checkpoint_to_current_registry_v1(
+            &bytes,
+            DESTINATION_REGISTRY,
+            &request,
+        )
+        .unwrap();
+        let expected_embeddings: Vec<u32> = transfer
+            .model_v1()
+            .parameter_snapshot_v1()
+            .into_iter()
+            .find(|p| p.name == "card_embedding.weight")
+            .unwrap()
+            .values
+            .iter()
+            .map(|v| v.to_bits())
+            .collect();
+        let envelope_sha256 = "7".repeat(64);
+        let policy =
+            FrozenPlayPolicyV1::from_fresh_registry_transfer_v1(&transfer, &envelope_sha256)
+                .unwrap();
+        assert!(policy.identity_v1().is_fresh_v1());
+        assert!(policy.identity_v1().as_imported_v1().is_none());
+        // Destination accessors read the current (post-transfer) identity.
+        assert_eq!(
+            policy.identity_v1().destination_registry_sha256_v1(),
+            hash(DESTINATION_REGISTRY)
+        );
+        assert_eq!(
+            policy.identity_v1().destination_card_db_hash_v1(),
+            format!("{KERNEL_CARDDB_HASH:016x}")
+        );
+        // Initial weight/seed/producer accessors read the nested ancestry.
+        assert_eq!(
+            policy.identity_v1().feature_contract_digest_v1(),
+            identity.feature_contract_digest
+        );
+        assert_eq!(
+            policy.identity_v1().initial_weights_sha256_v1(),
+            identity.initial_weights_sha256
+        );
+        assert_eq!(
+            policy.identity_v1().initial_model_parameter_sha256_v1(),
+            identity.initial_model_parameter_sha256
+        );
+        assert_eq!(
+            policy.identity_v1().origin_git_commit_v1(),
+            identity.producer_git_commit
+        );
+        assert_eq!(
+            policy
+                .embedding_rows_v1()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            expected_embeddings
+        );
     }
 
     /// Run explicitly with MTG_SIDEB_PLAY_IMPORT_MANIFEST pointing to pinned

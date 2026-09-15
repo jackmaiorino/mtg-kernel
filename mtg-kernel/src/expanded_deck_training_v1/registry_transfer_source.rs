@@ -66,7 +66,34 @@ pub(super) struct TransferTrainingContextV1 {
     completed_updates: u64,
 }
 
-fn check_pin(pin: &PinnedFileV1) -> Result<(), String> {
+impl TransferTrainingContextV1 {
+    /// Mirrors the fields this module's own `initialize` entry point already
+    /// builds inline (construct at zero, then set the resumed cursor after a
+    /// successor checkpoint validates). Reused by the fresh-transfer sibling
+    /// module so its own resolved-schedule/scalar/cursor logic and readback
+    /// stay identical; `completed_updates` is a constructor parameter (not
+    /// hardcoded at zero) so the sibling can build the final, already-correct
+    /// context once, without needing a private-field mutator across modules.
+    pub(super) fn new(
+        descriptor_pin: PinnedFileV1,
+        descriptor: ExpandedRegistryTransferSourceV1,
+        schedule: ExpandedRegistryTransferScheduleV1,
+        transfer_state_sha256: String,
+        scalars: RegistryTransferScalarsV1,
+        completed_updates: u64,
+    ) -> Self {
+        Self {
+            descriptor_pin,
+            descriptor,
+            schedule,
+            transfer_state_sha256,
+            scalars,
+            completed_updates,
+        }
+    }
+}
+
+pub(super) fn check_pin(pin: &PinnedFileV1) -> Result<(), String> {
     ensure(
         pin.path.is_absolute()
             && pin.sha256.len() == 64
@@ -78,11 +105,13 @@ fn check_pin(pin: &PinnedFileV1) -> Result<(), String> {
     )
 }
 
-fn batch_sha(batch: &[ExpandedEpisodeV1]) -> Result<String, String> {
+pub(super) fn batch_sha(batch: &[ExpandedEpisodeV1]) -> Result<String, String> {
     Ok(sha(&serde_json::to_vec(batch).map_err(err)?))
 }
 
-fn read_schedule(pin: &PinnedFileV1) -> Result<ExpandedRegistryTransferScheduleV1, String> {
+pub(super) fn read_schedule(
+    pin: &PinnedFileV1,
+) -> Result<ExpandedRegistryTransferScheduleV1, String> {
     let bytes = read_pinned_bytes(pin)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(err)?;
     if let Some(batches) = value.get("batches").and_then(Value::as_array) {

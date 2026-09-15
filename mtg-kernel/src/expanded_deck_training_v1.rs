@@ -57,11 +57,47 @@ pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 mod fresh_initialization_source;
+mod fresh_registry_transfer_source;
 mod registry_transfer_source;
 pub use fresh_initialization_source::ExpandedFreshInitializationSourceV1;
 pub use registry_transfer_source::{
     ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
 };
+
+/// Which registry-transfer family produced a `TransferTrainingContextV1`.
+/// Both families reuse the exact same context type (imported and fresh
+/// registry-transfer sources share resolved-schedule/scalar/cursor logic
+/// verbatim); only this tag distinguishes which successor checkpoint schema
+/// and origin family a resumed lineage belongs to. Discrimination for the
+/// three-way checkpoint schema selection is on this actual transfer context
+/// kind, not on a separately threaded flag.
+enum TransferContextV1 {
+    Imported(registry_transfer_source::TransferTrainingContextV1),
+    Fresh(registry_transfer_source::TransferTrainingContextV1),
+}
+
+impl TransferContextV1 {
+    fn is_fresh_v1(&self) -> bool {
+        matches!(self, Self::Fresh(_))
+    }
+    fn inner(&self) -> &registry_transfer_source::TransferTrainingContextV1 {
+        match self {
+            Self::Imported(context) | Self::Fresh(context) => context,
+        }
+    }
+    fn validate_scalars(&self, learning_rate: f32, value_coefficient: f32) -> Result<(), String> {
+        self.inner().validate_scalars(learning_rate, value_coefficient)
+    }
+    fn validate_batch(&self, episodes: &[ExpandedEpisodeV1]) -> Result<(), String> {
+        self.inner().validate_batch(episodes)
+    }
+    fn after_update(
+        &self,
+        adam_step: u64,
+    ) -> Result<registry_transfer_source::ExpandedRegistryContinuationV1, String> {
+        self.inner().after_update(adam_step)
+    }
+}
 
 /// Collection and exact behavior replay remain CPU-based. This selection
 /// changes only the learner's recomputation/backward/Adam implementation.
@@ -606,7 +642,7 @@ fn initialize_with_transfer_context(
     (
         FrozenPlayPolicyV1,
         NativePolicyValueTrainStateV1,
-        Option<registry_transfer_source::TransferTrainingContextV1>,
+        Option<TransferContextV1>,
     ),
     String,
 > {
@@ -614,7 +650,14 @@ fn initialize_with_transfer_context(
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     if probe.get("schema").and_then(Value::as_str) == Some(registry_transfer_source::SOURCE_SCHEMA)
     {
-        return registry_transfer_source::initialize(source, &bytes);
+        let (policy, state, context) = registry_transfer_source::initialize(source, &bytes)?;
+        return Ok((policy, state, context.map(TransferContextV1::Imported)));
+    }
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(fresh_registry_transfer_source::SOURCE_SCHEMA)
+    {
+        let (policy, state, context) = fresh_registry_transfer_source::initialize(source, &bytes)?;
+        return Ok((policy, state, context.map(TransferContextV1::Fresh)));
     }
     let mut policy = load_ordinary_policy_v1(source, &bytes)?;
     let mut model =
@@ -1492,10 +1535,12 @@ fn execute_update_v1(
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
     let checkpoint = ExpandedCheckpointV1 {
-        schema: if transfer.is_some() {
-            registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER
-        } else {
-            ordinary_checkpoint_schema_v1(policy.identity_v1())
+        schema: match &transfer {
+            Some(context) if context.is_fresh_v1() => {
+                fresh_registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER
+            }
+            Some(_) => registry_transfer_source::CHECKPOINT_SCHEMA_TRANSFER,
+            None => ordinary_checkpoint_schema_v1(policy.identity_v1()),
         }
         .into(),
         feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
