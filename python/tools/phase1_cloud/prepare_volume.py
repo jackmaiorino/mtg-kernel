@@ -39,8 +39,8 @@ import re
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
-from common import encoded, pin, read, require, write
+from common import (encoded, pin, read, require, write, FUNDING_SNAPSHOT_MAX_AGE_SECONDS,
+                    funding_snapshot_age_seconds, require_fresh_funding_snapshot)
 from prepare_lease import KEY_PLACEHOLDER
 
 SPEC_SCHEMA = 'phase1-cloud-volume-preparation/v1'
@@ -209,30 +209,9 @@ def prepared_template(output):
 
 
 # ---- Funding snapshot freshness --------------------------------------------
-FUNDING_SNAPSHOT_MAX_AGE_SECONDS = 30 * 60
-
-
-def funding_snapshot_age_seconds(snapshot, now):
-    require(isinstance(snapshot, dict) and isinstance(snapshot.get('observed_utc'), str),
-            'funding snapshot missing observed_utc')
-    try:
-        observed = datetime.fromisoformat(snapshot['observed_utc'])
-    except ValueError:
-        raise ValueError('funding snapshot observed_utc is not a valid ISO-8601 timestamp') from None
-    require(observed.tzinfo is not None, 'funding snapshot observed_utc must be timezone-aware')
-    return now - observed.timestamp()
-
-
-def require_fresh_funding_snapshot(path, now=None):
-    """Refuse to proceed without a funding snapshot read within the last
-    thirty minutes. Mirrors lease_guard.funding_status's conservative
-    freshness discipline. Never inspects or returns the API key."""
-    now = time.time() if now is None else now
-    snapshot = read(path)
-    age = funding_snapshot_age_seconds(snapshot, now)
-    require(0 <= age <= FUNDING_SNAPSHOT_MAX_AGE_SECONDS,
-            'funding snapshot is stale (older than thirty minutes) or has an invalid future timestamp')
-    return snapshot
+# FUNDING_SNAPSHOT_MAX_AGE_SECONDS, funding_snapshot_age_seconds and
+# require_fresh_funding_snapshot now live in common.py, shared with
+# prepare_lease.py's --execute path; re-exported here for existing callers.
 
 
 # ---- Live provider client (only reached through --execute) -----------------
