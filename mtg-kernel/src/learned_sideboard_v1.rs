@@ -543,6 +543,13 @@ impl LearnedSideboardModelV1 {
     /// `seed`) instead of `score_v1`'s argmax. The caller derives `seed`
     /// (domain-separated from a match seed, game index, seat and decision
     /// ordinal); this method owns no RNG state and never advances one.
+    ///
+    /// A thin wrapper over `sample_with_scratch_v1` for callers with no
+    /// scratch of their own to reuse; it allocates one `WideCategoricalScratchV1`
+    /// per call. A caller making several calls in a row (e.g.
+    /// `deliberate_sampled_v1`, one call per decision) should call
+    /// `sample_with_scratch_v1` directly with a scratch it keeps across
+    /// those calls instead.
     pub fn sample_v1(
         &self,
         input: &LearnedSideboardInputV1,
@@ -550,13 +557,30 @@ impl LearnedSideboardModelV1 {
         embeddings: &FrozenSideboardEmbeddingsV1<'_>,
         seed: u64,
     ) -> ResultV1<SampledSideboardDecisionV1> {
+        let mut scratch = WideCategoricalScratchV1::default();
+        self.sample_with_scratch_v1(input, state, embeddings, seed, &mut scratch)
+    }
+
+    /// `sample_v1`'s exact behavior, but the caller supplies the reusable
+    /// `WideCategoricalScratchV1` instead of a fresh one being allocated per
+    /// call. The sampled index and probability are read from the single
+    /// Hamilton apportionment `scratch.sample` already performs internally
+    /// (via `WideCategoricalScratchV1::last_masses_v1`), not a second,
+    /// redundant apportionment.
+    pub fn sample_with_scratch_v1(
+        &self,
+        input: &LearnedSideboardInputV1,
+        state: &SideboardDeliberationStateV1,
+        embeddings: &FrozenSideboardEmbeddingsV1<'_>,
+        seed: u64,
+        scratch: &mut WideCategoricalScratchV1,
+    ) -> ResultV1<SampledSideboardDecisionV1> {
         let scored = self.score_v1(input, state, embeddings)?;
         let logits_f32: Vec<f32> = scored.logits.iter().map(|&value| value as f32).collect();
-        let mut scratch = WideCategoricalScratchV1::default();
         let sampled_index = scratch
             .sample(&logits_f32, seed)
             .map_err(sampler_error)? as u32;
-        let masses = scratch.apportion(&logits_f32).map_err(sampler_error)?;
+        let masses = scratch.last_masses_v1(logits_f32.len());
         let sampled_probability =
             masses[sampled_index as usize] as f64 / FAST_CATEGORICAL_MASS_TOTAL as f64;
         let sampled_action = scored.ordered_actions[sampled_index as usize];
@@ -600,12 +624,14 @@ impl LearnedSideboardModelV1 {
     }
 
     /// The sampled sibling of `deliberate_v1`: runs the same swap-then-Done
-    /// deliberation loop, but selects each step with `sample_v1` instead of
-    /// argmax, and returns every step's `SampledSideboardDecisionV1` so a
-    /// self-play driver can record sampled probabilities per decision. The
-    /// caller supplies `seed_for_step`, called once per decision ordinal
+    /// deliberation loop, but selects each step with `sample_with_scratch_v1`
+    /// instead of argmax, and returns every step's `SampledSideboardDecisionV1`
+    /// so a self-play driver can record sampled probabilities per decision.
+    /// The caller supplies `seed_for_step`, called once per decision ordinal
     /// (0-based, contiguous within this one deliberation) so seeding stays
     /// entirely the driver's responsibility, matching `score_v1`/`sample_v1`.
+    /// One `WideCategoricalScratchV1` is allocated once and reused across
+    /// every decision in this deliberation, rather than once per decision.
     pub fn deliberate_sampled_v1(
         &self,
         input: &LearnedSideboardInputV1,
@@ -617,9 +643,11 @@ impl LearnedSideboardModelV1 {
         let mut actions = Vec::new();
         let mut decisions = Vec::new();
         let mut initial_value = 0.0;
+        let mut scratch = WideCategoricalScratchV1::default();
         for step in 0..SIDEBOARD_MAX_DECISIONS_V1 {
             let seed = seed_for_step(step as u32);
-            let decision = self.sample_v1(input, &state, embeddings, seed)?;
+            let decision =
+                self.sample_with_scratch_v1(input, &state, embeddings, seed, &mut scratch)?;
             if step == 0 {
                 initial_value = decision.value;
             }
@@ -1864,6 +1892,70 @@ mod tests {
             );
             assert_eq!(sampled.sampled_probability, expected_probability);
             assert!(sampled.sampled_probability > 0.0 && sampled.sampled_probability <= 1.0);
+        }
+    }
+
+    /// Pins `sample_v1`/`deliberate_sampled_v1` output against literal
+    /// values captured from this exact fixture before this module changed
+    /// `sample_v1` to a thin wrapper over `sample_with_scratch_v1` (a
+    /// caller-reusable `WideCategoricalScratchV1` instead of one allocated
+    /// per call) and before `sample_with_scratch_v1` started reading the
+    /// masses `scratch.sample` already computed
+    /// (`WideCategoricalScratchV1::last_masses_v1`) instead of apportioning
+    /// a second time. `sample_v1_is_deterministic_and_matches_fast_sampler_exactly`
+    /// above re-derives its expected values from fast_sampler on every run,
+    /// so a bug shared between `sample_v1` and its own re-derivation could
+    /// still pass there; this test instead pins fixed literal indices,
+    /// actions and exact probability bits so the refactor cannot silently
+    /// drift the sampled result.
+    #[test]
+    fn sample_v1_pinned_values_are_unchanged_by_the_scratch_reuse_refactor() {
+        let table = fixture_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let configuration = DeckConfigurationV1::new_exact_v1(
+            [vec![0; 30], vec![1; 30]].concat(),
+            [vec![1; 5], vec![2; 5], vec![3; 5]].concat(),
+        )
+        .unwrap();
+        let input = input(&configuration, 4);
+        let model = LearnedSideboardModelV1::new_v1(7, &embeddings);
+
+        let sampled = model
+            .sample_v1(
+                &input,
+                &SideboardDeliberationStateV1::new_v1(&configuration),
+                &embeddings,
+                42,
+            )
+            .unwrap();
+        assert_eq!(sampled.sampled_index, 2);
+        assert_eq!(sampled.sampled_action, SideboardActionV1::Done);
+        assert_eq!(sampled.sampled_probability.to_bits(), 0x3fd4_a00c_ff2a_bf91);
+
+        let result = model
+            .deliberate_sampled_v1(&input, &configuration, &embeddings, |step| {
+                0x1234_5678_u64.wrapping_add(u64::from(step))
+            })
+            .unwrap();
+        let expected = [
+            (
+                0_u32,
+                SideboardActionV1::MoveOneToSideboard { card_id: 0 },
+                0x3fd4_8b77_3ec2_ee11_u64,
+            ),
+            (
+                4,
+                SideboardActionV1::MoveOneToMainboard { card_id: 3 },
+                0x3fc9_dc89_f22d_02e6,
+            ),
+            (0, SideboardActionV1::Done, 0x3ff0_0000_0000_0000),
+        ];
+        assert_eq!(result.decisions.len(), expected.len());
+        for (decision, (index, action, probability_bits)) in result.decisions.iter().zip(expected)
+        {
+            assert_eq!(decision.sampled_index, index);
+            assert_eq!(decision.sampled_action, action);
+            assert_eq!(decision.sampled_probability.to_bits(), probability_bits);
         }
     }
 

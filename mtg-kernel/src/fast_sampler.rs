@@ -234,6 +234,14 @@ impl FastCategoricalScratch {
             code: "inverse-cdf-not-total",
         })
     }
+
+    /// Return the masses computed by this scratch's most recent `apportion`
+    /// or `sample` call, without apportioning again. `width` must be the
+    /// same width that call used (every caller already has it, since it is
+    /// `logits.len()`); this performs no recomputation and cannot fail.
+    pub fn last_masses_v1(&self, width: usize) -> &[u128] {
+        &self.masses[..width]
+    }
 }
 
 /// V3 runtime successor. Legacy callers retain `FastCategoricalScratch` and its
@@ -340,6 +348,20 @@ impl WideCategoricalScratchV1 {
         Err(FastCategoricalError::InternalInvariant {
             code: "wide-inverse-cdf-not-total",
         })
+    }
+
+    /// Return the masses computed by this scratch's most recent `apportion`
+    /// or `sample` call, without apportioning again. `width` must be the
+    /// same width that call used (every caller already has it, since it is
+    /// `logits.len()`); this dispatches to the same narrow/wide storage
+    /// `apportion`/`sample` would have used for that width, and performs no
+    /// recomputation.
+    pub fn last_masses_v1(&self, width: usize) -> &[u128] {
+        if width <= FAST_CATEGORICAL_MAX_ACTIONS {
+            self.narrow.last_masses_v1(width)
+        } else {
+            &self.masses[..width]
+        }
     }
 }
 

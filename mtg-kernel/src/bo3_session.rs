@@ -709,6 +709,61 @@ mod tests {
             .unwrap();
         assert_eq!(g2.prepared.start().starting_player, PlayerId::P1);
         assert_eq!(g2.prepared.start().game_index, 2);
+
+        // g1 and g2 above only ever exercise expected starting player P1
+        // (g1 through the `prepare_game_v1` delegation, g2 through the
+        // probe branch). The probe branch (at least one live seat, so the
+        // top-level delegation shortcut is skipped) must equally derive
+        // starting player P0: chooser P0 keeps the play, and chooser P1's
+        // Draw hands the play to P0. Two fresh matches isolate each chooser
+        // without fighting this module's win-count/next-chooser bookkeeping.
+        let mut p0_chooses = new_static_match();
+        p0_chooses
+            .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
+            .unwrap();
+        p0_chooses.record_game_result_v1(GameOutcomeV1::Draw).unwrap();
+        let mut learner_p0_play =
+            ScriptedLivePolicy::returning(current.clone(), vec![SideboardActionV1::Done]);
+        let live_p0_play = [
+            None,
+            Some(LiveSideboardConsultationV1 {
+                policy: &mut learner_p0_play,
+                evidence: &evidence,
+                current: &current,
+            }),
+        ];
+        let g3 = p0_chooses
+            .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, live_p0_play)
+            .unwrap();
+        assert_eq!(g3.prepared.start().starting_player, PlayerId::P0);
+        assert_eq!(g3.prepared.start().game_index, 2);
+
+        let mut p1_chooses = BestOfThreeDeckMatchV1::new_v1(
+            alpha_deck(),
+            beta_deck(),
+            static_policy(),
+            PlayerId::P1,
+        )
+        .unwrap();
+        p1_chooses
+            .prepare_game_with_live_policies_v1(PlayerId::P1, PlayDrawChoiceV1::Play, [None, None])
+            .unwrap();
+        p1_chooses.record_game_result_v1(GameOutcomeV1::Draw).unwrap();
+        let mut learner_p1_draw =
+            ScriptedLivePolicy::returning(current.clone(), vec![SideboardActionV1::Done]);
+        let live_p1_draw = [
+            None,
+            Some(LiveSideboardConsultationV1 {
+                policy: &mut learner_p1_draw,
+                evidence: &evidence,
+                current: &current,
+            }),
+        ];
+        let g4 = p1_chooses
+            .prepare_game_with_live_policies_v1(PlayerId::P1, PlayDrawChoiceV1::Draw, live_p1_draw)
+            .unwrap();
+        assert_eq!(g4.prepared.start().starting_player, PlayerId::P0);
+        assert_eq!(g4.prepared.start().game_index, 2);
     }
 
     /// Requirement (4): draw handling beyond three games. Every physical

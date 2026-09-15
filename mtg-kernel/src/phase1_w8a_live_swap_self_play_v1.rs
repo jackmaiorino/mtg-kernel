@@ -200,6 +200,40 @@ fn run_one_self_play_match_v1(
     embeddings: &FrozenSideboardEmbeddingsV1<'_>,
     game_player: &mut dyn W8aPhysicalGamePlayerV1,
 ) -> Result<W8aSelfPlayMatchReceiptV1, String> {
+    run_one_self_play_match_with_observer_v1(
+        config,
+        match_ordinal,
+        match_seed,
+        registered_decks,
+        fixed_sideboard_policy,
+        learner_model,
+        embeddings,
+        game_player,
+        &mut |_decision, _record| {},
+    )
+}
+
+/// `run_one_self_play_match_v1`'s exact behavior, plus a hook invoked once
+/// per recorded sideboard decision with the `SampledSideboardDecisionV1`
+/// that produced it (this driver's own sampled probability of record) and
+/// the exact `Bo3DecisionRecordV1` built from it, before either is dropped
+/// or pushed. `run_one_self_play_match_v1` is a thin wrapper over this
+/// function with a no-op observer; production callers never see this
+/// function, whose only reason to exist is letting a test compare the two
+/// probabilities directly at their true source instead of trying to
+/// reconstruct match state externally.
+#[allow(clippy::too_many_arguments)]
+fn run_one_self_play_match_with_observer_v1(
+    config: &W8aSelfPlayConfigV1,
+    match_ordinal: u32,
+    match_seed: u64,
+    registered_decks: [RegisteredDeckV1; 2],
+    fixed_sideboard_policy: &DeterministicSideboardPolicyV1,
+    learner_model: &LearnedSideboardModelV1,
+    embeddings: &FrozenSideboardEmbeddingsV1<'_>,
+    game_player: &mut dyn W8aPhysicalGamePlayerV1,
+    decision_observer: &mut dyn FnMut(&SampledSideboardDecisionV1, &Bo3DecisionRecordV1),
+) -> Result<W8aSelfPlayMatchReceiptV1, String> {
     let deck_ids = [
         registered_decks[0].deck_id().to_owned(),
         registered_decks[1].deck_id().to_owned(),
@@ -287,7 +321,7 @@ fn run_one_self_play_match_v1(
                 let logits_f32: Vec<f32> = decision.logits.iter().map(|&value| value as f32).collect();
                 let behavior =
                     BehaviorDistributionV1::hamilton_from_logits_v1(&logits_f32, decision.sampled_index)?;
-                sideboard_decisions.push(Bo3DecisionRecordV1 {
+                let record = Bo3DecisionRecordV1 {
                     decision_index,
                     actor: config.learner_seat.into(),
                     behavior_package_sha256: behavior_package_sha256.clone(),
@@ -296,7 +330,9 @@ fn run_one_self_play_match_v1(
                         input: evidence.clone(),
                         ordered_actions: decision.ordered_actions.clone(),
                     },
-                });
+                };
+                decision_observer(decision, &record);
+                sideboard_decisions.push(record);
                 decision_index += 1;
             }
             result.prepared
@@ -519,6 +555,82 @@ mod tests {
         assert_eq!(receipts, repeat);
     }
 
+    /// The Hamilton masses behind a sideboard swap are computed three times
+    /// in this codebase: once inside `LearnedSideboardModelV1::sample_v1`
+    /// (now via `sample_with_scratch_v1`'s single `scratch.sample` call),
+    /// once more via `scratch.apportion` to read `sampled_probability` back
+    /// out, and a third time here in the driver via
+    /// `BehaviorDistributionV1::hamilton_from_logits_v1`, which serializes
+    /// the receipt's own `HamiltonQ64` masses. Nothing previously asserted
+    /// those computations agree. This test uses the observer hook on
+    /// `run_one_self_play_match_with_observer_v1` to capture each decision's
+    /// `SampledSideboardDecisionV1.sampled_probability` (the model's own
+    /// value of record) beside the `Bo3DecisionRecordV1` built from it in
+    /// the very same loop iteration, and asserts the receipt's
+    /// `behavior.selected_probability_v1(action_count)` reproduces that
+    /// exact f64, bit for bit, for every decision of a run whose logits are
+    /// non-degenerate (three legal actions on the first sideboard decision,
+    /// none at probability 1, per
+    /// `sample_v1_pinned_values_are_unchanged_by_the_scratch_reuse_refactor`'s
+    /// sibling fixture in `learned_sideboard_v1`).
+    #[test]
+    fn receipt_probability_matches_the_sampled_decision_probability_bit_for_bit() {
+        let table = embeddings_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let model = LearnedSideboardModelV1::new_v1(5, &embeddings);
+        let config = W8aSelfPlayConfigV1 {
+            base_seed: 4242,
+            match_count: 1,
+            learner_seat: PlayerId::P0,
+            game_one_chooser: PlayerId::P0,
+            max_physical_games: 5,
+        };
+        let match_seed = w8a_match_seed_v1(config.base_seed, 0);
+        let script = [Some(PlayerId::P0), None, Some(PlayerId::P0)];
+        let mut game_player = ScriptedGamePlayer::new(&script);
+        let mut observed: Vec<(f64, f64, usize)> = Vec::new();
+        let receipt = run_one_self_play_match_with_observer_v1(
+            &config,
+            0,
+            match_seed,
+            [alpha_deck(), beta_deck()],
+            &fixed_policy(),
+            &model,
+            &embeddings,
+            &mut game_player,
+            &mut |decision, record| {
+                let ActorVisibleDecisionV1::Sideboard { ordered_actions, .. } = &record.visible
+                else {
+                    panic!("expected a sideboard decision");
+                };
+                let receipt_probability = record
+                    .behavior
+                    .selected_probability_v1(ordered_actions.len())
+                    .unwrap();
+                observed.push((
+                    decision.sampled_probability,
+                    receipt_probability,
+                    ordered_actions.len(),
+                ));
+            },
+        )
+        .unwrap();
+
+        assert!(!receipt.sideboard_decisions.is_empty());
+        assert_eq!(observed.len(), receipt.sideboard_decisions.len());
+        let mut saw_nondegenerate = false;
+        for (sampled_probability, receipt_probability, action_count) in observed {
+            assert_eq!(sampled_probability.to_bits(), receipt_probability.to_bits());
+            if action_count > 1 {
+                saw_nondegenerate = true;
+            }
+        }
+        assert!(
+            saw_nondegenerate,
+            "fixture must exercise at least one decision with more than one legal action"
+        );
+    }
+
     #[test]
     fn different_base_seeds_can_change_the_sampled_trace() {
         let table = embeddings_table();
@@ -551,5 +663,77 @@ mod tests {
         let a = run(1);
         let b = run(2);
         assert_ne!(a[0].match_seed, b[0].match_seed);
+        // Base seeds 1 and 2 are pinned, not arbitrary: over this fixture's
+        // non-degenerate logits (three legal actions on the first sideboard
+        // decision, none at probability 1) they demonstrably diverge at the
+        // very first decision. Base seed 1 selects index 1; base seed 2
+        // selects index 2, over the identical Hamilton masses
+        // (["5716708663464780403", "6352586045724736797",
+        // "6377449364520034416"]), so this is the sampler draw disagreeing,
+        // not a different distribution. Confirmed by running this test
+        // before pinning these seeds.
+        assert_ne!(a[0].sideboard_decisions, b[0].sideboard_decisions);
+        assert_eq!(a[0].sideboard_decisions[0].behavior.selected_index_v1(), 1);
+        assert_eq!(b[0].sideboard_decisions[0].behavior.selected_index_v1(), 2);
+    }
+
+    /// No prior driver test ever sets `learner_seat: PlayerId::P1`, so a
+    /// regression that silently kept reading/writing seat 0 throughout
+    /// (`registered_configurations[0]`, `summaries[0]`) instead of seat 1
+    /// could pass every other test in this module. Mirrors the P0 coverage
+    /// test's shape but has BetaDeck's seat (P1) win the match, and checks
+    /// the evidence actually folded into every recorded decision came from
+    /// `registered_configurations[1]` (BetaDeck's registered 75), never
+    /// AlphaDeck's.
+    #[test]
+    fn self_play_driver_consults_learner_seat_p1_not_p0() {
+        let table = embeddings_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let model = LearnedSideboardModelV1::new_v1(5, &embeddings);
+        let config = W8aSelfPlayConfigV1 {
+            base_seed: 4242,
+            match_count: 1,
+            learner_seat: PlayerId::P1,
+            game_one_chooser: PlayerId::P0,
+            max_physical_games: 5,
+        };
+        // Game one: P1 wins (0-1). Game two (one sideboard round): a draw.
+        // Game three (a second sideboard round): P1 wins again, completing
+        // the match 2-0 for P1.
+        let script = [Some(PlayerId::P1), None, Some(PlayerId::P1)];
+        let mut game_player = ScriptedGamePlayer::new(&script);
+        let receipts = run_w8a_self_play_matches_v1(
+            &config,
+            [alpha_deck(), beta_deck()],
+            &fixed_policy(),
+            &model,
+            &embeddings,
+            &mut game_player,
+        )
+        .unwrap();
+
+        assert_eq!(receipts.len(), 1);
+        let receipt = &receipts[0];
+        assert_eq!(receipt.learner_seat, PlayerSeatV1::from(PlayerId::P1));
+        assert_eq!(
+            receipt.outcome,
+            MatchOutcomeV1::Winner { winner: PlayerId::P1 }
+        );
+        assert!(!receipt.sideboard_decisions.is_empty());
+        let beta_registered_cards =
+            beta_deck().registered_configuration().combined_card_counts_v1();
+        let alpha_registered_cards =
+            alpha_deck().registered_configuration().combined_card_counts_v1();
+        assert_ne!(beta_registered_cards, alpha_registered_cards);
+        for decision in &receipt.sideboard_decisions {
+            assert_eq!(decision.actor, PlayerSeatV1::from(PlayerId::P1));
+            let ActorVisibleDecisionV1::Sideboard { input, .. } = &decision.visible else {
+                panic!("expected a sideboard decision");
+            };
+            // The evidence's registered cards must come from
+            // `registered_configurations[1]` (BetaDeck), proving the driver
+            // read seat 1, not seat 0's AlphaDeck registration.
+            assert_eq!(input.registered_cards, beta_registered_cards);
+        }
     }
 }

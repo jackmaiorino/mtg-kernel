@@ -244,3 +244,53 @@ from the workspace root (`E:/mtg-kernel-phase1-w8a`) with
   `MatchOutcomeV1`, and full determinism across a repeated run.
 - `phase1_w8a_live_swap_self_play_v1::tests::different_base_seeds_can_change_the_sampled_trace`:
   distinct base seeds draw from distinct domain-separated streams.
+
+## 7. Review closure
+
+An adversarial review of this match path found no correctness defect, only test
+and structure gaps. All five are closed:
+
+1. The Hamilton masses behind a sideboard swap were computed up to three times
+   (`sample_v1`'s internal `scratch.sample`, a second `scratch.apportion` to read
+   `sampled_probability`, and a third apportionment in the self-play driver via
+   `BehaviorDistributionV1::hamilton_from_logits_v1` for the receipt), with nothing
+   asserting the results agreed. `fast_sampler::WideCategoricalScratchV1` (and its
+   narrow `FastCategoricalScratch`) now expose `last_masses_v1`, so `sample_v1` (via
+   the new `sample_with_scratch_v1`) reads `sampled_probability` from the masses its
+   own `scratch.sample` call already computed instead of apportioning a second time;
+   the driver's own third apportionment stays, since it exists to serialize the
+   receipt's independent `HamiltonQ64` record, not to reselect an action.
+   `phase1_w8a_live_swap_self_play_v1::tests::receipt_probability_matches_the_sampled_decision_probability_bit_for_bit`
+   asserts the receipt's `behavior.selected_probability_v1(action_count)` reproduces
+   `SampledSideboardDecisionV1.sampled_probability` bit for bit, for every decision
+   of a run with non-degenerate logits.
+2. `sample_v1` allocated a fresh `WideCategoricalScratchV1` per call.
+   `sample_with_scratch_v1` now takes the scratch from the caller;
+   `deliberate_sampled_v1` allocates one and reuses it across every decision in a
+   deliberation, and `sample_v1` stays as a thin per-call wrapper for callers with no
+   scratch to reuse. `learned_sideboard_v1::tests::sample_v1_pinned_values_are_unchanged_by_the_scratch_reuse_refactor`
+   pins literal sampled indices, actions, and exact probability bits captured before
+   this change, so the reuse cannot silently drift the sampled result.
+3. `bo3_session::tests::starting_player_matches_play_draw_choice_across_games` never
+   asserted the probe path (`prepare_game_with_live_policies_v1` with at least one
+   live seat, not the `prepare_game_v1` delegation) for an expected starting player
+   of `PlayerId::P0`. The test now adds chooser P0 with `PlayDrawChoiceV1::Play` and
+   chooser P1 with `PlayDrawChoiceV1::Draw`, each with a live seat present, both
+   expecting `PlayerId::P0`.
+4. `phase1_w8a_live_swap_self_play_v1::tests::different_base_seeds_can_change_the_sampled_trace`
+   only checked that the two base seeds' derived match seeds differed, duplicating
+   `seed_derivations_are_pure_and_domain_separated`. It now also asserts the sampled
+   traces themselves differ: base seeds 1 and 2 are pinned because they demonstrably
+   select different actions (index 1 vs. index 2) at the first sideboard decision,
+   over the identical Hamilton masses, so it is the sampler draw disagreeing, not a
+   different distribution.
+5. No driver test used `learner_seat: PlayerId::P1`. The new
+   `self_play_driver_consults_learner_seat_p1_not_p0` test runs the driver with the
+   learner on seat 1, confirms every recorded decision's actor and the receipt's
+   `learner_seat` are P1, and confirms the evidence folded into those decisions came
+   from `registered_configurations[1]` (BetaDeck's registered cards), never seat 0's
+   AlphaDeck registration.
+
+No behavior changed for the sampling result, the receipt schema, the feature
+digests, or any frozen constant; `cargo test -p mtg-kernel --lib flat_policy_v3::`
+was re-run to confirm the feature digests are unaffected.
