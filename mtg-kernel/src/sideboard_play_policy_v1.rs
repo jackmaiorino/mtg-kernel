@@ -1542,6 +1542,155 @@ mod tests {
         );
     }
 
+    /// Proves the reconciliation layer, not just the raw action slice:
+    /// `score_fast_session_v1`'s V3 path (`encode_current_flat_scoring_decision_owned_v3`,
+    /// which shares `flat_policy_v2.rs`'s `build_scoring_owned_v3`) must
+    /// score a decision whose pending trigger's source has been shuffled
+    /// into its owner's library -- the same fixture the action-slice
+    /// regression tests in `rl_session/flat_action_v3.rs` use, driven all
+    /// the way through the frozen play policy's scorer instead of just the
+    /// raw action slice.
+    #[test]
+    fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source() {
+        let (mut state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        policy.reset_sampling_v1([11, 22]);
+        let scores = policy.score_fast_session_v1(&session).unwrap();
+        assert!(!scores.logits.is_empty());
+        assert!(scores.logits.iter().all(|x| x.is_finite()));
+        assert!(scores.value.is_finite());
+        let selected = policy.select_fast_session_v1(&session).unwrap();
+        assert!((selected as usize) < scores.logits.len());
+    }
+
+    /// The tensorizer-level sibling of the ordinal-collision regression in
+    /// `rl_session/flat_action_v3.rs`
+    /// (`v3_pending_trigger_hidden_source_ordinal_does_not_collide_with_real_stack_historical_rows`).
+    /// `score_fast_session_v1`'s V3 path runs the full scorer, including
+    /// `native_flat_tensorizer_v2.rs`'s `build_object_projection_v3` /
+    /// `build_object_projection_for_rows_v2`, which is what actually
+    /// enforces `(group, visible_ordinal)` uniqueness
+    /// (`NativeFlatTensorErrorV2::ObjectOrder`) across every registered
+    /// `PendingContext` row, real historical sources included -- the
+    /// action-slice test alone never reaches that check. A real spell at
+    /// stack index 0 plus two real non-spell historical rows at raw
+    /// indices 1 and 2 previously collided with a naive "count of
+    /// historical rows" ordinal for the pending-trigger row; this proves
+    /// the collision-safe ceiling
+    /// (`trigger::historical_public_source_ordinal_ceiling_v1`) avoids it.
+    #[test]
+    fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source_with_real_stack_historical_rows(
+    ) {
+        let (mut state, hunter) =
+            crate::rl_session::avenging_hunter_hidden_source_with_stack_historical_rows_state_v1();
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        policy.reset_sampling_v1([33, 44]);
+        let scores = policy.score_fast_session_v1(&session).unwrap();
+        assert!(!scores.logits.is_empty());
+        assert!(scores.logits.iter().all(|x| x.is_finite()));
+        assert!(scores.value.is_finite());
+    }
+
+    /// The registry-level proof the action-slice tests in
+    /// `rl_session/flat_action_v3.rs`
+    /// (`v3_pending_trigger_known_library_source_takes_the_ordinary_path`,
+    /// `..._graveyard_source_takes_the_ordinary_path`) cannot give: those
+    /// only inspect the action slice's own object table
+    /// (`rl_session.rs`'s `FlatActionObjectV2` rows), never
+    /// `flat_policy_v2.rs`'s model-facing registry
+    /// (`FlatDecisionEncoderV2::objects`) that
+    /// `append_pending_trigger_frozen_source_authority_v3` (layer B) could
+    /// grow with a ghost `PendingContext` row. This calls
+    /// `encode_current_flat_scoring_decision_owned_v3` directly (the same
+    /// path `score_fast_session_v1` uses) and counts the real
+    /// `buffers.objects` it publishes, before and after moving Hunter to a
+    /// known library position or to the graveyard: decision shape alone
+    /// (`Decision::ChooseTargets` for a pending trigger with a
+    /// `source_contract`) is not enough to open
+    /// `trigger::pending_trigger_choose_targets_gate_v1` -- the live
+    /// source must actually be hidden (`Zone::Library`, no
+    /// `library_knowledge` entry) -- so neither case may add a row.
+    #[test]
+    fn score_fast_session_v1_registry_object_count_is_unchanged_for_a_known_or_public_source() {
+        fn registry_object_count(state: crate::state::GameState) -> usize {
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("fixture must have an active decision");
+            };
+            let mut encoder = FlatDecisionEncoderV3::default();
+            let mut objects = Vec::new();
+            let mut relations = Vec::new();
+            let mut object_subtypes = Vec::new();
+            let mut ability_uses = Vec::new();
+            let mut goads = Vec::new();
+            let mut completed_dungeons = Vec::new();
+            let mut effect_subtype_changes = Vec::new();
+            let mut context_path_elements = Vec::new();
+            let mut actions = Vec::new();
+            let mut action_refs = Vec::new();
+            session
+                .encode_current_flat_scoring_decision_owned_v3(
+                    expected,
+                    &mut encoder,
+                    &mut FlatScoringOwnedBuffersV2 {
+                        objects: &mut objects,
+                        relations: &mut relations,
+                        object_subtypes: &mut object_subtypes,
+                        ability_uses: &mut ability_uses,
+                        goads: &mut goads,
+                        completed_dungeons: &mut completed_dungeons,
+                        effect_subtype_changes: &mut effect_subtype_changes,
+                        context_path_elements: &mut context_path_elements,
+                        actions: &mut actions,
+                        action_refs: &mut action_refs,
+                    },
+                )
+                .unwrap();
+            objects.len()
+        }
+
+        let (baseline_state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        let baseline_count = registry_object_count(baseline_state.clone());
+
+        let mut known_state = baseline_state.clone();
+        crate::rl_session::move_trigger_source_to_known_library_v1(
+            &mut known_state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        assert_eq!(
+            registry_object_count(known_state),
+            baseline_count,
+            "a known library source must not grow the registry with a ghost PendingContext row"
+        );
+
+        let mut graveyard_state = baseline_state;
+        crate::rl_session::move_trigger_source_to_graveyard_v1(
+            &mut graveyard_state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        assert_eq!(
+            registry_object_count(graveyard_state),
+            baseline_count,
+            "a graveyard source must not grow the registry with a ghost PendingContext row"
+        );
+    }
+
     /// Run explicitly with MTG_SIDEB_PLAY_IMPORT_MANIFEST pointing to pinned
     /// engineering inputs. No terminal outcomes or CP7 information are read.
     #[test]

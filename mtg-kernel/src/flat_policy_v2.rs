@@ -3949,6 +3949,78 @@ impl FlatDecisionEncoderV2 {
         Ok(output)
     }
 
+    /// Layer B of the pending-trigger-hidden-source reconciliation
+    /// (`trigger::pending_trigger_choose_targets_gate_v1` is the shared
+    /// gate; `rl_session.rs`'s `flat_visible_action_object_components_v1`
+    /// is layer A). When the gate is open, registers the trigger's frozen
+    /// source as an ordinary `HistoricalPublicSource` row via
+    /// `add_validated_historical_source_v3` -- the exact same registration
+    /// path `register_extensions_v3` already uses for a resolving effect's
+    /// or a non-spell stack item's historical source, reusing its existing
+    /// group instead of adding a new discriminant -- and appends the
+    /// matching `v3_action_objects` authority entry so
+    /// `validate_cached_tables` accepts layer A's action object.
+    ///
+    /// The gate closes for every decision except `Decision::ChooseTargets`
+    /// on `pending_triggers[0]`, so no other decision (in particular
+    /// `Decision::OrderTriggers`) ever gains a row here. Entries are only
+    /// appended to whatever `register_extensions_v3` already produced,
+    /// never replacing or reordering them, so no previously-succeeding
+    /// decision's encoding can change.
+    fn append_pending_trigger_frozen_source_authority_v3(
+        &mut self,
+        state: &crate::state::GameState,
+        actor: PlayerSeatV1,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let Some((source, contract, ordinal)) =
+            crate::trigger::pending_trigger_choose_targets_gate_v1(state)
+        else {
+            return Ok(());
+        };
+        let stable = CardStableRefV1 {
+            arena_id: source.0,
+            card_db_id: contract.card_def,
+            owner: contract.owner.into(),
+            controller: contract.controller.into(),
+            zone: contract.zone,
+            zone_change_count: contract.zone_change_count,
+        };
+        // Deliberately NOT `output.appended_object_indices.push(model_index)`
+        // the way `register_extensions_v3`'s own historical-source loop does
+        // for a newly appended row: the tensorizer
+        // (`native_flat_tensorizer_v2.rs`'s `build_object_projection_v3`)
+        // only accepts an appended `PendingContext` row when it also appears
+        // in `extensions.historical_public_sources`, keyed by a
+        // `HistoricalSourceContextV6` variant -- and this case has neither
+        // `Stack{stack_index}` (the source is not on the stack) nor
+        // `PendingEffect` (unrelated engine state) to legitimately use, and
+        // must not gain a new variant (frozen contract). Leaving it out of
+        // `appended_object_indices` instead lets the row fall into the
+        // tensorizer's ordinary "common" object bucket, sorted by
+        // `(group, visible_ordinal)` like any other registered object,
+        // which the V3 scoring test below proves does not error. The
+        // documented residual is a possible `visible_ordinal` collision
+        // against a real historical-source row's raw stack-index ordinal
+        // when non-spell stack items don't start at stack index 0 (this
+        // decision's own ordinal is `historical row count + trigger
+        // position`, which is not guaranteed to be free of every real
+        // stack-index gap) -- the tensorizer's own `ObjectOrder` check
+        // catches that case safely (`Err`, not silent corruption) rather
+        // than mis-scoring it.
+        let (model_index, _appended) =
+            self.add_validated_historical_source_v3(&stable, actor, ordinal)?;
+        let authority = Self::extension_authority_v3(
+            &stable,
+            actor,
+            FlatActionObjectGroupV1::HistoricalPublicSource,
+            usize::try_from(ordinal).map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+        )?;
+        if let Some(mapping) = self.v3_action_objects.as_mut() {
+            mapping.push((authority, model_index));
+        }
+        Ok(())
+    }
+
     pub(crate) fn build_scoring_owned_v3(
         &mut self,
         session: &FastActorSessionV1,
@@ -4000,6 +4072,10 @@ impl FlatDecisionEncoderV2 {
         self.build_globals(&observation)?;
         self.register_objects(&observation)?;
         let extensions = self.register_extensions_v3(&observation)?;
+        self.append_pending_trigger_frozen_source_authority_v3(
+            session.game_state(),
+            observation.acting_player,
+        )?;
         self.build_relations(&observation)?;
         self.validate_cached_tables()?;
         if self.scorer_actions.len() != self.actions.len()

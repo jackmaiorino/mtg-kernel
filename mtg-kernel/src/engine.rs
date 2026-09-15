@@ -1318,7 +1318,7 @@ fn step_grants_priority(step: Step) -> bool {
     !matches!(step, Step::Untap | Step::Cleanup)
 }
 
-fn target_count(spec: TargetSpec) -> u8 {
+pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None => 0,
         TargetSpec::AnyTarget
