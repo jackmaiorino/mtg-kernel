@@ -395,6 +395,7 @@ pub mod human_match_v1;
 pub mod human_match_v2;
 pub mod learned_bo3_v1;
 pub mod learned_sideboard_v1;
+pub mod phase1_w8a_live_swap_self_play_v1;
 #[cfg(test)]
 mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;

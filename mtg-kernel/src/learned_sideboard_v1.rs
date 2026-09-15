@@ -6,6 +6,7 @@
 //! are borrowed, frozen inputs. This is an imitation implementation, not an RL
 //! trainer or a claim that a particular checkpoint improves match win rate.
 
+use crate::fast_sampler::{FastCategoricalError, WideCategoricalScratchV1, FAST_CATEGORICAL_MASS_TOTAL};
 use crate::sideboard::{CardCountV1, DeckConfigurationV1, SideboardPlanV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -14,6 +15,12 @@ use std::fmt;
 
 pub const SIDEBOARD_EMBEDDING_DIM_V1: usize = 16;
 pub const SIDEBOARD_MAX_DECISIONS_V1: usize = 64;
+/// Identity for the W8a live-swap sampled entry beside `score_v1`. Reuses
+/// `fast_sampler`'s exact-integer Hamilton apportionment and its first
+/// SplitMix64 draw, over this head's own action logits, never a
+/// replacement for the frozen `FAST_CATEGORICAL_SAMPLER_VERSION` identity.
+pub const SIDEBOARD_LIVE_SAMPLER_VERSION_V1: &str =
+    "kernel-learned-sideboard-sample-f32-q8-expq63-hamilton-splitmix64/v1";
 const VOCAB_SIZE: usize = 65_537;
 const HIDDEN: usize = 24;
 // Registered, current main, current side, opponent, game-index weighted opponent,
@@ -35,6 +42,9 @@ impl std::error::Error for LearnedSideboardErrorV1 {}
 type ResultV1<T> = Result<T, LearnedSideboardErrorV1>;
 fn error(message: impl Into<String>) -> LearnedSideboardErrorV1 {
     LearnedSideboardErrorV1(message.into())
+}
+fn sampler_error(source: FastCategoricalError) -> LearnedSideboardErrorV1 {
+    error(format!("sideboard sampler: {source}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,6 +409,38 @@ pub struct LearnedSideboardResultV1 {
     pub initial_value: f64,
 }
 
+/// One sampled decision, versioned and reproducible: the same `seed` over the
+/// same `logits` always reselects `sampled_action` at `sampled_probability`.
+/// `logits` and `ordered_actions` are `score_v1`'s own outputs, so a sampled
+/// trace and its greedy sibling always agree on what was legal and how it was
+/// scored; only the selection rule (argmax vs. this sampler) differs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampledSideboardDecisionV1 {
+    pub sampler_version: &'static str,
+    pub seed: u64,
+    pub ordered_actions: Vec<SideboardActionV1>,
+    pub logits: Vec<f64>,
+    pub sampled_index: u32,
+    pub sampled_action: SideboardActionV1,
+    /// Exact Hamilton-apportioned mass for `sampled_action`, divided by the
+    /// sampler's `2**64` total. This is the actual behavior probability a
+    /// policy-gradient `log p_selected` term must use, not a plain softmax
+    /// value: it is the identical mass fast_sampler's inverse-CDF draw uses.
+    pub sampled_probability: f64,
+    pub value: f64,
+}
+
+/// A completed sampled deliberation: every step's sampled decision plus the
+/// resulting configuration, in the same shape `deliberate_v1`/
+/// `LearnedSideboardResultV1` already return for the greedy path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampledSideboardResultV1 {
+    pub configuration: DeckConfigurationV1,
+    pub actions: Vec<SideboardActionV1>,
+    pub decisions: Vec<SampledSideboardDecisionV1>,
+    pub initial_value: f64,
+}
+
 /// Shared action MLP and value head. The nonlinear shared head lets visible
 /// opponent evidence change the preference among candidate card moves. There
 /// are no per-archetype output rows. Only these weights are optimized.
@@ -495,6 +537,41 @@ impl LearnedSideboardModelV1 {
         })
     }
 
+    /// The W8a live-swap sampled sibling of `score_v1`: identical context and
+    /// per-action logits, but the selection is a deterministic categorical
+    /// draw (fast_sampler's exact-integer Hamilton apportionment, keyed by
+    /// `seed`) instead of `score_v1`'s argmax. The caller derives `seed`
+    /// (domain-separated from a match seed, game index, seat and decision
+    /// ordinal); this method owns no RNG state and never advances one.
+    pub fn sample_v1(
+        &self,
+        input: &LearnedSideboardInputV1,
+        state: &SideboardDeliberationStateV1,
+        embeddings: &FrozenSideboardEmbeddingsV1<'_>,
+        seed: u64,
+    ) -> ResultV1<SampledSideboardDecisionV1> {
+        let scored = self.score_v1(input, state, embeddings)?;
+        let logits_f32: Vec<f32> = scored.logits.iter().map(|&value| value as f32).collect();
+        let mut scratch = WideCategoricalScratchV1::default();
+        let sampled_index = scratch
+            .sample(&logits_f32, seed)
+            .map_err(sampler_error)? as u32;
+        let masses = scratch.apportion(&logits_f32).map_err(sampler_error)?;
+        let sampled_probability =
+            masses[sampled_index as usize] as f64 / FAST_CATEGORICAL_MASS_TOTAL as f64;
+        let sampled_action = scored.ordered_actions[sampled_index as usize];
+        Ok(SampledSideboardDecisionV1 {
+            sampler_version: SIDEBOARD_LIVE_SAMPLER_VERSION_V1,
+            seed,
+            ordered_actions: scored.ordered_actions,
+            logits: scored.logits,
+            sampled_index,
+            sampled_action,
+            sampled_probability,
+            value: scored.value,
+        })
+    }
+
     pub fn deliberate_v1(
         &self,
         input: &LearnedSideboardInputV1,
@@ -515,6 +592,45 @@ impl LearnedSideboardModelV1 {
                 return Ok(LearnedSideboardResultV1 {
                     configuration: state.configuration_v1()?,
                     actions,
+                    initial_value,
+                });
+            }
+        }
+        Err(error("sideboard deliberation exceeded decision limit"))
+    }
+
+    /// The sampled sibling of `deliberate_v1`: runs the same swap-then-Done
+    /// deliberation loop, but selects each step with `sample_v1` instead of
+    /// argmax, and returns every step's `SampledSideboardDecisionV1` so a
+    /// self-play driver can record sampled probabilities per decision. The
+    /// caller supplies `seed_for_step`, called once per decision ordinal
+    /// (0-based, contiguous within this one deliberation) so seeding stays
+    /// entirely the driver's responsibility, matching `score_v1`/`sample_v1`.
+    pub fn deliberate_sampled_v1(
+        &self,
+        input: &LearnedSideboardInputV1,
+        configuration: &DeckConfigurationV1,
+        embeddings: &FrozenSideboardEmbeddingsV1<'_>,
+        mut seed_for_step: impl FnMut(u32) -> u64,
+    ) -> ResultV1<SampledSideboardResultV1> {
+        let mut state = SideboardDeliberationStateV1::new_v1(configuration);
+        let mut actions = Vec::new();
+        let mut decisions = Vec::new();
+        let mut initial_value = 0.0;
+        for step in 0..SIDEBOARD_MAX_DECISIONS_V1 {
+            let seed = seed_for_step(step as u32);
+            let decision = self.sample_v1(input, &state, embeddings, seed)?;
+            if step == 0 {
+                initial_value = decision.value;
+            }
+            state.apply_v1(decision.sampled_action)?;
+            actions.push(decision.sampled_action);
+            decisions.push(decision);
+            if state.is_done_v1() {
+                return Ok(SampledSideboardResultV1 {
+                    configuration: state.configuration_v1()?,
+                    actions,
+                    decisions,
                     initial_value,
                 });
             }
@@ -1707,5 +1823,90 @@ mod tests {
                 model.policy_weights
             )
         );
+    }
+
+    #[test]
+    fn sample_v1_is_deterministic_and_matches_fast_sampler_exactly() {
+        let table = fixture_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let configuration = DeckConfigurationV1::new_exact_v1(
+            [vec![0; 30], vec![1; 30]].concat(),
+            [vec![1; 5], vec![2; 5], vec![3; 5]].concat(),
+        )
+        .unwrap();
+        let state = SideboardDeliberationStateV1::new_v1(&configuration);
+        let input = input(&configuration, 4);
+        let model = LearnedSideboardModelV1::new_v1(7, &embeddings);
+        let scored = model.score_v1(&input, &state, &embeddings).unwrap();
+        for seed in [0_u64, 1, 42, u64::MAX, 0xDEAD_BEEF] {
+            let sampled = model.sample_v1(&input, &state, &embeddings, seed).unwrap();
+            assert_eq!(sampled.sampler_version, SIDEBOARD_LIVE_SAMPLER_VERSION_V1);
+            assert_eq!(sampled.seed, seed);
+            assert_eq!(sampled.ordered_actions, scored.ordered_actions);
+            assert_eq!(sampled.logits, scored.logits);
+            assert_eq!(sampled.value, scored.value);
+            // Repeat calls with the same seed reselect the same action and
+            // probability: the reproducibility a policy-gradient step needs.
+            let repeat = model.sample_v1(&input, &state, &embeddings, seed).unwrap();
+            assert_eq!(sampled, repeat);
+            // Cross-check against fast_sampler directly: `sample_v1` must be a
+            // pure pass-through, not a reimplementation that could diverge.
+            let logits_f32: Vec<f32> = scored.logits.iter().map(|&v| v as f32).collect();
+            let mut scratch = WideCategoricalScratchV1::default();
+            let expected_index = scratch.sample(&logits_f32, seed).unwrap() as u32;
+            let masses = scratch.apportion(&logits_f32).unwrap();
+            let expected_probability =
+                masses[expected_index as usize] as f64 / FAST_CATEGORICAL_MASS_TOTAL as f64;
+            assert_eq!(sampled.sampled_index, expected_index);
+            assert_eq!(
+                sampled.sampled_action,
+                scored.ordered_actions[expected_index as usize]
+            );
+            assert_eq!(sampled.sampled_probability, expected_probability);
+            assert!(sampled.sampled_probability > 0.0 && sampled.sampled_probability <= 1.0);
+        }
+    }
+
+    #[test]
+    fn sampled_deliberation_finishes_and_conserves_the_registered_75() {
+        let table = fixture_table();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let configuration = DeckConfigurationV1::new_exact_v1(
+            [vec![0; 30], vec![1; 30]].concat(),
+            [vec![1; 5], vec![2; 5], vec![3; 5]].concat(),
+        )
+        .unwrap();
+        let input = input(&configuration, 4);
+        for seed in 0..8_u64 {
+            let model = LearnedSideboardModelV1::new_v1(seed, &embeddings);
+            // Arbitrary per-model salt so different models draw different step
+            // seed streams; still fully deterministic given the closure below.
+            let base_seed = seed ^ 0x5344_4231_u64;
+            let result = model
+                .deliberate_sampled_v1(&input, &configuration, &embeddings, |step| {
+                    base_seed.wrapping_add(u64::from(step))
+                })
+                .unwrap();
+            assert!(result.actions.len() <= 31);
+            assert_eq!(result.actions.last(), Some(&SideboardActionV1::Done));
+            assert_eq!(result.decisions.len(), result.actions.len());
+            assert_eq!(
+                result.configuration.combined_card_counts_v1(),
+                configuration.combined_card_counts_v1()
+            );
+            for (decision, action) in result.decisions.iter().zip(&result.actions) {
+                assert_eq!(decision.sampled_action, *action);
+                assert!(decision.sampled_probability > 0.0 && decision.sampled_probability <= 1.0);
+            }
+            // The same per-step seed function reproduces the exact same trace.
+            let repeat = model
+                .deliberate_sampled_v1(&input, &configuration, &embeddings, |step| {
+                    base_seed.wrapping_add(u64::from(step))
+                })
+                .unwrap();
+            assert_eq!(result.actions, repeat.actions);
+            assert_eq!(result.decisions, repeat.decisions);
+            assert_eq!(result.configuration, repeat.configuration);
+        }
     }
 }
