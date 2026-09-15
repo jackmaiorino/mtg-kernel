@@ -1183,6 +1183,105 @@ struct FlatVisibleActionObjectComponentsV1 {
     zone_change_count: u32,
 }
 
+/// The next three items mirror `flat_policy_v2.rs`'s
+/// `canonical_known_hand_cards` (and the two key helpers it composes,
+/// `canonical_json_u16_lexical_key` and
+/// `canonical_relative_player_string_order`) exactly, so a
+/// `KnownOpponentHand` action ordinal computed here always lands on the
+/// same row `register_objects` (`flat_policy_v2.rs`) assigns it. Any
+/// change to `canonical_known_hand_cards`'s sort key or tie-breaking in
+/// `flat_policy_v2.rs` must be mirrored here too, or this module's
+/// ordinals will silently drift from the registry's and reintroduce the
+/// `InvalidReference` failure `known_opponent_hand_canonical_ordinal_v1`
+/// fixes.
+///
+/// Same lexical key `canonical_json_u16_lexical_key` (`flat_policy_v2.rs`)
+/// uses to sort known-hand rows by `card_db_id` as canonical JSON would
+/// compare their decimal strings: a shorter number sorts before a longer
+/// one sharing its leading digits, because the unused trailing bytes stay
+/// zero (below any ASCII digit).
+fn canonical_json_u16_lexical_key_v1(value: u16) -> [u8; 5] {
+    let mut reversed = [0_u8; 5];
+    let mut value = value;
+    let mut length = 0;
+    loop {
+        reversed[length] = b'0' + u8::try_from(value % 10).expect("one decimal digit fits u8");
+        length += 1;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let mut lexical = [0_u8; 5];
+    for index in 0..length {
+        lexical[index] = reversed[length - index - 1];
+    }
+    lexical
+}
+
+/// Mirrors `canonical_relative_player_string_order` (`flat_policy_v2.rs`):
+/// canonical JSON string order places "opponent" before "self".
+fn canonical_relative_seat_order_v1(seat: PlayerId, actor: PlayerId) -> u8 {
+    u8::from(seat == actor)
+}
+
+/// The known-hand canonical position of `target` (arena id `target`, exact
+/// incarnation `target_zone_change_count`) in `owner`'s hand as `actor`
+/// knows it. `state.hand_knowledge` entries are kept in ascending
+/// `ObjectId` (arena id) order, not reveal order: `state.rs`'s
+/// `reveal_hand_card` and `transfer_library_knowledge_to_hand` both push
+/// the new entry then `entries.sort_by_key(|entry| entry.object)`.
+/// Register_objects (`flat_policy_v2.rs`) does not register each row at
+/// that raw arena-id position: it first runs the whole group through
+/// `canonical_known_hand_cards`, which sorts by (card_db_id lexical,
+/// controller, owner, zone) instead, a key that can diverge from arena-id
+/// order whenever a lower-arena-id card happens to have a higher
+/// card_db_id than a higher-arena-id one. An action referencing one of
+/// these cards must land on that same canonical position, or
+/// `validate_cached_tables` (`flat_policy_v2.rs`) cannot find a registry
+/// row at the position the action actually reports and fails closed with
+/// `InvalidReference` even though the card is genuinely known. Ties
+/// (matching keys) keep `hand_knowledge`'s original arena-id order, by a
+/// stable sort, exactly as `canonical_known_hand_cards` does over
+/// `observation.known_hand_cards`, which preserves that same raw order.
+fn known_opponent_hand_canonical_ordinal_v1(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    owner: PlayerId,
+    target: ObjectId,
+    target_zone_change_count: u32,
+) -> Option<usize> {
+    let entries = &state.hand_knowledge[actor.index()][owner.index()];
+    let mut keyed: Vec<([u8; 5], u8, u8, u8, ObjectId, u32)> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let object = state.objects.try_get(entry.object)?;
+        keyed.push((
+            canonical_json_u16_lexical_key_v1(object.card_def),
+            canonical_relative_seat_order_v1(object.controller, actor),
+            canonical_relative_seat_order_v1(object.owner, actor),
+            match object.zone {
+                Zone::Battlefield => 0,
+                Zone::Command => 1,
+                Zone::Exile => 2,
+                Zone::Graveyard => 3,
+                Zone::Hand => 4,
+                Zone::Library => 5,
+                Zone::Stack => 6,
+            },
+            entry.object,
+            entry.zone_change_count,
+        ));
+    }
+    // Re-sorted from scratch on every call rather than cached per decision
+    // build: the cost is O(hand size * log(hand size)) and hand size is a
+    // single player's revealed-hand count, so this stays cheap without the
+    // extra bookkeeping a per-(actor, owner) cache would add.
+    keyed.sort_by_key(|&(a, b, c, d, _, _)| (a, b, c, d));
+    keyed
+        .iter()
+        .position(|&(_, _, _, _, id, zcc)| id == target && zcc == target_zone_change_count)
+}
+
 fn flat_visible_action_object_components_v1(
     state: &crate::state::GameState,
     actor: PlayerId,
@@ -1214,12 +1313,14 @@ fn flat_visible_action_object_components_v1(
             if position(&state.players[object.owner.index()].hand).is_none() {
                 return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
             }
-            let ordinal = state.hand_knowledge[actor.index()][object.owner.index()]
-                .iter()
-                .position(|entry| {
-                    entry.object == object_id && entry.zone_change_count == object.zone_change_count
-                })
-                .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
+            let ordinal = known_opponent_hand_canonical_ordinal_v1(
+                state,
+                actor,
+                object.owner,
+                object_id,
+                object.zone_change_count,
+            )
+            .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
             (FlatActionObjectGroupV1::KnownOpponentHand, ordinal)
         }
         Zone::Battlefield => {
@@ -10871,6 +10972,658 @@ mod tests {
             encoded.binding.card_token_mapping_version,
             FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V1
         );
+    }
+
+    /// Regression test for the second panel-stopping crash: a formal
+    /// five-deck BO3 evaluator run (and two later engineering crash-sweep
+    /// hits) failed `StaleEnvironmentBinding: frozen sideboard play policy:
+    /// V3 actor-visible encoding: InvalidReference` on a decision that
+    /// legally targeted a card the acting player had already seen revealed
+    /// in the opponent's hand -- a plainly *known* reference, unlike the
+    /// combat-residue bug's hidden-zone one.
+    ///
+    /// `state.hand_knowledge` entries are kept in ascending `ObjectId`
+    /// (arena id) order, not reveal order (`state.rs`'s `reveal_hand_card`
+    /// and `transfer_library_knowledge_to_hand` both `sort_by_key(|entry|
+    /// entry.object)` after inserting). `register_objects`
+    /// (`flat_policy_v2.rs`) does not register each `KnownOpponentHand` row
+    /// at that raw arena-id position: it runs the whole group through
+    /// `canonical_known_hand_cards` first, which sorts by (card_db_id
+    /// lexical, controller, owner, zone) instead, so the model row order is
+    /// independent of incidental arena-id assignment. This function's
+    /// `Zone::Hand` (non-owner) arm used to report the raw arena-id
+    /// position instead of that same canonical position, so whenever two
+    /// known-hand cards have a card_db_id whose canonical order differs
+    /// from their arena-id order, the action's reported ordinal could
+    /// never match the registered row: the same error class as the
+    /// combat-residue bug (a projection using a laxer or differently-keyed
+    /// rule than the V3 registry), from a different projection.
+    /// `known_opponent_hand_canonical_ordinal_v1` now mirrors
+    /// `canonical_known_hand_cards`'s exact ordering, keyed by object
+    /// identity plus incarnation rather than by array position, so it
+    /// lands on the same row `register_objects` does.
+    #[test]
+    fn known_opponent_hand_arena_order_mismatch_does_not_break_v3_action_encoding() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_050, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+
+        // Force two distinct incarnations in the opponent's hand: `higher`
+        // gets a larger card_db_id than `lower`. `higher` is
+        // `opponent_hand[0]` and `lower` is `opponent_hand[1]`; opening
+        // hands are dealt by `draw_card` popping the front of a
+        // post-shuffle library (arena ids assigned contiguously in that
+        // same library order, per `GameState::new_from_libraries_with_
+        // starting_player_v1`) and pushing onto hand, so `higher` has the
+        // smaller ObjectId (arena id) than `lower` by construction --
+        // regardless of which order they are revealed in below.
+        // `state.hand_knowledge`'s raw order is always ascending arena id
+        // ([higher, lower] here), while canonical order (by card_db_id) is
+        // [lower, higher] -- the exact mismatch the crashing matches hit.
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(
+            opponent_hand.len() >= 2,
+            "fixture hand must hold two cards"
+        );
+        let higher = opponent_hand[0];
+        let lower = opponent_hand[1];
+        session.state.objects.get_mut(higher).card_def = 100;
+        session.state.objects.get_mut(lower).card_def = 1;
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, higher)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, lower)
+            .unwrap();
+        assert_eq!(
+            session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>(),
+            vec![higher, lower],
+            "raw hand_knowledge order is always ascending arena id (higher before \
+             lower), regardless of reveal call order"
+        );
+
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(lower)],
+                can_finish: false,
+            },
+        ));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect(
+                "a legal target on a known, arena-order-mismatched opponent hand card \
+                 must encode",
+            );
+    }
+
+    /// Regression test for adversarial-review finding 6a on the arena-order
+    /// fix above: two known opponent-hand cards can share a `card_db_id`,
+    /// tying their `canonical_json_u16_lexical_key_v1` key (and their
+    /// `canonical_relative_seat_order_v1` and zone keys too, since both are
+    /// the opponent's own cards sitting in `Zone::Hand`).
+    /// `known_opponent_hand_canonical_ordinal_v1`'s `keyed.sort_by_key` is a
+    /// stable sort, so tied entries must keep `hand_knowledge`'s raw
+    /// (ascending arena-id) relative order, exactly as
+    /// `canonical_known_hand_cards` (`flat_policy_v2.rs`) preserves that
+    /// same raw order for its own ties.
+    #[test]
+    fn known_opponent_hand_duplicate_card_db_ids_keep_stable_order() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_060, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(
+            opponent_hand.len() >= 3,
+            "fixture hand must hold three cards"
+        );
+        // `first` and `second` share a card_db_id, tying every canonical
+        // sort key; `third` gets a strictly smaller card_db_id so it
+        // canonically sorts ahead of the tied pair. `first` is
+        // opponent_hand[0] and `second` is opponent_hand[1], so `first` has
+        // the smaller arena id by construction (see the arena-order test
+        // above), which is the raw order the stable sort must preserve for
+        // the tie.
+        let first = opponent_hand[0];
+        let second = opponent_hand[1];
+        let third = opponent_hand[2];
+        session.state.objects.get_mut(first).card_def = 7;
+        session.state.objects.get_mut(second).card_def = 7;
+        session.state.objects.get_mut(third).card_def = 2;
+        // Reveal out of arena-id order to reconfirm (as the arena-order
+        // test does) that raw hand_knowledge order never depends on reveal
+        // call order.
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, third)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, second)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, first)
+            .unwrap();
+        assert_eq!(
+            session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>(),
+            vec![first, second, third],
+            "raw hand_knowledge order is always ascending arena id"
+        );
+
+        // Canonical order: third (card_db_id 2) sorts first; first and
+        // second are tied (card_db_id 7) and must keep their raw relative
+        // order (first before second).
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    third,
+                    state.objects.get(third).zone_change_count,
+                ),
+                Some(0),
+                "the strictly smaller card_db_id sorts first"
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    first,
+                    state.objects.get(first).zone_change_count,
+                ),
+                Some(1),
+                "tied with second, first keeps its raw arena-id order"
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    second,
+                    state.objects.get(second).zone_change_count,
+                ),
+                Some(2),
+                "tied with first, second keeps its raw arena-id order"
+            );
+        }
+
+        // Cross-check through the public entry point the fixed match arm
+        // calls: `flat_visible_action_object_components_v1` must report the
+        // same tie-broken ordinal for `second`.
+        let second_object = session.state.objects.get(second);
+        let second_reference = CardStableRefV1 {
+            arena_id: second.0,
+            card_db_id: second_object.card_def,
+            owner: second_object.owner.into(),
+            controller: second_object.controller.into(),
+            zone: second_object.zone,
+            zone_change_count: second_object.zone_change_count,
+        };
+        let components = flat_visible_action_object_components_v1(
+            &session.state,
+            actor_id,
+            &second_reference,
+        )
+        .expect("second is a known, live opponent hand card");
+        assert_eq!(components.group, FlatActionObjectGroupV1::KnownOpponentHand);
+        assert_eq!(components.actor_visible_ordinal, 2);
+
+        // Drive the real production path against the tied card.
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(second)],
+                can_finish: false,
+            },
+        ));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect("a legal target on a tied-card_db_id opponent hand card must encode");
+    }
+
+    /// Regression test for adversarial-review finding 6b on the arena-order
+    /// fix above: a revealed opponent-hand card can leave the hand (cast,
+    /// discarded, put onto the battlefield, ...) after being revealed.
+    /// `state.forget_hand_object` (called by every hand-leaving transition,
+    /// e.g. `move_hand_to_battlefield`) purges that object's
+    /// `hand_knowledge` entries for every observer, so
+    /// `known_opponent_hand_canonical_ordinal_v1` must recompute the
+    /// remaining cards' canonical ordinals over the smaller surviving set on
+    /// every call (it is never cached) rather than reporting a position
+    /// left over from while the departed card was still present.
+    #[test]
+    fn known_opponent_hand_ordinals_survive_a_card_leaving_hand() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_070, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(
+            opponent_hand.len() >= 3,
+            "fixture hand must hold three cards"
+        );
+        // Ascending arena id by construction: departing < remaining_low <
+        // remaining_high.
+        let departing = opponent_hand[0];
+        let remaining_low = opponent_hand[1];
+        let remaining_high = opponent_hand[2];
+        session.state.objects.get_mut(departing).card_def = 30;
+        session.state.objects.get_mut(remaining_low).card_def = 10;
+        session.state.objects.get_mut(remaining_high).card_def = 50;
+        for &card in &[departing, remaining_low, remaining_high] {
+            session
+                .state
+                .reveal_hand_card(actor_id, opponent, card)
+                .unwrap();
+        }
+
+        // Before `departing` leaves: canonical order by card_db_id is
+        // remaining_low(10) < departing(30) < remaining_high(50), so
+        // remaining_high starts in the last slot.
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    remaining_high,
+                    state.objects.get(remaining_high).zone_change_count,
+                ),
+                Some(2),
+                "remaining_high starts in the last canonical slot"
+            );
+        }
+
+        // `departing` leaves the hand through a real production zone-change
+        // path; its hand_knowledge entries are purged for every observer.
+        assert!(session.state.move_hand_to_battlefield(opponent, departing));
+        assert!(
+            !session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .any(|entry| entry.object == departing),
+            "a departed card must not linger in hand_knowledge"
+        );
+
+        // After `departing` leaves: only remaining_low(10) and
+        // remaining_high(50) are left, so remaining_high's canonical
+        // position must shift down from 2 to 1, not stay stale at 2 or
+        // point past the end of the shrunk set.
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    remaining_low,
+                    state.objects.get(remaining_low).zone_change_count,
+                ),
+                Some(0),
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    remaining_high,
+                    state.objects.get(remaining_high).zone_change_count,
+                ),
+                Some(1),
+                "remaining_high's canonical position must shift down after departing \
+                 leaves, not stay stale"
+            );
+        }
+
+        // Drive the real production path against one of the surviving
+        // cards.
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(remaining_high)],
+                can_finish: false,
+            },
+        ));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect(
+                "a legal target on a surviving known opponent hand card must encode \
+                 after another revealed card left the hand",
+            );
+    }
+
+    // Adversarial-review finding 6c on the arena-order fix above asked for a
+    // regression test covering an in-place incarnation bump
+    // (`zone_change_count` increment) of a *known* (revealed) hand card
+    // that stays in `Zone::Hand` throughout. This case is skipped for lack
+    // of a reachable path to exercise:
+    //   - Every `object.zone_change_count += 1` outside test-only code
+    //     (`state.rs`'s `draw_card` and `move_hand_to_battlefield`;
+    //     `engine.rs`'s `begin_cast`'s zone-finalizer and `move_to_stack`)
+    //     sits in the same block as an `object.zone = <different zone>`
+    //     assignment, i.e. it accompanies a real zone change away from
+    //     `Hand`, never an in-place bump while the card stays put.
+    //   - `event.rs`'s generic `commit_zone_change` (every `MoveObject`
+    //     effect leaf) is not itself zone-guarded against `from_zone ==
+    //     to_zone == Hand`, but no card program in this pool ever issues a
+    //     same-zone-to-hand move, and `commit_zone_change` unconditionally
+    //     calls `state.forget_hand_object(id)` before the move regardless
+    //     of `to_zone`, so even a hypothetical same-zone move would forget
+    //     the object's `hand_knowledge` entries rather than carry a bumped
+    //     incarnation forward as still-known. Only `reveal_hand_card` and
+    //     the draw-time `transfer_library_knowledge_to_hand` (re)populate
+    //     `hand_knowledge`, and neither runs from `commit_zone_change`.
+    // `known_opponent_hand_ordinals_survive_a_card_leaving_hand` above
+    // already covers the adjacent "hand_knowledge shrinks out from under a
+    // computed ordinal" risk for the zone-changing case.
+
+    /// Regression test for adversarial-review finding 6d on the arena-order
+    /// fix above: the fix must hold in both `hand_knowledge` directions, not
+    /// just the direction the original crash-derived fixture happened to
+    /// exercise (every seed `FastActorSessionV1::reset_with_limits` can
+    /// build starts with P0 to act, so the arena-order test above only ever
+    /// exercises P0 observing P1). This drives the identical mismatch with
+    /// the seats swapped: P1 is the acting player observing P0's hand.
+    #[test]
+    fn known_opponent_hand_ordinals_hold_for_p1_observing_p0() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_080, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = PlayerId::P1;
+        let opponent = PlayerId::P0;
+
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(
+            opponent_hand.len() >= 2,
+            "fixture hand must hold two cards"
+        );
+        let higher = opponent_hand[0];
+        let lower = opponent_hand[1];
+        session.state.objects.get_mut(higher).card_def = 100;
+        session.state.objects.get_mut(lower).card_def = 1;
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, higher)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, lower)
+            .unwrap();
+        assert_eq!(
+            session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>(),
+            vec![higher, lower],
+            "raw hand_knowledge order is always ascending arena id (higher before \
+             lower), regardless of reveal call order"
+        );
+
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    lower,
+                    state.objects.get(lower).zone_change_count,
+                ),
+                Some(0),
+                "P1 observing P0: lower's smaller card_db_id sorts first canonically"
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    higher,
+                    state.objects.get(higher).zone_change_count,
+                ),
+                Some(1),
+            );
+        }
+
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(lower)],
+                can_finish: false,
+            },
+        ));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect(
+                "a legal target on a known, arena-order-mismatched P0 hand card seen \
+                 by P1 must encode",
+            );
     }
 
     #[test]
