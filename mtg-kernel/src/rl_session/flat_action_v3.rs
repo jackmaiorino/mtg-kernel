@@ -964,6 +964,72 @@ pub(crate) fn shuffle_trigger_source_into_library_v1(
         .all(|entry| entry.object != hunter));
 }
 
+/// Moves `hunter` into `owner`'s library exactly like
+/// [`shuffle_trigger_source_into_library_v1`], but also records the exact
+/// live incarnation in `state.library_knowledge[owner][owner]`, as if it
+/// had been revealed (scried, searched, and so on) to its own controller.
+/// Returns the new `zone_change_count`. Used to prove
+/// `trigger::pending_trigger_choose_targets_gate_v1` does not open just
+/// because the live source sits in `Zone::Library`: a *known* library
+/// source must resolve through the ordinary `KnownSelfLibrary` /
+/// `KnownOpponentLibrary` path, gaining no `HistoricalPublicSource` row
+/// and no registry growth.
+#[cfg(test)]
+pub(crate) fn move_trigger_source_to_known_library_v1(
+    state: &mut GameState,
+    hunter: ObjectId,
+    owner: PlayerId,
+) -> u32 {
+    state.players[owner.index()]
+        .battlefield
+        .retain(|&id| id != hunter);
+    let new_generation = {
+        let object = state.objects.get_mut(hunter);
+        assert_eq!(object.zone, Zone::Battlefield);
+        object.zone = Zone::Library;
+        object.zone_change_count += 1;
+        object.zone_change_count
+    };
+    state.players[owner.index()].library.push(hunter);
+    let position = u32::try_from(state.players[owner.index()].library.len() - 1).unwrap();
+    state.library_knowledge[owner.index()][owner.index()].push(
+        crate::state::LibraryKnowledgeEntry {
+            position,
+            object: hunter,
+            zone_change_count: new_generation,
+        },
+    );
+    new_generation
+}
+
+/// Moves `hunter` into `owner`'s graveyard: a public zone, easily
+/// resolvable through the ordinary path, and -- like a real
+/// `LeftBattlefieldToGraveyard` trigger's own frozen contract
+/// (`trigger.rs`'s `uses_leave_lki` triggers) -- carrying a live
+/// `zone_change_count` one more than whatever the frozen contract
+/// captured. Returns the new `zone_change_count`. Used to prove the gate
+/// does not open just because the live and frozen generations disagree:
+/// it must also require `live.zone == Zone::Library`.
+#[cfg(test)]
+pub(crate) fn move_trigger_source_to_graveyard_v1(
+    state: &mut GameState,
+    hunter: ObjectId,
+    owner: PlayerId,
+) -> u32 {
+    state.players[owner.index()]
+        .battlefield
+        .retain(|&id| id != hunter);
+    let new_generation = {
+        let object = state.objects.get_mut(hunter);
+        assert_eq!(object.zone, Zone::Battlefield);
+        object.zone = Zone::Graveyard;
+        object.zone_change_count += 1;
+        object.zone_change_count
+    };
+    state.players[owner.index()].graveyard.push(hunter);
+    new_generation
+}
+
 /// Builds a real spell at stack index 0 and two real, untargeted triggered
 /// abilities above it at stack indices 1 and 2 (Lembas's own ETB ability,
 /// verbatim, on two different physical cards, placed via the same
@@ -1486,9 +1552,15 @@ mod tests {
             .any(|row| row.group == FlatActionObjectGroupV1::OpponentBattlefield));
         let _ = goaded;
 
-        // Tier 2's sibling assertion: the same shuffled-source state also
-        // reconciles through the scoring path's registry, not just the raw
-        // action slice.
+        // This only confirms the raw V6 observation itself still omits the
+        // hidden source (`rl.rs`'s `policy_observation_extensions_v6` is
+        // unmodified, so `historical_public_sources` never gains an entry
+        // for it) -- it does not exercise `flat_policy_v2.rs`'s scoring
+        // reconciliation at all. That proof is
+        // `sideboard_play_policy_v1.rs`'s
+        // `score_fast_session_v1_reconciles_a_pending_trigger_hidden_source`,
+        // which actually drives `score_fast_session_v1` on this same kind
+        // of fixture.
         let observation = session
             .flat_policy_observation_v3(expected(&session))
             .unwrap();
@@ -1577,6 +1649,71 @@ mod tests {
             // with it regardless of where on the stack it sits.
             assert_eq!(row.actor_visible_ordinal, 2);
         }
+    }
+
+    /// Layer A's own half of the two gate-precision regressions: the
+    /// action slice must keep using the ordinary group for a pending
+    /// trigger's source that is not actually hidden. This alone cannot
+    /// observe layer B's registry (`flat_policy_v2.rs`'s `self.objects`,
+    /// grown only by `build_scoring_owned_v3`), so it is not this test's
+    /// job to prove "no ghost row" -- `sideboard_play_policy_v1.rs`'s
+    /// `score_fast_session_v1_registry_object_count_is_unchanged_for_a_known_or_public_source`
+    /// does that directly against the real registry.
+    #[test]
+    fn v3_pending_trigger_known_library_source_takes_the_ordinary_path() {
+        let (mut state, hunter, goaded, _ordinary) =
+            avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        let new_generation = move_trigger_source_to_known_library_v1(&mut state, hunter, PlayerId::P0);
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let (_, objects) = encoded(&session);
+        assert!(objects
+            .iter()
+            .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
+        let hunter_card_token =
+            flat_card_token_v2(crate::card_def::card_id_by_name("Avenging Hunter").unwrap());
+        let hunter_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.card_token == hunter_card_token)
+            .collect();
+        assert!(!hunter_rows.is_empty());
+        for row in &hunter_rows {
+            assert_eq!(row.group, FlatActionObjectGroupV1::KnownSelfLibrary);
+            assert_eq!(row.zone, flat_zone_v1(Zone::Library));
+            assert_eq!(row.zone_change_count, new_generation);
+        }
+        let _ = goaded;
+    }
+
+    /// See the doc comment on
+    /// [`v3_pending_trigger_known_library_source_takes_the_ordinary_path`].
+    #[test]
+    fn v3_pending_trigger_graveyard_source_takes_the_ordinary_path() {
+        let (mut state, hunter, goaded, _ordinary) =
+            avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        let new_generation = move_trigger_source_to_graveyard_v1(&mut state, hunter, PlayerId::P0);
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let (_, objects) = encoded(&session);
+        assert!(objects
+            .iter()
+            .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
+        let hunter_card_token =
+            flat_card_token_v2(crate::card_def::card_id_by_name("Avenging Hunter").unwrap());
+        let hunter_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.card_token == hunter_card_token)
+            .collect();
+        assert!(!hunter_rows.is_empty());
+        for row in &hunter_rows {
+            // Exactly the components the unmodified `Zone::Graveyard` arm
+            // always produced -- this fix never touches it: the object's
+            // own live identity, never the frozen contract's.
+            assert_eq!(row.group, FlatActionObjectGroupV1::SelfGraveyard);
+            assert_eq!(row.zone, flat_zone_v1(Zone::Graveyard));
+            assert_eq!(row.zone_change_count, new_generation);
+        }
+        let _ = goaded;
     }
 
     #[test]

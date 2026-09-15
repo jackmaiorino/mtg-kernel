@@ -2204,11 +2204,25 @@ fn historical_public_source_ordinal_ceiling_v1(state: &crate::state::GameState) 
 /// same-controller group still needs `Decision::OrderTriggers` instead
 /// (2+ pending triggers, not yet placement-ordered), when
 /// `pending_triggers[0]` already has enough targets (so whatever decision
-/// is active, it is not this one), or when that trigger lost its
-/// `source_contract`. Only `pending_triggers[0]` is ever considered, so no
-/// previously-succeeding decision -- an `OrderTriggers` decision, or a
-/// `ChooseTargets` for a trigger whose source is still visible -- can gain
-/// a row through this gate.
+/// is active, it is not this one), when that trigger lost its
+/// `source_contract`, or -- critically -- when the trigger's live source
+/// is not actually hidden: its live object must be in `Zone::Library`
+/// *and* `state.library_knowledge[controller][owner]` must carry no entry
+/// for its exact live incarnation. Decision shape alone (a `ChooseTargets`
+/// for `pending_triggers[0]` with a `source_contract`) is not enough --
+/// every pending trigger with any targeted effect carries a
+/// `source_contract` (`PendingTrigger::source_contract`'s doc), including
+/// ordinary triggers whose source never left the battlefield and
+/// leaves-the-battlefield triggers whose frozen contract deliberately
+/// freezes the *departure* zone/generation (`trigger.rs`'s
+/// `uses_leave_lki` triggers capture `zone: from` and `zone_change_count:
+/// live - 1`) even though the source is now public in the graveyard. Only
+/// `pending_triggers[0]` is ever considered, so no previously-succeeding
+/// decision -- an `OrderTriggers` decision, a `ChooseTargets` for a
+/// trigger whose source is still visible on the battlefield or in the
+/// graveyard, or a `ChooseTargets` for a trigger whose source is in the
+/// library but already known to its controller through
+/// `library_knowledge` -- can gain a row through this gate.
 pub(crate) fn pending_trigger_choose_targets_gate_v1(
     state: &crate::state::GameState,
 ) -> Option<(crate::ids::ObjectId, AbilitySourceContractV4, u32)> {
@@ -2233,6 +2247,21 @@ pub(crate) fn pending_trigger_choose_targets_gate_v1(
         return None;
     }
     let contract = pending.source_contract?;
+    let live = state.objects.try_get(pending.source)?;
+    if live.zone != Zone::Library {
+        // Resolvable through the ordinary path (battlefield, graveyard,
+        // exile, stack, or a revealed hand) -- not this gate's business.
+        return None;
+    }
+    let known = state.library_knowledge[pending.controller.index()][live.owner.index()]
+        .iter()
+        .any(|entry| entry.object == pending.source && entry.zone_change_count == live.zone_change_count);
+    if known {
+        // In the library, but the controller already knows exactly where
+        // -- the ordinary `KnownSelfLibrary`/`KnownOpponentLibrary` path
+        // resolves it without help.
+        return None;
+    }
     let ordinal = historical_public_source_ordinal_ceiling_v1(state)?.checked_add(trigger_position)?;
     Some((pending.source, contract, ordinal))
 }
