@@ -282,7 +282,10 @@ pub enum FlatActionObjectGroupV1 {
 
 mod flat_action_v3;
 #[cfg(test)]
-pub(crate) use flat_action_v3::goaded_attacker_fixture_state_v3;
+pub(crate) use flat_action_v3::{
+    avenging_hunter_undercity_arena_choose_targets_state_v1, goaded_attacker_fixture_state_v3,
+    shuffle_trigger_source_into_library_v1,
+};
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
@@ -1365,8 +1368,15 @@ fn flat_visible_action_object_components_v1(
                 .iter()
                 .find(|entry| {
                     entry.object == object_id && entry.zone_change_count == object.zone_change_count
-                })
-                .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
+                });
+            let Some(knowledge) = knowledge else {
+                if let Some(components) =
+                    pending_trigger_frozen_source_components_v1(state, actor, object_id)?
+                {
+                    return Ok(components);
+                }
+                return Err(FlatActionDecisionSliceErrorV1::HiddenActionReference);
+            };
             let library_position = usize::try_from(knowledge.position)
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
             if state.players[object.owner.index()]
@@ -1395,6 +1405,60 @@ fn flat_visible_action_object_components_v1(
         zone: flat_zone_v1(object.zone),
         zone_change_count: object.zone_change_count,
     })
+}
+
+/// `Zone::Library` fallback for an action reference whose object is a
+/// pending trigger's source that has since moved into its owner's library
+/// (`EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`, `effect.rs`) without
+/// ever being revealed to `actor` -- `library_knowledge` has no entry for
+/// it, so the ordinary known-library lookup above cannot place it.
+///
+/// Rather than raise `HiddenActionReference`, describe the object by the
+/// exact public incarnation `PendingTrigger::source_contract` (`trigger.rs`)
+/// froze when the trigger was queued, reusing the existing
+/// `HistoricalPublicSource` group (never a new discriminant): this is the
+/// same "last known public identity" the observation side already reports
+/// for this case (`rl.rs`'s `PendingTriggerSemanticV2`, via
+/// `visible_card_ref`, reports `source: null` rather than the live hidden
+/// position -- this function mirrors that treatment on the action side
+/// instead of leaving it unencodable). No live library position or index
+/// is ever read here.
+///
+/// `trigger::pending_trigger_choose_targets_gate_v1` is the single shared
+/// gate: it is also consulted, independently, by
+/// `flat_policy_v2.rs`'s `append_pending_trigger_frozen_source_authority_v3`
+/// (layer B), which registers the matching scoring-registry row this
+/// action object reconciles against. Both layers therefore agree on
+/// whether the gate is open and on the exact ordinal without either side
+/// re-deriving the other's logic.
+///
+/// Returns `Ok(None)` -- not an error -- when the gate is closed (the
+/// current decision is not a `ChooseTargets` for `pending_triggers[0]`) or
+/// `object_id` is not that trigger's own source; the caller then keeps the
+/// ordinary `HiddenActionReference` outcome.
+fn pending_trigger_frozen_source_components_v1(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    object_id: ObjectId,
+) -> Result<Option<FlatVisibleActionObjectComponentsV1>, FlatActionDecisionSliceErrorV1> {
+    let Some((source, contract, ordinal)) =
+        crate::trigger::pending_trigger_choose_targets_gate_v1(state)
+    else {
+        return Ok(None);
+    };
+    if source != object_id {
+        return Ok(None);
+    }
+    Ok(Some(FlatVisibleActionObjectComponentsV1 {
+        card_db_id: contract.card_def,
+        group: FlatActionObjectGroupV1::HistoricalPublicSource,
+        actor_visible_ordinal: usize::try_from(ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: flat_relative_seat_v1(contract.owner.into(), actor.into())?,
+        controller_relative: flat_relative_seat_v1(contract.controller.into(), actor.into())?,
+        zone: flat_zone_v1(contract.zone),
+        zone_change_count: contract.zone_change_count,
+    }))
 }
 
 fn flat_card_token_v1(card_db_id: u16) -> Result<u16, FlatActionDecisionSliceErrorV1> {

@@ -1542,6 +1542,34 @@ mod tests {
         );
     }
 
+    /// Proves the reconciliation layer, not just the raw action slice:
+    /// `score_fast_session_v1`'s V3 path (`encode_current_flat_scoring_decision_owned_v3`,
+    /// which shares `flat_policy_v2.rs`'s `build_scoring_owned_v3`) must
+    /// score a decision whose pending trigger's source has been shuffled
+    /// into its owner's library -- the same fixture the action-slice
+    /// regression tests in `rl_session/flat_action_v3.rs` use, driven all
+    /// the way through the frozen play policy's scorer instead of just the
+    /// raw action slice.
+    #[test]
+    fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source() {
+        let (mut state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        policy.reset_sampling_v1([11, 22]);
+        let scores = policy.score_fast_session_v1(&session).unwrap();
+        assert!(!scores.logits.is_empty());
+        assert!(scores.logits.iter().all(|x| x.is_finite()));
+        assert!(scores.value.is_finite());
+        let selected = policy.select_fast_session_v1(&session).unwrap();
+        assert!((selected as usize) < scores.logits.len());
+    }
+
     /// Run explicitly with MTG_SIDEB_PLAY_IMPORT_MANIFEST pointing to pinned
     /// engineering inputs. No terminal outcomes or CP7 information are read.
     #[test]

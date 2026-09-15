@@ -857,18 +857,25 @@ impl FastActorSessionV1 {
     }
 }
 
-/// Resolves a real Arena room trigger, then stages the affected player's next
-/// attack declaration with an ordinary creature on either side of the goaded
-/// one in engine candidate order.
+/// Builds Avenging Hunter, fires its Undercity Room Arena trigger, and
+/// stops exactly at the resulting `Decision::ChooseTargets` (not yet
+/// answered) with `hunter`'s `PendingTrigger::source_contract` freshly
+/// captured while it is still on the battlefield. Shared by
+/// [`goaded_attacker_fixture_state_v3`] (which answers the decision
+/// immediately), the hidden-pending-trigger-source action-slice regression
+/// tests (`rl_session/flat_action_v3.rs`'s `tests` module), and the
+/// scoring-reconciliation regression test (`sideboard_play_policy_v1.rs`),
+/// which all instead move `hunter` into its owner's library before
+/// answering, to reproduce the exact repro condition
+/// `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary` (`effect.rs`) leaves
+/// behind.
 #[cfg(test)]
-pub(crate) fn goaded_attacker_fixture_state_v3(
+pub(crate) fn avenging_hunter_undercity_arena_choose_targets_state_v1(
     goad_first: bool,
-) -> (GameState, ObjectId, ObjectId) {
-    use crate::engine::{self, Action, Decision};
+) -> (GameState, ObjectId, ObjectId, ObjectId) {
+    use crate::engine::{self, Decision};
     use crate::policy_observation_v6::tests::{put, ready_state};
-    use crate::state::{
-        AbilitySourceContractV4, InitiativeTriggerKindV1, Step, Target, UndercityRoomV1,
-    };
+    use crate::state::{AbilitySourceContractV4, InitiativeTriggerKindV1, Target, UndercityRoomV1};
 
     let mut state = ready_state();
     let hunter = put(
@@ -910,6 +917,65 @@ pub(crate) fn goaded_attacker_fixture_state_v3(
     state.engine.pending_triggers.extend(triggers);
     assert!(matches!(engine::advance_until_decision(&mut state),
         Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(goaded))));
+    (state, hunter, goaded, ordinary)
+}
+
+/// Moves `hunter`'s live incarnation into `owner`'s library the way
+/// `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary` (`effect.rs`) does:
+/// removed from the battlefield, its zone-change generation bumped, and
+/// placed in the library without ever populating `library_knowledge` for
+/// any observer. This is an equivalent state mutation rather than driving
+/// that op directly: the real op only fires while a *different*
+/// already-resolving trigger's own source sits in the graveyard (it reads
+/// `ctx.ability_source_contract`, the currently-resolving stack item's own
+/// contract, not an arbitrary pending trigger's), and reaching that from a
+/// fixture where the Arena trigger's own `Decision::ChooseTargets` is
+/// still unanswered is not reachable through ordinary engine flow:
+/// `drain_pending_triggers_or_decide` (`engine.rs`) fully drains one
+/// trigger's target selection in a tight loop before any stack item is
+/// ever given a chance to resolve, so nothing can shuffle Hunter away in
+/// between. The mutation below reproduces the exact repro condition
+/// instead: a live `Zone::Library` object with no `library_knowledge`
+/// entry, behind a pending trigger whose `source_contract` still names its
+/// last public (`Battlefield`) incarnation.
+///
+/// Shared by the action-slice tests (`rl_session/flat_action_v3.rs`'s
+/// `tests` module) and the scoring-reconciliation test
+/// (`sideboard_play_policy_v1.rs`), which both need the identical repro
+/// state.
+#[cfg(test)]
+pub(crate) fn shuffle_trigger_source_into_library_v1(
+    state: &mut GameState,
+    hunter: ObjectId,
+    owner: PlayerId,
+) {
+    state.players[owner.index()]
+        .battlefield
+        .retain(|&id| id != hunter);
+    {
+        let object = state.objects.get_mut(hunter);
+        assert_eq!(object.zone, Zone::Battlefield);
+        object.zone = Zone::Library;
+        object.zone_change_count += 1;
+    }
+    state.players[owner.index()].library.push(hunter);
+    assert!(state.library_knowledge[owner.index()][owner.index()]
+        .iter()
+        .all(|entry| entry.object != hunter));
+}
+
+/// Resolves a real Arena room trigger, then stages the affected player's next
+/// attack declaration with an ordinary creature on either side of the goaded
+/// one in engine candidate order.
+#[cfg(test)]
+pub(crate) fn goaded_attacker_fixture_state_v3(
+    goad_first: bool,
+) -> (GameState, ObjectId, ObjectId) {
+    use crate::engine::{self, Action, Decision};
+    use crate::state::{Step, Target};
+
+    let (mut state, _hunter, goaded, ordinary) =
+        avenging_hunter_undercity_arena_choose_targets_state_v1(goad_first);
     engine::step(&mut state, Action::ChooseTarget(Target::Object(goaded))).unwrap();
     for _ in 0..48 {
         let decision = engine::advance_until_decision(&mut state);
@@ -1265,6 +1331,177 @@ mod tests {
             flat_build_action_cache_v2(&session, &raw, None).unwrap_err(),
             FlatActionDecisionSliceErrorV1::InvalidActionReference
         );
+    }
+
+    #[test]
+    fn v3_pending_trigger_hidden_source_resolves_by_frozen_contract() {
+        let (mut state, hunter, goaded, _ordinary) =
+            avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        let contract = state.engine.pending_triggers[0].source_contract.unwrap();
+        assert_eq!(contract.source, hunter);
+        assert_eq!(contract.zone, Zone::Battlefield);
+        shuffle_trigger_source_into_library_v1(&mut state, hunter, PlayerId::P0);
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let current = session.current.as_ref().unwrap();
+        assert!(matches!(
+            current.origin_decision,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseTargets {
+                spell,
+                ..
+            })) if spell == hunter
+        ));
+        let saw_choose_target_or_finish = current.candidates.iter().any(|candidate| {
+            matches!(
+                candidate.semantic,
+                ActionSemanticV1::ChooseTarget { .. } | ActionSemanticV1::FinishTargetSelection { .. }
+            )
+        });
+        assert!(saw_choose_target_or_finish);
+
+        let (_, objects) = encoded(&session);
+        let pending_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
+            .collect();
+        assert!(
+            !pending_rows.is_empty(),
+            "the hidden Hunter reference must resolve through the frozen-contract fallback"
+        );
+        for row in &pending_rows {
+            assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
+            assert_eq!(row.zone_change_count, contract.zone_change_count);
+            assert_eq!(row.card_token, flat_card_token_v2(contract.card_def));
+            // No non-spell stack item or resolving pending effect coexists
+            // with this decision, so the shared ordinal (existing
+            // historical rows + trigger position) is exactly 0.
+            assert_eq!(row.actor_visible_ordinal, 0);
+        }
+        // The chosen target (`goaded`) still resolves normally -- only
+        // Hunter's own hidden reference needed the frozen-contract
+        // fallback.
+        assert!(objects
+            .iter()
+            .any(|row| row.group == FlatActionObjectGroupV1::OpponentBattlefield));
+        let _ = goaded;
+
+        // Tier 2's sibling assertion: the same shuffled-source state also
+        // reconciles through the scoring path's registry, not just the raw
+        // action slice.
+        let observation = session
+            .flat_policy_observation_v3(expected(&session))
+            .unwrap();
+        assert!(observation
+            .extensions
+            .historical_public_sources
+            .is_empty());
+    }
+
+    #[test]
+    fn v3_pending_trigger_hidden_source_resolves_alongside_a_coexisting_stack_item() {
+        use crate::policy_observation_v6::tests::put;
+        use crate::trigger::PendingTrigger;
+
+        let (mut state, hunter, _goaded, _ordinary) =
+            avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        // Insert a real, independently-valid non-spell stack item ahead of
+        // Hunter's own still-pending trigger, exactly the way the engine
+        // would if another untargeted triggered ability had already been
+        // placed on the stack earlier in the same trigger-draining pass:
+        // `drain_pending_triggers_or_decide` (`engine.rs`) places any
+        // trigger needing no targets immediately, so queuing this filler
+        // ahead of Hunter's own trigger and re-draining lands it on the
+        // stack, unresolved, before Hunter's `Decision::ChooseTargets`
+        // surfaces. Lembas's real, untargeted ETB ability
+        // (`trigger::triggers_for`'s first entry) is used verbatim so
+        // `engine::validate_pending_trigger`'s definition-owned check
+        // (`triggered_stack_item_expected_target_spec`) accepts it as a
+        // real card-defined trigger, not a synthetic placeholder.
+        let filler = put(&mut state, PlayerId::P1, "Lembas", Zone::Battlefield);
+        let filler_card_def = state.objects.get(filler).card_def;
+        let filler_effect = (crate::trigger::triggers_for(filler_card_def)[0].effect)();
+        let filler_contract = crate::state::AbilitySourceContractV4::capture(&state, filler);
+        state.engine.pending_triggers.insert(
+            0,
+            PendingTrigger {
+                controller: PlayerId::P1,
+                source: filler,
+                effect: filler_effect,
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: crate::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(filler_contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            },
+        );
+        let decision = crate::engine::advance_until_decision(&mut state);
+        assert!(
+            matches!(&decision, Decision::ChooseTargets { spell, .. } if *spell == hunter),
+            "got {decision:?}, halted={:?}, stack={:?}",
+            state.engine.halted,
+            state.stack
+        );
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].source, filler);
+        assert_eq!(state.stack[0].kind, crate::state::StackItemKind::TriggeredAbility);
+
+        let contract = state.engine.pending_triggers[0].source_contract.unwrap();
+        assert_eq!(contract.source, hunter);
+        shuffle_trigger_source_into_library_v1(&mut state, hunter, PlayerId::P0);
+        assert_eq!(state.stack.len(), 1, "the filler stack item is untouched by the shuffle");
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let (_, objects) = encoded(&session);
+        let pending_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
+            .collect();
+        assert!(
+            !pending_rows.is_empty(),
+            "the frozen-contract fallback must still resolve Hunter's hidden \
+             reference with an unrelated non-spell item on the stack"
+        );
+        for row in &pending_rows {
+            assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
+            assert_eq!(row.zone_change_count, contract.zone_change_count);
+            // Exactly one non-spell item (the Lembas filler) is already on
+            // the stack, so the shared ordinal (existing historical rows +
+            // trigger position) must be offset past it, not collide with
+            // whatever ordinal a real historical row for that filler would
+            // use.
+            assert_eq!(row.actor_visible_ordinal, 1);
+        }
+    }
+
+    #[test]
+    fn v3_pending_trigger_unshuffled_source_encoding_is_unchanged() {
+        let (state, hunter, goaded, _ordinary) =
+            avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let (_, objects) = encoded(&session);
+        assert!(objects
+            .iter()
+            .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
+        let hunter_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.card_token == flat_card_token_v2(crate::card_def::card_id_by_name("Avenging Hunter").unwrap()))
+            .collect();
+        assert!(!hunter_rows.is_empty());
+        for row in &hunter_rows {
+            assert_eq!(row.group, FlatActionObjectGroupV1::SelfBattlefield);
+            assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
+            assert_eq!(row.zone_change_count, 0);
+        }
+        let _ = hunter;
+        assert!(objects
+            .iter()
+            .any(|row| row.group == FlatActionObjectGroupV1::OpponentBattlefield));
+        let _ = goaded;
     }
 
     #[test]

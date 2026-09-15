@@ -2145,6 +2145,86 @@ pub fn order_apnap(triggers: Vec<PendingTrigger>, active_player: PlayerId) -> Ve
     active
 }
 
+/// Mirrors `rl.rs`'s `policy_observation_extensions_v6` (specifically its
+/// `historical_public_sources` construction) exactly: one row per
+/// non-spell `state.stack` item, in stack order, plus one more if
+/// `state.engine.pending_effect` is `Some`. Used only to compute where a
+/// *new*, pending-trigger-derived `HistoricalPublicSource` action object
+/// and registry row can be appended without colliding with the real ones
+/// -- it does not build or touch the observation itself, and must keep
+/// counting the exact same rows that function would, or the two layers'
+/// shared ordinal (see [`pending_trigger_choose_targets_gate_v1`]) drifts
+/// from what `flat_policy_v2.rs`'s `register_extensions_v3` actually
+/// assigns real historical sources.
+fn historical_public_source_row_count_v1(state: &crate::state::GameState) -> Option<u32> {
+    let stack_count = state
+        .stack
+        .iter()
+        .filter(|item| item.kind != crate::state::StackItemKind::Spell)
+        .count();
+    let pending_effect_count = usize::from(state.engine.pending_effect.is_some());
+    u32::try_from(stack_count.checked_add(pending_effect_count)?).ok()
+}
+
+/// Whether the currently active decision is `Decision::ChooseTargets` for
+/// `pending_triggers[0]` (`engine.rs`'s `drain_pending_triggers_or_decide`
+/// never surfaces that decision for any other pending trigger), and, if
+/// so, that trigger's live `source`, its frozen `source_contract`
+/// (`PendingTrigger::source_contract` -- the identity
+/// `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`, `effect.rs`, leaves
+/// behind once the live object has moved into its owner's library), and
+/// the exact ordinal a `HistoricalPublicSource`-tagged reference to it
+/// must carry: one past the last position `rl.rs`'s
+/// `policy_observation_extensions_v6` would already have assigned in
+/// `PolicyObservationExtensionsV6::historical_public_sources` for this
+/// same state.
+///
+/// This is the single gate predicate shared by the V3 action-slice
+/// encoder (`rl_session.rs`'s `flat_visible_action_object_components_v1`,
+/// layer A, which describes the hidden reference using the returned
+/// contract and ordinal) and the V3 scoring reconciliation
+/// (`flat_policy_v2.rs`'s
+/// `append_pending_trigger_frozen_source_authority_v3`, layer B, which
+/// registers and authorizes that description against the registry). Both
+/// call this helper instead of re-deriving the gate or the ordinal
+/// themselves, so the two layers cannot independently drift.
+///
+/// Returns `None` when there is no pending trigger, when the leading
+/// same-controller group still needs `Decision::OrderTriggers` instead
+/// (2+ pending triggers, not yet placement-ordered), when
+/// `pending_triggers[0]` already has enough targets (so whatever decision
+/// is active, it is not this one), or when that trigger lost its
+/// `source_contract`. Only `pending_triggers[0]` is ever considered, so no
+/// previously-succeeding decision -- an `OrderTriggers` decision, or a
+/// `ChooseTargets` for a trigger whose source is still visible -- can gain
+/// a row through this gate.
+pub(crate) fn pending_trigger_choose_targets_gate_v1(
+    state: &crate::state::GameState,
+) -> Option<(crate::ids::ObjectId, AbilitySourceContractV4, u32)> {
+    let pending_triggers = &state.engine.pending_triggers;
+    let first = pending_triggers.first()?;
+    let controller = first.controller;
+    let group_len = pending_triggers
+        .iter()
+        .take_while(|trigger| trigger.controller == controller)
+        .count();
+    let group_is_ordered = pending_triggers[..group_len]
+        .iter()
+        .all(|trigger| trigger.placement_ordered);
+    if group_len >= 2 && !group_is_ordered {
+        // `Decision::OrderTriggers` is active instead, not `ChooseTargets`.
+        return None;
+    }
+    let pending = &pending_triggers[0];
+    let need = crate::engine::target_count(pending.target_spec);
+    if pending.targets.len() >= usize::from(need) {
+        return None;
+    }
+    let contract = pending.source_contract?;
+    let ordinal = historical_public_source_row_count_v1(state)?;
+    Some((pending.source, contract, ordinal))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
