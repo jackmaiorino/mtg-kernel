@@ -19,7 +19,11 @@ staging complete (cloud_worker.py stage), native run start and end (worker-
 start.json / worker-result.json from cloud_worker.py run, or an explicit
 --run-end), checkpoint export complete (recovery.json from cloud_worker.py's
 export), and an independently confirmed provider release lookup (a receipt
-showing provider_absent: true).
+showing provider_absent: true). verify_pod_absent.py's pod-absence-<podid>.json
+is one such receipt: it carries provider_absent and a timezone-aware
+observed_utc, which is exactly what --release-confirmed and receipt_epoch's
+fallback field require, so it can be passed there directly once every
+repeated lookup it performed came back not-found.
 
 For --environment local there is no Pod: allocation, image_startup and
 release_confirmation are recorded not_applicable (with a reason and evidence,
