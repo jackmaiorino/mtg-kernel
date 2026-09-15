@@ -219,6 +219,20 @@ pub enum Subtype {
     Insect,
     /// Appended for Gurmag Angler. Existing stable ids remain fixed.
     Fish,
+    /// Appended for the three Urza lands' shared `"Urza's"` subtype (pauper
+    /// meta wave 2). Not a creature type. Existing stable ids remain fixed;
+    /// see this module's doc on append-only discriminants.
+    Urzas,
+    /// Appended for Urza's Tower. Not a creature type.
+    Tower,
+    /// Appended for Urza's Power Plant (registry spelling `"Power-Plant"`).
+    /// Not a creature type.
+    PowerPlant,
+    /// Appended for Urza's Mine. Not a creature type.
+    Mine,
+    /// Appended for Conduit Pylons' printed Desert subtype (pauper meta wave
+    /// 2 Task 3). Not a creature type.
+    Desert,
 }
 
 impl Subtype {
@@ -848,6 +862,11 @@ pub enum ManaAbilityCostDef {
     /// Treasure's printed `{T}, Sacrifice this artifact` cost. Keeping the
     /// combined cost atomic prevents either half from being approximated.
     TapAndSacrificeSelf,
+    /// No object cost at all beyond the ability's own mana cost: Barrels of
+    /// Blasting Jelly's `{1}: Add one mana of any color` has no tap symbol.
+    /// Appended for pauper meta wave 2 Task 3; existing discriminants remain
+    /// fixed.
+    None,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -874,6 +893,30 @@ pub enum DynamicValueDef {
     /// graveyard. The controller is supplied by the effect or mana-ability
     /// context at the moment the value is sampled.
     ControllerGraveyardCardsWithType(CardType),
+    /// `amount_when_met` when the evaluating controller controls at least
+    /// one battlefield permanent matching *each* entry of `required`, and
+    /// `amount_otherwise` when any entry has no match. The two-entry array
+    /// keeps the enum `Copy`, `Serialize`, and `Deserialize` (a slice or
+    /// `Vec` payload would not), which every `DynamicValueDef` consumer
+    /// relies on. Appended for the Urza lands' `UrzaTerrainValue` without
+    /// renumbering existing variants.
+    AmountIfControllerControlsEach {
+        required: [SubtypeConjunctionDef; 2],
+        amount_when_met: u8,
+        amount_otherwise: u8,
+    },
+}
+
+/// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
+/// Mine piece is a permanent whose effective subtypes contain both
+/// `Subtype::Urzas` and `Subtype::Mine`. A pair of independent single-type
+/// queries would wrongly assemble Tron from an unrelated Mine and an
+/// unrelated Urza's land, which is exactly what XMage's per-piece
+/// `FilterControlledPermanent` conjunction prevents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SubtypeConjunctionDef {
+    pub first: Subtype,
+    pub second: Subtype,
 }
 
 /// Reusable definition for a single printed mana ability whose cost, amount,
@@ -1232,6 +1275,19 @@ pub struct CardDef {
     /// `engine::legal_blockers_for`. Appended so every earlier generated
     /// field identity remains stable.
     pub cant_be_blocked_by_monarchs_creatures: bool,
+    /// How many mana one activation of this card's *primary* printed mana
+    /// ability adds, when that amount is board dependent. `None` (every card
+    /// but the three Urza lands) means the legacy one-per-tap contract.
+    ///
+    /// Deliberately distinct from `mana_ability_def`: a card with a rich
+    /// `ManaAbilityDef` is excluded from `is_automatic_payment_mana_source`
+    /// and can only be used through an explicit activation action, which for
+    /// twelve of Urzatron's lands would change the whole deck's action
+    /// surface. A conditional yield instead stays on the automatic payment
+    /// path, where `mana::gather_sources` samples it into
+    /// `mana::ManaSource::yield_per_tap`. Appended so every earlier
+    /// generated field identity remains stable.
+    pub conditional_tap_yield: Option<DynamicValueDef>,
 }
 
 impl CardDef {
@@ -1422,14 +1478,27 @@ impl CardDef {
                 .primary_mana_ability_choices(chosen_color)
                 .contains(&choice))
         .then(|| {
+            // A conditional yield adds the same 1-or-more the automatic
+            // payment planner would have taken from this source, sampled at
+            // activation resolution by the same `DynamicValueDef` the
+            // planner samples at solve time, so a hand-activated Urza's
+            // Tower and an automatically tapped one can never disagree.
+            let add = match self.conditional_tap_yield {
+                Some(amount) => EffectOp::AddManaDynamic {
+                    player: PlayerRef::Controller,
+                    color: choice,
+                    amount,
+                },
+                None => EffectOp::AddMana {
+                    player: PlayerRef::Controller,
+                    colors: vec![choice],
+                },
+            };
             EffectOp::Sequence(vec![
                 EffectOp::TapObject {
                     object: ObjectRef::ThisSource,
                 },
-                EffectOp::AddMana {
-                    player: PlayerRef::Controller,
-                    colors: vec![choice],
-                },
+                add,
             ])
         })
     }
@@ -1541,8 +1610,14 @@ mod tests {
         // Secrets is appended as id 179, again without renumbering earlier
         // ids. Gurmag Angler and Viridian Longbow are appended as ids
         // 180-181. Fang Dragon and Azure Fleet Admiral are appended as ids
-        // 182-183, again without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 184);
+        // 182-183, again without renumbering earlier ids. Urza's Tower,
+        // Urza's Power Plant, and Urza's Mine are appended as ids 184-186
+        // (pauper meta wave 2 Task 2), again without renumbering earlier
+        // ids. Bojuka Bog, Conduit Pylons, Expedition Map, Bonder's
+        // Ornament, and Barrels of Blasting Jelly are appended as ids
+        // 187-191 (pauper meta wave 2 Task 3), again without renumbering
+        // earlier ids.
+        assert_eq!(CARD_DEFS.len(), 192);
     }
 
     #[test]
@@ -1606,12 +1681,14 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v33_is_frozen() {
-        // Version 33 folds in Fang Dragon's Adventure characteristics/effect
-        // (Forktail Sweep) and Azure Fleet Admiral's
-        // `cant_be_blocked_by_monarchs_creatures` static flag, appended after
-        // `delve` without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xde59_c501_e943_f3fd);
+    fn card_db_hash_v34_is_frozen() {
+        // Version 34 folds in `conditional_tap_yield`, the board-dependent
+        // per-tap mana amount carried by the three Urza lands, appended
+        // after `cant_be_blocked_by_monarchs_creatures` without renumbering
+        // prior definitions. Version 33 folded in Fang Dragon's Adventure
+        // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
+        // `cant_be_blocked_by_monarchs_creatures` static flag.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
     }
 
     #[test]
@@ -1847,7 +1924,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 184, "171 pool cards plus thirteen required tokens");
+        assert_eq!(full, 192, "179 pool cards plus thirteen required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

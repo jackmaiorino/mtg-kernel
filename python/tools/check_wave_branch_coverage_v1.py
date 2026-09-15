@@ -11,6 +11,11 @@ declared branch to the test function that exercises it, and fails closed
 card or branch the manifest does not declare (typos must fail, never
 silently pass).
 
+When several waves' manifests coexist, the scan roots hold every wave's
+annotations at once, so pass each other wave's manifest with
+`--also-declared` to say "declared, but not this wave's to check". A card
+name that appears in no supplied manifest still fails closed.
+
 This tool is intentionally stdlib-only.
 """
 
@@ -230,14 +235,23 @@ def build_report(
     cards: dict[str, CardManifest],
     bindings: list[Binding],
     diagnostics: list[ContiguityDiagnostic] | None = None,
+    declared_elsewhere: set[str] | None = None,
 ) -> dict[str, Any]:
     by_card_branch: dict[tuple[str, str], list[Binding]] = {}
     unknown_card_annotations: list[dict[str, Any]] = []
     undeclared_branch_annotations: list[dict[str, Any]] = []
+    declared_elsewhere = declared_elsewhere or set()
 
     for b in bindings:
         card_manifest = cards.get(b.card)
         if card_manifest is None:
+            # A card another wave's manifest declares is not a typo: the
+            # scan roots hold every wave's annotations at once, so an
+            # earlier wave's `covers:` lines are simply not this wave's
+            # business. A name absent from *every* supplied manifest still
+            # fails closed, which is what this check exists for.
+            if b.card in declared_elsewhere:
+                continue
             unknown_card_annotations.append(
                 {"card": b.card, "branch": b.branch, "file": b.file, "line": b.line, "test": b.test}
             )
@@ -354,18 +368,35 @@ def main(argv: list[str] | None = None) -> int:
         "(repeatable; default: mtg-kernel/tests and mtg-kernel/src)",
     )
     parser.add_argument("--json", dest="json_out", type=Path, default=None, help="also write the JSON report here")
+    parser.add_argument(
+        "--also-declared",
+        dest="also_declared",
+        action="append",
+        type=Path,
+        default=None,
+        help="another wave's manifest whose cards are declared but not checked here "
+        "(repeatable). Annotations naming those cards are skipped instead of failing as "
+        "unknown; a name in no manifest at all still fails closed.",
+    )
     args = parser.parse_args(argv)
 
     roots = args.tests_roots if args.tests_roots else [Path("mtg-kernel/tests"), Path("mtg-kernel/src")]
 
     try:
         wave, cards = load_manifest(args.manifest)
+        declared_elsewhere: set[str] = set()
+        for sibling in args.also_declared or []:
+            _sibling_wave, sibling_cards = load_manifest(sibling)
+            declared_elsewhere.update(sibling_cards)
     except ManifestError as exc:
         print(f"WAVE_BRANCH_COVERAGE: FAIL: {exc}", file=sys.stderr)
         return 1
+    # A card this wave declares is always this wave's to check, even if a
+    # sibling manifest also lists it.
+    declared_elsewhere -= set(cards)
 
     bindings, diagnostics = scan_roots(roots)
-    report = build_report(wave, args.manifest, cards, bindings, diagnostics)
+    report = build_report(wave, args.manifest, cards, bindings, diagnostics, declared_elsewhere)
     print(render_report(report))
 
     if args.json_out is not None:

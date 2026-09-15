@@ -9,6 +9,7 @@ from xml.etree import ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LIST = ROOT / "docs/research/pauper_meta_decklists_2026-09-09/Affinity__887998.txt"
+URZATRON_LIST = ROOT / "docs/research/pauper_meta_decklists_2026-09-09/Urzatron__888074.txt"
 TOOL = "python/tools/write_dek_from_mtgo_list_v1.py"
 
 
@@ -43,6 +44,52 @@ class WriteDek(unittest.TestCase):
         self.assertNotIn("Utrom Monitor", names)
         self.assertIn("Cryogen Relic", names)
         self.assertNotIn("Sewer-veillance Cam", names)
+
+    def test_urzatron_substitutions_and_counts(self) -> None:
+        # Malevolent Rumble is this wave's own card (not yet registered when
+        # this test runs; a later task in this wave registers it);
+        # --allow-pending is the documented escape hatch for exactly this
+        # case. Blue Elemental Blast is already registered (wave 1), so its
+        # substitution needs no --allow-pending: the tool's registry check
+        # applies to a --substitute target's new name, not to names copied
+        # through from the source list.
+        out = pathlib.Path(tempfile.mkdtemp()) / "t.dek"
+        subprocess.run(
+            [
+                sys.executable,
+                TOOL,
+                str(URZATRON_LIST),
+                str(out),
+                "--substitute",
+                "Giant's Boulder=Malevolent Rumble",
+                "--substitute",
+                "Call Damage Control=Blue Elemental Blast",
+                "--allow-pending",
+                "Malevolent Rumble",
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+        rows = ET.parse(out).getroot().findall("Cards")
+        main = sum(int(r.get("Quantity")) for r in rows if r.get("Sideboard") == "false")
+        side = sum(int(r.get("Quantity")) for r in rows if r.get("Sideboard") == "true")
+        self.assertEqual((main, side), (60, 15))
+        main_names = {r.get("Name") for r in rows if r.get("Sideboard") == "false"}
+        side_names = {r.get("Name") for r in rows if r.get("Sideboard") == "true"}
+        self.assertNotIn("Giant's Boulder", main_names)
+        self.assertNotIn("Call Damage Control", side_names)
+        rumble_qty = sum(
+            int(r.get("Quantity"))
+            for r in rows
+            if r.get("Name") == "Malevolent Rumble" and r.get("Sideboard") == "false"
+        )
+        self.assertEqual(rumble_qty, 4)
+        beb_qty = sum(
+            int(r.get("Quantity"))
+            for r in rows
+            if r.get("Name") == "Blue Elemental Blast" and r.get("Sideboard") == "true"
+        )
+        self.assertEqual(beb_qty, 2)
 
     def test_substitution_target_not_registered_and_not_pending_is_an_error(self) -> None:
         # Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,

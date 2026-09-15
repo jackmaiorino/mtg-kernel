@@ -21,10 +21,17 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _run(manifest: Path, tests_root: Path, json_out: Path | None = None) -> tuple[int, str]:
+def _run(
+    manifest: Path,
+    tests_root: Path,
+    json_out: Path | None = None,
+    also_declared: list[Path] | None = None,
+) -> tuple[int, str]:
     args = [str(manifest), "--tests-root", str(tests_root)]
     if json_out is not None:
         args += ["--json", str(json_out)]
+    for sibling in also_declared or []:
+        args += ["--also-declared", str(sibling)]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         code = checker.main(args)
@@ -429,6 +436,69 @@ class CheckWaveBranchCoverageTest(unittest.TestCase):
 
             self.assertEqual(code, 1, out)
             self.assertIn("Nonexistent Card", out)
+
+    def test_sibling_manifest_cards_are_declared_not_unknown(self) -> None:
+        """A second wave's annotations live under the same scan roots. Naming
+        the sibling manifest makes them declared-elsewhere rather than typos,
+        while a name in neither manifest still fails closed."""
+
+        def manifest(wave: str, card: str, branch: str) -> str:
+            return json.dumps(
+                {
+                    "schema": "kernel_wave_branch_manifest/v1",
+                    "wave": wave,
+                    "cards": {card: {"post_board": False, "branches": [branch]}},
+                }
+            )
+
+        def rust_test(card: str, branch: str, fn: str) -> str:
+            return (
+                f"// covers: {card}: {branch}\n"
+                "#[test]\n"
+                f"fn {fn}() {{\n"
+                "    assert!(true);\n"
+                "}\n"
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wave_one = root / "w1.json"
+            _write(wave_one, manifest("synthetic_w1", "Wave One Card", "w1_branch"))
+            wave_two = root / "w2.json"
+            _write(wave_two, manifest("synthetic_w2", "Wave Two Card", "w2_branch"))
+
+            tests_root = root / "tests"
+            _write(
+                tests_root / "fake_w1_tests.rs",
+                rust_test("Wave One Card", "w1_branch", "wave_one_card_does_the_thing"),
+            )
+            _write(
+                tests_root / "fake_w2_tests.rs",
+                rust_test("Wave Two Card", "w2_branch", "wave_two_card_does_the_thing"),
+            )
+
+            # Without the sibling manifest, each wave's run trips over the
+            # other wave's annotations.
+            code, out = _run(wave_two, tests_root)
+            self.assertEqual(code, 1, out)
+            self.assertIn("Wave One Card", out)
+
+            code, out = _run(wave_two, tests_root, also_declared=[wave_one])
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("ERROR", out)
+            self.assertIn("1 of 1 cards", out)
+
+            code, out = _run(wave_one, tests_root, also_declared=[wave_two])
+            self.assertEqual(code, 0, out)
+
+            # A card in neither manifest is still a hard failure.
+            _write(
+                tests_root / "fake_typo_tests.rs",
+                rust_test("Wave Twoo Card", "w2_branch", "typo_test"),
+            )
+            code, out = _run(wave_two, tests_root, also_declared=[wave_one])
+            self.assertEqual(code, 1, out)
+            self.assertIn("Wave Twoo Card", out)
 
 
 if __name__ == "__main__":
