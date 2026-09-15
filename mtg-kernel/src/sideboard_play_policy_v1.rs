@@ -1570,6 +1570,40 @@ mod tests {
         assert!((selected as usize) < scores.logits.len());
     }
 
+    /// The tensorizer-level sibling of the ordinal-collision regression in
+    /// `rl_session/flat_action_v3.rs`
+    /// (`v3_pending_trigger_hidden_source_ordinal_does_not_collide_with_real_stack_historical_rows`).
+    /// `score_fast_session_v1`'s V3 path runs the full scorer, including
+    /// `native_flat_tensorizer_v2.rs`'s `build_object_projection_v3` /
+    /// `build_object_projection_for_rows_v2`, which is what actually
+    /// enforces `(group, visible_ordinal)` uniqueness
+    /// (`NativeFlatTensorErrorV2::ObjectOrder`) across every registered
+    /// `PendingContext` row, real historical sources included -- the
+    /// action-slice test alone never reaches that check. A real spell at
+    /// stack index 0 plus two real non-spell historical rows at raw
+    /// indices 1 and 2 previously collided with a naive "count of
+    /// historical rows" ordinal for the pending-trigger row; this proves
+    /// the collision-safe ceiling
+    /// (`trigger::historical_public_source_ordinal_ceiling_v1`) avoids it.
+    #[test]
+    fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source_with_real_stack_historical_rows(
+    ) {
+        let (mut state, hunter) =
+            crate::rl_session::avenging_hunter_hidden_source_with_stack_historical_rows_state_v1();
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        policy.reset_sampling_v1([33, 44]);
+        let scores = policy.score_fast_session_v1(&session).unwrap();
+        assert!(!scores.logits.is_empty());
+        assert!(scores.logits.iter().all(|x| x.is_finite()));
+        assert!(scores.value.is_finite());
+    }
+
     /// Run explicitly with MTG_SIDEB_PLAY_IMPORT_MANIFEST pointing to pinned
     /// engineering inputs. No terminal outcomes or CP7 information are read.
     #[test]

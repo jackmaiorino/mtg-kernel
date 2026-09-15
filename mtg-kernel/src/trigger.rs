@@ -2145,25 +2145,33 @@ pub fn order_apnap(triggers: Vec<PendingTrigger>, active_player: PlayerId) -> Ve
     active
 }
 
-/// Mirrors `rl.rs`'s `policy_observation_extensions_v6` (specifically its
-/// `historical_public_sources` construction) exactly: one row per
-/// non-spell `state.stack` item, in stack order, plus one more if
-/// `state.engine.pending_effect` is `Some`. Used only to compute where a
-/// *new*, pending-trigger-derived `HistoricalPublicSource` action object
-/// and registry row can be appended without colliding with the real ones
-/// -- it does not build or touch the observation itself, and must keep
-/// counting the exact same rows that function would, or the two layers'
-/// shared ordinal (see [`pending_trigger_choose_targets_gate_v1`]) drifts
-/// from what `flat_policy_v2.rs`'s `register_extensions_v3` actually
-/// assigns real historical sources.
-fn historical_public_source_row_count_v1(state: &crate::state::GameState) -> Option<u32> {
-    let stack_count = state
-        .stack
-        .iter()
-        .filter(|item| item.kind != crate::state::StackItemKind::Spell)
-        .count();
-    let pending_effect_count = usize::from(state.engine.pending_effect.is_some());
-    u32::try_from(stack_count.checked_add(pending_effect_count)?).ok()
+/// An `actor_visible_ordinal`/registry `visible_ordinal` value that is
+/// provably greater than any ordinal a *real* `HistoricalPublicSource` row
+/// can carry for this exact state, on both the action side
+/// (`rl_session/flat_action_v3.rs`'s `extension_object`, which assigns a
+/// `PendingEffect`-context row the position of its entry within
+/// `PolicyObservationExtensionsV6::historical_public_sources`, 0-based) and
+/// the registry side (`flat_policy_v2.rs`'s `register_extensions_v3`,
+/// which assigns `add_validated_historical_source_v3` the row's *raw*
+/// `Stack { stack_index }` -- up to `state.stack.len() - 1`, with possible
+/// gaps wherever an intervening item is a spell -- or, for the single
+/// `PendingEffect` row, `state.stack.len()` itself).
+///
+/// The real ordinals used by either mechanism therefore never exceed
+/// `state.stack.len()`; `1 + state.stack.len()` is strictly greater than
+/// every one of them regardless of stack shape (how many real rows exist,
+/// which raw stack indices they occupy, or whether a `PendingEffect` row
+/// is present), so a pending-trigger-derived row built from it can never
+/// collide -- neither in the registry's own `(group, visible_ordinal)`
+/// uniqueness the tensorizer enforces
+/// (`native_flat_tensorizer_v2.rs`'s `build_object_projection_for_rows_v2`,
+/// `NativeFlatTensorErrorV2::ObjectOrder`) nor in the action-side
+/// `v3_action_objects` authority match. This is a safe upper bound, not an
+/// attempt to reproduce `rl.rs`'s `policy_observation_extensions_v6` row
+/// count: it does not need to match the real ordinal namespace, only to
+/// stay outside it.
+fn historical_public_source_ordinal_ceiling_v1(state: &crate::state::GameState) -> Option<u32> {
+    u32::try_from(state.stack.len()).ok()?.checked_add(1)
 }
 
 /// Whether the currently active decision is `Decision::ChooseTargets` for
@@ -2174,10 +2182,13 @@ fn historical_public_source_row_count_v1(state: &crate::state::GameState) -> Opt
 /// `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`, `effect.rs`, leaves
 /// behind once the live object has moved into its owner's library), and
 /// the exact ordinal a `HistoricalPublicSource`-tagged reference to it
-/// must carry: one past the last position `rl.rs`'s
-/// `policy_observation_extensions_v6` would already have assigned in
-/// `PolicyObservationExtensionsV6::historical_public_sources` for this
-/// same state.
+/// must carry: [`historical_public_source_ordinal_ceiling_v1`] (an ordinal
+/// no real historical row can ever carry, for any stack shape) plus this
+/// trigger's own position in `pending_triggers` (always `0` today, since
+/// only `pending_triggers[0]` can ever reach this gate, but named
+/// explicitly so a second simultaneous, equally-hidden trigger could not
+/// silently collide with the first if a future change ever let this gate
+/// consider a later position).
 ///
 /// This is the single gate predicate shared by the V3 action-slice
 /// encoder (`rl_session.rs`'s `flat_visible_action_object_components_v1`,
@@ -2215,13 +2226,14 @@ pub(crate) fn pending_trigger_choose_targets_gate_v1(
         // `Decision::OrderTriggers` is active instead, not `ChooseTargets`.
         return None;
     }
+    let trigger_position: u32 = 0;
     let pending = &pending_triggers[0];
     let need = crate::engine::target_count(pending.target_spec);
     if pending.targets.len() >= usize::from(need) {
         return None;
     }
     let contract = pending.source_contract?;
-    let ordinal = historical_public_source_row_count_v1(state)?;
+    let ordinal = historical_public_source_ordinal_ceiling_v1(state)?.checked_add(trigger_position)?;
     Some((pending.source, contract, ordinal))
 }
 

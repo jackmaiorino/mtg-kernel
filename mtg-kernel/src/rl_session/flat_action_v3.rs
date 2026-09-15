@@ -964,6 +964,106 @@ pub(crate) fn shuffle_trigger_source_into_library_v1(
         .all(|entry| entry.object != hunter));
 }
 
+/// Builds a real spell at stack index 0 and two real, untargeted triggered
+/// abilities above it at stack indices 1 and 2 (Lembas's own ETB ability,
+/// verbatim, on two different physical cards, placed via the same
+/// mechanism [`avenging_hunter_undercity_arena_choose_targets_state_v1`]
+/// documents: a same-controller pair would need `Decision::OrderTriggers`
+/// first, so the two fillers are given different controllers to place
+/// immediately), then fires Hunter's own Undercity Room Arena trigger and
+/// stops at the resulting `Decision::ChooseTargets`, unanswered, with
+/// `hunter` still on the battlefield.
+///
+/// This is the fixture `trigger::historical_public_source_ordinal_ceiling_v1`
+/// exists to survive: real `HistoricalPublicSource` rows occupy raw
+/// registry ordinals 1 and 2 (`Stack { stack_index: 1 }` and `Stack {
+/// stack_index: 2 }`; the spell at index 0 is never a historical source),
+/// exactly the range a naive "count of historical rows" ordinal (one prior
+/// version of this fix used) could collide with.
+#[cfg(test)]
+pub(crate) fn avenging_hunter_hidden_source_with_stack_historical_rows_state_v1(
+) -> (GameState, ObjectId) {
+    use crate::engine::{self, Action, Decision};
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::{AbilitySourceContractV4, InitiativeTriggerKindV1, StackItemKind, Target, UndercityRoomV1};
+    use crate::trigger::PendingTrigger;
+
+    let mut state = ready_state();
+    let hunter = put(
+        &mut state,
+        PlayerId::P0,
+        "Avenging Hunter",
+        Zone::Battlefield,
+    );
+    let hunter_source = AbilitySourceContractV4::capture(&state, hunter);
+    state.initiative = Some(PlayerId::P0);
+    state.engine.initiative_source = Some(hunter_source);
+
+    // Stack index 0: a real Spell. Never a historical source itself
+    // (`register_extensions_v3` explicitly rejects a Spell-kind row), so it
+    // exists here only to prove the two triggered abilities above it land
+    // at raw stack indices 1 and 2, not 0 and 1.
+    let bolt_target = put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[PlayerId::P0.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+    engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(bolt_target))).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].kind, StackItemKind::Spell);
+
+    let filler_card_def = crate::card_def::card_id_by_name("Lembas").unwrap();
+    let filler_effect = (crate::trigger::triggers_for(filler_card_def)[0].effect)();
+    let mut fillers = Vec::new();
+    for controller in [PlayerId::P0, PlayerId::P1] {
+        let filler = put(&mut state, controller, "Lembas", Zone::Battlefield);
+        let filler_contract = AbilitySourceContractV4::capture(&state, filler);
+        fillers.push(PendingTrigger {
+            controller,
+            source: filler,
+            effect: filler_effect.clone(),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: crate::card_def::TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(filler_contract),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
+    state.engine.pending_triggers.extend(fillers);
+
+    crate::event::log_initiative_trigger(
+        &mut state,
+        PlayerId::P0,
+        hunter_source,
+        InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Arena),
+    )
+    .unwrap();
+    let triggers = crate::trigger::collect_and_process(&mut state);
+    state.engine.pending_triggers.extend(triggers);
+
+    let decision = engine::advance_until_decision(&mut state);
+    assert!(
+        matches!(&decision, Decision::ChooseTargets { spell, .. } if *spell == hunter),
+        "got {decision:?}, halted={:?}, stack={:?}, pending_triggers={:?}",
+        state.engine.halted,
+        state.stack,
+        state.engine.pending_triggers
+    );
+    assert_eq!(state.stack.len(), 3);
+    assert_eq!(state.stack[0].kind, StackItemKind::Spell);
+    assert_eq!(state.stack[1].kind, StackItemKind::TriggeredAbility);
+    assert_eq!(state.stack[2].kind, StackItemKind::TriggeredAbility);
+    (state, hunter)
+}
+
 /// Resolves a real Arena room trigger, then stages the affected player's next
 /// attack declaration with an ordinary creature on either side of the goaded
 /// one in engine candidate order.
@@ -1372,10 +1472,11 @@ mod tests {
             assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
             assert_eq!(row.zone_change_count, contract.zone_change_count);
             assert_eq!(row.card_token, flat_card_token_v2(contract.card_def));
-            // No non-spell stack item or resolving pending effect coexists
-            // with this decision, so the shared ordinal (existing
-            // historical rows + trigger position) is exactly 0.
-            assert_eq!(row.actor_visible_ordinal, 0);
+            // The stack is empty in this fixture, so the collision-safe
+            // ceiling (`trigger::historical_public_source_ordinal_ceiling_v1`
+            // = stack length + 1) plus this trigger's own position (0) is
+            // exactly 1.
+            assert_eq!(row.actor_visible_ordinal, 1);
         }
         // The chosen target (`goaded`) still resolves normally -- only
         // Hunter's own hidden reference needed the frozen-contract
@@ -1469,12 +1570,41 @@ mod tests {
         for row in &pending_rows {
             assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
             assert_eq!(row.zone_change_count, contract.zone_change_count);
-            // Exactly one non-spell item (the Lembas filler) is already on
-            // the stack, so the shared ordinal (existing historical rows +
-            // trigger position) must be offset past it, not collide with
-            // whatever ordinal a real historical row for that filler would
-            // use.
-            assert_eq!(row.actor_visible_ordinal, 1);
+            // The stack holds exactly one item (the Lembas filler), so the
+            // collision-safe ceiling (stack length 1 + 1) plus this
+            // trigger's own position (0) is exactly 2 -- strictly past the
+            // filler's own real historical ordinal (1), never colliding
+            // with it regardless of where on the stack it sits.
+            assert_eq!(row.actor_visible_ordinal, 2);
+        }
+    }
+
+    #[test]
+    fn v3_pending_trigger_hidden_source_ordinal_does_not_collide_with_real_stack_historical_rows() {
+        let (mut state, hunter) =
+            avenging_hunter_hidden_source_with_stack_historical_rows_state_v1();
+        let contract = state.engine.pending_triggers[0].source_contract.unwrap();
+        assert_eq!(contract.source, hunter);
+        shuffle_trigger_source_into_library_v1(&mut state, hunter, PlayerId::P0);
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let (_, objects) = encoded(&session);
+        let pending_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
+            .collect();
+        assert!(
+            !pending_rows.is_empty(),
+            "the frozen-contract fallback must resolve Hunter's hidden \
+             reference even with real Stack-context historical rows present"
+        );
+        for row in &pending_rows {
+            assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
+            assert_eq!(row.zone_change_count, contract.zone_change_count);
+            // Stack length 3 (spell + two triggered-ability fillers) + 1 +
+            // trigger position 0 = 4, strictly past the two real
+            // Stack-context historical rows' own raw ordinals (1 and 2).
+            assert_eq!(row.actor_visible_ordinal, 4);
         }
     }
 

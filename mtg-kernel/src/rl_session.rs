@@ -283,6 +283,7 @@ pub enum FlatActionObjectGroupV1 {
 mod flat_action_v3;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
+    avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
     avenging_hunter_undercity_arena_choose_targets_state_v1, goaded_attacker_fixture_state_v3,
     shuffle_trigger_source_into_library_v1,
 };
