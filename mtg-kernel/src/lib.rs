@@ -70,6 +70,7 @@ pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod flat_policy_v3;
+pub mod flat_policy_v4;
 pub mod ids;
 pub mod policy_observation_v6;
 pub mod policy_observation_v7;
@@ -187,6 +188,7 @@ pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
 pub(crate) mod native_flat_tensorizer_v3;
+pub(crate) mod native_flat_tensorizer_v4;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
 // Section 1.5 / Section 5.3 item 3). Test-only, `#[ignore]`d: requires the
 // real de-novo screen checkpoint store on D:, which does not exist in a

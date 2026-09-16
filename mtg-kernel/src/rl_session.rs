@@ -281,6 +281,7 @@ pub enum FlatActionObjectGroupV1 {
 }
 
 mod flat_action_v3;
+mod flat_action_v4;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
     avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
@@ -288,6 +289,8 @@ pub(crate) use flat_action_v3::{
     move_trigger_source_to_graveyard_v1, move_trigger_source_to_known_library_v1,
     shuffle_trigger_source_into_library_v1,
 };
+#[cfg(test)]
+pub(crate) use flat_action_v4::hidden_order_triggers_state_v1;
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
