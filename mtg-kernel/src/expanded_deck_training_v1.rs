@@ -2573,18 +2573,20 @@ mod tests {
         );
     }
 
-    /// Multi-seed regression soak for the V4 actor-visible encoder gap fixed
-    /// in `rl_session/flat_action_v4.rs` (see the doc comment on
+    /// Multi-seed regression soak for the V4 actor-visible encoder gaps
+    /// fixed in `rl_session/flat_action_v4.rs` (see the doc comment on
     /// `ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly`
-    /// for the original single-seed reproduction, and on
+    /// for the original single-seed reproduction; on
     /// `validate_origin_decision_against_reordered_candidates_v4` /
     /// `flat_validate_current_binding_staleness_v4` for the two further
-    /// instances this soak itself found: a `ChooseEffectTargets`
-    /// decision-local-library reorder, and a goaded-attacker
-    /// `AttackerInclusion` menu shrunk to one candidate). 20 real, untrained,
-    /// unmanipulated V4 self-play games across the checked-in Pauper pool
-    /// decks (cycled as consecutive pairs, so every included deck appears as
-    /// both learner and opponent mainboard across the run), each seeded
+    /// instances an earlier run of this soak found; and on
+    /// `FlatResolvedActionObjectV4` for the burst-2
+    /// `InvalidActionReference`/`DuplicateCanonicalObject` pair fixed
+    /// alongside this extension). 20 real, untrained, unmanipulated V4
+    /// self-play games across exactly the seven standard runtime decks
+    /// (Wildfire, Rally, Affinity, Elves, Burn, Terror, Faeries -- cycled
+    /// as consecutive pairs, so every deck appears as both learner and
+    /// opponent mainboard multiple times across the run), each seeded
     /// distinctly. Real complete games (native engine compute), deliberately
     /// opt-in like its single-game sibling above.
     ///
@@ -2597,14 +2599,17 @@ mod tests {
     /// decision, again confirmed identical under V3 on the same seed). Both
     /// are pre-existing, generation-agnostic gaps unrelated to the V4-vs-V3
     /// divergence this soak exists to catch; see the fix report for the
-    /// residual-risk note.
+    /// residual-risk note. The V2 archetype variants (BurnV2, DelverV2,
+    /// etc.) this soak previously also cycled through are dropped here to
+    /// focus exactly on the seven standard decks the task named; they are
+    /// not a coverage loss for the two burst-2 defects specifically, since
+    /// both are demonstrated and fixed by the real-game regressions above
+    /// and the synthetic fixture in `flat_action_v4.rs`, not by this soak.
     #[test]
-    #[ignore = "root-owned native qualification: 20 real V4 games across most checked-in Pauper decks"]
+    #[ignore = "root-owned native qualification: 20 real V4 games across the seven standard Pauper decks"]
     fn v4_gameplay_soak_over_standard_decks_completes_every_seed() {
-        const DECK_IDS: [&str; 15] = [
-            "Wildfire", "Rally", "Affinity", "Elves", "Burn", "Terror", "Faeries", "BurnV2",
-            "DelverV2", "AffinityV2", "RallyV2", "WildfireV2", "ElvesV2", "TerrorV2",
-            "DimirTerrorV2",
+        const DECK_IDS: [&str; 7] = [
+            "Wildfire", "Rally", "Affinity", "Elves", "Burn", "Terror", "Faeries",
         ];
         const GAME_COUNT: usize = 20;
         let mut failures = Vec::new();
@@ -2637,6 +2642,231 @@ mod tests {
             "V4 gameplay soak failures:\n{}",
             failures.join("\n")
         );
+    }
+
+    /// Loads the real `fresh-initialization-checks-002` inspection-a
+    /// weights (the actual Python-producer output the burst-2 WSL run used
+    /// when it found both defects below), via the production
+    /// `load_policy_v1` loader, so a self-play game driven by these exact
+    /// weights reproduces the exact recorded decision step, not merely an
+    /// analogous one under `training_fixture_v4()`'s fixed/synthetic
+    /// weights (confirmed empirically: the fixed-weight fixture completes
+    /// both games below in under 400 decisions without ever reaching
+    /// either defect). Depends on
+    /// `E:/mtg-kernel-learned-sideboarding-evidence` (the burst-2
+    /// preparation's own evidence tree, sha256-pinned below), so both
+    /// tests that use it are `#[ignore]`d qualification tests, matching
+    /// this module's existing `collect_episode_v4_real_game_...`/
+    /// `v4_gameplay_soak_over_standard_decks_...` convention for
+    /// real-weight, real-game evidence.
+    fn burst2_evidence_fresh_v4_policy_v1() -> FrozenPlayPolicyV1 {
+        let root = std::path::Path::new(
+            "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001/fresh-initialization-checks-002/generated-a",
+        );
+        let source = fresh_initialization_source::ExpandedFreshInitializationSourceV1 {
+            schema: fresh_initialization_source::SOURCE_SCHEMA.into(),
+            initialization: PinnedFileV1 {
+                path: root.join("initialization.json"),
+                sha256: "524b5ab409236ace22de794c6512d3adf302b654d15b64bc95a07c389e8cbc2f".into(),
+            },
+            parameters: PinnedFileV1 {
+                path: root.join("parameters.f32le"),
+                sha256: "6346acf09188d19c8d320006131fe715da60e88758bf660b8ad5af93c238a001".into(),
+            },
+        };
+        let features = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+            expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+        };
+        fresh_initialization_source::load_policy_v1(&source, &features).unwrap()
+    }
+
+    /// Card-id arrays taken verbatim from `a-sized-v2.json`'s failing
+    /// episode's own "registered"/"selected" fields (iteration 0, episode
+    /// index 37), byte-equal to `list("Faeries")`/`list("Affinity")`
+    /// (asserted once here rather than at every call site).
+    fn burst2_faeries_affinity_decks_v1() -> [ExpandedDeckListV1; 2] {
+        let faeries = ExpandedDeckListV1 {
+            label: "Faeries".into(),
+            mainboard: vec![
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
+                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
+                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
+                110,
+            ],
+            sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
+        };
+        let affinity = ExpandedDeckListV1 {
+            label: "Affinity".into(),
+            mainboard: vec![
+                5, 5, 5, 6, 6, 18, 23, 23, 23, 23, 35, 41, 41, 41, 41, 48, 48, 48, 56, 58, 58, 58,
+                58, 62, 62, 62, 69, 73, 73, 73, 73, 78, 78, 78, 78, 79, 79, 79, 94, 94, 94, 94,
+                96, 96, 96, 96, 102, 102, 103, 103, 114, 117, 117, 117, 117, 121, 121, 125, 125,
+                125,
+            ],
+            sideboard: vec![7, 7, 9, 46, 57, 57, 57, 57, 62, 90, 90, 90, 90, 95, 124],
+        };
+        assert_eq!(faeries.mainboard, list("Faeries").mainboard, "registry deck differs from evidence");
+        assert_eq!(affinity.mainboard, list("Affinity").mainboard, "registry deck differs from evidence");
+        [faeries, affinity]
+    }
+
+    /// Burst-2 defect 1 regression (`InvalidActionReference`): real V4
+    /// fresh-lineage self-play, Elves vs Wildfire, seed
+    /// 8736899219446983818, starting player 0 -- byte-identical to the
+    /// WSL `native_expanded_training_run_v1` run that crashed at exactly
+    /// step 275, `physical_decision_id` 264, actor P1, a `Surface`
+    /// decision with `legal_action_count` 2 (confirmed by reproducing the
+    /// pre-fix crash with this exact fixture before landing the fix in
+    /// `rl_session/flat_action_v4.rs`). Root cause: a `Source`-role
+    /// reference to a `PendingEffect`-context historical row (frozen at
+    /// the object's battlefield zone/`zone_change_count`) and a later
+    /// `TargetObject`-role reference to the same physical `arena_id` (now
+    /// a known library card, a different zone/`zone_change_count`) both
+    /// default `position` to 0, so the old `(arena_id, position)` dedup
+    /// key forced them through the "must resolve identically" check even
+    /// though they legitimately differ. Now completes the full real game.
+    #[test]
+    #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
+    fn burst2_defect_a_elves_vs_wildfire_v4_regression() {
+        let mut policy = burst2_evidence_fresh_v4_policy_v1();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "burst2-defect-a".into(),
+            seed: 8_736_899_219_446_983_818,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            registered: [list("Elves"), list("Wildfire")],
+            selected: [list("Elves"), list("Wildfire")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
+            .expect("V4 self-play must complete this real game without an actor-visible encoding error");
+        assert!(trajectory.decisions.len() > 275, "must play well past the formerly-crashing step 275");
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// Burst-2 defect 2 regression (`DuplicateCanonicalObject`): real V4
+    /// fresh-lineage self-play, Faeries vs Affinity, seed
+    /// 16977991839826055713 (found by a bounded local seed sweep around
+    /// the originally reported seed 16977991839826055697, whose exact
+    /// game did not reproduce under this evidence policy -- almost
+    /// certainly because the WSL run's "current" opponent-pool member was
+    /// not byte-identical to this "initial" fresh policy; no preserved
+    /// evidence of the exact WSL weights exists to confirm further. This
+    /// nearby seed reproduces the same error kind on the same reported
+    /// deck pair with direct diagnostic confirmation of the exact
+    /// mechanism during root-causing), starting player 1 -- crashed
+    /// pre-fix at step 303, actor P1, a `Surface` decision with
+    /// `legal_action_count` 6. Root cause: two `Decision::OrderTriggers`
+    /// positions (0 and 1) sharing one VISIBLE (not hidden) physical
+    /// source both resolve through the position-INSENSITIVE ordinary zone
+    /// lookup to the byte-identical row, yet the old dedup key still
+    /// treated `position` as significant unconditionally, so the second
+    /// occurrence was flagged as a canonical-key collision against the
+    /// first. See `rl_session/flat_action_v4.rs`'s
+    /// `v4_two_visible_order_triggers_positions_sharing_one_physical_source_share_one_row`
+    /// for the same mechanism reproduced as a fast, self-contained unit
+    /// fixture (that test, not this one, is the primary regression floor
+    /// for CI; this one additionally proves the fix against the real
+    /// reported deck pair and real fresh-lineage weights).
+    #[test]
+    #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
+    fn burst2_defect_b_faeries_vs_affinity_v4_regression() {
+        let [faeries, affinity] = burst2_faeries_affinity_decks_v1();
+        let mut policy = burst2_evidence_fresh_v4_policy_v1();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "burst2-defect-b".into(),
+            seed: 16_977_991_839_826_055_713,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: None,
+            registered: [faeries.clone(), affinity.clone()],
+            selected: [faeries, affinity],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
+            .expect("V4 self-play must complete this real game without an actor-visible encoding error");
+        assert!(trajectory.decisions.len() > 303, "must play well past the formerly-crashing step 303");
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// The originally reported burst-2 defect-B seed (16977991839826055697,
+    /// Faeries vs Affinity, starting player 1) never reproduced the crash
+    /// against this evidence policy (see
+    /// `burst2_defect_b_faeries_vs_affinity_v4_regression`'s doc comment),
+    /// but is still worth an always-checked non-regression floor: this
+    /// exact originally-reported (seed, deck pair) must keep completing
+    /// cleanly.
+    #[test]
+    #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
+    fn burst2_originally_reported_defect_b_seed_completes_cleanly() {
+        let [faeries, affinity] = burst2_faeries_affinity_decks_v1();
+        let mut policy = burst2_evidence_fresh_v4_policy_v1();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "burst2-defect-b-original-seed".into(),
+            seed: 16_977_991_839_826_055_697,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: None,
+            registered: [faeries.clone(), affinity.clone()],
+            selected: [faeries, affinity],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
+            .expect("V4 self-play must complete this real game without an actor-visible encoding error");
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// Item 1 of the fix procedure: confirm the V3 (frozen) path is
+    /// unaffected by playing the identical seeds/deck pairs both burst-2
+    /// defects were found on through a real V3 self-play game. `V3` has no
+    /// `fresh_successor`/`FreshLineageGenerationV1::V4` concept at all, so
+    /// there is no way to force the literal WSL run's V4 weights through
+    /// the V3 encoder; this instead uses `training_fixture_v3()`
+    /// (self-contained, deterministic, no evidence dependency, the same
+    /// generation-comparison idiom `ordinary_trainer_two_iteration_v3_fixture_state_hash_is_unchanged`
+    /// already uses alongside its V4 sibling), always-run since it needs
+    /// no external weights. `flat_action_v4.rs`'s
+    /// `v4_two_visible_order_triggers_positions_sharing_one_physical_source_share_one_row`
+    /// additionally proves V3 unaffected on the EXACT synthetic state that
+    /// reproduces defect 2's mechanism, by calling the V3 encoder directly
+    /// against it.
+    #[test]
+    fn burst2_defect_seeds_complete_cleanly_through_v3_encoder() {
+        for (seed, starting_player, decks) in [
+            (8_736_899_219_446_983_818u64, 0u8, [list("Elves"), list("Wildfire")]),
+            (16_977_991_839_826_055_713u64, 1u8, burst2_faeries_affinity_decks_v1()),
+            (16_977_991_839_826_055_697u64, 1u8, burst2_faeries_affinity_decks_v1()),
+        ] {
+            let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+            let learner = test_behavior(&policy, false);
+            let episode = ExpandedEpisodeV1 {
+                id: format!("burst2-v3-check-{seed}"),
+                seed,
+                starting_player,
+                learner_seat: 0,
+                opponent: None,
+                registered: decks.clone(),
+                selected: decks,
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+            };
+            let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
+                panic!("V3 self-play must never fail on these seeds/decks (seed {seed}): {e}")
+            });
+            validate_trajectory(&trajectory).unwrap();
+        }
     }
 
     /// The burst-2 fixture: two full ordinary-trainer iterations (Collect,

@@ -49,14 +49,58 @@ use super::*;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 
-/// Local (V4-only) analog of `FlatResolvedActionObjectV2`: adds `position`
-/// to the dedup/consistency key so two hidden pending-trigger positions
-/// sharing one physical source object (identical `arena_id`) are tracked
-/// as distinct resolved entries instead of being collapsed into one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Local (V4-only) analog of `FlatResolvedActionObjectV2`. Two real defects
+/// were found in real gameplay by conflating `arena_id` and `position` in
+/// this type's dedup/consistency key; both are fixed by the fields below.
+///
+/// Defect 1 (`InvalidActionReference`): a `Source`-role reference for a
+/// `PendingEffect`-context historical row is frozen at the object's
+/// zone/`zone_change_count` from when the effect became pending (resolved
+/// via the extension-row match in
+/// [`flat_visible_action_object_extension_aware_v4`]), while a different
+/// role's reference to the SAME physical `arena_id` (for example a
+/// `TargetObject` naming a legal target) names the object's CURRENT
+/// zone/`zone_change_count`, which can differ if the object has moved zones
+/// since the effect became pending (for example battlefield-then-library).
+/// Both roles default `position` to 0 (only `OrderTriggers` ever produces a
+/// nonzero `order_index`), so `arena_id` and `position` alone collided even
+/// though the two references, and their correctly-resolved objects, are
+/// legitimately different. Fix: the full `reference` is now part of the
+/// key too, so two references naming different points in one object's
+/// history are tracked as distinct entries -- resolved the same way
+/// `register_extensions_v4` resolves the analogous shared-physical-source
+/// case, as two independently valid rows, never a forced mismatch.
+///
+/// Defect 2 (`DuplicateCanonicalObject`): the mirror-image mistake. Two
+/// `OrderTriggers` positions (0 and 1) whose *physical* source is the same
+/// VISIBLE (not hidden) permanent both resolve through the
+/// position-INSENSITIVE ordinary zone lookup (see `position_sensitive`
+/// below): the object is visible, so
+/// `pending_trigger_frozen_source_components_v4`'s hidden check fails for
+/// both positions, and the ordinary fallback's ordinal depends only on the
+/// object's own live zone, never on `position`. Both positions therefore
+/// legitimately resolve to the byte-identical row (same `reference`, same
+/// object) -- exactly as V3's plain arena_id-only dedup would collapse them
+/// -- yet keying strictly on `(arena_id, position, reference)` still forced
+/// them apart (`position` differs), so the second one was rejected as a
+/// canonical-key collision against the first. Fix: `position` is only part
+/// of the "already resolved" key when the resolution that produced the
+/// EXISTING entry was itself position-sensitive (i.e. actually came from
+/// `pending_trigger_frozen_source_components_v4`, whose ordinal genuinely
+/// depends on `position`); otherwise two positions naming the identical
+/// `(arena_id, reference)` share one entry, matching V3's behavior for the
+/// visible case (V3 has no position-sensitive path at all). A single
+/// physical source cannot be position-sensitive at one position and not at
+/// another within one decision: hiddenness is a property of the live
+/// object alone (`pending_trigger_hidden_source_v1` reads only
+/// `state.objects`/`state.library_knowledge`, never `position`), so this
+/// split is unambiguous.
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct FlatResolvedActionObjectV4 {
     arena_id: u32,
     position: u32,
+    reference: CardStableRefV1,
+    position_sensitive: bool,
     object: FlatActionObjectV2,
 }
 
@@ -210,16 +254,30 @@ fn pending_trigger_frozen_source_components_v4(
 /// exactly how a frozen reference is recognized, not an ordinary
 /// consistency error), with `position` threaded through from the caller
 /// instead of derived by scanning for a matching `arena_id`.
+///
+/// Resolves the components for a reference, and reports whether the
+/// resolution was *position-sensitive*: `true` only when
+/// [`pending_trigger_frozen_source_components_v4`] actually produced the
+/// result (its ordinal is `ceiling + position`, so two different positions
+/// for the same physical source genuinely need distinct rows there). Every
+/// other arm (the ordinary zone-based lookup below) computes its ordinal
+/// purely from the object's own live zone state, independent of `position`,
+/// so two different positions resolving the SAME visible object through
+/// this path always compute the identical result and must be allowed to
+/// share one row -- exactly as V3's plain arena_id dedup already does for
+/// the same case (V3 has no position-sensitive path at all). Callers use
+/// this to decide whether `position` belongs in their own dedup key; see
+/// `FlatResolvedActionObjectV4`'s doc comment.
 fn flat_visible_action_object_components_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
     position: u32,
     reference: &CardStableRefV1,
-) -> Result<FlatVisibleActionObjectComponentsV1, FlatActionDecisionSliceErrorV1> {
+) -> Result<(FlatVisibleActionObjectComponentsV1, bool), FlatActionDecisionSliceErrorV1> {
     if let Some(components) =
         pending_trigger_frozen_source_components_v4(state, actor, position, reference)?
     {
-        return Ok(components);
+        return Ok((components, true));
     }
     let object_id = ObjectId(reference.arena_id);
     let object = state
@@ -323,15 +381,18 @@ fn flat_visible_action_object_components_v4(
             )
         }
     };
-    Ok(FlatVisibleActionObjectComponentsV1 {
-        card_db_id: object.card_def,
-        group,
-        actor_visible_ordinal: ordinal,
-        owner_relative: flat_relative_seat_v1(owner, actor.into())?,
-        controller_relative: flat_relative_seat_v1(controller, actor.into())?,
-        zone: flat_zone_v1(object.zone),
-        zone_change_count: object.zone_change_count,
-    })
+    Ok((
+        FlatVisibleActionObjectComponentsV1 {
+            card_db_id: object.card_def,
+            group,
+            actor_visible_ordinal: ordinal,
+            owner_relative: flat_relative_seat_v1(owner, actor.into())?,
+            controller_relative: flat_relative_seat_v1(controller, actor.into())?,
+            zone: flat_zone_v1(object.zone),
+            zone_change_count: object.zone_change_count,
+        },
+        false,
+    ))
 }
 
 fn flat_visible_action_object_v4(
@@ -339,18 +400,22 @@ fn flat_visible_action_object_v4(
     actor: PlayerId,
     position: u32,
     reference: &CardStableRefV1,
-) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
-    let fields = flat_visible_action_object_components_v4(state, actor, position, reference)?;
-    Ok(FlatActionObjectV2 {
-        card_token: flat_card_token_v2(fields.card_db_id),
-        group: fields.group,
-        actor_visible_ordinal: u16::try_from(fields.actor_visible_ordinal)
-            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
-        owner_relative: fields.owner_relative,
-        controller_relative: fields.controller_relative,
-        zone: fields.zone,
-        zone_change_count: fields.zone_change_count,
-    })
+) -> Result<(FlatActionObjectV2, bool), FlatActionDecisionSliceErrorV1> {
+    let (fields, position_sensitive) =
+        flat_visible_action_object_components_v4(state, actor, position, reference)?;
+    Ok((
+        FlatActionObjectV2 {
+            card_token: flat_card_token_v2(fields.card_db_id),
+            group: fields.group,
+            actor_visible_ordinal: u16::try_from(fields.actor_visible_ordinal)
+                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+            owner_relative: fields.owner_relative,
+            controller_relative: fields.controller_relative,
+            zone: fields.zone,
+            zone_change_count: fields.zone_change_count,
+        },
+        position_sensitive,
+    ))
 }
 
 /// `current.candidates` is not always in `origin_decision`'s raw,
@@ -459,6 +524,14 @@ fn extension_object_v4(
 /// ordinary [`flat_visible_action_object_v4`] resolution -- which already
 /// covers the `PendingTrigger` case via [`pending_trigger_frozen_source_components_v4`]
 /// -- for every other reference.
+///
+/// Also reports whether the resolution was position-sensitive (see
+/// [`flat_visible_action_object_components_v4`]'s doc comment): always
+/// `false` for both extension-row matches here, since neither the
+/// `PendingEffect` row's enumerate-index ordinal nor the
+/// `decision_local_library` search-position ordinal depends on `position`
+/// at all -- only [`pending_trigger_frozen_source_components_v4`], reached
+/// through the ordinary fallback, ever is.
 fn flat_visible_action_object_extension_aware_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
@@ -466,7 +539,7 @@ fn flat_visible_action_object_extension_aware_v4(
     role: FlatActionRefRoleV1,
     reference: &CardStableRefV1,
     extension: &crate::policy_observation_v6::PolicyObservationExtensionsV6,
-) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
+) -> Result<(FlatActionObjectV2, bool), FlatActionDecisionSliceErrorV1> {
     if role == FlatActionRefRoleV1::Source {
         if let Some((ordinal, _)) = extension
             .historical_public_sources
@@ -482,7 +555,8 @@ fn flat_visible_action_object_extension_aware_v4(
                 actor,
                 FlatActionObjectGroupV1::HistoricalPublicSource,
                 ordinal,
-            );
+            )
+            .map(|object| (object, false));
         }
     }
     if let Some(ordinal) = extension
@@ -490,7 +564,8 @@ fn flat_visible_action_object_extension_aware_v4(
         .as_ref()
         .and_then(|search| search.cards.iter().position(|card| card.stable == *reference))
     {
-        return extension_object_v4(reference, actor, FlatActionObjectGroupV1::DecisionLocalLibrary, ordinal);
+        return extension_object_v4(reference, actor, FlatActionObjectGroupV1::DecisionLocalLibrary, ordinal)
+            .map(|object| (object, false));
     }
     flat_visible_action_object_v4(state, actor, position, reference)
 }
@@ -534,14 +609,10 @@ impl FastActorSessionV1 {
         let actor: PlayerSeatV1 = current.actor.into();
         let mut actions_out: Vec<FlatActionCoreV1> = Vec::with_capacity(current.candidates.len());
         let mut unindexed_refs: Vec<FlatUnindexedActionRefV2> = Vec::new();
-        // Keyed by (arena_id, position) rather than V3's arena_id alone:
-        // two hidden pending-trigger positions can share one physical
-        // source object, and must be tracked as distinct resolved entries
-        // (see the module doc comment's collision-freedom note), while
-        // still catching a genuine same-(arena_id, position) inconsistency
-        // exactly as the arena_id-only check did for the ordinary case
-        // (where `position` is always 0 for every non-`PendingSources`
-        // role, so this is a strict generalization, not a relaxation).
+        // See `FlatResolvedActionObjectV4`'s doc comment for the two real
+        // defects this dedup/consistency key was widened to fix, and why
+        // `position` only joins the "already resolved" match when the
+        // EXISTING entry's own resolution was position-sensitive.
         let mut resolved_objects: Vec<FlatResolvedActionObjectV4> = Vec::new();
         for (action_index, candidate) in current.candidates.iter().enumerate() {
             flat_validate_semantic_policy_pair_v1(candidate)?;
@@ -556,7 +627,7 @@ impl FastActorSessionV1 {
                 ref_start,
                 |role, order_index, associated_order, reference| {
                     let position = u32::from(order_index);
-                    let object = flat_visible_action_object_extension_aware_v4(
+                    let (object, position_sensitive) = flat_visible_action_object_extension_aware_v4(
                         &self.state,
                         current.actor,
                         position,
@@ -564,10 +635,12 @@ impl FastActorSessionV1 {
                         reference,
                         &extension,
                     )?;
-                    if let Some(previous) = resolved_objects
-                        .iter()
-                        .find(|candidate| candidate.arena_id == reference.arena_id && candidate.position == position)
-                    {
+                    if let Some(previous) = resolved_objects.iter().find(|candidate| {
+                        candidate.arena_id == reference.arena_id
+                            && candidate.reference == *reference
+                            && candidate.position_sensitive == position_sensitive
+                            && (!position_sensitive || candidate.position == position)
+                    }) {
                         if previous.object != object {
                             return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
                         }
@@ -580,6 +653,8 @@ impl FastActorSessionV1 {
                         resolved_objects.push(FlatResolvedActionObjectV4 {
                             arena_id: reference.arena_id,
                             position,
+                            reference: reference.clone(),
+                            position_sensitive,
                             object,
                         });
                     }
@@ -849,6 +924,51 @@ pub(crate) fn hidden_order_triggers_shared_source_state_v1() -> (crate::state::G
     assert!(state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]
         .iter()
         .all(|entry| entry.object != object));
+    (state, object)
+}
+
+/// Burst-2 regression fixture (defect 2, `DuplicateCanonicalObject`):
+/// [`hidden_order_triggers_shared_source_state_v1`] minus the final
+/// shuffle-into-library step, so the one shared physical source stays
+/// VISIBLE on the battlefield instead of hidden. Both `pending_sources`
+/// positions must therefore resolve through the position-INSENSITIVE
+/// ordinary zone lookup (`pending_trigger_hidden_source_v1` is false for a
+/// visible object, so `pending_trigger_frozen_source_components_v4` never
+/// fires for either position), landing on the byte-identical
+/// `SelfBattlefield` row for both -- real gameplay's actual shape (two
+/// simultaneous triggers off one still-battlefield permanent is a common,
+/// unremarkable board state, unlike the hidden case above).
+///
+/// Test-only. Re-exported as `crate::rl_session::visible_order_triggers_shared_source_state_v1`.
+#[cfg(test)]
+pub(crate) fn visible_order_triggers_shared_source_state_v1() -> (crate::state::GameState, ObjectId)
+{
+    use crate::card_def::TargetSpec;
+    use crate::effect::EffectOp;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::AbilitySourceContractV4;
+    use crate::trigger::PendingTrigger;
+
+    let mut state = ready_state();
+    let object = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+    let contract = AbilitySourceContractV4::capture(&state, object);
+    for _ in 0..2 {
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: PlayerId::P0,
+            source: object,
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(contract),
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
     (state, object)
 }
 
@@ -1150,6 +1270,66 @@ mod tests {
         // differs, which is exactly what disambiguates the two positions).
         assert_eq!(pending_rows[0].card_token, pending_rows[1].card_token);
         assert_eq!(pending_rows[0].zone_change_count, pending_rows[1].zone_change_count);
+        let _ = shared_object;
+    }
+
+    /// Burst-2 regression: two simultaneous `OrderTriggers` positions (0 and
+    /// 1) whose one shared physical source is VISIBLE (still on the
+    /// battlefield, not hidden) must resolve to one shared
+    /// `SelfBattlefield` row, not two, and must never raise
+    /// `DuplicateCanonicalObject`. Before the fix, `position` was
+    /// unconditionally part of the dedup key, so position 1's
+    /// byte-identical resolution was treated as a NEW entry and rejected as
+    /// a canonical-key collision against position 0's already-recorded
+    /// entry. Reproduces the real burst-2 finding (seed
+    /// 16977991839826055713, Faeries vs Affinity, step 303, a `Surface`
+    /// decision) mechanically, without depending on that real game or its
+    /// policy weights. V3 is proven unaffected on the identical state: V3's
+    /// action-slice encoder has never had a position-sensitive path at all
+    /// (its own single, always-position-0 hidden fallback aside), so its
+    /// plain arena_id dedup already collapses this case correctly, and did
+    /// before and after this fix.
+    #[test]
+    fn v4_two_visible_order_triggers_positions_sharing_one_physical_source_share_one_row() {
+        let (state, shared_object) = visible_order_triggers_shared_source_state_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        assert!(matches!(
+            session.current.as_ref().unwrap().origin_decision,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers { .. }))
+        ));
+
+        // V3 must accept this decision too (same live-source arena_id dedup
+        // it has always used), never `DuplicateCanonicalObject` or any
+        // other error -- proving V3 is unaffected by this class of defect.
+        let mut v3_actions = vec![FlatActionCoreV1::default(); 128];
+        let mut v3_refs = vec![FlatActionRefV2::default(); 256];
+        let mut v3_objects = vec![FlatActionObjectV2::default(); 128];
+        session
+            .encode_current_flat_action_slice_v3(
+                expected(&session),
+                &mut FlatActionDecisionSliceBuffersV2 {
+                    actions: &mut v3_actions,
+                    refs: &mut v3_refs,
+                    objects: &mut v3_objects,
+                },
+            )
+            .unwrap();
+
+        let (result, objects) = encoded_v4(&session);
+        assert!(result.active_action_count > 0);
+        let battlefield_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.group == FlatActionObjectGroupV1::SelfBattlefield)
+            .collect();
+        assert_eq!(
+            battlefield_rows.len(),
+            1,
+            "both positions share one physical, visible source and must collapse to one row, \
+             matching V3's plain arena_id dedup for the same live-source case"
+        );
+        assert!(objects
+            .iter()
+            .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
         let _ = shared_object;
     }
 }
