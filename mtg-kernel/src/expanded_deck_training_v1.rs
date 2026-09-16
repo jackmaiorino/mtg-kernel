@@ -89,7 +89,8 @@ impl TransferContextV1 {
         }
     }
     fn validate_scalars(&self, learning_rate: f32, value_coefficient: f32) -> Result<(), String> {
-        self.inner().validate_scalars(learning_rate, value_coefficient)
+        self.inner()
+            .validate_scalars(learning_rate, value_coefficient)
     }
     fn validate_batch(&self, episodes: &[ExpandedEpisodeV1]) -> Result<(), String> {
         self.inner().validate_batch(episodes)
@@ -1157,7 +1158,7 @@ const NON_NATURAL_RETRY_LIMIT: u32 = 3;
 /// ledger (or carried on a trajectory's own `episode.seed`) can be
 /// recomputed from the original episode id, its original seed, and the
 /// retry index alone -- nothing else is fed in.
-fn derived_retry_seed_v1(episode_id: &str, original_seed: u64, retry_index: u32) -> u64 {
+pub(crate) fn derived_retry_seed_v1(episode_id: &str, original_seed: u64, retry_index: u32) -> u64 {
     let mut buffer = Vec::with_capacity(episode_id.len() + 24);
     buffer.extend_from_slice(b"mtg-kernel-non-natural-retry-seed/v1\0");
     buffer.extend_from_slice(episode_id.as_bytes());
@@ -1170,6 +1171,77 @@ fn derived_retry_seed_v1(episode_id: &str, original_seed: u64, retry_index: u32)
             .try_into()
             .expect("sha256 digest is at least 8 bytes"),
     )
+}
+
+/// The seed a schedule audit must expect on each slot's published trajectory
+/// once the tolerant-collection ledger pinned at `pin` is taken into account:
+/// `None` for a slot with no ledgered failure (its trajectory carries the
+/// scheduled seed unchanged) and `Some(seed)` for a slot whose `k` ledgered
+/// attempts all failed, where `seed` is `derived_retry_seed_v1(id, scheduled
+/// seed, k)`, the seed the `k + 1`th, successful attempt used. The ledger is
+/// re-verified against the schedule first, so a trajectory can never be
+/// admitted on the strength of a ledger that does not itself re-derive:
+/// pinned bytes, schema, every slot inside the schedule, the schedule's own
+/// episode id, decks and starting player on every entry, contiguous 1-based
+/// attempts per slot (entries may arrive in completion order, so they are
+/// sorted by slot and attempt first), each attempt's own seed re-derived
+/// from the schedule, and fewer failed attempts than the retry limit (a slot
+/// that exhausted its budget never published a trajectory, so such a ledger
+/// cannot describe a complete collection).
+pub(crate) fn ledgered_retry_seed_overrides_v1(
+    pin: &PinnedFileV1,
+    episodes: &[ExpandedEpisodeV1],
+) -> Result<Vec<Option<u64>>, String> {
+    let bytes = read_pinned_bytes(pin)?;
+    let ledger: NonNaturalLedgerV1 = serde_json::from_slice(&bytes).map_err(err)?;
+    ensure(
+        ledger.schema == NON_NATURAL_LEDGER_SCHEMA_V1,
+        "non-natural ledger schema differs",
+    )?;
+    let mut entries: Vec<&NonNaturalLedgerEntryV1> = ledger.entries.iter().collect();
+    entries.sort_by_key(|entry| (entry.slot, entry.attempt));
+    let mut failed_attempts = vec![0u32; episodes.len()];
+    for entry in entries {
+        let episode = episodes
+            .get(entry.slot)
+            .ok_or_else(|| "non-natural ledger slot is outside the schedule".to_string())?;
+        let failed = &mut failed_attempts[entry.slot];
+        ensure(
+            entry.attempt == *failed + 1,
+            "non-natural ledger attempts are not contiguous from the first attempt",
+        )?;
+        ensure(
+            entry.episode_id == episode.id
+                && entry.decks
+                    == [
+                        episode.selected[0].label.clone(),
+                        episode.selected[1].label.clone(),
+                    ]
+                && entry.starting_player == episode.starting_player,
+            "non-natural ledger entry does not match the scheduled episode",
+        )?;
+        let expected_seed = if entry.attempt == 1 {
+            episode.seed
+        } else {
+            derived_retry_seed_v1(&episode.id, episode.seed, entry.attempt - 1)
+        };
+        ensure(
+            entry.seed == expected_seed,
+            "non-natural ledger seed does not re-derive from the schedule",
+        )?;
+        *failed += 1;
+        ensure(
+            *failed < NON_NATURAL_RETRY_LIMIT,
+            "non-natural ledger records a slot that exhausted its retry budget",
+        )?;
+    }
+    Ok(failed_attempts
+        .iter()
+        .zip(episodes)
+        .map(|(failed, episode)| {
+            (*failed > 0).then(|| derived_retry_seed_v1(&episode.id, episode.seed, *failed))
+        })
+        .collect())
 }
 
 // Test-only injection: lets a test force specific *seeds* to be treated as
@@ -1248,8 +1320,10 @@ fn collect_episode_tolerant_v1(
     episode: &ExpandedEpisodeV1,
     slot: usize,
     max_non_natural_episode_fraction: f32,
-) -> Result<(ExpandedTrajectoryV1, Vec<NonNaturalLedgerEntryV1>), (String, Vec<NonNaturalLedgerEntryV1>)>
-{
+) -> Result<
+    (ExpandedTrajectoryV1, Vec<NonNaturalLedgerEntryV1>),
+    (String, Vec<NonNaturalLedgerEntryV1>),
+> {
     let mut ledger = Vec::new();
     let mut attempt_episode = episode.clone();
     for attempt in 1..=NON_NATURAL_RETRY_LIMIT {
@@ -1566,16 +1640,16 @@ fn replay_learner_groups_v1<'a>(
                 opponent.unwrap_or(learner)
             };
             let output = match generation {
-                FreshLineageGenerationV1::V3 => acting.score_training_tensor_v3(
-                    &NativeFlatDecisionTensorV3 {
+                FreshLineageGenerationV1::V3 => {
+                    acting.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
                         common: common.clone(),
-                    },
-                )?,
-                FreshLineageGenerationV1::V4 => acting.score_training_tensor_v4(
-                    &NativeFlatDecisionTensorV4 {
+                    })?
+                }
+                FreshLineageGenerationV1::V4 => {
+                    acting.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
                         common: common.clone(),
-                    },
-                )?,
+                    })?
+                }
             };
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
@@ -1629,7 +1703,10 @@ pub enum ExpandedTrainingCommandV1 {
         update_backend: ExpandedUpdateBackendV1,
         /// Config-driven; default `Sequential` keeps every existing config and
         /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
-        #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+        #[serde(
+            default,
+            skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential"
+        )]
         update_backward_execution: UpdateBackwardExecutionV1,
         output_directory: PathBuf,
     },
@@ -1642,7 +1719,10 @@ pub enum ExpandedTrainingCommandV1 {
         value_coefficient: f32,
         #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
         update_backend: ExpandedUpdateBackendV1,
-        #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+        #[serde(
+            default,
+            skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential"
+        )]
         update_backward_execution: UpdateBackwardExecutionV1,
         preparation_workers: usize,
         output_directory: PathBuf,
@@ -1739,7 +1819,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                     schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
                     entries: ledger,
                 };
-                Some(publish_json(&output_directory, "non-natural.json", &document)?)
+                Some(publish_json(
+                    &output_directory,
+                    "non-natural.json",
+                    &document,
+                )?)
             } else {
                 None
             };
@@ -2942,14 +3026,39 @@ mod tests {
     #[test]
     fn identity_valid_admits_pure_v3_and_pure_v4_but_rejects_any_mixed_pair() {
         let cards = format!("{KERNEL_CARDDB_HASH:016x}");
-        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3, &cards).is_ok());
-        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4, &cards).is_ok());
+        assert!(identity_valid(
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V3,
+            &cards
+        )
+        .is_ok());
+        assert!(identity_valid(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V4,
+            &cards
+        )
+        .is_ok());
         // A mixed pair (a V3 contract digest with a V4 encoding digest, or
         // vice versa) must fail: this is a whole-pair check, not two
         // independent membership checks.
-        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V4, &cards).is_err());
-        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V3, &cards).is_err());
-        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4, "0".repeat(16).as_str()).is_err());
+        assert!(identity_valid(
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V4,
+            &cards
+        )
+        .is_err());
+        assert!(identity_valid(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V3,
+            &cards
+        )
+        .is_err());
+        assert!(identity_valid(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V4,
+            "0".repeat(16).as_str()
+        )
+        .is_err());
     }
 
     /// Real complete game, deliberately opt-in (native engine compute),
@@ -2984,8 +3093,14 @@ mod tests {
             max_policy_steps: 1_000_000,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
-        assert_eq!(trajectory.feature_contract_digest, FEATURE_CONTRACT_DIGEST_V4);
-        assert_eq!(trajectory.feature_encoding_digest, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(
+            trajectory.feature_contract_digest,
+            FEATURE_CONTRACT_DIGEST_V4
+        );
+        assert_eq!(
+            trajectory.feature_encoding_digest,
+            FEATURE_ENCODING_DIGEST_V4
+        );
         validate_trajectory(&trajectory).unwrap();
         assert!(
             !(trajectory.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
@@ -3078,19 +3193,20 @@ mod tests {
             label: "Wildfire/c19a76864de9".into(),
             mainboard: vec![
                 6, 11, 11, 11, 11, 15, 15, 15, 15, 23, 23, 23, 23, 29, 35, 35, 35, 35, 39, 39, 58,
-                58, 58, 62, 62, 62, 65, 65, 65, 69, 76, 76, 79, 79, 79, 79, 81, 89, 96, 96, 96,
-                96, 104, 104, 104, 104, 114, 114, 114, 121, 121, 123, 123, 123, 123, 125, 131,
-                131, 131, 131,
+                58, 58, 62, 62, 62, 65, 65, 65, 69, 76, 76, 79, 79, 79, 79, 81, 89, 96, 96, 96, 96,
+                104, 104, 104, 104, 114, 114, 114, 121, 121, 123, 123, 123, 123, 125, 131, 131,
+                131, 131,
             ],
-            sideboard: vec![9, 9, 24, 24, 24, 31, 90, 90, 90, 122, 122, 128, 128, 128, 128],
+            sideboard: vec![
+                9, 9, 24, 24, 24, 31, 90, 90, 90, 122, 122, 128, 128, 128, 128,
+            ],
         };
         let faeries = ExpandedDeckListV1 {
             label: "Faeries/a8c6f236b1b4".into(),
             mainboard: vec![
-                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
-                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
-                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
-                110,
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55, 55,
+                55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 75, 75,
+                75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110, 110,
             ],
             sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
         };
@@ -3211,7 +3327,11 @@ mod tests {
             "the only published trajectory must carry the derived retry seed, never the \
              non-Natural original: nothing is learned from the failed attempt"
         );
-        assert_eq!(ledger.len(), 1, "exactly the one failed attempt is ledgered");
+        assert_eq!(
+            ledger.len(),
+            1,
+            "exactly the one failed attempt is ledgered"
+        );
         assert_eq!(ledger[0].slot, 3);
         assert_eq!(ledger[0].attempt, 1);
         assert_eq!(ledger[0].seed, episode.seed);
@@ -3226,6 +3346,196 @@ mod tests {
             ledger[0].terminal_classification,
             trajectory.terminal.terminal_classification
         );
+    }
+
+    fn ledger_fixture_episodes() -> Vec<ExpandedEpisodeV1> {
+        let mut first = test_episode(0, None);
+        first.id = "ledger-slot-0".into();
+        first.seed = 11;
+        let mut second = test_episode(1, None);
+        second.id = "ledger-slot-1".into();
+        second.seed = 22;
+        second.starting_player = 1;
+        vec![first, second]
+    }
+
+    fn ledger_entry(
+        episode: &ExpandedEpisodeV1,
+        slot: usize,
+        attempt: u32,
+        seed: u64,
+    ) -> NonNaturalLedgerEntryV1 {
+        NonNaturalLedgerEntryV1 {
+            slot,
+            attempt,
+            episode_id: episode.id.clone(),
+            seed,
+            decks: [
+                episode.selected[0].label.clone(),
+                episode.selected[1].label.clone(),
+            ],
+            starting_player: episode.starting_player,
+            terminal_classification: TerminalClassificationV1::Natural,
+            terminal_reason: "test".into(),
+            error_text: NON_NATURAL_ERROR_TEXT_V1.into(),
+            step: 1,
+        }
+    }
+
+    fn write_ledger(label: &str, ledger: &NonNaturalLedgerV1) -> PinnedFileV1 {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ledger-overrides-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let bytes = serde_json::to_vec(ledger).unwrap();
+        let path = directory.join("non-natural.json");
+        fs::write(&path, &bytes).unwrap();
+        PinnedFileV1 {
+            path,
+            sha256: sha(&bytes),
+        }
+    }
+
+    #[test]
+    fn ledgered_retry_seed_overrides_follow_the_derived_seed_chain_in_any_entry_order() {
+        let episodes = ledger_fixture_episodes();
+        let empty = write_ledger(
+            "empty",
+            &NonNaturalLedgerV1 {
+                schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
+                entries: Vec::new(),
+            },
+        );
+        assert_eq!(
+            ledgered_retry_seed_overrides_v1(&empty, &episodes).unwrap(),
+            vec![None, None]
+        );
+
+        // Slot 0 failed twice (attempts 1 and 2), slot 1 once; entries arrive in
+        // completion order, not schedule order.
+        let slot0_retry1 = derived_retry_seed_v1(&episodes[0].id, episodes[0].seed, 1);
+        let ledger = NonNaturalLedgerV1 {
+            schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
+            entries: vec![
+                ledger_entry(&episodes[1], 1, 1, episodes[1].seed),
+                ledger_entry(&episodes[0], 0, 2, slot0_retry1),
+                ledger_entry(&episodes[0], 0, 1, episodes[0].seed),
+            ],
+        };
+        let pin = write_ledger("chain", &ledger);
+        assert_eq!(
+            ledgered_retry_seed_overrides_v1(&pin, &episodes).unwrap(),
+            vec![
+                Some(derived_retry_seed_v1(&episodes[0].id, episodes[0].seed, 2)),
+                Some(derived_retry_seed_v1(&episodes[1].id, episodes[1].seed, 1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn ledgered_retry_seed_overrides_reject_ledgers_that_do_not_re_derive_from_the_schedule() {
+        let episodes = ledger_fixture_episodes();
+        let write = |label: &str, entries: Vec<NonNaturalLedgerEntryV1>| {
+            write_ledger(
+                label,
+                &NonNaturalLedgerV1 {
+                    schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
+                    entries,
+                },
+            )
+        };
+        let reject = |label: &str, entries: Vec<NonNaturalLedgerEntryV1>, reason: &str| {
+            let error =
+                ledgered_retry_seed_overrides_v1(&write(label, entries), &episodes).unwrap_err();
+            assert!(error.contains(reason), "{label}: {error}");
+        };
+        reject(
+            "wrong-seed",
+            vec![ledger_entry(&episodes[0], 0, 1, episodes[0].seed + 1)],
+            "does not re-derive",
+        );
+        reject(
+            "wrong-retry-seed",
+            vec![
+                ledger_entry(&episodes[0], 0, 1, episodes[0].seed),
+                ledger_entry(&episodes[0], 0, 2, episodes[0].seed),
+            ],
+            "does not re-derive",
+        );
+        reject(
+            "gap",
+            vec![
+                ledger_entry(&episodes[0], 0, 1, episodes[0].seed),
+                ledger_entry(
+                    &episodes[0],
+                    0,
+                    3,
+                    derived_retry_seed_v1(&episodes[0].id, episodes[0].seed, 2),
+                ),
+            ],
+            "not contiguous",
+        );
+        reject(
+            "exhausted",
+            vec![
+                ledger_entry(&episodes[0], 0, 1, episodes[0].seed),
+                ledger_entry(
+                    &episodes[0],
+                    0,
+                    2,
+                    derived_retry_seed_v1(&episodes[0].id, episodes[0].seed, 1),
+                ),
+                ledger_entry(
+                    &episodes[0],
+                    0,
+                    3,
+                    derived_retry_seed_v1(&episodes[0].id, episodes[0].seed, 2),
+                ),
+            ],
+            "exhausted",
+        );
+        reject(
+            "slot-range",
+            vec![ledger_entry(&episodes[0], 2, 1, episodes[0].seed)],
+            "outside the schedule",
+        );
+        let mut foreign = ledger_entry(&episodes[0], 0, 1, episodes[0].seed);
+        foreign.episode_id = "someone-else".into();
+        reject(
+            "foreign-id",
+            vec![foreign],
+            "does not match the scheduled episode",
+        );
+        let mut seat = ledger_entry(&episodes[1], 1, 1, episodes[1].seed);
+        seat.starting_player = 0;
+        reject("seat", vec![seat], "does not match the scheduled episode");
+
+        let wrong_schema = write_ledger(
+            "schema",
+            &NonNaturalLedgerV1 {
+                schema: "something-else/v9".into(),
+                entries: Vec::new(),
+            },
+        );
+        assert!(ledgered_retry_seed_overrides_v1(&wrong_schema, &episodes)
+            .unwrap_err()
+            .contains("schema differs"));
+        let mut tampered = write_ledger(
+            "sha",
+            &NonNaturalLedgerV1 {
+                schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
+                entries: Vec::new(),
+            },
+        );
+        tampered.sha256 = "0".repeat(64);
+        assert!(ledgered_retry_seed_overrides_v1(&tampered, &episodes)
+            .unwrap_err()
+            .contains("SHA differs"));
     }
 
     #[test]
@@ -3268,10 +3578,8 @@ mod tests {
     #[test]
     fn execute_v1_collect_writes_ledger_records_its_hash_and_enforces_the_fraction_cap() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-tolerant-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("expanded-collect-tolerant-{}", std::process::id()));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -3349,7 +3657,8 @@ mod tests {
             "got: {error}"
         );
         assert!(
-            root.join("collect-fraction-capped/non-natural.json").exists(),
+            root.join("collect-fraction-capped/non-natural.json")
+                .exists(),
             "the ledger must be preserved on disk even though the fraction cap aborted the run"
         );
     }
@@ -3568,10 +3877,9 @@ mod tests {
         let faeries = ExpandedDeckListV1 {
             label: "Faeries".into(),
             mainboard: vec![
-                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
-                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
-                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
-                110,
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55, 55,
+                55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 75, 75,
+                75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110, 110,
             ],
             sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
         };
@@ -3579,16 +3887,31 @@ mod tests {
             label: "Affinity".into(),
             mainboard: vec![
                 5, 5, 5, 6, 6, 18, 23, 23, 23, 23, 35, 41, 41, 41, 41, 48, 48, 48, 56, 58, 58, 58,
-                58, 62, 62, 62, 69, 73, 73, 73, 73, 78, 78, 78, 78, 79, 79, 79, 94, 94, 94, 94,
-                96, 96, 96, 96, 102, 102, 103, 103, 114, 117, 117, 117, 117, 121, 121, 125, 125,
-                125,
+                58, 62, 62, 62, 69, 73, 73, 73, 73, 78, 78, 78, 78, 79, 79, 79, 94, 94, 94, 94, 96,
+                96, 96, 96, 102, 102, 103, 103, 114, 117, 117, 117, 117, 121, 121, 125, 125, 125,
             ],
             sideboard: vec![7, 7, 9, 46, 57, 57, 57, 57, 62, 90, 90, 90, 90, 95, 124],
         };
-        assert_eq!(faeries.mainboard, list("Faeries").mainboard, "registry deck differs from evidence");
-        assert_eq!(faeries.sideboard, list("Faeries").sideboard, "registry deck differs from evidence");
-        assert_eq!(affinity.mainboard, list("Affinity").mainboard, "registry deck differs from evidence");
-        assert_eq!(affinity.sideboard, list("Affinity").sideboard, "registry deck differs from evidence");
+        assert_eq!(
+            faeries.mainboard,
+            list("Faeries").mainboard,
+            "registry deck differs from evidence"
+        );
+        assert_eq!(
+            faeries.sideboard,
+            list("Faeries").sideboard,
+            "registry deck differs from evidence"
+        );
+        assert_eq!(
+            affinity.mainboard,
+            list("Affinity").mainboard,
+            "registry deck differs from evidence"
+        );
+        assert_eq!(
+            affinity.sideboard,
+            list("Affinity").sideboard,
+            "registry deck differs from evidence"
+        );
         [faeries, affinity]
     }
 
@@ -3624,9 +3947,13 @@ mod tests {
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
         };
-        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
-            .expect("V4 self-play must complete this real game without an actor-visible encoding error");
-        assert!(trajectory.decisions.len() > 275, "must play well past the formerly-crashing step 275");
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
+            "V4 self-play must complete this real game without an actor-visible encoding error",
+        );
+        assert!(
+            trajectory.decisions.len() > 275,
+            "must play well past the formerly-crashing step 275"
+        );
         validate_trajectory(&trajectory).unwrap();
     }
 
@@ -3672,9 +3999,13 @@ mod tests {
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
         };
-        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
-            .expect("V4 self-play must complete this real game without an actor-visible encoding error");
-        assert!(trajectory.decisions.len() > 303, "must play well past the formerly-crashing step 303");
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
+            "V4 self-play must complete this real game without an actor-visible encoding error",
+        );
+        assert!(
+            trajectory.decisions.len() > 303,
+            "must play well past the formerly-crashing step 303"
+        );
         validate_trajectory(&trajectory).unwrap();
     }
 
@@ -3706,8 +4037,9 @@ mod tests {
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
         };
-        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
-            .expect("V4 self-play must complete this real game without an actor-visible encoding error");
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
+            "V4 self-play must complete this real game without an actor-visible encoding error",
+        );
         validate_trajectory(&trajectory).unwrap();
     }
 
@@ -3728,9 +4060,21 @@ mod tests {
     #[test]
     fn burst2_defect_seeds_complete_cleanly_through_v3_encoder() {
         for (seed, starting_player, decks) in [
-            (8_736_899_219_446_983_818u64, 0u8, [list("Elves"), list("Wildfire")]),
-            (16_977_991_839_826_055_713u64, 1u8, burst2_faeries_affinity_decks_v1()),
-            (16_977_991_839_826_055_697u64, 1u8, burst2_faeries_affinity_decks_v1()),
+            (
+                8_736_899_219_446_983_818u64,
+                0u8,
+                [list("Elves"), list("Wildfire")],
+            ),
+            (
+                16_977_991_839_826_055_713u64,
+                1u8,
+                burst2_faeries_affinity_decks_v1(),
+            ),
+            (
+                16_977_991_839_826_055_697u64,
+                1u8,
+                burst2_faeries_affinity_decks_v1(),
+            ),
         ] {
             let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
             let learner = test_behavior(&policy, false);
@@ -3746,9 +4090,10 @@ mod tests {
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
             };
-            let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
-                panic!("V3 self-play must never fail on these seeds/decks (seed {seed}): {e}")
-            });
+            let trajectory =
+                collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
+                    panic!("V3 self-play must never fail on these seeds/decks (seed {seed}): {e}")
+                });
             validate_trajectory(&trajectory).unwrap();
         }
     }
@@ -3813,12 +4158,13 @@ mod tests {
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
         };
-        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
-            panic!(
-                "both the V4 encoding defect and the engine InvalidEffectContinuation defect \
+        let trajectory =
+            collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
+                panic!(
+                    "both the V4 encoding defect and the engine InvalidEffectContinuation defect \
                  must be fixed, so this game now completes naturally: got {e}"
-            )
-        });
+                )
+            });
         validate_trajectory(&trajectory).unwrap();
     }
 
@@ -3890,13 +4236,14 @@ mod tests {
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
         };
-        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
-            panic!(
-                "both the V4 encoding defect (InvalidDecisionRelation) and its root cause \
+        let trajectory =
+            collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
+                panic!(
+                    "both the V4 encoding defect (InvalidDecisionRelation) and its root cause \
                  (the engine's validate_spell_sourced_trigger defect) must be fixed, so this \
                  game now completes naturally: got {e}"
-            )
-        });
+                )
+            });
         validate_trajectory(&trajectory).unwrap();
     }
 
@@ -3961,11 +4308,12 @@ mod tests {
             "ordinary-two-iteration-{label}-{}",
             std::process::id()
         ));
-        let source_struct = fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
-            &root.join("source"),
-            feature_identity,
-            mutate,
-        );
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                mutate,
+            );
         let descriptor_path = root.join("descriptor.json");
         let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
         std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
@@ -4092,8 +4440,7 @@ mod tests {
         // this pin is this test's own independent measurement, not copied
         // from the V3 constant).
         assert_eq!(
-            state,
-            "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            state, "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
             "the V4 ordinary-trainer path over real constructed decks must stay reproducible"
         );
     }
@@ -4120,8 +4467,7 @@ mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V3);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V3);
         assert_eq!(
-            state,
-            "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            state, "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
             "the V3 ordinary-trainer path must be byte-for-byte unchanged by \
              the V4 update-path follow-up"
         );
@@ -4312,8 +4658,7 @@ mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         assert_ne!(
-            state,
-            "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            state, "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
             "CUDA differs from CPU sequential by design (tolerance-bounded, never bit-identical); \
              an exact match here would itself be suspicious"
         );

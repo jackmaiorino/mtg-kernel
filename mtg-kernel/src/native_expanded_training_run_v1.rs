@@ -74,7 +74,10 @@ pub struct NativeExpandedTrainingRunV1 {
     pub update_backend: ExpandedUpdateBackendV1,
     /// Config-driven; default `Sequential` keeps every existing config and
     /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
-    #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+    #[serde(
+        default,
+        skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential"
+    )]
     pub update_backward_execution: UpdateBackwardExecutionV1,
     #[serde(
         default = "default_collection_workers",
@@ -405,17 +408,45 @@ fn validate_collection(
             && document["behavior_state_sha256"] == before.state_sha256,
         "collection source/state does not match iteration",
     )?;
+    validate_collection_episodes(&document, episodes)
+}
+
+/// The schedule half of `validate_collection`: every published trajectory
+/// must carry exactly its scheduled episode. Under tolerant collection
+/// (`max_non_natural_episode_fraction > 0.0`) a slot whose ledgered attempts
+/// all failed legitimately published its trajectory from the derived retry
+/// seed, so for that slot alone the scheduled seed is replaced by the seed
+/// the ledger re-derives (`ledgered_retry_seed_overrides_v1`, which first
+/// re-verifies the whole ledger against the schedule); every other episode
+/// field, and every unledgered slot, must still match the schedule exactly.
+fn validate_collection_episodes(
+    document: &Value,
+    episodes: &[ExpandedEpisodeV1],
+) -> Result<Vec<PinnedFileV1>, String> {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(document["trajectories"].clone()).map_err(err)?;
     check(
         trajectories.len() == episodes.len(),
         "collection episode count differs",
     )?;
-    for (trajectory, episode) in trajectories.iter().zip(episodes) {
+    let seed_overrides = match document.get("non_natural_ledger") {
+        None | Some(Value::Null) => vec![None; episodes.len()],
+        Some(pin) => {
+            let pin: PinnedFileV1 = serde_json::from_value(pin.clone()).map_err(err)?;
+            crate::expanded_deck_training_v1::ledgered_retry_seed_overrides_v1(&pin, episodes)?
+        }
+    };
+    for ((trajectory, episode), seed_override) in
+        trajectories.iter().zip(episodes).zip(&seed_overrides)
+    {
         verify_pin(trajectory)?;
         let saved = read_json(&trajectory.path, ARTIFACT_CAP)?;
+        let mut expected = episode.clone();
+        if let Some(seed) = seed_override {
+            expected.seed = *seed;
+        }
         check(
-            saved["episode"] == value(episode)?,
+            saved["episode"] == value(&expected)?,
             "collection episode assignment differs",
         )?;
     }
@@ -1074,7 +1105,9 @@ mod tests {
     fn max_non_natural_episode_fraction_preserves_serial_wire_and_validates_range() {
         let serial = schedule();
         let serial_value = value(&serial).unwrap();
-        assert!(serial_value.get("max_non_natural_episode_fraction").is_none());
+        assert!(serial_value
+            .get("max_non_natural_episode_fraction")
+            .is_none());
         let restored: NativeExpandedTrainingRunV1 =
             serde_json::from_value(serial_value.clone()).unwrap();
         assert_eq!(restored.max_non_natural_episode_fraction, 0.0);
@@ -1090,7 +1123,14 @@ mod tests {
             json!(0.2f32)
         );
 
-        for invalid in [-0.1f32, 1.0, 1.5, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for invalid in [
+            -0.1f32,
+            1.0,
+            1.5,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
             tolerant.max_non_natural_episode_fraction = invalid;
             assert!(tolerant.validate_v1().is_err(), "must reject {invalid}");
         }
@@ -1104,10 +1144,7 @@ mod tests {
             tolerant.output_directory.join("collect"),
         ))
         .unwrap();
-        assert_eq!(
-            command["max_non_natural_episode_fraction"],
-            json!(0.2f32)
-        );
+        assert_eq!(command["max_non_natural_episode_fraction"], json!(0.2f32));
     }
 
     #[test]
@@ -1145,6 +1182,90 @@ mod tests {
         assert_eq!(
             collection_non_natural_ledger_pin(&with_ledger).unwrap(),
             Some(ledger_pin)
+        );
+    }
+
+    #[test]
+    fn collection_schedule_check_admits_a_ledgered_retry_seed_and_nothing_else() {
+        let directory = temporary_directory("ledgered-schedule");
+        let write = |name: &str, document: &Value| -> PinnedFileV1 {
+            let bytes = serde_json::to_vec(document).unwrap();
+            let path = directory.join(name);
+            fs::write(&path, &bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: digest(&bytes),
+            }
+        };
+        let plan = schedule();
+        let episode = plan.iterations[0].episodes[0].episode.clone();
+        let retry_seed =
+            crate::expanded_deck_training_v1::derived_retry_seed_v1(&episode.id, episode.seed, 1);
+        let mut retried = episode.clone();
+        retried.seed = retry_seed;
+        let scheduled_trajectory = write(
+            "scheduled.json",
+            &json!({"episode": value(&episode).unwrap()}),
+        );
+        let retried_trajectory = write(
+            "retried.json",
+            &json!({"episode": value(&retried).unwrap()}),
+        );
+        let ledger = write(
+            "non-natural.json",
+            &json!({"schema": "mtg-kernel-non-natural-collection-ledger/v1", "entries": [{
+                "slot": 0, "attempt": 1, "episode_id": episode.id.clone(), "seed": episode.seed,
+                "decks": [episode.selected[0].label.clone(), episode.selected[1].label.clone()],
+                "starting_player": episode.starting_player,
+                "terminal_classification": "halted",
+                "terminal_reason": "engine_halted:test", "error_text": "test", "step": 7}]}),
+        );
+        let empty_ledger = write(
+            "empty-ledger.json",
+            &json!({"schema": "mtg-kernel-non-natural-collection-ledger/v1", "entries": []}),
+        );
+        let collection = |trajectory: &PinnedFileV1, ledger: Option<&PinnedFileV1>| {
+            let mut document = json!({"trajectories": [value(trajectory).unwrap()]});
+            if let Some(ledger) = ledger {
+                document["non_natural_ledger"] = value(ledger).unwrap();
+            }
+            document
+        };
+        let episodes = vec![episode.clone()];
+
+        // Today's behavior, byte for byte: no ledger, the scheduled seed passes
+        // and any other seed is rejected.
+        validate_collection_episodes(&collection(&scheduled_trajectory, None), &episodes).unwrap();
+        assert_eq!(
+            validate_collection_episodes(&collection(&retried_trajectory, None), &episodes)
+                .unwrap_err(),
+            "collection episode assignment differs"
+        );
+        // An empty ledger (every tolerant iteration writes one) changes nothing.
+        validate_collection_episodes(
+            &collection(&scheduled_trajectory, Some(&empty_ledger)),
+            &episodes,
+        )
+        .unwrap();
+        assert_eq!(
+            validate_collection_episodes(
+                &collection(&retried_trajectory, Some(&empty_ledger)),
+                &episodes
+            )
+            .unwrap_err(),
+            "collection episode assignment differs"
+        );
+        // One ledgered failure: only the re-derived retry seed is admitted for
+        // that slot; the scheduled seed is now the wrong one.
+        validate_collection_episodes(&collection(&retried_trajectory, Some(&ledger)), &episodes)
+            .unwrap();
+        assert_eq!(
+            validate_collection_episodes(
+                &collection(&scheduled_trajectory, Some(&ledger)),
+                &episodes
+            )
+            .unwrap_err(),
+            "collection episode assignment differs"
         );
     }
 
