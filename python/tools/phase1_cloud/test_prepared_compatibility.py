@@ -10,7 +10,8 @@ from parity_evidence import Artifacts, training_run, training_parity, resume_par
 from production_check import bind_reference, reference_run
 from reference import build as build_reference
 from throughput import (canonical_training_config, preparation_workers, training_contract, qualify,
-    validate_preparation_runner, validate_preparation_update, validate_preparation_result, ThroughputPolicy)
+    update_backward_execution, validate_preparation_runner, validate_preparation_update,
+    validate_preparation_result, ThroughputPolicy)
 from workload import compare, layouts
 import test_cloud
 from test_production_checks import Fixture
@@ -50,6 +51,31 @@ class PreparedConfigurationTests(unittest.TestCase):
         self.assertEqual(training_contract(config),training_contract(config|{'preparation_workers':1}))
         self.assertNotEqual(training_contract(config),training_contract(config|{'preparation_workers':4}))
         self.assertEqual(canonical_training_config(config|{'preparation_workers':32})['preparation_workers'],32)
+
+    def test_backward_execution_default_and_explicit_sequential_have_same_exact_contract(self):
+        """Mirrors `test_default_and_explicit_one_have_same_exact_contract` above
+        for `update_backward_execution` (mtg-kernel `UpdateBackwardExecutionV1`):
+        a contract computed with the explicit or implicit 'sequential' default
+        is byte-identical; only 'fixed_partition_4' changes it, matching the
+        Rust-side convention (`canonical_training_config`'s own docstring)."""
+        config={'initial_source':{},'opponents':[],'iterations':[],'output_directory':'unused',
+                'learning_rate':1e-5,'value_coefficient':.5}
+        self.assertEqual(canonical_training_config(config),
+                          canonical_training_config(config|{'update_backward_execution':'sequential'}))
+        self.assertEqual(training_contract(config),
+                          training_contract(config|{'update_backward_execution':'sequential'}))
+        self.assertNotEqual(training_contract(config),
+                             training_contract(config|{'update_backward_execution':'fixed_partition_4'}))
+        self.assertEqual(canonical_training_config(
+            config|{'update_backward_execution':'fixed_partition_4'})['update_backward_execution'],
+            'fixed_partition_4')
+        self.assertNotIn('update_backward_execution', canonical_training_config(config))
+
+    def test_backward_execution_rejects_unknown_values(self):
+        config={'learning_rate':1e-5,'value_coefficient':.5}
+        for execution in ('Sequential','fixed_partition_1',4,None,''):
+            with self.subTest(execution=execution), self.assertRaisesRegex(ValueError, 'update_backward_execution'):
+                update_backward_execution(config|{'update_backward_execution':execution})
 
     def test_invalid_counts_fail_before_default_normalization(self):
         config={'learning_rate':1e-5,'value_coefficient':.5}
@@ -108,6 +134,12 @@ class PreparedArtifactTests(unittest.TestCase):
         self.assertEqual(compare(f.config|{'preparation_workers':4},f.future|{'preparation_workers':4},4)['workload_class']['preparation_workers'],4)
         with self.assertRaises(ValueError):compare(f.config,f.future|{'preparation_workers':4},4)
         with self.assertRaises(ValueError):layouts(f.config|{'preparation_workers':33})
+
+    def test_layouts_accepts_fixed_partition_backward_and_rejects_unknown_values(self):
+        f=self.fixture
+        self.assertTrue(layouts(f.config|{'update_backward_execution':'fixed_partition_4'}))
+        self.assertTrue(layouts(f.config|{'update_backward_execution':'sequential'}))
+        with self.assertRaises(ValueError):layouts(f.config|{'update_backward_execution':'bogus'})
 
     def test_old_serial_proof_omission_normalizes_without_enabling_production(self):
         f=self.fixture;proof=read(f.proof['path']);proof.pop('preparation_workers')

@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 from common import encoded, require
-from throughput import canonical_training_config, training_contract, preparation_workers
+from throughput import canonical_training_config, training_contract, preparation_workers, update_backward_execution
 
 CLASS_SCHEMA='phase1-ten-fresh-game-workload-class/v1'
 CONFIG_REQUIRED={'schema','initial_source','opponents','iterations','learning_rate',
@@ -21,13 +21,15 @@ def digest(value):return hashlib.sha256(encoded(value)).hexdigest()
 
 
 def layouts(config):
-    require(CONFIG_REQUIRED<=set(config)<=CONFIG_REQUIRED|{'update_backend','collection_workers','preparation_workers'},
+    require(CONFIG_REQUIRED<=set(config)<=CONFIG_REQUIRED|{'update_backend','collection_workers',
+            'preparation_workers','update_backward_execution'},
             'unsupported training configuration fields')
     require(config['schema']=='mtg-kernel-native-expanded-training-run/v1','wrong training schema')
     require(config.get('update_backend',{'kind':'cpu'})=={'kind':'cpu'},'only qualified CPU backend supported')
     workers=config.get('collection_workers',1)
     require(type(workers) is int and 1<=workers<=1024,'invalid collector worker count')
     preparation_workers(config)
+    update_backward_execution(config)
     require(config['iterations'],'empty production schedule')
     ids=set();seeds=set();result=[]
     for index,iteration in enumerate(config['iterations']):

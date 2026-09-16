@@ -20,6 +20,17 @@ def preparation_workers(config):
     return workers
 
 
+def update_backward_execution(config):
+    """Fresh-V4-lineage-only option (mtg-kernel `UpdateBackwardExecutionV1`);
+    a bare string on the wire, mirroring `preparation_workers` above, not a
+    `{'kind':...}` mapping like `update_backend`. Default 'sequential' keeps
+    every existing config and the V3 lineage unchanged."""
+    execution=config.get('update_backward_execution','sequential')
+    require(execution in ('sequential','fixed_partition_4'),
+            "invalid update_backward_execution; 'sequential' or 'fixed_partition_4' required")
+    return execution
+
+
 def validate_preparation_runner(config,document):
     workers=preparation_workers(config)
     if workers==1:
@@ -58,6 +69,11 @@ def canonical_training_config(config):
     if preparation_workers(value)==1:value.pop('preparation_workers',None)
     if value.get('collection_workers')==1:value.pop('collection_workers')
     if value.get('update_backend')=={'kind':'cpu'}:value.pop('update_backend')
+    # Same convention as preparation_workers/update_backend above: stripped
+    # only at the byte-identical default, so a contract computed with
+    # fixed_partition_4 is supposed to differ from one computed with the
+    # (explicit or implicit) sequential default.
+    if update_backward_execution(value)=='sequential':value.pop('update_backward_execution',None)
     for key in ('learning_rate','value_coefficient'):
         value[key]=struct.unpack('<f',struct.pack('<f',value[key]))[0]
     return value
