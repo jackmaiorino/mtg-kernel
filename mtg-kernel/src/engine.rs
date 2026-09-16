@@ -3847,6 +3847,25 @@ fn pay_cost_components_with_x(
                     state,
                     ProposedEvent::zone_change(object_cost_chosen[0], Zone::Hand),
                 );
+                // 506.4: a permanent removed from the battlefield leaves combat.
+                // Without this, the returned attacker's id survives as a stale
+                // entry in `combat.attackers`. That is usually harmless, but if
+                // this same object has ninjutsu and is later put back onto the
+                // battlefield "tapped and attacking" in this same combat (a
+                // legal ninjutsu chain: it was tapped to attack, then returned
+                // to hand as a *different* ninjutsu ability's cost, then
+                // ninjutsu'd back in itself), `put_ninjutsu_source_onto_
+                // battlefield_attacking`'s own-duplicate guard finds the stale
+                // id and fails closed on a legal game. See
+                // CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4 (Wildfire vs
+                // Faeries, seed 15634452618269313559, turn 15: Ninja of the
+                // Deep Hours ninjutsu'd back in after paying for another
+                // ninjutsu creature's cost).
+                state
+                    .engine
+                    .combat
+                    .attackers
+                    .retain(|&attacker| attacker != object_cost_chosen[0]);
             }
             CostComponent::Mana(_) => pay_plan(
                 state,
@@ -14641,6 +14660,54 @@ mod tests {
         let before = state.clone();
         assert!(step(&mut state, Action::ChooseEffectOption(2)).is_err());
         assert_eq!(state, before);
+    }
+
+    /// CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4 root cause: paying the
+    /// `ReturnControlledUnblockedAttackerToOwnersHand` cost (ninjutsu's own
+    /// activation cost, and the only other cost family that returns an
+    /// *attacking* permanent to hand) used to commit the zone change without
+    /// removing the returned object from `state.engine.combat.attackers`. If
+    /// that same object legitimately re-enters combat later in the same
+    /// Declare Blockers step (it has ninjutsu itself, and gets returned to
+    /// hand to pay for a *different* ninjutsu creature's cost before its own
+    /// ninjutsu ability resolves), `put_ninjutsu_source_onto_battlefield_
+    /// attacking`'s own-duplicate guard (`combat.attackers.contains`) found
+    /// the stale leftover id and rejected a legal ninjutsu chain as "ninjutsu
+    /// source already appears in combat", which the collector turns into an
+    /// engine halt and a rejected trajectory. Reproduced end to end (real
+    /// seed, real decks, the real trained checkpoint) by
+    /// `expanded_deck_training_v1::tests::
+    /// campaign_001_block1_cuda_iteration_30_slot_3_ninjutsu_chain_completes_naturally`;
+    /// this is the same defect isolated to the one cost-payment call site,
+    /// with no game loop, policy, or checkpoint needed.
+    #[test]
+    fn returning_an_unblocked_attacker_for_a_cost_prunes_it_from_combat_attackers() {
+        let mut state = empty_game();
+        let attacker = put_on_battlefield(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.objects.get_mut(attacker).tapped = true;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![attacker];
+
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            attacker,
+            &[CostComponent::ReturnControlledUnblockedAttackerToOwnersHand],
+            &[attacker],
+        ));
+
+        assert_eq!(state.objects.get(attacker).zone, Zone::Hand);
+        assert!(
+            !state.engine.combat.attackers.contains(&attacker),
+            "a permanent returned to hand as this cost must leave combat.attackers (506.4), \
+             or a later legal ninjutsu re-entry by the same object is rejected as a \
+             false-positive duplicate: {:?}",
+            state.engine.combat.attackers
+        );
     }
 
     /// Fireblast's alternative cost (Sol #85: alt costs are payment
