@@ -11,9 +11,9 @@ import struct
 import tempfile
 import unittest
 from common import pin, read, write
-from fresh_source import (PAYLOAD_BYTES, SOURCE_SCHEMA, SOURCE_FILES, canonical, sha, layout,
-    atom, model_seed, inspect_source, initial_state, state_hash, validate_checkpoint_origin,
-    validate_inference_identity, validate_trajectory)
+from fresh_source import (PAYLOAD_BYTES, SOURCE_SCHEMA, SOURCE_FILES, SOURCE_FILES_V3, SOURCE_FILES_V4,
+    canonical, sha, layout, atom, model_seed, inspect_source, initial_state, state_hash,
+    validate_checkpoint_origin, validate_inference_identity, validate_trajectory)
 
 
 def synthetic_state_digest(state):
@@ -34,7 +34,7 @@ def synthetic_state_digest(state):
     return digest.hexdigest()
 
 
-def synthetic_transport_fixture(root, target=None):
+def synthetic_transport_fixture(root, target=None, source_files_template=None):
     root = Path(root); root.mkdir(parents=True,exist_ok=True)
     target = copy.deepcopy(target) if target is not None else {
         'registry':{'path':'/synthetic/historical/registry.json','sha256':'a'*64}, 'card_db_hash':'b'*16,
@@ -57,7 +57,8 @@ def synthetic_transport_fixture(root, target=None):
         for dimension in row['shape']: named.update(struct.pack('>Q',dimension))
         named.update(struct.pack('>Q',row['byte_count']//4)+raw)
         parameters.append({'name':row['name'],'shape':row['shape'],'values':[v[0] for v in struct.iter_unpack('<I',raw)]})
-    source_files = [{'path':name,'sha256':'1'*64,'bytes':1} for name in SOURCE_FILES]
+    source_files = [{'path':name,'sha256':'1'*64,'bytes':1}
+                     for name in (source_files_template if source_files_template is not None else SOURCE_FILES)]
     for index, value in ((5,target['features_source_sha256']),(6,target['feature_descriptor_sha256']),(7,target['registry']['sha256'])):
         source_files[index]['sha256'] = value
     runtime = dict(python_version='synthetic',python_implementation='synthetic',platform_system='Linux',
@@ -155,6 +156,28 @@ class FreshTransportTests(unittest.TestCase):
         self.assertTrue(validate_trajectory(trajectory))
         trajectory['schema']='mtg-kernel-expanded-deck-trajectory/v2'
         with self.assertRaises(ValueError): validate_trajectory(trajectory)
+
+    def test_v4_fresh_lineage_source_files_are_admitted_alongside_v3(self):
+        # Dual admission (Jack's ruling): V4 is a new arm, never a cutover
+        # that stops re-verifying the sealed V3 evidence above.
+        f = synthetic_transport_fixture(self.root/'fixture-v4', source_files_template=SOURCE_FILES_V4)
+        proof = initial_state(f['source'],f['inspection'])
+        self.assertEqual(proof['state_sha256'],f['state']['state_sha256'])
+        # The sealed V3 fixture built in setUpClass is still independently
+        # re-verifiable: dual admission, not a hard cutover.
+        self.assertEqual(initial_state(self.fixture['source'],self.fixture['inspection'])['state_sha256'],
+                          self.fixture['state']['state_sha256'])
+
+    def test_mixed_v3_v4_source_files_rejected(self):
+        # A source_files list naming features_v7.py (V4) at index 5 but the
+        # V3 feature_contract_v3.json at index 6 is a mixed tuple: classified
+        # as V4 by index 5, then rejected by the exact structural check
+        # against SOURCE_FILES_V4's own index 6, never silently accepted by
+        # checking each index independently against "V3 or V4".
+        mixed = list(SOURCE_FILES_V4)
+        mixed[6] = SOURCE_FILES_V3[6]
+        with self.assertRaises(ValueError):
+            synthetic_transport_fixture(self.root/'fixture-mixed', source_files_template=mixed)
 
 
 if __name__ == '__main__': unittest.main()

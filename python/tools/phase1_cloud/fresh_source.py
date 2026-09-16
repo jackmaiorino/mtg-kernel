@@ -24,10 +24,19 @@ TRAJECTORY_SCHEMA = 'mtg-kernel-expanded-deck-trajectory/v3'
 PAYLOAD_BYTES = 4923976
 SAMPLER = 'f32-q8-expq63-hamilton-splitmix64-wide-v1'
 CONFIG_SHA = 'f3836afa17acc74b4856fe18222345116f27c12fa5ad18c34b4dec3f04855251'
-SOURCE_FILES = ('python/mtg_kernel_rl/phase1_fresh_initialization_v1.py',
+# V3 (frozen, `features_v6.py`) source pin inventory. `SOURCE_FILES` is kept
+# as an alias, unchanged, for every existing caller of that name.
+SOURCE_FILES_V3 = ('python/mtg_kernel_rl/phase1_fresh_initialization_v1.py',
     'python/mtg_kernel_rl/model.py', 'python/mtg_kernel_rl/features.py',
     'python/mtg_kernel_rl/determinism.py', 'python/mtg_kernel_rl/common_model_snapshot_v1.py',
     'python/mtg_kernel_rl/features_v6.py', 'data/flat_policy_v3/feature_contract_v3.json', 'data/cards_v1.json')
+SOURCE_FILES = SOURCE_FILES_V3
+# V4 (fresh-lineage, `features_v7.py`) sibling of `SOURCE_FILES_V3`. Only
+# indices 5 and 6 (the feature-source and feature-contract pins) differ.
+SOURCE_FILES_V4 = ('python/mtg_kernel_rl/phase1_fresh_initialization_v1.py',
+    'python/mtg_kernel_rl/model.py', 'python/mtg_kernel_rl/features.py',
+    'python/mtg_kernel_rl/determinism.py', 'python/mtg_kernel_rl/common_model_snapshot_v1.py',
+    'python/mtg_kernel_rl/features_v7.py', 'data/flat_policy_v4/feature_contract_v4.json', 'data/cards_v1.json')
 
 
 def shape(value, fields):
@@ -166,7 +175,16 @@ def inspect_source(source_pin, feature_transfer, *, resolve_pin=None):
     hex_value(producer['source_git_commit'],40)
     require(type(producer['source_git_clean']) is bool, 'producer clean flag invalid')
     require(type(producer['source_files']) is list and len(producer['source_files']) == 8, 'producer source inventory differs')
-    for record, name in zip(producer['source_files'],SOURCE_FILES):
+    # Classify from the producer's own recorded features-module path (index
+    # 5), never a caller flag: this only selects which expected tuple the
+    # exact structural zip-check below verifies against, so a malformed or
+    # reordered list still fails that check regardless of which tuple was
+    # picked here. Mirrors the Rust reader's dispatch on the loaded source's
+    # own declared identity.
+    fifth = producer['source_files'][5]
+    source_files = (SOURCE_FILES_V4 if type(fifth) is dict and fifth.get('path') == SOURCE_FILES_V4[5]
+                     else SOURCE_FILES_V3)
+    for record, name in zip(producer['source_files'],source_files):
         shape(record, ('path','sha256','bytes')); hex_value(record['sha256'])
         require(record['path'] == name and 0 < integer(record['bytes']) <= 16*MIB, 'producer source pin differs')
     runtime = producer['runtime']

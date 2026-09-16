@@ -60,6 +60,58 @@ class FreshInitializationV1Tests(unittest.TestCase):
         return {"schema": fresh.REQUEST_SCHEMA, "lineage_id": "lineage-a", "base_seed": 2026091301,
                 "target": {key: copy.deepcopy(self.manifest["target"][key]) for key in fresh.TARGET_KEYS}}
 
+    def manifest_for_source_paths(self, source_paths: tuple[str, ...]) -> dict:
+        sources = [{"path": name, "sha256": f"{i + 1:064x}", "bytes": 123}
+                   for i, name in enumerate(source_paths)]
+        manifest = copy.deepcopy(self.manifest)
+        manifest["producer"]["source_files"] = sources
+        manifest["target"]["registry"]["sha256"] = sources[7]["sha256"]
+        manifest["target"]["features_source_sha256"] = sources[5]["sha256"]
+        manifest["target"]["feature_descriptor_sha256"] = sources[6]["sha256"]
+        return manifest
+
+    def test_v4_source_paths_are_admitted_alongside_v3(self) -> None:
+        # Dual admission (Jack's ruling): V4 is a new arm, never a cutover.
+        manifest = self.manifest_for_source_paths(fresh.SOURCE_PATHS_V4)
+        parsed = fresh.validate_initialization_bytes_v1(self.encoded(manifest), self.payload)
+        self.assertEqual(parsed["producer"]["source_files"][5]["path"],
+                          "python/mtg_kernel_rl/features_v7.py")
+        self.assertEqual(parsed["producer"]["source_files"][6]["path"],
+                          "data/flat_policy_v4/feature_contract_v4.json")
+        # The sealed V3 fixture stays independently re-verifiable by the same
+        # live tool: dual admission, not a hard cutover.
+        self.assertEqual(fresh.validate_initialization_bytes_v1(self.encoded(), self.payload), self.manifest)
+
+    def test_select_generation_matches_v3_or_v4_fingerprint_never_a_mixed_pair(self) -> None:
+        from mtg_kernel_rl import features_v6, features_v7
+        v3_target = {"feature_contract_digest": features_v6.feature_contract_fingerprint(),
+                     "feature_encoding_digest": features_v6.encoding_contract_fingerprint()}
+        source_paths, module = fresh._select_generation_v1(v3_target)
+        self.assertIs(module, features_v6)
+        self.assertEqual(source_paths, fresh.SOURCE_PATHS_V3)
+        v4_target = {"feature_contract_digest": features_v7.feature_contract_fingerprint(),
+                     "feature_encoding_digest": features_v7.encoding_contract_fingerprint()}
+        source_paths, module = fresh._select_generation_v1(v4_target)
+        self.assertIs(module, features_v7)
+        self.assertEqual(source_paths, fresh.SOURCE_PATHS_V4)
+        # A mixed pair (V3 contract fingerprint, V4 encoding fingerprint)
+        # must match neither generation, never a per-field OR.
+        mixed_target = {"feature_contract_digest": features_v6.feature_contract_fingerprint(),
+                         "feature_encoding_digest": features_v7.encoding_contract_fingerprint()}
+        with self.assertRaises(fresh.FreshInitializationErrorV1):
+            fresh._select_generation_v1(mixed_target)
+
+    def test_mixed_v3_v4_source_paths_rejected(self) -> None:
+        # A source_files list naming features_v7.py (V4) at index 5 but the
+        # V3 feature_contract_v3.json at index 6 is a mixed tuple: rejected
+        # by the exact structural check against SOURCE_PATHS_V4's own index
+        # 6, never silently accepted by checking each index independently.
+        mixed = list(fresh.SOURCE_PATHS_V4)
+        mixed[6] = fresh.SOURCE_PATHS_V3[6]
+        manifest = self.manifest_for_source_paths(mixed)
+        with self.assertRaises(fresh.FreshInitializationErrorV1):
+            fresh.validate_initialization_bytes_v1(self.encoded(manifest), self.payload)
+
     def test_exact_roundtrip_layout_and_bootstrap_requirement(self) -> None:
         parsed = fresh.validate_initialization_bytes_v1(self.encoded(), self.payload)
         self.assertEqual(parsed, self.manifest)

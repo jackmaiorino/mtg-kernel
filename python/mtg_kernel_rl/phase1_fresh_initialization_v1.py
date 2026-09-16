@@ -31,7 +31,9 @@ ELEMENTS = 1_230_994
 ENCODING = "ieee-754-binary32-little-endian"
 LAYOUT = "torch-named-parameters-c-contiguous-row-major-linear-output-input-no-padding-v1"
 TOKEN_RULE = "card-token=id+1; padding=0"
-SOURCE_PATHS = (
+# V3 (frozen, `features_v6.py`) source pin inventory. Kept as `SOURCE_PATHS`
+# too, unchanged, for every existing caller of that name.
+SOURCE_PATHS_V3 = (
     "python/mtg_kernel_rl/phase1_fresh_initialization_v1.py",
     "python/mtg_kernel_rl/model.py",
     "python/mtg_kernel_rl/features.py",
@@ -39,6 +41,19 @@ SOURCE_PATHS = (
     "python/mtg_kernel_rl/common_model_snapshot_v1.py",
     "python/mtg_kernel_rl/features_v6.py",
     "data/flat_policy_v3/feature_contract_v3.json",
+    "data/cards_v1.json",
+)
+SOURCE_PATHS = SOURCE_PATHS_V3
+# V4 (fresh-lineage, `features_v7.py`) sibling of `SOURCE_PATHS_V3`. Only
+# indices 5 and 6 (the feature-source and feature-contract pins) differ.
+SOURCE_PATHS_V4 = (
+    "python/mtg_kernel_rl/phase1_fresh_initialization_v1.py",
+    "python/mtg_kernel_rl/model.py",
+    "python/mtg_kernel_rl/features.py",
+    "python/mtg_kernel_rl/determinism.py",
+    "python/mtg_kernel_rl/common_model_snapshot_v1.py",
+    "python/mtg_kernel_rl/features_v7.py",
+    "data/flat_policy_v4/feature_contract_v4.json",
     "data/cards_v1.json",
 )
 TARGET_KEYS = {"registry", "card_db_hash", "feature_contract_digest",
@@ -164,8 +179,8 @@ def _pin(path: Path, cap: int = SOURCE_CAP) -> dict:
     return {"path": resolved.as_posix(), "sha256": digest.hexdigest(), "bytes": count}
 
 
-def _sources(root: Path) -> list[dict]:
-    return [{**_pin(root / relative), "path": relative} for relative in SOURCE_PATHS]
+def _sources(root: Path, source_paths: tuple[str, ...] = SOURCE_PATHS_V3) -> list[dict]:
+    return [{**_pin(root / relative), "path": relative} for relative in source_paths]
 
 
 def _git(root: Path) -> tuple[str, bool]:
@@ -281,16 +296,26 @@ def validate_initialization_bytes_v1(manifest_bytes: bytes, payload: bytes) -> d
     _hex(producer["source_git_commit"], 40)
     _require(type(producer["source_git_clean"]) is bool, "git clean must be bool")
     records = producer["source_files"]
-    _require(type(records) is list and len(records) == len(SOURCE_PATHS), "source file count differs")
-    for row, expected in zip(records, SOURCE_PATHS):
+    # Classify from the producer's own recorded features-module path (index
+    # 5), never a caller flag: this only selects which expected tuple the
+    # exact structural zip-check below verifies against, so a malformed or
+    # reordered list still fails that check regardless of which tuple was
+    # picked here. Mirrors the Rust reader's dispatch on the loaded source's
+    # own declared identity.
+    source_paths = SOURCE_PATHS_V4 if (
+        type(records) is list and len(records) > 5 and type(records[5]) is dict
+        and records[5].get("path") == SOURCE_PATHS_V4[5]
+    ) else SOURCE_PATHS_V3
+    _require(type(records) is list and len(records) == len(source_paths), "source file count differs")
+    for row, expected in zip(records, source_paths):
         _object(row, {"path", "sha256", "bytes"}, "source file")
         _require(row["path"] == expected, "source file order/path differs")
         _hex(row["sha256"])
         _integer(row["bytes"], 1, SOURCE_CAP, "source bytes")
     recorded_hashes = {row["path"]: row["sha256"] for row in records}
-    _require(recorded_hashes[SOURCE_PATHS[5]] == target["features_source_sha256"]
-             and recorded_hashes[SOURCE_PATHS[6]] == target["feature_descriptor_sha256"]
-             and recorded_hashes[SOURCE_PATHS[7]] == target["registry"]["sha256"], "target/source pins differ")
+    _require(recorded_hashes[source_paths[5]] == target["features_source_sha256"]
+             and recorded_hashes[source_paths[6]] == target["feature_descriptor_sha256"]
+             and recorded_hashes[source_paths[7]] == target["registry"]["sha256"], "target/source pins differ")
     runtime = _object(producer["runtime"], {"python_version", "python_implementation", "platform_system",
         "platform_machine", "byte_order", "torch_version", "device", "dtype", "deterministic_algorithms",
         "num_threads", "num_interop_threads", "python_executable", "torch_C", "torch_cpu_library"}, "runtime")
@@ -318,18 +343,38 @@ def validate_initialization_bytes_v1(manifest_bytes: bytes, payload: bytes) -> d
     return manifest
 
 
+def _select_generation_v1(target: dict):
+    """Select which fresh-lineage generation's source-file inventory and
+    features module a request's declared target belongs to, matched by each
+    generation's own live fingerprint functions, never a hardcoded digest
+    literal in this file. Mirrors the Rust admission's whole-tuple dispatch
+    (`fresh_lineage_generation_v1`), matched against exactly the compiled V3
+    or V4 contract, never a mixed pair.
+    """
+    from . import features_v6, features_v7
+    if (target["feature_contract_digest"] == features_v6.feature_contract_fingerprint()
+            and target["feature_encoding_digest"] == features_v6.encoding_contract_fingerprint()):
+        return SOURCE_PATHS_V3, features_v6
+    if (target["feature_contract_digest"] == features_v7.feature_contract_fingerprint()
+            and target["feature_encoding_digest"] == features_v7.encoding_contract_fingerprint()):
+        return SOURCE_PATHS_V4, features_v7
+    raise FreshInitializationErrorV1(
+        "requested target feature identity matches neither the V3 nor V4 contract")
+
+
 def generate_initialization_v1(request: dict, repo_root: Path | None = None) -> tuple[bytes, bytes]:
     """Generate one explicit CPU seed. No outcome selection or training occurs."""
     request = validate_request_v1(request)
     root = (Path(__file__).resolve().parents[2] if repo_root is None else Path(repo_root).resolve())
     _require(Path(__file__).resolve() == root / SOURCE_PATHS[0], "generator root does not match loaded module")
-    sources = _sources(root)
+    source_paths, features_module = _select_generation_v1(request["target"])
+    sources = _sources(root, source_paths)
     git_head, git_clean = _git(root)
     import torch
-    from . import model, features, determinism, common_model_snapshot_v1, features_v6
-    for module, relative in ((model, SOURCE_PATHS[1]), (features, SOURCE_PATHS[2]),
-                             (determinism, SOURCE_PATHS[3]), (common_model_snapshot_v1, SOURCE_PATHS[4]),
-                             (features_v6, SOURCE_PATHS[5])):
+    from . import model, features, determinism, common_model_snapshot_v1
+    for module, relative in ((model, source_paths[1]), (features, source_paths[2]),
+                             (determinism, source_paths[3]), (common_model_snapshot_v1, source_paths[4]),
+                             (features_module, source_paths[5])):
         _require(Path(module.__file__).resolve() == root / relative, "loaded producer module is from another root")
     determinism.configure_torch_determinism()
     runtime = _runtime(torch)
@@ -344,17 +389,17 @@ def generate_initialization_v1(request: dict, repo_root: Path | None = None) -> 
     names = [card.get("name") if type(card) is dict else None for card in cards]
     _require(all(type(name) is str and name for name in names) and len(set(names)) == len(names),
              "invalid/duplicate registry card names")
-    descriptor_bytes = _read(root / SOURCE_PATHS[6], JSON_CAP)
+    descriptor_bytes = _read(root / source_paths[6], JSON_CAP)
     descriptor = parse_json_v1(descriptor_bytes)
     _require(type(descriptor) is dict, "feature descriptor must be an object")
-    _require(target["feature_contract_digest"] == features_v6.feature_contract_fingerprint()
+    _require(target["feature_contract_digest"] == features_module.feature_contract_fingerprint()
              == descriptor.get("feature_contract_digest")
-             and target["feature_encoding_digest"] == features_v6.encoding_contract_fingerprint()
+             and target["feature_encoding_digest"] == features_module.encoding_contract_fingerprint()
              == descriptor.get("feature_encoding_digest")
              and target["features_source_sha256"] == sources[5]["sha256"]
              == descriptor.get("features_source_sha256")
              and target["feature_descriptor_sha256"] == hashlib.sha256(descriptor_bytes).hexdigest(),
-             "requested V3 target differs from actual source/descriptor")
+             "requested target differs from actual source/descriptor")
     target.update(registry_card_count=len(cards), card_token_rule=TOKEN_RULE)
     config = model.ModelConfig()
     config.validate()
@@ -380,7 +425,7 @@ def generate_initialization_v1(request: dict, repo_root: Path | None = None) -> 
         "payload": payload_contract, "parameters": rows, "optimizer_bootstrap": _bootstrap(anchor)}
     result = canonical_json_v1(manifest) + b"\n"
     validate_initialization_bytes_v1(result, payload)
-    _require(_sources(root) == sources and _git(root) == (git_head, git_clean)
+    _require(_sources(root, source_paths) == sources and _git(root) == (git_head, git_clean)
              and _runtime(torch) == runtime, "producer source/runtime changed during generation")
     _require(hashlib.sha256(_read(Path(target["registry"]["path"]), SOURCE_CAP)).hexdigest()
              == target["registry"]["sha256"], "target registry changed during generation")
