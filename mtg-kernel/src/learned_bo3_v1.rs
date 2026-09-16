@@ -416,6 +416,35 @@ pub fn run_learned_bo3_with_registrations_v1(
     ))
 }
 
+/// The population gate accepts either the current V3 or the current V4
+/// feature contract, each matched wholly (never a mix of fields drawn from
+/// both). `SeatRoutedBo3PlayPolicyV1::new_v1` below separately requires
+/// both seats to report the same feature generation, so a V3-vs-V4 seat
+/// pairing is still rejected there even though each seat individually
+/// passes this per-seat gate.
+fn recognized_population_feature_contract_v1(model: &ExpandedInferenceIdentityV1) -> bool {
+    let matches_contract = |schema_version: &str,
+                             registry_version: &str,
+                             features_source_sha256: &str,
+                             feature_descriptor_sha256: &str| {
+        model.feature_schema_version == schema_version
+            && model.feature_registry_version == registry_version
+            && model.features_source_sha256 == features_source_sha256
+            && model.feature_descriptor_sha256 == feature_descriptor_sha256
+    };
+    matches_contract(
+        crate::native_flat_tensorizer_v3::FEATURE_SCHEMA_VERSION_V3,
+        crate::native_flat_tensorizer_v3::FEATURE_REGISTRY_VERSION_V3,
+        crate::native_flat_tensorizer_v3::FEATURES_SOURCE_SHA256_V3,
+        crate::native_flat_tensorizer_v3::FEATURE_DESCRIPTOR_SHA256_V3,
+    ) || matches_contract(
+        crate::native_flat_tensorizer_v4::FEATURE_SCHEMA_VERSION_V4,
+        crate::native_flat_tensorizer_v4::FEATURE_REGISTRY_VERSION_V4,
+        crate::native_flat_tensorizer_v4::FEATURES_SOURCE_SHA256_V4,
+        crate::native_flat_tensorizer_v4::FEATURE_DESCRIPTOR_SHA256_V4,
+    )
+}
+
 /// Evaluate separately loaded current/historical players without substituting
 /// either seat's model or registration. The strict CLI loader supplies the
 /// checkpoint receipts; this boundary also checks them against installed model
@@ -432,17 +461,10 @@ pub fn run_population_bo3_v1(
     validate_run_limits_v1(&config)?;
     for seat in 0..2 {
         if !play_policies[seat].uses_observation_successor_v3()
-            || play_models[seat].feature_schema_version
-                != crate::native_flat_tensorizer_v3::FEATURE_SCHEMA_VERSION_V3
-            || play_models[seat].feature_registry_version
-                != crate::native_flat_tensorizer_v3::FEATURE_REGISTRY_VERSION_V3
-            || play_models[seat].features_source_sha256
-                != crate::native_flat_tensorizer_v3::FEATURES_SOURCE_SHA256_V3
-            || play_models[seat].feature_descriptor_sha256
-                != crate::native_flat_tensorizer_v3::FEATURE_DESCRIPTOR_SHA256_V3
+            || !recognized_population_feature_contract_v1(&play_models[seat])
         {
             return Err(format!(
-                "seat {seat} population model requires the current V3 feature contract"
+                "seat {seat} population model requires the current V3 or V4 feature contract"
             ));
         }
         if registered_decks[seat].deck_id() != config.deck_ids[seat] {
