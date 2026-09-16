@@ -246,6 +246,55 @@ fn pending_trigger_frozen_source_components_v4(
     }))
 }
 
+/// V4-only stack-ordinal resolution. A card that is itself a spell on the
+/// stack can simultaneously source a `TriggerCondition::CastSelf`/
+/// `home_zone: Zone::Stack` triggered ability of its own (Writhing
+/// Chrysalis's cast trigger, `trigger.rs`'s `WRITHING_CHRYSALIS_TRIGGERS` --
+/// the only card using this shape at the time of this fix), which places a
+/// SECOND `StackItem` on the stack whose `source` is the identical
+/// `arena_id` as the spell (a `home_zone: Zone::Stack` trigger is sourced
+/// from the stack object that spawned it, which is the spell itself). The
+/// shared `flat_stack_action_object_ordinal_v1` (`rl_session.rs`, also
+/// called by the frozen V3 path) scans for `item.source == object_id` and
+/// deliberately refuses to guess when two or more stack items match,
+/// returning `InvalidActionReference` -- correct when the ambiguity is
+/// genuine, but a real V4 fresh-lineage game (campaign-001 block 1, seed
+/// 3157112932801185221, Terror vs Wildfire) hit it for a `TargetObject`
+/// reference that names the SPELL unambiguously (Terror's own `Counterspell`
+/// choosing its only legal target: Writhing Chrysalis's spell, while
+/// Writhing Chrysalis's own cast trigger also sits on the stack one
+/// position above it) -- Counterspell can only ever target a spell, never
+/// an ability, so the reference cannot mean the triggered ability.
+///
+/// A `StackItem` actually carries the distinction the shared scan ignores:
+/// `kind`. The object's own spell presence is always the unique entry with
+/// `source == object_id && kind == StackItemKind::Spell` -- an ability's
+/// entry never claims to BE the object, only to be sourced FROM it. An
+/// ordinary object reference names the object's own zone presence, exactly
+/// as every other zone arm in `flat_visible_action_object_components_v4`
+/// resolves to the object's own position and never some other thing's, so
+/// it always means that spell entry when one exists, even while an ability
+/// sourced from the same object also sits on the stack. Falls back to the
+/// shared, unmodified `flat_stack_action_object_ordinal_v1` -- byte-identical
+/// to what V3 still calls, so V3's own resolution (including its
+/// `detached_matches`/resolving-spell-popped-before-an-optional-cost case)
+/// is untouched -- whenever no unique spell entry exists, so no case that
+/// path already resolves (correctly or by its own defensive error) changes.
+fn flat_stack_action_object_ordinal_v4(
+    state: &crate::state::GameState,
+    object_id: ObjectId,
+    controller: PlayerId,
+) -> Result<usize, FlatActionDecisionSliceErrorV1> {
+    let mut spell_positions = state.stack.iter().enumerate().filter(|(_, item)| {
+        item.source == object_id && item.kind == crate::state::StackItemKind::Spell
+    });
+    match (spell_positions.next(), spell_positions.next()) {
+        (Some((ordinal, _)), None) => Ok(ordinal),
+        (None, _) => flat_stack_action_object_ordinal_v1(state, object_id, controller),
+        (Some(_), Some(_)) => Err(FlatActionDecisionSliceErrorV1::InvalidActionReference),
+    }
+}
+
 /// Fork of `flat_visible_action_object_components_v1`: every non-`Library`
 /// arm is byte-identical; the frozen/hidden fallback
 /// ([`pending_trigger_frozen_source_components_v4`]) is now checked FIRST
@@ -346,7 +395,7 @@ fn flat_visible_action_object_components_v4(
         ),
         Zone::Stack => (
             FlatActionObjectGroupV1::Stack,
-            flat_stack_action_object_ordinal_v1(state, object_id, object.controller)?,
+            flat_stack_action_object_ordinal_v4(state, object_id, object.controller)?,
         ),
         Zone::Command => (
             FlatActionObjectGroupV1::Command,
@@ -927,6 +976,62 @@ pub(crate) fn hidden_order_triggers_shared_source_state_v1() -> (crate::state::G
     (state, object)
 }
 
+/// Campaign-001 block-1 regression fixture: a card that is itself a spell
+/// on the stack simultaneously sources a `TriggerCondition::CastSelf`/
+/// `home_zone: Zone::Stack` triggered ability of its own (Writhing
+/// Chrysalis's cast trigger shape, `trigger.rs`'s
+/// `WRITHING_CHRYSALIS_TRIGGERS`, the only card using it at the time of
+/// this fix), so `state.stack` holds two entries with the identical
+/// physical `source`: the spell itself (`StackItemKind::Spell`, pushed
+/// first, so its ordinal is 0) and its own cast trigger
+/// (`StackItemKind::TriggeredAbility`, pushed second). Mechanically
+/// identical to real gameplay's shape (a real game reached it: campaign-001
+/// block 1, seed 3157112932801185221, Terror vs Wildfire, step 155,
+/// Terror's own `Counterspell` choosing its only legal target) without
+/// depending on that real game or its policy weights, matching this
+/// module's existing `*_shared_source_state_v1` fixtures' idiom.
+///
+/// Test-only. Re-exported as
+/// `crate::rl_session::spell_and_own_cast_trigger_shared_source_state_v1`.
+#[cfg(test)]
+pub(crate) fn spell_and_own_cast_trigger_shared_source_state_v1(
+) -> (crate::state::GameState, ObjectId) {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::{StackItem, StackItemKind, StackStateV4};
+
+    let mut state = ready_state();
+    let object = put(&mut state, PlayerId::P0, "Writhing Chrysalis", Zone::Battlefield);
+    state.players[PlayerId::P0.index()]
+        .battlefield
+        .retain(|&id| id != object);
+    {
+        let live = state.objects.get_mut(object);
+        assert_eq!(live.zone, Zone::Battlefield);
+        live.zone = Zone::Stack;
+        live.zone_change_count += 1;
+    }
+    let stack_item = |kind, inline_effect| StackItem {
+        kind,
+        source: object,
+        controller: PlayerId::P0,
+        targets: Vec::new(),
+        is_copy: false,
+        inline_effect,
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: StackStateV4::default(),
+    };
+    state.stack.push(stack_item(StackItemKind::Spell, None));
+    state.stack.push(stack_item(
+        StackItemKind::TriggeredAbility,
+        Some(crate::effect::EffectOp::Sequence(Vec::new())),
+    ));
+    (state, object)
+}
+
 /// Burst-2 regression fixture (defect 2, `DuplicateCanonicalObject`):
 /// [`hidden_order_triggers_shared_source_state_v1`] minus the final
 /// shuffle-into-library step, so the one shared physical source stays
@@ -1331,5 +1436,54 @@ mod tests {
             .iter()
             .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
         let _ = shared_object;
+    }
+
+    /// Campaign-001 block-1 regression, fast self-contained unit fixture
+    /// for the mechanism (see `flat_stack_action_object_ordinal_v4`'s doc
+    /// comment and `spell_and_own_cast_trigger_shared_source_state_v1`):
+    /// an ordinary object reference to a card that is itself a spell on the
+    /// stack must resolve to that spell's own stack position, even while a
+    /// `home_zone: Zone::Stack` triggered ability it sourced (Writhing
+    /// Chrysalis's cast trigger) also sits on the stack claiming the same
+    /// `source`. Before this fix, `flat_stack_action_object_ordinal_v1`'s
+    /// same-`source` ambiguity guard could not tell the two stack entries
+    /// apart and raised `InvalidActionReference` for both V3 and V4 alike
+    /// (the real crash: campaign-001 block 1, seed 3157112932801185221,
+    /// Terror vs Wildfire, step 155, `V4 actor-visible encoding:
+    /// Action(InvalidActionReference)`).
+    ///
+    /// V3 confirmed unaffected on the identical synthetic state: it never
+    /// gained the spell-kind preference, so
+    /// `flat_visible_action_object_components_v1` still hits the same
+    /// pre-existing ambiguity error it always has, exactly as before this
+    /// fix -- this class of state was simply never resolvable through
+    /// either generation until now.
+    #[test]
+    fn v4_spell_resolves_to_its_own_stack_position_despite_its_own_cast_trigger_sharing_source() {
+        let (state, object) = spell_and_own_cast_trigger_shared_source_state_v1();
+        let card_db_id = crate::card_def::card_id_by_name("Writhing Chrysalis").unwrap();
+        let live = state.objects.try_get(object).unwrap();
+        assert_eq!(live.zone, Zone::Stack);
+        let reference = CardStableRefV1 {
+            arena_id: object.0,
+            card_db_id,
+            owner: PlayerSeatV1::P0,
+            controller: PlayerSeatV1::P0,
+            zone: Zone::Stack,
+            zone_change_count: live.zone_change_count,
+        };
+
+        let (object_row, position_sensitive) =
+            flat_visible_action_object_v4(&state, PlayerId::P0, 0, &reference)
+                .expect("V4 must resolve the spell's own stack position unambiguously");
+        assert_eq!(object_row.group, FlatActionObjectGroupV1::Stack);
+        assert_eq!(object_row.actor_visible_ordinal, 0, "the spell was pushed at stack position 0");
+        assert!(!position_sensitive);
+
+        assert_eq!(
+            flat_visible_action_object_components_v1(&state, PlayerId::P0, &reference).unwrap_err(),
+            FlatActionDecisionSliceErrorV1::InvalidActionReference,
+            "V3 must stay byte-identical: its shared-source ambiguity guard is untouched"
+        );
     }
 }
