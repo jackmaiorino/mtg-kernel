@@ -39,7 +39,7 @@
   "feature_registry_version": "rust-observation-v7-action-v5-registry-1",
   "feature_schema_version": "actor-relative-v7-python-1",
   "features_source_path": "python/mtg_kernel_rl/features_v7.py",
-  "features_source_sha256": "1ee7cfab4eb05c8f22b49e442c8f226bda9544cca711f6cf8de7f46ef926762a",
+  "features_source_sha256": "73640fb49a1bb0b2e7e2ab115324cf01ec504d5f4d255c3f700c84c169324777",
   "legal_action_schema": 5,
   "model_contract_version": "kernel-policy-value-net-9",
   "provenance_boundary": "Python validates internal consistency; authoritative Rust production validates actual public history and hidden-state scope.",

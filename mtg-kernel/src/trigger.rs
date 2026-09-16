@@ -2170,8 +2170,45 @@ pub fn order_apnap(triggers: Vec<PendingTrigger>, active_player: PlayerId) -> Ve
 /// attempt to reproduce `rl.rs`'s `policy_observation_extensions_v6` row
 /// count: it does not need to match the real ordinal namespace, only to
 /// stay outside it.
-fn historical_public_source_ordinal_ceiling_v1(state: &crate::state::GameState) -> Option<u32> {
+pub(crate) fn historical_public_source_ordinal_ceiling_v1(
+    state: &crate::state::GameState,
+) -> Option<u32> {
     u32::try_from(state.stack.len()).ok()?.checked_add(1)
+}
+
+/// V4 fresh-lineage helper, additive beside [`pending_trigger_choose_targets_gate_v1`]
+/// (which stays exactly as committed for the V3/frozen path). Factors out
+/// only the *hiddenness* half of that gate's predicate -- the trigger's live
+/// `source` sits in `Zone::Library` and carries no
+/// `state.library_knowledge` entry for its exact live incarnation, from the
+/// perspective of `pending.controller` observing `pending.source`'s owner's
+/// library -- without the ChooseTargets-only decision-shape constraints
+/// (`pending_triggers[0]`, `target_spec`/`targets` length, APNAP group
+/// ordering). The V7 observation-extensions producer
+/// (`policy_observation_v7::policy_observation_extensions_v7`) and the V4
+/// action-slice component resolver (`rl_session::flat_action_v4`) both call
+/// this instead of re-deriving the check, so the two layers cannot
+/// independently drift, mirroring how both V3 layers already share
+/// [`pending_trigger_choose_targets_gate_v1`] itself.
+///
+/// Returns `false` (never hidden) when `pending.source` is not a live
+/// object at all -- a defensive default, not a case any real caller should
+/// ever hit for a `PendingTrigger` still present in `state.engine.pending_triggers`.
+pub(crate) fn pending_trigger_hidden_source_v1(
+    state: &crate::state::GameState,
+    pending: &PendingTrigger,
+) -> bool {
+    let Some(live) = state.objects.try_get(pending.source) else {
+        return false;
+    };
+    if live.zone != Zone::Library {
+        return false;
+    }
+    !state.library_knowledge[pending.controller.index()][live.owner.index()]
+        .iter()
+        .any(|entry| {
+            entry.object == pending.source && entry.zone_change_count == live.zone_change_count
+        })
 }
 
 /// Whether the currently active decision is `Decision::ChooseTargets` for

@@ -72,6 +72,7 @@ pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod ids;
 pub mod policy_observation_v6;
+pub mod policy_observation_v7;
 pub mod phase1_agent_v1;
 pub mod phase1_bo3_collection_v1;
 pub mod phase1_bo3_learning_v1;

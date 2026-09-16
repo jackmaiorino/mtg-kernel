@@ -2981,8 +2981,16 @@ def _validate_observation_semantics(observation: dict[str, Any]) -> None:
         context = record["context"]
         if context["kind"] == "stack":
             historical_source_refs_v7.append(p["stack"][context["stack_index"]]["source"])
-        else:
+        elif context["kind"] == "pending_effect":
             historical_source_refs_v7.append(p["engine_context"]["pending_effect"]["source"])
+        else:
+            # pending_trigger: the live source is intentionally hidden
+            # (unrevealed in the owner's library), so
+            # engine_context.pending_triggers[position]["source"] is None
+            # for exactly that reason -- there is no live counterpart ref to
+            # add here beyond record["source"], already appended above.
+            if context["kind"] != "pending_trigger":
+                raise FeatureSchemaError(f"unknown historical source context kind: {context['kind']}")
     historical_source_ids_v7 = {id(ref) for ref in historical_source_refs_v7}
     identity_by_key: dict[tuple[int, int], tuple[int, str, str, str]] = {}
     for ref in _iter_card_refs_by_schema(observation, OBSERVATION_SPEC):

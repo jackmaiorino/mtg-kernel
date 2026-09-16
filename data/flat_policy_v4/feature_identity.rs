@@ -3,5 +3,5 @@ pub(crate) const FEATURE_SCHEMA_VERSION_V4: &str = "actor-relative-v7-python-1";
 pub(crate) const FEATURE_REGISTRY_VERSION_V4: &str = "rust-observation-v7-action-v5-registry-1";
 pub(crate) const FEATURE_CONTRACT_DIGEST_V4: &str = "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b";
 pub(crate) const FEATURE_ENCODING_DIGEST_V4: &str = "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de";
-pub(crate) const FEATURES_SOURCE_SHA256_V4: &str = "1ee7cfab4eb05c8f22b49e442c8f226bda9544cca711f6cf8de7f46ef926762a";
-pub(crate) const FEATURE_DESCRIPTOR_SHA256_V4: &str = "1e7050f136c7dbe9e373bd45889a7472d391320d679872023f123659a004ab02";
+pub(crate) const FEATURES_SOURCE_SHA256_V4: &str = "73640fb49a1bb0b2e7e2ab115324cf01ec504d5f4d255c3f700c84c169324777";
+pub(crate) const FEATURE_DESCRIPTOR_SHA256_V4: &str = "1773672b4f82306222111ce4219be63062a164330624a2b92638b2d23fb65d88";
