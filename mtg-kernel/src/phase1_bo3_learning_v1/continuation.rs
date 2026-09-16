@@ -17,7 +17,9 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use crate::rl::PlayerSeatV1;
-use crate::sideboard_play_policy_v1::{FrozenPlayObservationTransferV3, FrozenPlayPolicyV1};
+use crate::sideboard_play_policy_v1::{
+    FreshLineageGenerationV1, FrozenPlayObservationTransferV3, FrozenPlayPolicyV1,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -921,14 +923,25 @@ fn apply_prepared(
     lr: u32,
     value: u32,
 ) -> Result<(), String> {
+    // Whole-tuple dispatch (never a flag) on the batch's own loaded-learner
+    // generation: the weighted grouped loss/backward/Adam arithmetic is
+    // fully shared, only the input-config schema differs (see
+    // native_policy_train_step_v1::weighted_v3).
+    let generation = batch.learner_generation_v1();
     batch
-        .with_native_groups_v1(|groups, weights| {
-            state.train_step_weighted_feature_transfer_v3(
+        .with_native_groups_v1(|groups, weights| match generation {
+            FreshLineageGenerationV1::V3 => state.train_step_weighted_feature_transfer_v3(
                 groups,
                 weights,
                 f32::from_bits(value),
                 f32::from_bits(lr),
-            )
+            ),
+            FreshLineageGenerationV1::V4 => state.train_step_weighted_feature_transfer_v4(
+                groups,
+                weights,
+                f32::from_bits(value),
+                f32::from_bits(lr),
+            ),
         })
         .map_err(err)?;
     #[cfg(test)]

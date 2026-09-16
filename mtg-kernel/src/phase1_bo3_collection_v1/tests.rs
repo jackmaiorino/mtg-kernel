@@ -110,6 +110,16 @@ pub(crate) fn fixtures(
     (policies, packages)
 }
 
+/// V4 sibling of `fixtures`, reused by other modules' V4 gameplay/replay
+/// tests so they need not rebuild the compact-board weight trick themselves.
+pub(crate) fn fixtures_v4(
+    choices: [PlayDrawChoiceV1; 2],
+) -> ([FrozenPlayPolicyV1; 2], [CompleteAgentPackageV1; 2]) {
+    let policies = [compact_board_policy_v4(), compact_board_policy_v4()];
+    let packages = [0, 1].map(|i| package_v4(&policies[i], choices[i]));
+    (policies, packages)
+}
+
 /// A real, explicitly untrained Net8 fixture that strongly prefers the legal
 /// Pass action. The generic fixed net otherwise spends thousands of decisions
 /// activating a growing board of basic lands, exhausting the recorder bound.
@@ -235,7 +245,7 @@ fn collect_fixture(
 /// `training_parameters_v3`/`replace_training_parameters_v3` are, despite
 /// their name, generation-generic warm-start accessors (they just read/write
 /// `self.model`'s parameter snapshot), so this reuses them unchanged.
-fn compact_board_policy_v4() -> FrozenPlayPolicyV1 {
+pub(crate) fn compact_board_policy_v4() -> FrozenPlayPolicyV1 {
     use crate::native_policy_value_net_v1::HIDDEN_DIM_V1;
     let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
     let mut parameters = policy.training_parameters_v3();
@@ -260,7 +270,7 @@ fn compact_board_policy_v4() -> FrozenPlayPolicyV1 {
 
 /// V4 sibling of `package`: same test-only ancestry shape, but every
 /// feature-identity field is the compiled V4 fresh-lineage tuple, never V3's.
-fn package_v4(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAgentPackageV1 {
+pub(crate) fn package_v4(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAgentPackageV1 {
     use crate::native_flat_tensorizer_v4::{
         FEATURES_SOURCE_SHA256_V4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_DESCRIPTOR_SHA256_V4,
         FEATURE_ENCODING_DIGEST_V4, FEATURE_REGISTRY_VERSION_V4, FEATURE_SCHEMA_VERSION_V4,

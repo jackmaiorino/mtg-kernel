@@ -1244,7 +1244,7 @@ fn trajectory_generation_v1(t: &ExpandedTrajectoryV1) -> FreshLineageGenerationV
 /// lifetime that would force) just to pick a schema: the wrapper and the
 /// generic tensor share the identical field layout, so this reads directly
 /// off the generic tensor's own fields.
-fn encoded_decision_view_generic_v1(
+pub(crate) fn encoded_decision_view_generic_v1(
     t: &NativeFlatDecisionTensorV2,
     generation: FreshLineageGenerationV1,
 ) -> crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_> {

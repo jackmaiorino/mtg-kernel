@@ -2,7 +2,7 @@ use super::*;
 use crate::bo3_match::PlayDrawChoiceV1;
 use crate::phase1_bo3_collection_v1::{
     collect_loaded_inner,
-    tests::{config, fixtures},
+    tests::{config, fixtures, fixtures_v4},
 };
 
 fn limits() -> Bo3NativeCaptureLimitsV1 {
@@ -47,6 +47,54 @@ fn captured(
             "capture must not change any V1 core result byte"
         );
     }
+    let request = TrainableBo3RequestV1 {
+        schema: TRAINABLE_BO3_REQUEST_SCHEMA_V1.into(),
+        config: config.clone(),
+        packages: packages.clone(),
+        capture_limits: limits,
+    };
+    let current_runtimes = packages.each_ref().map(|p| ProducerRuntimeClaimV1 {
+        executable_path: "test-only-unverified-producer".into(),
+        executable_sha256: p.runtime.executable.sha256.clone(),
+        engine_commit: p.runtime.engine_commit.clone(),
+        tracked_tree_sha256: p.runtime.tracked_tree_sha256.clone(),
+        tracked_tree_contract: p.runtime.tracked_tree_contract.clone(),
+        toolchain_sha256: p.runtime.toolchain.sha256.clone(),
+    });
+    let result = TrainableResultDto {
+        schema: TRAINABLE_BO3_RESULT_SCHEMA_V1.into(),
+        request,
+        result: CollectionResultDto {
+            schema: BO3_COLLECTION_RESULT_SCHEMA_V1.into(),
+            config,
+            packages,
+            current_runtimes,
+            collected: serde_json::from_value(serde_json::to_value(collected).unwrap()).unwrap(),
+        },
+        native_capture: sink.finish(),
+    };
+    (result, policies)
+}
+
+/// V4 sibling of `captured`: same real native-model/original-engine capture
+/// shape, sourced from the compact-board V4 fresh-lineage fixture pairing
+/// (`fixtures_v4`) instead of V3's, so `replay_attempt`'s generation
+/// dispatch is exercised against a real, complete V4 game.
+fn captured_v4(
+    config: Bo3CollectionConfigV1,
+    choices: [PlayDrawChoiceV1; 2],
+    limits: Bo3NativeCaptureLimitsV1,
+) -> (TrainableResultDto, [FrozenPlayPolicyV1; 2]) {
+    let (mut policies, packages) = fixtures_v4(choices);
+    let mut sink = CaptureBuffer::new(limits.clone()).unwrap();
+    let collected = collect_loaded_inner(
+        &config,
+        packages.each_ref(),
+        &mut policies,
+        [None, None],
+        Some(&mut sink),
+    )
+    .unwrap();
     let request = TrainableBo3RequestV1 {
         schema: TRAINABLE_BO3_REQUEST_SCHEMA_V1.into(),
         config: config.clone(),
@@ -171,6 +219,7 @@ fn assert_structural_complete_multisubstep_group(
     let learner = original.result.packages[0].gameplay.clone();
     let batch = finish_prepared(
         learner,
+        FreshLineageGenerationV1::V3,
         vec![prepared.report],
         prepared.groups,
         prepared.payload,
@@ -235,7 +284,15 @@ fn phase1_bo3_training_actual_two_three_game_capture_preserves_core_and_equal_ma
     let substeps = first.substeps + second.substeps;
     let reports = vec![first.report, second.report];
     let all = first.groups.into_iter().chain(second.groups).collect();
-    let prepared = finish_prepared(learner, reports, all, payload, substeps).unwrap();
+    let prepared = finish_prepared(
+        learner,
+        FreshLineageGenerationV1::V3,
+        reports,
+        all,
+        payload,
+        substeps,
+    )
+    .unwrap();
     assert_eq!(
         prepared.report.disposition,
         Bo3PreparationDispositionV1::Ready
@@ -275,6 +332,61 @@ fn phase1_bo3_training_actual_two_three_game_capture_preserves_core_and_equal_ma
     });
 }
 
+/// V4 sibling of the test above: drives a real, complete V4 fresh-lineage
+/// game through `replay_attempt` (whole-tuple generation dispatch, never a
+/// flag: a V4 policy's `successor` is `None`, so falling through to the V3
+/// scorer would fail loudly with "training requires explicit successor
+/// features" rather than silently mis-scoring) and confirms the prepared
+/// batch is admitted by `finish_prepared`/`with_native_groups_v1` all the
+/// way to a native update-ready group, exactly like the V3 path.
+#[test]
+fn phase1_bo3_training_actual_v4_game_capture_replays_through_native_groups() {
+    let (result, policies) = captured_v4(
+        config("native-capture-v4"),
+        [PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw],
+        limits(),
+    );
+    let learner = result.result.packages[0].gameplay.clone();
+    assert!(!result.native_capture.records.is_empty());
+    let prepared = replay_attempt(
+        result,
+        PlayerSeatV1::P0,
+        policies.each_ref(),
+        MAX_PREPARED_BYTES,
+    )
+    .unwrap();
+    assert!(prepared.report.complete && prepared.report.eligible);
+    assert!(!prepared.groups.is_empty());
+    let batch = finish_prepared(
+        learner,
+        FreshLineageGenerationV1::V4,
+        vec![prepared.report],
+        prepared.groups,
+        prepared.payload,
+        prepared.substeps,
+    )
+    .unwrap();
+    assert_eq!(batch.learner_generation_v1(), FreshLineageGenerationV1::V4);
+    assert_eq!(
+        batch.report_v1().disposition,
+        Bo3PreparationDispositionV1::Ready
+    );
+    batch.with_native_groups_v1(|groups, weights| {
+        assert!(!groups.is_empty());
+        assert_eq!(weights.len(), groups.len());
+        assert!(groups
+            .iter()
+            .all(|g| g.baseline_bits == 0 && matches!(g.terminal_return, -1 | 1)));
+        // Opponent rows were replayed via score_training_tensor_v4, but the
+        // borrowed update groups contain only the requested learner's
+        // committed actual scorer tensors, encoded through the V4 schema.
+        assert!(groups
+            .iter()
+            .flat_map(|g| g.substeps)
+            .all(|s| matches!(s.forward, NativePolicyForwardInputV1::Encoded(_))));
+    });
+}
+
 #[test]
 fn phase1_bo3_training_capped_prefix_keeps_witnesses_and_no_update() {
     let mut cfg = config("native-capture-capped");
@@ -294,7 +406,15 @@ fn phase1_bo3_training_capped_prefix_keeps_witnesses_and_no_update() {
     )
     .unwrap();
     assert!(!prepared.report.eligible && prepared.groups.is_empty() && prepared.payload == 0);
-    let batch = finish_prepared(learner, vec![prepared.report], Vec::new(), 0, 0).unwrap();
+    let batch = finish_prepared(
+        learner,
+        FreshLineageGenerationV1::V3,
+        vec![prepared.report],
+        Vec::new(),
+        0,
+        0,
+    )
+    .unwrap();
     assert_eq!(
         batch.report.disposition,
         Bo3PreparationDispositionV1::NoUpdate

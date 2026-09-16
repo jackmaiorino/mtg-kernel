@@ -1,12 +1,13 @@
 use super::*;
 use crate::bo3_match::PlayDrawChoiceV1;
 use crate::native_flat_tensorizer_v3::{NativeFlatDecisionTensorV3, encoded_decision_view_v3};
+use crate::native_flat_tensorizer_v4::{NativeFlatDecisionTensorV4, encoded_decision_view_v4};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
 };
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
 use crate::paired_bo1_harness_v1::PairedBo1PolicyV1;
-use crate::phase1_bo3_collection_v1::tests::{config, fixtures};
+use crate::phase1_bo3_collection_v1::tests::{config, fixtures, fixtures_v4};
 use crate::phase1_bo3_learning_v1::{
     BO3_PREPARATION_REQUEST_SCHEMA_V1, Bo3AttemptInputV1, Bo3PreparationLimitsV1,
 };
@@ -97,6 +98,103 @@ fn numerical_update(
         .unwrap();
 }
 
+/// V4 sibling of `native_state_and_tensor`, sourced from the fresh-lineage
+/// V4 fixture instead of V3's. `apply_prepared` (the update entry point's
+/// caller of `with_native_groups_v1`) dispatches to
+/// `train_step_weighted_feature_transfer_v4` for exactly this generation;
+/// this fixture exercises that same numeric/optimizer primitive directly,
+/// since `PreparedBo3GameplayBatchV1` and `apply_prepared` themselves are
+/// private to two different sibling modules and cannot both be reached from
+/// one synthetic test without a file-orchestrated `update_bo3_gameplay_v1`
+/// run, which (like the existing V3 real-pinned test below) needs a real
+/// root-supplied producer artifact for `verify_producer` to accept.
+fn native_state_and_tensor_v4() -> (NativePolicyValueTrainStateV1, NativeFlatDecisionTensorV4) {
+    use crate::human_opening_v1::HumanOpeningV1;
+    use crate::ids::PlayerId;
+    use crate::paired_bo1_harness_v1::{PairedBo1PolicyInputV1, paired_policy_seeds_v1};
+    use crate::rl_session::FastActorResponseV1;
+    let (mut policies, _) = fixtures_v4([PlayDrawChoiceV1::Play; 2]);
+    let cfg = config("continuation-native-tensor-v4");
+    let mut opening = HumanOpeningV1::new(
+        1,
+        117,
+        100,
+        100,
+        cfg.deck_ids,
+        cfg.registrations.each_ref().map(|d| d.mainboard.clone()),
+        PlayerId::P0,
+        PlayerId::P0,
+    )
+    .unwrap();
+    opening.keep().unwrap();
+    let session = opening.into_session().unwrap();
+    let FastActorResponseV1::Decision(decision) = session.current_response() else {
+        panic!("real initial decision missing")
+    };
+    policies[0]
+        .reset_for_game_v1(paired_policy_seeds_v1(117))
+        .unwrap();
+    let input = PairedBo1PolicyInputV1::new(&session, decision);
+    policies[0].select_paired_with_scores_v1(&input).unwrap();
+    let tensor = policies[0]
+        .last_scored_training_tensor_v4()
+        .unwrap()
+        .clone();
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .unwrap();
+    model
+        .replace_parameter_snapshot_v1(&policies[0].training_parameters_v3())
+        .unwrap();
+    let state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+    let mut snapshot = state.snapshot_v1().unwrap();
+    snapshot.adam_step = 7;
+    snapshot
+        .first_moments
+        .iter_mut()
+        .find(|p| p.name == "value_head.2.bias")
+        .unwrap()
+        .values[0] = 0.015;
+    snapshot
+        .second_moments
+        .iter_mut()
+        .find(|p| p.name == "value_head.2.bias")
+        .unwrap()
+        .values[0] = 0.023;
+    (
+        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &snapshot)
+            .unwrap(),
+        tensor,
+    )
+}
+fn numerical_update_v4(
+    state: &mut NativePolicyValueTrainStateV1,
+    tensor: &NativeFlatDecisionTensorV4,
+) {
+    // V4 sibling of `numerical_update`: identical arithmetic, only the
+    // feature-transfer config (schema validation) and encoded-view builder
+    // differ, exactly as `train_step_feature_transfer_v3`/`_v4` already do.
+    let output = state
+        .model_v1()
+        .forward_feature_transfer_v4(encoded_decision_view_v4(tensor))
+        .unwrap();
+    let logits: Vec<_> = output.logits.iter().map(|v| v.to_bits()).collect();
+    let steps = [NativePolicySubstepV1 {
+        forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v4(tensor))),
+        selected_action_index: 0,
+        expected_raw_action_logit_bits: &logits,
+        expected_value_bits: output.value.to_bits(),
+    }];
+    let groups = [NativePolicyPhysicalDecisionV1 {
+        substeps: &steps,
+        terminal_return: 1,
+        baseline_bits: 0,
+    }];
+    state
+        .train_step_weighted_feature_transfer_v4(&groups, &[1.0], 0.5, 0.00001)
+        .unwrap();
+}
+
 #[test]
 fn bo3_continuation_native_full_state_bits_and_fresh_numeric_next_update_survive_reload() {
     let (mut state, tensor) = native_state_and_tensor();
@@ -109,6 +207,31 @@ fn bo3_continuation_native_full_state_bits_and_fresh_numeric_next_update_survive
     assert_eq!(restored.adam_step_v1(), 8);
     numerical_update(&mut state, &tensor);
     numerical_update(&mut restored, &tensor);
+    assert_eq!(
+        StateBits::capture(&state).unwrap(),
+        StateBits::capture(&restored).unwrap()
+    );
+    assert_eq!(restored.adam_step_v1(), 9);
+    assert_eq!(StateBits::capture(&origin).unwrap().adam_step, 7);
+}
+
+/// V4 sibling of the test above: the same checkpoint save/reload plus
+/// fresh-numeric-next-update proof, but through
+/// `train_step_weighted_feature_transfer_v4`, the exact primitive
+/// `apply_prepared` dispatches to for a V4-generation prepared batch on the
+/// update entry point's own path.
+#[test]
+fn bo3_continuation_native_full_state_bits_and_fresh_numeric_next_update_survive_reload_v4() {
+    let (mut state, tensor) = native_state_and_tensor_v4();
+    let origin = state.clone();
+    numerical_update_v4(&mut state, &tensor);
+    let saved = StateBits::capture(&state).unwrap();
+    let decoded: StateBits = strict_json(&json(&saved, MAX_CHECKPOINT_BYTES).unwrap()).unwrap();
+    let mut restored = decoded.restore(&origin).unwrap();
+    assert_eq!(StateBits::capture(&restored).unwrap(), saved);
+    assert_eq!(restored.adam_step_v1(), 8);
+    numerical_update_v4(&mut state, &tensor);
+    numerical_update_v4(&mut restored, &tensor);
     assert_eq!(
         StateBits::capture(&state).unwrap(),
         StateBits::capture(&restored).unwrap()

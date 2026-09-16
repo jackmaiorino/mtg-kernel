@@ -6,16 +6,18 @@ use crate::expanded_deck_training_v1::{
 };
 use crate::fast_sampler::{WideCategoricalScratchV1, WIDE_CATEGORICAL_SAMPLER_VERSION_V1};
 use crate::learned_bo3_v1::Bo3OpeningProtocolV1;
+use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::*;
+use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
 };
-use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
+use crate::paired_bo1_harness_v1::{paired_policy_seeds_v1, PairedBo1PolicyV1, PlayPolicyGenerationV1};
 use crate::phase1_agent_v1::*;
 use crate::phase1_bo3_collection_v1::{Bo3CollectionConfigV1, BO3_COLLECTION_RESULT_SCHEMA_V1};
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
 use crate::rl_session::RlSessionTerminalV1;
-use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+use crate::sideboard_play_policy_v1::{FreshLineageGenerationV1, FrozenPlayPolicyV1};
 use crate::state::SplitMix64;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -95,7 +97,7 @@ pub struct Bo3GameplayPreparationReportV1 {
     pub claim: String,
 }
 pub(crate) struct PreparedBo3SubstepV1 {
-    pub(crate) tensor: NativeFlatDecisionTensorV3,
+    pub(crate) tensor: NativeFlatDecisionTensorV2,
     pub(crate) logits: Vec<u32>,
     pub(crate) value: u32,
     pub(crate) selected: usize,
@@ -109,6 +111,12 @@ pub(crate) struct PreparedBo3GroupV1 {
 pub struct PreparedBo3GameplayBatchV1 {
     report: Bo3GameplayPreparationReportV1,
     learner: ExpandedSeatBehaviorV1,
+    /// The single loaded learner's own whole-tuple generation (V3 or V4),
+    /// fixed once at `prepare_bo3_gameplay_batch_v1`'s single `load_actual`
+    /// call and shared by every stored substep in every group: only the
+    /// learner's decisions are ever stored here, and every attempt in one
+    /// request is checked against the same `request.learner` identity.
+    learner_generation: FreshLineageGenerationV1,
     attempts: Vec<Bo3AttemptInputV1>,
     attempt_identities: Vec<[String; 3]>,
     pub(crate) groups: Vec<PreparedBo3GroupV1>,
@@ -120,6 +128,9 @@ impl PreparedBo3GameplayBatchV1 {
     }
     pub fn learner_v1(&self) -> &ExpandedSeatBehaviorV1 {
         &self.learner
+    }
+    pub(crate) fn learner_generation_v1(&self) -> FreshLineageGenerationV1 {
+        self.learner_generation
     }
     pub fn attempts_v1(&self) -> &[Bo3AttemptInputV1] {
         &self.attempts
@@ -140,7 +151,10 @@ impl PreparedBo3GameplayBatchV1 {
                     .iter()
                     .map(|step| NativePolicySubstepV1 {
                         forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                            encoded_decision_view_v3(&step.tensor),
+                            crate::expanded_deck_training_v1::encoded_decision_view_generic_v1(
+                                &step.tensor,
+                                self.learner_generation,
+                            ),
                         )),
                         selected_action_index: step.selected,
                         expected_raw_action_logit_bits: &step.logits,
@@ -469,6 +483,14 @@ pub fn prepare_bo3_gameplay_batch_v1(
         )?;
     }
     let learner = load_actual(&request.learner)?;
+    // Whole-tuple dispatch (never a flag): the loaded learner's own
+    // generation, fixed for the whole request since every attempt is
+    // checked against this same `request.learner` identity below.
+    let learner_generation = if learner.feature_generation_v1() == PlayPolicyGenerationV1::V4 {
+        FreshLineageGenerationV1::V4
+    } else {
+        FreshLineageGenerationV1::V3
+    };
     let mut opponent_cache: Option<(ExpandedSeatBehaviorV1, FrozenPlayPolicyV1)> = None;
     let mut reports = Vec::new();
     let mut groups = Vec::new();
@@ -570,6 +592,7 @@ pub fn prepare_bo3_gameplay_batch_v1(
     }
     let mut prepared = finish_prepared(
         request.learner,
+        learner_generation,
         reports,
         groups,
         prepared_bytes,
@@ -582,6 +605,7 @@ pub fn prepare_bo3_gameplay_batch_v1(
 
 fn finish_prepared(
     learner: ExpandedSeatBehaviorV1,
+    learner_generation: FreshLineageGenerationV1,
     reports: Vec<Bo3AttemptPreparationReportV1>,
     groups: Vec<PreparedBo3GroupV1>,
     prepared_bytes: u64,
@@ -619,6 +643,7 @@ fn finish_prepared(
     Ok(PreparedBo3GameplayBatchV1 {
         report,
         learner,
+        learner_generation,
         attempts: Vec::new(),
         attempt_identities: Vec::new(),
         groups,
@@ -801,8 +826,22 @@ fn replay_attempt(
                 captured.raw_logit_bits.len() == ordered_actions.len(),
                 "native/visible action width differs",
             )?;
-            let tensor = captured.tensor_bits.into_tensor();
-            let scores = policies[seat(decision.actor)].score_training_tensor_v3(&tensor)?;
+            let tensor = captured.tensor_bits.into_tensor().common;
+            // Whole-tuple dispatch (never a flag), the same idiom
+            // RecordingPolicy's capture path uses: a V4 actor's captured
+            // bits are the identical NativeFlatDecisionTensorV2 core, only
+            // the identity gate and forward config differ.
+            let scores = if policies[seat(decision.actor)].feature_generation_v1()
+                == PlayPolicyGenerationV1::V4
+            {
+                policies[seat(decision.actor)].score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
+                    common: tensor.clone(),
+                })?
+            } else {
+                policies[seat(decision.actor)].score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
+                    common: tensor.clone(),
+                })?
+            };
             require(
                 scores.value.to_bits() == captured.raw_value_bits
                     && scores

@@ -103,6 +103,47 @@ impl NativePolicyValueTrainStateV1 {
         value_coefficient: f32,
         learning_rate: f32,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v3();
+        self.train_step_weighted_with_input_config_v1(
+            groups,
+            group_weights,
+            value_coefficient,
+            learning_rate,
+            input_config,
+        )
+    }
+
+    /// V4 sibling of `train_step_weighted_feature_transfer_v3`, for the
+    /// fresh-lineage (V7 observation-schema) successor contract. The weighted
+    /// grouped loss/backward/Adam arithmetic below is fully shared, unchanged;
+    /// only the input-config schema every encoded view is validated against
+    /// differs. No CUDA arm exists for the weighted objective at all (V3 or
+    /// V4); it is CPU-only, same as before.
+    pub(crate) fn train_step_weighted_feature_transfer_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        group_weights: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_weighted_with_input_config_v1(
+            groups,
+            group_weights,
+            value_coefficient,
+            learning_rate,
+            input_config,
+        )
+    }
+
+    fn train_step_weighted_with_input_config_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        group_weights: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        input_config: NativePolicyValueModelConfigV1,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         validate_weighted_inputs_v3(groups, group_weights)?;
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
@@ -123,7 +164,6 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        let input_config = self.model.feature_transfer_config_v3();
         let mut gradients: Vec<_> = parameters
             .iter()
             .map(|p| vec![0.0; p.values.len()])
