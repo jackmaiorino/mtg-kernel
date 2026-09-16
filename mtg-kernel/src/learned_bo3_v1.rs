@@ -18,7 +18,7 @@ use crate::learned_sideboard_v1::{
     VisibleEvidenceZoneV1,
 };
 use crate::paired_bo1_harness_v1::{
-    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1,
+    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
 };
 use crate::rl_session::{FastActorSessionV1, RlSessionError};
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
@@ -133,10 +133,14 @@ pub struct SeatRoutedBo3PlayPolicyV1<'a> {
 
 impl<'a> SeatRoutedBo3PlayPolicyV1<'a> {
     pub fn new_v1(policies: [&'a mut dyn PairedBo1PolicyV1; 2]) -> Result<Self, String> {
-        let uses_v3 = policies[0].uses_observation_successor_v3();
-        if uses_v3 != policies[1].uses_observation_successor_v3() {
-            return Err("per-seat BO3 policies require the same observation contract".into());
+        // Strict whole-generation equality, not just the wide-vs-narrow
+        // boolean: two different wide generations (V3 and V4) both report
+        // `true` for `uses_observation_successor_v3`, so comparing only that
+        // boolean would silently accept a mixed V3/V4 seat pairing.
+        if policies[0].feature_generation_v1() != policies[1].feature_generation_v1() {
+            return Err("per-seat BO3 policies require the same feature generation".into());
         }
+        let uses_v3 = policies[0].uses_observation_successor_v3();
         Ok(Self { policies, uses_v3 })
     }
 }
@@ -144,6 +148,12 @@ impl<'a> SeatRoutedBo3PlayPolicyV1<'a> {
 impl PairedBo1PolicyV1 for SeatRoutedBo3PlayPolicyV1<'_> {
     fn uses_observation_successor_v3(&self) -> bool {
         self.uses_v3
+    }
+
+    /// `new_v1` already required both seats to report the same generation,
+    /// so either seat's own value is authoritative here.
+    fn feature_generation_v1(&self) -> crate::paired_bo1_harness_v1::PlayPolicyGenerationV1 {
+        self.policies[0].feature_generation_v1()
     }
 
     fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
@@ -781,6 +791,67 @@ mod tests {
         assert!(SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0, &mut p1]).is_err());
         assert!(p0.resets.is_empty());
         assert!(p1.resets.is_empty());
+    }
+
+    /// A minimal stand-in that reports only a generation, for gates that
+    /// must compare `feature_generation_v1()` and never reach
+    /// `reset_for_game_v1`/`select_action_v1` first.
+    struct GenerationOnlyStub {
+        generation: PlayPolicyGenerationV1,
+    }
+    impl PairedBo1PolicyV1 for GenerationOnlyStub {
+        fn uses_observation_successor_v3(&self) -> bool {
+            self.generation != PlayPolicyGenerationV1::V2
+        }
+        fn feature_generation_v1(&self) -> PlayPolicyGenerationV1 {
+            self.generation
+        }
+        fn reset_for_game_v1(&mut self, _seeds: [u64; 2]) -> Result<(), RlSessionError> {
+            unreachable!("generation gate must reject before any reset")
+        }
+        fn select_action_v1(
+            &mut self,
+            _input: PairedBo1PolicyInputV1<'_>,
+        ) -> Result<u32, RlSessionError> {
+            unreachable!("generation gate must reject before any selection")
+        }
+    }
+
+    #[test]
+    fn population_router_rejects_mixed_v3_v4_generation_even_when_the_wide_boolean_matches() {
+        // Both V3 and V4 report `true` for the legacy wide-vs-narrow
+        // boolean (`uses_observation_successor_v3`), so a pairing check
+        // that only compares that boolean would silently accept a mixed
+        // V3/V4 seat pairing. `new_v1` must reject this via
+        // `feature_generation_v1` instead.
+        let mut v3 = GenerationOnlyStub {
+            generation: PlayPolicyGenerationV1::V3,
+        };
+        let mut v4 = GenerationOnlyStub {
+            generation: PlayPolicyGenerationV1::V4,
+        };
+        assert!(v3.uses_observation_successor_v3());
+        assert!(v4.uses_observation_successor_v3());
+        let policies: [&mut dyn PairedBo1PolicyV1; 2] = [&mut v3, &mut v4];
+        assert!(SeatRoutedBo3PlayPolicyV1::new_v1(policies).is_err());
+
+        let mut v3_a = GenerationOnlyStub {
+            generation: PlayPolicyGenerationV1::V3,
+        };
+        let mut v3_b = GenerationOnlyStub {
+            generation: PlayPolicyGenerationV1::V3,
+        };
+        let policies: [&mut dyn PairedBo1PolicyV1; 2] = [&mut v3_a, &mut v3_b];
+        assert!(SeatRoutedBo3PlayPolicyV1::new_v1(policies).is_ok());
+
+        let mut v4_a = GenerationOnlyStub {
+            generation: PlayPolicyGenerationV1::V4,
+        };
+        let mut v4_b = GenerationOnlyStub {
+            generation: PlayPolicyGenerationV1::V4,
+        };
+        let policies: [&mut dyn PairedBo1PolicyV1; 2] = [&mut v4_a, &mut v4_b];
+        assert!(SeatRoutedBo3PlayPolicyV1::new_v1(policies).is_ok());
     }
 
     #[test]

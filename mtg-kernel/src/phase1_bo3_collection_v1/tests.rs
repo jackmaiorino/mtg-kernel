@@ -229,6 +229,97 @@ fn collect_fixture(
     (result, packages)
 }
 
+/// V4 sibling of `compact_board_policy`: same weight-manipulation trick
+/// (strongly prefer the real legal Pass action so the game terminates
+/// quickly by mutual decking), built on a fresh-V4 fixture instead of V3.
+/// `training_parameters_v3`/`replace_training_parameters_v3` are, despite
+/// their name, generation-generic warm-start accessors (they just read/write
+/// `self.model`'s parameter snapshot), so this reuses them unchanged.
+fn compact_board_policy_v4() -> FrozenPlayPolicyV1 {
+    use crate::native_policy_value_net_v1::HIDDEN_DIM_V1;
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut parameters = policy.training_parameters_v3();
+    for parameter in &mut parameters {
+        parameter.values.fill(0.0);
+    }
+    for (name, input, value) in [
+        ("action_encoder.0.weight", 0, 4.0),
+        ("action_encoder.2.weight", 0, 4.0),
+        ("scorer.0.weight", HIDDEN_DIM_V1, 4.0),
+        ("scorer.2.weight", 0, 16.0),
+    ] {
+        let parameter = parameters.iter_mut().find(|p| p.name == name).unwrap();
+        assert_eq!(parameter.shape.len(), 2);
+        assert!(input < parameter.shape[1]);
+        parameter.values[input] = value;
+    }
+    policy.replace_training_parameters_v3(&parameters).unwrap();
+    assert_compact_policy_scores(&mut policy);
+    policy
+}
+
+/// V4 sibling of `package`: same test-only ancestry shape, but every
+/// feature-identity field is the compiled V4 fresh-lineage tuple, never V3's.
+fn package_v4(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAgentPackageV1 {
+    use crate::native_flat_tensorizer_v4::{
+        FEATURES_SOURCE_SHA256_V4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_DESCRIPTOR_SHA256_V4,
+        FEATURE_ENCODING_DIGEST_V4, FEATURE_REGISTRY_VERSION_V4, FEATURE_SCHEMA_VERSION_V4,
+    };
+    let model = policy.actual_model_identity_v1();
+    let runtime = AgentRuntimeIdentityV1 {
+        executable: pin("test-only-missing-executable"),
+        toolchain: pin("test-only-toolchain"),
+        engine_commit: "a".repeat(40),
+        tracked_tree_sha256: "b".repeat(64),
+        tracked_tree_contract: "test-only-tree".into(),
+        build_git_clean: true,
+        card_db_hash: model.card_db_hash.clone(),
+        card_registry_sha256: policy
+            .identity_v1()
+            .destination_registry_sha256_v1()
+            .to_owned(),
+        feature_contract_digest: model.feature_contract_digest.clone(),
+        feature_encoding_digest: model.feature_encoding_digest.clone(),
+        features_source_sha256: FEATURES_SOURCE_SHA256_V4.into(),
+        feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V4.into(),
+    };
+    let result = CompleteAgentPackageV1 {
+        schema: COMPLETE_AGENT_PACKAGE_SCHEMA_V1.into(),
+        runtime,
+        gameplay: ExpandedSeatBehaviorV1 {
+            source: ExpandedModelSourceV1 {
+                play_import: pin("test-only-import-v4"),
+                checkpoint: None,
+                feature_transfer: FrozenPlayObservationTransferV3 {
+                    expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                    expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+                },
+            },
+            identity: ExpandedInferenceIdentityV1 {
+                schema: "mtg-kernel-expanded-deck-inference/v1".into(),
+                source_import: policy.identity_v1().clone(),
+                checkpoint_sha256: None,
+                model,
+                state_sha256: "c".repeat(64),
+                adam_step: 0,
+                feature_schema_version: FEATURE_SCHEMA_VERSION_V4.into(),
+                feature_registry_version: FEATURE_REGISTRY_VERSION_V4.into(),
+                features_source_sha256: FEATURES_SOURCE_SHA256_V4.into(),
+                feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V4.into(),
+            },
+        },
+        gameplay_sampler_identity: policy.runtime_sampler_identity_v1().into(),
+        opening: AgentOpeningPolicyV1::Existing {
+            protocol: Bo3OpeningProtocolV1::KeepSevenV2,
+        },
+        play_draw: AgentPlayDrawPolicyV1::Fixed { choice },
+        sideboard: AgentSideboardPolicyV1::Keep,
+        search: AgentSearchPolicyV1::Disabled,
+    };
+    result.validate_metadata_v1().unwrap();
+    result
+}
+
 fn gameplay_trace(record: &Bo3DecisionRecordV1) -> String {
     format!(
         "{:x}",
@@ -728,4 +819,68 @@ fn bounded_public_request_parser_roundtrips_and_rejects_nested_duplicates() {
     assert!(
         Bo3CollectionRequestV1::from_json_v1(&serde_json::to_string(&unknown).unwrap()).is_err()
     );
+}
+
+/// The fixture the plan's designer described: a real BO3 collect through
+/// `phase1_bo3_collection_v1`'s gate for a fresh-V4 pairing (rejected before
+/// item 4, since `uses_observation_successor_v3` reported `false` for a V4
+/// policy), plus a mixed V3/V4 pairing still rejected.
+///
+/// The mixed case is caught by `Bo3TrainingTrajectoryV1::validate_v1`'s
+/// pre-existing `packages[0].runtime == packages[1].runtime` check
+/// (`phase1_agent_v1/trajectory.rs`, "physical seats use different
+/// runtime/feature contracts") before `collect_loaded_inner`'s own new
+/// `feature_generation_v1` equality check ever runs: that whole-struct `==`
+/// already compared every `AgentRuntimeIdentityV1` field, feature digests
+/// included, so it was already dual-generation-safe without modification.
+/// The new policy-level check added for item 4 is real, additional
+/// defense in depth (it would still catch a loaded policy whose actual
+/// generation drifted from its own claimed package), just not the one
+/// this particular mismatched-package scenario reaches first.
+#[test]
+fn v4_bo3_collect_gate_accepts_a_v4_pairing_and_rejects_a_mixed_v3_v4_pairing() {
+    let cfg = config("v4-bo3-collect-fixture");
+    let mut v4_policies = [compact_board_policy_v4(), compact_board_policy_v4()];
+    let v4_packages = [
+        package_v4(&v4_policies[0], PlayDrawChoiceV1::Play),
+        package_v4(&v4_policies[1], PlayDrawChoiceV1::Draw),
+    ];
+    let result =
+        collect_loaded(&cfg, v4_packages.each_ref(), &mut v4_policies, [None, None]).unwrap();
+    assert!(matches!(
+        result.trajectory.ending,
+        Bo3TrajectoryEndingV1::Complete { .. }
+    ));
+
+    // A mixed V3/V4 seat pairing must be rejected: both seats report `true`
+    // for the legacy wide-vs-narrow boolean, so a check that only compared
+    // that boolean would not have been enough on its own.
+    let mut mixed_policies = [compact_board_policy(), compact_board_policy_v4()];
+    let mixed_packages = [
+        package(&mixed_policies[0], PlayDrawChoiceV1::Play),
+        package_v4(&mixed_policies[1], PlayDrawChoiceV1::Draw),
+    ];
+    let error = collect_loaded(
+        &cfg,
+        mixed_packages.each_ref(),
+        &mut mixed_policies,
+        [None, None],
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("physical seats use different runtime/feature contracts"),
+        "unexpected error: {error}"
+    );
+}
+
+/// Isolates the item-4 policy-level check itself (not the package-level one
+/// above): two policies whose own `feature_generation_v1()` differ must be
+/// rejected by `collect_loaded_inner` even when nothing about `packages` is
+/// inspected. This is the same whole-generation-equality gate exercised via
+/// `SeatRoutedBo3PlayPolicyV1::new_v1` in `learned_bo3_v1.rs`'s own tests.
+#[test]
+fn policy_level_generation_equality_rejects_a_mixed_pairing_directly() {
+    let v3 = FrozenPlayPolicyV1::training_fixture_v3();
+    let v4 = FrozenPlayPolicyV1::training_fixture_v4();
+    assert_ne!(v3.feature_generation_v1(), v4.feature_generation_v1());
 }

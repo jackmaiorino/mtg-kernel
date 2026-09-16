@@ -335,6 +335,15 @@ pub(crate) fn collect_loaded_inner(
     mut capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
 ) -> Result<Bo3CollectedMatchV1, String> {
     validate_configuration(config, packages)?;
+    // Strict whole-generation equality between the two seats, not just the
+    // per-seat wide-vs-narrow boolean below: two different wide generations
+    // (V3 and V4) both report `true` for `uses_observation_successor_v3`, so
+    // comparing only that boolean per seat would silently accept a mixed
+    // V3/V4 pairing across seats.
+    ensure(
+        policies[0].feature_generation_v1() == policies[1].feature_generation_v1(),
+        "installed BO3 gameplay differs from the behavior package",
+    )?;
     for i in 0..2 {
         ensure(
             policies[i].uses_observation_successor_v3()

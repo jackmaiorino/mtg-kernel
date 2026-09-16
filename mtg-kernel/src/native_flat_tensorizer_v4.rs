@@ -86,3 +86,95 @@ pub(crate) fn encoded_decision_view_v4(
         &t.action_ref_node_indices,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_policy_value_net_v1::{
+        NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    };
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn successor_source_and_descriptor_match_their_independent_pins() {
+        assert_eq!(
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../../python/mtg_kernel_rl/features_v7.py"))
+            ),
+            FEATURES_SOURCE_SHA256_V4
+        );
+        assert_eq!(
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!(
+                    "../../data/flat_policy_v4/feature_contract_v4.json"
+                ))
+            ),
+            FEATURE_DESCRIPTOR_SHA256_V4
+        );
+        assert_ne!(
+            FEATURE_CONTRACT_DIGEST_V4,
+            crate::native_policy_value_net_v1::FEATURE_CONTRACT_DIGEST_V1
+        );
+        assert_ne!(
+            FEATURE_ENCODING_DIGEST_V4,
+            crate::native_policy_value_net_v1::FEATURE_ENCODING_DIGEST_V1
+        );
+        // Never the same identity as the V3 generation this is additive to.
+        assert_ne!(
+            FEATURE_CONTRACT_DIGEST_V4,
+            crate::native_flat_tensorizer_v3::FEATURE_CONTRACT_DIGEST_V3
+        );
+        assert_ne!(
+            FEATURE_ENCODING_DIGEST_V4,
+            crate::native_flat_tensorizer_v3::FEATURE_ENCODING_DIGEST_V3
+        );
+    }
+
+    #[test]
+    fn frozen_feature_transfer_v4_requires_new_identity_and_preserves_shape_checks() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut tensor = NativeFlatDecisionTensorV4 {
+            common: NativeFlatDecisionTensorV2 {
+                state: vec![0.0; 219],
+                object_features: vec![0.0; 98],
+                object_card_ids: vec![1],
+                object_groups: vec![0],
+                object_node_ids: vec![0],
+                action_features: vec![0.0; 195],
+                ..Default::default()
+            },
+        };
+        let view = encoded_decision_view_v4(&tensor);
+        assert!(model.forward_v1(view).is_err());
+        let output = model.forward_feature_transfer_v4(view).unwrap();
+        assert_eq!(output.logits.len(), 1);
+        assert!(output.value.is_finite());
+        assert!(model
+            .forward_feature_transfer_v4(
+                crate::native_checkpoint_inference_v1::encoded_decision_view_v1(&tensor.common)
+            )
+            .is_err());
+        // Bit-identical to a hand-built V3-shaped forward pass over the same
+        // numeric input bits: the V4 forward differs from V3 only in which
+        // compiled schema/contract digest labels the input, never in the
+        // underlying arithmetic.
+        let v3_tensor = crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3 {
+            common: tensor.common.clone(),
+        };
+        let v3_output = model
+            .forward_feature_transfer_v3(crate::native_flat_tensorizer_v3::encoded_decision_view_v3(
+                &v3_tensor,
+            ))
+            .unwrap();
+        assert_eq!(output.logits, v3_output.logits);
+        assert_eq!(output.value, v3_output.value);
+        tensor.common.state.pop();
+        assert!(model
+            .forward_feature_transfer_v4(encoded_decision_view_v4(&tensor))
+            .is_err());
+    }
+}
