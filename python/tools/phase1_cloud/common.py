@@ -1,9 +1,11 @@
 """Small immutable package and receipt helpers. No work on import."""
 from __future__ import annotations
+from datetime import datetime
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import time
 import uuid
 
 
@@ -67,3 +69,33 @@ def relative(value):
     require(not result.is_absolute() and '..' not in result.parts and
             str(result) not in ('', '.') and '\\' not in value, 'safe relative path required')
     return result
+
+
+# ---- Funding snapshot freshness --------------------------------------------
+# Shared by prepare_volume.py and prepare_lease.py's --execute paths. Kept here
+# rather than in either module so neither must import the other (prepare_volume
+# already imports KEY_PLACEHOLDER from prepare_lease).
+FUNDING_SNAPSHOT_MAX_AGE_SECONDS = 30 * 60
+
+
+def funding_snapshot_age_seconds(snapshot, now):
+    require(isinstance(snapshot, dict) and isinstance(snapshot.get('observed_utc'), str),
+            'funding snapshot missing observed_utc')
+    try:
+        observed = datetime.fromisoformat(snapshot['observed_utc'])
+    except ValueError:
+        raise ValueError('funding snapshot observed_utc is not a valid ISO-8601 timestamp') from None
+    require(observed.tzinfo is not None, 'funding snapshot observed_utc must be timezone-aware')
+    return now - observed.timestamp()
+
+
+def require_fresh_funding_snapshot(path, now=None):
+    """Refuse to proceed without a funding snapshot read within the last
+    thirty minutes. Mirrors lease_guard.funding_status's conservative
+    freshness discipline. Never inspects or returns the API key."""
+    now = time.time() if now is None else now
+    snapshot = read(path)
+    age = funding_snapshot_age_seconds(snapshot, now)
+    require(0 <= age <= FUNDING_SNAPSHOT_MAX_AGE_SECONDS,
+            'funding snapshot is stale (older than thirty minutes) or has an invalid future timestamp')
+    return snapshot

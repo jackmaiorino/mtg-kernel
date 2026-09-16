@@ -21,12 +21,18 @@ use crate::flat_policy_v2::{
 use crate::flat_policy_v3::{
     FlatDecisionEncoderV3, FlatScoringDecisionViewV3, FlatScoringExtensionsV3,
 };
+use crate::flat_policy_v4::{FlatDecisionEncoderV4, FlatScoringExtensionsV4};
 use crate::native_checkpoint_inference_v1::encoded_decision_view_v1;
 use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 use crate::native_flat_tensorizer_v3::{
     encoded_decision_view_v3, NativeFlatDecisionTensorV3, NativeFlatTensorizerV3,
     FEATURES_SOURCE_SHA256_V3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3,
     FEATURE_ENCODING_DIGEST_V3,
+};
+#[allow(unused_imports)]
+use crate::native_flat_tensorizer_v4::{
+    NativeFlatDecisionTensorV4, NativeFlatTensorizerV4, FEATURE_CONTRACT_DIGEST_V4,
+    FEATURE_ENCODING_DIGEST_V4,
 };
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
@@ -163,6 +169,17 @@ pub struct FrozenPlayPolicyV1 {
     seat_rng: [SplitMix64; 2],
     sampling_initialized: bool,
     successor: Option<FrozenPlaySuccessorStateV3>,
+    /// Fresh-lineage (V4 contract) sibling of `successor`, independent and
+    /// additive: both fields are per-instance, runtime-dispatched, and
+    /// validated against digests from two different compiled modules
+    /// (`native_flat_tensorizer_v3::FEATURE_CONTRACT_DIGEST_V3` vs
+    /// `native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4`), so both can
+    /// coexist in the same binary and even the same `FrozenPlayPolicyV1`
+    /// instance without either affecting the other. `None` for every
+    /// checkpoint constructed today; no existing caller ever sets this to
+    /// `Some`, matching item 16's "reachable, not yet wired to any caller"
+    /// scope.
+    fresh_successor: Option<FrozenPlayFreshSuccessorStateV1>,
 }
 
 #[derive(Default)]
@@ -172,6 +189,35 @@ struct FrozenPlaySuccessorStateV3 {
     tensorizer: NativeFlatTensorizerV3,
     tensor: NativeFlatDecisionTensorV3,
     sampler: WideCategoricalScratchV1,
+}
+
+#[derive(Default)]
+struct FrozenPlayFreshSuccessorStateV1 {
+    encoder: FlatDecisionEncoderV4,
+    extensions: FlatScoringExtensionsV4,
+    tensorizer: NativeFlatTensorizerV4,
+    tensor: NativeFlatDecisionTensorV4,
+    sampler: WideCategoricalScratchV1,
+}
+
+/// Structural, not just numeric, identity gate for `fresh_successor`:
+/// callers must bind it only to `FEATURE_CONTRACT_DIGEST_V4`/
+/// `FEATURE_ENCODING_DIGEST_V4` (the fresh-lineage generation), never to
+/// `FEATURE_CONTRACT_DIGEST_V3`/`FEATURE_ENCODING_DIGEST_V3` (the frozen
+/// V3 generation) or any other generation's constants, mirroring the
+/// non-relabeling discipline `expanded_deck_training_v1.rs`'s
+/// `identity_valid`/`frozen_feature_identity_cannot_be_relabelled_as_successor`
+/// already establishes for the V1-vs-V3 pair. This is new, additive code:
+/// `identity_valid` itself is untouched.
+pub(crate) fn fresh_successor_identity_valid_v1(
+    feature_contract_digest: &str,
+    feature_encoding_digest: &str,
+) -> Result<(), String> {
+    require(
+        feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
+            && feature_encoding_digest == FEATURE_ENCODING_DIGEST_V4,
+        "fresh_successor feature identity must be the V4 fresh-lineage contract, never V3's",
+    )
 }
 
 impl FrozenPlayPolicyV1 {
@@ -264,6 +310,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -315,6 +362,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -366,6 +414,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -417,6 +466,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         };
         let installed = policy.actual_model_identity_v1();
         let PlayPolicyOriginV1::Imported(identity) = &mut policy.identity else {
@@ -585,6 +635,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: None,
+            fresh_successor: None,
         })
     }
 
@@ -641,6 +692,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -1146,6 +1198,42 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn fresh_successor_is_none_for_every_existing_checkpoint_construction_path() {
+        // `training_fixture_v3` sets the V3 `successor` to `Some`, exercising
+        // the "both fields independent" claim: a V3 successor present does
+        // not imply a fresh (V4) one.
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        assert!(policy.successor.is_some());
+        assert!(policy.fresh_successor.is_none());
+    }
+
+    #[test]
+    fn fresh_successor_identity_accepts_only_v4_never_v3() {
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V4,
+        )
+        .is_ok());
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V3,
+        )
+        .is_err());
+        // Mixed pairs (one V4, one V3) must also fail: this is a structural
+        // pair check, not two independent membership checks.
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V3,
+        )
+        .is_err());
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V4,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn phase1_collection_fork_has_private_weights_embeddings_samplers_and_rng() {
         let mut original = FrozenPlayPolicyV1::training_fixture_v3();
         let expected_identity = original.actual_model_identity_v1();
@@ -1539,6 +1627,155 @@ mod tests {
                 .map(|v| v.to_bits())
                 .collect::<Vec<_>>(),
             expected_embeddings
+        );
+    }
+
+    /// Proves the reconciliation layer, not just the raw action slice:
+    /// `score_fast_session_v1`'s V3 path (`encode_current_flat_scoring_decision_owned_v3`,
+    /// which shares `flat_policy_v2.rs`'s `build_scoring_owned_v3`) must
+    /// score a decision whose pending trigger's source has been shuffled
+    /// into its owner's library -- the same fixture the action-slice
+    /// regression tests in `rl_session/flat_action_v3.rs` use, driven all
+    /// the way through the frozen play policy's scorer instead of just the
+    /// raw action slice.
+    #[test]
+    fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source() {
+        let (mut state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        policy.reset_sampling_v1([11, 22]);
+        let scores = policy.score_fast_session_v1(&session).unwrap();
+        assert!(!scores.logits.is_empty());
+        assert!(scores.logits.iter().all(|x| x.is_finite()));
+        assert!(scores.value.is_finite());
+        let selected = policy.select_fast_session_v1(&session).unwrap();
+        assert!((selected as usize) < scores.logits.len());
+    }
+
+    /// The tensorizer-level sibling of the ordinal-collision regression in
+    /// `rl_session/flat_action_v3.rs`
+    /// (`v3_pending_trigger_hidden_source_ordinal_does_not_collide_with_real_stack_historical_rows`).
+    /// `score_fast_session_v1`'s V3 path runs the full scorer, including
+    /// `native_flat_tensorizer_v2.rs`'s `build_object_projection_v3` /
+    /// `build_object_projection_for_rows_v2`, which is what actually
+    /// enforces `(group, visible_ordinal)` uniqueness
+    /// (`NativeFlatTensorErrorV2::ObjectOrder`) across every registered
+    /// `PendingContext` row, real historical sources included -- the
+    /// action-slice test alone never reaches that check. A real spell at
+    /// stack index 0 plus two real non-spell historical rows at raw
+    /// indices 1 and 2 previously collided with a naive "count of
+    /// historical rows" ordinal for the pending-trigger row; this proves
+    /// the collision-safe ceiling
+    /// (`trigger::historical_public_source_ordinal_ceiling_v1`) avoids it.
+    #[test]
+    fn score_fast_session_v1_reconciles_a_pending_trigger_hidden_source_with_real_stack_historical_rows(
+    ) {
+        let (mut state, hunter) =
+            crate::rl_session::avenging_hunter_hidden_source_with_stack_historical_rows_state_v1();
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        policy.reset_sampling_v1([33, 44]);
+        let scores = policy.score_fast_session_v1(&session).unwrap();
+        assert!(!scores.logits.is_empty());
+        assert!(scores.logits.iter().all(|x| x.is_finite()));
+        assert!(scores.value.is_finite());
+    }
+
+    /// The registry-level proof the action-slice tests in
+    /// `rl_session/flat_action_v3.rs`
+    /// (`v3_pending_trigger_known_library_source_takes_the_ordinary_path`,
+    /// `..._graveyard_source_takes_the_ordinary_path`) cannot give: those
+    /// only inspect the action slice's own object table
+    /// (`rl_session.rs`'s `FlatActionObjectV2` rows), never
+    /// `flat_policy_v2.rs`'s model-facing registry
+    /// (`FlatDecisionEncoderV2::objects`) that
+    /// `append_pending_trigger_frozen_source_authority_v3` (layer B) could
+    /// grow with a ghost `PendingContext` row. This calls
+    /// `encode_current_flat_scoring_decision_owned_v3` directly (the same
+    /// path `score_fast_session_v1` uses) and counts the real
+    /// `buffers.objects` it publishes, before and after moving Hunter to a
+    /// known library position or to the graveyard: decision shape alone
+    /// (`Decision::ChooseTargets` for a pending trigger with a
+    /// `source_contract`) is not enough to open
+    /// `trigger::pending_trigger_choose_targets_gate_v1` -- the live
+    /// source must actually be hidden (`Zone::Library`, no
+    /// `library_knowledge` entry) -- so neither case may add a row.
+    #[test]
+    fn score_fast_session_v1_registry_object_count_is_unchanged_for_a_known_or_public_source() {
+        fn registry_object_count(state: crate::state::GameState) -> usize {
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("fixture must have an active decision");
+            };
+            let mut encoder = FlatDecisionEncoderV3::default();
+            let mut objects = Vec::new();
+            let mut relations = Vec::new();
+            let mut object_subtypes = Vec::new();
+            let mut ability_uses = Vec::new();
+            let mut goads = Vec::new();
+            let mut completed_dungeons = Vec::new();
+            let mut effect_subtype_changes = Vec::new();
+            let mut context_path_elements = Vec::new();
+            let mut actions = Vec::new();
+            let mut action_refs = Vec::new();
+            session
+                .encode_current_flat_scoring_decision_owned_v3(
+                    expected,
+                    &mut encoder,
+                    &mut FlatScoringOwnedBuffersV2 {
+                        objects: &mut objects,
+                        relations: &mut relations,
+                        object_subtypes: &mut object_subtypes,
+                        ability_uses: &mut ability_uses,
+                        goads: &mut goads,
+                        completed_dungeons: &mut completed_dungeons,
+                        effect_subtype_changes: &mut effect_subtype_changes,
+                        context_path_elements: &mut context_path_elements,
+                        actions: &mut actions,
+                        action_refs: &mut action_refs,
+                    },
+                )
+                .unwrap();
+            objects.len()
+        }
+
+        let (baseline_state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        let baseline_count = registry_object_count(baseline_state.clone());
+
+        let mut known_state = baseline_state.clone();
+        crate::rl_session::move_trigger_source_to_known_library_v1(
+            &mut known_state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        assert_eq!(
+            registry_object_count(known_state),
+            baseline_count,
+            "a known library source must not grow the registry with a ghost PendingContext row"
+        );
+
+        let mut graveyard_state = baseline_state;
+        crate::rl_session::move_trigger_source_to_graveyard_v1(
+            &mut graveyard_state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        assert_eq!(
+            registry_object_count(graveyard_state),
+            baseline_count,
+            "a graveyard source must not grow the registry with a ghost PendingContext row"
         );
     }
 

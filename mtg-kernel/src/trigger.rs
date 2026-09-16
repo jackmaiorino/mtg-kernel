@@ -2181,6 +2181,164 @@ pub fn order_apnap(triggers: Vec<PendingTrigger>, active_player: PlayerId) -> Ve
     active
 }
 
+/// An `actor_visible_ordinal`/registry `visible_ordinal` value that is
+/// provably greater than any ordinal a *real* `HistoricalPublicSource` row
+/// can carry for this exact state, on both the action side
+/// (`rl_session/flat_action_v3.rs`'s `extension_object`, which assigns a
+/// `PendingEffect`-context row the position of its entry within
+/// `PolicyObservationExtensionsV6::historical_public_sources`, 0-based) and
+/// the registry side (`flat_policy_v2.rs`'s `register_extensions_v3`,
+/// which assigns `add_validated_historical_source_v3` the row's *raw*
+/// `Stack { stack_index }` -- up to `state.stack.len() - 1`, with possible
+/// gaps wherever an intervening item is a spell -- or, for the single
+/// `PendingEffect` row, `state.stack.len()` itself).
+///
+/// The real ordinals used by either mechanism therefore never exceed
+/// `state.stack.len()`; `1 + state.stack.len()` is strictly greater than
+/// every one of them regardless of stack shape (how many real rows exist,
+/// which raw stack indices they occupy, or whether a `PendingEffect` row
+/// is present), so a pending-trigger-derived row built from it can never
+/// collide -- neither in the registry's own `(group, visible_ordinal)`
+/// uniqueness the tensorizer enforces
+/// (`native_flat_tensorizer_v2.rs`'s `build_object_projection_for_rows_v2`,
+/// `NativeFlatTensorErrorV2::ObjectOrder`) nor in the action-side
+/// `v3_action_objects` authority match. This is a safe upper bound, not an
+/// attempt to reproduce `rl.rs`'s `policy_observation_extensions_v6` row
+/// count: it does not need to match the real ordinal namespace, only to
+/// stay outside it.
+pub(crate) fn historical_public_source_ordinal_ceiling_v1(
+    state: &crate::state::GameState,
+) -> Option<u32> {
+    u32::try_from(state.stack.len()).ok()?.checked_add(1)
+}
+
+/// V4 fresh-lineage helper, additive beside [`pending_trigger_choose_targets_gate_v1`]
+/// (which stays exactly as committed for the V3/frozen path). Factors out
+/// only the *hiddenness* half of that gate's predicate -- the trigger's live
+/// `source` sits in `Zone::Library` and carries no
+/// `state.library_knowledge` entry for its exact live incarnation, from the
+/// perspective of `pending.controller` observing `pending.source`'s owner's
+/// library -- without the ChooseTargets-only decision-shape constraints
+/// (`pending_triggers[0]`, `target_spec`/`targets` length, APNAP group
+/// ordering). The V7 observation-extensions producer
+/// (`policy_observation_v7::policy_observation_extensions_v7`) and the V4
+/// action-slice component resolver (`rl_session::flat_action_v4`) both call
+/// this instead of re-deriving the check, so the two layers cannot
+/// independently drift, mirroring how both V3 layers already share
+/// [`pending_trigger_choose_targets_gate_v1`] itself.
+///
+/// Returns `false` (never hidden) when `pending.source` is not a live
+/// object at all -- a defensive default, not a case any real caller should
+/// ever hit for a `PendingTrigger` still present in `state.engine.pending_triggers`.
+pub(crate) fn pending_trigger_hidden_source_v1(
+    state: &crate::state::GameState,
+    pending: &PendingTrigger,
+) -> bool {
+    let Some(live) = state.objects.try_get(pending.source) else {
+        return false;
+    };
+    if live.zone != Zone::Library {
+        return false;
+    }
+    !state.library_knowledge[pending.controller.index()][live.owner.index()]
+        .iter()
+        .any(|entry| {
+            entry.object == pending.source && entry.zone_change_count == live.zone_change_count
+        })
+}
+
+/// Whether the currently active decision is `Decision::ChooseTargets` for
+/// `pending_triggers[0]` (`engine.rs`'s `drain_pending_triggers_or_decide`
+/// never surfaces that decision for any other pending trigger), and, if
+/// so, that trigger's live `source`, its frozen `source_contract`
+/// (`PendingTrigger::source_contract` -- the identity
+/// `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`, `effect.rs`, leaves
+/// behind once the live object has moved into its owner's library), and
+/// the exact ordinal a `HistoricalPublicSource`-tagged reference to it
+/// must carry: [`historical_public_source_ordinal_ceiling_v1`] (an ordinal
+/// no real historical row can ever carry, for any stack shape) plus this
+/// trigger's own position in `pending_triggers` (always `0` today, since
+/// only `pending_triggers[0]` can ever reach this gate, but named
+/// explicitly so a second simultaneous, equally-hidden trigger could not
+/// silently collide with the first if a future change ever let this gate
+/// consider a later position).
+///
+/// This is the single gate predicate shared by the V3 action-slice
+/// encoder (`rl_session.rs`'s `flat_visible_action_object_components_v1`,
+/// layer A, which describes the hidden reference using the returned
+/// contract and ordinal) and the V3 scoring reconciliation
+/// (`flat_policy_v2.rs`'s
+/// `append_pending_trigger_frozen_source_authority_v3`, layer B, which
+/// registers and authorizes that description against the registry). Both
+/// call this helper instead of re-deriving the gate or the ordinal
+/// themselves, so the two layers cannot independently drift.
+///
+/// Returns `None` when there is no pending trigger, when the leading
+/// same-controller group still needs `Decision::OrderTriggers` instead
+/// (2+ pending triggers, not yet placement-ordered), when
+/// `pending_triggers[0]` already has enough targets (so whatever decision
+/// is active, it is not this one), when that trigger lost its
+/// `source_contract`, or -- critically -- when the trigger's live source
+/// is not actually hidden: its live object must be in `Zone::Library`
+/// *and* `state.library_knowledge[controller][owner]` must carry no entry
+/// for its exact live incarnation. Decision shape alone (a `ChooseTargets`
+/// for `pending_triggers[0]` with a `source_contract`) is not enough --
+/// every pending trigger with any targeted effect carries a
+/// `source_contract` (`PendingTrigger::source_contract`'s doc), including
+/// ordinary triggers whose source never left the battlefield and
+/// leaves-the-battlefield triggers whose frozen contract deliberately
+/// freezes the *departure* zone/generation (`trigger.rs`'s
+/// `uses_leave_lki` triggers capture `zone: from` and `zone_change_count:
+/// live - 1`) even though the source is now public in the graveyard. Only
+/// `pending_triggers[0]` is ever considered, so no previously-succeeding
+/// decision -- an `OrderTriggers` decision, a `ChooseTargets` for a
+/// trigger whose source is still visible on the battlefield or in the
+/// graveyard, or a `ChooseTargets` for a trigger whose source is in the
+/// library but already known to its controller through
+/// `library_knowledge` -- can gain a row through this gate.
+pub(crate) fn pending_trigger_choose_targets_gate_v1(
+    state: &crate::state::GameState,
+) -> Option<(crate::ids::ObjectId, AbilitySourceContractV4, u32)> {
+    let pending_triggers = &state.engine.pending_triggers;
+    let first = pending_triggers.first()?;
+    let controller = first.controller;
+    let group_len = pending_triggers
+        .iter()
+        .take_while(|trigger| trigger.controller == controller)
+        .count();
+    let group_is_ordered = pending_triggers[..group_len]
+        .iter()
+        .all(|trigger| trigger.placement_ordered);
+    if group_len >= 2 && !group_is_ordered {
+        // `Decision::OrderTriggers` is active instead, not `ChooseTargets`.
+        return None;
+    }
+    let trigger_position: u32 = 0;
+    let pending = &pending_triggers[0];
+    let need = crate::engine::target_count(pending.target_spec);
+    if pending.targets.len() >= usize::from(need) {
+        return None;
+    }
+    let contract = pending.source_contract?;
+    let live = state.objects.try_get(pending.source)?;
+    if live.zone != Zone::Library {
+        // Resolvable through the ordinary path (battlefield, graveyard,
+        // exile, stack, or a revealed hand) -- not this gate's business.
+        return None;
+    }
+    let known = state.library_knowledge[pending.controller.index()][live.owner.index()]
+        .iter()
+        .any(|entry| entry.object == pending.source && entry.zone_change_count == live.zone_change_count);
+    if known {
+        // In the library, but the controller already knows exactly where
+        // -- the ordinary `KnownSelfLibrary`/`KnownOpponentLibrary` path
+        // resolves it without help.
+        return None;
+    }
+    let ordinal = historical_public_source_ordinal_ceiling_v1(state)?.checked_add(trigger_position)?;
+    Some((pending.source, contract, ordinal))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

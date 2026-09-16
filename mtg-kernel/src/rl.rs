@@ -1636,7 +1636,7 @@ fn build_observation_v2(
         ],
         exile: public_cards_v2(state, &state.exile, text_mode)?,
         stack: stack_public_v2(state, acting_player)?,
-        combat: combat_public_v2(state)?,
+        combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_public_v2(state, acting_player)?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
@@ -4908,6 +4908,44 @@ fn visible_card_ref(
     }
 }
 
+/// Mirrors `register_objects`' (`flat_policy_v2.rs`) actual model-row
+/// membership rule, which `visible_card_ref` above does not: that registry
+/// also admits an opponent's hand card through `known_hand_cards_v4`
+/// (`state.known_hand_cards`, populated by `state.reveal_hand_card`) when
+/// this exact incarnation was previously revealed to `acting_player` and is
+/// still sitting in that same hand. `visible_card_ref` treats every
+/// opponent-hand object as unresolvable -- correct for
+/// `object_relations_public_v4` (an attachment or an exile link never
+/// originates from a revealed-hand card), but not a faithful membership
+/// check for combat residue, where a bounced-and-revealed blocker is a real
+/// case the registry already resolves. Used by `combat_public_v2` only.
+fn combat_participant_visible_v2(
+    state: &GameState,
+    id: ObjectId,
+    acting_player: PlayerId,
+) -> Result<bool> {
+    let object = state
+        .objects
+        .try_get(id)
+        .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    if !object_is_live_in_zone_index(state, id)? {
+        return Ok(false);
+    }
+    Ok(match object.zone {
+        Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command => true,
+        Zone::Hand => {
+            object.owner == acting_player
+                || state
+                    .known_hand_cards(acting_player, object.owner)
+                    .iter()
+                    .any(|entry| {
+                        entry.object == id && entry.zone_change_count == object.zone_change_count
+                    })
+        }
+        Zone::Library => false,
+    })
+}
+
 fn visible_card_refs(
     state: &GameState,
     ids: &[ObjectId],
@@ -5243,18 +5281,33 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
     }
 }
 
-fn combat_public_v2(state: &GameState) -> Result<CombatStatePublicV2> {
+/// Combat is retained verbatim from the turn's declare-attackers/-blockers
+/// steps until the next `Step::BeginCombat` (`CombatState` doc comment,
+/// `engine.rs`), so this residue is still being reported well after the
+/// combat phase ends -- including after a participant has left every
+/// zone `register_objects` (`flat_policy_v2.rs`) can register an object
+/// from. `object_is_live_in_zone_index` only asks whether the id still
+/// resolves to *some* zone slot, not whether that zone is one the registry
+/// can ever contain, so a stale reference into an unregistered zone reached
+/// the V3 encoder as `InvalidReference`. `combat_participant_visible_v2` is
+/// the exact registry-membership check (including a revealed opponent-hand
+/// incarnation); reuse it here so combat residue drops a participant the
+/// instant it becomes unresolvable, the same way an already-filtered
+/// dead/replaced id is dropped below.
+fn combat_public_v2(state: &GameState, acting_player: PlayerId) -> Result<CombatStatePublicV2> {
     let live_attackers = state
         .engine
         .combat
         .attackers
         .iter()
         .copied()
-        .filter_map(|id| match object_is_live_in_zone_index(state, id) {
-            Ok(true) => Some(Ok(id)),
-            Ok(false) => None,
-            Err(err) => Some(Err(err)),
-        })
+        .filter_map(
+            |id| match combat_participant_visible_v2(state, id, acting_player) {
+                Ok(true) => Some(Ok(id)),
+                Ok(false) => None,
+                Err(err) => Some(Err(err)),
+            },
+        )
         .collect::<Result<Vec<_>>>()?;
     Ok(CombatStatePublicV2 {
         attackers_declared: state.engine.combat.attackers_declared,
@@ -5275,11 +5328,13 @@ fn combat_public_v2(state: &GameState) -> Result<CombatStatePublicV2> {
                     blockers
                         .iter()
                         .copied()
-                        .filter_map(|id| match object_is_live_in_zone_index(state, id) {
-                            Ok(true) => Some(card_ref(state, id)),
-                            Ok(false) => None,
-                            Err(err) => Some(Err(err)),
-                        })
+                        .filter_map(
+                            |id| match combat_participant_visible_v2(state, id, acting_player) {
+                                Ok(true) => Some(card_ref(state, id)),
+                                Ok(false) => None,
+                                Err(err) => Some(Err(err)),
+                            },
+                        )
                         .collect::<Result<Vec<_>>>()?,
                 ))
             })

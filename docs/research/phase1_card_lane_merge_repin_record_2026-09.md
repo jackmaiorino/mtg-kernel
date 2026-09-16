@@ -284,3 +284,148 @@ confirmed by direct source inspection, not assumed:
 Consequently, this task's re-pins of these two goldens will **not** need to move again on the
 next commit for tree-hash reasons; they will only move again if `data/cards_v1.json` (the card
 catalog) changes again.
+
+## Addendum: merging the Phase 1 branch tip forward (2026-09-16)
+
+A second task merged the Phase 1 branch tip, `codex/learned-sideboarding-integration-v1` at
+`7dc364d7`, into this same branch (`lead/phase1-card-lane-merge-v1`, worktree
+`E:/mtg-kernel-phase1-cards-merge`), starting from this doc's own HEAD `b6b916f0`, so the card
+wave can later fast-forward into Phase 1. Merge base: `2d8d564c`.
+
+### Conflicts and resolution
+
+`git merge codex/learned-sideboarding-integration-v1` produced exactly one textual conflict,
+`data/flat_policy_v2/goldens_v2.json`, both sides having independently regenerated
+`payload_sha256` (ours `59c0b96d...` for this branch's own re-pin work, theirs
+`6da80043...` for their own unrelated V3/V4 additions). `feature_inventory_v2.json` auto-merged
+cleanly (the two sides' edits landed on non-overlapping lines). Resolved by keeping HEAD's value
+verbatim as a placeholder, then regenerating both files with
+`python/tools/generate_flat_policy_v2_goldens.py` (no `--check`) once the merge's other 37 files
+were staged, so the payload hash reflects the merged `flat_policy_v1.rs`/`flat_policy_v2.rs`
+bytes and the merged catalog. `python/tools/generate_flat_policy_v1_goldens.py --check` was run
+first and reported clean (`flat_policy_v1.rs` is untouched by the Phase 1 branch, so no v1
+regeneration was needed). Both generators report clean (`--check`, exit 0) after regeneration.
+No conflicts appeared in `rl_session.rs`, `trigger.rs`, or any other source file: `git diff
+--diff-filter=U` was empty after the one resolution above, and a source-tree grep for leftover
+`<<<<<<<`/`=======`/`>>>>>>>` markers found none. `rl_session.rs` carries 889 lines of diff on
+the source branch relative to the merge base and this branch's own prior re-pin diff relative to
+the same base; both landed on non-overlapping lines and merged automatically, confirmed correct
+by the module's own test run below (99/99 passing).
+
+### `repin_card_db_identity_v1.py --check`
+
+Clean after building the merged crate (`cargo build --offline --locked --jobs 4 -p mtg-kernel`,
+`MTG_KERNEL_CARGO_TARGET_DIR=E:\cargo-target-phase1-merge`): `card_db_hash 064a7c989255ab3c`,
+matching this branch's already-finalised identity. The tool's own report lists
+`native_training_store_run_v2.rs`'s `FROZEN_CARD_DB_HASH_U64_HEX_V2` and
+`FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1` as stale, annotated "not rewritten (Task 3 owns
+re-pinning it)" -- these are the main-tree-only design canary sites, expected and unchanged by
+this task.
+
+### `--lib` test sweep: every module covered, per-module counts
+
+Ran in four grouped `cargo test --offline --locked --jobs 4 -p mtg-kernel --lib -- <mod1>::
+<mod2>:: ... --test-threads=N` invocations (multiple `module::` filters after `--` are OR'd by
+the libtest harness), covering all 2,106 tests `--lib -- --list` reports (cross-checked
+name-for-name against the combined logs; the five apparent gaps found by an early substring-only
+cross-check were `#[should_panic]` tests, whose result line reads `test <name> - should panic
+... ok` and simply didn't match that first regex -- confirmed present and green in the raw
+logs). `policy_observation_v7` (new this merge) carries zero `#[test]` functions, confirmed by
+direct inspection; nothing to run there.
+
+| Group | Modules | Result |
+|---|---|---:|
+| Priority (Phase 1-changed) | `rl_session`, `flat_policy_v2`, `flat_policy_v3`, `flat_policy_v4`, `policy_observation_v6`, `trigger`, `sideboard_play_policy_v1`, `learned_sideboard_v1`, `phase1_w8a_live_swap_self_play_v1`, `bo3_session`, `fast_sampler`, `expanded_deck_training_v1`, `phase1_registry_transfer_v1` | 257 passed, 0 failed, 4 ignored |
+| Chunk 00 (debug, `--test-threads=4`) | 33 modules incl. `card_def`, `engine`, `flat_policy_v1`, `human_bo3_v1`, `model_guided_search_*` | 628 passed, 0 failed, 9 ignored |
+| Chunk 01 (debug, `--test-threads=4`) | 24 modules incl. `native_checkpoint_inference_v1`, `native_checkpoint_runner_v1`, `native_trainer_v1` (schedule-only at this point), `phase1_agent_v1` family | 445 passed, **1 failed** (see below), 21 ignored |
+| Remaining (release, `--test-threads=4`) | 52 modules: the rest of chunk 02/03 plus `native_trainer_v1`, `native_science_loop_v1` | 727 passed, **1 failed** (known canary), 15 ignored |
+
+Grand total across all four groups: 2,057 passed, 2 failed, 49 ignored (2,106 accounted for).
+Per-module pass/ignored/failed breakdowns for every one of the ~120 modules were computed from
+the raw logs and match this table's group totals exactly (a handful of modules' raw `grep`
+counts were inflated by cargo's own "has been running for over 60 seconds" watchdog line
+repeating a test's full path -- confirmed benign by inspecting the raw lines; the harness's own
+`test result:` summary line is authoritative and was used for every total above).
+
+**Debug-mode slowdown, not a hang or lock contention.** Chunks 00-01 and the priority group ran
+fine in debug mode. Chunk 02 (`native_trainer_v1`, `native_science_loop_v1`,
+`native_training_store_checkpoint_v3`, and others) stalled for 30+ minutes under debug with
+`--test-threads=4`, then stalled again single-threaded on individual tests (confirmed by
+`Get-Process` CPU-time deltas matching wall-clock elapsed almost exactly the whole time --
+continuously and legitimately computing, not deadlocked or idle). Rather than continue paying
+that cost, the crate and its tests were rebuilt with `cargo build --release` (17 minutes,
+one-time) and the remaining 52 modules re-run under `--release --test-threads=4`: 295 seconds
+total, 727 passed, 1 failed (the known canary), 0 hangs. This was a build-profile choice made
+under the standing time-efficiency authorization, not a correctness change; released and debug
+binaries were never mixed within one comparison (every module's pass/fail read from a single
+consistent run).
+
+### The one non-canary failure: pre-existing on the source branch, not caused by this merge
+
+`native_checkpoint_inference_v1::checkpoint_reliance_probe_v1::action_block_gradient_diagnostic_v1::joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1`
+failed on the merged tree:
+
+```
+left:  "ba4b3568f7d93f9485b2a6cb4a00f71372f99f912ae3bb1c41aee31a65ab7c59"
+right: "9a19af3bb5dadbbedce5648443c7ab4a7163e389ff7cfff7559f67fdedc452c9"
+```
+
+`right` is exactly this doc's own catalog-identity re-pin from the first task (the row for this
+test in the audit table above), still green on this branch's pre-merge HEAD `b6b916f0`. Per this
+task's brief, a catalog-identity literal is only eligible for re-pinning when the failure is in
+code the Phase 1 side *added*; this file
+(`action_block_gradient_diagnostic_v1.rs`) is pre-existing, not new, so this failure was
+investigated rather than re-pinned:
+
+- Every input and transitive dependency of this test's fixture (`joined_fixture_v1`,
+  `join_rollout_v1`, `frame_joined_tape_v1`, `envelope_probe_receipt_for_test_v2`,
+  `zero_learner_envelope_probe_receipt_for_test_v2`, `validate_start_v2`, `envelope_sha256_v2`,
+  `runtime_deck_by_id`, `ladder_pool_member_for_episode_v1`,
+  `native_trainer_episode_schedule_v1`, `derive_native_trainer_learner_action_seed_v1`,
+  `selected_log_softmax`, `synthetic_action_tensor_v1`, `PreflightSeed949999AuthorityV1`) lives
+  either in this same unchanged file or in `native_full_episode_trajectory_v2.rs`,
+  `native_ladder_opponent_v1.rs`, `native_trainer_schedule_v1.rs`,
+  `native_policy_train_step_v1.rs`, `runtime_decks.rs`,
+  `checkpoint_reliance_probe_v1/action_ingress_admission_v2.rs`, `rl_session.rs` (type aliases
+  only, unchanged shape) -- every one of these files, `data/cards_v1.json`,
+  `data/runtime_decks_v1.json`, `Cargo.lock`, and `mtg-kernel/build.rs` is confirmed
+  byte-identical between the merge base `2d8d564c` and the source branch tip `7dc364d7`
+  (`git diff --stat`, empty). The fixture is fully synthetic (fixed seeds and a hard-coded
+  `[0x3c; 32]` inner digest), not a live gameplay rollout, so trigger.rs/rl.rs/engine.rs changes
+  elsewhere cannot reach it through this call graph.
+- Direct diagnostic: a disposable detached worktree (`git worktree add --detach
+  E:/tmp/lead/diag-codex-branch 7dc364d7`, its own scratch `CARGO_TARGET_DIR`) ran this exact
+  test, in isolation, on the **unmerged source branch alone**. It also failed, against its own
+  inherited (pre-catalog-move) pin `ae853cabe8cb...`, computing a **third** distinct value
+  (`cd71f6a0ed8b1f515ffaf4c1ef6fa10a195804f7b8b60602afa11cd71a1d7bb6`, matching neither this
+  branch's pin nor the merged-tree value). This proves the golden is already stale on
+  `codex/learned-sideboarding-integration-v1` by itself, independent of this merge or the card
+  catalog; the merged-tree value differs again only because the merge additionally carries this
+  branch's own catalog move. The diagnostic worktree and its scratch target dir were removed
+  after use.
+- The two new Phase 1 docs added by this merge (`docs/PHASE1-W8A-LIVE-SWAP-MATCH.md`,
+  `docs/research/phase1_v3_contract_frozen_pins_2026-09.md`) do not mention this test, so it is
+  not a documented, already-accepted gap on the Phase 1 side either.
+
+Per this task's explicit instruction, a failure that is not a catalog-identity literal in
+Phase-1-added code is left unpinned and reported rather than silently re-pinned. **No re-pin was
+made for this test.** It should be reported to whoever owns the Phase 1 branch's own test health
+(likely Codex/the Phase 1 lead) as a pre-existing, undocumented golden drift in
+`action_block_gradient_diagnostic_v1.rs`, unrelated to the card lane.
+
+### Python suites
+
+`PYTHONPATH=<worktree>/python;<worktree>/python/tests python -B -m pytest
+python/tests/test_features_v6.py python/tests/test_features_v7.py -q`: 29 passed, 11 subtests
+passed, 0 failed. `python -B -m unittest discover -s python/tools/phase1_cloud -p "test_*.py"`
+(21 files): `Ran 294 tests ... OK (skipped=12)`.
+
+### No re-pins were needed
+
+Unlike the first task, this merge produced no new catalog-identity literal drift: the only two
+`--lib` failures are the pre-existing main-tree-only design canary
+(`native_training_store_run_v2::tests::current_frozen_literal_matches_the_live_build_constant`,
+explicitly accepted by this task's brief) and the pre-existing, unrelated golden drift on the
+source branch documented above. Nothing in this addendum required editing a frozen literal, so
+there is no separate re-pin commit for this task; the merge commit carries only the merge
+resolution (the two regenerated `flat_policy_v2` files) and this addendum.

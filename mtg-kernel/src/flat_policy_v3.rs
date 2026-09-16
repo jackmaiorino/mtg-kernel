@@ -328,6 +328,124 @@ mod tests {
         }
     }
 
+    /// Regression test for the panel-stopping crash: a formal five-deck BO3
+    /// evaluator run hit `StaleEnvironmentBinding: frozen sideboard play
+    /// policy: V3 actor-visible encoding: InvalidReference` on a decision
+    /// with no pending cast, discard, or stack item at all -- the reference
+    /// that failed to resolve came from `combat` residue instead.
+    ///
+    /// `state.engine.combat` is only reset at the next `Step::BeginCombat`
+    /// (see the `CombatState` doc comment in `engine.rs`: "This turn's
+    /// combat. Reset at every `Step::BeginCombat`."), so it keeps reporting
+    /// the last combat's attackers/blockers all the way through the rest of
+    /// that combat phase, both main phases, both end steps, and the whole of
+    /// the next turn up to its own `BeginCombat`. `combat_public_v2`
+    /// (`rl.rs`) used to re-derive each participant's *current* zone with
+    /// `object_is_live_in_zone_index`, which only asks whether the id still
+    /// resolves to some zone slot -- not whether that zone is one the V3
+    /// object registry (`register_objects`/`resolve_live` in
+    /// `flat_policy_v2.rs`) can ever contain. A blocker that had since been
+    /// shuffled into its owner's library (a hidden zone, never registered)
+    /// therefore reached the encoder as an unresolvable stable reference.
+    ///
+    /// Also covers the fix's own equivalence requirement: the registry
+    /// additionally admits an opponent's hand card once it has been
+    /// revealed to the acting player (`known_hand_cards_v4`), so the
+    /// combat-participant gate must keep that case resolvable (own hand,
+    /// and a revealed opponent-hand incarnation) while only dropping the
+    /// truly unresolvable ones (library, unrevealed opponent hand).
+    #[test]
+    fn stale_combat_residue_pointing_at_a_hidden_zone_does_not_break_v3_scoring() {
+        use crate::event::{self, ProposedEvent};
+        use crate::ids::PlayerId;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Zone;
+
+        let mut state = ready_state();
+        // Build the stale residue directly rather than playing out a whole
+        // combat: the code under test only looks at `state.engine.combat`
+        // and each named object's current zone, so this reproduces exactly
+        // what a real post-combat, hidden-zone-bound decision presents.
+        let attacker = put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Battlefield);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(attacker, Zone::Graveyard));
+        let blocker_visible = put(&mut state, PlayerId::P0, "Tolarian Terror", Zone::Battlefield);
+        let blocker_hidden = put(&mut state, PlayerId::P0, "Tolarian Terror", Zone::Battlefield);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(blocker_hidden, Zone::Library),
+        );
+        // The registry (`register_objects`, `flat_policy_v2.rs`) also admits
+        // an opponent's hand card through `known_hand_cards_v4` when this
+        // exact incarnation was previously revealed to the acting player
+        // (`state.reveal_hand_card`) and is still sitting in that hand. The
+        // combat-participant gate must match that exactly: the acting
+        // player's own hand is always visible, the opponent's hand only
+        // when revealed, never otherwise.
+        let blocker_own_hand = put(&mut state, PlayerId::P0, "Tolarian Terror", Zone::Hand);
+        let blocker_opp_hand_unrevealed =
+            put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Hand);
+        let blocker_opp_hand_revealed = put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Hand);
+        state
+            .reveal_hand_card(PlayerId::P0, PlayerId::P1, blocker_opp_hand_revealed)
+            .unwrap();
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![attacker];
+        state.engine.combat.blocked_by = vec![(
+            attacker,
+            vec![
+                blocker_visible,
+                blocker_hidden,
+                blocker_own_hand,
+                blocker_opp_hand_unrevealed,
+                blocker_opp_hand_revealed,
+            ],
+        )];
+
+        // The projection itself must silently drop the now-hidden blockers
+        // (the same treatment a truly-gone id already got) rather than hand
+        // the encoder a reference it can never resolve, while keeping every
+        // blocker the registry can actually resolve -- including the
+        // revealed opponent-hand incarnation, which must not regress just
+        // because the library-bound case now gets dropped.
+        let observation = crate::rl::observe_policy_v6(
+            &state,
+            &crate::policy_surface_v5::PolicySurfaceV5::new(),
+            PlayerId::P0,
+            0,
+            0,
+            0,
+            1,
+        )
+        .unwrap();
+        let combat = &observation.projection.surface.combat;
+        assert_eq!(combat.ordered_attackers.len(), 1, "dead attacker stays visible in its graveyard");
+        assert_eq!(combat.attacker_to_ordered_blockers.len(), 1);
+        let (_, blockers) = &combat.attacker_to_ordered_blockers[0];
+        assert_eq!(
+            blockers.iter().map(|b| b.arena_id).collect::<Vec<_>>(),
+            vec![
+                blocker_visible.0,
+                blocker_own_hand.0,
+                blocker_opp_hand_revealed.0,
+            ],
+            "library-bound and unrevealed-opponent-hand blockers must be dropped; \
+             battlefield, own-hand, and revealed-opponent-hand blockers must survive"
+        );
+
+        // End-to-end: this exact fixture used to panic V3 scoring encode
+        // with `InvalidReference` once the dropped-here reference reached
+        // `resolve_live`. `OwnedScoringV3::encode` unwraps internally, so a
+        // regression here fails this test with that same error.
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        assert!(matches!(
+            session.current_response(),
+            FastActorResponseV1::Decision(_)
+        ));
+        let mut owned = OwnedScoringV3::default();
+        let _ = owned.encode(&session);
+    }
+
     fn escape_prefix_states() -> Vec<(String, GameState)> {
         let (mut state, _, picks) = escape_prefix_state();
         let mut states = Vec::new();

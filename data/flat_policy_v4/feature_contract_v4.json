@@ -1,0 +1,49 @@
+{
+  "dimensions": {
+    "action": 195,
+    "action_ref": 25,
+    "edge": 41,
+    "object": 98,
+    "object_groups": 20,
+    "state": 219
+  },
+  "encoding": {
+    "chosen_creature_cost": "controller-only-pending-selected-zone-and-exact-visible-stack-paid-reference-with-refreshed-power-lki-in-canonical-state-hash-no-new-numeric-columns",
+    "combat_legal_mask": "current-eligible-attacker-with-visible-active-goad-requires-include-only-at-every-prefix-otherwise-exclude-include",
+    "empty_extensions": "always-include-required-null-and-empty-fields-in-v7-state-hash",
+    "extension_edge_order": "cost-source-then-selected-then-search-cards-then-historical-sources-after-v5-edges",
+    "historical_nodes": "reuse-exact-frozen-facts-else-pending-context-without-claiming-live-arena-controller-only-snapshot-divergence",
+    "historical_sources": "exact-stack-pending-effect-or-pending-trigger-context-binding-not-json-provenance-authentication",
+    "historical_targets": "validated-public-stack-targets-may-retain-battlefield-stack-or-graveyard-provenance-never-hidden-zones",
+    "new_cost_category": "ChooseCreatureOrRevealCreature-is-explicit-semantic-category-with-zero-legacy11-onehot-and-distinct-full-string-action-hash",
+    "new_node_order": "all-common-nodes-including-legacy-detached-context-then-new-search-then-new-history",
+    "object_cost": "declared-cast-method-and-original-zone-prefix-in-state-hash-and-pending-edges",
+    "search_actions": "supplied-actions-follow-canonical-visible-target-order-no-silent-action-reordering",
+    "search_cards": "actor-only-unordered-visible-multiset-no-library-position-no-operational-id-order",
+    "search_copy_roles": "within-public-class-selected-prefix-index-before-unselected-no-id-derived-role-order",
+    "search_objects": "reuse-visible-node-else-private-context-private-source-shared-visible-class-ordinal",
+    "ward_absence": "omit-absent-pending-and-empty-queued-members-to-preserve-revision2-nonward-canonical-bytes-and-all-tensors",
+    "ward_edges": "after-history-edges-pending36-then-queued37-from-ward-source-to-targeter-source-primary-targeter-stack-index-associated-trigger-stack-index-or-zero-for-pending-extra-relative-payer3-and-generic-div32",
+    "ward_payment": "pending-and-queued-public-stack-instance-bindings-with-payer-and-generic-cost-no-arena-identities"
+  },
+  "extension_edge_subroles": {
+    "cost_selected": 33,
+    "cost_source": 32,
+    "historical_source": 35,
+    "pending_ward_payment": 36,
+    "queued_ward_payment": 37,
+    "search_card": 34
+  },
+  "feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b",
+  "feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de",
+  "feature_registry_version": "rust-observation-v7-action-v5-registry-1",
+  "feature_schema_version": "actor-relative-v7-python-1",
+  "features_source_path": "python/mtg_kernel_rl/features_v7.py",
+  "features_source_sha256": "73640fb49a1bb0b2e7e2ab115324cf01ec504d5f4d255c3f700c84c169324777",
+  "legal_action_schema": 5,
+  "model_contract_version": "kernel-policy-value-net-9",
+  "provenance_boundary": "Python validates internal consistency; authoritative Rust production validates actual public history and hidden-state scope.",
+  "rich_observation_schema": 7,
+  "schema": "flat-policy-v4-feature-contract-4",
+  "transfer": "Existing Net8 weights require explicitly labeled feature transfer. Shape equality is not unchanged checkpoint identity or competence evidence."
+}

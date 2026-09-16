@@ -3949,6 +3949,78 @@ impl FlatDecisionEncoderV2 {
         Ok(output)
     }
 
+    /// Layer B of the pending-trigger-hidden-source reconciliation
+    /// (`trigger::pending_trigger_choose_targets_gate_v1` is the shared
+    /// gate; `rl_session.rs`'s `flat_visible_action_object_components_v1`
+    /// is layer A). When the gate is open, registers the trigger's frozen
+    /// source as an ordinary `HistoricalPublicSource` row via
+    /// `add_validated_historical_source_v3` -- the exact same registration
+    /// path `register_extensions_v3` already uses for a resolving effect's
+    /// or a non-spell stack item's historical source, reusing its existing
+    /// group instead of adding a new discriminant -- and appends the
+    /// matching `v3_action_objects` authority entry so
+    /// `validate_cached_tables` accepts layer A's action object.
+    ///
+    /// The gate closes for every decision except `Decision::ChooseTargets`
+    /// on `pending_triggers[0]`, so no other decision (in particular
+    /// `Decision::OrderTriggers`) ever gains a row here. Entries are only
+    /// appended to whatever `register_extensions_v3` already produced,
+    /// never replacing or reordering them, so no previously-succeeding
+    /// decision's encoding can change.
+    fn append_pending_trigger_frozen_source_authority_v3(
+        &mut self,
+        state: &crate::state::GameState,
+        actor: PlayerSeatV1,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let Some((source, contract, ordinal)) =
+            crate::trigger::pending_trigger_choose_targets_gate_v1(state)
+        else {
+            return Ok(());
+        };
+        let stable = CardStableRefV1 {
+            arena_id: source.0,
+            card_db_id: contract.card_def,
+            owner: contract.owner.into(),
+            controller: contract.controller.into(),
+            zone: contract.zone,
+            zone_change_count: contract.zone_change_count,
+        };
+        // Deliberately NOT `output.appended_object_indices.push(model_index)`
+        // the way `register_extensions_v3`'s own historical-source loop does
+        // for a newly appended row: the tensorizer
+        // (`native_flat_tensorizer_v2.rs`'s `build_object_projection_v3`)
+        // only accepts an appended `PendingContext` row when it also appears
+        // in `extensions.historical_public_sources`, keyed by a
+        // `HistoricalSourceContextV6` variant -- and this case has neither
+        // `Stack{stack_index}` (the source is not on the stack) nor
+        // `PendingEffect` (unrelated engine state) to legitimately use, and
+        // must not gain a new variant (frozen contract). Leaving it out of
+        // `appended_object_indices` instead lets the row fall into the
+        // tensorizer's ordinary "common" object bucket, sorted by
+        // `(group, visible_ordinal)` like any other registered object,
+        // which the V3 scoring test below proves does not error. The
+        // documented residual is a possible `visible_ordinal` collision
+        // against a real historical-source row's raw stack-index ordinal
+        // when non-spell stack items don't start at stack index 0 (this
+        // decision's own ordinal is `historical row count + trigger
+        // position`, which is not guaranteed to be free of every real
+        // stack-index gap) -- the tensorizer's own `ObjectOrder` check
+        // catches that case safely (`Err`, not silent corruption) rather
+        // than mis-scoring it.
+        let (model_index, _appended) =
+            self.add_validated_historical_source_v3(&stable, actor, ordinal)?;
+        let authority = Self::extension_authority_v3(
+            &stable,
+            actor,
+            FlatActionObjectGroupV1::HistoricalPublicSource,
+            usize::try_from(ordinal).map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+        )?;
+        if let Some(mapping) = self.v3_action_objects.as_mut() {
+            mapping.push((authority, model_index));
+        }
+        Ok(())
+    }
+
     pub(crate) fn build_scoring_owned_v3(
         &mut self,
         session: &FastActorSessionV1,
@@ -4000,6 +4072,10 @@ impl FlatDecisionEncoderV2 {
         self.build_globals(&observation)?;
         self.register_objects(&observation)?;
         let extensions = self.register_extensions_v3(&observation)?;
+        self.append_pending_trigger_frozen_source_authority_v3(
+            session.game_state(),
+            observation.acting_player,
+        )?;
         self.build_relations(&observation)?;
         self.validate_cached_tables()?;
         if self.scorer_actions.len() != self.actions.len()
@@ -4475,6 +4551,566 @@ impl FlatDecisionEncoderV2 {
             active_action_ref_count: usize_u32(self.action_refs.len())?,
             active_action_object_count: usize_u32(self.action_objects.len())?,
         })
+    }
+}
+
+/// Fresh-lineage (V4 contract) extension registration and scoring entry
+/// point. Additive sibling of the block above: `register_extensions_v3` and
+/// `build_scoring_owned_v3` are never called from here, are not modified by
+/// this block, and stay byte-identical, per the plan's fork-not-mutate
+/// discipline. Everything below is new code; nothing above this point in
+/// the file was edited to add it (only mechanically-derived digest fields
+/// in `data/flat_policy_v2/feature_inventory_v2.json` and `goldens_v2.json`
+/// change, since `build.rs` byte-hashes this file whole regardless of
+/// which lines changed).
+impl FlatDecisionEncoderV2 {
+    /// Always inserts a fresh model row for a `PendingTrigger`-tagged
+    /// historical source, deliberately bypassing
+    /// `add_validated_historical_source_v3`'s shared-object dedup (which
+    /// keys reuse on `(arena_id, zone_change_count, controller)` alone,
+    /// ignoring which context produced the row). Two simultaneously hidden
+    /// pending triggers that happen to share one physical source object
+    /// (one permanent with two abilities triggering off the same event)
+    /// must still receive two distinct registry rows, one per position,
+    /// since each position needs its own distinct `visible_ordinal` and
+    /// `rl_session::flat_action_v4` now resolves each position to a
+    /// genuinely separate `HistoricalPublicSource`-group action object.
+    /// Reusing one row for both positions would make two authority entries
+    /// point at a single row carrying only one of the two ordinals, so the
+    /// position whose ordinal lost could never be matched by
+    /// `validate_cached_tables`. `object_keys` gets `None` for this row
+    /// (never `Some(wanted)`): unlike `add_validated_historical_source_v3`'s
+    /// rows, a `PendingTrigger` row must never be found by a LATER
+    /// `Stack`/`PendingEffect`/`PendingTrigger` dedup search either, since
+    /// every `PendingTrigger` row is already deliberately non-reusable by
+    /// construction.
+    fn add_pending_trigger_row_v4(
+        &mut self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        ordinal: u32,
+    ) -> Result<u32, FlatDecisionErrorV2> {
+        let wanted = Self::private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
+        let index = usize_u32(self.objects.len())?;
+        self.objects.push(FlatObjectCoreV2 {
+            card_token: wanted.card_token,
+            group: FlatObjectGroupV2::PendingContext,
+            source_kind: FlatObjectSourceKindV2::Pending,
+            visible_ordinal: ordinal,
+            owner: wanted.owner,
+            controller: wanted.controller,
+            zone: Some(wanted.zone),
+            ..FlatObjectCoreV2::default()
+        });
+        self.object_keys.push(None);
+        Ok(index)
+    }
+
+    /// Fork of `register_extensions_v3`'s exhaustive match, generalized with
+    /// one new arm. Every extension kind except `historical_public_sources`
+    /// is byte-for-byte identical logic to V3, reading from `extensions_v7`
+    /// (the V7 producer's output, `policy_observation_v7::policy_observation_extensions_v7`)
+    /// in place of `observation.extensions` -- those other fields are
+    /// unchanged copies of the V6 producer's own output (see
+    /// `PolicyObservationExtensionsV7`'s doc comment), so this is not a
+    /// behavior change, only a different field path.
+    ///
+    /// The new `PendingTrigger { position }` arm validates against
+    /// `observation.projection.surface.engine_context.pending_triggers.get(position)`:
+    /// the entry must exist, its `source` must be `None` (hidden, exactly
+    /// what `visible_card_ref` already reports for every `Zone::Library`
+    /// trigger source regardless of `library_knowledge`), and its
+    /// `controller` must be the acting player. The ordinal is
+    /// `trigger::historical_public_source_ordinal_ceiling_v1(state) + position`
+    /// -- the identical shared helper the V4 action-slice encoder
+    /// (`rl_session::flat_action_v4::pending_trigger_frozen_source_components_v4`)
+    /// also calls, so both layers cannot independently drift, mirroring the
+    /// discipline the V3 mechanism already established for its single
+    /// (always-0) position.
+    ///
+    /// # Collision-freedom argument (2+ simultaneously hidden triggers)
+    ///
+    /// `historical_public_source_ordinal_ceiling_v1(state) == 1 + state.stack.len()`
+    /// is, by its own proof (trigger.rs doc comment), strictly greater than
+    /// every ordinal a *real* historical row (`Stack{stack_index}`, which
+    /// never exceeds `state.stack.len() - 1`, or the single `PendingEffect`
+    /// row, exactly `state.stack.len()`) can ever carry, for any stack
+    /// shape. Adding a non-negative `position` only widens that margin
+    /// (`ceiling + position >= ceiling > every real ordinal`), so no
+    /// `PendingTrigger` row can ever collide with a `Stack` or
+    /// `PendingEffect` row. Two *different* `PendingTrigger` rows (positions
+    /// `p1 != p2` in the same decision) cannot collide with each other
+    /// either, since `ceiling + p1 == ceiling + p2` implies `p1 == p2` by
+    /// injectivity of integer addition with a fixed, shared `ceiling` value
+    /// (computed once, from the one live `state`, for every position in the
+    /// same decision) -- this holds uniformly whether 2 or all 7
+    /// (`FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1`) positions are
+    /// simultaneously hidden, since the argument never depends on how many
+    /// positions are hidden, only that each hidden position keeps its own
+    /// distinct `position` index into `state.engine.pending_triggers`. The
+    /// duplicate-context guard below (mirroring V3's) additionally refuses
+    /// two rows with the identical `context` value outright, so even a
+    /// hypothetical future bug that computed the same `position` twice
+    /// would surface as `ObservationContract`, not a silent collision.
+    ///
+    /// # Shared physical source across two hidden positions
+    ///
+    /// Two simultaneously hidden pending triggers can share one live
+    /// source object (one permanent with two abilities both triggering off
+    /// the same event, then shuffled into the library together): the same
+    /// `arena_id`/`zone_change_count`/`controller` names two different
+    /// `PendingTrigger { position }` context values. Design choice: this
+    /// registry always inserts one model row PER POSITION
+    /// (`add_pending_trigger_row_v4`, below, never
+    /// `add_validated_historical_source_v3`'s shared-object dedup), so the
+    /// two rows are distinct even though the physical card is not. This
+    /// composes with `rl_session::flat_action_v4`'s action-side fix (which
+    /// resolves a hidden reference by trigger position, never by scanning
+    /// for the first pending trigger with a matching `arena_id`), so the
+    /// two positions never collapse into one virtual identity. The
+    /// alternative (fail loudly on the shared-source case in both layers)
+    /// was rejected: it would make a common two-triggers-one-permanent
+    /// card pattern permanently unencodable for the fresh lineage, where
+    /// distinct rows cost only one extra `PendingContext` object per
+    /// simultaneously-hidden duplicate and are already how `Stack`
+    /// contexts (a different physical stack item per row) work.
+    fn register_extensions_v4(
+        &mut self,
+        observation: &ObservationV6,
+        extensions_v7: &crate::policy_observation_v7::PolicyObservationExtensionsV7,
+        state: &crate::state::GameState,
+    ) -> Result<crate::flat_policy_v4::FlatScoringExtensionsV4, FlatDecisionErrorV2> {
+        use crate::flat_policy_v3::{
+            FlatDecisionLocalLibraryV3, FlatFinalizedChosenCreatureCostV3,
+            FlatPendingCastObjectCostV3, FlatPendingChosenCreatureCostV3,
+            FlatQueuedWardPaymentV3, FlatWardPaymentV3,
+        };
+        use crate::flat_policy_v4::{FlatHistoricalPublicSourceV4, FlatScoringExtensionsV4};
+        use crate::policy_observation_v7::HistoricalSourceContextV7;
+
+        let actor = observation.acting_player;
+        let mut output = FlatScoringExtensionsV4::default();
+        let mut authority_mapping = Vec::new();
+        if let Some(search) = &extensions_v7.decision_local_library {
+            if search.chooser != actor {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            let mut object_indices = Vec::with_capacity(search.cards.len());
+            let mut public_class_ordinals = Vec::with_capacity(search.cards.len());
+            let mut previous_class = None;
+            let mut class_ordinal = 0_u32;
+            for (index, card) in search.cards.iter().enumerate() {
+                let stable = &card.stable;
+                let class = (
+                    stable.card_db_id,
+                    seat_index(stable.owner),
+                    seat_index(stable.controller),
+                    flat_zone(stable.zone) as u8,
+                );
+                if stable.zone != Zone::Library
+                    || stable.owner != search.library_owner
+                    || previous_class.is_some_and(|previous| previous > class)
+                    || search.cards[..index].iter().any(|prior| {
+                        prior.stable.arena_id == stable.arena_id
+                            && prior.stable.zone_change_count == stable.zone_change_count
+                    })
+                {
+                    return Err(FlatDecisionErrorV2::ObservationContract);
+                }
+                if previous_class.is_some_and(|previous| previous != class) {
+                    class_ordinal = class_ordinal
+                        .checked_add(1)
+                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+                }
+                previous_class = Some(class);
+                let model_index = match self.resolve_reference(stable, actor) {
+                    Ok(index) => index,
+                    Err(FlatDecisionErrorV2::InvalidReference) => {
+                        let index = self.add_private_card(
+                            card,
+                            actor,
+                            FlatObjectGroupV2::PrivateContext,
+                            FlatObjectSourceKindV2::Private,
+                            class_ordinal,
+                            DECISION_LOCAL_LIBRARY_KIND_V3,
+                        )?;
+                        output.appended_object_indices.push(index);
+                        index
+                    }
+                    Err(error) => return Err(error),
+                };
+                authority_mapping.push((
+                    Self::extension_authority_v3(
+                        stable,
+                        actor,
+                        FlatActionObjectGroupV1::DecisionLocalLibrary,
+                        index,
+                    )?,
+                    model_index,
+                ));
+                object_indices.push(model_index);
+                public_class_ordinals.push(class_ordinal);
+            }
+            output.decision_local_library = Some(FlatDecisionLocalLibraryV3 {
+                chooser: relative_player(search.chooser, actor),
+                library_owner: relative_player(search.library_owner, actor),
+                object_indices,
+                public_class_ordinals,
+            });
+        }
+
+        // Per-arm insertion (not a shared post-match block): `PendingTrigger`
+        // rows must never share a model row with anything else, even when
+        // their live source object is identical to another hidden
+        // position's (see `add_pending_trigger_row_v4`'s doc comment for
+        // the full collision-freedom argument), so that arm calls a
+        // different, dedup-free insertion primitive than the `Stack`/
+        // `PendingEffect` arms (which keep V3's exact
+        // `add_validated_historical_source_v3` reuse behavior, including
+        // its own `index` (loop position) authority-ordinal convention,
+        // since those two contexts are never referenced through a
+        // `HistoricalPublicSource`-group action object).
+        let public_stack = &observation.projection.surface.stack;
+        for (index, historical) in extensions_v7.historical_public_sources.iter().enumerate() {
+            if extensions_v7.historical_public_sources[..index]
+                .iter()
+                .any(|prior| prior.context == historical.context)
+            {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            let model_index = match historical.context {
+                HistoricalSourceContextV7::Stack { stack_index } => {
+                    let item = public_stack
+                        .get(
+                            usize::try_from(stack_index)
+                                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+                        )
+                        .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+                    if historical.stack_item_kind == StackItemKindV2::Spell
+                        || item.source != historical.source
+                        || item.stack_item_kind != historical.stack_item_kind
+                    {
+                        return Err(FlatDecisionErrorV2::InconsistentReference);
+                    }
+                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                        &historical.source,
+                        actor,
+                        stack_index,
+                    )?;
+                    if appended {
+                        output.appended_object_indices.push(model_index);
+                    }
+                    authority_mapping.push((
+                        Self::extension_authority_v3(
+                            &historical.source,
+                            actor,
+                            FlatActionObjectGroupV1::HistoricalPublicSource,
+                            index,
+                        )?,
+                        model_index,
+                    ));
+                    model_index
+                }
+                HistoricalSourceContextV7::PendingEffect => {
+                    let pending = observation
+                        .projection
+                        .surface
+                        .engine_context
+                        .pending_effect
+                        .as_ref()
+                        .ok_or(FlatDecisionErrorV2::ObservationContract)?;
+                    if pending.source.as_ref() != Some(&historical.source) {
+                        return Err(FlatDecisionErrorV2::InconsistentReference);
+                    }
+                    let ordinal = usize_u32(public_stack.len())?;
+                    let (model_index, appended) =
+                        self.add_validated_historical_source_v3(&historical.source, actor, ordinal)?;
+                    if appended {
+                        output.appended_object_indices.push(model_index);
+                    }
+                    authority_mapping.push((
+                        Self::extension_authority_v3(
+                            &historical.source,
+                            actor,
+                            FlatActionObjectGroupV1::HistoricalPublicSource,
+                            index,
+                        )?,
+                        model_index,
+                    ));
+                    model_index
+                }
+                HistoricalSourceContextV7::PendingTrigger { position } => {
+                    let trigger_index = usize::try_from(position)
+                        .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+                    let entry = observation
+                        .projection
+                        .surface
+                        .engine_context
+                        .pending_triggers
+                        .get(trigger_index)
+                        .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+                    if entry.source.is_some() || entry.controller != actor {
+                        return Err(FlatDecisionErrorV2::InconsistentReference);
+                    }
+                    let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
+                        .and_then(|ceiling| ceiling.checked_add(position))
+                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+                    let model_index =
+                        self.add_pending_trigger_row_v4(&historical.source, actor, ordinal)?;
+                    output.appended_object_indices.push(model_index);
+                    authority_mapping.push((
+                        Self::extension_authority_v3(
+                            &historical.source,
+                            actor,
+                            FlatActionObjectGroupV1::HistoricalPublicSource,
+                            usize::try_from(ordinal)
+                                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+                        )?,
+                        model_index,
+                    ));
+                    model_index
+                }
+            };
+            output
+                .historical_public_sources
+                .push(FlatHistoricalPublicSourceV4 {
+                    context: historical.context.clone(),
+                    stack_item_kind: historical.stack_item_kind,
+                    model_object_index: model_index,
+                });
+        }
+
+        if let Some(cost) = &extensions_v7.pending_cast_object_cost {
+            let selected_count = usize_u32(cost.selected.len())?;
+            if selected_count.checked_add(cost.remaining_count) != Some(cost.required_count)
+                || cost.selected.iter().enumerate().any(|(index, selected)| {
+                    cost.selected[..index].iter().any(|prior| prior == selected)
+                })
+            {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            output.pending_cast_object_cost = Some(FlatPendingCastObjectCostV3 {
+                source_object: self.resolve_reference(&cost.source, actor)?,
+                controller: relative_player(cost.controller, actor),
+                cast_method: cost.cast_method,
+                cost_kind: cost.cost_kind,
+                required_count: cost.required_count,
+                selected_objects: cost
+                    .selected
+                    .iter()
+                    .map(|stable| self.resolve_reference(stable, actor))
+                    .collect::<Result<Vec<_>, _>>()?,
+                remaining_count: cost.remaining_count,
+            });
+        }
+        if let Some(cost) = &extensions_v7.pending_chosen_creature_cost {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_cast
+                .as_ref()
+                .ok_or(FlatDecisionErrorV2::ObservationContract)?;
+            if cost.controller != actor
+                || pending.controller != cost.controller
+                || pending.source.as_ref() != Some(&cost.source)
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            output.pending_chosen_creature_cost = Some(FlatPendingChosenCreatureCostV3 {
+                source_object: self.resolve_reference(&cost.source, actor)?,
+                controller: relative_player(cost.controller, actor),
+                selected_zone: cost.selected_zone,
+            });
+        }
+        for (index, cost) in extensions_v7.finalized_chosen_creature_costs.iter().enumerate() {
+            let item = public_stack
+                .get(cost.stack_index as usize)
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if item.stack_item_kind != StackItemKindV2::Spell
+                || item.source != cost.source
+                || item.paid_cost_refs.as_slice() != [cost.chosen.clone()]
+                || !matches!(cost.chosen.zone, Zone::Battlefield | Zone::Hand)
+                || extensions_v7.finalized_chosen_creature_costs[..index]
+                    .iter()
+                    .any(|prior| prior.stack_index >= cost.stack_index)
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            output
+                .finalized_chosen_creature_costs
+                .push(FlatFinalizedChosenCreatureCostV3 {
+                    stack_index: cost.stack_index,
+                    source_object: self.resolve_reference(&cost.source, actor)?,
+                    chosen_object: self.resolve_reference(&cost.chosen, actor)?,
+                    power_lki: cost.power_lki,
+                });
+        }
+        let payment = |ward: &crate::policy_observation_v6::WardPaymentV6,
+                       source: &CardStableRefV1|
+         -> Result<FlatWardPaymentV3, FlatDecisionErrorV2> {
+            let targeting = public_stack
+                .get(ward.targeting_stack_index as usize)
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if targeting.controller != ward.payer {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            Ok(FlatWardPaymentV3 {
+                targeting_stack_index: ward.targeting_stack_index,
+                targeting_source_object: self.resolve_reference(&targeting.source, actor)?,
+                ward_source_object: self.resolve_reference(source, actor)?,
+                payer: relative_player(ward.payer, actor),
+                generic: ward.generic,
+            })
+        };
+        if let Some(ward) = &extensions_v7.pending_ward_payment {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .ok_or(FlatDecisionErrorV2::ObservationContract)?;
+            let source = pending
+                .source
+                .as_ref()
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if ward.payer != actor {
+                return Err(FlatDecisionErrorV2::ObservationContract);
+            }
+            output.pending_ward_payment = Some(payment(ward, source)?);
+        }
+        for (index, ward) in extensions_v7.queued_ward_payments.iter().enumerate() {
+            let trigger = public_stack
+                .get(ward.stack_index as usize)
+                .ok_or(FlatDecisionErrorV2::InvalidReference)?;
+            if trigger.stack_item_kind != StackItemKindV2::TriggeredAbility
+                || ward.payment.targeting_stack_index >= ward.stack_index
+                || extensions_v7.queued_ward_payments[..index]
+                    .iter()
+                    .any(|prior| prior.stack_index >= ward.stack_index)
+            {
+                return Err(FlatDecisionErrorV2::InconsistentReference);
+            }
+            output.queued_ward_payments.push(FlatQueuedWardPaymentV3 {
+                stack_index: ward.stack_index,
+                payment: payment(&ward.payment, &trigger.source)?,
+            });
+        }
+        self.v3_action_objects = Some(authority_mapping);
+        Ok(output)
+    }
+
+    /// V4 sibling of `build_scoring_owned_v3`. Item 15: this does not call
+    /// `append_pending_trigger_frozen_source_authority_v3` or
+    /// `pending_trigger_frozen_source_components_v1` -- the generalized
+    /// `PendingTrigger` arm in [`Self::register_extensions_v4`] (paired
+    /// with `rl_session::flat_action_v4`'s action-side resolver) already
+    /// covers every position that single-slot workaround patched, so it is
+    /// not needed on the V4 path. `register_objects`, `build_globals`, and
+    /// `build_relations` are reused unmodified: none of the three reads
+    /// `observation.extensions` at all (confirmed by inspection), so they
+    /// are already generation-agnostic. `validate_cached_tables` is also
+    /// reused unmodified: it cross-checks `self.action_objects` against
+    /// `self.objects`/`self.v3_action_objects` generically, with no V3-only
+    /// assumption baked in.
+    pub(crate) fn build_scoring_owned_v4(
+        &mut self,
+        session: &FastActorSessionV1,
+        expected: FastActorDecisionV1,
+        buffers: &mut FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<crate::flat_policy_v4::FlatDecisionV4, FlatDecisionErrorV2> {
+        self.clear_typed_cache();
+        let action_count = usize::try_from(expected.legal_action_count)
+            .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+        let max_refs = action_count
+            .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+            .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+        self.actions
+            .resize(action_count, FlatActionCoreV1::default());
+        self.action_refs
+            .resize(max_refs, FlatActionRefV2::default());
+        self.action_objects
+            .resize(max_refs, FlatActionObjectV2::default());
+        let action_slice = session.encode_current_flat_action_slice_v4(
+            expected,
+            &mut FlatActionDecisionSliceBuffersV2 {
+                actions: &mut self.actions,
+                refs: &mut self.action_refs,
+                objects: &mut self.action_objects,
+            },
+        )?;
+        self.actions.truncate(
+            usize::try_from(action_slice.active_action_count)
+                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+        );
+        self.action_refs.truncate(
+            usize::try_from(action_slice.active_ref_count)
+                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+        );
+        self.action_objects
+            .truncate(usize::from(action_slice.active_object_count));
+        // Not `flat_policy_observation_v3`: that helper validates the
+        // eagerly built V3 action-slice cache first
+        // (`validated_v3_cache`/`current.flat_action_cache_v2`), which the
+        // session machinery builds for every V3-mode session regardless of
+        // which generation consumes it, and which fails with
+        // `HiddenActionReference` for exactly the hidden-`OrderTriggers`
+        // states this function exists to handle (it is produced by the
+        // V3-only layer this module never calls). See
+        // `rl_session::flat_action_v4::flat_policy_observation_v4`'s doc
+        // comment for the full explanation.
+        let observation = session.flat_policy_observation_v4(expected)?;
+        if observation.schema_version != 6
+            || observation.acting_player != expected.acting_player
+            || observation.step_index != expected.step
+            || observation.physical_decision_id != expected.physical_decision_id
+            || observation.substep_index != expected.substep_index
+            || observation.substep_count != expected.substep_count
+            || observation.card_db_hash != action_slice.binding.0.card_db_hash
+        {
+            return Err(FlatDecisionErrorV2::ObservationContract);
+        }
+        self.build_globals(&observation)?;
+        self.register_objects(&observation)?;
+        let extensions_v7 = crate::policy_observation_v7::policy_observation_extensions_v7(
+            session.game_state(),
+            crate::kernel_native_search_opponent_v1::player_id_v1(observation.acting_player),
+        )
+        .map_err(|_| FlatDecisionErrorV2::ObservationContract)?;
+        let extensions =
+            self.register_extensions_v4(&observation, &extensions_v7, session.game_state())?;
+        self.build_relations(&observation)?;
+        self.validate_cached_tables()?;
+        if self.scorer_actions.len() != self.actions.len()
+            || self.scorer_action_refs.len() != self.action_refs.len()
+        {
+            return Err(FlatDecisionErrorV2::ScorerBindingMismatch);
+        }
+        let decision = crate::flat_policy_v4::FlatDecisionV4 {
+            binding: action_slice.binding,
+            globals: self.globals,
+            extensions,
+        };
+        // Publish all scorer-visible rows only after every authority and
+        // relation has validated. No V2/V3 binding is cached or exposed here.
+        std::mem::swap(&mut self.objects, buffers.objects);
+        std::mem::swap(&mut self.relations, buffers.relations);
+        std::mem::swap(&mut self.object_subtypes, buffers.object_subtypes);
+        std::mem::swap(&mut self.ability_uses, buffers.ability_uses);
+        std::mem::swap(&mut self.goads, buffers.goads);
+        std::mem::swap(&mut self.completed_dungeons, buffers.completed_dungeons);
+        std::mem::swap(
+            &mut self.effect_subtype_changes,
+            buffers.effect_subtype_changes,
+        );
+        std::mem::swap(
+            &mut self.context_path_elements,
+            buffers.context_path_elements,
+        );
+        std::mem::swap(&mut self.scorer_actions, buffers.actions);
+        std::mem::swap(&mut self.scorer_action_refs, buffers.action_refs);
+        Ok(decision)
     }
 }
 
