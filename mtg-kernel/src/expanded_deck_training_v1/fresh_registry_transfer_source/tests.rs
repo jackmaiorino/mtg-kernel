@@ -291,6 +291,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
         learning_rate: LR,
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         output_directory: f.root.join("update-0"),
     })
     .unwrap();
@@ -333,6 +334,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
         learning_rate: LR,
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         output_directory: f.root.join("update-1"),
     })
     .unwrap();
@@ -360,6 +362,7 @@ fn phase1_fresh_registry_trainer_rejects_wrong_scalars_before_publication() {
         learning_rate: LR * 2.0,
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         output_directory: output.clone(),
     })
     .unwrap_err();

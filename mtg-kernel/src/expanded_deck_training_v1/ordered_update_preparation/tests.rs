@@ -365,12 +365,14 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         learning_rate: LR,
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         output_directory: PathBuf::from("legacy-output"),
     };
     let value = serde_json::to_value(&command).unwrap();
     assert_eq!(value["mode"], "update");
     assert!(value.get("preparation_workers").is_none());
     assert!(value.get("update_backend").is_none());
+    assert!(value.get("update_backward_execution").is_none());
     let bytes = serde_json::to_vec(&command).unwrap();
     assert_eq!(
         bytes,
@@ -383,6 +385,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         learning_rate: LR,
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         preparation_workers: 4,
         output_directory: PathBuf::from("prepared-output"),
     };
@@ -390,4 +393,5 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     assert_eq!(value["mode"], "update_prepared");
     assert_eq!(value["preparation_workers"], 4);
     assert!(value.get("update_backend").is_none());
+    assert!(value.get("update_backward_execution").is_none());
 }

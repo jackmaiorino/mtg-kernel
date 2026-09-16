@@ -7,6 +7,7 @@ use crate::durable_publication_v1::{
 use crate::expanded_deck_training_v1::{
     execute_v1, load_expanded_inference_v1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
     ExpandedModelSourceV1, ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, PinnedFileV1,
+    UpdateBackwardExecutionV1,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -71,6 +72,10 @@ pub struct NativeExpandedTrainingRunV1 {
     pub value_coefficient: f32,
     #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
     pub update_backend: ExpandedUpdateBackendV1,
+    /// Config-driven; default `Sequential` keeps every existing config and
+    /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
+    #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+    pub update_backward_execution: UpdateBackwardExecutionV1,
     #[serde(
         default = "default_collection_workers",
         skip_serializing_if = "is_serial_collection"
@@ -500,6 +505,7 @@ fn update_command(
             learning_rate: config.learning_rate,
             value_coefficient: config.value_coefficient,
             update_backend: config.update_backend,
+            update_backward_execution: config.update_backward_execution,
             output_directory,
         }
     } else {
@@ -509,6 +515,7 @@ fn update_command(
             learning_rate: config.learning_rate,
             value_coefficient: config.value_coefficient,
             update_backend: config.update_backend,
+            update_backward_execution: config.update_backward_execution,
             preparation_workers: config.preparation_workers,
             output_directory,
         }
@@ -918,6 +925,7 @@ mod tests {
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
             collection_workers: 1,
             preparation_workers: 1,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),

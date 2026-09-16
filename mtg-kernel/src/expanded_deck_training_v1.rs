@@ -187,6 +187,32 @@ impl ExpandedUpdateBackendV1 {
     }
 }
 
+/// Selects the backward-pass numerical execution for the ordinary trainer's
+/// update (`execute_update_v1`, both `Update` and `UpdatePrepared`) and for
+/// the BO3 weighted update (`phase1_bo3_learning_v1::continuation::apply_prepared`).
+/// `FixedPartition4` is a config-driven option for the fresh V4 lineage ONLY:
+/// `execute_update_v1` rejects it outright for a V3-generation policy with a
+/// clear error, so the V3 and imported paths are never reachable with
+/// anything but `Sequential` and stay byte-identical. Production always uses
+/// `native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1` (4)
+/// workers when this is selected; see `fixed_partition_backward_worker_limit_v1`
+/// for the `#[cfg(test)]`-only override that lets tests exercise 1..=4
+/// workers through this same real entry point.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateBackwardExecutionV1 {
+    #[default]
+    Sequential,
+    #[serde(rename = "fixed_partition_4")]
+    FixedPartition4,
+}
+
+impl UpdateBackwardExecutionV1 {
+    pub(crate) fn is_sequential(&self) -> bool {
+        matches!(self, Self::Sequential)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedFileV1 {
@@ -1352,6 +1378,10 @@ pub enum ExpandedTrainingCommandV1 {
         value_coefficient: f32,
         #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
         update_backend: ExpandedUpdateBackendV1,
+        /// Config-driven; default `Sequential` keeps every existing config and
+        /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
+        #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+        update_backward_execution: UpdateBackwardExecutionV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -1363,6 +1393,8 @@ pub enum ExpandedTrainingCommandV1 {
         value_coefficient: f32,
         #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
         update_backend: ExpandedUpdateBackendV1,
+        #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+        update_backward_execution: UpdateBackwardExecutionV1,
         preparation_workers: usize,
         output_directory: PathBuf,
     },
@@ -1438,6 +1470,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             learning_rate,
             value_coefficient,
             update_backend,
+            update_backward_execution,
             output_directory,
         } => execute_update_v1(
             source,
@@ -1445,6 +1478,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             learning_rate,
             value_coefficient,
             update_backend,
+            update_backward_execution,
             output_directory,
             None,
         ),
@@ -1454,6 +1488,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             learning_rate,
             value_coefficient,
             update_backend,
+            update_backward_execution,
             preparation_workers,
             output_directory,
         } => {
@@ -1464,11 +1499,47 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 learning_rate,
                 value_coefficient,
                 update_backend,
+                update_backward_execution,
                 output_directory,
                 Some(preparation_workers),
             )
         }
     }
+}
+
+// Per-thread-only test override for `fixed_partition_backward_worker_limit_v1`
+// below; see its doc comment.
+#[cfg(test)]
+thread_local! {
+    static BACKWARD_WORKER_LIMIT_OVERRIDE_FOR_TEST_V1: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_fixed_partition_backward_worker_limit_override_for_test_v1(
+    worker_limit: Option<usize>,
+) {
+    BACKWARD_WORKER_LIMIT_OVERRIDE_FOR_TEST_V1.with(|cell| cell.set(worker_limit));
+}
+
+/// Worker limit `execute_update_v1` uses for `UpdateBackwardExecutionV1::
+/// FixedPartition4`. Production always resolves to
+/// `FIXED_BACKWARD_PARTITION_COUNT_V1` (4, "up to 4" workers on the 4 frozen
+/// logical partitions). Tests may override this on their own thread only, to
+/// drive the real two-iteration ordinary-trainer fixture at worker limits
+/// 1..=4 through this exact production entry point and prove topology
+/// invariance on real data, not just the synthetic-fixture unit test in
+/// `native_policy_train_step_v1`.
+fn fixed_partition_backward_worker_limit_v1() -> usize {
+    #[cfg(test)]
+    {
+        if let Some(worker_limit) =
+            BACKWARD_WORKER_LIMIT_OVERRIDE_FOR_TEST_V1.with(std::cell::Cell::get)
+        {
+            return worker_limit;
+        }
+    }
+    crate::native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1
 }
 
 fn execute_update_v1(
@@ -1477,6 +1548,7 @@ fn execute_update_v1(
     learning_rate: f32,
     value_coefficient: f32,
     update_backend: ExpandedUpdateBackendV1,
+    backward_execution: UpdateBackwardExecutionV1,
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
 ) -> Result<Value, String> {
@@ -1584,6 +1656,23 @@ fn execute_update_v1(
     // the loaded policy through the same accessor every other stamping site
     // uses, never a hardcoded V3 constant on a fresh-V4 policy.
     let generation = policy.feature_identity_v1().generation;
+    // Config-driven fixed-partition backward is a fresh-V4-lineage-only
+    // option (`UpdateBackwardExecutionV1`). Any other combination is
+    // rejected here, before any learner tensor is built, so a V3-generation
+    // or CUDA-backend update can never reach anything but `Sequential`: the
+    // V3 and imported paths stay byte-identical by construction, not by
+    // convention.
+    if !backward_execution.is_sequential() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu),
+            "fixed-partition backward requires the CPU update backend",
+        )?;
+        ensure(
+            generation == FreshLineageGenerationV1::V4,
+            "fixed-partition backward is available only to the V4 fresh lineage; \
+             V3 and imported paths must use sequential",
+        )?;
+    }
     let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
         .iter()
         .map(|(_, group)| {
@@ -1623,9 +1712,19 @@ fn execute_update_v1(
         (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
             .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
             .map_err(err)?,
-        (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => state
-            .train_step_feature_transfer_v4(&groups, value_coefficient, learning_rate)
-            .map_err(err)?,
+        (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => match backward_execution {
+            UpdateBackwardExecutionV1::Sequential => state
+                .train_step_feature_transfer_v4(&groups, value_coefficient, learning_rate)
+                .map_err(err)?,
+            UpdateBackwardExecutionV1::FixedPartition4 => state
+                .train_step_feature_transfer_v4_fixed_partition_v1(
+                    &groups,
+                    value_coefficient,
+                    learning_rate,
+                    fixed_partition_backward_worker_limit_v1(),
+                )
+                .map_err(err)?,
+        },
         (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V3) => {
             #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
             {
@@ -2898,7 +2997,8 @@ mod tests {
         label: &str,
         mutate: impl FnOnce(&mut Vec<NativeNamedParameterV1>),
         decks: [ExpandedDeckListV1; 2],
-    ) -> (String, String, String) {
+        backward_execution: UpdateBackwardExecutionV1,
+    ) -> Result<(String, String, String), String> {
         let root = std::env::temp_dir().join(format!(
             "ordinary-two-iteration-{label}-{}",
             std::process::id()
@@ -2944,8 +3044,7 @@ mod tests {
                 source: source.clone(),
                 episodes: vec![episode],
                 output_directory: root.join(format!("collect-{iteration}")),
-            })
-            .unwrap();
+            })?;
             let trajectories: Vec<PinnedFileV1> =
                 serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
             let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
@@ -2954,9 +3053,17 @@ mod tests {
                 learning_rate: 0.0003,
                 value_coefficient: 0.5,
                 update_backend: ExpandedUpdateBackendV1::Cpu,
+                update_backward_execution: backward_execution,
                 output_directory: root.join(format!("update-{iteration}")),
-            })
-            .unwrap();
+            })?;
+            // Engineering timing note only (never a claim): visible in the
+            // test log so `learner_update_seconds` sequential vs.
+            // fixed_partition_4 can be read off this fixture directly.
+            eprintln!(
+                "timing note: label={label} iteration={iteration} backward_execution={backward_execution:?} \
+                 learner_update_seconds={}",
+                update_result["learner_update_seconds"]
+            );
             let checkpoint: PinnedFileV1 =
                 serde_json::from_value(update_result["checkpoint"].clone()).unwrap();
             let saved: ExpandedCheckpointV1 = read_pinned(&checkpoint).unwrap();
@@ -2968,7 +3075,7 @@ mod tests {
                 .to_owned();
             source.checkpoint = Some(checkpoint);
         }
-        (final_contract, final_encoding, final_state_sha256)
+        Ok((final_contract, final_encoding, final_state_sha256))
     }
 
     /// Regression fixture for the V4 actor-visible encoder gap discovered
@@ -3008,7 +3115,9 @@ mod tests {
             "v4",
             |_parameters| {},
             [list("Affinity"), list("Terror")],
-        );
+            UpdateBackwardExecutionV1::Sequential,
+        )
+        .unwrap();
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         // Pinned against the value this fixture actually produced running it
@@ -3040,7 +3149,9 @@ mod tests {
             "v3",
             |_parameters| {},
             [list("Affinity"), list("Terror")],
-        );
+            UpdateBackwardExecutionV1::Sequential,
+        )
+        .unwrap();
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V3);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V3);
         assert_eq!(
@@ -3048,6 +3159,87 @@ mod tests {
             "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
             "the V3 ordinary-trainer path must be byte-for-byte unchanged by \
              the V4 update-path follow-up"
+        );
+    }
+
+    /// Real-fixture topology invariance for the config-driven fixed-partition
+    /// option: the same two-iteration ordinary-trainer fixture as the tests
+    /// above, run end to end through the real `execute_v1`/`execute_update_v1`
+    /// production path with `update_backward_execution=fixed_partition_4`, at
+    /// backward worker limits 1, 2, 3 and 4 (the
+    /// `#[cfg(test)]`-only override installed for exactly this). Complements
+    /// `native_policy_train_step_v1::fixed_partition_parallel_backward_is_deterministic_topology_invariant_and_bounded`,
+    /// which proves the same property on a synthetic batch directly against
+    /// the lower-level primitive; this proves it on real collected games
+    /// through the whole config/dispatch path added by this change.
+    ///
+    /// Timing note (engineering only, not a claim; single CPU, this small
+    /// two-iteration fixture, 103 then 88 physical decisions; measured
+    /// 2026-09-16 with `cargo test ... -- --nocapture`, reading
+    /// `learner_update_seconds` straight from the real `update.json`
+    /// receipts): Sequential 2.22-2.42s; fixed_partition_4 at worker_limit=1
+    /// 2.26-2.41s (about the same, as expected: same 4-way logical split,
+    /// one thread); worker_limit=2 1.93-1.95s; worker_limit=3 1.92-2.03s;
+    /// worker_limit=4 1.47-1.50s, roughly 33-38% below Sequential on this
+    /// fixture. See `UPDATE-PHASE-STUDY-001.md`/`PARALLEL-REPLAY-SMOKE-001.md`
+    /// for the larger, representative fixture this small correctness fixture
+    /// does not attempt to reproduce.
+    #[test]
+    fn ordinary_trainer_two_iteration_v4_fixture_fixed_partition_is_topology_invariant_and_pinned()
+    {
+        let mut reference: Option<String> = None;
+        for worker_limit in [1usize, 2, 3, 4] {
+            set_fixed_partition_backward_worker_limit_override_for_test_v1(Some(worker_limit));
+            let (contract, encoding, state) = run_ordinary_two_iteration_fixture_v1(
+                crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+                &format!("v4-fixed-partition-w{worker_limit}"),
+                |_parameters| {},
+                [list("Affinity"), list("Terror")],
+                UpdateBackwardExecutionV1::FixedPartition4,
+            )
+            .unwrap();
+            set_fixed_partition_backward_worker_limit_override_for_test_v1(None);
+            assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+            assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+            match &reference {
+                None => reference = Some(state),
+                Some(reference) => assert_eq!(
+                    &state, reference,
+                    "fixed_partition_4 must be topology invariant across backward worker limits \
+                     on the real two-iteration fixture (worker_limit={worker_limit})"
+                ),
+            }
+        }
+        // Pinned against the value this fixture actually produced running it
+        // 2026-09-16: the fresh lineage's partitioned-backward reference for
+        // this fixture. Deliberately not equal to the Sequential pin above
+        // (`28faac99...`); `native_policy_train_step_v1`'s own determinism
+        // test already proves fixed-partition and sequential are not
+        // expected to be bit-identical to each other.
+        assert_eq!(
+            reference.unwrap(),
+            "2fd271a3aab18a9bcd2501bf92ce8f24664ffcb1269ba885b79159fe743e1bf0",
+            "the V4 fixed-partition ordinary-trainer path over real constructed decks \
+             must stay reproducible"
+        );
+    }
+
+    /// V3 must reject `fixed_partition_4` with a clear error, before any
+    /// game is even collected: the imported/frozen V3 path cannot change via
+    /// this config.
+    #[test]
+    fn ordinary_trainer_v3_update_rejects_fixed_partition_backward() {
+        let error = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3,
+            "v3-rejects-fixed-partition",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::FixedPartition4,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("V4 fresh lineage"),
+            "error should clearly explain the V3 rejection: {error}"
         );
     }
 }
