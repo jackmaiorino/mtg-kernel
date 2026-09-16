@@ -1743,8 +1743,29 @@ fn execute_update_v1(
                 return Err("CUDA update backend was not compiled".into());
             }
         }
-        (ExpandedUpdateBackendV1::Cuda { .. }, FreshLineageGenerationV1::V4) => {
-            return Err("CUDA update backend has no V4 arm yet".into());
+        (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V4) => {
+            // `backward_execution` is already proven `Sequential` here: the
+            // guard above rejects any non-CPU backend paired with
+            // `fixed_partition_4` before this match ever runs, matching
+            // `NativeTrainingNumericalBackendV1::CudaBurnDense`'s
+            // `accepts_backward_worker_limit_v1` rule (worker_limit == 1
+            // only). Nothing below needs to check it again.
+            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+            {
+                state
+                    .train_step_cuda_feature_transfer_v4(
+                        &groups,
+                        value_coefficient,
+                        learning_rate,
+                        device_ordinal,
+                    )
+                    .map_err(err)?
+            }
+            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+            {
+                let _ = device_ordinal;
+                return Err("CUDA update backend was not compiled".into());
+            }
         }
     };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
@@ -3007,6 +3028,7 @@ mod tests {
         mutate: impl FnOnce(&mut Vec<NativeNamedParameterV1>),
         decks: [ExpandedDeckListV1; 2],
         backward_execution: UpdateBackwardExecutionV1,
+        update_backend: ExpandedUpdateBackendV1,
     ) -> Result<(String, String, String), String> {
         let root = std::env::temp_dir().join(format!(
             "ordinary-two-iteration-{label}-{}",
@@ -3061,17 +3083,21 @@ mod tests {
                 trajectories,
                 learning_rate: 0.0003,
                 value_coefficient: 0.5,
-                update_backend: ExpandedUpdateBackendV1::Cpu,
+                update_backend,
                 update_backward_execution: backward_execution,
                 output_directory: root.join(format!("update-{iteration}")),
             })?;
             // Engineering timing note only (never a claim): visible in the
             // test log so `learner_update_seconds` sequential vs.
-            // fixed_partition_4 can be read off this fixture directly.
+            // fixed_partition_4 vs. CUDA, and the whole `update_elapsed_seconds`,
+            // can be read off this fixture directly (also on disk in the
+            // real `update.json` receipt under `output_directory` above).
             eprintln!(
-                "timing note: label={label} iteration={iteration} backward_execution={backward_execution:?} \
-                 learner_update_seconds={}",
-                update_result["learner_update_seconds"]
+                "timing note: label={label} iteration={iteration} update_backend={update_backend:?} \
+                 backward_execution={backward_execution:?} learner_update_seconds={} \
+                 update_elapsed_seconds={}",
+                update_result["learner_update_seconds"],
+                update_result["update_elapsed_seconds"]
             );
             let checkpoint: PinnedFileV1 =
                 serde_json::from_value(update_result["checkpoint"].clone()).unwrap();
@@ -3125,6 +3151,7 @@ mod tests {
             |_parameters| {},
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
         )
         .unwrap();
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
@@ -3159,6 +3186,7 @@ mod tests {
             |_parameters| {},
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
         )
         .unwrap();
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V3);
@@ -3205,6 +3233,7 @@ mod tests {
                 |_parameters| {},
                 [list("Affinity"), list("Terror")],
                 UpdateBackwardExecutionV1::FixedPartition4,
+                ExpandedUpdateBackendV1::Cpu,
             )
             .unwrap();
             set_fixed_partition_backward_worker_limit_override_for_test_v1(None);
@@ -3244,11 +3273,219 @@ mod tests {
             |_parameters| {},
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::FixedPartition4,
+            ExpandedUpdateBackendV1::Cpu,
         )
         .unwrap_err();
         assert!(
             error.contains("V4 fresh lineage"),
             "error should clearly explain the V3 rejection: {error}"
         );
+    }
+
+    /// V4 must also reject `fixed_partition_4` on the CUDA backend with a
+    /// clear error, before any device is touched:
+    /// `NativeTrainingNumericalBackendV1::CudaBurnDense` accepts only
+    /// `worker_limit == 1` (`accepts_backward_worker_limit_v1`), and
+    /// `execute_update_v1` enforces the config-level equivalent of that rule
+    /// (`update_backend` must be `Cpu` for any non-`Sequential`
+    /// `backward_execution`) ahead of the backend/generation dispatch, after
+    /// collection and behavior replay but before any encoded substep is
+    /// built or any CPU/CUDA train-step function is called. The assertion
+    /// itself does not exercise a real device; this test is gated on the
+    /// CUDA feature only because `require_compiled_v1` refuses an
+    /// uncompiled `Cuda` backend before this check ever runs, which would
+    /// otherwise report a different (also correct, but not this test's
+    /// target) error.
+    #[test]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_v4_update_rejects_fixed_partition_backward_on_cuda() {
+        let error = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            "v4-cuda-rejects-fixed-partition",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::FixedPartition4,
+            ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("fixed-partition backward requires the CPU update backend"),
+            "error should clearly explain the CUDA rejection: {error}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // CUDA V4 arm: completion/restoration, per-device determinism (one
+    // process and across processes), and a pinned golden. All three
+    // require the real GPU1 and are `#[ignore]`d; run explicitly with:
+    // cargo test --release --features experimental-burn-net8-packed-cuda-v1
+    //   -- --ignored --test-threads=1
+    //   expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v4_fixture_cuda
+    // ------------------------------------------------------------------
+
+    /// Device selection reuses exactly the mechanism the V3 CUDA path
+    /// already uses: `ExpandedUpdateBackendV1::Cuda { device_ordinal }`,
+    /// the same config value `execute_update_v1` matches on and
+    /// `train_step_cuda_feature_transfer_v3`/`_v4` take directly. That
+    /// mechanism has no built-in default device (the enum's `#[default]`
+    /// variant is `Cpu`, and `device_ordinal` carries no
+    /// `#[serde(default)]`), so a caller must always name a device
+    /// explicitly; this constant is this test module's one explicit
+    /// choice, not a new default added anywhere in production code. Device
+    /// ordinal 1 is the RTX 3050 on this machine; ordinal 0 is the RTX
+    /// 4070 SUPER GUI device and stays out of scope for training.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const V4_CUDA_DEVICE_ORDINAL_V1: usize = 1;
+
+    /// Pinned against the value the V4 two-iteration ordinary-trainer
+    /// fixture actually produced running it end to end through the real
+    /// `execute_v1`/`execute_update_v1` production path on the CUDA
+    /// backend, device ordinal 1 (RTX 3050, driver 596.36), 2026-09-16.
+    /// Deliberately NOT equal to
+    /// `ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly`'s
+    /// CPU-sequential pin (`28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878`):
+    /// CUDA is tolerance-bounded against the CPU reference and run-to-run
+    /// bit-deterministic on one device, but never bit-identical to the CPU
+    /// identities (`CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1`'s own
+    /// doc comment; already the case for the existing V3 CUDA backend).
+    /// This difference is by design, not a defect; the `assert_ne!` below
+    /// makes that an explicit, checked property rather than only prose.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const V4_CUDA_GOLDEN_STATE_SHA256_V1: &str =
+        "059a4b805466577ebb5385b5e5fd122a18ff2bb75c7e587a775702b5370d476a";
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_v4_cuda_fixture_v1(label: &str) -> (String, String, String) {
+        run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            label,
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cuda {
+                device_ordinal: V4_CUDA_DEVICE_ORDINAL_V1,
+            },
+        )
+        .unwrap()
+    }
+
+    /// The V4 two-iteration ordinary-trainer fixture completes and
+    /// restores on the CUDA backend: `run_ordinary_two_iteration_fixture_v1`
+    /// only returns `Ok` if `execute_update_v1`'s own internal readback
+    /// (`initialize(&resumed_source)` plus a state-hash equality check,
+    /// exercised after each of the two iterations) succeeded, exactly the
+    /// same proof the CPU-sequential and CPU-fixed-partition-4 siblings
+    /// above rely on.
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_v4_fixture_cuda_stamps_v4_and_restores_cleanly() {
+        let (contract, encoding, state) = run_v4_cuda_fixture_v1("v4-cuda-golden");
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        assert_ne!(
+            state,
+            "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            "CUDA differs from CPU sequential by design (tolerance-bounded, never bit-identical); \
+             an exact match here would itself be suspicious"
+        );
+        assert_eq!(
+            state, V4_CUDA_GOLDEN_STATE_SHA256_V1,
+            "the V4 CUDA ordinary-trainer path over real constructed decks must stay reproducible"
+        );
+    }
+
+    /// Bit-identical final state across two consecutive runs of the V4
+    /// fixture on CUDA in the same process (fresh model/state each run,
+    /// same seeds/decks/device; only the output directories differ).
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_runs_in_one_process(
+    ) {
+        let (contract_a, encoding_a, state_a) = run_v4_cuda_fixture_v1("v4-cuda-det-inprocess-a");
+        let (contract_b, encoding_b, state_b) = run_v4_cuda_fixture_v1("v4-cuda-det-inprocess-b");
+        assert_eq!(contract_a, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding_a, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(contract_b, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding_b, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(
+            state_a, state_b,
+            "two consecutive CUDA V4 updates in one process must be bit-identical"
+        );
+        assert_eq!(state_a, V4_CUDA_GOLDEN_STATE_SHA256_V1);
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const V4_CUDA_SUBPROCESS_MARKER_ENV_V1: &str = "MTG_KERNEL_V4_CUDA_DETERMINISM_SUBPROCESS_V1";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const V4_CUDA_SUBPROCESS_HASH_PREFIX_V1: &str = "MTG_KERNEL_V4_CUDA_STATE_SHA256_V1=";
+
+    /// Bit-identical final state across two separate OS processes on the
+    /// same device (GPU1, RTX 3050): spawns the compiled test binary
+    /// itself twice (`std::env::current_exe()`), each invocation selecting
+    /// only the one-shot worker test below via `--exact`, mirroring
+    /// `native_forward_determinism_probe_v1::tests::forward_probe_subprocess_worker_v1`'s
+    /// established pattern for this crate.
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes() {
+        let exe = std::env::current_exe().expect("current_exe must resolve for the test binary");
+        let mut hashes = Vec::with_capacity(2);
+        for attempt in 0..2u32 {
+            let output = std::process::Command::new(&exe)
+                .arg("--ignored")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg(
+                    "expanded_deck_training_v1::tests::\
+                     ordinary_trainer_two_iteration_v4_fixture_cuda_subprocess_worker_v1",
+                )
+                .env(V4_CUDA_SUBPROCESS_MARKER_ENV_V1, "1")
+                .output()
+                .expect("subprocess spawn must succeed");
+            assert!(
+                output.status.success(),
+                "subprocess {attempt} exited non-zero: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let hash_line = stdout
+                .lines()
+                .find(|line| line.starts_with(V4_CUDA_SUBPROCESS_HASH_PREFIX_V1))
+                .unwrap_or_else(|| {
+                    panic!("subprocess {attempt} printed no hash line; stdout was: {stdout}")
+                });
+            hashes.push(hash_line[V4_CUDA_SUBPROCESS_HASH_PREFIX_V1.len()..].to_owned());
+        }
+        assert_eq!(
+            hashes[0], hashes[1],
+            "two separate OS processes on the same device (GPU1, RTX 3050) must be bit-identical"
+        );
+        assert_eq!(hashes[0], V4_CUDA_GOLDEN_STATE_SHA256_V1);
+    }
+
+    /// One-shot worker invoked as a subprocess by
+    /// `ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes`.
+    /// Not a real assertion test on its own. Left `#[ignore]`d and gated on
+    /// the marker env var so a normal `--ignored` sweep does not also run
+    /// this as an unselected duplicate measurement; only meant to be
+    /// invoked with `--exact`.
+    #[test]
+    #[ignore = "subprocess worker for ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes; do not run directly"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_v4_fixture_cuda_subprocess_worker_v1() {
+        if std::env::var_os(V4_CUDA_SUBPROCESS_MARKER_ENV_V1).is_none() {
+            panic!(
+                "this test is a subprocess worker; run it via \
+                 ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes"
+            );
+        }
+        let (contract, encoding, state) = run_v4_cuda_fixture_v1("v4-cuda-det-subprocess");
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        println!("{V4_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
     }
 }
