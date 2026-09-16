@@ -339,12 +339,14 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
                 source: f.source.clone(),
                 episodes: wrong.clone(),
                 workers: 2,
+                max_non_natural_episode_fraction: 0.0,
                 output_directory: output.clone(),
             }
         } else {
             ExpandedTrainingCommandV1::Collect {
                 source: f.source.clone(),
                 episodes: wrong.clone(),
+                max_non_natural_episode_fraction: 0.0,
                 output_directory: output.clone(),
             }
         };

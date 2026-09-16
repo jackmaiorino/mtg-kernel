@@ -10,8 +10,8 @@ from parity_evidence import Artifacts, training_run, training_parity, resume_par
 from production_check import bind_reference, reference_run
 from reference import build as build_reference
 from throughput import (canonical_training_config, preparation_workers, training_contract, qualify,
-    update_backward_execution, validate_preparation_runner, validate_preparation_update,
-    validate_preparation_result, ThroughputPolicy)
+    update_backward_execution, max_non_natural_episode_fraction, validate_preparation_runner,
+    validate_preparation_update, validate_preparation_result, ThroughputPolicy)
 from workload import compare, layouts
 import test_cloud
 from test_production_checks import Fixture
@@ -77,6 +77,36 @@ class PreparedConfigurationTests(unittest.TestCase):
             with self.subTest(execution=execution), self.assertRaisesRegex(ValueError, 'update_backward_execution'):
                 update_backward_execution(config|{'update_backward_execution':execution})
 
+    def test_max_non_natural_episode_fraction_default_and_explicit_zero_have_same_exact_contract(self):
+        """Mirrors `test_backward_execution_default_and_explicit_sequential_have_same_exact_contract`
+        above for `max_non_natural_episode_fraction` (mtg-kernel
+        `NativeExpandedTrainingRunV1.max_non_natural_episode_fraction`): a
+        contract computed with the explicit or implicit 0.0 default is
+        byte-identical; any positive fraction changes it, matching the
+        Rust-side convention (`canonical_training_config`'s own docstring)."""
+        config={'initial_source':{},'opponents':[],'iterations':[],'output_directory':'unused',
+                'learning_rate':1e-5,'value_coefficient':.5}
+        self.assertEqual(canonical_training_config(config),
+                          canonical_training_config(config|{'max_non_natural_episode_fraction':0.0}))
+        self.assertEqual(training_contract(config),
+                          training_contract(config|{'max_non_natural_episode_fraction':0.0}))
+        self.assertNotEqual(training_contract(config),
+                             training_contract(config|{'max_non_natural_episode_fraction':0.2}))
+        self.assertAlmostEqual(canonical_training_config(
+            config|{'max_non_natural_episode_fraction':0.2})['max_non_natural_episode_fraction'],
+            0.2,places=6)
+        self.assertNotIn('max_non_natural_episode_fraction', canonical_training_config(config))
+        # An integer 0 and a value that only rounds to 0.0 at f32 precision
+        # both strip exactly like the float default (the Rust field is f32).
+        self.assertNotIn('max_non_natural_episode_fraction',
+                          canonical_training_config(config|{'max_non_natural_episode_fraction':0}))
+
+    def test_max_non_natural_episode_fraction_rejects_invalid_values(self):
+        config={'learning_rate':1e-5,'value_coefficient':.5}
+        for fraction in (-0.1,1.0,1.5,float('nan'),float('inf'),float('-inf'),None,'0.2',True):
+            with self.subTest(fraction=fraction), self.assertRaisesRegex(ValueError, 'max_non_natural_episode_fraction'):
+                max_non_natural_episode_fraction(config|{'max_non_natural_episode_fraction':fraction})
+
     def test_invalid_counts_fail_before_default_normalization(self):
         config={'learning_rate':1e-5,'value_coefficient':.5}
         for workers in (0,33,-1,True,False,1.0,'4',None,float('nan')):
@@ -140,6 +170,13 @@ class PreparedArtifactTests(unittest.TestCase):
         self.assertTrue(layouts(f.config|{'update_backward_execution':'fixed_partition_4'}))
         self.assertTrue(layouts(f.config|{'update_backward_execution':'sequential'}))
         with self.assertRaises(ValueError):layouts(f.config|{'update_backward_execution':'bogus'})
+
+    def test_layouts_accepts_tolerant_collection_fraction_and_rejects_invalid_values(self):
+        f=self.fixture
+        self.assertTrue(layouts(f.config|{'max_non_natural_episode_fraction':0.2}))
+        self.assertTrue(layouts(f.config|{'max_non_natural_episode_fraction':0.0}))
+        with self.assertRaises(ValueError):layouts(f.config|{'max_non_natural_episode_fraction':1.0})
+        with self.assertRaises(ValueError):layouts(f.config|{'max_non_natural_episode_fraction':'bogus'})
 
     def test_old_serial_proof_omission_normalizes_without_enabling_production(self):
         f=self.fixture;proof=read(f.proof['path']);proof.pop('preparation_workers')

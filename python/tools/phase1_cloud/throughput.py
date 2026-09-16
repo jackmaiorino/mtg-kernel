@@ -31,6 +31,21 @@ def update_backward_execution(config):
     return execution
 
 
+def max_non_natural_episode_fraction(config):
+    """mtg-kernel `NativeExpandedTrainingRunV1.max_non_natural_episode_fraction`
+    (and the same-named field on `ExpandedTrainingCommandV1::Collect`/
+    `CollectParallel`): a bare float on the wire, mirroring
+    `preparation_workers`/`update_backward_execution` above. Default 0.0
+    keeps today's fatal-on-first-non-Natural-terminal collection behavior
+    and every existing config unchanged; the admitted range is the
+    half-open [0.0, 1.0), matching the Rust-side validator
+    (`validate_max_non_natural_episode_fraction_v1`) exactly."""
+    fraction=config.get('max_non_natural_episode_fraction',0.0)
+    require(finite(fraction) and fraction<1.0,
+            'invalid max_non_natural_episode_fraction; float in [0.0, 1.0) required')
+    return fraction
+
+
 def validate_preparation_runner(config,document):
     workers=preparation_workers(config)
     if workers==1:
@@ -74,6 +89,16 @@ def canonical_training_config(config):
     # fixed_partition_4 is supposed to differ from one computed with the
     # (explicit or implicit) sequential default.
     if update_backward_execution(value)=='sequential':value.pop('update_backward_execution',None)
+    # Same convention again: stripped only at the byte-identical 0.0 default.
+    # f32-round-tripped like learning_rate/value_coefficient below (it is an
+    # f32 field on the Rust side too) before that comparison, so an explicit
+    # value that rounds to exactly 0.0 strips the same as an absent one, and
+    # a kept value is hashed at the exact bit pattern mtg-kernel uses.
+    fraction=struct.unpack('<f',struct.pack('<f',max_non_natural_episode_fraction(value)))[0]
+    if fraction==0.0:
+        value.pop('max_non_natural_episode_fraction',None)
+    else:
+        value['max_non_natural_episode_fraction']=fraction
     for key in ('learning_rate','value_coefficient'):
         value[key]=struct.unpack('<f',struct.pack('<f',value[key]))[0]
     return value

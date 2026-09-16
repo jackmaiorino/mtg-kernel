@@ -933,12 +933,53 @@ fn restore_checkpoint_fields_v1(
     Ok(state)
 }
 
+/// `collect_episode`'s error, split so a tolerant caller (see
+/// `max_non_natural_episode_fraction`) can distinguish "this game did not
+/// complete naturally" -- carries the full terminal record, enough to build
+/// a `non-natural.json` ledger entry without re-deriving anything -- from
+/// every other failure (encoding/validation defects, I/O, ...), which must
+/// never be silently retried or ledgered. `Display`/`Into<String>` reproduce
+/// the exact pre-existing message for the non-natural case
+/// ("only naturally completed games may become training trajectories"), so
+/// every caller that only ever saw a `String` before keeps the identical
+/// text, and default-off behavior (`max_non_natural_episode_fraction ==
+/// 0.0`) is byte-for-byte unchanged.
+const NON_NATURAL_ERROR_TEXT_V1: &str =
+    "only naturally completed games may become training trajectories";
+
+#[derive(Debug)]
+enum CollectEpisodeErrorV1 {
+    NonNatural(RlSessionTerminalV1),
+    Other(String),
+}
+
+impl std::fmt::Display for CollectEpisodeErrorV1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CollectEpisodeErrorV1::NonNatural(_) => f.write_str(NON_NATURAL_ERROR_TEXT_V1),
+            CollectEpisodeErrorV1::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for CollectEpisodeErrorV1 {
+    fn from(message: String) -> Self {
+        CollectEpisodeErrorV1::Other(message)
+    }
+}
+
+impl From<CollectEpisodeErrorV1> for String {
+    fn from(error: CollectEpisodeErrorV1) -> Self {
+        error.to_string()
+    }
+}
+
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
-) -> Result<ExpandedTrajectoryV1, String> {
+) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
     let configs = episode.configurations()?;
     ensure(
         episode.opponent.is_some() == opponent.is_some(),
@@ -979,10 +1020,9 @@ fn collect_episode(
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
-                ensure(
-                    terminal.terminal_classification == TerminalClassificationV1::Natural,
-                    "only naturally completed games may become training trajectories",
-                )?;
+                if terminal.terminal_classification != TerminalClassificationV1::Natural {
+                    return Err(CollectEpisodeErrorV1::NonNatural(terminal));
+                }
                 // Read the digests actually stamped by this loaded policy's
                 // generation, never a hardcoded V3 constant: a fresh-V4
                 // policy must produce a V4-labeled trajectory.
@@ -1049,6 +1089,207 @@ fn collect_episode(
             }
         }
     }
+}
+
+/// One non-natural collection attempt, preserved for audit even though it is
+/// never learned from. Written verbatim (schedule order, one entry per
+/// failed attempt) to a `non-natural.json` ledger alongside the collection
+/// receipt whenever `max_non_natural_episode_fraction > 0.0`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NonNaturalLedgerEntryV1 {
+    /// Position of this episode within its collection batch (0-based).
+    /// Batch membership, order and count are unaffected by a retry: this is
+    /// always the slot's original schedule index.
+    slot: usize,
+    /// 1-based: 1 is the original attempt, 2 and 3 are retries.
+    attempt: u32,
+    episode_id: String,
+    /// The seed actually used for this attempt: the episode's original seed
+    /// on attempt 1, otherwise `derived_retry_seed_v1(episode_id,
+    /// original_seed, attempt - 1)`.
+    seed: u64,
+    decks: [String; 2],
+    starting_player: u8,
+    terminal_classification: TerminalClassificationV1,
+    terminal_reason: String,
+    error_text: String,
+    /// `RlSessionTerminalV1::policy_step_count` at the terminal.
+    step: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NonNaturalLedgerV1 {
+    schema: String,
+    entries: Vec<NonNaturalLedgerEntryV1>,
+}
+
+const NON_NATURAL_LEDGER_SCHEMA_V1: &str = "mtg-kernel-non-natural-collection-ledger/v1";
+
+fn is_zero_non_natural_fraction_v1(value: &f32) -> bool {
+    *value == 0.0
+}
+
+/// `0.0` (the default) means today's fatal-on-first-non-Natural-terminal
+/// behavior; `1.0` would tolerate every slot in an iteration failing, which
+/// defeats the point of collecting anything, so the admitted range is the
+/// half-open `[0.0, 1.0)`.
+pub(crate) fn validate_max_non_natural_episode_fraction_v1(value: f32) -> Result<(), String> {
+    ensure(
+        value.is_finite() && (0.0..1.0).contains(&value),
+        "max_non_natural_episode_fraction must be in [0.0, 1.0)",
+    )
+}
+
+/// Total attempts (the original collection plus up to two retries) a single
+/// slot gets before a non-Natural terminal becomes fatal even with
+/// `max_non_natural_episode_fraction > 0.0`. Fixed, not config-driven, per
+/// the plan: "a small fixed retry limit (3)".
+const NON_NATURAL_RETRY_LIMIT: u32 = 3;
+
+/// Deterministic retry seed for a non-natural collection slot: keyed by the
+/// episode's own id (so two slots that happen to share a seed never derive
+/// colliding retry seeds) and the 1-based retry index (1 for the first
+/// retry, 2 for the second). SHA-256 over a fixed, domain-separated byte
+/// string; the first 8 digest bytes, read back big-endian. This is the
+/// single source of truth: any retried seed recorded in a `non-natural.json`
+/// ledger (or carried on a trajectory's own `episode.seed`) can be
+/// recomputed from the original episode id, its original seed, and the
+/// retry index alone -- nothing else is fed in.
+fn derived_retry_seed_v1(episode_id: &str, original_seed: u64, retry_index: u32) -> u64 {
+    let mut buffer = Vec::with_capacity(episode_id.len() + 24);
+    buffer.extend_from_slice(b"mtg-kernel-non-natural-retry-seed/v1\0");
+    buffer.extend_from_slice(episode_id.as_bytes());
+    buffer.push(0);
+    buffer.extend_from_slice(&original_seed.to_be_bytes());
+    buffer.extend_from_slice(&retry_index.to_be_bytes());
+    let digest = Sha256::digest(&buffer);
+    u64::from_be_bytes(
+        digest[..8]
+            .try_into()
+            .expect("sha256 digest is at least 8 bytes"),
+    )
+}
+
+// Test-only injection: lets a test force specific *seeds* to be treated as
+// non-Natural without depending on any specific card interaction (Part 1's
+// `campaign_001_block1_cuda_iteration_30_slot_3_ninjutsu_chain_completes_naturally`
+// covers a real engine-defect non-Natural terminal end to end; these tests
+// exercise the generic retry/ledger bookkeeping in isolation, fast and
+// always-run). The real game still plays out in full and must complete
+// naturally on its own merits -- only a flagged seed's *real, own* terminal
+// is then reported as non-Natural, so the ledger records genuine terminal
+// data, never a fabricated one.
+//
+// A process-wide `static`, not a `thread_local!`: `collect_parallel_v1`
+// checks this from its own spawned worker threads, which a thread-local set
+// on the *test's* thread would never reach. Additive (`set_...` inserts,
+// `clear_...` removes only the caller's own seeds, never the whole set), so
+// concurrently running tests -- `cargo test` runs `#[test]` fns on their own
+// threads by default -- cannot clobber each other as long as each test uses
+// its own distinct seed literals, which every test below does.
+#[cfg(test)]
+static FORCE_NON_NATURAL_SEEDS_FOR_TEST_V1: std::sync::Mutex<std::collections::BTreeSet<u64>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+#[cfg(test)]
+pub(crate) fn set_force_non_natural_seeds_for_test_v1(seeds: impl IntoIterator<Item = u64>) {
+    FORCE_NON_NATURAL_SEEDS_FOR_TEST_V1
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .extend(seeds);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_force_non_natural_seeds_for_test_v1(seeds: impl IntoIterator<Item = u64>) {
+    let mut set = FORCE_NON_NATURAL_SEEDS_FOR_TEST_V1
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for seed in seeds {
+        set.remove(&seed);
+    }
+}
+
+#[cfg(test)]
+fn seed_is_forced_non_natural_for_test_v1(seed: u64) -> bool {
+    FORCE_NON_NATURAL_SEEDS_FOR_TEST_V1
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&seed)
+}
+#[cfg(not(test))]
+fn seed_is_forced_non_natural_for_test_v1(_seed: u64) -> bool {
+    false
+}
+
+/// Wraps `collect_episode` with the config-driven tolerant-collection policy
+/// (`max_non_natural_episode_fraction`, default `0.0` = off). At `0.0` this
+/// is exactly `collect_episode`'s first attempt: no retry, no ledger entry,
+/// the identical error -- every existing config's behavior is unchanged bit
+/// for bit. Above `0.0`, a non-Natural terminal is never turned into a
+/// trajectory (the plan's law: no learning from an incomplete game);
+/// instead the attempt is appended to the returned ledger and the slot is
+/// retried with `derived_retry_seed_v1` (every other episode field -- decks,
+/// starting player, seat, opponent, limits -- is unchanged), up to
+/// `NON_NATURAL_RETRY_LIMIT` total attempts. A non-non-natural error (a
+/// genuine defect, not a legitimate non-natural outcome) is never retried or
+/// ledgered, at any fraction setting: it is fatal immediately, exactly as
+/// today. Batch membership, order and count are unaffected: this always
+/// returns exactly one trajectory (plus whatever ledger entries the failed
+/// attempts produced) for the slot, or -- once the retry budget is
+/// exhausted -- the plan's existing fatal error, with the ledger entries
+/// gathered so far returned alongside it so a caller can still preserve them
+/// before aborting.
+fn collect_episode_tolerant_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    mut opponent: Option<&mut LoadedOpponentV1>,
+    episode: &ExpandedEpisodeV1,
+    slot: usize,
+    max_non_natural_episode_fraction: f32,
+) -> Result<(ExpandedTrajectoryV1, Vec<NonNaturalLedgerEntryV1>), (String, Vec<NonNaturalLedgerEntryV1>)>
+{
+    let mut ledger = Vec::new();
+    let mut attempt_episode = episode.clone();
+    for attempt in 1..=NON_NATURAL_RETRY_LIMIT {
+        let reborrowed_opponent = opponent.as_mut().map(|o| &mut **o);
+        let outcome = collect_episode(policy, learner, reborrowed_opponent, &attempt_episode);
+        let outcome = match outcome {
+            Ok(trajectory) if seed_is_forced_non_natural_for_test_v1(attempt_episode.seed) => Err(
+                CollectEpisodeErrorV1::NonNatural(trajectory.terminal.clone()),
+            ),
+            other => other,
+        };
+        match outcome {
+            Ok(trajectory) => return Ok((trajectory, ledger)),
+            Err(CollectEpisodeErrorV1::NonNatural(terminal))
+                if max_non_natural_episode_fraction > 0.0 =>
+            {
+                ledger.push(NonNaturalLedgerEntryV1 {
+                    slot,
+                    attempt,
+                    episode_id: attempt_episode.id.clone(),
+                    seed: attempt_episode.seed,
+                    decks: [
+                        attempt_episode.selected[0].label.clone(),
+                        attempt_episode.selected[1].label.clone(),
+                    ],
+                    starting_player: attempt_episode.starting_player,
+                    terminal_classification: terminal.terminal_classification,
+                    terminal_reason: terminal.terminal_reason,
+                    error_text: NON_NATURAL_ERROR_TEXT_V1.to_string(),
+                    step: terminal.policy_step_count,
+                });
+                if attempt == NON_NATURAL_RETRY_LIMIT {
+                    return Err((NON_NATURAL_ERROR_TEXT_V1.to_string(), ledger));
+                }
+                attempt_episode.seed = derived_retry_seed_v1(&episode.id, episode.seed, attempt);
+            }
+            Err(error) => return Err((error.to_string(), ledger)),
+        }
+    }
+    unreachable!("the loop above always returns by the NON_NATURAL_RETRY_LIMIT'th attempt")
 }
 
 fn acting_policy_v1<'a>(
@@ -1361,6 +1602,12 @@ pub enum ExpandedTrainingCommandV1 {
     Collect {
         source: ExpandedModelSourceV1,
         episodes: Vec<ExpandedEpisodeV1>,
+        /// Config-driven; default `0.0` (fatal on the first non-Natural
+        /// terminal) keeps every existing config byte-identical on the wire
+        /// and its collection behavior unchanged. See
+        /// `collect_episode_tolerant_v1`.
+        #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction_v1")]
+        max_non_natural_episode_fraction: f32,
         output_directory: PathBuf,
     },
     /// Explicit execution-only successor. The legacy Collect command and its
@@ -1369,6 +1616,8 @@ pub enum ExpandedTrainingCommandV1 {
         source: ExpandedModelSourceV1,
         episodes: Vec<ExpandedEpisodeV1>,
         workers: usize,
+        #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction_v1")]
+        max_non_natural_episode_fraction: f32,
         output_directory: PathBuf,
     },
     Update {
@@ -1406,16 +1655,19 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             source,
             episodes,
             workers,
+            max_non_natural_episode_fraction,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
             episodes,
             workers,
+            max_non_natural_episode_fraction,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {
             source,
             episodes,
+            max_non_natural_episode_fraction,
             output_directory,
         } => {
             let collection_started = std::time::Instant::now();
@@ -1423,6 +1675,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 !episodes.is_empty() && episodes.len() <= 1024,
                 "invalid collection size",
             )?;
+            validate_max_non_natural_episode_fraction_v1(max_non_natural_episode_fraction)?;
             let mut ids = BTreeSet::new();
             for episode in &episodes {
                 episode.configurations()?;
@@ -1442,25 +1695,70 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let initialization_seconds = collection_started.elapsed().as_secs_f64();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
-            for (index, episode) in episodes.iter().enumerate() {
-                eprintln!(
-                    "collect episode {}/{} {}",
-                    index + 1,
-                    episodes.len(),
-                    episode.id
-                );
-                let opponent = episode
-                    .opponent
-                    .as_ref()
-                    .map(|s| opponent_cache.load(s))
-                    .transpose()?;
-                let trajectory = collect_episode(&mut policy, &learner, opponent, episode)?;
-                let name = format!("episode-{index:04}.json");
-                outputs.push(publish_json(&output_directory, &name, &trajectory)?);
+            let mut ledger = Vec::new();
+            // IIFE: the loop body needs `?` for ordinary per-episode errors,
+            // but a non-Natural terminal (see `collect_episode_tolerant_v1`)
+            // must still let the ledger gathered so far reach disk before the
+            // command as a whole fails, so the loop's outcome is captured
+            // here rather than propagated directly out of the match arm.
+            let collection_result: Result<(), String> = (|| {
+                for (index, episode) in episodes.iter().enumerate() {
+                    eprintln!(
+                        "collect episode {}/{} {}",
+                        index + 1,
+                        episodes.len(),
+                        episode.id
+                    );
+                    let opponent = episode
+                        .opponent
+                        .as_ref()
+                        .map(|s| opponent_cache.load(s))
+                        .transpose()?;
+                    let (trajectory, entries) = collect_episode_tolerant_v1(
+                        &mut policy,
+                        &learner,
+                        opponent,
+                        episode,
+                        index,
+                        max_non_natural_episode_fraction,
+                    )
+                    .map_err(|(collection_error, entries)| {
+                        ledger.extend(entries);
+                        collection_error
+                    })?;
+                    ledger.extend(entries);
+                    let name = format!("episode-{index:04}.json");
+                    outputs.push(publish_json(&output_directory, &name, &trajectory)?);
+                }
+                Ok(())
+            })();
+            let failed_slots: BTreeSet<usize> = ledger.iter().map(|entry| entry.slot).collect();
+            let failed_fraction = failed_slots.len() as f32 / episodes.len() as f32;
+            let non_natural_ledger_pin = if max_non_natural_episode_fraction > 0.0 {
+                let document = NonNaturalLedgerV1 {
+                    schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
+                    entries: ledger,
+                };
+                Some(publish_json(&output_directory, "non-natural.json", &document)?)
+            } else {
+                None
+            };
+            collection_result?;
+            if max_non_natural_episode_fraction > 0.0 {
+                ensure(
+                    failed_fraction <= max_non_natural_episode_fraction,
+                    &format!(
+                        "non-natural episode fraction {failed_fraction} exceeds the configured \
+                         maximum {max_non_natural_episode_fraction}"
+                    ),
+                )?;
             }
-            let result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs,
+            let mut result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs,
                 "collection_elapsed_seconds":collection_started.elapsed().as_secs_f64(),
                 "collection_initialization_seconds":initialization_seconds});
+            if let Some(pin) = non_natural_ledger_pin {
+                result["non_natural_ledger"] = json!(pin);
+            }
             publish_json(&output_directory, "collection.json", &result)?;
             Ok(result)
         }
@@ -2696,6 +2994,366 @@ mod tests {
         );
     }
 
+    /// Root-cause regression for CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4:
+    /// campaign-001 lineage a's block-1 CUDA dry block stopped at iteration 30
+    /// (0-based), collector 2, episode index 3
+    /// (`breadth-4ae2334fa6fad9fd9ff1beb0-b0-i30-s3`), Wildfire (learner, seat 0,
+    /// the real iteration-29 checkpoint) versus Faeries (opponent, fixed policy
+    /// fresh-b, no checkpoint), starting player 1, seed
+    /// 15634452618269313559. Every path, hash, seed and deck list below is
+    /// copied verbatim from the real collection command receipt at
+    /// `Q/campaign-001/a/block1-cuda/run/iterations/000030/attempt-000000/
+    /// collect-command.json`. Reads the real evidence tree (Q =
+    /// `E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/
+    /// phase1-training-qualification-001`), never writes to it.
+    ///
+    /// Before the fix below, this game halted at turn 15 with
+    /// `engine_halted:InvalidEffectContinuation:source:74`: Ninja of the Deep
+    /// Hours (object 74, Faeries) attacked normally this turn, was returned to
+    /// hand as the cost of a *different* ninjutsu creature's ninjutsu ability
+    /// (`CostComponent::ReturnControlledUnblockedAttackerToOwnersHand`, which
+    /// committed the zone change but never removed the object from
+    /// `state.engine.combat.attackers`), and then had its own ninjutsu ability
+    /// resolve later in the same Declare Blockers step
+    /// (`put_ninjutsu_source_onto_battlefield_attacking`). That function's
+    /// own-duplicate guard (`combat.attackers.contains(&source)`) found the
+    /// stale id left over from the object's earlier, no-longer-live attack and
+    /// rejected a legal ninjutsu chain as "ninjutsu source already appears in
+    /// combat", which `EffectOp::PutSourceOntoBattlefieldTappedAndAttacking`
+    /// (`effect.rs`) turned into an engine halt, which `collect_episode`
+    /// correctly refuses to turn into a training trajectory. Fixed by pruning
+    /// the returned attacker from `combat.attackers` at the moment its cost is
+    /// paid (see the `ReturnControlledUnblockedAttackerToOwnersHand` arm a few
+    /// hundred lines above `commit_cost_component`), per 506.4: a permanent
+    /// that leaves the battlefield leaves combat. Real native-engine compute
+    /// against a real trained checkpoint, deliberately opt-in like its
+    /// siblings above.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-001 block1-cuda iteration 30 slot 3 against the real evidence tree"]
+    fn campaign_001_block1_cuda_iteration_30_slot_3_ninjutsu_chain_completes_naturally() {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-001/a/block1-cuda/run/iterations/000029/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "e66cbb478196b24a1c47123a0bda3bae505307c8e505a13bfec4f5037c4c9e9a".into(),
+            }),
+        };
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer,
+            checkpoint: None,
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let wildfire = ExpandedDeckListV1 {
+            label: "Wildfire/c19a76864de9".into(),
+            mainboard: vec![
+                6, 11, 11, 11, 11, 15, 15, 15, 15, 23, 23, 23, 23, 29, 35, 35, 35, 35, 39, 39, 58,
+                58, 58, 62, 62, 62, 65, 65, 65, 69, 76, 76, 79, 79, 79, 79, 81, 89, 96, 96, 96,
+                96, 104, 104, 104, 104, 114, 114, 114, 121, 121, 123, 123, 123, 123, 125, 131,
+                131, 131, 131,
+            ],
+            sideboard: vec![9, 9, 24, 24, 24, 31, 90, 90, 90, 122, 122, 128, 128, 128, 128],
+        };
+        let faeries = ExpandedDeckListV1 {
+            label: "Faeries/a8c6f236b1b4".into(),
+            mainboard: vec![
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
+                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
+                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
+                110,
+            ],
+            sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-4ae2334fa6fad9fd9ff1beb0-b0-i30-s3".into(),
+            seed: 15_634_452_618_269_313_559,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [wildfire.clone(), faeries.clone()],
+            selected: [wildfire, faeries],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "the ninjutsu-chain fix regressed: this exact seed/deck/checkpoint \
+                     combination (CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4) should complete \
+                     naturally again, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    // ---- max_non_natural_episode_fraction: tolerant collection with a
+    // ---- ledger (Part 2). `derived_retry_seed_v1` is exercised directly
+    // ---- (no game); the retry/ledger bookkeeping tests use
+    // ---- `set_force_non_natural_seeds_for_test_v1` to deterministically
+    // ---- and quickly flag a real, naturally-completing self-play game's
+    // ---- *own* seed as non-Natural, independent of any specific card
+    // ---- interaction (Part 1's ninjutsu-chain test above already covers a
+    // ---- real engine-defect non-Natural terminal end to end).
+
+    fn fast_self_play_episode_v1(id: &str, seed: u64, slot_hint: u8) -> ExpandedEpisodeV1 {
+        ExpandedEpisodeV1 {
+            id: id.into(),
+            seed,
+            starting_player: slot_hint % 2,
+            learner_seat: 0,
+            opponent: None,
+            registered: [list("Affinity"), list("Terror")],
+            selected: [list("Affinity"), list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        }
+    }
+
+    #[test]
+    fn derived_retry_seed_v1_is_deterministic_and_domain_separated() {
+        let a = derived_retry_seed_v1("episode-a", 42, 1);
+        assert_eq!(
+            a,
+            derived_retry_seed_v1("episode-a", 42, 1),
+            "same inputs must always derive the same seed"
+        );
+        assert_ne!(
+            a,
+            derived_retry_seed_v1("episode-b", 42, 1),
+            "different episode ids must not derive colliding seeds"
+        );
+        assert_ne!(
+            a,
+            derived_retry_seed_v1("episode-a", 43, 1),
+            "different original seeds must not derive colliding seeds"
+        );
+        assert_ne!(
+            a,
+            derived_retry_seed_v1("episode-a", 42, 2),
+            "different retry indices must not derive colliding seeds"
+        );
+    }
+
+    #[test]
+    fn tolerant_collection_default_off_still_aborts_on_first_attempt_with_no_ledger() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("tolerant-off", 2_026_091_701, 0);
+        set_force_non_natural_seeds_for_test_v1([episode.seed]);
+        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 0, 0.0);
+        clear_force_non_natural_seeds_for_test_v1([episode.seed]);
+        let (error, ledger) = outcome.unwrap_err();
+        assert_eq!(
+            error, NON_NATURAL_ERROR_TEXT_V1,
+            "the default (0.0, off) must reproduce today's exact fatal message"
+        );
+        assert!(
+            ledger.is_empty(),
+            "max_non_natural_episode_fraction at its 0.0 default must never record a ledger \
+             entry or retry"
+        );
+    }
+
+    #[test]
+    fn tolerant_collection_retries_with_the_derived_seed_and_ledgers_only_the_failed_attempt() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("tolerant-retry", 2_026_091_702, 1);
+        let retry_seed = derived_retry_seed_v1(&episode.id, episode.seed, 1);
+        assert_ne!(retry_seed, episode.seed);
+        set_force_non_natural_seeds_for_test_v1([episode.seed]);
+        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 3, 0.5);
+        clear_force_non_natural_seeds_for_test_v1([episode.seed]);
+        let (trajectory, ledger) = outcome.unwrap();
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+        assert_eq!(
+            trajectory.episode.seed, retry_seed,
+            "the only published trajectory must carry the derived retry seed, never the \
+             non-Natural original: nothing is learned from the failed attempt"
+        );
+        assert_eq!(ledger.len(), 1, "exactly the one failed attempt is ledgered");
+        assert_eq!(ledger[0].slot, 3);
+        assert_eq!(ledger[0].attempt, 1);
+        assert_eq!(ledger[0].seed, episode.seed);
+        assert_eq!(ledger[0].episode_id, episode.id);
+        assert_eq!(
+            ledger[0].decks,
+            ["Affinity".to_string(), "Terror".to_string()]
+        );
+        assert_eq!(ledger[0].starting_player, episode.starting_player);
+        assert_eq!(ledger[0].error_text, NON_NATURAL_ERROR_TEXT_V1);
+        assert_eq!(
+            ledger[0].terminal_classification,
+            trajectory.terminal.terminal_classification
+        );
+    }
+
+    #[test]
+    fn tolerant_collection_exhausts_the_retry_limit_and_returns_the_ledger_with_the_fatal_error() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = fast_self_play_episode_v1("tolerant-exhausted", 2_026_091_703, 0);
+        let retry_1 = derived_retry_seed_v1(&episode.id, episode.seed, 1);
+        let retry_2 = derived_retry_seed_v1(&episode.id, episode.seed, 2);
+        set_force_non_natural_seeds_for_test_v1([episode.seed, retry_1, retry_2]);
+        let outcome = collect_episode_tolerant_v1(&mut policy, &learner, None, &episode, 7, 0.9);
+        clear_force_non_natural_seeds_for_test_v1([episode.seed, retry_1, retry_2]);
+        let (error, ledger) = outcome.unwrap_err();
+        assert_eq!(
+            error, NON_NATURAL_ERROR_TEXT_V1,
+            "a slot that fails NON_NATURAL_RETRY_LIMIT times aborts exactly as today"
+        );
+        assert_eq!(ledger.len(), NON_NATURAL_RETRY_LIMIT as usize);
+        assert_eq!(
+            ledger.iter().map(|e| e.attempt).collect::<Vec<_>>(),
+            vec![1, 2, 3],
+            "the ledger preserved alongside the fatal error covers every attempt"
+        );
+        assert_eq!(
+            ledger.iter().map(|e| e.seed).collect::<Vec<_>>(),
+            vec![episode.seed, retry_1, retry_2]
+        );
+        assert!(ledger.iter().all(|e| e.slot == 7));
+    }
+
+    /// End to end through the real `execute_v1(Collect{..})` command: proves
+    /// the ledger file, the `collection.json` receipt's `non_natural_ledger`
+    /// pin, the reported trajectory count (one per slot, retries included --
+    /// "counts of actual completed work"), and the fraction cap, all through
+    /// the same dispatch production uses. `CollectParallel` reuses the exact
+    /// same `collect_episode_tolerant_v1` and only differs in how ledger
+    /// entries reach the shared accumulator (a `Mutex` instead of a plain
+    /// `Vec`, since workers run concurrently); this is covered directly by
+    /// `phase1_parallel_collection::tests::phase1_parallel_tolerant_collection_ledgers_and_enforces_the_fraction_cap`.
+    #[test]
+    fn execute_v1_collect_writes_ledger_records_its_hash_and_enforces_the_fraction_cap() {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
+        let root = std::env::temp_dir().join(format!(
+            "expanded-collect-tolerant-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let episodes: Vec<_> = (0..4u64)
+            .map(|index| {
+                fast_self_play_episode_v1(
+                    &format!("tolerant-batch-{index}"),
+                    2_026_091_800 + index,
+                    index as u8,
+                )
+            })
+            .collect();
+
+        // One slot (index 1) fails its original attempt and must be
+        // re-collected with the derived seed; a generous fraction budget
+        // (1 of 4 = 0.25, budget 0.5) admits it.
+        set_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
+        let result = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: episodes.clone(),
+            max_non_natural_episode_fraction: 0.5,
+            output_directory: root.join("collect-admitted"),
+        });
+        clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
+        let result = result.unwrap();
+        let trajectories = result["trajectories"].as_array().unwrap();
+        assert_eq!(
+            trajectories.len(),
+            episodes.len(),
+            "counts of actual completed work: exactly one trajectory per slot, however many \
+             attempts a slot needed"
+        );
+        let ledger_pin: PinnedFileV1 =
+            serde_json::from_value(result["non_natural_ledger"].clone()).unwrap();
+        let ledger_document: Value = read_pinned(&ledger_pin).unwrap();
+        assert_eq!(ledger_document["schema"], NON_NATURAL_LEDGER_SCHEMA_V1);
+        let entries = ledger_document["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["slot"], 1);
+        assert_eq!(entries[0]["seed"], episodes[1].seed);
+        assert_eq!(entries[0]["attempt"], 1);
+
+        // Same setup, but a fraction budget too tight for even one failed
+        // slot out of four (1/4 = 0.25 exceeds 0.1) must abort, with the
+        // ledger still preserved on disk.
+        let forced_seed = episodes[1].seed;
+        set_force_non_natural_seeds_for_test_v1([forced_seed]);
+        let error = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source,
+            episodes,
+            max_non_natural_episode_fraction: 0.1,
+            output_directory: root.join("collect-fraction-capped"),
+        })
+        .unwrap_err();
+        clear_force_non_natural_seeds_for_test_v1([forced_seed]);
+        assert!(
+            error.contains("non-natural episode fraction"),
+            "got: {error}"
+        );
+        assert!(
+            root.join("collect-fraction-capped/non-natural.json").exists(),
+            "the ledger must be preserved on disk even though the fraction cap aborted the run"
+        );
+    }
+
     /// Multi-seed regression soak for the V4 actor-visible encoder gaps
     /// fixed in `rl_session/flat_action_v4.rs` (see the doc comment on
     /// `ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly`
@@ -3343,6 +4001,7 @@ mod tests {
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
                 episodes: vec![episode],
+                max_non_natural_episode_fraction: 0.0,
                 output_directory: root.join(format!("collect-{iteration}")),
             })?;
             let trajectories: Vec<PinnedFileV1> =

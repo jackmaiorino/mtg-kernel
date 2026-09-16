@@ -6,6 +6,7 @@
 use super::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 
@@ -139,6 +140,7 @@ pub(super) fn collect_parallel_v1(
     source: ExpandedModelSourceV1,
     episodes: Vec<ExpandedEpisodeV1>,
     workers: usize,
+    max_non_natural_episode_fraction: f32,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -148,6 +150,7 @@ pub(super) fn collect_parallel_v1(
         !episodes.is_empty() && episodes.len() <= 1024,
         "invalid collection size",
     )?;
+    validate_max_non_natural_episode_fraction_v1(max_non_natural_episode_fraction)?;
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         episode.configurations()?;
@@ -179,7 +182,15 @@ pub(super) fn collect_parallel_v1(
     drop(policy);
     let initialization_seconds = started.elapsed().as_secs_f64();
     fs::create_dir(&output_directory).map_err(err)?;
-    let (outputs, worker_timings) =
+    // Side channel, independent of `ordered_parallel_jobs_v1`'s own success/
+    // failure return: a worker extends this the moment it has an attempt's
+    // ledger entries, whether or not that worker (or a sibling) ultimately
+    // fails, so the ledger is preserved even when the whole command aborts
+    // (a slot exhausting `NON_NATURAL_RETRY_LIMIT`, which
+    // `ordered_parallel_jobs_v1` turns into a fatal `Err` that discards
+    // every worker's normal `T` return value).
+    let ledger: Mutex<Vec<NonNaturalLedgerEntryV1>> = Mutex::new(Vec::new());
+    let collection_result =
         ordered_parallel_jobs_v1(contexts, episodes.len(), |collector, index| {
             let episode = &episodes[index];
             eprintln!(
@@ -207,7 +218,25 @@ pub(super) fn collect_parallel_v1(
                 .as_ref()
                 .map(|opponent| collector.opponent_cache.load(opponent))
                 .transpose()?;
-            let trajectory = collect_episode(&mut collector.policy, &learner, opponent, episode)?;
+            let (trajectory, entries) = collect_episode_tolerant_v1(
+                &mut collector.policy,
+                &learner,
+                opponent,
+                episode,
+                index,
+                max_non_natural_episode_fraction,
+            )
+            .map_err(|(collection_error, entries)| {
+                ledger
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend(entries);
+                collection_error
+            })?;
+            ledger
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend(entries);
             // Publish directly from each private worker so completed tensors
             // do not accumulate in RAM while an earlier episode is running.
             publish_json(
@@ -215,8 +244,33 @@ pub(super) fn collect_parallel_v1(
                 &format!("episode-{index:04}.json"),
                 &trajectory,
             )
-        })?;
-    let result = json!({
+        });
+    let mut ledger_entries = ledger
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    ledger_entries.sort_by_key(|entry| (entry.slot, entry.attempt));
+    let failed_slots: BTreeSet<usize> = ledger_entries.iter().map(|entry| entry.slot).collect();
+    let failed_fraction = failed_slots.len() as f32 / episodes.len() as f32;
+    let non_natural_ledger_pin = if max_non_natural_episode_fraction > 0.0 {
+        let document = NonNaturalLedgerV1 {
+            schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
+            entries: ledger_entries,
+        };
+        Some(publish_json(&output_directory, "non-natural.json", &document)?)
+    } else {
+        None
+    };
+    let (outputs, worker_timings) = collection_result?;
+    if max_non_natural_episode_fraction > 0.0 {
+        ensure(
+            failed_fraction <= max_non_natural_episode_fraction,
+            &format!(
+                "non-natural episode fraction {failed_fraction} exceeds the configured maximum \
+                 {max_non_natural_episode_fraction}"
+            ),
+        )?;
+    }
+    let mut result = json!({
         "schema":"mtg-kernel-expanded-deck-collection/v1",
         "complete":true,
         "source":source,
@@ -229,6 +283,9 @@ pub(super) fn collect_parallel_v1(
         "collection_elapsed_seconds":started.elapsed().as_secs_f64(),
         "collection_worker_timings":worker_timings,
     });
+    if let Some(pin) = non_natural_ledger_pin {
+        result["non_natural_ledger"] = json!(pin);
+    }
     publish_json(&output_directory, "collection.json", &result)?;
     Ok(result)
 }
@@ -329,6 +386,114 @@ mod tests {
         assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(invalid).is_err());
         parallel.as_object_mut().unwrap().remove("workers");
         assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(parallel).is_err());
+    }
+
+    /// Mirrors `expanded_deck_training_v1::tests::
+    /// execute_v1_collect_writes_ledger_records_its_hash_and_enforces_the_fraction_cap`
+    /// through the parallel path specifically: there, ledger entries reach
+    /// disk through a `Mutex`-guarded side channel (see `collect_parallel_v1`'s
+    /// doc comment on `ledger`) instead of a plain `Vec` accumulated by a
+    /// single thread, since workers run concurrently.
+    #[test]
+    fn phase1_parallel_tolerant_collection_ledgers_and_enforces_the_fraction_cap() {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
+        let root = std::env::temp_dir().join(format!(
+            "expanded-collect-parallel-tolerant-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let deck = |id: &str| {
+            let registration =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            let cards = registration.registered_configuration();
+            ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: cards.mainboard().to_vec(),
+                sideboard: cards.sideboard().to_vec(),
+            }
+        };
+        let decks = [deck("Affinity"), deck("Terror")];
+        let episodes: Vec<_> = (0..4u64)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("tolerant-parallel-{index}"),
+                seed: 2_026_091_900 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: 0,
+                opponent: None,
+                registered: decks.clone(),
+                selected: decks.clone(),
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+            })
+            .collect();
+
+        // One slot fails its original attempt; a generous fraction budget
+        // (1 of 4 = 0.25, budget 0.5) admits the retried result.
+        set_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
+        let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
+            source: source.clone(),
+            episodes: episodes.clone(),
+            workers: 2,
+            max_non_natural_episode_fraction: 0.5,
+            output_directory: root.join("collect-admitted"),
+        });
+        clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
+        let result = result.unwrap();
+        let trajectories = result["trajectories"].as_array().unwrap();
+        assert_eq!(
+            trajectories.len(),
+            episodes.len(),
+            "counts of actual completed work: exactly one trajectory per slot"
+        );
+        let ledger_pin: PinnedFileV1 =
+            serde_json::from_value(result["non_natural_ledger"].clone()).unwrap();
+        let ledger_document: Value = read_pinned(&ledger_pin).unwrap();
+        let entries = ledger_document["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["slot"], 1);
+        assert_eq!(entries[0]["seed"], episodes[1].seed);
+
+        // Same setup, but a fraction budget too tight for even one failed
+        // slot out of four must abort, with the ledger still preserved.
+        let forced_seed = episodes[1].seed;
+        set_force_non_natural_seeds_for_test_v1([forced_seed]);
+        let error = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
+            source,
+            episodes,
+            workers: 2,
+            max_non_natural_episode_fraction: 0.1,
+            output_directory: root.join("collect-fraction-capped"),
+        })
+        .unwrap_err();
+        clear_force_non_natural_seeds_for_test_v1([forced_seed]);
+        assert!(
+            error.contains("non-natural episode fraction"),
+            "got: {error}"
+        );
+        assert!(
+            root.join("collect-fraction-capped/non-natural.json").exists(),
+            "the ledger must be preserved on disk even though the fraction cap aborted the run"
+        );
     }
 
     /// Real complete games, deliberately opt-in because these exercise native

@@ -86,7 +86,17 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "is_serial_collection"
     )]
     pub preparation_workers: usize,
+    /// Config-driven; default `0.0` (fatal on the first non-Natural
+    /// terminal) keeps every existing config byte-identical on the wire and
+    /// its collection behavior unchanged. See
+    /// `expanded_deck_training_v1::collect_episode_tolerant_v1`.
+    #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction")]
+    pub max_non_natural_episode_fraction: f32,
     pub output_directory: PathBuf,
+}
+
+fn is_zero_non_natural_fraction(value: &f32) -> bool {
+    *value == 0.0
 }
 
 fn check(ok: bool, message: &str) -> Result<(), String> {
@@ -124,6 +134,9 @@ impl NativeExpandedTrainingRunV1 {
         crate::expanded_deck_training_v1::validate_collection_workers_v1(self.collection_workers)?;
         crate::expanded_deck_training_v1::validate_preparation_workers_v1(
             self.preparation_workers,
+        )?;
+        crate::expanded_deck_training_v1::validate_max_non_natural_episode_fraction_v1(
+            self.max_non_natural_episode_fraction,
         )?;
         check(
             self.output_directory.is_absolute(),
@@ -360,6 +373,25 @@ fn resolve_episodes(
         .collect()
 }
 
+/// Auditability for the config-driven tolerant-collection ledger (see
+/// `expanded_deck_training_v1::collect_episode_tolerant_v1`): `collect`/
+/// `collect_parallel` stamp `non_natural_ledger` on their own
+/// `collection.json` receipt only when `max_non_natural_episode_fraction >
+/// 0.0`, so an iteration's ledger (if any) is surfaced here, from the same
+/// pinned collection receipt `validate_collection` already re-verified, for
+/// the caller to record directly on the iteration's own `complete.json`
+/// receipt rather than leaving it reachable only by chasing the collection
+/// pin by hand.
+fn collection_non_natural_ledger_pin(
+    collection: &PinnedFileV1,
+) -> Result<Option<PinnedFileV1>, String> {
+    let document = read_pin(collection)?;
+    match document.get("non_natural_ledger") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => Ok(Some(serde_json::from_value(value.clone()).map_err(err)?)),
+    }
+}
+
 fn validate_collection(
     collection: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
@@ -469,6 +501,7 @@ fn collection_command(
         ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
             episodes: episodes.to_vec(),
+            max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
             output_directory,
         }
     } else {
@@ -476,6 +509,7 @@ fn collection_command(
             source: source.clone(),
             episodes: episodes.to_vec(),
             workers: config.collection_workers,
+            max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
             output_directory,
         }
     }
@@ -777,9 +811,12 @@ pub fn run_native_expanded_training_v1(
             config.preparation_workers,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
-        let receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
+        let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
+        if let Some(ledger_pin) = collection_non_natural_ledger_pin(&collection)? {
+            receipt["non_natural_ledger"] = value(&ledger_pin)?;
+        }
         receipts.push(publish(&directory, "complete.json", &receipt)?);
         current = next;
         current_identity = after;
@@ -928,6 +965,7 @@ mod tests {
             update_backward_execution: UpdateBackwardExecutionV1::Sequential,
             collection_workers: 1,
             preparation_workers: 1,
+            max_non_natural_episode_fraction: 0.0,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -1030,6 +1068,84 @@ mod tests {
             parallel.preparation_workers = invalid;
             assert!(parallel.validate_v1().is_err());
         }
+    }
+
+    #[test]
+    fn max_non_natural_episode_fraction_preserves_serial_wire_and_validates_range() {
+        let serial = schedule();
+        let serial_value = value(&serial).unwrap();
+        assert!(serial_value.get("max_non_natural_episode_fraction").is_none());
+        let restored: NativeExpandedTrainingRunV1 =
+            serde_json::from_value(serial_value.clone()).unwrap();
+        assert_eq!(restored.max_non_natural_episode_fraction, 0.0);
+        assert_eq!(value(&restored).unwrap(), serial_value);
+
+        let mut tolerant = serial.clone();
+        tolerant.max_non_natural_episode_fraction = 0.2;
+        tolerant.validate_v1().unwrap();
+        assert_ne!(identity(&serial).unwrap(), identity(&tolerant).unwrap());
+        let tolerant_value = value(&tolerant).unwrap();
+        assert_eq!(
+            tolerant_value["max_non_natural_episode_fraction"],
+            json!(0.2f32)
+        );
+
+        for invalid in [-0.1f32, 1.0, 1.5, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            tolerant.max_non_natural_episode_fraction = invalid;
+            assert!(tolerant.validate_v1().is_err(), "must reject {invalid}");
+        }
+
+        let episodes = resolve_episodes(&serial, 0, &serial.initial_source, &[]).unwrap();
+        tolerant.max_non_natural_episode_fraction = 0.2;
+        let command = value(&collection_command(
+            &tolerant,
+            &tolerant.initial_source,
+            &episodes,
+            tolerant.output_directory.join("collect"),
+        ))
+        .unwrap();
+        assert_eq!(
+            command["max_non_natural_episode_fraction"],
+            json!(0.2f32)
+        );
+    }
+
+    #[test]
+    fn collection_non_natural_ledger_pin_extracts_or_omits_the_ledger_reference() {
+        let directory = temporary_directory("ledger-pin");
+        let write = |name: &str, document: &Value| -> PinnedFileV1 {
+            let bytes = serde_json::to_vec(document).unwrap();
+            let path = directory.join(name);
+            fs::write(&path, &bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: digest(&bytes),
+            }
+        };
+        let without = write(
+            "collection-without.json",
+            &json!({"complete": true, "trajectories": []}),
+        );
+        assert_eq!(collection_non_natural_ledger_pin(&without).unwrap(), None);
+
+        let with_null = write(
+            "collection-null.json",
+            &json!({"complete": true, "non_natural_ledger": null}),
+        );
+        assert_eq!(collection_non_natural_ledger_pin(&with_null).unwrap(), None);
+
+        let ledger_pin = PinnedFileV1 {
+            path: directory.join("non-natural.json"),
+            sha256: "c".repeat(64),
+        };
+        let with_ledger = write(
+            "collection-with.json",
+            &json!({"complete": true, "non_natural_ledger": value(&ledger_pin).unwrap()}),
+        );
+        assert_eq!(
+            collection_non_natural_ledger_pin(&with_ledger).unwrap(),
+            Some(ledger_pin)
+        );
     }
 
     #[test]
