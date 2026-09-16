@@ -262,6 +262,56 @@ mod tests {
         multi_hidden_scoring_case(7);
     }
 
+    /// Adversarial-review MAJOR-finding regression, full pipeline: two
+    /// simultaneously hidden pending triggers sharing one physical source
+    /// object (one permanent with two abilities, both hidden) must produce
+    /// two distinct registry rows -- never one row reused for both
+    /// positions -- and the action-slice layer and the registry layer must
+    /// agree (both succeed, or both fail identically; never one succeeding
+    /// while the other errors). This proves both layers together, not just
+    /// the action-slice layer alone (`rl_session::flat_action_v4`'s own
+    /// `v4_two_hidden_positions_sharing_one_physical_source_resolve_distinctly`
+    /// proves that layer in isolation).
+    #[test]
+    fn v4_shared_physical_source_across_two_hidden_positions_gets_two_registry_rows() {
+        let (state, _shared_object) =
+            crate::rl_session::hidden_order_triggers_shared_source_state_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut owned = OwnedScoringV4::default();
+        let decision = owned
+            .encode(&session)
+            .expect("both layers must agree and succeed for the shared-physical-source case");
+        let hist = &decision.extensions.historical_public_sources;
+        assert_eq!(hist.len(), 2, "one row per hidden position, even though the physical card is shared");
+        let mut positions: Vec<u32> = hist
+            .iter()
+            .map(|row| match row.context {
+                HistoricalSourceContextV7::PendingTrigger { position } => position,
+                other => panic!("expected PendingTrigger, found {other:?}"),
+            })
+            .collect();
+        positions.sort_unstable();
+        assert_eq!(positions, vec![0, 1]);
+        let model_indices: std::collections::BTreeSet<_> =
+            hist.iter().map(|row| row.model_object_index).collect();
+        assert_eq!(
+            model_indices.len(),
+            2,
+            "the two positions must map to two distinct model rows, not one row reused twice"
+        );
+
+        // The action-slice layer (independently exercised in full by
+        // rl_session::flat_action_v4's own test) must also succeed for this
+        // exact fixture and agree on two distinct ordinals -- checked here
+        // via the tensorizer, which is the only consumer that would notice
+        // a mismatch between the two layers (`ObjectOrder`/`ObjectShape`).
+        let view = owned.view(&decision);
+        let mut tensor = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default()
+            .fill(view, &mut tensor)
+            .expect("both layers must be mutually consistent for the shared-physical-source case");
+    }
+
     /// Dimension-stability check (plan section 3, step 7): encoding a
     /// common, non-hidden fixture through V3 and V4 must produce numerically
     /// identical object/edge feature widths -- proving mechanically, not

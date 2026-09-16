@@ -19,80 +19,208 @@
 //! recomputing fresh on every call), so no shared session cache field needs
 //! a V4 variant added to it.
 //!
-//! Known scoped limitation: like the V3 path it mirrors, this resolves a
-//! hidden reference to `state.engine.pending_triggers` by the *first*
-//! matching position for that live `arena_id`. If two simultaneously
-//! hidden pending triggers ever shared the identical live source object
-//! (two triggered abilities on the same permanent, both queued and both
-//! hidden at once), only the first such position is disambiguated; the
-//! second would raise `InvalidActionReference` via the same-arena-id
-//! consistency check `flat_build_action_cache_v2` already performs for V3.
-//! Every fixture exercised by this fork's tests uses distinct source
-//! objects per hidden position, so this residual is not exercised here.
+//! Position-based, not arena-id-based (adversarial-review fix): two
+//! simultaneously hidden pending triggers can share one live source object
+//! (one permanent with two abilities both triggering off the same event,
+//! then shuffled into the library together), so resolving a hidden
+//! reference by scanning `state.engine.pending_triggers` for the first
+//! entry matching a live `arena_id` cannot disambiguate them -- both
+//! positions would resolve to the same (first) match. This module instead
+//! resolves each `PendingSources` reference by its own POSITION (the
+//! `order_index` `flat_action_core_and_refs_v1` already threads through
+//! `emit_ref`, equal to 0 for every non-`OrderTriggers` role and to the
+//! pending-source index for `OrderTriggers`, matching
+//! `Decision::OrderTriggers { pending }`'s own prefix-of-`state.engine.
+//! pending_triggers` invariant), never by arena-id search, so two hidden
+//! positions sharing one physical card never collapse into one. This
+//! composes with `flat_policy_v2.rs`'s `register_extensions_v4`, which (per
+//! its own doc comment) always inserts one registry row per hidden
+//! position for the same reason.
+//!
+//! Item 14 (plan): [`frozen_pending_trigger_semantic_v4`] is the V4
+//! producer that substitutes a hidden position's frozen `source_contract`
+//! fields for the raw live `card_ref`, applied to a cloned candidate
+//! semantic inside this module -- `rl.rs`'s `core_surface_action_candidates_v1`
+//! (the `Decision::OrderTriggers` arm at ~2988-2993, and its `ChooseTarget`/
+//! `FinishTargetSelection` arms) is never touched and keeps producing the
+//! raw, unconditional `card_ref` this function reads as input.
 
 use super::*;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 
-/// `Zone::Library` fallback for a V4 action reference whose object is a
-/// pending trigger's source moved into its owner's library without ever
-/// being revealed to `actor`. Fork of `pending_trigger_frozen_source_components_v1`,
-/// generalized from the single ChooseTargets-only gate
-/// (`trigger::pending_trigger_choose_targets_gate_v1`, always position 0)
-/// to any position in `state.engine.pending_triggers`: searches every
-/// `(position, pending)` for one whose live `source` is `object_id`,
-/// whose `controller` is `actor`, and whose live source is hidden per
-/// `trigger::pending_trigger_hidden_source_v1` (the exact predicate the V3
-/// gate also checks, minus its ChooseTargets-only decision-shape
-/// constraints). The ordinal reuses the identical shared ceiling
-/// (`trigger::historical_public_source_ordinal_ceiling_v1`) plus this
-/// trigger's own position, exactly mirroring the registry side
-/// (`flat_policy_v2.rs`'s `register_extensions_v4`), so the two layers
-/// cannot independently drift -- the same discipline the V3 mechanism
-/// already established for its single position.
+/// Local (V4-only) analog of `FlatResolvedActionObjectV2`: adds `position`
+/// to the dedup/consistency key so two hidden pending-trigger positions
+/// sharing one physical source object (identical `arena_id`) are tracked
+/// as distinct resolved entries instead of being collapsed into one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlatResolvedActionObjectV4 {
+    arena_id: u32,
+    position: u32,
+    object: FlatActionObjectV2,
+}
+
+/// V4 producer (plan item 14): rewrites a candidate's `ActionSemanticV1` so
+/// a hidden same-controller pending trigger's source is named by its
+/// frozen `PendingTrigger::source_contract` identity instead of the raw
+/// live `card_ref` -- for every position in `Decision::OrderTriggers`'s
+/// `pending_sources`, and for the single (always-0) position
+/// `Decision::ChooseTargets` for a pending trigger can ever name
+/// (`ChooseTarget`/`FinishTargetSelection`'s own `source` field, per
+/// `trigger::pending_trigger_choose_targets_gate_v1`'s proven "only
+/// `pending_triggers[0]`" invariant). A position is substituted only when
+/// [`crate::trigger::pending_trigger_hidden_source_v1`] confirms it is
+/// genuinely hidden and the live `arena_id` still matches that position's
+/// own pending trigger; otherwise the reference is left as the ordinary
+/// live `card_ref`, resolving through the normal (non-frozen) path exactly
+/// as it would for V3. Every other `ActionSemanticV1` variant passes
+/// through unchanged: none of them can ever name a pending trigger's own
+/// source (they arise from engine stages -- casting, cost payment, effect
+/// resolution -- mutually exclusive with `EngineDecisionStageV2::PendingTriggers`).
+fn frozen_pending_trigger_semantic_v4(
+    state: &crate::state::GameState,
+    semantic: ActionSemanticV1,
+) -> ActionSemanticV1 {
+    let frozen_at = |position: usize, live: &CardStableRefV1, actor: PlayerSeatV1| -> CardStableRefV1 {
+        let Some(pending) = state.engine.pending_triggers.get(position) else {
+            return live.clone();
+        };
+        if PlayerSeatV1::from(pending.controller) != actor || pending.source.0 != live.arena_id {
+            return live.clone();
+        }
+        let Some(contract) = pending.source_contract else {
+            return live.clone();
+        };
+        if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
+            return live.clone();
+        }
+        CardStableRefV1 {
+            arena_id: pending.source.0,
+            card_db_id: contract.card_def,
+            owner: contract.owner.into(),
+            controller: contract.controller.into(),
+            zone: contract.zone,
+            zone_change_count: contract.zone_change_count,
+        }
+    };
+    match semantic {
+        ActionSemanticV1::OrderTriggers {
+            actor,
+            mut pending_sources,
+            order,
+        } => {
+            for (position, source) in pending_sources.iter_mut().enumerate() {
+                *source = frozen_at(position, source, actor);
+            }
+            ActionSemanticV1::OrderTriggers {
+                actor,
+                pending_sources,
+                order,
+            }
+        }
+        ActionSemanticV1::ChooseTarget {
+            actor,
+            source,
+            remaining,
+            target,
+        } => {
+            let source = frozen_at(0, &source, actor);
+            ActionSemanticV1::ChooseTarget {
+                actor,
+                source,
+                remaining,
+                target,
+            }
+        }
+        ActionSemanticV1::FinishTargetSelection {
+            actor,
+            source,
+            selected_count,
+        } => {
+            let source = frozen_at(0, &source, actor);
+            ActionSemanticV1::FinishTargetSelection {
+                actor,
+                source,
+                selected_count,
+            }
+        }
+        other => other,
+    }
+}
+
+/// `Zone::Library` fallback for a V4 action reference at a known
+/// `position` (0 for `ChooseTargets`, the pending-source index for
+/// `OrderTriggers`). Position-based: looks up `state.engine.pending_triggers[position]`
+/// directly (no arena-id scan), so two hidden positions sharing one
+/// physical source object each resolve independently. Verifies `reference`
+/// actually carries that position's exact frozen contract fields (which
+/// [`frozen_pending_trigger_semantic_v4`] should already have substituted)
+/// before treating it as the frozen fallback; a mismatch returns `None`
+/// (falls through to the ordinary, non-frozen resolution below, which then
+/// fails loudly with `HiddenActionReference` for a still-hidden position --
+/// never a silent guess).
 fn pending_trigger_frozen_source_components_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
-    object_id: ObjectId,
+    position: u32,
+    reference: &CardStableRefV1,
 ) -> Result<Option<FlatVisibleActionObjectComponentsV1>, FlatActionDecisionSliceErrorV1> {
-    for (position, pending) in state.engine.pending_triggers.iter().enumerate() {
-        if pending.source != object_id || pending.controller != actor {
-            continue;
-        }
-        let Some(contract) = pending.source_contract else {
-            continue;
-        };
-        if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
-            continue;
-        }
-        let position_u32 = u32::try_from(position)
-            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
-        let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
-            .and_then(|ceiling| ceiling.checked_add(position_u32))
-            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
-        return Ok(Some(FlatVisibleActionObjectComponentsV1 {
-            card_db_id: contract.card_def,
-            group: FlatActionObjectGroupV1::HistoricalPublicSource,
-            actor_visible_ordinal: usize::try_from(ordinal)
-                .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
-            owner_relative: flat_relative_seat_v1(contract.owner.into(), actor.into())?,
-            controller_relative: flat_relative_seat_v1(contract.controller.into(), actor.into())?,
-            zone: flat_zone_v1(contract.zone),
-            zone_change_count: contract.zone_change_count,
-        }));
+    let index = usize::try_from(position)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    let Some(pending) = state.engine.pending_triggers.get(index) else {
+        return Ok(None);
+    };
+    if pending.controller != actor || pending.source.0 != reference.arena_id {
+        return Ok(None);
     }
-    Ok(None)
+    let Some(contract) = pending.source_contract else {
+        return Ok(None);
+    };
+    if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
+        return Ok(None);
+    }
+    if reference.card_db_id != contract.card_def
+        || reference.owner != contract.owner.into()
+        || reference.controller != contract.controller.into()
+        || reference.zone != contract.zone
+        || reference.zone_change_count != contract.zone_change_count
+    {
+        return Ok(None);
+    }
+    let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
+        .and_then(|ceiling| ceiling.checked_add(position))
+        .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+    Ok(Some(FlatVisibleActionObjectComponentsV1 {
+        card_db_id: contract.card_def,
+        group: FlatActionObjectGroupV1::HistoricalPublicSource,
+        actor_visible_ordinal: usize::try_from(ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: flat_relative_seat_v1(contract.owner.into(), actor.into())?,
+        controller_relative: flat_relative_seat_v1(contract.controller.into(), actor.into())?,
+        zone: flat_zone_v1(contract.zone),
+        zone_change_count: contract.zone_change_count,
+    }))
 }
 
 /// Fork of `flat_visible_action_object_components_v1`: every non-`Library`
-/// arm is byte-identical; the `Library` arm's hidden fallback calls
-/// [`pending_trigger_frozen_source_components_v4`] instead of the V3
-/// single-position gate.
+/// arm is byte-identical; the frozen/hidden fallback
+/// ([`pending_trigger_frozen_source_components_v4`]) is now checked FIRST
+/// (a frozen reference's `zone`/`zone_change_count` intentionally do not
+/// match the live object's current, post-shuffle state -- that mismatch is
+/// exactly how a frozen reference is recognized, not an ordinary
+/// consistency error), with `position` threaded through from the caller
+/// instead of derived by scanning for a matching `arena_id`.
 fn flat_visible_action_object_components_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
+    position: u32,
     reference: &CardStableRefV1,
 ) -> Result<FlatVisibleActionObjectComponentsV1, FlatActionDecisionSliceErrorV1> {
+    if let Some(components) =
+        pending_trigger_frozen_source_components_v4(state, actor, position, reference)?
+    {
+        return Ok(components);
+    }
     let object_id = ObjectId(reference.arena_id);
     let object = state
         .objects
@@ -108,15 +236,15 @@ fn flat_visible_action_object_components_v4(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
     }
-    let position = |objects: &[ObjectId]| objects.iter().position(|&id| id == object_id);
+    let zone_position = |objects: &[ObjectId]| objects.iter().position(|&id| id == object_id);
     let (group, ordinal) = match object.zone {
         Zone::Hand if object.owner == actor => (
             FlatActionObjectGroupV1::SelfHand,
-            position(&state.players[actor.index()].hand)
+            zone_position(&state.players[actor.index()].hand)
                 .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
         ),
         Zone::Hand => {
-            if position(&state.players[object.owner.index()].hand).is_none() {
+            if zone_position(&state.players[object.owner.index()].hand).is_none() {
                 return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
             }
             let ordinal = known_opponent_hand_canonical_ordinal_v1(
@@ -130,7 +258,7 @@ fn flat_visible_action_object_components_v4(
             (FlatActionObjectGroupV1::KnownOpponentHand, ordinal)
         }
         Zone::Battlefield => {
-            let ordinal = position(&state.players[object.controller.index()].battlefield)
+            let ordinal = zone_position(&state.players[object.controller.index()].battlefield)
                 .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
             (
                 if object.controller == actor {
@@ -142,7 +270,7 @@ fn flat_visible_action_object_components_v4(
             )
         }
         Zone::Graveyard => {
-            let ordinal = position(&state.players[object.owner.index()].graveyard)
+            let ordinal = zone_position(&state.players[object.owner.index()].graveyard)
                 .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
             (
                 if object.owner == actor {
@@ -155,7 +283,8 @@ fn flat_visible_action_object_components_v4(
         }
         Zone::Exile => (
             FlatActionObjectGroupV1::Exile,
-            position(&state.exile).ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
+            zone_position(&state.exile)
+                .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
         ),
         Zone::Stack => (
             FlatActionObjectGroupV1::Stack,
@@ -163,7 +292,7 @@ fn flat_visible_action_object_components_v4(
         ),
         Zone::Command => (
             FlatActionObjectGroupV1::Command,
-            position(&state.command)
+            zone_position(&state.command)
                 .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?,
         ),
         Zone::Library => {
@@ -173,11 +302,6 @@ fn flat_visible_action_object_components_v4(
                     entry.object == object_id && entry.zone_change_count == object.zone_change_count
                 });
             let Some(knowledge) = knowledge else {
-                if let Some(components) =
-                    pending_trigger_frozen_source_components_v4(state, actor, object_id)?
-                {
-                    return Ok(components);
-                }
                 return Err(FlatActionDecisionSliceErrorV1::HiddenActionReference);
             };
             let library_position = usize::try_from(knowledge.position)
@@ -213,9 +337,10 @@ fn flat_visible_action_object_components_v4(
 fn flat_visible_action_object_v4(
     state: &crate::state::GameState,
     actor: PlayerId,
+    position: u32,
     reference: &CardStableRefV1,
 ) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
-    let fields = flat_visible_action_object_components_v4(state, actor, reference)?;
+    let fields = flat_visible_action_object_components_v4(state, actor, position, reference)?;
     Ok(FlatActionObjectV2 {
         card_token: flat_card_token_v2(fields.card_db_id),
         group: fields.group,
@@ -254,22 +379,33 @@ impl FastActorSessionV1 {
         let actor: PlayerSeatV1 = current.actor.into();
         let mut actions_out: Vec<FlatActionCoreV1> = Vec::with_capacity(current.candidates.len());
         let mut unindexed_refs: Vec<FlatUnindexedActionRefV2> = Vec::new();
-        let mut resolved_objects: Vec<FlatResolvedActionObjectV2> = Vec::new();
+        // Keyed by (arena_id, position) rather than V3's arena_id alone:
+        // two hidden pending-trigger positions can share one physical
+        // source object, and must be tracked as distinct resolved entries
+        // (see the module doc comment's collision-freedom note), while
+        // still catching a genuine same-(arena_id, position) inconsistency
+        // exactly as the arena_id-only check did for the ordinary case
+        // (where `position` is always 0 for every non-`PendingSources`
+        // role, so this is a strict generalization, not a relaxation).
+        let mut resolved_objects: Vec<FlatResolvedActionObjectV4> = Vec::new();
         for (action_index, candidate) in current.candidates.iter().enumerate() {
             flat_validate_semantic_policy_pair_v1(candidate)?;
             let action_index_u32 = u32::try_from(action_index)
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
             let ref_start = u32::try_from(unindexed_refs.len())
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
+            let semantic = frozen_pending_trigger_semantic_v4(&self.state, candidate.semantic.clone());
             let core = flat_action_core_and_refs_v1(
-                &candidate.semantic,
+                &semantic,
                 actor,
                 ref_start,
                 |role, order_index, associated_order, reference| {
-                    let object = flat_visible_action_object_v4(&self.state, current.actor, reference)?;
+                    let position = u32::from(order_index);
+                    let object =
+                        flat_visible_action_object_v4(&self.state, current.actor, position, reference)?;
                     if let Some(previous) = resolved_objects
                         .iter()
-                        .find(|candidate| candidate.arena_id == reference.arena_id)
+                        .find(|candidate| candidate.arena_id == reference.arena_id && candidate.position == position)
                     {
                         if previous.object != object {
                             return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
@@ -280,8 +416,9 @@ impl FastActorSessionV1 {
                         }) {
                             return Err(FlatActionDecisionSliceErrorV1::DuplicateCanonicalObject);
                         }
-                        resolved_objects.push(FlatResolvedActionObjectV2 {
+                        resolved_objects.push(FlatResolvedActionObjectV4 {
                             arena_id: reference.arena_id,
+                            position,
                             object,
                         });
                     }
@@ -462,6 +599,59 @@ pub(crate) fn hidden_order_triggers_state_v1(count: usize) -> (crate::state::Gam
             .all(|entry| entry.object != object));
     }
     (state, sources)
+}
+
+/// Adversarial-review fixture: one physical permanent with two abilities
+/// that both trigger off the same event, giving two `PendingTrigger`
+/// entries with the identical `source` `ObjectId` (and, once shuffled, the
+/// identical live `zone_change_count` too) -- the exact scenario the
+/// arena-id-based resolution bug applied to. Both positions are
+/// simultaneously hidden. `Decision::OrderTriggers` is the active decision
+/// (group_len 2).
+///
+/// Test-only. Re-exported as `crate::rl_session::hidden_order_triggers_shared_source_state_v1`.
+#[cfg(test)]
+pub(crate) fn hidden_order_triggers_shared_source_state_v1() -> (crate::state::GameState, ObjectId) {
+    use crate::card_def::TargetSpec;
+    use crate::effect::EffectOp;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::AbilitySourceContractV4;
+    use crate::trigger::PendingTrigger;
+
+    let mut state = ready_state();
+    let object = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+    let contract = AbilitySourceContractV4::capture(&state, object);
+    for _ in 0..2 {
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: PlayerId::P0,
+            source: object,
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(contract),
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
+    state.players[PlayerId::P0.index()]
+        .battlefield
+        .retain(|&id| id != object);
+    {
+        let live = state.objects.get_mut(object);
+        assert_eq!(live.zone, Zone::Battlefield);
+        live.zone = Zone::Library;
+        live.zone_change_count += 1;
+    }
+    state.players[PlayerId::P0.index()].library.push(object);
+    assert!(state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]
+        .iter()
+        .all(|entry| entry.object != object));
+    (state, object)
 }
 
 #[cfg(test)]
@@ -656,5 +846,49 @@ mod tests {
     fn v4_multi_hidden_order_triggers_seven_simultaneous_at_the_flat_action_ceiling() {
         assert_eq!(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1, 7);
         multi_hidden_order_triggers_case(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1);
+    }
+
+    /// Adversarial-review MAJOR-finding regression: two simultaneously
+    /// hidden pending triggers sharing one physical source object (same
+    /// `arena_id`) must each resolve to their OWN distinct ordinal, not
+    /// collapse into one via an arena-id scan (which would either silently
+    /// alias both positions to the first match, or -- with the old dedup
+    /// key -- raise `InvalidActionReference` on the second). Position 0 and
+    /// position 1 must both appear, with distinct ordinals, and the two
+    /// `FlatActionObjectV2` rows must actually be distinct (`canonical_key`
+    /// differs), proving they are two model objects, not one reused twice.
+    #[test]
+    fn v4_two_hidden_positions_sharing_one_physical_source_resolve_distinctly() {
+        let (state, shared_object) = hidden_order_triggers_shared_source_state_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        assert!(matches!(
+            session.current.as_ref().unwrap().origin_decision,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers { .. }))
+        ));
+        let (result, objects) = encoded_v4(&session);
+        assert!(result.active_action_count > 0);
+        let pending_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
+            .collect();
+        assert_eq!(
+            pending_rows.len(),
+            2,
+            "both positions must gain their own row despite sharing one physical source"
+        );
+        let mut ordinals: Vec<u16> = pending_rows.iter().map(|row| row.actor_visible_ordinal).collect();
+        ordinals.sort_unstable();
+        assert_eq!(ordinals, vec![1, 2], "ceiling(=1, empty stack) + position 0 and + position 1");
+        assert_ne!(
+            pending_rows[0].canonical_key(),
+            pending_rows[1].canonical_key(),
+            "the two positions must be two distinct model objects, not one row reused twice"
+        );
+        // Both rows still carry the one shared physical card's identity
+        // (same card_token/zone/zone_change_count -- only the ordinal
+        // differs, which is exactly what disambiguates the two positions).
+        assert_eq!(pending_rows[0].card_token, pending_rows[1].card_token);
+        assert_eq!(pending_rows[0].zone_change_count, pending_rows[1].zone_change_count);
+        let _ = shared_object;
     }
 }
