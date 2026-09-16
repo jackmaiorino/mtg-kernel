@@ -427,17 +427,42 @@ impl CompleteAgentPackageV1 {
     /// have been implemented and qualified. There is no implicit fallback.
     pub fn load_supported_components_v1(&self) -> Result<VerifiedAgentComponentsV1, String> {
         self.validate_metadata_v1()?;
+        let learned_opening = matches!(self.opening, AgentOpeningPolicyV1::LearnedLondonV1 { .. });
+        let learned_play_draw = matches!(self.play_draw, AgentPlayDrawPolicyV1::LearnedV1 { .. });
+        if learned_opening || learned_play_draw {
+            // Structural gate, independent of digest comparison: an imported
+            // (frozen) gameplay identity is rejected even if its digests
+            // happened to numerically equal a fresh one's, because this
+            // compares the identity's origin kind, not a digest string.
+            // `source_import` here is the package's declared identity, not
+            // yet the loaded one; the require below (`actual == self.gameplay
+            // .identity`) still binds it to the actually loaded checkpoint,
+            // so a forged "fresh" declaration cannot pass this gate and then
+            // load something else.
+            require(
+                self.gameplay.identity.source_import.is_fresh_v1(),
+                "learned opening/play-draw may not attach to an imported (frozen) gameplay identity",
+            )?;
+        }
         require(
-            matches!(
+            (matches!(
                 self.opening,
                 AgentOpeningPolicyV1::Existing {
                     protocol: Bo3OpeningProtocolV1::KeepSevenV2
                 }
-            ) && matches!(self.play_draw, AgentPlayDrawPolicyV1::Fixed { .. })
+            ) || learned_opening)
+                && (matches!(self.play_draw, AgentPlayDrawPolicyV1::Fixed { .. })
+                    || learned_play_draw)
                 && matches!(self.search, AgentSearchPolicyV1::Disabled),
             "learned opening/play-draw or search execution is not implemented by this interface",
         )?;
         let current_runtime = self.runtime.verify_current_runtime_v1()?;
+        if learned_opening || learned_play_draw {
+            require(
+                current_runtime.generation_v1() == RuntimeContractGenerationV1::V4,
+                "learned opening/play-draw requires the fresh-lineage (V4) runtime contract",
+            )?;
+        }
         let (gameplay, actual) = load_expanded_inference_v1(&self.gameplay.source)?;
         require(
             actual == self.gameplay.identity

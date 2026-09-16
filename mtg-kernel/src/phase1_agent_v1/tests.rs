@@ -14,7 +14,8 @@ use crate::rl::{PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1};
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::sideboard::CardCountV1;
 use crate::sideboard_play_policy_v1::{
-    FrozenPlayObservationTransferV3, FrozenPlayPolicyIdentityV1, PlayModelIdentityV1,
+    FreshPlayPolicyIdentityV1, FrozenPlayObservationTransferV3, FrozenPlayPolicyIdentityV1,
+    PlayModelIdentityV1, PlayPolicyOriginV1, FRESH_PLAY_INITIALIZATION_SCHEMA_V1,
 };
 use std::path::PathBuf;
 
@@ -548,13 +549,33 @@ fn learned_opening_package() -> CompleteAgentPackageV1 {
     value
 }
 
+// A LearnedLondonV1 opening is admissible only for a fresh gameplay identity
+// on the V4 runtime contract (item 19). `learned_opening_package()`'s
+// gameplay identity is Imported (frozen ancestry, from `package()`), so this
+// is still rejected, now by the new structural gate rather than a blanket
+// "not implemented" refusal.
 #[test]
-fn future_descriptor_never_falls_back_to_fixed_opening() {
+fn imported_gameplay_identity_rejects_learned_opening_package() {
     let value = learned_opening_package();
     value.validate_metadata_v1().unwrap();
     match value.load_supported_components_v1() {
-        Ok(_) => panic!("unimplemented opening must not load"),
-        Err(error) => assert!(error.contains("not implemented")),
+        Ok(_) => panic!("an imported (frozen) gameplay identity must not admit a learned opening"),
+        Err(error) => assert!(error.contains("imported (frozen) gameplay identity")),
+    }
+}
+
+// A plain Existing{KeepSevenV2}+Fixed+Disabled package must never touch the
+// new learned-policy gate at all; it still fails only on runtime/file
+// verification, exactly as it did before item 19.
+#[test]
+fn existing_keep_seven_package_bypasses_the_learned_policy_gate() {
+    let value = package();
+    match value.load_supported_components_v1() {
+        Ok(_) => panic!("fixture runtime/files are not real; success is not expected here"),
+        Err(error) => assert!(
+            !error.contains("learned opening/play-draw"),
+            "plain KeepSevenV2/Fixed packages must not reach the learned-policy gate: {error}"
+        ),
     }
 }
 
@@ -868,5 +889,120 @@ fn any_single_altered_feature_field_is_rejected_for_either_generation() {
             .verify_current_runtime_v1()
             .unwrap_err()
             .contains("neither compiled V3 nor V4"));
+    }
+}
+
+// Item 19: LearnedLondonV1/LearnedV1 admission requires a fresh gameplay
+// identity AND a verified V4 runtime; a package whose digests coincidentally
+// line up but whose origin is Imported must still be rejected.
+
+/// A `LearnedLondonV1` package whose declared gameplay identity is Fresh and
+/// whose runtime metadata is fully self-consistent with `runtime`. The
+/// `play_import` pin points at a real, existing (non-JSON) file so that, if
+/// admission succeeds, the failure surfaces from the loader parsing it, not
+/// from a missing fixture file standing in for our own gate.
+fn learned_opening_fresh_package(runtime: AgentRuntimeIdentityV1) -> CompleteAgentPackageV1 {
+    let mut value = package();
+    value.runtime = runtime;
+    value.gameplay.identity.model.card_db_hash = value.runtime.card_db_hash.clone();
+    value.gameplay.identity.model.feature_contract_digest =
+        value.runtime.feature_contract_digest.clone();
+    value.gameplay.identity.model.feature_encoding_digest =
+        value.runtime.feature_encoding_digest.clone();
+    value.gameplay.identity.features_source_sha256 = value.runtime.features_source_sha256.clone();
+    value.gameplay.identity.feature_descriptor_sha256 =
+        value.runtime.feature_descriptor_sha256.clone();
+    value.gameplay.source.feature_transfer.expected_feature_contract_digest =
+        value.runtime.feature_contract_digest.clone();
+    value.gameplay.source.feature_transfer.expected_feature_encoding_digest =
+        value.runtime.feature_encoding_digest.clone();
+    value.gameplay.identity.schema = "mtg-kernel-expanded-deck-inference/v2".into();
+    value.gameplay.identity.source_import =
+        PlayPolicyOriginV1::FreshInitialization(FreshPlayPolicyIdentityV1 {
+            schema: FRESH_PLAY_INITIALIZATION_SCHEMA_V1.into(),
+            initialization_manifest_sha256: digest('1'),
+            lineage_id: "fixture-lineage".into(),
+            initializer: "trainer-seeded-v1".into(),
+            base_seed: 1,
+            model_init_seed: 1,
+            seed_derivation: "kernel-python-rl-trainer-sha256-v2".into(),
+            producer_git_commit: "a".repeat(40),
+            initial_weights_sha256: digest('1'),
+            initial_model_parameter_sha256: digest('1'),
+            parameter_layout_sha256: digest('1'),
+            destination_registry_sha256: value.runtime.card_registry_sha256.clone(),
+            destination_card_db_hash: value.runtime.card_db_hash.clone(),
+            destination_card_count: crate::card_def::CARD_DEFS.len(),
+            feature_contract_digest: value.runtime.feature_contract_digest.clone(),
+            feature_encoding_digest: value.runtime.feature_encoding_digest.clone(),
+            features_source_sha256: value.runtime.features_source_sha256.clone(),
+            feature_descriptor_sha256: value.runtime.feature_descriptor_sha256.clone(),
+            sampler_identity: WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into(),
+        });
+    value.gameplay.source.play_import = PinnedFileV1 {
+        path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("rust-toolchain.toml"),
+        sha256: {
+            use sha2::{Digest, Sha256};
+            format!(
+                "{:x}",
+                Sha256::digest(include_bytes!("../../../rust-toolchain.toml"))
+            )
+        },
+    };
+    value.gameplay.source.checkpoint = None;
+    value.gameplay.identity.checkpoint_sha256 = None;
+    value.opening = AgentOpeningPolicyV1::LearnedLondonV1 {
+        policy: AuxiliaryPolicyBindingV1 {
+            checkpoint: pin("fixture-learned-opening"),
+            play_weights_sha256: value.gameplay.identity.model.weights_sha256.clone(),
+            embedding_table_sha256: value.gameplay.identity.model.embedding_table_sha256.clone(),
+            feature_contract_digest: value.runtime.feature_contract_digest.clone(),
+            feature_encoding_digest: value.runtime.feature_encoding_digest.clone(),
+            card_db_hash: value.runtime.card_db_hash.clone(),
+        },
+    };
+    value
+}
+
+#[test]
+fn fresh_identity_with_v4_runtime_admits_learned_opening_past_the_gate() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    let value = learned_opening_fresh_package(v4_runtime_fixture());
+    value.validate_metadata_v1().unwrap();
+    assert!(value.gameplay.identity.source_import.is_fresh_v1());
+    assert_eq!(
+        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        RuntimeContractGenerationV1::V4
+    );
+    match value.load_supported_components_v1() {
+        Ok(_) => panic!(
+            "the play_import fixture is deliberately not a loadable checkpoint; \
+             full success is not expected here"
+        ),
+        Err(error) => {
+            // Neither of our new admission-gate messages: the gate let this
+            // package through, and it failed only in the loader beyond it.
+            assert!(!error.contains("learned opening/play-draw"));
+            assert!(!error.contains("not implemented by this interface"));
+        }
+    }
+}
+
+#[test]
+fn fresh_identity_with_v3_runtime_rejects_learned_opening() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    let value = learned_opening_fresh_package(current_runtime_fixture());
+    value.validate_metadata_v1().unwrap();
+    assert!(value.gameplay.identity.source_import.is_fresh_v1());
+    match value.load_supported_components_v1() {
+        Ok(_) => panic!("a V3 runtime must not admit a learned opening"),
+        Err(error) => assert!(error.contains("fresh-lineage (V4) runtime contract")),
     }
 }
