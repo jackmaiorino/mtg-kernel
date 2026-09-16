@@ -21,12 +21,18 @@ use crate::flat_policy_v2::{
 use crate::flat_policy_v3::{
     FlatDecisionEncoderV3, FlatScoringDecisionViewV3, FlatScoringExtensionsV3,
 };
+use crate::flat_policy_v4::{FlatDecisionEncoderV4, FlatScoringExtensionsV4};
 use crate::native_checkpoint_inference_v1::encoded_decision_view_v1;
 use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 use crate::native_flat_tensorizer_v3::{
     encoded_decision_view_v3, NativeFlatDecisionTensorV3, NativeFlatTensorizerV3,
     FEATURES_SOURCE_SHA256_V3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3,
     FEATURE_ENCODING_DIGEST_V3,
+};
+#[allow(unused_imports)]
+use crate::native_flat_tensorizer_v4::{
+    NativeFlatDecisionTensorV4, NativeFlatTensorizerV4, FEATURE_CONTRACT_DIGEST_V4,
+    FEATURE_ENCODING_DIGEST_V4,
 };
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
@@ -163,6 +169,17 @@ pub struct FrozenPlayPolicyV1 {
     seat_rng: [SplitMix64; 2],
     sampling_initialized: bool,
     successor: Option<FrozenPlaySuccessorStateV3>,
+    /// Fresh-lineage (V4 contract) sibling of `successor`, independent and
+    /// additive: both fields are per-instance, runtime-dispatched, and
+    /// validated against digests from two different compiled modules
+    /// (`native_flat_tensorizer_v3::FEATURE_CONTRACT_DIGEST_V3` vs
+    /// `native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4`), so both can
+    /// coexist in the same binary and even the same `FrozenPlayPolicyV1`
+    /// instance without either affecting the other. `None` for every
+    /// checkpoint constructed today; no existing caller ever sets this to
+    /// `Some`, matching item 16's "reachable, not yet wired to any caller"
+    /// scope.
+    fresh_successor: Option<FrozenPlayFreshSuccessorStateV1>,
 }
 
 #[derive(Default)]
@@ -172,6 +189,35 @@ struct FrozenPlaySuccessorStateV3 {
     tensorizer: NativeFlatTensorizerV3,
     tensor: NativeFlatDecisionTensorV3,
     sampler: WideCategoricalScratchV1,
+}
+
+#[derive(Default)]
+struct FrozenPlayFreshSuccessorStateV1 {
+    encoder: FlatDecisionEncoderV4,
+    extensions: FlatScoringExtensionsV4,
+    tensorizer: NativeFlatTensorizerV4,
+    tensor: NativeFlatDecisionTensorV4,
+    sampler: WideCategoricalScratchV1,
+}
+
+/// Structural, not just numeric, identity gate for `fresh_successor`:
+/// callers must bind it only to `FEATURE_CONTRACT_DIGEST_V4`/
+/// `FEATURE_ENCODING_DIGEST_V4` (the fresh-lineage generation), never to
+/// `FEATURE_CONTRACT_DIGEST_V3`/`FEATURE_ENCODING_DIGEST_V3` (the frozen
+/// V3 generation) or any other generation's constants, mirroring the
+/// non-relabeling discipline `expanded_deck_training_v1.rs`'s
+/// `identity_valid`/`frozen_feature_identity_cannot_be_relabelled_as_successor`
+/// already establishes for the V1-vs-V3 pair. This is new, additive code:
+/// `identity_valid` itself is untouched.
+pub(crate) fn fresh_successor_identity_valid_v1(
+    feature_contract_digest: &str,
+    feature_encoding_digest: &str,
+) -> Result<(), String> {
+    require(
+        feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
+            && feature_encoding_digest == FEATURE_ENCODING_DIGEST_V4,
+        "fresh_successor feature identity must be the V4 fresh-lineage contract, never V3's",
+    )
 }
 
 impl FrozenPlayPolicyV1 {
@@ -264,6 +310,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -315,6 +362,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -366,6 +414,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -417,6 +466,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         };
         let installed = policy.actual_model_identity_v1();
         let PlayPolicyOriginV1::Imported(identity) = &mut policy.identity else {
@@ -585,6 +635,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: None,
+            fresh_successor: None,
         })
     }
 
@@ -641,6 +692,7 @@ impl FrozenPlayPolicyV1 {
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
+            fresh_successor: None,
         })
     }
 
@@ -1144,6 +1196,42 @@ impl OwnedScoringV1 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn fresh_successor_is_none_for_every_existing_checkpoint_construction_path() {
+        // `training_fixture_v3` sets the V3 `successor` to `Some`, exercising
+        // the "both fields independent" claim: a V3 successor present does
+        // not imply a fresh (V4) one.
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        assert!(policy.successor.is_some());
+        assert!(policy.fresh_successor.is_none());
+    }
+
+    #[test]
+    fn fresh_successor_identity_accepts_only_v4_never_v3() {
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V4,
+        )
+        .is_ok());
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V3,
+        )
+        .is_err());
+        // Mixed pairs (one V4, one V3) must also fail: this is a structural
+        // pair check, not two independent membership checks.
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V3,
+        )
+        .is_err());
+        assert!(fresh_successor_identity_valid_v1(
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V4,
+        )
+        .is_err());
+    }
 
     #[test]
     fn phase1_collection_fork_has_private_weights_embeddings_samplers_and_rng() {
