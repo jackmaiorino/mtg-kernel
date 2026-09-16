@@ -1251,6 +1251,49 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Config-driven fixed-partition sibling of `train_step_feature_transfer_v4`,
+    /// for the fresh-lineage `update_backward_execution=fixed_partition_4`
+    /// option (`expanded_deck_training_v1::execute_update_v1`,
+    /// `phase1_bo3_learning_v1::continuation::apply_prepared`'s weighted V4
+    /// arm has its own sibling in `weighted_v3`). Validation, forward
+    /// arithmetic and Adam are fully shared with `train_step_feature_transfer_v4`
+    /// via `train_step_with_input_config_v1`; only `backward_execution` differs.
+    /// There is no V3 sibling: callers must reject any non-sequential value for
+    /// a V3-generation policy before reaching this function, so the V3/imported
+    /// path never changes.
+    pub(crate) fn train_step_feature_transfer_v4_fixed_partition_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        for (group_index, group) in groups.iter().enumerate() {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                }
+            }
+        }
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_with_input_config_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            input_config,
+        )
+    }
+
     /// Host-only validation for the explicit V3 CUDA successor. This must
     /// finish before creating a device or inspecting the resident GPU cache.
     #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
@@ -1739,13 +1782,21 @@ impl NativePolicyValueTrainStateV1 {
                 // observation order. Only dense gradient accumulation is
                 // partitioned, so the proof record does not acquire a second
                 // reduction convention.
-                let gauge_accumulator = observe_scorer_bias_gauge_v1(&group_tapes, group_count)?;
+                let coefficients: Vec<(f32, f32)> = group_tapes
+                    .iter()
+                    .map(|group| {
+                        (
+                            -group.advantage / group_count,
+                            (value_coefficient / group_count) * (2.0 * group.value_error),
+                        )
+                    })
+                    .collect();
+                let gauge_accumulator = observe_scorer_bias_gauge_v1(&group_tapes, &coefficients)?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
                 gradients = fixed_partition_backward_gradients_v1(
                     &parameters,
                     &group_tapes,
-                    group_count,
-                    value_coefficient,
+                    &coefficients,
                     worker_limit,
                     gradients,
                     &execution_context,
@@ -1866,13 +1917,20 @@ fn prepare_reverse_logits_v1(
     }
 }
 
+/// `coefficients[i]` is `(d_joint_log_probability, d_value)` for `groups[i]`,
+/// precomputed by the caller (unweighted: `-advantage / group_count`;
+/// weighted: `-advantage * weight`; see `weighted_v3`'s fixed-partition arm).
+/// Only `.0` is read here; the gauge's own global reverse observation order
+/// is unaffected by whether gradient accumulation itself is later partitioned.
 fn observe_scorer_bias_gauge_v1(
     groups: &[GroupTapeV1<'_>],
-    group_count: f32,
+    coefficients: &[(f32, f32)],
 ) -> Result<ScorerBiasGaugeAccumulatorV1, NativePolicyTrainErrorV1> {
+    debug_assert_eq!(groups.len(), coefficients.len());
     let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
-    for group in groups.iter().rev() {
-        let d_joint_log_probability = -group.advantage / group_count;
+    for index in (0..groups.len()).rev() {
+        let group = &groups[index];
+        let (d_joint_log_probability, _) = coefficients[index];
         for selected in group.tapes.iter().rev() {
             gauge_accumulator.observe(
                 selected.tape.logits_v1(),
@@ -1894,12 +1952,15 @@ enum FixedPartitionBackwardOutcomeV1 {
     Panicked { partition_ordinal: usize },
 }
 
+/// `coefficients[i]` is `(d_joint_log_probability, d_value)` for `groups[i]`
+/// (see `observe_scorer_bias_gauge_v1`). Shared by the unweighted and
+/// `weighted_v3` fixed-partition arms; only the caller's coefficient formula
+/// differs, never this orchestration.
 #[allow(clippy::too_many_arguments)]
 fn fixed_partition_backward_gradients_v1(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
-    group_count: f32,
-    value_coefficient: f32,
+    coefficients: &[(f32, f32)],
     worker_limit: usize,
     mut reduced_gradients: Vec<Vec<f32>>,
     execution_context: &FixedPartitionBackwardExecutionContextV1,
@@ -1907,6 +1968,7 @@ fn fixed_partition_backward_gradients_v1(
     if worker_limit == 0 {
         return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
     }
+    debug_assert_eq!(groups.len(), coefficients.len());
     let partition_count = FIXED_BACKWARD_PARTITION_COUNT_V1;
     let partition_ordinals = (0..partition_count).collect::<Vec<_>>();
     let worker_count = worker_limit.min(partition_count);
@@ -1914,8 +1976,7 @@ fn fixed_partition_backward_gradients_v1(
         fixed_partition_backward_outcomes_v1(
             parameters,
             groups,
-            group_count,
-            value_coefficient,
+            coefficients,
             partition_count,
             &partition_ordinals,
             execution_context,
@@ -1939,8 +2000,7 @@ fn fixed_partition_backward_gradients_v1(
                             fixed_partition_backward_outcomes_v1(
                                 parameters,
                                 groups,
-                                group_count,
-                                value_coefficient,
+                                coefficients,
                                 partition_count,
                                 chunk,
                                 execution_context,
@@ -1967,8 +2027,7 @@ fn fixed_partition_backward_gradients_v1(
                         outcomes.extend(fixed_partition_backward_outcomes_v1(
                             parameters,
                             groups,
-                            group_count,
-                            value_coefficient,
+                            coefficients,
                             partition_count,
                             chunk,
                             execution_context,
@@ -2016,8 +2075,7 @@ fn fixed_partition_backward_gradients_v1(
 fn fixed_partition_backward_outcomes_v1(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
-    group_count: f32,
-    value_coefficient: f32,
+    coefficients: &[(f32, f32)],
     partition_count: usize,
     partition_ordinals: &[usize],
     execution_context: &FixedPartitionBackwardExecutionContextV1,
@@ -2038,8 +2096,7 @@ fn fixed_partition_backward_outcomes_v1(
                 fixed_partition_backward_v1(
                     parameters,
                     groups,
-                    group_count,
-                    value_coefficient,
+                    coefficients,
                     partition_count,
                     partition_ordinal,
                 )
@@ -2069,8 +2126,7 @@ fn fixed_partition_reverse_bounds_v1(
 fn fixed_partition_backward_v1(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
-    group_count: f32,
-    value_coefficient: f32,
+    coefficients: &[(f32, f32)],
     partition_count: usize,
     partition_ordinal: usize,
 ) -> Result<FixedPartitionBackwardResultV1, NativePolicyTrainErrorV1> {
@@ -2082,9 +2138,9 @@ fn fixed_partition_backward_v1(
     let (start, end) =
         fixed_partition_reverse_bounds_v1(groups.len(), partition_count, partition_ordinal);
     for reverse_group_ordinal in start..end {
-        let group = &groups[groups.len() - 1 - reverse_group_ordinal];
-        let d_joint_log_probability = -group.advantage / group_count;
-        let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
+        let index = groups.len() - 1 - reverse_group_ordinal;
+        let group = &groups[index];
+        let (d_joint_log_probability, d_value) = coefficients[index];
         for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
             prepare_reverse_logits_v1(selected, d_joint_log_probability, &mut reverse_workspace);
             reverse_decision(

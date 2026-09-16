@@ -109,6 +109,7 @@ impl NativePolicyValueTrainStateV1 {
             group_weights,
             value_coefficient,
             learning_rate,
+            BackwardExecutionV1::Sequential,
             input_config,
         )
     }
@@ -132,6 +133,36 @@ impl NativePolicyValueTrainStateV1 {
             group_weights,
             value_coefficient,
             learning_rate,
+            BackwardExecutionV1::Sequential,
+            input_config,
+        )
+    }
+
+    /// Config-driven fixed-partition sibling of
+    /// `train_step_weighted_feature_transfer_v4`, for
+    /// `phase1_bo3_learning_v1::continuation::apply_prepared`'s
+    /// `update_backward_execution=fixed_partition_4` V4 arm (see
+    /// `native_policy_train_step_v1::train_step_feature_transfer_v4_fixed_partition_v1`,
+    /// the unweighted sibling this mirrors). No V3 sibling exists; callers
+    /// must reject any non-sequential value for a V3-generation batch before
+    /// reaching this function.
+    pub(crate) fn train_step_weighted_feature_transfer_v4_fixed_partition_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        group_weights: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_weighted_with_input_config_v1(
+            groups,
+            group_weights,
+            value_coefficient,
+            learning_rate,
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
             input_config,
         )
     }
@@ -142,6 +173,7 @@ impl NativePolicyValueTrainStateV1 {
         group_weights: &[f32],
         value_coefficient: f32,
         learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         validate_weighted_inputs_v3(groups, group_weights)?;
@@ -164,10 +196,6 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        let mut gradients: Vec<_> = parameters
-            .iter()
-            .map(|p| vec![0.0; p.values.len()])
-            .collect();
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -247,53 +275,97 @@ impl NativePolicyValueTrainStateV1 {
         finite_scalar("weighted_loss", 1, value_sum)?;
         finite_scalar("weighted_loss", 2, loss)?;
 
-        let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
-        let mut reverse_workspace = ReverseWorkspaceV1::default();
-        for (group, weight) in group_tapes.into_iter().rev() {
-            let d_joint_log_probability = -group.advantage * weight;
-            let d_value = (value_coefficient * weight) * (2.0 * group.value_error);
-            finite_scalar("weighted_policy_coefficient", 0, d_joint_log_probability)?;
-            finite_scalar("weighted_value_coefficient", 0, d_value)?;
-            for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
-                resize_zeroed_v1(
-                    &mut reverse_workspace.grad_output,
-                    selected.log_probabilities.len(),
-                );
-                reverse_workspace.grad_output[selected.selected_action_index] =
-                    d_joint_log_probability;
-                let grad_output_sum = reverse_workspace
-                    .grad_output
-                    .iter()
-                    .copied()
-                    .fold(0.0f32, |sum, value| sum + value);
-                reverse_workspace.d_logits.clear();
-                reverse_workspace
-                    .d_logits
-                    .reserve(selected.log_probabilities.len());
-                for (gradient, log_probability) in reverse_workspace
-                    .grad_output
-                    .iter()
-                    .zip(&selected.log_probabilities)
-                {
-                    reverse_workspace
-                        .d_logits
-                        .push(*gradient - log_probability.exp() * grad_output_sum);
+        let zero_gradients = |parameters: &[NativeNamedParameterV1]| -> Vec<Vec<f32>> {
+            parameters
+                .iter()
+                .map(|p| vec![0.0; p.values.len()])
+                .collect()
+        };
+        let (mut gradients, gauge_accumulator) = match backward_execution {
+            BackwardExecutionV1::Sequential => {
+                let mut gradients = zero_gradients(&parameters);
+                let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+                let mut reverse_workspace = ReverseWorkspaceV1::default();
+                for (group, weight) in group_tapes.into_iter().rev() {
+                    let d_joint_log_probability = -group.advantage * weight;
+                    let d_value = (value_coefficient * weight) * (2.0 * group.value_error);
+                    finite_scalar("weighted_policy_coefficient", 0, d_joint_log_probability)?;
+                    finite_scalar("weighted_value_coefficient", 0, d_value)?;
+                    for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
+                        resize_zeroed_v1(
+                            &mut reverse_workspace.grad_output,
+                            selected.log_probabilities.len(),
+                        );
+                        reverse_workspace.grad_output[selected.selected_action_index] =
+                            d_joint_log_probability;
+                        let grad_output_sum = reverse_workspace
+                            .grad_output
+                            .iter()
+                            .copied()
+                            .fold(0.0f32, |sum, value| sum + value);
+                        reverse_workspace.d_logits.clear();
+                        reverse_workspace
+                            .d_logits
+                            .reserve(selected.log_probabilities.len());
+                        for (gradient, log_probability) in reverse_workspace
+                            .grad_output
+                            .iter()
+                            .zip(&selected.log_probabilities)
+                        {
+                            reverse_workspace
+                                .d_logits
+                                .push(*gradient - log_probability.exp() * grad_output_sum);
+                        }
+                        gauge_accumulator.observe(
+                            selected.tape.logits_v1(),
+                            selected.selected_action_index,
+                            d_joint_log_probability,
+                        )?;
+                        reverse_decision(
+                            &parameters,
+                            &mut gradients,
+                            &selected.tape,
+                            &reverse_workspace.d_logits,
+                            if substep_index == 0 { d_value } else { 0.0 },
+                            &mut reverse_workspace.decision,
+                        )?;
+                    }
                 }
-                gauge_accumulator.observe(
-                    selected.tape.logits_v1(),
-                    selected.selected_action_index,
-                    d_joint_log_probability,
-                )?;
-                reverse_decision(
-                    &parameters,
-                    &mut gradients,
-                    &selected.tape,
-                    &reverse_workspace.d_logits,
-                    if substep_index == 0 { d_value } else { 0.0 },
-                    &mut reverse_workspace.decision,
-                )?;
+                (gradients, gauge_accumulator)
             }
-        }
+            BackwardExecutionV1::FixedPartitions { worker_limit } => {
+                // Same weighted derivative formula as the Sequential arm
+                // above (`-advantage * weight`, `(value_coefficient *
+                // weight) * 2 * value_error`), precomputed per group so the
+                // shared orchestration in `native_policy_train_step_v1`
+                // (also used by the unweighted `BackwardExecutionV1::
+                // FixedPartitions` arm) can partition and, optionally,
+                // parallelize gradient accumulation while gauge evidence
+                // keeps its own global reverse observation order.
+                let (unweighted_groups, weights): (Vec<GroupTapeV1<'_>>, Vec<f32>) =
+                    group_tapes.into_iter().unzip();
+                let mut coefficients = Vec::with_capacity(unweighted_groups.len());
+                for (index, group) in unweighted_groups.iter().enumerate() {
+                    let d_joint_log_probability = -group.advantage * weights[index];
+                    let d_value = (value_coefficient * weights[index]) * (2.0 * group.value_error);
+                    finite_scalar("weighted_policy_coefficient", index, d_joint_log_probability)?;
+                    finite_scalar("weighted_value_coefficient", index, d_value)?;
+                    coefficients.push((d_joint_log_probability, d_value));
+                }
+                let gauge_accumulator =
+                    observe_scorer_bias_gauge_v1(&unweighted_groups, &coefficients)?;
+                let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
+                let gradients = fixed_partition_backward_gradients_v1(
+                    &parameters,
+                    &unweighted_groups,
+                    &coefficients,
+                    worker_limit,
+                    zero_gradients(&parameters),
+                    &execution_context,
+                )?;
+                (gradients, gauge_accumulator)
+            }
+        };
         validate_finite_nested("weighted_gradient", &gradients)?;
         let mut scorer_bias_gauge = gauge_accumulator.finish(
             gradients[SCORER_SECOND_BIAS][0],
