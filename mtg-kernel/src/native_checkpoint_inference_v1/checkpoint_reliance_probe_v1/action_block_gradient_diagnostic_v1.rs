@@ -7926,12 +7926,29 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
     // branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
     // 0x064a_7c98_9255_ab3c), same root cause. Old (wave-1) value:
-    // "ae853cabe8cb59c0aa44e93e142d11963d4cc57893a1d9b27ffe7fedc6366a71". New
+    // "ae853cabe8cb59c0aa44e93e142d11963d4cc57893a1d9b27ffe7fedc6366a71".
+    //
+    // Re-baselined again 2026-09-16 (lead/phase1-golden-repins-v1, root cause
+    // dated in docs/research/phase1_branch_golden_drift_2026-09.md): this
+    // fixture's chain constructs a FlatDecisionBindingV2, whose
+    // contract_digests embed a byte-for-byte SHA-256 of flat_policy_v1.rs
+    // and flat_policy_v2.rs. Root-cause commit 436c62b2 (2026-09-12, "Add
+    // explicit V6 observation and V3 frozen-play feature transfer") first
+    // moved this identity by adding two FlatActionObjectGroupV1 variants
+    // (DecisionLocalLibrary, HistoricalPublicSource); every later commit on
+    // this branch that edited flat_policy_v2.rs for the V3/V4 observation
+    // work (5ca1c733, cbfa2435, a70f0985, 0f479bad, 0f82a02c, 3071597c,
+    // a88b2195, 72c1cd6d, e5902257) moved it again, confirmed by bisection
+    // (distinct actual digests at 436c62b2 and at a70f0985, neither equal to
+    // the prior pin). None of these commits changes this test's own file or
+    // any pre-existing V1/V2 encoding behavior; every new match arm they add
+    // is unreachable from this test's call graph. Old value:
+    // "9a19af3bb5dadbbedce5648443c7ab4a7163e389ff7cfff7559f67fdedc452c9". New
     // value is this test's own live-computed digest, read directly from a
-    // failing run (never hand-typed).
+    // failing run at the tip (never hand-typed).
     assert_eq!(
         frame.sha256_v1(),
-        "9a19af3bb5dadbbedce5648443c7ab4a7163e389ff7cfff7559f67fdedc452c9",
+        "ba4b3568f7d93f9485b2a6cb4a00f71372f99f912ae3bb1c41aee31a65ab7c59",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame
