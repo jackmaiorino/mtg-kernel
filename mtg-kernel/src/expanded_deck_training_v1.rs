@@ -3368,6 +3368,132 @@ mod tests {
         validate_trajectory(&trajectory).unwrap();
     }
 
+    /// Root-cause regression for campaign-001 lineage a's nine-deck block-2
+    /// dry run, iteration 0 (0-based), collector 2, episode index 2
+    /// (`breadth-8576bc14e77629db60f4b54b-b1-i0-s2`), CawGates (opponent,
+    /// seat 0) versus Spy (learner, seat 1), both the real lineage-a
+    /// block-1-cuda-3 iteration-199 end checkpoint (a self-play mirror: this
+    /// is iteration 0 of block 2, so the learner's live weights are still
+    /// byte-identical to that checkpoint), starting player 0, seed
+    /// 3360537705903855079. Every path, hash, seed and deck list below is
+    /// copied verbatim from the real collection command receipt at
+    /// `Q/campaign-001/a/block2/run/iterations/000000/attempt-000000/
+    /// collect-command.json`, episode index 2. Reads the real evidence tree
+    /// (Q = `E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/
+    /// phase1-training-qualification-001`), never writes to it.
+    ///
+    /// Before the fix, this game halted at step 478 (physical decision 439,
+    /// CawGates' own Surface priority window, 12 legal actions) with `V4
+    /// actor-visible encoding: InvalidReference`. Root cause (DECK-GAPS,
+    /// CawGates vs. Spy): Spy's Mesmeric Fiend (card 158, `linked_exile`)
+    /// had already resolved its own ETB, exiling CawGates' Spell Pierce and
+    /// recording an `ObjectRelationPublicV4::ExiledBy` relation that names
+    /// Mesmeric Fiend by its identity at that moment (Battlefield,
+    /// zone_change_count 3). Before Mesmeric Fiend's own leaves-the-
+    /// battlefield trigger (which still needs that identity to return the
+    /// linked Spell Pierce) resolved, CawGates' Journey to Nowhere exiled
+    /// Mesmeric Fiend itself, advancing its live identity to
+    /// Exile/zone_change_count 4. `register_objects` deliberately gives a
+    /// nonspell stack item (Mesmeric Fiend's pending trigger) no ordinary
+    /// object row; `register_extensions_v3`/`_v4` registers its frozen
+    /// source once instead, tagged "historical". `build_relations`
+    /// (flat_policy_v2.rs, shared byte-for-byte by the V3 and V4 scoring
+    /// builders) already resolved a stack item's own `source` through the
+    /// historical-aware `resolve_reference` for exactly this reason, but
+    /// its `ExiledBy` arm resolved `exiled_by` through the strict,
+    /// historical-blind `resolve_live`, which can never see a
+    /// historical-only registration. Fixed by giving `ExiledBy`'s
+    /// `exiled_by` the same `resolve_reference`-when-available treatment
+    /// the stack-source resolution already had. Hermetic unit-test coverage:
+    /// `flat_policy_v2::tests::
+    /// build_relations_resolves_exiled_by_through_a_historical_stack_registration`.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-001 block2 iteration 0 slot 2 against the real evidence tree"]
+    fn campaign_001_a_block2_iteration_0_slot_2_cawgates_surface_encoding_completes_naturally() {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let shared_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer,
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-001/a/block1-cuda-3/run/iterations/000199/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "eba59f2ad70ce5e132fde3e6dc527dcd36705c02f73218c8f94747d2a1bc1ad3".into(),
+            }),
+        };
+        let learner_source = shared_source.clone();
+        let opponent_source = shared_source;
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let caw_gates = ExpandedDeckListV1 {
+            label: "CawGates/e20cd1d12a56".into(),
+            mainboard: vec![
+                2, 2, 3, 3, 3, 3, 8, 8, 8, 14, 14, 14, 14, 17, 17, 17, 17, 49, 53, 53, 59, 60, 60,
+                60, 60, 61, 61, 61, 61, 68, 68, 68, 83, 83, 86, 86, 88, 88, 88, 88, 98, 98, 98, 98,
+                100, 100, 100, 100, 109, 109, 112, 112, 112, 112, 115, 115, 115, 115, 118, 118,
+            ],
+            sideboard: vec![7, 7, 7, 22, 22, 25, 25, 25, 28, 28, 57, 57, 90, 90, 90],
+        };
+        let spy = ExpandedDeckListV1 {
+            label: "Spy/4d47f8a74557".into(),
+            mainboard: vec![
+                39, 39, 39, 42, 42, 42, 42, 64, 64, 64, 64, 71, 71, 71, 91, 91, 114, 130, 130, 130,
+                130, 136, 136, 137, 137, 138, 138, 138, 138, 139, 139, 139, 139, 140, 140, 141,
+                141, 141, 142, 142, 142, 142, 143, 145, 145, 145, 150, 150, 150, 150, 151, 151,
+                152, 152, 152, 152, 153, 153, 158, 158,
+            ],
+            sideboard: vec![
+                71, 114, 126, 126, 146, 146, 146, 146, 155, 155, 156, 157, 157, 158, 158,
+            ],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-8576bc14e77629db60f4b54b-b1-i0-s2".into(),
+            seed: 3_360_537_705_903_855_079,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [caw_gates.clone(), spy.clone()],
+            selected: [caw_gates, spy],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "the CawGates V4 Surface-encoding fix regressed: this exact seed/deck/\
+                     checkpoint combination should complete naturally again, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
     // ---- max_non_natural_episode_fraction: tolerant collection with a
     // ---- ledger (Part 2). `derived_retry_seed_v1` is exercised directly
     // ---- (no game); the retry/ledger bookkeeping tests use

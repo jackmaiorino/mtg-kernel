@@ -2849,7 +2849,27 @@ impl FlatDecisionEncoderV2 {
                 }
                 ObjectRelationPublicV4::ExiledBy { object, exiled_by } => {
                     let source = self.resolve_live(object, actor)?;
-                    let target = self.resolve_live(exiled_by, actor)?;
+                    // `exiled_by` can legitimately outlive the exiler's own
+                    // live incarnation: a linked-exile source (for example
+                    // Mesmeric Fiend) that has since itself been exiled by an
+                    // unrelated effect still owes its own pending
+                    // leaves-the-battlefield trigger the identity it had at
+                    // the moment it performed the exile, and that identity is
+                    // exactly what `register_extensions_v3`/`_v4` already
+                    // registered (as a "historical", not live, entry) for the
+                    // stack item's own `source` a few lines below in this
+                    // same function. `resolve_live` requires
+                    // `historical_kind == 0` and so can never see that
+                    // registration; only the exiler's CURRENT live zone
+                    // (which no longer matches this relation's frozen
+                    // reference) would be visible to it. `resolve_reference`
+                    // finds either one, exactly like the stack-source
+                    // resolution below.
+                    let target = if common.v3_source_authority {
+                        self.resolve_reference(exiled_by, actor)?
+                    } else {
+                        self.resolve_live(exiled_by, actor)?
+                    };
                     object_relations.push((FlatRelationRoleV2::ExiledBy, source, target));
                 }
             }
@@ -5660,6 +5680,97 @@ mod tests {
             materialize_v3(&observation),
             Err(FlatDecisionErrorV2::ObservationContract)
         ));
+    }
+
+    /// CawGates/Spy V4 Surface-encoding regression: the real crash was `V4
+    /// actor-visible encoding: InvalidReference` at a real self-play
+    /// decision (campaign-001 lineage a, nine-deck block 2, iteration 0,
+    /// slot 2, physical decision 439; see
+    /// `expanded_deck_training_v1::tests::
+    /// campaign_001_a_block2_iteration_0_slot_2_cawgates_surface_encoding_completes_naturally`
+    /// for the full real-game reproduction). Root cause, reproduced
+    /// hermetically here with no real checkpoint: a linked-exile creature
+    /// (Mesmeric Fiend) resolves its own ETB and exiles another card,
+    /// recording an `ObjectRelationPublicV4::ExiledBy` relation that names
+    /// the creature by its identity at that moment (Battlefield,
+    /// zone_change_count 3). Before the creature's own leaves-the-
+    /// battlefield trigger -- which still needs that exact identity to
+    /// return the linked card -- resolves, an unrelated effect (Journey to
+    /// Nowhere) exiles the creature itself, advancing its LIVE identity to
+    /// Exile/zone_change_count 4. `register_objects`'s own stack loop
+    /// deliberately gives a nonspell stack item no ordinary object row (see
+    /// its `v3_source_authority` skip a few lines up in this file);
+    /// `register_extensions_v3`/`_v4` registers the item's frozen source
+    /// once instead, tagged "historical" via
+    /// `add_validated_historical_source_v3`. `build_relations` already
+    /// resolves a stack item's own `source` through the historical-aware
+    /// `resolve_reference` for exactly this reason (a few lines below this
+    /// test's target code) -- but its `ExiledBy` arm resolved `exiled_by`
+    /// through the strict, historical-blind `resolve_live` (which requires
+    /// `historical_kind == 0`), so the frozen Battlefield/3 registration
+    /// was invisible to it, and the object's only *live* registration
+    /// (Exile/4) does not match the relation's frozen reference either.
+    /// `build_relations` is shared byte-for-byte between the V3 and V4
+    /// scoring builders (no per-generation copy), so this is generation-
+    /// agnostic; exercised here through the V3 entry point purely because
+    /// its fixture helpers are simpler, exactly as the historical-source
+    /// test above it does.
+    #[test]
+    fn build_relations_resolves_exiled_by_through_a_historical_stack_registration() {
+        use crate::policy_observation_v6::{HistoricalPublicSourceV6, HistoricalSourceContextV6};
+        let mut observation = v3_observation_fixture();
+        let actor = observation.acting_player;
+        let creature_when_it_left = CardStableRefV1 {
+            arena_id: 93_051,
+            card_db_id: 158,
+            owner: actor,
+            controller: actor,
+            zone: Zone::Battlefield,
+            zone_change_count: 3,
+        };
+        let creature_now = CardStableRefV1 {
+            zone: Zone::Exile,
+            zone_change_count: 4,
+            ..creature_when_it_left.clone()
+        };
+        let linked_card = synthetic_stable(93_052, 109, actor, actor, Zone::Exile);
+        observation.projection.surface.exile = vec![
+            synthetic_public(creature_now),
+            synthetic_public(linked_card.clone()),
+        ];
+        observation.projection.surface.object_relations = vec![ObjectRelationPublicV4::ExiledBy {
+            object: linked_card,
+            exiled_by: creature_when_it_left.clone(),
+        }];
+        observation.projection.surface.stack = vec![StackItemPublicV2 {
+            stack_index: 0,
+            source: creature_when_it_left.clone(),
+            controller: actor,
+            targets: Vec::new(),
+            stack_item_kind: StackItemKindV2::TriggeredAbility,
+            is_copy: false,
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            cast_method: None,
+            face_index: 0,
+            x_value: 0,
+            paid_cost_refs: Vec::new(),
+        }];
+        observation
+            .extensions
+            .historical_public_sources
+            .push(HistoricalPublicSourceV6 {
+                context: HistoricalSourceContextV6::Stack { stack_index: 0 },
+                source: creature_when_it_left,
+                stack_item_kind: StackItemKindV2::TriggeredAbility,
+            });
+        materialize_v3(&observation).unwrap_or_else(|error| {
+            panic!(
+                "ExiledBy must resolve through the historical stack registration, got: {error:?}"
+            )
+        });
     }
 
     fn synthetic_stable(
