@@ -342,7 +342,7 @@ pub(crate) fn collect_loaded_inner(
     // V3/V4 pairing across seats.
     ensure(
         policies[0].feature_generation_v1() == policies[1].feature_generation_v1(),
-        "installed BO3 gameplay differs from the behavior package",
+        "installed BO3 gameplay seats use different fresh-lineage feature generations",
     )?;
     for i in 0..2 {
         ensure(

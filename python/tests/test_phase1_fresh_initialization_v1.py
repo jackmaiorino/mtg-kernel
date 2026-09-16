@@ -84,22 +84,47 @@ class FreshInitializationV1Tests(unittest.TestCase):
 
     def test_select_generation_matches_v3_or_v4_fingerprint_never_a_mixed_pair(self) -> None:
         from mtg_kernel_rl import features_v6, features_v7
+        root = Path(fresh.__file__).resolve().parents[2]
+
+        def live_hashes(source_paths: tuple[str, ...]) -> tuple[str, str]:
+            return (
+                hashlib.sha256((root / source_paths[5]).read_bytes()).hexdigest(),
+                hashlib.sha256((root / source_paths[6]).read_bytes()).hexdigest(),
+            )
+
+        v3_source_sha256, v3_descriptor_sha256 = live_hashes(fresh.SOURCE_PATHS_V3)
+        v4_source_sha256, v4_descriptor_sha256 = live_hashes(fresh.SOURCE_PATHS_V4)
         v3_target = {"feature_contract_digest": features_v6.feature_contract_fingerprint(),
-                     "feature_encoding_digest": features_v6.encoding_contract_fingerprint()}
-        source_paths, module = fresh._select_generation_v1(v3_target)
+                     "feature_encoding_digest": features_v6.encoding_contract_fingerprint(),
+                     "features_source_sha256": v3_source_sha256,
+                     "feature_descriptor_sha256": v3_descriptor_sha256}
+        source_paths, module = fresh._select_generation_v1(v3_target, root)
         self.assertIs(module, features_v6)
         self.assertEqual(source_paths, fresh.SOURCE_PATHS_V3)
         v4_target = {"feature_contract_digest": features_v7.feature_contract_fingerprint(),
-                     "feature_encoding_digest": features_v7.encoding_contract_fingerprint()}
-        source_paths, module = fresh._select_generation_v1(v4_target)
+                     "feature_encoding_digest": features_v7.encoding_contract_fingerprint(),
+                     "features_source_sha256": v4_source_sha256,
+                     "feature_descriptor_sha256": v4_descriptor_sha256}
+        source_paths, module = fresh._select_generation_v1(v4_target, root)
         self.assertIs(module, features_v7)
         self.assertEqual(source_paths, fresh.SOURCE_PATHS_V4)
-        # A mixed pair (V3 contract fingerprint, V4 encoding fingerprint)
-        # must match neither generation, never a per-field OR.
+        # A mixed pair (V3 contract/encoding fingerprint, V4 source/descriptor
+        # hash) must match neither generation, never a per-field OR across
+        # any of the four fields.
         mixed_target = {"feature_contract_digest": features_v6.feature_contract_fingerprint(),
-                         "feature_encoding_digest": features_v7.encoding_contract_fingerprint()}
+                         "feature_encoding_digest": features_v6.encoding_contract_fingerprint(),
+                         "features_source_sha256": v4_source_sha256,
+                         "feature_descriptor_sha256": v4_descriptor_sha256}
         with self.assertRaises(fresh.FreshInitializationErrorV1):
-            fresh._select_generation_v1(mixed_target)
+            fresh._select_generation_v1(mixed_target, root)
+        # Same idea the other way: V3 contract fingerprint alone, with every
+        # other field genuinely V4, is still a mixed tuple.
+        mixed_target_2 = {"feature_contract_digest": features_v6.feature_contract_fingerprint(),
+                           "feature_encoding_digest": features_v7.encoding_contract_fingerprint(),
+                           "features_source_sha256": v4_source_sha256,
+                           "feature_descriptor_sha256": v4_descriptor_sha256}
+        with self.assertRaises(fresh.FreshInitializationErrorV1):
+            fresh._select_generation_v1(mixed_target_2, root)
 
     def test_mixed_v3_v4_source_paths_rejected(self) -> None:
         # A source_files list naming features_v7.py (V4) at index 5 but the

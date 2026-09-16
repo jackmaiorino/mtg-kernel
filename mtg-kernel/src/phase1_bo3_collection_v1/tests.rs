@@ -874,13 +874,37 @@ fn v4_bo3_collect_gate_accepts_a_v4_pairing_and_rejects_a_mixed_v3_v4_pairing() 
 }
 
 /// Isolates the item-4 policy-level check itself (not the package-level one
-/// above): two policies whose own `feature_generation_v1()` differ must be
-/// rejected by `collect_loaded_inner` even when nothing about `packages` is
-/// inspected. This is the same whole-generation-equality gate exercised via
-/// `SeatRoutedBo3PlayPolicyV1::new_v1` in `learned_bo3_v1.rs`'s own tests.
+/// above, which the mixed test above already exercises and which fires
+/// first when the packages themselves disagree). Two packages that agree
+/// with EACH OTHER (so `Bo3TrainingTrajectoryV1::validate_v1`'s
+/// `packages[0].runtime == packages[1].runtime` check, which
+/// `validate_configuration` runs before `collect_loaded_inner`'s own
+/// checks, never trips) are paired here with two real policies whose own
+/// `feature_generation_v1()` differ. `collect_loaded_inner`'s cross-seat
+/// check runs immediately after `validate_configuration` and before the
+/// later per-seat model-identity loop (which would also reject a mismatch,
+/// with the same message the package-level check used before this test's
+/// own fix distinguished them); its own now-distinct message proves this
+/// specific check, and not one of the other two, is what fired.
 #[test]
 fn policy_level_generation_equality_rejects_a_mixed_pairing_directly() {
-    let v3 = FrozenPlayPolicyV1::training_fixture_v3();
-    let v4 = FrozenPlayPolicyV1::training_fixture_v4();
-    assert_ne!(v3.feature_generation_v1(), v4.feature_generation_v1());
+    let cfg = config("policy-level-generation-gate");
+    let (_agreeing_policies, packages) =
+        fixtures([PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw]);
+    let mut mismatched = [
+        FrozenPlayPolicyV1::training_fixture_v3(),
+        FrozenPlayPolicyV1::training_fixture_v4(),
+    ];
+    assert_ne!(
+        mismatched[0].feature_generation_v1(),
+        mismatched[1].feature_generation_v1()
+    );
+    let error = collect_loaded(&cfg, packages.each_ref(), &mut mismatched, [None, None])
+        .unwrap_err();
+    assert_eq!(
+        error, "installed BO3 gameplay seats use different fresh-lineage feature generations",
+        "the policy-level generation gate specifically (not the earlier \
+         package-level runtime check, and not the later per-seat \
+         model-identity check) must be what rejects this"
+    );
 }

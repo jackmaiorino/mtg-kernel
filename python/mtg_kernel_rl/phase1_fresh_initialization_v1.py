@@ -343,21 +343,38 @@ def validate_initialization_bytes_v1(manifest_bytes: bytes, payload: bytes) -> d
     return manifest
 
 
-def _select_generation_v1(target: dict):
+def _select_generation_v1(target: dict, root: Path):
     """Select which fresh-lineage generation's source-file inventory and
-    features module a request's declared target belongs to, matched by each
-    generation's own live fingerprint functions, never a hardcoded digest
+    features module a request's declared target belongs to, matched as one
+    whole four-field tuple (feature_contract_digest, feature_encoding_digest,
+    features_source_sha256, feature_descriptor_sha256) against exactly one
+    compiled generation's live values, never four independent per-field
+    matches that a mixed tuple could satisfy piecemeal. The digest pair
+    comes from each generation's own live fingerprint functions and the
+    source/descriptor hashes from the live bytes of that generation's own
+    features module and feature-contract JSON file, never a hardcoded
     literal in this file. Mirrors the Rust admission's whole-tuple dispatch
     (`fresh_lineage_generation_v1`), matched against exactly the compiled V3
-    or V4 contract, never a mixed pair.
+    or V4 contract, never a mixed pair. `generate_initialization_v1`'s own
+    later cross-check (target/descriptor/source agreement once `sources` is
+    built) stays in place as independent defense in depth, not replaced by
+    this earlier classification.
     """
     from . import features_v6, features_v7
-    if (target["feature_contract_digest"] == features_v6.feature_contract_fingerprint()
-            and target["feature_encoding_digest"] == features_v6.encoding_contract_fingerprint()):
-        return SOURCE_PATHS_V3, features_v6
-    if (target["feature_contract_digest"] == features_v7.feature_contract_fingerprint()
-            and target["feature_encoding_digest"] == features_v7.encoding_contract_fingerprint()):
-        return SOURCE_PATHS_V4, features_v7
+    candidates = (
+        (SOURCE_PATHS_V3, features_v6),
+        (SOURCE_PATHS_V4, features_v7),
+    )
+    for source_paths, features_module in candidates:
+        live_features_source_sha256 = hashlib.sha256(
+            _read(root / source_paths[5], SOURCE_CAP)).hexdigest()
+        live_feature_descriptor_sha256 = hashlib.sha256(
+            _read(root / source_paths[6], JSON_CAP)).hexdigest()
+        if (target["feature_contract_digest"] == features_module.feature_contract_fingerprint()
+                and target["feature_encoding_digest"] == features_module.encoding_contract_fingerprint()
+                and target["features_source_sha256"] == live_features_source_sha256
+                and target["feature_descriptor_sha256"] == live_feature_descriptor_sha256):
+            return source_paths, features_module
     raise FreshInitializationErrorV1(
         "requested target feature identity matches neither the V3 nor V4 contract")
 
@@ -367,7 +384,7 @@ def generate_initialization_v1(request: dict, repo_root: Path | None = None) -> 
     request = validate_request_v1(request)
     root = (Path(__file__).resolve().parents[2] if repo_root is None else Path(repo_root).resolve())
     _require(Path(__file__).resolve() == root / SOURCE_PATHS[0], "generator root does not match loaded module")
-    source_paths, features_module = _select_generation_v1(request["target"])
+    source_paths, features_module = _select_generation_v1(request["target"], root)
     sources = _sources(root, source_paths)
     git_head, git_clean = _git(root)
     import torch
