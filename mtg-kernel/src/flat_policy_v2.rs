@@ -4564,6 +4564,48 @@ impl FlatDecisionEncoderV2 {
 /// change, since `build.rs` byte-hashes this file whole regardless of
 /// which lines changed).
 impl FlatDecisionEncoderV2 {
+    /// Always inserts a fresh model row for a `PendingTrigger`-tagged
+    /// historical source, deliberately bypassing
+    /// `add_validated_historical_source_v3`'s shared-object dedup (which
+    /// keys reuse on `(arena_id, zone_change_count, controller)` alone,
+    /// ignoring which context produced the row). Two simultaneously hidden
+    /// pending triggers that happen to share one physical source object
+    /// (one permanent with two abilities triggering off the same event)
+    /// must still receive two distinct registry rows, one per position,
+    /// since each position needs its own distinct `visible_ordinal` and
+    /// `rl_session::flat_action_v4` now resolves each position to a
+    /// genuinely separate `HistoricalPublicSource`-group action object.
+    /// Reusing one row for both positions would make two authority entries
+    /// point at a single row carrying only one of the two ordinals, so the
+    /// position whose ordinal lost could never be matched by
+    /// `validate_cached_tables`. `object_keys` gets `None` for this row
+    /// (never `Some(wanted)`): unlike `add_validated_historical_source_v3`'s
+    /// rows, a `PendingTrigger` row must never be found by a LATER
+    /// `Stack`/`PendingEffect`/`PendingTrigger` dedup search either, since
+    /// every `PendingTrigger` row is already deliberately non-reusable by
+    /// construction.
+    fn add_pending_trigger_row_v4(
+        &mut self,
+        stable: &CardStableRefV1,
+        actor: PlayerSeatV1,
+        ordinal: u32,
+    ) -> Result<u32, FlatDecisionErrorV2> {
+        let wanted = Self::private_key(stable, actor, HISTORICAL_PUBLIC_SOURCE_KIND_V3);
+        let index = usize_u32(self.objects.len())?;
+        self.objects.push(FlatObjectCoreV2 {
+            card_token: wanted.card_token,
+            group: FlatObjectGroupV2::PendingContext,
+            source_kind: FlatObjectSourceKindV2::Pending,
+            visible_ordinal: ordinal,
+            owner: wanted.owner,
+            controller: wanted.controller,
+            zone: Some(wanted.zone),
+            ..FlatObjectCoreV2::default()
+        });
+        self.object_keys.push(None);
+        Ok(index)
+    }
+
     /// Fork of `register_extensions_v3`'s exhaustive match, generalized with
     /// one new arm. Every extension kind except `historical_public_sources`
     /// is byte-for-byte identical logic to V3, reading from `extensions_v7`
@@ -4610,6 +4652,28 @@ impl FlatDecisionEncoderV2 {
     /// two rows with the identical `context` value outright, so even a
     /// hypothetical future bug that computed the same `position` twice
     /// would surface as `ObservationContract`, not a silent collision.
+    ///
+    /// # Shared physical source across two hidden positions
+    ///
+    /// Two simultaneously hidden pending triggers can share one live
+    /// source object (one permanent with two abilities both triggering off
+    /// the same event, then shuffled into the library together): the same
+    /// `arena_id`/`zone_change_count`/`controller` names two different
+    /// `PendingTrigger { position }` context values. Design choice: this
+    /// registry always inserts one model row PER POSITION
+    /// (`add_pending_trigger_row_v4`, below, never
+    /// `add_validated_historical_source_v3`'s shared-object dedup), so the
+    /// two rows are distinct even though the physical card is not. This
+    /// composes with `rl_session::flat_action_v4`'s action-side fix (which
+    /// resolves a hidden reference by trigger position, never by scanning
+    /// for the first pending trigger with a matching `arena_id`), so the
+    /// two positions never collapse into one virtual identity. The
+    /// alternative (fail loudly on the shared-source case in both layers)
+    /// was rejected: it would make a common two-triggers-one-permanent
+    /// card pattern permanently unencodable for the fresh lineage, where
+    /// distinct rows cost only one extra `PendingContext` object per
+    /// simultaneously-hidden duplicate and are already how `Stack`
+    /// contexts (a different physical stack item per row) work.
     fn register_extensions_v4(
         &mut self,
         observation: &ObservationV6,
@@ -4695,6 +4759,17 @@ impl FlatDecisionEncoderV2 {
             });
         }
 
+        // Per-arm insertion (not a shared post-match block): `PendingTrigger`
+        // rows must never share a model row with anything else, even when
+        // their live source object is identical to another hidden
+        // position's (see `add_pending_trigger_row_v4`'s doc comment for
+        // the full collision-freedom argument), so that arm calls a
+        // different, dedup-free insertion primitive than the `Stack`/
+        // `PendingEffect` arms (which keep V3's exact
+        // `add_validated_historical_source_v3` reuse behavior, including
+        // its own `index` (loop position) authority-ordinal convention,
+        // since those two contexts are never referenced through a
+        // `HistoricalPublicSource`-group action object).
         let public_stack = &observation.projection.surface.stack;
         for (index, historical) in extensions_v7.historical_public_sources.iter().enumerate() {
             if extensions_v7.historical_public_sources[..index]
@@ -4703,7 +4778,7 @@ impl FlatDecisionEncoderV2 {
             {
                 return Err(FlatDecisionErrorV2::ObservationContract);
             }
-            let ordinal = match historical.context {
+            let model_index = match historical.context {
                 HistoricalSourceContextV7::Stack { stack_index } => {
                     let item = public_stack
                         .get(
@@ -4717,7 +4792,24 @@ impl FlatDecisionEncoderV2 {
                     {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    stack_index
+                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                        &historical.source,
+                        actor,
+                        stack_index,
+                    )?;
+                    if appended {
+                        output.appended_object_indices.push(model_index);
+                    }
+                    authority_mapping.push((
+                        Self::extension_authority_v3(
+                            &historical.source,
+                            actor,
+                            FlatActionObjectGroupV1::HistoricalPublicSource,
+                            index,
+                        )?,
+                        model_index,
+                    ));
+                    model_index
                 }
                 HistoricalSourceContextV7::PendingEffect => {
                     let pending = observation
@@ -4730,7 +4822,22 @@ impl FlatDecisionEncoderV2 {
                     if pending.source.as_ref() != Some(&historical.source) {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    usize_u32(public_stack.len())?
+                    let ordinal = usize_u32(public_stack.len())?;
+                    let (model_index, appended) =
+                        self.add_validated_historical_source_v3(&historical.source, actor, ordinal)?;
+                    if appended {
+                        output.appended_object_indices.push(model_index);
+                    }
+                    authority_mapping.push((
+                        Self::extension_authority_v3(
+                            &historical.source,
+                            actor,
+                            FlatActionObjectGroupV1::HistoricalPublicSource,
+                            index,
+                        )?,
+                        model_index,
+                    ));
+                    model_index
                 }
                 HistoricalSourceContextV7::PendingTrigger { position } => {
                     let trigger_index = usize::try_from(position)
@@ -4745,46 +4852,25 @@ impl FlatDecisionEncoderV2 {
                     if entry.source.is_some() || entry.controller != actor {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
+                    let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
                         .and_then(|ceiling| ceiling.checked_add(position))
-                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?
+                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+                    let model_index =
+                        self.add_pending_trigger_row_v4(&historical.source, actor, ordinal)?;
+                    output.appended_object_indices.push(model_index);
+                    authority_mapping.push((
+                        Self::extension_authority_v3(
+                            &historical.source,
+                            actor,
+                            FlatActionObjectGroupV1::HistoricalPublicSource,
+                            usize::try_from(ordinal)
+                                .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?,
+                        )?,
+                        model_index,
+                    ));
+                    model_index
                 }
             };
-            let (model_index, appended) =
-                self.add_validated_historical_source_v3(&historical.source, actor, ordinal)?;
-            if appended {
-                output.appended_object_indices.push(model_index);
-            }
-            // The authority ordinal must match whatever the action side
-            // actually resolves to a `HistoricalPublicSource`-group
-            // reference for: `Stack`/`PendingEffect` rows are never
-            // referenced that way (that group is only reachable via the
-            // hidden-pending-trigger fallback, `rl_session::flat_action_v4`'s
-            // `pending_trigger_frozen_source_components_v4`), so they keep
-            // V3's own `index` (loop position) convention unchanged; a
-            // `PendingTrigger` row's action-side counterpart always uses
-            // this registry's own `ordinal` (the shared
-            // `historical_public_source_ordinal_ceiling_v1(state) + position`
-            // value), so the authority entry must use `ordinal` here too, or
-            // `validate_cached_tables`'s exact-equality authority match
-            // would never find it.
-            let authority_ordinal = if matches!(
-                historical.context,
-                HistoricalSourceContextV7::PendingTrigger { .. }
-            ) {
-                usize::try_from(ordinal).map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?
-            } else {
-                index
-            };
-            authority_mapping.push((
-                Self::extension_authority_v3(
-                    &historical.source,
-                    actor,
-                    FlatActionObjectGroupV1::HistoricalPublicSource,
-                    authority_ordinal,
-                )?,
-                model_index,
-            ));
             output
                 .historical_public_sources
                 .push(FlatHistoricalPublicSourceV4 {
