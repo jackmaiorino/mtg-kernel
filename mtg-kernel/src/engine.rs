@@ -3107,9 +3107,62 @@ fn has_unblocked_attacker_return_cost(components: &[CostComponent]) -> bool {
     })
 }
 
+/// Activation-time gate (702.50a: "Activate only during combat after
+/// blockers are declared and only if you control an unblocked attacking
+/// creature"). `player` must currently hold priority here: this is checked
+/// while staging/paying the activation itself (`unblocked_attacker_return_
+/// candidates`, consulted by the offer gate, the interactive cost-target
+/// decision, and the pre-payment re-validation), always synchronously
+/// within the activating player's own priority window, so requiring
+/// `player == state.priority_player` is correct. See `ninjutsu_resolution_
+/// window_ok` for the sibling *resolution*-time gate, which must not
+/// include this same comparison.
 fn ninjutsu_timing_ok(player: PlayerId, state: &GameState) -> bool {
     player == state.active_player
         && player == state.priority_player
+        && state.engine.combat.blockers_declared
+        && matches!(
+            state.step,
+            Step::DeclareBlockers | Step::CombatDamage | Step::EndCombat
+        )
+}
+
+/// Resolution-time sibling of `ninjutsu_timing_ok`, deliberately omitting
+/// its `player == state.priority_player` comparison.
+///
+/// Ninjutsu is modeled here as an ordinary stack-using activated ability
+/// (`push_paid_activation` pushes every activation, this one included), so
+/// between activation and resolution priority passes around normally --
+/// 117.4/608.1: a stack item resolves once all players pass in succession,
+/// which is a fact about the *pass sequence*, never about who currently
+/// holds priority. `resolve_top_of_stack` (engine.rs) runs before
+/// `reset_priority`, so `state.priority_player` at the exact instant this
+/// runs still holds whatever `Action::Pass` last flipped it to (each pass
+/// sets `priority_player = passer.opponent()`, so it lands on the
+/// controller's own side only when the controller happens to be the final
+/// passer) -- it is not reset to the active player until immediately after
+/// resolution completes. A resolving ability's controller is never
+/// required to currently hold priority for it to resolve (117.3b: only the
+/// *next* recipient of priority after a resolution is defined, as the
+/// active player); checking it here fails closed on completely ordinary
+/// sequences, such as the opponent responding to something else first, or
+/// even a single extra mana ability activated while this ninjutsu sat on
+/// the stack.
+///
+/// Root-caused end to end against campaign-001 block1-cuda-2 iteration 95
+/// slot 2 (seed 14378628175672525038, turn 8): Ninja of the Deep Hours
+/// (learner-controlled) had its ninjutsu activation staged, cost paid
+/// (returning a different unblocked attacker to hand), and pushed onto the
+/// stack; by the time it resolved, `state.priority_player` was the
+/// opponent (an ordinary consequence of the pass sequence, not of anything
+/// illegal), so the old shared `ninjutsu_timing_ok` check wrongly reported
+/// "resolved outside its post-blockers combat window" and the engine
+/// halted a legal game. The other three conditions -- still that
+/// player's own combat, blockers declared, still `DeclareBlockers`/
+/// `CombatDamage`/`EndCombat` -- remain exactly the right resolution-time
+/// gate and are unchanged here.
+fn ninjutsu_resolution_window_ok(player: PlayerId, state: &GameState) -> bool {
+    player == state.active_player
         && state.engine.combat.blockers_declared
         && matches!(
             state.step,
@@ -10945,7 +10998,7 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
     controller: PlayerId,
     expected_source: Option<ObjectLinkV4>,
 ) -> Result<(), String> {
-    if !ninjutsu_timing_ok(controller, state) {
+    if !ninjutsu_resolution_window_ok(controller, state) {
         return Err("ninjutsu resolved outside its post-blockers combat window".to_string());
     }
     let expected_source = expected_source.ok_or("ninjutsu effect lost its hand source binding")?;
@@ -14765,6 +14818,67 @@ mod tests {
             "a permanent returned to hand as this cost must leave combat.attackers (506.4): {:?}",
             state.engine.combat.attackers
         );
+    }
+
+    /// Root cause for campaign-001 block1-cuda-2 iteration 95 slot 2 (seed
+    /// 14378628175672525038, turn 8): once a ninjutsu activation is staged,
+    /// its cost paid, and its ability pushed onto the stack (this kernel
+    /// models ninjutsu as an ordinary stack-using activated ability), it
+    /// resolves through the normal pass-priority-twice cycle like anything
+    /// else on the stack. `resolve_top_of_stack` runs *before*
+    /// `reset_priority`, so `state.priority_player` at the exact instant a
+    /// stack item resolves is whichever player `Action::Pass` last flipped
+    /// it to -- it lands back on the item's own controller only when that
+    /// controller happens to be the second of the two consecutive passers.
+    /// The old shared `ninjutsu_timing_ok` (still correctly used at
+    /// activation time, see the two tests above) required the resolving
+    /// ability's own controller to currently hold priority, which is not a
+    /// real rule (117.3b/608.1: resolution is a fact about the pass
+    /// sequence, not about who currently holds priority) and fails closed
+    /// on the entirely ordinary case of the opponent holding priority when
+    /// a legal, already-paid ninjutsu ability resolves. Reproduced end to
+    /// end (real seed, real decks, the real trained checkpoint) by
+    /// `expanded_deck_training_v1::tests::
+    /// campaign_001_block1_cuda2_iteration_95_slot_2_ninjutsu_resolution_completes_naturally`;
+    /// this is the same defect isolated to the one resolution call site,
+    /// with no game loop, policy, or checkpoint needed.
+    #[test]
+    fn ninjutsu_resolves_even_when_the_opponent_currently_holds_priority() {
+        let mut state = empty_game();
+        let unblocked_attacker = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
+        state.objects.get_mut(unblocked_attacker).tapped = true;
+        let ninja = put_in_hand(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.active_player = PlayerId::P0;
+        // The bug: priority sits with the *opponent*, not the ninjutsu
+        // ability's own controller, at the moment it resolves -- exactly
+        // what an ordinary pass sequence (or an opposing response) leaves
+        // behind, since `reset_priority` has not run yet.
+        state.priority_player = PlayerId::P1;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![unblocked_attacker];
+
+        let expected_source = Some(ObjectLinkV4 {
+            object: ninja,
+            zone_change_count: state.objects.get(ninja).zone_change_count,
+        });
+        put_ninjutsu_source_onto_battlefield_attacking(
+            &mut state,
+            ninja,
+            PlayerId::P0,
+            expected_source,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "a legal ninjutsu resolution must not depend on who currently holds \
+                 priority: {error}"
+            )
+        });
+
+        assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+        assert!(state.objects.get(ninja).tapped);
+        assert!(state.engine.combat.attackers.contains(&ninja));
     }
 
     /// Fireblast's alternative cost (Sol #85: alt costs are payment
