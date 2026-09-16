@@ -1486,4 +1486,76 @@ mod tests {
             "V3 must stay byte-identical: its shared-source ambiguity guard is untouched"
         );
     }
+
+    /// Defect-2 regression (`InvalidDecisionRelation`, campaign-001 block-1
+    /// sweep offset 26, seed 3157112932801185247, step 457, actor P0,
+    /// `legal_action_count` 4, involving Cryptic Serpent): a later,
+    /// otherwise-unrelated decision's actor-visible encoding must not fail
+    /// merely because a still-pending spell-sourced (`home_zone:
+    /// Zone::Stack`) cast trigger's producing spell has already departed
+    /// the stack -- the same
+    /// `spell_sourced_trigger_state_after_producer_departs_v1` fixture as
+    /// `policy_observation_v6::tests::
+    /// v6_spell_sourced_trigger_survives_producer_countered_while_still_pending`,
+    /// exercised through both actor-visible encoders instead of the raw V6
+    /// observation call.
+    ///
+    /// Root cause was never V4-specific: `encode_current_flat_action_slice_v4`
+    /// calls `crate::rl::policy_observation_extensions_v6` directly (for its
+    /// own decision-local-library/historical-source extension data), and
+    /// both `flat_policy_observation_v3` (`flat_action_v3.rs`) and
+    /// `flat_policy_observation_v4` (this file) call the identical shared
+    /// `crate::rl::observe_policy_v6_unhashed_for_flat_policy` ->
+    /// `build_policy_observation_v6` -> `policy_observation_extensions_with_text_v6`
+    /// chain. That chain calls `rl.rs`'s `stack_source_ref` for every stack
+    /// item, which calls `engine::validated_stack_item_target_spec` ->
+    /// `validate_spell_stack_source` -> `validate_spell_source_contract_fields`
+    /// -> `engine::validate_spell_sourced_trigger` -- the exact function
+    /// fixed for defect 1 (see its doc comment). Because this per-item
+    /// revalidation runs for the WHOLE stack on every later observation,
+    /// not only when the stale trigger is about to resolve, a departed
+    /// producer anywhere on the stack broke every subsequent decision's
+    /// encoding under both V3 and V4 alike, confirmed below: no V4-only or
+    /// V3-only file needed a change, so `flat_action_v3.rs` and every V3
+    /// pinned file (`docs/research/phase1_v3_contract_frozen_pins_2026-09.md`)
+    /// stay byte-identical.
+    #[test]
+    fn v3_and_v4_encode_a_later_decision_despite_a_still_pending_departed_producer_trigger() {
+        let (state, chrysalis) =
+            crate::policy_observation_v6::tests::spell_sourced_trigger_state_after_producer_departs_v1(
+            );
+        assert_eq!(
+            state.stack.len(),
+            1,
+            "only the still-pending cast trigger, its producer already departed"
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+
+        let mut v3_actions = vec![FlatActionCoreV1::default(); 128];
+        let mut v3_refs = vec![FlatActionRefV2::default(); 256];
+        let mut v3_objects = vec![FlatActionObjectV2::default(); 128];
+        session
+            .encode_current_flat_action_slice_v3(
+                expected(&session),
+                &mut FlatActionDecisionSliceBuffersV2 {
+                    actions: &mut v3_actions,
+                    refs: &mut v3_refs,
+                    objects: &mut v3_objects,
+                },
+            )
+            .unwrap_or_else(|e| {
+                panic!("V3 action-slice encoding must not fail on a departed-producer trigger: {e:?}")
+            });
+        session.flat_policy_observation_v3(expected(&session)).unwrap_or_else(|e| {
+            panic!("V3 policy observation must not fail on a departed-producer trigger: {e:?}")
+        });
+
+        let (v4_result, _objects) = encoded_v4(&session);
+        assert!(v4_result.active_action_count > 0);
+        session.flat_policy_observation_v4(expected(&session)).unwrap_or_else(|e| {
+            panic!("V4 policy observation must not fail on a departed-producer trigger: {e:?}")
+        });
+
+        let _ = chrysalis;
+    }
 }

@@ -283,6 +283,102 @@ pub(crate) mod tests {
         assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
     }
 
+    /// Defect-2 fixture (`InvalidDecisionRelation`, campaign-001 block-1
+    /// sweep offset 26, seed 3157112932801185247): Writhing Chrysalis's own
+    /// `TriggerCondition::CastSelf` cast trigger left alone on the stack
+    /// after Counterspell counters the spell that produced it (the spell
+    /// departs to the graveyard; the trigger, stacked above it, is not yet
+    /// resolved). Real self-play never needs the trigger to actually
+    /// resolve to hit this: `stack_source_ref` (`rl.rs`) revalidates EVERY
+    /// stack item's producer -- including this still-pending one -- every
+    /// time any later decision's observation is built, well before the
+    /// trigger is ever the top of the stack. Before the engine fix (see
+    /// `engine::validate_spell_sourced_trigger`), that per-item
+    /// revalidation itself failed with "spell-sourced trigger contract no
+    /// longer matches its producer", which every caller of
+    /// `policy_observation_extensions_v6` (both the V3 and the V4 actor-
+    /// visible encoders alike -- see `rl_session::flat_action_v4`'s
+    /// `encode_current_flat_action_slice_v4` and
+    /// `flat_policy_observation_v3`/`v4`) folds into a generic
+    /// `InvalidDecisionRelation`, for ANY later decision, not only one that
+    /// otherwise involves Chrysalis at all. Returns the state with the
+    /// bare trigger on the stack, and Chrysalis's own (now-departed) object
+    /// id.
+    pub(crate) fn spell_sourced_trigger_state_after_producer_departs_v1() -> (GameState, ObjectId) {
+        let mut state = ready_state();
+        let chrysalis = put(&mut state, PlayerId::P0, "Writhing Chrysalis", Zone::Hand);
+        let counterspell = put(&mut state, PlayerId::P1, "Counterspell", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        state.players[1].mana_pool[ManaColor::U.pool_index()] = 2;
+
+        engine::step(&mut state, Action::CastSpell(chrysalis)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.len(), 2, "the spell and its cast trigger must both be on the stack");
+
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        engine::step(&mut state, Action::CastSpell(counterspell)).unwrap();
+        match engine::advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(chrysalis)]);
+            }
+            other => panic!("expected Counterspell's target decision, got {other:?}"),
+        }
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(chrysalis))).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.len(), 3);
+
+        // Pass until exactly one stack item resolves: Counterspell itself,
+        // which also removes its target (the Chrysalis spell) as part of
+        // that same resolution, dropping the stack from 3 items to 1 in one
+        // step. Stop there, deliberately not letting the bare trigger
+        // resolve, so it stays a still-pending, producer-departed stack
+        // item for the fixture's caller to observe.
+        let starting_len = state.stack.len();
+        loop {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("unexpected decision while resolving Counterspell: {other:?}"),
+            }
+            if state.stack.len() < starting_len {
+                break;
+            }
+        }
+        assert_eq!(state.stack.len(), 1, "only the still-pending cast trigger should remain");
+        assert_eq!(state.stack[0].kind, crate::state::StackItemKind::TriggeredAbility);
+        assert_eq!(state.stack[0].source, chrysalis);
+        assert!(
+            state.players[0].graveyard.contains(&chrysalis),
+            "Counterspell must have countered the Chrysalis spell into the graveyard"
+        );
+        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        (state, chrysalis)
+    }
+
+    /// Defect-2 regression, always-run and self-contained: building the V6
+    /// observation extensions for either player must not fail merely
+    /// because a still-pending spell-sourced trigger's producing spell has
+    /// already departed the stack. Confirmed to fail with `RlContractError`
+    /// ("spell-sourced trigger contract no longer matches its producer")
+    /// against the pre-fix `engine::validate_spell_sourced_trigger`.
+    #[test]
+    fn v6_spell_sourced_trigger_survives_producer_countered_while_still_pending() {
+        let (state, chrysalis) = spell_sourced_trigger_state_after_producer_departs_v1();
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            policy_observation_extensions_v6(&state, actor).unwrap_or_else(|e| {
+                panic!("V6 observation extensions must not fail on a departed-producer trigger: {e}")
+            });
+        }
+        let observation = observe(&state, PlayerId::P0);
+        assert_eq!(observation.projection.surface.stack.len(), 1);
+        assert_eq!(
+            observation.projection.surface.stack[0].source.arena_id,
+            chrysalis.0
+        );
+    }
+
     #[test]
     fn v6_ward_multiple_targeters_have_exact_queued_and_pending_bindings() {
         let (mut state, spells, terror) = ward_multi_targeter_state();
