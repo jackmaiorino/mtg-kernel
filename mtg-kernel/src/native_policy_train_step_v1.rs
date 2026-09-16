@@ -1219,8 +1219,11 @@ impl NativePolicyValueTrainStateV1 {
     /// regardless of generation, so the grouped loss/backward/Adam arithmetic
     /// (`train_step_with_input_config_v1`) is fully shared unchanged; only the
     /// input-config schema this validates every encoded view against differs.
-    /// The CUDA successor (`train_step_cuda_feature_transfer_v3`) has no V4
-    /// arm yet; callers must reject a V4 policy before selecting that backend.
+    /// The CUDA successor is `train_step_cuda_feature_transfer_v4`, which
+    /// validates the V4 identity and shares the same device kernel path as
+    /// `train_step_cuda_feature_transfer_v3` (`train_step_cuda_burn_dense_inner_v1`
+    /// is dims-oblivious and generation-agnostic; only the identity check
+    /// upstream of it differs).
     pub(crate) fn train_step_feature_transfer_v4(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -1379,6 +1382,94 @@ impl NativePolicyValueTrainStateV1 {
         Ok(())
     }
 
+    /// V4 sibling of `validate_cuda_feature_transfer_update_v3`, for the
+    /// fresh-lineage successor contract. Identical shape and ordering;
+    /// only the input-config identity (`feature_transfer_config_v4` in
+    /// place of `_v3`) differs, so a V3-encoded view is rejected here just
+    /// as a V4-encoded view is rejected by the V3 validator.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn validate_cuda_feature_transfer_update_v4(
+        &self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        // CUDA's driver device ordinal is signed 32-bit. Never allow a
+        // narrowing cast to turn an explicit request into another device.
+        if i32::try_from(device_ordinal).is_err() {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-v4-device-ordinal-out-of-range",
+            });
+        }
+        if groups.is_empty() {
+            return Err(NativePolicyTrainErrorV1::EmptyBatch);
+        }
+        if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
+            return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
+        }
+        if !learning_rate.is_finite() || learning_rate <= 0.0 {
+            return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
+        }
+        self.validate_state_v1()?;
+        self.adam_step
+            .checked_add(1)
+            .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?;
+        exact_group_count_f32(groups.len())?;
+        let input_config = self.model.feature_transfer_config_v4();
+        for (group_index, group) in groups.iter().enumerate() {
+            if group.substeps.is_empty() {
+                return Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index });
+            }
+            physical_substep_count_u32_v1(group_index, group.substeps.len())?;
+            if !matches!(group.terminal_return, -1..=1) {
+                return Err(NativePolicyTrainErrorV1::InvalidTerminalReturn {
+                    group_index,
+                    value: group.terminal_return,
+                });
+            }
+            if group.baseline_bits != 0 {
+                return Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index });
+            }
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                };
+                let counts = encoded.validate(input_config)?;
+                if substep.expected_raw_action_logit_bits.len() != counts.action_count {
+                    return Err(NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
+                        group_index,
+                        substep_index,
+                        expected: counts.action_count,
+                        actual: substep.expected_raw_action_logit_bits.len(),
+                    });
+                }
+                if substep.selected_action_index >= counts.action_count {
+                    return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {
+                        group_index,
+                        substep_index,
+                        selected: substep.selected_action_index,
+                        action_count: counts.action_count,
+                    });
+                }
+                for (index, bits) in substep.expected_raw_action_logit_bits.iter().enumerate() {
+                    finite_scalar("V4 CUDA transported logit", index, f32::from_bits(*bits))?;
+                }
+                finite_scalar(
+                    "V4 CUDA transported value",
+                    substep_index,
+                    f32::from_bits(substep.expected_value_bits),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// One guarded current-feature CUDA update. The caller explicitly owns
     /// device placement and the successor backend receipt. CPU/V2 entry
     /// points and checkpoint feature identities are not reinterpreted.
@@ -1391,6 +1482,33 @@ impl NativePolicyValueTrainStateV1 {
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
+            self,
+            groups,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+        )
+    }
+
+    /// V4 sibling of `train_step_cuda_feature_transfer_v3`. Validates the
+    /// V4 identity (`validate_cuda_feature_transfer_update_v4`) and then
+    /// shares the exact same device kernel path
+    /// (`train_step_cuda_burn_dense_inner_v1`, via the bridge's
+    /// `train_step_cuda_burn_dense_feature_transfer_v4`): the CUDA forward/
+    /// backward arithmetic is dims-oblivious and never branches on
+    /// generation, only the upstream identity/schema check does. Device
+    /// placement uses the same mechanism as V3: the caller-supplied
+    /// `device_ordinal` is the sole placement authority, with no implicit
+    /// fallback and no default; see `ExpandedUpdateBackendV1::Cuda`.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn train_step_cuda_feature_transfer_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
             value_coefficient,

@@ -1472,6 +1472,60 @@ fn train_step_cuda_burn_dense_feature_transfer_inner_v3(
     Ok(result)
 }
 
+/// V4 sibling of `train_step_cuda_burn_dense_feature_transfer_v3`, for the
+/// fresh-lineage successor contract. Identical shape: only the identity
+/// validation (`validate_cuda_feature_transfer_update_v4`) differs. The
+/// shared `train_step_cuda_burn_dense_inner_v1` call below is the same
+/// function V3 uses, unmodified: it is dims-oblivious and never inspects
+/// which generation's schema tagged the encoded views it was handed (see
+/// its own doc comment), so the V3 and V4 wrappers genuinely share one
+/// device kernel path, not two copies of it.
+pub(crate) fn train_step_cuda_burn_dense_feature_transfer_v4(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    state.validate_cuda_feature_transfer_update_v4(
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+    )?;
+    let snapshot = state.snapshot_v1()?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_inner_v1(
+        snapshot,
+        false,
+        Some(device_ordinal),
+        groups,
+        value_coefficient,
+        learning_rate,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        false,
+        #[cfg(test)]
+        None,
+    )?;
+    let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| {
+        // Never retain a candidate from a failed host commit. The previous
+        // host state remains untouched and can be imported on the next call.
+        *resident_device_state_slot_v1() = None;
+        NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-v4-state-reimport-failure",
+        }
+    })?;
+    *state = candidate;
+    Ok(result)
+}
+
 /// Same V3 update with a read-only, pre-Adam gradient export for explicit
 /// numerical qualification. It does not exist in production builds.
 #[cfg(test)]
