@@ -3112,26 +3112,32 @@ mod tests {
     /// the stack, sharing the identical physical `source`; see
     /// `flat_stack_action_object_ordinal_v4`'s doc comment for the fix.
     ///
-    /// This exact reproduction confirms the fix (the game no longer fails
-    /// at the V4 encoding layer, and plays well past the formerly-crashing
-    /// step 155) but does NOT reach natural completion: once the encoder is
-    /// fixed and the game actually resolves Counterspell countering
-    /// Writhing Chrysalis's spell, the engine's own resumable effect
-    /// interpreter halts resolving Writhing Chrysalis's still-pending cast
+    /// This exact reproduction confirms both fixes: the game no longer
+    /// fails at the V4 encoding layer (playing well past the
+    /// formerly-crashing step 155), and, once the encoder let the game
+    /// actually resolve Counterspell countering Writhing Chrysalis's spell,
+    /// it no longer halts resolving Writhing Chrysalis's still-pending cast
     /// trigger with `engine_halted:InvalidEffectContinuation:source:<arena_id>`
-    /// -- a separate, pre-existing, generation-agnostic engine defect
-    /// (`engine.rs`'s `UnsupportedMechanic::InvalidEffectContinuation`,
-    /// entirely outside `rl_session`/V3/V4), unmasked rather than caused by
-    /// this fix, and out of scope for it. Filed as a follow-up defect, not
-    /// resolved here. A bounded 30-seed local sweep around this seed (same
-    /// decks/policy) found 28/30 complete naturally and neither of the two
-    /// that exercised this same shared-stack-source mechanism reached
-    /// natural completion for unrelated downstream reasons, so this
-    /// residual engine gap is rare, not a systemic consequence of the fix;
-    /// see the always-run, self-contained
+    /// either. That halt was a separate, pre-existing, generation-agnostic
+    /// engine defect (`engine.rs`'s `UnsupportedMechanic::
+    /// InvalidEffectContinuation`, entirely outside `rl_session`/V3/V4):
+    /// `validate_spell_sourced_trigger` required a live producing spell
+    /// stack item for every spell-sourced (`home_zone: Zone::Stack`) cast
+    /// trigger's own resolution, contrary to CR 603.3e (a triggered ability
+    /// exists independently of its source once it triggers) and CR 608.2b
+    /// (only an ability whose targets are all illegal fizzles; this cast
+    /// trigger has none). The fix relaxes that check to CR 603.3e's actual
+    /// requirement: once `zone_change_count` proves the producing spell
+    /// left the stack at a later generation than this trigger's frozen
+    /// contract recorded, the trigger resolves from that last-known
+    /// incarnation instead of demanding a live producer. See
+    /// `validate_spell_sourced_trigger`'s doc comment in `engine.rs`, and
+    /// `writhing_chrysalis_cast_trigger_resolves_after_its_own_spell_is_countered`
+    /// there for the fast, self-contained regression floor for the
+    /// mechanism itself. The game now reaches natural completion. See also
+    /// the always-run, self-contained
     /// `v4_spell_resolves_to_its_own_stack_position_despite_its_own_cast_trigger_sharing_source`
-    /// (`flat_action_v4.rs`) for the primary regression floor for the
-    /// mechanism itself.
+    /// (`flat_action_v4.rs`) for the encoding-layer regression floor.
     #[test]
     #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
     fn campaign001_block1_wildfire_vs_terror_v4_regression() {
@@ -3149,17 +3155,13 @@ mod tests {
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
         };
-        let error = collect_episode(&mut policy, &learner, None, &episode).unwrap_err();
-        assert!(
-            !error.contains("V4 actor-visible encoding") && !error.contains("InvalidActionReference"),
-            "the V4 encoding defect must be fixed: got {error}"
-        );
-        assert_eq!(
-            error, "only naturally completed games may become training trajectories",
-            "must now fail only at the separate, pre-existing engine defect \
-             (InvalidEffectContinuation), well past the formerly-crashing step 155, \
-             not at the V4 encoding layer"
-        );
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
+            panic!(
+                "both the V4 encoding defect and the engine InvalidEffectContinuation defect \
+                 must be fixed, so this game now completes naturally: got {e}"
+            )
+        });
+        validate_trajectory(&trajectory).unwrap();
     }
 
     /// V3 check for the campaign-001 block-1 seed/decks above, matching
@@ -3173,6 +3175,84 @@ mod tests {
         let episode = ExpandedEpisodeV1 {
             id: "campaign001-block1-v3-check".into(),
             seed: 3_157_112_932_801_185_221,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: None,
+            registered: [list("Wildfire"), list("Terror")],
+            selected: [list("Wildfire"), list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
+            .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// Campaign-001 block-1 sweep-offset-26 regression (`InvalidDecisionRelation`):
+    /// real V4 fresh-lineage self-play, same decks/policy/starting player as
+    /// `campaign001_block1_wildfire_vs_terror_v4_regression`, seed
+    /// 3157112932801185247 (offset 26 of the bounded 30-seed local sweep
+    /// around the defect-1 seed). Root cause was the identical, already-fixed
+    /// `engine::validate_spell_sourced_trigger` defect from defect 1, not a
+    /// separate V4-encoder bug: this game's Writhing Chrysalis cast trigger
+    /// is left pending on the stack after its own spell is countered
+    /// (exactly the defect-1 mechanism), but is not the very next thing to
+    /// resolve, so the engine itself never halts on it. Instead, `rl.rs`'s
+    /// `stack_source_ref` revalidates every stack item's producer -- this
+    /// still-pending one included -- every time ANY later decision's
+    /// observation is built, which failed pre-fix well before the trigger
+    /// ever reached the top of the stack. Both V3's and V4's actor-visible
+    /// encoders call into the identical shared validation chain (see
+    /// `rl_session::flat_action_v4::tests::
+    /// v3_and_v4_encode_a_later_decision_despite_a_still_pending_departed_producer_trigger`'s
+    /// doc comment for the exact call chain, and
+    /// `policy_observation_v6::tests::
+    /// v6_spell_sourced_trigger_survives_producer_countered_while_still_pending`
+    /// for the fast, self-contained mechanism fixture both real-game
+    /// regressions below reduce to), so the defect-1 engine fix alone
+    /// resolves this too: no V4-only or V3-only file needed a change.
+    /// Byte-identical to the real crash this reproduced pre-fix (V4
+    /// actor-visible encoding: `Action(InvalidDecisionRelation)`, step 457,
+    /// actor P0, decision_kind Surface, legal_action_count 4).
+    #[test]
+    #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
+    fn campaign001_block1_sweep_offset26_wildfire_vs_terror_v4_regression() {
+        let mut policy = burst2_evidence_fresh_v4_policy_v1();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "campaign001-block1-sweep-offset26".into(),
+            seed: 3_157_112_932_801_185_247,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: None,
+            registered: [list("Wildfire"), list("Terror")],
+            selected: [list("Wildfire"), list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
+            panic!(
+                "both the V4 encoding defect (InvalidDecisionRelation) and its root cause \
+                 (the engine's validate_spell_sourced_trigger defect) must be fixed, so this \
+                 game now completes naturally: got {e}"
+            )
+        });
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// V3 check for the campaign-001 block-1 sweep-offset-26 seed/decks
+    /// above, matching `campaign001_block1_seed_completes_cleanly_through_v3_encoder`'s
+    /// idiom (`training_fixture_v3()`, self-contained, no evidence
+    /// dependency). Always-run.
+    #[test]
+    fn campaign001_block1_sweep_offset26_seed_completes_cleanly_through_v3_encoder() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "campaign001-block1-sweep-offset26-v3-check".into(),
+            seed: 3_157_112_932_801_185_247,
             starting_player: 0,
             learner_seat: 1,
             opponent: None,

@@ -2118,14 +2118,44 @@ fn validate_spell_sourced_trigger(
         .objects
         .try_get(item.source)
         .ok_or("spell-sourced trigger source object is missing")?;
+    // CR 603.3e/608.2b: a "when you cast this spell" triggered ability
+    // exists independently of the spell once it triggers, and keeps
+    // resolving from this frozen, last-known incarnation even if that spell
+    // later leaves the stack on its own -- resolves normally, is countered,
+    // or ceases as a virtual copy -- before the ability does (a target
+    // naming the spell itself is what CR 608.2b's illegal-target fizzle
+    // already governs via `stack_targets_still_legal`, not this producer
+    // check). `zone_change_count` only ever advances alongside a real zone
+    // change (every `+= 1` site sits with a `zone = <different zone>`
+    // assignment), so a strictly later generation than `contract` recorded
+    // is proof the spell genuinely departed, not state corruption.
     if contract.source != item.source
         || contract.card_def != source.card_def
         || contract.owner != source.owner
-        || contract.controller != source.controller
         || contract.controller != item.controller
         || contract.zone != Zone::Stack
-        || source.zone != Zone::Stack
-        || contract.zone_change_count != source.zone_change_count
+        || source.zone_change_count < contract.zone_change_count
+    {
+        return Err("spell-sourced trigger contract no longer matches its producer".to_string());
+    }
+    let definition_matches = crate::trigger::triggers_for(source.card_def)
+        .iter()
+        .filter(|trigger| trigger.home_zone == Zone::Stack)
+        .any(|trigger| {
+            crate::trigger::materialize_trigger_effect(trigger, item.source, state)
+                == *item.inline_effect.as_ref().expect("checked Some above")
+        });
+    if !definition_matches {
+        return Err("spell-sourced trigger no longer matches its card definition".to_string());
+    }
+    if source.zone_change_count > contract.zone_change_count {
+        // The producing spell already left the stack at a later generation;
+        // nothing further to check against a live producer that no longer
+        // exists at this generation.
+        return Ok(());
+    }
+    if source.zone != Zone::Stack
+        || contract.controller != source.controller
         || contract.spell_copy_origin != source.spell_copy_origin
         || contract.spell_cast_origin != source.v4.spell_cast_origin
     {
@@ -2141,16 +2171,6 @@ fn validate_spell_sourced_trigger(
         return Err("spell-sourced trigger lacks one exact producing spell".to_string());
     }
     validate_spell_source_contract_fields(state, producer)?;
-    let definition_matches = crate::trigger::triggers_for(source.card_def)
-        .iter()
-        .filter(|trigger| trigger.home_zone == Zone::Stack)
-        .any(|trigger| {
-            crate::trigger::materialize_trigger_effect(trigger, item.source, state)
-                == *item.inline_effect.as_ref().expect("checked Some above")
-        });
-    if !definition_matches {
-        return Err("spell-sourced trigger no longer matches its card definition".to_string());
-    }
     Ok(())
 }
 
@@ -19761,6 +19781,100 @@ mod tests {
         assert_eq!(
             poc.otherwise, None,
             "missing field must default to no decline consequence"
+        );
+    }
+
+    /// Defect-1 regression (`UnsupportedMechanic::InvalidEffectContinuation`):
+    /// Writhing Chrysalis's own `TriggerCondition::CastSelf`/
+    /// `home_zone: Zone::Stack` cast trigger (`trigger.rs`'s
+    /// `WRITHING_CHRYSALIS_TRIGGERS`) must still resolve, creating both
+    /// Eldrazi Spawn tokens, after Counterspell counters the Chrysalis spell
+    /// that produced it while the trigger is still pending above it on the
+    /// stack. CR 603.3e: a triggered ability exists independently of its
+    /// source once it triggers; CR 608.2b only fizzles an ability whose
+    /// targets are all illegal, and this cast trigger has none. Before the
+    /// fix, `validate_spell_sourced_trigger` required a live producing spell
+    /// stack item for every spell-sourced trigger resolution, so countering
+    /// the producing spell first (moving it to the graveyard, off the stack)
+    /// made the ability's own resolution -- reached immediately afterward,
+    /// the trigger being the new top of stack -- halt with
+    /// `engine_halted:InvalidEffectContinuation`, mirroring the real
+    /// campaign-001 block-1 seed (3157112932801185221) once the V4 encoding
+    /// defect fixed in 567f850c stopped masking it earlier.
+    #[test]
+    fn writhing_chrysalis_cast_trigger_resolves_after_its_own_spell_is_countered() {
+        let mut state = ready_game_in_main1(0);
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        state.players[1].mana_pool[ManaColor::U.pool_index()] = 2;
+        let chrysalis = put_in_hand(&mut state, PlayerId::P0, "Writhing Chrysalis");
+        let counterspell = put_in_hand(&mut state, PlayerId::P1, "Counterspell");
+
+        step(&mut state, Action::CastSpell(chrysalis)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state.stack.len(),
+            2,
+            "casting Chrysalis must place both the spell and its cast trigger on the stack"
+        );
+        assert_eq!(state.stack[0].kind, StackItemKind::Spell);
+        assert_eq!(state.stack[0].source, chrysalis);
+        assert_eq!(state.stack[1].kind, StackItemKind::TriggeredAbility);
+        assert_eq!(state.stack[1].source, chrysalis);
+
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        step(&mut state, Action::CastSpell(counterspell)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(
+                    legal_targets,
+                    vec![Target::Object(chrysalis)],
+                    "the Chrysalis spell must be Counterspell's only legal target"
+                );
+            }
+            other => panic!("expected Counterspell's target decision, got {other:?}"),
+        }
+        step(&mut state, Action::ChooseTarget(Target::Object(chrysalis))).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state.stack.len(),
+            3,
+            "the spell, its pending cast trigger, and Counterspell must all be on the stack"
+        );
+
+        let decision = pass_until_stack_resolves(&mut state);
+        assert!(
+            state.engine.halted.is_none(),
+            "the cast trigger must resolve, not halt, once its spell is countered: {decision:?}"
+        );
+        assert!(
+            state.stack.is_empty(),
+            "the whole stack must resolve naturally: {decision:?}"
+        );
+        assert!(
+            state.players[0].graveyard.contains(&chrysalis),
+            "Counterspell must still counter the Chrysalis spell into the graveyard"
+        );
+        let spawn_count = state.players[0]
+            .battlefield
+            .iter()
+            .filter(|&&id| state.objects.get(id).name == "Eldrazi Spawn Token")
+            .count();
+        assert_eq!(
+            spawn_count, 2,
+            "the cast trigger must still create both Eldrazi Spawn tokens despite its spell \
+             being countered"
         );
     }
 }
