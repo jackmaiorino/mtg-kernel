@@ -341,11 +341,19 @@ fn verify_producer(result: &CollectionResultDto) -> Result<(), String> {
                 && claim.toolchain_sha256 == runtime.toolchain.sha256,
             "producer runtime claims differ from pinned package",
         )?;
+        // Whole-tuple V3-or-V4, matched as one unit (never a per-field OR):
+        // a duplicate of the classifier phase1_agent_v1/package.rs's
+        // RuntimeContractGenerationV1 and fresh_lineage_generation_v1
+        // already establish, not a third independently maintained copy of
+        // the two compiled generations' constants.
         require(
-            runtime.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
-                && runtime.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3
-                && runtime.features_source_sha256 == FEATURES_SOURCE_SHA256_V3
-                && runtime.feature_descriptor_sha256 == FEATURE_DESCRIPTOR_SHA256_V3
+            crate::sideboard_play_policy_v1::fresh_lineage_generation_v1(
+                &runtime.feature_contract_digest,
+                &runtime.feature_encoding_digest,
+                &runtime.features_source_sha256,
+                &runtime.feature_descriptor_sha256,
+            )
+            .is_ok()
                 && runtime.card_db_hash == format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH)
                 && runtime.card_registry_sha256
                     == format!(

@@ -646,13 +646,31 @@ pub(super) fn write_synthetic_fresh_source_v1(
     dir: &std::path::Path,
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
 ) -> ExpandedFreshInitializationSourceV1 {
+    write_synthetic_fresh_source_with_parameters_v1(dir, feature_identity, |_parameters| {})
+}
+
+/// Sibling of `write_synthetic_fresh_source_v1` that additionally lets a
+/// caller mutate the sampled parameters before they are serialized (for
+/// example, the same weight-manipulation trick
+/// `compact_board_policy`/`compact_board_policy_v4`
+/// (`phase1_bo3_collection_v1/tests.rs`) use to make a real game terminate
+/// quickly by mutual decking), keeping the model, the payload bytes and
+/// every computed hash mutually consistent.
+#[cfg(test)]
+pub(super) fn write_synthetic_fresh_source_with_parameters_v1(
+    dir: &std::path::Path,
+    feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+    mutate: impl FnOnce(&mut Vec<crate::native_policy_value_net_v1::NativeNamedParameterV1>),
+) -> ExpandedFreshInitializationSourceV1 {
     use crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1;
     std::fs::create_dir_all(dir).unwrap();
 
-    let model =
+    let mut model =
         NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
             .unwrap();
-    let parameters = model.parameter_snapshot_v1();
+    let mut parameters = model.parameter_snapshot_v1();
+    mutate(&mut parameters);
+    model.replace_parameter_snapshot_v1(&parameters).unwrap();
     let expected: Vec<_> = native_train_state_parameter_layout_v1().collect();
     assert_eq!(parameters.len(), expected.len());
 

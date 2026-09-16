@@ -1213,6 +1213,44 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// V4 sibling of `train_step_feature_transfer_v3`, for the fresh-lineage
+    /// (V7 observation-schema) successor contract. `NativePolicyPhysicalDecisionV1`
+    /// carries an already-encoded, schema-tagged `NativeEncodedDecisionViewV1`
+    /// regardless of generation, so the grouped loss/backward/Adam arithmetic
+    /// (`train_step_with_input_config_v1`) is fully shared unchanged; only the
+    /// input-config schema this validates every encoded view against differs.
+    /// The CUDA successor (`train_step_cuda_feature_transfer_v3`) has no V4
+    /// arm yet; callers must reject a V4 policy before selecting that backend.
+    pub(crate) fn train_step_feature_transfer_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        for (group_index, group) in groups.iter().enumerate() {
+            for (substep_index, substep) in group.substeps.iter().enumerate() {
+                if !matches!(substep.forward, NativePolicyForwardInputV1::Encoded(_)) {
+                    return Err(
+                        NativePolicyTrainErrorV1::FeatureTransferRequiresCanonicalInput {
+                            group_index,
+                            substep_index,
+                        },
+                    );
+                }
+            }
+        }
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_with_input_config_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            1,
+            BackwardExecutionV1::Sequential,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            input_config,
+        )
+    }
+
     /// Host-only validation for the explicit V3 CUDA successor. This must
     /// finish before creating a device or inspecting the resident GPU cache.
     #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]

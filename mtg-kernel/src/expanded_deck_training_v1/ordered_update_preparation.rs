@@ -330,20 +330,28 @@ where
         } else {
             opponent.map_or(policy, |other| &other.policy)
         };
+        let generation = trajectory_generation_v1(trajectory);
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
-            // V3-only, matching `replay_learner_groups_v1`: the update
-            // backend has no V4 arm yet.
-            let tensor = NativeFlatDecisionTensorV3 {
-                common: row.tensor.tensor(),
+            let common = row.tensor.tensor();
+            let output = match generation {
+                FreshLineageGenerationV1::V3 => acting.score_training_tensor_v3(
+                    &NativeFlatDecisionTensorV3 {
+                        common: common.clone(),
+                    },
+                )?,
+                FreshLineageGenerationV1::V4 => acting.score_training_tensor_v4(
+                    &NativeFlatDecisionTensorV4 {
+                        common: common.clone(),
+                    },
+                )?,
             };
-            let output = acting.score_training_tensor_v3(&tensor)?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
             )?;
             if first.actor == trajectory.episode.learner_seat {
-                rows.push((row, tensor));
+                rows.push((row, common));
             }
         }
         Ok(if rows.is_empty() {

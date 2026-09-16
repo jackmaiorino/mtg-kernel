@@ -12,10 +12,13 @@ use crate::fast_sampler::{
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::{
-    encoded_decision_view_v3, NativeFlatDecisionTensorV3, FEATURES_SOURCE_SHA256_V3,
-    FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3, FEATURE_ENCODING_DIGEST_V3,
+    NativeFlatDecisionTensorV3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3,
 };
-use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
+#[cfg(test)]
+use crate::native_flat_tensorizer_v3::{FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRIPTOR_SHA256_V3};
+use crate::native_flat_tensorizer_v4::{
+    NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
+};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -915,6 +918,17 @@ fn collect_episode(
         episode.opponent.is_some() == opponent.is_some(),
         "opponent dispatch source missing",
     )?;
+    if let Some(other) = &opponent {
+        // Strict whole-generation equality (never a flag): a trajectory
+        // stamps one feature-contract identity from the learner alone
+        // (below), so a learner/opponent generation mismatch would tensorize
+        // some rows under a generation the trajectory never declares.
+        ensure(
+            policy.feature_identity_v1().generation
+                == other.policy.feature_identity_v1().generation,
+            "learner and opponent use different fresh-lineage feature generations",
+        )?;
+    }
     let seat_behaviors = opponent.as_ref().map(|other| {
         std::array::from_fn(|actor| {
             if actor == episode.learner_seat as usize {
@@ -1208,10 +1222,58 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     )
 }
 
-type LearnerTensorGroupV1<'a> = (i8, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV3)>);
+type LearnerTensorGroupV1<'a> = (i8, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV2)>);
+
+/// The trajectory's own recorded whole-pair generation, never a caller flag.
+/// `validate_trajectory` (called by every caller of this) already proved the
+/// pair is a legitimate V3-or-V4 whole pair via `identity_valid`, so
+/// anything that is not the V4 pair here is therefore the V3 pair.
+fn trajectory_generation_v1(t: &ExpandedTrajectoryV1) -> FreshLineageGenerationV1 {
+    if t.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
+        && t.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V4
+    {
+        FreshLineageGenerationV1::V4
+    } else {
+        FreshLineageGenerationV1::V3
+    }
+}
+
+/// A `NativeEncodedDecisionViewV1` over the shared common tensor, stamped
+/// with exactly the compiled V3 or V4 schema for `generation`. Avoids
+/// needing a `NativeFlatDecisionTensorV3`/`V4` wrapper (and the temporary
+/// lifetime that would force) just to pick a schema: the wrapper and the
+/// generic tensor share the identical field layout, so this reads directly
+/// off the generic tensor's own fields.
+fn encoded_decision_view_generic_v1(
+    t: &NativeFlatDecisionTensorV2,
+    generation: FreshLineageGenerationV1,
+) -> crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_> {
+    let schema = match generation {
+        FreshLineageGenerationV1::V3 => crate::native_flat_tensorizer_v3::schema_v3(),
+        FreshLineageGenerationV1::V4 => crate::native_flat_tensorizer_v4::schema_v4(),
+    };
+    crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1::from_slices_unvalidated(
+        schema,
+        &t.state,
+        &t.object_features,
+        &t.object_card_ids,
+        &t.object_groups,
+        &t.object_node_ids,
+        &t.edge_features,
+        &t.edge_source_indices,
+        &t.edge_target_indices,
+        &t.action_features,
+        &t.action_ref_features,
+        &t.action_ref_card_ids,
+        &t.action_ref_action_indices,
+        &t.action_ref_node_indices,
+    )
+}
 
 /// Validate every stored actor-visible forward before returning learner-only
 /// physical decisions. Opponent tensors never enter the optimizer input.
+/// Dispatches the replay/verification score call on the trajectory's own
+/// recorded generation (`trajectory_generation_v1`), never a caller flag.
 fn replay_learner_groups_v1<'a>(
     t: &'a ExpandedTrajectoryV1,
     learner: &FrozenPlayPolicyV1,
@@ -1222,6 +1284,7 @@ fn replay_learner_groups_v1<'a>(
         t.episode.opponent.is_some() == opponent.is_some(),
         "opponent replay source missing",
     )?;
+    let generation = trajectory_generation_v1(t);
     let mut groups = Vec::new();
     let mut index = 0;
     while index < t.decisions.len() {
@@ -1229,24 +1292,30 @@ fn replay_learner_groups_v1<'a>(
         let count = first.substep_count as usize;
         let mut group = Vec::new();
         for row in &t.decisions[index..index + count] {
-            // The update/replay path is V3-only (native_policy_train_step_v1's
-            // update backend has no V4 arm yet); wrap the generic bits back
-            // into the V3 wrapper `score_training_tensor_v3` expects.
-            let tensor = NativeFlatDecisionTensorV3 {
-                common: row.tensor.tensor(),
-            };
+            let common = row.tensor.tensor();
             let acting = if row.actor == t.episode.learner_seat {
                 learner
             } else {
                 opponent.unwrap_or(learner)
             };
-            let output = acting.score_training_tensor_v3(&tensor)?;
+            let output = match generation {
+                FreshLineageGenerationV1::V3 => acting.score_training_tensor_v3(
+                    &NativeFlatDecisionTensorV3 {
+                        common: common.clone(),
+                    },
+                )?,
+                FreshLineageGenerationV1::V4 => acting.score_training_tensor_v4(
+                    &NativeFlatDecisionTensorV4 {
+                        common: common.clone(),
+                    },
+                )?,
+            };
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
             )?;
             if row.actor == t.episode.learner_seat {
-                group.push((row, tensor));
+                group.push((row, common));
             }
         }
         if !group.is_empty() {
@@ -1508,6 +1577,13 @@ fn execute_update_v1(
         (tensor_groups, None)
     };
     ensure(!tensor_groups.is_empty(), "no learner decisions")?;
+    // One dispatch for the whole update: every trajectory in this batch was
+    // already required (above) to share the live policy's own source_import
+    // ancestry, which for a fresh origin carries the feature-contract digest
+    // pair itself, so they also share its generation transitively. Read from
+    // the loaded policy through the same accessor every other stamping site
+    // uses, never a hardcoded V3 constant on a fresh-V4 policy.
+    let generation = policy.feature_identity_v1().generation;
     let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
         .iter()
         .map(|(_, group)| {
@@ -1515,7 +1591,7 @@ fn execute_update_v1(
                 .iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                        encoded_decision_view_v3(t),
+                        encoded_decision_view_generic_v1(t, generation),
                     )),
                     selected_action_index: row.selected as usize,
                     expected_raw_action_logit_bits: &row.logits,
@@ -1543,11 +1619,14 @@ fn execute_update_v1(
     );
     let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
     let learner_started = std::time::Instant::now();
-    let update = match update_backend {
-        ExpandedUpdateBackendV1::Cpu => state
+    let update = match (update_backend, generation) {
+        (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
             .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
             .map_err(err)?,
-        ExpandedUpdateBackendV1::Cuda { device_ordinal } => {
+        (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => state
+            .train_step_feature_transfer_v4(&groups, value_coefficient, learning_rate)
+            .map_err(err)?,
+        (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V3) => {
             #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
             {
                 state
@@ -1565,6 +1644,9 @@ fn execute_update_v1(
                 return Err("CUDA update backend was not compiled".into());
             }
         }
+        (ExpandedUpdateBackendV1::Cuda { .. }, FreshLineageGenerationV1::V4) => {
+            return Err("CUDA update backend has no V4 arm yet".into());
+        }
     };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
     let checkpoint_started = std::time::Instant::now();
@@ -1580,9 +1662,9 @@ fn execute_update_v1(
         }
         .into(),
         // Read from the loaded policy's own generation, never a hardcoded
-        // V3 constant on a fresh-V4 policy (item 3's single-accessor
-        // mitigation). The update arithmetic itself (`train_step_feature_transfer_v3`
-        // above) stays V3-only; this only fixes the identity label.
+        // V3 constant on a fresh-V4 policy (the single-accessor mitigation).
+        // The update arithmetic above now dispatches on this same
+        // `generation` value, so this label matches what actually ran.
         feature_contract_digest: policy.feature_identity_v1().feature_contract_digest.into(),
         feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
@@ -2149,7 +2231,7 @@ mod tests {
                     .iter()
                     .map(|(row, tensor)| NativePolicySubstepV1 {
                         forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                            encoded_decision_view_v3(tensor),
+                            encoded_decision_view_generic_v1(tensor, FreshLineageGenerationV1::V3),
                         )),
                         selected_action_index: row.selected as usize,
                         expected_raw_action_logit_bits: &row.logits,
@@ -2488,6 +2570,185 @@ mod tests {
             !(trajectory.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
                 && trajectory.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3),
             "a V4 trajectory must never satisfy an unmodified pure-V3 identity check"
+        );
+    }
+
+    fn all_basic_deck(name: &str) -> ExpandedDeckListV1 {
+        let card = crate::card_def::card_id_by_name(name).unwrap();
+        ExpandedDeckListV1 {
+            label: name.into(),
+            mainboard: vec![card; 60],
+            sideboard: vec![card; 15],
+        }
+    }
+
+    /// The burst-2 fixture: two full ordinary-trainer iterations (Collect,
+    /// Update, Collect, Update) driven through the real `execute_v1` command
+    /// entry points against a real, on-disk fresh source, not a direct
+    /// `collect_episode`/`execute_update_v1` call. `execute_update_v1`'s own
+    /// internal readback (`initialize(&resumed_source)` plus a state-hash
+    /// equality check, run every time it publishes a checkpoint) already
+    /// proves the first checkpoint restores cleanly; the second iteration's
+    /// Collect against that same checkpoint additionally proves the
+    /// ordinary Collect path (not just Update's own readback) loads it.
+    ///
+    /// `mutate`/`decks` let a caller apply the same compact-board
+    /// weight-manipulation trick `compact_board_policy`/`compact_board_policy_v4`
+    /// (`phase1_bo3_collection_v1/tests.rs`) use for a real game that
+    /// terminates quickly and predictably by mutual decking, and the
+    /// matching all-basic-land deck pair that trick requires. The V3 caller
+    /// below passes a no-op mutation and the original real-deck pair,
+    /// matching exactly what this fixture measured before this function
+    /// existed (see the pinned hash on that test).
+    ///
+    /// Returns (final checkpoint's feature_contract_digest,
+    /// feature_encoding_digest, after_state_sha256).
+    fn run_ordinary_two_iteration_fixture_v1(
+        feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+        label: &str,
+        mutate: impl FnOnce(&mut Vec<NativeNamedParameterV1>),
+        decks: [ExpandedDeckListV1; 2],
+    ) -> (String, String, String) {
+        let root = std::env::temp_dir().join(format!(
+            "ordinary-two-iteration-{label}-{}",
+            std::process::id()
+        ));
+        let source_struct = fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+            &root.join("source"),
+            feature_identity,
+            mutate,
+        );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let play_import = PinnedFileV1 {
+            path: descriptor_path.canonicalize().unwrap(),
+            sha256: sha(&descriptor_bytes),
+        };
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+        };
+        let mut source = ExpandedModelSourceV1 {
+            play_import,
+            feature_transfer,
+            checkpoint: None,
+        };
+        let mut final_contract = String::new();
+        let mut final_encoding = String::new();
+        let mut final_state_sha256 = String::new();
+        for iteration in 0..2u64 {
+            let episode = ExpandedEpisodeV1 {
+                id: format!("{label}-iter-{iteration}"),
+                seed: 2_026_091_601 + iteration,
+                starting_player: 0,
+                learner_seat: 0,
+                opponent: None,
+                registered: decks.clone(),
+                selected: decks.clone(),
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+            };
+            let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
+                source: source.clone(),
+                episodes: vec![episode],
+                output_directory: root.join(format!("collect-{iteration}")),
+            })
+            .unwrap();
+            let trajectories: Vec<PinnedFileV1> =
+                serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
+            let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
+                source: source.clone(),
+                trajectories,
+                learning_rate: 0.0003,
+                value_coefficient: 0.5,
+                update_backend: ExpandedUpdateBackendV1::Cpu,
+                output_directory: root.join(format!("update-{iteration}")),
+            })
+            .unwrap();
+            let checkpoint: PinnedFileV1 =
+                serde_json::from_value(update_result["checkpoint"].clone()).unwrap();
+            let saved: ExpandedCheckpointV1 = read_pinned(&checkpoint).unwrap();
+            final_contract = saved.feature_contract_digest.clone();
+            final_encoding = saved.feature_encoding_digest.clone();
+            final_state_sha256 = update_result["after_state_sha256"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            source.checkpoint = Some(checkpoint);
+        }
+        (final_contract, final_encoding, final_state_sha256)
+    }
+
+    /// Same weight-manipulation trick `compact_board_policy_v4`
+    /// (`phase1_bo3_collection_v1/tests.rs`) uses: strongly prefer the real
+    /// legal Pass action, so a real game against an all-basic-land opponent
+    /// terminates quickly and predictably by mutual decking. An
+    /// untrained/default-weight policy playing two full natural games of
+    /// real constructed decks (Affinity/Terror) discovered a real, narrow
+    /// gap in the V4 actor-visible encoder for at least one "Surface"
+    /// decision scenario (`Action(InvalidDecisionRelation)`) unrelated to
+    /// this follow-up's update/replay/checkpoint work; this fixture avoids
+    /// that unresolved gap deliberately (not by seed-hunting a lucky pass)
+    /// so the update-path dispatch itself can still be proven end to end.
+    /// See the discovery note in the commit message.
+    fn compact_board_parameters_v1(parameters: &mut Vec<NativeNamedParameterV1>) {
+        for parameter in parameters.iter_mut() {
+            parameter.values.fill(0.0);
+        }
+        for (name, input, value) in [
+            ("action_encoder.0.weight", 0, 4.0),
+            ("action_encoder.2.weight", 0, 4.0),
+            (
+                "scorer.0.weight",
+                crate::native_policy_value_net_v1::HIDDEN_DIM_V1,
+                4.0,
+            ),
+            ("scorer.2.weight", 0, 16.0),
+        ] {
+            let parameter = parameters.iter_mut().find(|p| p.name == name).unwrap();
+            assert_eq!(parameter.shape.len(), 2);
+            assert!(input < parameter.shape[1]);
+            parameter.values[input] = value;
+        }
+    }
+
+    #[test]
+    fn ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly() {
+        let (contract, encoding, _state) = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            "v4",
+            compact_board_parameters_v1,
+            [all_basic_deck("Forest"), all_basic_deck("Island")],
+        );
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+    }
+
+    /// Pinned against the value this exact fixture (same seeds, decks,
+    /// learning rate, value coefficient, unmanipulated real weights)
+    /// produced by actually running it at commit a94dce64, one commit
+    /// before the update-path follow-up that added this test:
+    /// `28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878`.
+    /// Proves the V3 ordinary-trainer path is byte-for-byte unchanged by
+    /// this follow-up's dispatch/generic-tensor refactor, not merely
+    /// "should be unchanged by inspection".
+    #[test]
+    fn ordinary_trainer_two_iteration_v3_fixture_state_hash_is_unchanged() {
+        let (contract, encoding, state) = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3,
+            "v3",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+        );
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V3);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V3);
+        assert_eq!(
+            state,
+            "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            "the V3 ordinary-trainer path must be byte-for-byte unchanged by \
+             the V4 update-path follow-up"
         );
     }
 }

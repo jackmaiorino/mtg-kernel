@@ -140,7 +140,7 @@ fn run_probe_v1(plan: ProbePlanV1, with_device: bool) -> Result<Value, String> {
             rows.iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                        encoded_decision_view_v3(t),
+                        encoded_decision_view_generic_v1(t, FreshLineageGenerationV1::V3),
                     )),
                     selected_action_index: row.selected as usize,
                     expected_raw_action_logit_bits: &row.logits,

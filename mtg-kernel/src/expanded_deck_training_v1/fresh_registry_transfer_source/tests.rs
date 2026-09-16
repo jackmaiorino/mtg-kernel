@@ -84,7 +84,7 @@ fn apply(
             rows.iter()
                 .map(|(row, tensor)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
-                        encoded_decision_view_v3(tensor),
+                        encoded_decision_view_generic_v1(tensor, FreshLineageGenerationV1::V3),
                     )),
                     selected_action_index: row.selected as usize,
                     expected_raw_action_logit_bits: &row.logits,

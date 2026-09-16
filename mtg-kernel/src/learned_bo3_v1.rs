@@ -18,8 +18,10 @@ use crate::learned_sideboard_v1::{
     VisibleEvidenceZoneV1,
 };
 use crate::paired_bo1_harness_v1::{
-    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
+    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1,
 };
+#[cfg(test)]
+use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
 use crate::rl_session::{FastActorSessionV1, RlSessionError};
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;

@@ -14,7 +14,7 @@ use crate::learned_sideboard_v1::{
     SideboardDeliberationStateV1,
 };
 use crate::paired_bo1_harness_v1::{
-    PairedBo1PolicyInputV1, PairedBo1PolicyV1, paired_policy_seeds_v1,
+    PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1, paired_policy_seeds_v1,
 };
 use crate::phase1_agent_v1::*;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
@@ -802,12 +802,30 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
             }
         };
         let native = if let Some(capture) = self.capture.as_deref() {
-            let tensor = self.policies[seat(decision.acting_player)]
-                .last_scored_training_tensor_v3()
-                .map_err(recording_error)?;
+            let acting = &self.policies[seat(decision.acting_player)];
+            // Whole-generation dispatch (never a flag): the captured bits
+            // are generation-agnostic storage (both NativeFlatDecisionTensorV3
+            // and V4 wrap the identical NativeFlatDecisionTensorV2), so a V4
+            // scorer's tensor is simply re-wrapped into the same V3-typed
+            // carrier `capture.prepare` already accepts, rather than needing
+            // its own capture format.
+            let tensor = if acting.feature_generation_v1() == PlayPolicyGenerationV1::V4 {
+                crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3 {
+                    common: acting
+                        .last_scored_training_tensor_v4()
+                        .map_err(recording_error)?
+                        .common
+                        .clone(),
+                }
+            } else {
+                acting
+                    .last_scored_training_tensor_v3()
+                    .map_err(recording_error)?
+                    .clone()
+            };
             match capture.prepare(
                 record.decision_index,
-                tensor,
+                &tensor,
                 &scores,
                 decision.legal_action_count as usize,
             ) {
