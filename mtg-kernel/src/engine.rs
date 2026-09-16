@@ -3841,6 +3841,23 @@ fn pay_cost_components_with_x(
                     state,
                     ProposedEvent::zone_change(object_cost_chosen[0], Zone::Hand),
                 );
+                // 506.4, same reasoning and same defect class as the sibling
+                // arm just below: this cost's own candidate list
+                // (`return_permanent_cost_candidates`/`permanent_matches_return_filter`)
+                // filters only by controller, zone and card type/subtype/color,
+                // never by tapped or attacking status, so a currently-attacking
+                // creature is a legal choice here too. Found alongside
+                // CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4 while fixing the
+                // identical gap in the unblocked-attacker arm below; not itself
+                // reproduced by a real game (no in-repo card currently offers
+                // this exact shape of ability), but the underlying staleness is
+                // the same and the fix is free to make now rather than leaving
+                // a second, textually adjacent copy of the same bug.
+                state
+                    .engine
+                    .combat
+                    .attackers
+                    .retain(|&attacker| attacker != object_cost_chosen[0]);
             }
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 event::propose_and_commit(
@@ -14706,6 +14723,46 @@ mod tests {
             "a permanent returned to hand as this cost must leave combat.attackers (506.4), \
              or a later legal ninjutsu re-entry by the same object is rejected as a \
              false-positive duplicate: {:?}",
+            state.engine.combat.attackers
+        );
+    }
+
+    /// Sibling of the test above, for `ReturnControlledPermanentToOwnersHand`
+    /// (any "return a permanent you control to hand" cost, not only
+    /// ninjutsu's own): `return_permanent_cost_candidates`/
+    /// `permanent_matches_return_filter` filter only by controller, zone and
+    /// card type/subtype/color, never by tapped or attacking status (nothing
+    /// in the comprehensive rules requires an untapped or non-attacking
+    /// permanent for a plain return-to-hand cost), so a currently-attacking
+    /// creature is a legal choice here too, and the same stale
+    /// `combat.attackers` entry could cause the same false-positive ninjutsu
+    /// rejection through this cost family instead.
+    #[test]
+    fn returning_a_permanent_for_a_generic_cost_also_prunes_it_from_combat_attackers() {
+        let mut state = empty_game();
+        let attacker = put_on_battlefield(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.objects.get_mut(attacker).tapped = true;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![attacker];
+
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            attacker,
+            &[CostComponent::ReturnControlledPermanentToOwnersHand(
+                PermanentFilterDef::CreatureWithColor(mana::ManaColor::U)
+            )],
+            &[attacker],
+        ));
+
+        assert_eq!(state.objects.get(attacker).zone, Zone::Hand);
+        assert!(
+            !state.engine.combat.attackers.contains(&attacker),
+            "a permanent returned to hand as this cost must leave combat.attackers (506.4): {:?}",
             state.engine.combat.attackers
         );
     }
