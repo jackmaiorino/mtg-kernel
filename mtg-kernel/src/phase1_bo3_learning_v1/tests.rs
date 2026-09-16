@@ -5,7 +5,10 @@ use crate::phase1_bo3_collection_v1::{
     tests::{config, fixtures, fixtures_v4},
 };
 
-fn limits() -> Bo3NativeCaptureLimitsV1 {
+/// `pub(crate)`, not private: `continuation::tests` (a sibling module) reuses
+/// this, `captured`/`captured_v4`'s fixed limit, to build a real, in-memory
+/// `TrainableResultDto` for `apply_prepared`'s own regression test.
+pub(crate) fn limits() -> Bo3NativeCaptureLimitsV1 {
     Bo3NativeCaptureLimitsV1 {
         max_payload_bytes: 256 * 1024 * 1024,
         max_json_bytes: 256 * 1024 * 1024,
@@ -14,7 +17,14 @@ fn limits() -> Bo3NativeCaptureLimitsV1 {
 
 /// Actual native models and original engine captures. File/runtime metadata
 /// comes from the clearly test-only fixture and is never producer-verified.
-fn captured(
+///
+/// `pub(crate)`, not private: `continuation::tests` reuses this, alongside
+/// `captured_v4`, `replay_attempt`, `finish_prepared` and
+/// `with_native_groups_v1`, to drive a real V3 `PreparedBo3GameplayBatchV1`
+/// through `apply_prepared` and cross-check the resulting Adam step and
+/// parameters against a direct `train_step_weighted_feature_transfer_v3`
+/// call on the same groups. Nothing about this function's behavior changes.
+pub(crate) fn captured(
     config: Bo3CollectionConfigV1,
     choices: [PlayDrawChoiceV1; 2],
     limits: Bo3NativeCaptureLimitsV1,
@@ -80,7 +90,9 @@ fn captured(
 /// shape, sourced from the compact-board V4 fresh-lineage fixture pairing
 /// (`fixtures_v4`) instead of V3's, so `replay_attempt`'s generation
 /// dispatch is exercised against a real, complete V4 game.
-fn captured_v4(
+///
+/// `pub(crate)`, not private: see `captured`'s doc comment.
+pub(crate) fn captured_v4(
     config: Bo3CollectionConfigV1,
     choices: [PlayDrawChoiceV1; 2],
     limits: Bo3NativeCaptureLimitsV1,

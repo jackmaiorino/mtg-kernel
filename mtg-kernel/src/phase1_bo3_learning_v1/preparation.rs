@@ -28,7 +28,7 @@ use std::path::PathBuf;
 pub const BO3_PREPARATION_REQUEST_SCHEMA_V1: &str = "mtg-kernel-bo3-gameplay-preparation/v1";
 pub const MAX_BO3_PREPARATION_REQUEST_BYTES_V1: usize = 1024 * 1024;
 const MAX_INPUT_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_PREPARED_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const MAX_PREPARED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_GROUPS: usize = 65_536;
 const MAX_SUBSTEPS: usize = 100_000;
 
@@ -207,21 +207,28 @@ struct CollectedDto {
     committed_decision_json_bytes: u64,
     games: Vec<GameDiagnosticDto>,
 }
+/// `pub(crate)`, not private, and likewise its `packages` field: see
+/// `TrainableResultDto`'s doc comment below.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CollectionResultDto {
+pub(crate) struct CollectionResultDto {
     schema: String,
     config: Bo3CollectionConfigV1,
-    packages: [CompleteAgentPackageV1; 2],
+    pub(crate) packages: [CompleteAgentPackageV1; 2],
     current_runtimes: [ProducerRuntimeClaimV1; 2],
     collected: CollectedDto,
 }
+/// `pub(crate)`, not private, and likewise its `result` field: `continuation::tests`
+/// (a sibling module) reuses `captured`/`captured_v4`'s return value opaquely
+/// (passed straight into `replay_attempt`) except for reading
+/// `result.result.packages[0].gameplay` to obtain the `learner` `finish_prepared`
+/// needs, exactly as `preparation::tests`'s own real-game tests already do.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TrainableResultDto {
+pub(crate) struct TrainableResultDto {
     schema: String,
     request: TrainableBo3RequestV1,
-    result: CollectionResultDto,
+    pub(crate) result: CollectionResultDto,
     native_capture: Bo3NativeCaptureV1,
 }
 fn seat(actor: PlayerSeatV1) -> usize {
@@ -603,7 +610,14 @@ pub fn prepare_bo3_gameplay_batch_v1(
     Ok(prepared)
 }
 
-fn finish_prepared(
+/// `pub(crate)`, not private: `continuation::tests` (a sibling module of
+/// `preparation`'s own test module) reuses this unmodified, alongside
+/// `replay_attempt` and `MAX_PREPARED_BYTES`, to build a real, in-memory
+/// `PreparedBo3GameplayBatchV1` for `apply_prepared`'s own regression test --
+/// the alternative (a file-orchestrated `update_bo3_gameplay_v1` run) needs a
+/// real root-supplied producer artifact `verify_producer` will accept.
+/// Nothing about this function's behavior changes.
+pub(crate) fn finish_prepared(
     learner: ExpandedSeatBehaviorV1,
     learner_generation: FreshLineageGenerationV1,
     reports: Vec<Bo3AttemptPreparationReportV1>,
@@ -651,14 +665,15 @@ fn finish_prepared(
     })
 }
 
-struct AttemptPrepared {
-    report: Bo3AttemptPreparationReportV1,
-    groups: Vec<PreparedBo3GroupV1>,
-    payload: u64,
-    substeps: usize,
+pub(crate) struct AttemptPrepared {
+    pub(crate) report: Bo3AttemptPreparationReportV1,
+    pub(crate) groups: Vec<PreparedBo3GroupV1>,
+    pub(crate) payload: u64,
+    pub(crate) substeps: usize,
 }
 
-fn replay_attempt(
+/// `pub(crate)`, not private: see [`finish_prepared`]'s doc comment.
+pub(crate) fn replay_attempt(
     result: TrainableResultDto,
     learner: PlayerSeatV1,
     policies: [&FrozenPlayPolicyV1; 2],
@@ -957,4 +972,4 @@ fn replay_attempt(
 
 #[cfg(test)]
 #[path = "tests.rs"]
-mod tests;
+pub(crate) mod tests;

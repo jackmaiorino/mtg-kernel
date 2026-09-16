@@ -8,6 +8,10 @@ use crate::native_policy_train_step_v1::{
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
 use crate::paired_bo1_harness_v1::PairedBo1PolicyV1;
 use crate::phase1_bo3_collection_v1::tests::{config, fixtures, fixtures_v4};
+use crate::phase1_bo3_learning_v1::preparation::tests::{captured, captured_v4, limits};
+use crate::phase1_bo3_learning_v1::preparation::{
+    finish_prepared, replay_attempt, TrainableResultDto, MAX_PREPARED_BYTES,
+};
 use crate::phase1_bo3_learning_v1::{
     BO3_PREPARATION_REQUEST_SCHEMA_V1, Bo3AttemptInputV1, Bo3PreparationLimitsV1,
 };
@@ -193,6 +197,115 @@ fn numerical_update_v4(
     state
         .train_step_weighted_feature_transfer_v4(&groups, &[1.0], 0.5, 0.00001)
         .unwrap();
+}
+
+fn native_state_for_policy(policy: &FrozenPlayPolicyV1) -> NativePolicyValueTrainStateV1 {
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .unwrap();
+    model
+        .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+        .unwrap();
+    NativePolicyValueTrainStateV1::new_v1(model).unwrap()
+}
+
+/// Closes a review finding on commit e70981f1's `apply_prepared` (~920-946):
+/// its whole-tuple generation match had no test reaching either arm through
+/// a real *prepared* batch. Prior coverage only reached
+/// `train_step_weighted_feature_transfer_v3`/`_v4` directly
+/// (`numerical_update`/`numerical_update_v4` above, bypassing
+/// `apply_prepared` and `PreparedBo3GameplayBatchV1` entirely), or counted
+/// whether `apply_prepared` ran at all (`UPDATE_CALLS`, via the
+/// file-orchestrated, root-gated `update_bo3_gameplay_v1` path further
+/// below, `#[ignore]`d outside a real producer-supplied manifest, and only
+/// ever exercising the V3 arm even when it does run). This drives a real,
+/// in-memory `PreparedBo3GameplayBatchV1` -- built the same way
+/// `preparation::tests`'s own real-game tests do (`captured`/`captured_v4`,
+/// `replay_attempt`, `finish_prepared`), now `pub(crate)` for exactly this
+/// reuse -- through `apply_prepared` for the given generation, and
+/// separately replays the identical `(groups, weights)` through
+/// `train_step_weighted_feature_transfer_v3`/`_v4` on a clone of the same
+/// starting state; asserts the resulting Adam step and full
+/// parameter/optimizer-moment snapshot are equal.
+fn assert_apply_prepared_matches_direct_weighted_update(
+    generation: FreshLineageGenerationV1,
+    result: TrainableResultDto,
+    policies: [FrozenPlayPolicyV1; 2],
+) {
+    let learner = result.result.packages[0].gameplay.clone();
+    let prepared = replay_attempt(
+        result,
+        PlayerSeatV1::P0,
+        policies.each_ref(),
+        MAX_PREPARED_BYTES,
+    )
+    .unwrap();
+    assert!(prepared.report.complete && prepared.report.eligible);
+    assert!(!prepared.groups.is_empty());
+    let batch = finish_prepared(
+        learner,
+        generation,
+        vec![prepared.report],
+        prepared.groups,
+        prepared.payload,
+        prepared.substeps,
+    )
+    .unwrap();
+    assert_eq!(batch.learner_generation_v1(), generation);
+
+    let mut state = native_state_for_policy(&policies[0]);
+    let mut direct = state.clone();
+    let (lr, value) = (0.0003_f32, 0.5_f32);
+    batch
+        .with_native_groups_v1(|groups, weights| match generation {
+            FreshLineageGenerationV1::V3 => {
+                direct.train_step_weighted_feature_transfer_v3(groups, weights, value, lr)
+            }
+            FreshLineageGenerationV1::V4 => {
+                direct.train_step_weighted_feature_transfer_v4(groups, weights, value, lr)
+            }
+        })
+        .unwrap();
+    apply_prepared(&mut state, &batch, lr.to_bits(), value.to_bits()).unwrap();
+    assert_eq!(state.adam_step_v1(), direct.adam_step_v1());
+    assert_eq!(
+        StateBits::capture(&state).unwrap(),
+        StateBits::capture(&direct).unwrap()
+    );
+}
+
+#[test]
+fn apply_prepared_v3_matches_direct_weighted_update_on_a_real_prepared_batch() {
+    let (result, policies) = captured(
+        config("apply-prepared-v3"),
+        [PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw],
+        limits(),
+        false,
+    );
+    assert_apply_prepared_matches_direct_weighted_update(
+        FreshLineageGenerationV1::V3,
+        result,
+        policies,
+    );
+}
+
+/// V4 sibling of the test above: same real, in-memory prepared-batch
+/// construction and `apply_prepared`-vs-direct-update proof, sourced from
+/// the fresh-lineage V4 fixture instead of V3's, so `apply_prepared`'s
+/// `FreshLineageGenerationV1::V4` arm is finally reached through a real
+/// prepared batch, not just through the shared numeric primitive alone.
+#[test]
+fn apply_prepared_v4_matches_direct_weighted_update_on_a_real_prepared_batch() {
+    let (result, policies) = captured_v4(
+        config("apply-prepared-v4"),
+        [PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw],
+        limits(),
+    );
+    assert_apply_prepared_matches_direct_weighted_update(
+        FreshLineageGenerationV1::V4,
+        result,
+        policies,
+    );
 }
 
 #[test]
