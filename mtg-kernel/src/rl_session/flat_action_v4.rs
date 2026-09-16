@@ -857,7 +857,8 @@ mod tests {
     use super::*;
     use crate::engine::Decision;
     use crate::rl_session::{
-        avenging_hunter_undercity_arena_choose_targets_state_v1, shuffle_trigger_source_into_library_v1,
+        avenging_hunter_undercity_arena_choose_targets_state_v1, goaded_attacker_fixture_state_v3,
+        shuffle_trigger_source_into_library_v1,
     };
 
     fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
@@ -905,6 +906,68 @@ mod tests {
             .collect();
         ordinals.sort_unstable();
         ordinals
+    }
+
+    /// V4 sibling of
+    /// `flat_action_v3::tests::v3_active_goad_is_include_only_at_every_prefix_and_v2_pair_is_unchanged`:
+    /// an always-run, outcome-asserting proof that
+    /// `validate_origin_decision_against_reordered_candidates_v4` actually
+    /// handles the goaded-attacker `AttackerInclusion` shrink (a fixed
+    /// `[exclude, include]` pair reduced by `normalize_candidates`'s
+    /// retain-filter to a single forced `include` candidate when the
+    /// attacker is goaded), not merely "does not error" -- the only prior
+    /// coverage was the `#[ignore]`d 20-game soak
+    /// (`expanded_deck_training_v1.rs`'s
+    /// `v4_gameplay_soak_over_standard_decks_completes_every_seed`), which
+    /// asserts nothing about this specific decision. Reuses the same
+    /// `goaded_attacker_fixture_state_v3` fixture the V3 test does (a real
+    /// Arena-room goad, staged with an ordinary creature on either side of
+    /// the goaded one), encodes every `AttackerInclusion` prefix through
+    /// `encode_current_flat_action_slice_v4`, and drives the selected index
+    /// through the same `session.step` real V4 gameplay uses (there is no
+    /// V4-specific consume wrapper: `encode_current_flat_action_slice_v4` is
+    /// cache-free, so nothing needs re-validating against a cached V4
+    /// binding before stepping).
+    #[test]
+    fn v4_active_goad_is_include_only_at_every_prefix_and_apply_updates_declared_attackers() {
+        for goad_first in [true, false] {
+            let (state, goaded, ordinary) = goaded_attacker_fixture_state_v3(goad_first);
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+            for _ in 0..2 {
+                let decision = expected(&session);
+                assert_eq!(
+                    decision.decision_kind,
+                    FastActorDecisionKindV1::AttackerInclusion
+                );
+                let current = session.current.as_ref().unwrap();
+                let ActionSemanticV1::ChooseAttackerInclusion { attacker, .. } =
+                    &current.candidates[0].semantic
+                else {
+                    unreachable!()
+                };
+                let is_goaded = attacker.arena_id == goaded.0;
+                assert_eq!(current.candidates.len(), if is_goaded { 1 } else { 2 });
+                if is_goaded {
+                    assert!(matches!(
+                        current.candidates[0].semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    ));
+                }
+                let (slice, _) = encoded_v4(&session);
+                assert_eq!(
+                    slice.active_action_count,
+                    if is_goaded { 1 } else { 2 },
+                    "the V4 action slice must encode the single forced include candidate for \
+                     the goaded attacker, and the ordinary optional pair otherwise"
+                );
+                // Index zero means forced include for the goaded creature,
+                // and voluntary exclude for the ordinary creature (same
+                // convention the V3 test uses).
+                session.step(decision.episode_id, decision.step, 0).unwrap();
+            }
+            assert!(session.state.engine.combat.attackers.contains(&goaded));
+            assert!(!session.state.engine.combat.attackers.contains(&ordinary));
+        }
     }
 
     #[test]
