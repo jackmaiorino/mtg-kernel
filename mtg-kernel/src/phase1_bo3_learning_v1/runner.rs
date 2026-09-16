@@ -8,7 +8,9 @@ use crate::durable_publication_v1::{
     DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
     verify_existing_publication_v1,
 };
-use crate::expanded_deck_training_v1::{ExpandedSeatBehaviorV1, PinnedFileV1};
+use crate::expanded_deck_training_v1::{
+    ExpandedSeatBehaviorV1, PinnedFileV1, UpdateBackwardExecutionV1,
+};
 use crate::phase1_agent_v1::CompleteAgentPackageV1;
 use crate::phase1_bo3_collection_v1::Bo3CollectionConfigV1;
 use crate::rl::PlayerSeatV1;
@@ -773,6 +775,12 @@ fn update_request(
         preparation_request: preparation,
         learning_rate_bits: config.learning_rate_bits,
         value_coefficient_bits: config.value_coefficient_bits,
+        // The automated BO3 runner does not yet expose this choice in
+        // `NativeBo3TrainingRunV1`; it always requests the byte-identical
+        // sequential backward pass. `Bo3GameplayUpdateRequestV1` itself is
+        // fully config-driven (see `UpdateBackwardExecutionV1`) for direct
+        // callers.
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         previous_progress: previous,
         output_directory: output,
     }

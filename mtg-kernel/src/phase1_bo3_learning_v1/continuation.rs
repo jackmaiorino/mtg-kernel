@@ -10,7 +10,7 @@ use crate::durable_publication_v1::{
 };
 use crate::expanded_deck_training_v1::{
     ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ExpandedSeatBehaviorV1, PinnedFileV1,
-    inference_identity_v1, load_ordinary_bo3_parent_v1,
+    UpdateBackwardExecutionV1, inference_identity_v1, load_ordinary_bo3_parent_v1,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -60,6 +60,10 @@ pub struct Bo3GameplayUpdateRequestV1 {
     pub preparation_request: PinnedFileV1,
     pub learning_rate_bits: u32,
     pub value_coefficient_bits: u32,
+    /// Config-driven; default `Sequential` keeps every existing request and
+    /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
+    #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+    pub update_backward_execution: UpdateBackwardExecutionV1,
     /// The caller supplies the latest immutable tip, including after NoUpdate.
     /// None opens a deliberate new ordinary-origin chain, not a global claim.
     pub previous_progress: Option<PinnedFileV1>,
@@ -922,26 +926,47 @@ fn apply_prepared(
     batch: &PreparedBo3GameplayBatchV1,
     lr: u32,
     value: u32,
+    backward_execution: UpdateBackwardExecutionV1,
 ) -> Result<(), String> {
     // Whole-tuple dispatch (never a flag) on the batch's own loaded-learner
     // generation: the weighted grouped loss/backward/Adam arithmetic is
     // fully shared, only the input-config schema differs (see
     // native_policy_train_step_v1::weighted_v3).
     let generation = batch.learner_generation_v1();
+    // Fixed-partition backward is a fresh-V4-lineage-only option: reject any
+    // other combination before touching the model, so a V3-generation batch
+    // can never reach anything but `Sequential` (see the ordinary trainer's
+    // matching guard in `expanded_deck_training_v1::execute_update_v1`).
+    if !backward_execution.is_sequential() {
+        require(
+            generation == FreshLineageGenerationV1::V4,
+            "fixed-partition backward is available only to the V4 fresh lineage; \
+             V3 and imported paths must use sequential",
+        )?;
+    }
     batch
-        .with_native_groups_v1(|groups, weights| match generation {
-            FreshLineageGenerationV1::V3 => state.train_step_weighted_feature_transfer_v3(
+        .with_native_groups_v1(|groups, weights| match (generation, backward_execution) {
+            (FreshLineageGenerationV1::V3, _) => state.train_step_weighted_feature_transfer_v3(
                 groups,
                 weights,
                 f32::from_bits(value),
                 f32::from_bits(lr),
             ),
-            FreshLineageGenerationV1::V4 => state.train_step_weighted_feature_transfer_v4(
-                groups,
-                weights,
-                f32::from_bits(value),
-                f32::from_bits(lr),
-            ),
+            (FreshLineageGenerationV1::V4, UpdateBackwardExecutionV1::Sequential) => state
+                .train_step_weighted_feature_transfer_v4(
+                    groups,
+                    weights,
+                    f32::from_bits(value),
+                    f32::from_bits(lr),
+                ),
+            (FreshLineageGenerationV1::V4, UpdateBackwardExecutionV1::FixedPartition4) => state
+                .train_step_weighted_feature_transfer_v4_fixed_partition_v1(
+                    groups,
+                    weights,
+                    f32::from_bits(value),
+                    f32::from_bits(lr),
+                    crate::native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1,
+                ),
         })
         .map_err(err)?;
     #[cfg(test)]
@@ -1191,6 +1216,7 @@ pub fn update_bo3_gameplay_v1(
         &prepared,
         request.learning_rate_bits,
         request.value_coefficient_bits,
+        request.update_backward_execution,
     )?;
     drop(prepared);
     require(

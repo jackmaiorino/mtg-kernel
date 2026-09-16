@@ -229,6 +229,7 @@ fn native_state_for_policy(policy: &FrozenPlayPolicyV1) -> NativePolicyValueTrai
 /// parameter/optimizer-moment snapshot are equal.
 fn assert_apply_prepared_matches_direct_weighted_update(
     generation: FreshLineageGenerationV1,
+    backward_execution: UpdateBackwardExecutionV1,
     result: TrainableResultDto,
     policies: [FrozenPlayPolicyV1; 2],
 ) {
@@ -257,16 +258,31 @@ fn assert_apply_prepared_matches_direct_weighted_update(
     let mut direct = state.clone();
     let (lr, value) = (0.0003_f32, 0.5_f32);
     batch
-        .with_native_groups_v1(|groups, weights| match generation {
-            FreshLineageGenerationV1::V3 => {
+        .with_native_groups_v1(|groups, weights| match (generation, backward_execution) {
+            (FreshLineageGenerationV1::V3, _) => {
                 direct.train_step_weighted_feature_transfer_v3(groups, weights, value, lr)
             }
-            FreshLineageGenerationV1::V4 => {
+            (FreshLineageGenerationV1::V4, UpdateBackwardExecutionV1::Sequential) => {
                 direct.train_step_weighted_feature_transfer_v4(groups, weights, value, lr)
             }
+            (FreshLineageGenerationV1::V4, UpdateBackwardExecutionV1::FixedPartition4) => direct
+                .train_step_weighted_feature_transfer_v4_fixed_partition_v1(
+                    groups,
+                    weights,
+                    value,
+                    lr,
+                    crate::native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1,
+                ),
         })
         .unwrap();
-    apply_prepared(&mut state, &batch, lr.to_bits(), value.to_bits()).unwrap();
+    apply_prepared(
+        &mut state,
+        &batch,
+        lr.to_bits(),
+        value.to_bits(),
+        backward_execution,
+    )
+    .unwrap();
     assert_eq!(state.adam_step_v1(), direct.adam_step_v1());
     assert_eq!(
         StateBits::capture(&state).unwrap(),
@@ -284,6 +300,7 @@ fn apply_prepared_v3_matches_direct_weighted_update_on_a_real_prepared_batch() {
     );
     assert_apply_prepared_matches_direct_weighted_update(
         FreshLineageGenerationV1::V3,
+        UpdateBackwardExecutionV1::Sequential,
         result,
         policies,
     );
@@ -303,8 +320,71 @@ fn apply_prepared_v4_matches_direct_weighted_update_on_a_real_prepared_batch() {
     );
     assert_apply_prepared_matches_direct_weighted_update(
         FreshLineageGenerationV1::V4,
+        UpdateBackwardExecutionV1::Sequential,
         result,
         policies,
+    );
+}
+
+/// V4 fixed-partition sibling: same real prepared-batch/`apply_prepared`
+/// proof, but through the `update_backward_execution=fixed_partition_4`
+/// arm (`train_step_weighted_feature_transfer_v4_fixed_partition_v1`),
+/// proving `apply_prepared` dispatches this option correctly on a real
+/// batch, not just in the unit-level weighted_v3 tests.
+#[test]
+fn apply_prepared_v4_fixed_partition_matches_direct_weighted_update_on_a_real_prepared_batch() {
+    let (result, policies) = captured_v4(
+        config("apply-prepared-v4-fixed-partition"),
+        [PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw],
+        limits(),
+    );
+    assert_apply_prepared_matches_direct_weighted_update(
+        FreshLineageGenerationV1::V4,
+        UpdateBackwardExecutionV1::FixedPartition4,
+        result,
+        policies,
+    );
+}
+
+/// V3 must reject `fixed_partition_4` with a clear error (never reach the
+/// model): the imported/frozen V3 path cannot change via this config.
+#[test]
+fn apply_prepared_v3_rejects_fixed_partition_backward() {
+    let (result, policies) = captured(
+        config("apply-prepared-v3-rejects-fixed-partition"),
+        [PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw],
+        limits(),
+        false,
+    );
+    let learner = result.result.packages[0].gameplay.clone();
+    let prepared = replay_attempt(
+        result,
+        PlayerSeatV1::P0,
+        policies.each_ref(),
+        MAX_PREPARED_BYTES,
+    )
+    .unwrap();
+    let batch = finish_prepared(
+        learner,
+        FreshLineageGenerationV1::V3,
+        vec![prepared.report],
+        prepared.groups,
+        prepared.payload,
+        prepared.substeps,
+    )
+    .unwrap();
+    let mut state = native_state_for_policy(&policies[0]);
+    let error = apply_prepared(
+        &mut state,
+        &batch,
+        0.0003_f32.to_bits(),
+        0.5_f32.to_bits(),
+        UpdateBackwardExecutionV1::FixedPartition4,
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("V4 fresh lineage"),
+        "error should clearly explain the V3 rejection: {error}"
     );
 }
 
@@ -393,6 +473,7 @@ fn accounting_fixture() -> (
         preparation_request: pin("preparation.json", 10),
         learning_rate_bits: 925353388,
         value_coefficient_bits: 1056964608,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         previous_progress: None,
         output_directory: std::env::temp_dir().join("structural-only-bo3-progress"),
     };
