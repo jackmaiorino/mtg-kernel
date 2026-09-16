@@ -39,6 +39,16 @@ pub struct AgentRuntimeIdentityV1 {
     pub feature_descriptor_sha256: String,
 }
 
+/// Exactly the two compiled feature-contract generations this runtime may
+/// verify against, never an open-ended allow-list. Adding a generation means
+/// adding a new named arm here and a new named tuple below, never widening
+/// this into a table or a runtime-configurable set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeContractGenerationV1 {
+    V3,
+    V4,
+}
+
 /// Read-only evidence of the current executable and its compiled identities.
 /// This does not certify another interface, a remote process or numerical parity.
 /// Private fields prevent callers from constructing a successful check directly.
@@ -50,6 +60,12 @@ pub struct CurrentAgentRuntimeV1 {
     tracked_tree_sha256: String,
     tracked_tree_contract: String,
     toolchain_sha256: String,
+    /// Skipped on the wire: producer JSON (`Bo3CollectionResultV1` and its
+    /// downstream `ProducerRuntimeClaimV1` reader) pins this struct's exact
+    /// serialized shape with `deny_unknown_fields`; this is in-process-only
+    /// evidence for callers such as `load_supported_components_v1`.
+    #[serde(skip)]
+    generation: RuntimeContractGenerationV1,
 }
 
 impl CurrentAgentRuntimeV1 {
@@ -58,6 +74,12 @@ impl CurrentAgentRuntimeV1 {
     }
     pub fn executable_path_v1(&self) -> &Path {
         &self.executable_path
+    }
+    /// Which of the exactly-two compiled feature-contract generations this
+    /// runtime identity matched. Callers gate learned-only behavior on this,
+    /// never on comparing digest strings themselves.
+    pub fn generation_v1(&self) -> RuntimeContractGenerationV1 {
+        self.generation
     }
 }
 
@@ -98,17 +120,38 @@ impl AgentRuntimeIdentityV1 {
         )?;
         verify_file(&self.toolchain)?;
         require(
-            self.card_db_hash == format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH)
-                && self.feature_contract_digest
-                    == crate::native_flat_tensorizer_v3::FEATURE_CONTRACT_DIGEST_V3
-                && self.feature_encoding_digest
-                    == crate::native_flat_tensorizer_v3::FEATURE_ENCODING_DIGEST_V3
-                && self.features_source_sha256
-                    == crate::native_flat_tensorizer_v3::FEATURES_SOURCE_SHA256_V3
-                && self.feature_descriptor_sha256
-                    == crate::native_flat_tensorizer_v3::FEATURE_DESCRIPTOR_SHA256_V3,
-            "runtime feature/card identity differs from the compiled loader",
+            self.card_db_hash == format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH),
+            "runtime card identity differs from the compiled loader",
         )?;
+        // Exactly two compiled tuples, matched as whole tuples so a mixed
+        // tuple (a V3 field paired with a V4 field) can never pass by having
+        // each field independently equal "V3 or V4". Never an open-ended
+        // allow-list, never prefix/partial matching, never runtime-configurable.
+        let generation = match (
+            self.feature_contract_digest.as_str(),
+            self.feature_encoding_digest.as_str(),
+            self.features_source_sha256.as_str(),
+            self.feature_descriptor_sha256.as_str(),
+        ) {
+            (
+                crate::native_flat_tensorizer_v3::FEATURE_CONTRACT_DIGEST_V3,
+                crate::native_flat_tensorizer_v3::FEATURE_ENCODING_DIGEST_V3,
+                crate::native_flat_tensorizer_v3::FEATURES_SOURCE_SHA256_V3,
+                crate::native_flat_tensorizer_v3::FEATURE_DESCRIPTOR_SHA256_V3,
+            ) => RuntimeContractGenerationV1::V3,
+            (
+                crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4,
+                crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4,
+                crate::native_flat_tensorizer_v4::FEATURES_SOURCE_SHA256_V4,
+                crate::native_flat_tensorizer_v4::FEATURE_DESCRIPTOR_SHA256_V4,
+            ) => RuntimeContractGenerationV1::V4,
+            _ => {
+                return Err(
+                    "runtime feature identity matches neither compiled V3 nor V4 contract"
+                        .to_string(),
+                )
+            }
+        };
         Ok(CurrentAgentRuntimeV1 {
             executable_path,
             executable_sha256,
@@ -116,6 +159,7 @@ impl AgentRuntimeIdentityV1 {
             tracked_tree_sha256: self.tracked_tree_sha256.clone(),
             tracked_tree_contract: self.tracked_tree_contract.clone(),
             toolchain_sha256,
+            generation,
         })
     }
 }

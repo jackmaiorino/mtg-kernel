@@ -699,6 +699,21 @@ fn current_runtime_fixture() -> AgentRuntimeIdentityV1 {
     }
 }
 
+/// The same real, currently-running-binary evidence as `current_runtime_fixture`,
+/// with the feature tuple swapped for the compiled V4 (fresh-lineage) contract.
+fn v4_runtime_fixture() -> AgentRuntimeIdentityV1 {
+    AgentRuntimeIdentityV1 {
+        feature_contract_digest: crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4
+            .into(),
+        feature_encoding_digest: crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4
+            .into(),
+        features_source_sha256: crate::native_flat_tensorizer_v4::FEATURES_SOURCE_SHA256_V4.into(),
+        feature_descriptor_sha256: crate::native_flat_tensorizer_v4::FEATURE_DESCRIPTOR_SHA256_V4
+            .into(),
+        ..current_runtime_fixture()
+    }
+}
+
 #[test]
 fn matching_head_and_valid_foreign_file_pin_do_not_verify_current_executable() {
     use sha2::{Digest, Sha256};
@@ -770,5 +785,88 @@ fn exact_current_identity_requires_clean_compiled_source() {
             .verify_current_runtime_v1()
             .unwrap_err()
             .contains("clean compiled source tree"));
+    }
+}
+
+// Item 18: verify_current_runtime_v1 matches an explicit two-entry compiled
+// table (V3, V4), never an open-ended allow-list or partial match.
+
+#[test]
+fn v3_feature_identity_verifies_as_generation_v3() {
+    let runtime = current_runtime_fixture();
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return; // Covered separately by exact_current_identity_requires_clean_compiled_source.
+    }
+    let actual = runtime.verify_current_runtime_v1().unwrap();
+    assert_eq!(actual.generation_v1(), RuntimeContractGenerationV1::V3);
+}
+
+#[test]
+fn v4_feature_identity_verifies_as_generation_v4() {
+    let runtime = v4_runtime_fixture();
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    let actual = runtime.verify_current_runtime_v1().unwrap();
+    assert_eq!(actual.generation_v1(), RuntimeContractGenerationV1::V4);
+}
+
+#[test]
+fn mixed_generation_feature_tuple_is_rejected() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return; // Reaching the generation match requires a clean-tree pass first.
+    }
+    // V3 contract digest paired with a V4 encoding digest.
+    let mut mixed = current_runtime_fixture();
+    mixed.feature_encoding_digest =
+        crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4.into();
+    assert!(mixed
+        .verify_current_runtime_v1()
+        .unwrap_err()
+        .contains("neither compiled V3 nor V4"));
+    // And vice versa: V4 contract digest paired with a V3 encoding digest.
+    let mut mixed = v4_runtime_fixture();
+    mixed.feature_encoding_digest =
+        crate::native_flat_tensorizer_v3::FEATURE_ENCODING_DIGEST_V3.into();
+    assert!(mixed
+        .verify_current_runtime_v1()
+        .unwrap_err()
+        .contains("neither compiled V3 nor V4"));
+}
+
+#[test]
+fn any_single_altered_feature_field_is_rejected_for_either_generation() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    for baseline in [current_runtime_fixture(), v4_runtime_fixture()] {
+        let bad = digest('9');
+        let mut altered = baseline.clone();
+        altered.feature_contract_digest = bad.clone();
+        assert!(altered
+            .verify_current_runtime_v1()
+            .unwrap_err()
+            .contains("neither compiled V3 nor V4"));
+
+        let mut altered = baseline.clone();
+        altered.feature_encoding_digest = bad.clone();
+        assert!(altered
+            .verify_current_runtime_v1()
+            .unwrap_err()
+            .contains("neither compiled V3 nor V4"));
+
+        let mut altered = baseline.clone();
+        altered.features_source_sha256 = bad.clone();
+        assert!(altered
+            .verify_current_runtime_v1()
+            .unwrap_err()
+            .contains("neither compiled V3 nor V4"));
+
+        let mut altered = baseline;
+        altered.feature_descriptor_sha256 = bad;
+        assert!(altered
+            .verify_current_runtime_v1()
+            .unwrap_err()
+            .contains("neither compiled V3 nor V4"));
     }
 }
