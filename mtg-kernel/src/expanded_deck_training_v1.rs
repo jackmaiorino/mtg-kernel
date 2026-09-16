@@ -3237,6 +3237,137 @@ mod tests {
         validate_trajectory(&trajectory).unwrap();
     }
 
+    /// Root-cause regression for campaign-001 lineage a's block-1 CUDA-2
+    /// dry block, which stopped at iteration 95 (0-based), collector 2,
+    /// episode index 2 (`breadth-3da0216e51fb249275cc26ab-b0-i95-s2`),
+    /// Faeries (learner, seat 0) versus Elves (opponent), both the real
+    /// iteration-94 checkpoint (self-play mirror), starting player 0, seed
+    /// 14378628175672525038. Every path, hash, seed and deck list below is
+    /// copied verbatim from the real collection command receipt at
+    /// `Q/campaign-001/a/block1-cuda-2/run/iterations/000095/attempt-000000/
+    /// collect-command.json`, episode index 2. Reads the real evidence tree
+    /// (Q = `E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/
+    /// phase1-training-qualification-001`), never writes to it.
+    ///
+    /// Before the fix below, this game halted at turn 8 with
+    /// `engine_halted:InvalidEffectContinuation:source:18`: Ninja of the
+    /// Deep Hours (object 18, Faeries, learner-controlled) legally
+    /// activated its ninjutsu ability during the post-blockers Declare
+    /// Blockers window (returning a different unblocked attacker to hand,
+    /// paying {1}{U}), which correctly staged, chose its cost target, and
+    /// paid, then was pushed onto the stack like any other activated
+    /// ability in this kernel. By the time that stack item actually
+    /// resolved -- the opponent had pushed a stack item of their own in
+    /// response, and ordinary priority passing continued around it --
+    /// `state.priority_player` had cycled to the opponent, an entirely
+    /// ordinary consequence of the pass sequence (`resolve_top_of_stack`
+    /// runs before `reset_priority`, so the field is not yet reset to the
+    /// active player at the instant a stack item resolves; `Action::Pass`
+    /// always flips it to the passer's opponent, so it lands back on the
+    /// controller only when the controller happens to be the final of the
+    /// two consecutive passers). `put_ninjutsu_source_onto_battlefield_
+    /// attacking`'s legality re-check (the old shared `ninjutsu_timing_ok`)
+    /// wrongly required the ability's own controller to currently hold
+    /// priority in order for their own already-activated, already-paid
+    /// ability to resolve, which `EffectOp::PutSourceOntoBattlefieldTapped
+    /// AndAttacking` (`effect.rs`) turned into an engine halt, which
+    /// `collect_episode` correctly refuses to turn into a training
+    /// trajectory.
+    ///
+    /// Fixed by splitting the shared timing gate: `ninjutsu_resolution_
+    /// window_ok` keeps the real resolution-time requirements (still that
+    /// player's own combat, blockers declared, still Declare Blockers/
+    /// Combat Damage/End Combat) but drops the priority-holder comparison,
+    /// which is only ever meaningful at activation time (`ninjutsu_timing_
+    /// ok`, unchanged, still gates staging/paying the activation itself).
+    /// Real native-engine compute against a real trained checkpoint,
+    /// deliberately opt-in like its siblings above.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-001 block1-cuda-2 iteration 95 slot 2 against the real evidence tree"]
+    fn campaign_001_block1_cuda2_iteration_95_slot_2_ninjutsu_resolution_completes_naturally() {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let shared_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer,
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-001/a/block1-cuda-2/run/iterations/000094/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "502ca59eba7552626be4ca36a55c7eb33f2d8cf8c52390046c12320c0bcb9b5f".into(),
+            }),
+        };
+        let learner_source = shared_source.clone();
+        let opponent_source = shared_source;
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let faeries = ExpandedDeckListV1 {
+            label: "Faeries/a8c6f236b1b4".into(),
+            mainboard: vec![
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
+                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
+                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
+                110,
+            ],
+            sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
+        };
+        let elves = ExpandedDeckListV1 {
+            label: "Elves/0643b1494373".into(),
+            mainboard: vec![
+                1, 1, 1, 1, 26, 26, 26, 26, 40, 40, 40, 42, 42, 42, 42, 64, 64, 64, 64, 67, 67,
+                71, 71, 71, 71, 81, 81, 81, 81, 87, 87, 87, 87, 91, 91, 91, 91, 108, 108, 108,
+                108, 108, 108, 108, 108, 108, 108, 108, 108, 108, 119, 119, 119, 119, 129, 129,
+                130, 130, 130, 130,
+            ],
+            sideboard: vec![43, 74, 74, 74, 74, 89, 89, 89, 111, 111, 111, 126, 126, 126, 126],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-3da0216e51fb249275cc26ab-b0-i95-s2".into(),
+            seed: 14_378_628_175_672_525_038,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [faeries.clone(), elves.clone()],
+            selected: [faeries, elves],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "the ninjutsu-resolution-priority fix regressed: this exact seed/deck/\
+                     checkpoint combination should complete naturally again, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
     // ---- max_non_natural_episode_fraction: tolerant collection with a
     // ---- ledger (Part 2). `derived_retry_seed_v1` is exercised directly
     // ---- (no game); the retry/ledger bookkeeping tests use
