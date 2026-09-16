@@ -332,7 +332,11 @@ where
         };
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
-            let tensor = row.tensor.tensor();
+            // V3-only, matching `replay_learner_groups_v1`: the update
+            // backend has no V4 arm yet.
+            let tensor = NativeFlatDecisionTensorV3 {
+                common: row.tensor.tensor(),
+            };
             let output = acting.score_training_tensor_v3(&tensor)?;
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,

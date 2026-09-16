@@ -86,7 +86,7 @@ fn group_bytes(groups: &[LearnerTensorGroupV1<'_>]) -> Vec<u8> {
                             record.substep_index,
                             record.substep_count,
                             record.actor,
-                            TensorBitsV1::from_tensor(tensor),
+                            TensorBitsV1::from_tensor(&tensor.common),
                         )
                     })
                     .collect::<Vec<_>>(),

@@ -14,8 +14,8 @@ use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::{
     encoded_decision_view_v3, NativeFlatDecisionTensorV3, FEATURES_SOURCE_SHA256_V3,
     FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3, FEATURE_ENCODING_DIGEST_V3,
-    FEATURE_REGISTRY_VERSION_V3, FEATURE_SCHEMA_VERSION_V3,
 };
+use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -33,8 +33,8 @@ use crate::rl_session::{
 };
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::{
-    FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1, FrozenPlayPolicyV1,
-    PlayModelIdentityV1, PlayPolicyOriginV1,
+    FreshLineageGenerationV1, FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1,
+    FrozenPlayPolicyV1, PlayModelIdentityV1, PlayPolicyOriginV1,
 };
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
@@ -267,6 +267,10 @@ pub(crate) fn inference_identity_v1(
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
+    // Single accessor, not a hand-picked constant: a fresh-V4 policy must
+    // stamp the V4 schema/registry/source/descriptor identity here, never
+    // the V3 one, and this is the one place that decides which.
+    let feature_identity = policy.feature_identity_v1();
     Ok(ExpandedInferenceIdentityV1 {
         schema: inference_schema_v1(policy.identity_v1()).into(),
         source_import: policy.identity_v1().clone(),
@@ -274,10 +278,10 @@ pub(crate) fn inference_identity_v1(
         model: policy.actual_model_identity_v1(),
         state_sha256: hex(&state.state_sha256_v1().map_err(err)?),
         adam_step: state.adam_step_v1(),
-        feature_schema_version: FEATURE_SCHEMA_VERSION_V3.into(),
-        feature_registry_version: FEATURE_REGISTRY_VERSION_V3.into(),
-        features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
-        feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
+        feature_schema_version: feature_identity.feature_schema_version.into(),
+        feature_registry_version: feature_identity.feature_registry_version.into(),
+        features_source_sha256: feature_identity.features_source_sha256.into(),
+        feature_descriptor_sha256: feature_identity.feature_descriptor_sha256.into(),
     })
 }
 
@@ -471,8 +475,12 @@ fn floats(values: &[u32]) -> Vec<f32> {
     values.iter().map(|x| f32::from_bits(*x)).collect()
 }
 impl TensorBitsV1 {
-    fn from_tensor(t: &NativeFlatDecisionTensorV3) -> Self {
-        let t = &t.common;
+    /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
+    /// specifically: `NativeFlatDecisionTensorV3` and `NativeFlatDecisionTensorV4`
+    /// are both byte-identical `{ common: NativeFlatDecisionTensorV2 }`
+    /// wrappers, so a caller passes `&tensor.common` regardless of which
+    /// generation produced `tensor`, and this type never needs a V4 sibling.
+    fn from_tensor(t: &NativeFlatDecisionTensorV2) -> Self {
         Self {
             state: bits(&t.state),
             object_features: bits(&t.object_features),
@@ -489,23 +497,21 @@ impl TensorBitsV1 {
             action_ref_node_indices: t.action_ref_node_indices.clone(),
         }
     }
-    fn tensor(&self) -> NativeFlatDecisionTensorV3 {
-        NativeFlatDecisionTensorV3 {
-            common: NativeFlatDecisionTensorV2 {
-                state: floats(&self.state),
-                object_features: floats(&self.object_features),
-                object_card_ids: self.object_card_ids.clone(),
-                object_groups: self.object_groups.clone(),
-                object_node_ids: self.object_node_ids.clone(),
-                edge_features: floats(&self.edge_features),
-                edge_source_indices: self.edge_source_indices.clone(),
-                edge_target_indices: self.edge_target_indices.clone(),
-                action_features: floats(&self.action_features),
-                action_ref_features: floats(&self.action_ref_features),
-                action_ref_card_ids: self.action_ref_card_ids.clone(),
-                action_ref_action_indices: self.action_ref_action_indices.clone(),
-                action_ref_node_indices: self.action_ref_node_indices.clone(),
-            },
+    fn tensor(&self) -> NativeFlatDecisionTensorV2 {
+        NativeFlatDecisionTensorV2 {
+            state: floats(&self.state),
+            object_features: floats(&self.object_features),
+            object_card_ids: self.object_card_ids.clone(),
+            object_groups: self.object_groups.clone(),
+            object_node_ids: self.object_node_ids.clone(),
+            edge_features: floats(&self.edge_features),
+            edge_source_indices: self.edge_source_indices.clone(),
+            edge_target_indices: self.edge_target_indices.clone(),
+            action_features: floats(&self.action_features),
+            action_ref_features: floats(&self.action_ref_features),
+            action_ref_card_ids: self.action_ref_card_ids.clone(),
+            action_ref_action_indices: self.action_ref_action_indices.clone(),
+            action_ref_node_indices: self.action_ref_node_indices.clone(),
         }
     }
 }
@@ -618,9 +624,15 @@ struct ExpandedCheckpointV1 {
     registry_transfer: Option<registry_transfer_source::ExpandedRegistryContinuationV1>,
 }
 
+/// Whole-pair V3-or-V4 admission: a stored trajectory/checkpoint's
+/// `(feature_contract_digest, feature_encoding_digest)` pair must match
+/// exactly one compiled generation's pair, never a mixed pair (a V3
+/// contract digest with a V4 encoding digest, or vice versa) accepted by
+/// independently checking each field against "V3 or V4".
 fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), String> {
     ensure(
-        contract == FEATURE_CONTRACT_DIGEST_V3 && encoding == FEATURE_ENCODING_DIGEST_V3,
+        (contract == FEATURE_CONTRACT_DIGEST_V3 && encoding == FEATURE_ENCODING_DIGEST_V3)
+            || (contract == FEATURE_CONTRACT_DIGEST_V4 && encoding == FEATURE_ENCODING_DIGEST_V4),
         "successor feature identity differs",
     )?;
     ensure(
@@ -931,11 +943,15 @@ fn collect_episode(
                     terminal.terminal_classification == TerminalClassificationV1::Natural,
                     "only naturally completed games may become training trajectories",
                 )?;
+                // Read the digests actually stamped by this loaded policy's
+                // generation, never a hardcoded V3 constant: a fresh-V4
+                // policy must produce a V4-labeled trajectory.
+                let feature_identity = policy.feature_identity_v1();
                 let result = ExpandedTrajectoryV1 {
                     schema: trajectory_schema_v1(policy.identity_v1(), seat_behaviors.as_ref())
                         .into(),
-                    feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
-                    feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+                    feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                    feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
                     card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
                     source_import: policy.identity_v1().clone(),
                     behavior_state_sha256: learner.identity.state_sha256.clone(),
@@ -959,7 +975,22 @@ fn collect_episode(
                     episode.learner_seat,
                     seat(d.acting_player),
                 )?;
-                let (selected, scores, tensor) = acting.select_with_training_tensor_v3(&session)?;
+                // Dispatch on the acting policy's own generation: a V4
+                // fresh-lineage policy scores and tensorizes through the V4
+                // successor, never through the V3 one. `TensorBitsV1` itself
+                // is generation-agnostic (both wrappers share the same inner
+                // `NativeFlatDecisionTensorV2`), so only this selection point
+                // differs.
+                let (selected, scores, tensor_bits) =
+                    if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
+                        let (selected, scores, tensor) =
+                            acting.select_with_training_tensor_v4(&session)?;
+                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                    } else {
+                        let (selected, scores, tensor) =
+                            acting.select_with_training_tensor_v3(&session)?;
+                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                    };
                 let record = DecisionRecordV1 {
                     step: d.step,
                     physical_decision_id: d.physical_decision_id,
@@ -969,7 +1000,7 @@ fn collect_episode(
                     selected,
                     logits: bits(&scores.logits),
                     value: scores.value.to_bits(),
-                    tensor: TensorBitsV1::from_tensor(&tensor),
+                    tensor: tensor_bits,
                     sampler_identity: decision_sampler_identity_v1(scores.logits.len())
                         .map(str::to_owned),
                 };
@@ -1198,7 +1229,12 @@ fn replay_learner_groups_v1<'a>(
         let count = first.substep_count as usize;
         let mut group = Vec::new();
         for row in &t.decisions[index..index + count] {
-            let tensor = row.tensor.tensor();
+            // The update/replay path is V3-only (native_policy_train_step_v1's
+            // update backend has no V4 arm yet); wrap the generic bits back
+            // into the V3 wrapper `score_training_tensor_v3` expects.
+            let tensor = NativeFlatDecisionTensorV3 {
+                common: row.tensor.tensor(),
+            };
             let acting = if row.actor == t.episode.learner_seat {
                 learner
             } else {
@@ -1543,8 +1579,12 @@ fn execute_update_v1(
             None => ordinary_checkpoint_schema_v1(policy.identity_v1()),
         }
         .into(),
-        feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
-        feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+        // Read from the loaded policy's own generation, never a hardcoded
+        // V3 constant on a fresh-V4 policy (item 3's single-accessor
+        // mitigation). The update arithmetic itself (`train_step_feature_transfer_v3`
+        // above) stays V3-only; this only fixes the identity label.
+        feature_contract_digest: policy.feature_identity_v1().feature_contract_digest.into(),
+        feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
         state_sha256: after.clone(),
@@ -1931,7 +1971,7 @@ mod tests {
                 selected,
                 logits: bits(&scores.logits),
                 value: scores.value.to_bits(),
-                tensor: TensorBitsV1::from_tensor(&tensor),
+                tensor: TensorBitsV1::from_tensor(&tensor.common),
                 sampler_identity: decision_sampler_identity_v1(scores.logits.len())
                     .map(str::to_owned),
             });
@@ -2000,7 +2040,9 @@ mod tests {
             let mut rng = paired_policy_seeds_v1(trajectory.episode.seed).map(SplitMix64::seed);
             let mut sampler = WideCategoricalScratchV1::default();
             for row in &trajectory.decisions {
-                let tensor = row.tensor.tensor();
+                let tensor = NativeFlatDecisionTensorV3 {
+                    common: row.tensor.tensor(),
+                };
                 let expected = if row.actor == learner_seat {
                     &learner
                 } else {
@@ -2381,13 +2423,71 @@ mod tests {
     }
     #[test]
     fn persisted_tensor_preserves_every_bit() {
-        let mut t = NativeFlatDecisionTensorV3::default();
-        t.common.state = vec![0.0, -0.0, 1.2345678, f32::MIN_POSITIVE];
-        t.common.object_card_ids = vec![65536];
+        // `TensorBitsV1` is generic over the shared inner tensor: exercise it
+        // directly against `NativeFlatDecisionTensorV2`, since both the V3
+        // and V4 wrappers just forward `.common` to it unchanged.
+        let mut t = NativeFlatDecisionTensorV2::default();
+        t.state = vec![0.0, -0.0, 1.2345678, f32::MIN_POSITIVE];
+        t.object_card_ids = vec![65536];
         let bytes = serde_json::to_vec(&TensorBitsV1::from_tensor(&t)).unwrap();
         let saved: TensorBitsV1 = serde_json::from_slice(&bytes).unwrap();
         let restored = saved.tensor();
-        assert_eq!(bits(&t.common.state), bits(&restored.common.state));
-        assert_eq!(t.common.object_card_ids, restored.common.object_card_ids);
+        assert_eq!(bits(&t.state), bits(&restored.state));
+        assert_eq!(t.object_card_ids, restored.object_card_ids);
+    }
+
+    #[test]
+    fn identity_valid_admits_pure_v3_and_pure_v4_but_rejects_any_mixed_pair() {
+        let cards = format!("{KERNEL_CARDDB_HASH:016x}");
+        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3, &cards).is_ok());
+        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4, &cards).is_ok());
+        // A mixed pair (a V3 contract digest with a V4 encoding digest, or
+        // vice versa) must fail: this is a whole-pair check, not two
+        // independent membership checks.
+        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V4, &cards).is_err());
+        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V3, &cards).is_err());
+        assert!(identity_valid(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4, "0".repeat(16).as_str()).is_err());
+    }
+
+    /// Real complete game, deliberately opt-in (native engine compute),
+    /// mirroring `phase1_parallel_real_episodes_match_serial`'s convention.
+    /// Proves the actual "Collect" command path (not a synthetic replay
+    /// fixture) for a fresh-V4 policy: the produced trajectory carries the
+    /// V4 constants, `validate_trajectory` accepts it, and the same digest
+    /// pair, checked by an unmodified pure-V3 equality, is rejected -- no
+    /// cross-generation leak.
+    #[test]
+    #[ignore = "root-owned native qualification: one real complete game"]
+    fn collect_episode_v4_real_game_stamps_v4_digests_and_is_rejected_by_a_pure_v3_check() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        let learner = test_behavior(&policy, false);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "fresh-v4-collect-fixture".into(),
+            seed: 2_026_091_601,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            registered: [deck.clone(), deck.clone()],
+            selected: [deck.clone(), deck.clone()],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        assert_eq!(trajectory.feature_contract_digest, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(trajectory.feature_encoding_digest, FEATURE_ENCODING_DIGEST_V4);
+        validate_trajectory(&trajectory).unwrap();
+        assert!(
+            !(trajectory.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
+                && trajectory.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3),
+            "a V4 trajectory must never satisfy an unmodified pure-V3 identity check"
+        );
     }
 }
