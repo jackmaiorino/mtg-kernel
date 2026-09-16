@@ -2698,10 +2698,11 @@ mod tests {
     /// decision, again confirmed identical under V3 on the same seed). Both
     /// are pre-existing, generation-agnostic gaps unrelated to the V4-vs-V3
     /// divergence this soak exists to catch; see the fix report for the
-    /// residual-risk note. The V2 archetype variants (BurnV2, DelverV2,
-    /// etc.) this soak previously also cycled through are dropped here to
-    /// focus exactly on the seven standard decks the task named; they are
-    /// not a coverage loss for the two burst-2 defects specifically, since
+    /// residual-risk note. The eight V2 archetype variants (BurnV2,
+    /// DelverV2, AffinityV2, RallyV2, WildfireV2, ElvesV2, TerrorV2,
+    /// DimirTerrorV2) this soak previously also cycled through are dropped
+    /// here to focus exactly on the seven standard decks the task named;
+    /// they are not a coverage loss for the two burst-2 defects specifically, since
     /// both are demonstrated and fixed by the real-game regressions above
     /// and the synthetic fixture in `flat_action_v4.rs`, not by this soak.
     #[test]
@@ -2806,7 +2807,9 @@ mod tests {
             sideboard: vec![7, 7, 9, 46, 57, 57, 57, 57, 62, 90, 90, 90, 90, 95, 124],
         };
         assert_eq!(faeries.mainboard, list("Faeries").mainboard, "registry deck differs from evidence");
+        assert_eq!(faeries.sideboard, list("Faeries").sideboard, "registry deck differs from evidence");
         assert_eq!(affinity.mainboard, list("Affinity").mainboard, "registry deck differs from evidence");
+        assert_eq!(affinity.sideboard, list("Affinity").sideboard, "registry deck differs from evidence");
         [faeries, affinity]
     }
 
@@ -2900,9 +2903,12 @@ mod tests {
     /// Faeries vs Affinity, starting player 1) never reproduced the crash
     /// against this evidence policy (see
     /// `burst2_defect_b_faeries_vs_affinity_v4_regression`'s doc comment),
-    /// but is still worth an always-checked non-regression floor: this
-    /// exact originally-reported (seed, deck pair) must keep completing
-    /// cleanly.
+    /// but is still worth a non-regression floor: this exact
+    /// originally-reported (seed, deck pair) must keep completing cleanly.
+    /// Like its siblings, this is part of the `#[ignore]`d root-owned
+    /// qualification suite, not an always-checked test: it depends on the
+    /// burst-2 evidence tree (the real evidence-weight policy), not the
+    /// synthetic fixtures the always-run suite uses.
     #[test]
     #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
     fn burst2_originally_reported_defect_b_seed_completes_cleanly() {
