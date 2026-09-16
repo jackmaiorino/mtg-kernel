@@ -11784,14 +11784,21 @@ mod tests {
         // mixes `KERNEL_CARDDB_HASH` directly into the commitment's SHA-256
         // domain separator, so the wave's 21 new cards move this value. Old
         // bytes: [0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f,
-        // 0x19, 0x65, 0xbc, 0xdb, 0x6d, 0xce]. New value is this test's own
-        // live-computed commitment, read directly from a failing run (never
-        // hand-typed).
+        // 0x19, 0x65, 0xbc, 0xdb, 0x6d, 0xce].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause
+        // as above. Old (wave-1) bytes: [0x45, 0x8c, 0xce, 0x40, 0xb7, 0x14,
+        // 0x6d, 0x98, 0x81, 0x18, 0xc5, 0x49, 0x46, 0xeb, 0x92, 0x40]. New
+        // value is this test's own live-computed commitment, read directly
+        // from a failing run (never hand-typed).
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x45, 0x8c, 0xce, 0x40, 0xb7, 0x14, 0x6d, 0x98, 0x81, 0x18, 0xc5, 0x49, 0x46, 0xeb,
-                0x92, 0x40,
+                0x57, 0x66, 0x98, 0x62, 0x89, 0xda, 0x70, 0x3d, 0x25, 0xaf, 0x03, 0x20, 0x52, 0x38,
+                0x0c, 0xce,
             ]
         );
     }
@@ -11840,13 +11847,21 @@ mod tests {
         // commitment's SHA-256 domain separator, so the wave's 21 new cards
         // move every commitment in this test. Old v1 bytes: [0x38, 0x90,
         // 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40,
-        // 0xe7, 0x7c, 0xd1]. New value is this test's own live-computed
-        // commitment, read directly from a failing run (never hand-typed).
+        // 0xe7, 0x7c, 0xd1].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1) v1
+        // bytes: [0xc3, 0xa8, 0x8d, 0xde, 0xbc, 0xbc, 0xc3, 0xf3, 0xcb, 0xac,
+        // 0x00, 0x74, 0xda, 0xcd, 0x75, 0x5f]. New value is this test's own
+        // live-computed commitment, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             v1,
             [
-                0xc3, 0xa8, 0x8d, 0xde, 0xbc, 0xbc, 0xc3, 0xf3, 0xcb, 0xac, 0x00, 0x74, 0xda, 0xcd,
-                0x75, 0x5f,
+                0xf8, 0xca, 0x13, 0xd1, 0xd2, 0x16, 0xb6, 0x5a, 0xd7, 0x4d, 0x38, 0xf7, 0x46, 0x0b,
+                0x59, 0x21,
             ]
         );
 
@@ -11878,11 +11893,20 @@ mod tests {
         // (see the V1 re-pin note on `v1` above). Old bytes: [0x9f, 0xfa,
         // 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20,
         // 0x25, 0xe3, 0x13].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1)
+        // bytes: [0xf4, 0x6a, 0x56, 0x15, 0x52, 0x37, 0x5e, 0xcf, 0xaa, 0x0b,
+        // 0x8a, 0xbc, 0x76, 0xa4, 0xcd, 0x05]. New value is this test's own
+        // live-computed commitment, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             common_v2,
             [
-                0xf4, 0x6a, 0x56, 0x15, 0x52, 0x37, 0x5e, 0xcf, 0xaa, 0x0b, 0x8a, 0xbc, 0x76, 0xa4,
-                0xcd, 0x05,
+                0xd3, 0x9d, 0x49, 0xbd, 0xdb, 0x9a, 0xef, 0x4a, 0xb9, 0xfb, 0x0f, 0xec, 0xd0, 0x9b,
+                0x5e, 0x74,
             ]
         );
         assert_ne!(common_v2, v1);
@@ -11890,11 +11914,17 @@ mod tests {
         // 13, identity finalisation): same root cause as `common_v2` above.
         // Old bytes: [0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04,
         // 0xcb, 0xd3, 0x4d, 0x55, 0xad, 0xc6, 0x06].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): same
+        // root cause as `common_v2` above. Old (wave-1) bytes: [0x1f, 0x17,
+        // 0x3b, 0x7e, 0x1d, 0xa5, 0x8e, 0x0e, 0xd3, 0xc6, 0xb9, 0xb3, 0x21,
+        // 0x78, 0xd1, 0xa0]. New value is this test's own live-computed
+        // commitment, read directly from a failing run (never hand-typed).
         assert_eq!(
             commitment_v2(65_536),
             [
-                0x1f, 0x17, 0x3b, 0x7e, 0x1d, 0xa5, 0x8e, 0x0e, 0xd3, 0xc6, 0xb9, 0xb3, 0x21, 0x78,
-                0xd1, 0xa0,
+                0x4f, 0x39, 0xd7, 0xa1, 0xaf, 0xbb, 0x29, 0x35, 0x2b, 0x44, 0x84, 0x9c, 0xf4, 0x20,
+                0xb1, 0xa8,
             ]
         );
     }
@@ -12529,6 +12559,25 @@ mod tests {
         //   final-pool-v8 legacy full-session core:  0x9a93_e402_6f8e_ad86 -> 0x3c6d_b17f_22d6_0e43
         //   final-pool-v9 environment-v2 policy:      0x9ed7_895c_1f47_82ca -> 0xda58_b63d_08f6_6b99
         //   final-pool-v9 environment-v2 core:        0xf69d_f52f_fdd0_564e -> 0xa1c5_ca41_1ee8_1a2d
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Per the cause key
+        // above this table, only the two cause-A (policy) constants embed
+        // KERNEL_CARDDB_HASH and move again; the two cause-B (core)
+        // constants are `GameState::monarch`-shaped (wave 1 Task 11,
+        // already resolved before this merge) and do not depend on card
+        // content at all, so they are confirmed UNCHANGED by this merge (a
+        // live run with the old core literals still in place passed
+        // clean -- not assumed, verified). New policy values are each
+        // test's own live-computed hash, read directly from a failing run
+        // (never hand-typed); the two sibling tests reuse all four values
+        // verbatim, updated/confirmed identically:
+        //   final-pool-v8 legacy policy environment: 0x6908_0ca5_c012_7e2b -> 0x2ad8_a53b_ecdc_221f (cause A)
+        //   final-pool-v8 legacy full-session core:  0x3c6d_b17f_22d6_0e43 -> unchanged (cause B, confirmed)
+        //   final-pool-v9 environment-v2 policy:      0xda58_b63d_08f6_6b99 -> 0x3901_7f97_042a_d80a (cause A)
+        //   final-pool-v9 environment-v2 core:        0xa1c5_ca41_1ee8_1a2d -> unchanged (cause B, confirmed)
         let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
         let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
         let v2_full = full_session_on_environment_v2(99);
@@ -12538,7 +12587,7 @@ mod tests {
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0x6908_0ca5_c012_7e2b,
+            0x2ad8_a53b_ecdc_221f,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
@@ -12553,7 +12602,7 @@ mod tests {
         );
 
         assert_eq!(
-            v2_policy, 0xda58_b63d_08f6_6b99,
+            v2_policy, 0x3901_7f97_042a_d80a,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -12975,10 +13024,14 @@ mod tests {
         assert!(current.flat_action_cache_v2.is_some());
         assert!(current.flat_action_cache_error_v2.is_none());
 
-        // Captured legacy pins are preserved bit-exact.
+        // Captured legacy pins are preserved bit-exact. Re-pinned again for
+        // the Phase 1 card lane merge (2026-09), same root cause and same
+        // four shared values as
+        // `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`'s
+        // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0x6908_0ca5_c012_7e2b
+            0x2ad8_a53b_ecdc_221f
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
@@ -13160,9 +13213,13 @@ mod tests {
         use crate::environment_randomization_v2::PhysicalOwnerV2;
         let full = canonical_v2_full_reset(99);
         let fast = canonical_v2_fast_reset(99);
+        // Re-pinned again for the Phase 1 card lane merge (2026-09), same
+        // root cause and same shared values as
+        // `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`'s
+        // own re-pin comment ("final-pool-v9 environment-v2 policy"/"core").
         assert_eq!(
             full.privileged_environment_hash(),
-            0xda58_b63d_08f6_6b99,
+            0x3901_7f97_042a_d80a,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -13210,7 +13267,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0xda58_b63d_08f6_6b99
+            0x3901_7f97_042a_d80a
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
@@ -13494,11 +13551,18 @@ mod tests {
     /// (Task 13, identity finalisation): the wave's 21 new cards moved
     /// KERNEL_CARDDB_HASH, embedded in the real Burn-deck decision transcript
     /// above. Old value:
-    /// "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2". New
+    /// "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2".
+    ///
+    /// Re-captured again for the Phase 1 card lane merge (2026-09): merging
+    /// lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
+    /// branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
+    /// 0x064a_7c98_9255_ab3c), embedded in the same transcript. Old
+    /// (wave-1) value:
+    /// "d0494851dbd7d944dab4cbca34e443ceedaf6a7269a0125cd1a7533c7b38f110". New
     /// value is this test's own live-computed digest, read directly from a
     /// failing run (never hand-typed).
     const V5_TRANSCRIPT_SHA256: &str =
-        "d0494851dbd7d944dab4cbca34e443ceedaf6a7269a0125cd1a7533c7b38f110";
+        "62208a3deec93510fe8595f23625d6cc4e604965d064350a2c1350955ac5266a";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

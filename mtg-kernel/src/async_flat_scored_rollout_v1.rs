@@ -5921,12 +5921,20 @@ mod tests {
         // (Task 13, identity finalisation): the wave's 21 new cards moved
         // KERNEL_CARDDB_HASH, which the observation bytes embed. Old value:
         // "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043".
-        // scorer.counts above is again unaffected. New value is this test's
-        // own live-computed digest, read directly from a failing run (never
-        // hand-typed).
+        // scorer.counts above is again unaffected.
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "78289df65db7f4464e1107fdcbb7703c9ad2512aa3246fc9b5bb82475d103c81".
+        // scorer.counts above is again confirmed unaffected. New value is
+        // this test's own live-computed digest, read directly from a
+        // failing run (never hand-typed).
         assert_eq!(
             digest,
-            "78289df65db7f4464e1107fdcbb7703c9ad2512aa3246fc9b5bb82475d103c81"
+            "f4468293c68ef2b62557aabf03afdd8056a9fae1a9d4258ec4cc708c7f6b84a4"
         );
     }
 

@@ -1817,11 +1817,17 @@ mod tests {
     // (Task 13, identity finalisation): the wave's 21 new cards moved
     // KERNEL_CARDDB_HASH, which the genesis manifest's run-authority fields
     // embed. Old value:
-    // "719d3edde1584b20cd8fb97caadbcd3e4d0af0a33d0759fd5be5aac30109d03f". New
+    // "719d3edde1584b20cd8fb97caadbcd3e4d0af0a33d0759fd5be5aac30109d03f".
+    //
+    // Re-baselined again for the Phase 1 card lane merge (2026-09): merging
+    // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
+    // branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
+    // 0x064a_7c98_9255_ab3c), same root cause. Old (wave-1) value:
+    // "41041620bb9bcdb656571a49f9e9da915c59569b29d8946cfc827f7bef93984b". New
     // value is this test's own live-computed digest, read directly from a
     // failing run (never hand-typed).
     const GENESIS_MANIFEST_SHA256_GOLDEN_V3: &str =
-        "41041620bb9bcdb656571a49f9e9da915c59569b29d8946cfc827f7bef93984b";
+        "01f95f369f0c496e834232e4c138c7b77dd4b8b5ac848645d42bc41a5c038462";
     const GENESIS_PAYLOAD_SHA256_GOLDEN_V1: &str =
         "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43";
     // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
@@ -1835,8 +1841,18 @@ mod tests {
     // `native_checkpoint_runner_v1.rs`'s `logical_state_sha256` re-pin (see
     // that file's own comment); this constant moves identically. Old value:
     // "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974".
+    //
+    // Re-baselined again for the Phase 1 card lane merge (2026-09): merging
+    // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
+    // branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
+    // 0x064a_7c98_9255_ab3c); this constant again moves identically with
+    // native_checkpoint_runner_v1.rs's logical_state_sha256 re-pin. Old
+    // (wave-1) value:
+    // "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5". New
+    // value is native_checkpoint_runner_v1.rs's own live-computed digest for
+    // the same shared fixture scenario (never hand-typed independently).
     const GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1: &str =
-        "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5";
+        "d77a82c7a9c4928803be6af2d42c494a37c93091dbafbcdd897d8fc9f2918fae";
     const GENESIS_TRAIN_STATE_SHA256_GOLDEN_V1: &str =
         "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26";
 

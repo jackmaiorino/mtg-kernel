@@ -7921,11 +7921,17 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // (Task 13, identity finalisation): the wave's 21 new cards moved
     // KERNEL_CARDDB_HASH, which the live deck_ids/deck_hashes above embed.
     // Old value: "d6812f9e689c56911b38426ee17eddf00d400e94ee3ff8aa3ebf8d2310e00970".
-    // New value is this test's own live-computed digest, read directly from
-    // a failing run (never hand-typed).
+    //
+    // Re-baselined again for the Phase 1 card lane merge (2026-09): merging
+    // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
+    // branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
+    // 0x064a_7c98_9255_ab3c), same root cause. Old (wave-1) value:
+    // "ae853cabe8cb59c0aa44e93e142d11963d4cc57893a1d9b27ffe7fedc6366a71". New
+    // value is this test's own live-computed digest, read directly from a
+    // failing run (never hand-typed).
     assert_eq!(
         frame.sha256_v1(),
-        "ae853cabe8cb59c0aa44e93e142d11963d4cc57893a1d9b27ffe7fedc6366a71",
+        "9a19af3bb5dadbbedce5648443c7ab4a7163e389ff7cfff7559f67fdedc452c9",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame

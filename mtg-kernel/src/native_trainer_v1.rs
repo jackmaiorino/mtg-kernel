@@ -5113,16 +5113,26 @@ mod tests {
         // KERNEL_CARDDB_HASH, which the observation (and so the trajectory
         // digest) embeds. Old bytes: [206, 204, 202, 83, 211, 229, 60, 79,
         // 178, 67, 28, 33, 251, 247, 221, 162, 116, 116, 169, 215, 228, 160,
-        // 65, 144, 30, 135, 83, 123, 92, 60, 227, 185]. New value is this
-        // test's own live-computed digest, read directly from a failing
-        // run (never hand-typed).
+        // 65, 144, 30, 135, 83, 123, 92, 60, 227, 185].
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) bytes: [146, 96, 71, 19, 161, 67, 106, 182, 228, 70,
+        // 255, 159, 173, 185, 114, 122, 177, 100, 70, 139, 150, 215, 245,
+        // 17, 209, 229, 50, 14, 103, 162, 8, 48]. model_digest_before,
+        // changed_non_gauge_parameter_count, and the numerical witness
+        // above are confirmed unaffected. New value is this test's own
+        // live-computed digest, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             narrow_evidence.episodes[0]
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                146, 96, 71, 19, 161, 67, 106, 182, 228, 70, 255, 159, 173, 185, 114, 122, 177,
-                100, 70, 139, 150, 215, 245, 17, 209, 229, 50, 14, 103, 162, 8, 48,
+                33, 73, 6, 167, 119, 116, 213, 206, 57, 62, 147, 196, 186, 57, 62, 235, 83, 80,
+                106, 205, 110, 99, 182, 119, 48, 244, 83, 73, 117, 44, 234, 11,
             ]
         );
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -5133,15 +5143,24 @@ mod tests {
         // KERNEL_CARDDB_HASH, which the observation embeds. Old bytes:
         // [162, 131, 253, 244, 77, 73, 235, 205, 77, 158, 173, 180, 1, 20,
         // 164, 57, 130, 181, 15, 208, 117, 142, 3, 104, 207, 50, 221, 194,
-        // 231, 238, 51, 94]. New value is this test's own live-computed
-        // digest, read directly from a failing run (never hand-typed).
+        // 231, 238, 51, 94].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) bytes: [98, 192, 36, 61, 165, 126, 250, 1, 161, 202,
+        // 78, 70, 100, 50, 198, 91, 242, 42, 198, 17, 126, 28, 170, 1, 127,
+        // 206, 41, 245, 145, 161, 230, 14]. New value is this test's own
+        // live-computed digest, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             narrow_evidence.episodes[1]
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                98, 192, 36, 61, 165, 126, 250, 1, 161, 202, 78, 70, 100, 50, 198, 91, 242, 42,
-                198, 17, 126, 28, 170, 1, 127, 206, 41, 245, 145, 161, 230, 14,
+                179, 245, 74, 214, 194, 31, 195, 235, 179, 28, 91, 229, 205, 207, 193, 4, 112, 78,
+                182, 65, 228, 90, 136, 211, 33, 14, 77, 133, 114, 160, 69, 206,
             ]
         );
 
@@ -6062,18 +6081,28 @@ mod tests {
         // "2218bdf0e39836dbaca0d6c08d2b82aacc237534bd32430472edb9a6d5ad6f66"),
         // ("0462ea3dfdad0787f2eac9be68ea38e29a58510b0167148489806b02bb6d94ed",
         // "0c4f922282ddd153fd722a7c98130e2679543d47124c4f994a3d809587e2ad7b")].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // [("7076afcbed3e4901263986cf49dec2aef0fc524298035a1303d9ee5c18ac391c",
+        // "99d5adb203cee530600150364f452a38312d0b1e3ec1a452484be04a892083af"),
+        // ("fb36f8a7c6c81938f6f93a47bd097da4b784ca42470082ce3376319dbb51ec68",
+        // "42e736f84023f82d3c193d7baca5ac2d4247c2a13365fb05ead5b9c2362341d1")].
         // New value is this test's own live-computed digests, read directly
         // from a failing run (never hand-typed).
         assert_eq!(
             digest_hexes,
             [
                 (
-                    "7076afcbed3e4901263986cf49dec2aef0fc524298035a1303d9ee5c18ac391c".to_owned(),
-                    "99d5adb203cee530600150364f452a38312d0b1e3ec1a452484be04a892083af".to_owned(),
+                    "720cc813789de134346f2f7fcd5ed36694ca595e5668509d880a691d9d8a0863".to_owned(),
+                    "0ed70bf6763dbec93ee0693b8f2ddc039bcd536b9976e5c8e22cc0c5031c77d7".to_owned(),
                 ),
                 (
-                    "fb36f8a7c6c81938f6f93a47bd097da4b784ca42470082ce3376319dbb51ec68".to_owned(),
-                    "42e736f84023f82d3c193d7baca5ac2d4247c2a13365fb05ead5b9c2362341d1".to_owned(),
+                    "c840b7f4bfa23e06573a6b88a5734307b832035890d2bf5176c1132362878c4d".to_owned(),
+                    "c0a6fe9722461e91d73acd7d6f72a579345b3e5f079f1b461724223e85a9f762".to_owned(),
                 ),
             ],
             "the distinct-deck V2 pair goldens drifted"

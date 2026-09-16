@@ -5334,12 +5334,23 @@ mod tests {
         // is unchanged, confirming no structural/additive-field
         // perturbation, only the digest moved. Old x86_64-pc-windows-msvc
         // value: "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8".
-        // New value is this test's own live-computed digest, read directly
-        // from a failing run on this Windows host (never hand-typed), same
-        // discipline as this constant's own prior re-baseline note above.
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Byte length (`MAIN_GOLDEN_LEN_V1`, below) is confirmed unchanged
+        // again. Old (wave-1) x86_64-pc-windows-msvc value:
+        // "a833a6e04bec9416f9fc71d9df1fcfd04dbe6af49cc9a5aef979a2eb5fe480cf".
+        // The x86_64-unknown-linux-gnu arm above stays unverifiable from
+        // this Windows host and is left untouched, same documented
+        // limitation as wave 1. New value is this test's own live-computed
+        // digest, read directly from a failing run on this Windows host
+        // (never hand-typed), same discipline as this constant's own prior
+        // re-baseline note above.
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "a833a6e04bec9416f9fc71d9df1fcfd04dbe6af49cc9a5aef979a2eb5fe480cf";
+            "3dfbce637a6925e8d7dbc7842170ec4554f927e4971d13bc67b2851e53a84aef";
         const MAIN_GOLDEN_LEN_V1: usize = 78_190;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -5833,12 +5844,19 @@ mod tests {
         // KERNEL_CARDDB_HASH, which this legacy episode projection's deck
         // bindings and trajectory digests embed. Old value (pre-wave-1):
         // "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372".
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "0fd11d97f708f191e89c0039a0d65a48c2b63a38b68cbeaa86c0dc152c16498f".
         // New value is this test's own live-computed digest, read directly
         // from a failing run on this Windows host (never hand-typed), same
         // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "0fd11d97f708f191e89c0039a0d65a48c2b63a38b68cbeaa86c0dc152c16498f",
+            "b8f1f3ea6b911cb7cdf977e685416601db0681257c8ccbe6878b082a558746ef",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }

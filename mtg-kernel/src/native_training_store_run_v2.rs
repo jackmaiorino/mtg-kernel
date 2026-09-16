@@ -7151,20 +7151,38 @@ mod tests {
         // and
         // `response_exploiter_absence_preserves_existing_bytes_and_population_behavior`,
         // both of which hash the same `fixture_bytes()` directly and are
-        // updated identically). New values are this test's own
-        // live-computed digests, read directly from a failing run (never
-        // hand-typed).
+        // updated identically).
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again, off wave 1's final
+        // identity and onto this file's own live-tracking
+        // FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1 constant above (not
+        // spelled out again here on purpose: this file is a card-DB-hash
+        // pin site, and repin_card_db_identity_v1.py's own
+        // PROTECTED_FILE_V1 scan treats any other bare occurrence of that
+        // literal in this file as an unrecognized pin site and hard-errors
+        // on --check/--write; see that script's docstring). Same root
+        // cause as every other row in this table. Old (wave-1) values:
+        // semantics
+        // "2ad70a88949312e7df8f26926f0430bc9be93a89a3094cfd15e815bc4ef4665d",
+        // identity "3374ce8012db4d9c9200c34f996290a3d7d0ceb5f35c11c82b5c5c2b0e164cb3",
+        // run_bytes sha256
+        // "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
+        // (same two sibling tests share the new run_bytes value verbatim).
+        // New values are this test's own live-computed digests, read
+        // directly from a failing run (never hand-typed).
         assert_eq!(
             semantics,
-            "2ad70a88949312e7df8f26926f0430bc9be93a89a3094cfd15e815bc4ef4665d"
+            "db709ac73893a382be26544c766847165c1e493c0d66295ee470327e5945b790"
         );
         assert_eq!(
             identity,
-            "3374ce8012db4d9c9200c34f996290a3d7d0ceb5f35c11c82b5c5c2b0e164cb3"
+            "8b79805463cf89dca30566f78fccd4d6bf44121f7c0f3eec7c1f7c6b31078949"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
+            "45a792caf3ea9782f25977043dfa968fa296a39e52f8fa43716442901e0df5ea"
         );
     }
 
@@ -7902,9 +7920,12 @@ mod tests {
             .population_program_v1
             .is_none());
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): shares
+        // `independent_digest_references_and_goldens_match`'s `run_bytes`
+        // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&bytes),
-            "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
+            "45a792caf3ea9782f25977043dfa968fa296a39e52f8fa43716442901e0df5ea"
         );
         assert!(!String::from_utf8(bytes)
             .unwrap()
@@ -8201,9 +8222,12 @@ mod tests {
         let legacy_bytes = fixture_bytes();
         let legacy = decode_train_run_v2(&legacy_bytes).unwrap();
         assert!(legacy.record().contracts().response_exploiter_v1.is_none());
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): shares
+        // `independent_digest_references_and_goldens_match`'s `run_bytes`
+        // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "4c8ae8a6954236ff558ceadcc9f9b1ebcae0bd3bccfb8d1a6e6122617f6cfcd2"
+            "45a792caf3ea9782f25977043dfa968fa296a39e52f8fa43716442901e0df5ea"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()
