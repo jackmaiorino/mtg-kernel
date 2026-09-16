@@ -2705,13 +2705,18 @@ mod tests {
     /// they are not a coverage loss for the two burst-2 defects specifically, since
     /// both are demonstrated and fixed by the real-game regressions above
     /// and the synthetic fixture in `flat_action_v4.rs`, not by this soak.
+    /// Extended from 20 to 60 games (more seeds) as part of the
+    /// campaign-001 block-1 V4 actor-visible-encoding fix (a card that is
+    /// itself a spell on the stack sourcing a `TriggerCondition::CastSelf`/
+    /// `home_zone: Zone::Stack` triggered ability of its own, e.g. Writhing
+    /// Chrysalis): re-run to completion once against the fixed encoder.
     #[test]
-    #[ignore = "root-owned native qualification: 20 real V4 games across the seven standard Pauper decks"]
+    #[ignore = "root-owned native qualification: 60 real V4 games across the seven standard Pauper decks"]
     fn v4_gameplay_soak_over_standard_decks_completes_every_seed() {
         const DECK_IDS: [&str; 7] = [
             "Wildfire", "Rally", "Affinity", "Elves", "Burn", "Terror", "Faeries",
         ];
-        const GAME_COUNT: usize = 20;
+        const GAME_COUNT: usize = 60;
         let mut failures = Vec::new();
         for game_index in 0..GAME_COUNT {
             let deck_a_id = DECK_IDS[game_index % DECK_IDS.len()];
@@ -2972,6 +2977,98 @@ mod tests {
             });
             validate_trajectory(&trajectory).unwrap();
         }
+    }
+
+    /// Campaign-001 block-1 dry-block regression (`InvalidActionReference`):
+    /// real V4 fresh-lineage self-play, Wildfire (seat 0) vs Terror (seat 1,
+    /// the learner), seed 3157112932801185221, starting player 0, against
+    /// the real `fresh-initialization-checks-002` inspection-a evidence
+    /// weights -- byte-identical to the Windows-native
+    /// `native_expanded_training_run_v1` campaign run (campaign-001 block 1,
+    /// iteration 26 slot 6) that crashed with `V4 actor-visible encoding:
+    /// Action(InvalidActionReference)` at step 155, actor P1, decision_kind
+    /// Surface, legal_action_count 1 (`CAMPAIGN-001-BLOCK1-DRY-001.md`
+    /// section 6a). Root cause: Terror's own `Counterspell`, in the process
+    /// of being cast, chose its only legal target -- Wildfire's `Writhing
+    /// Chrysalis` spell -- while Writhing Chrysalis's own
+    /// `TriggerCondition::CastSelf`/`home_zone: Zone::Stack` triggered
+    /// ability (`trigger.rs`'s `WRITHING_CHRYSALIS_TRIGGERS`) also sat on
+    /// the stack, sharing the identical physical `source`; see
+    /// `flat_stack_action_object_ordinal_v4`'s doc comment for the fix.
+    ///
+    /// This exact reproduction confirms the fix (the game no longer fails
+    /// at the V4 encoding layer, and plays well past the formerly-crashing
+    /// step 155) but does NOT reach natural completion: once the encoder is
+    /// fixed and the game actually resolves Counterspell countering
+    /// Writhing Chrysalis's spell, the engine's own resumable effect
+    /// interpreter halts resolving Writhing Chrysalis's still-pending cast
+    /// trigger with `engine_halted:InvalidEffectContinuation:source:<arena_id>`
+    /// -- a separate, pre-existing, generation-agnostic engine defect
+    /// (`engine.rs`'s `UnsupportedMechanic::InvalidEffectContinuation`,
+    /// entirely outside `rl_session`/V3/V4), unmasked rather than caused by
+    /// this fix, and out of scope for it. Filed as a follow-up defect, not
+    /// resolved here. A bounded 30-seed local sweep around this seed (same
+    /// decks/policy) found 28/30 complete naturally and neither of the two
+    /// that exercised this same shared-stack-source mechanism reached
+    /// natural completion for unrelated downstream reasons, so this
+    /// residual engine gap is rare, not a systemic consequence of the fix;
+    /// see the always-run, self-contained
+    /// `v4_spell_resolves_to_its_own_stack_position_despite_its_own_cast_trigger_sharing_source`
+    /// (`flat_action_v4.rs`) for the primary regression floor for the
+    /// mechanism itself.
+    #[test]
+    #[ignore = "root-owned native qualification: real V4 self-play against burst-2 evidence weights"]
+    fn campaign001_block1_wildfire_vs_terror_v4_regression() {
+        let mut policy = burst2_evidence_fresh_v4_policy_v1();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "campaign001-block1-a-i26-s6".into(),
+            seed: 3_157_112_932_801_185_221,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: None,
+            registered: [list("Wildfire"), list("Terror")],
+            selected: [list("Wildfire"), list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let error = collect_episode(&mut policy, &learner, None, &episode).unwrap_err();
+        assert!(
+            !error.contains("V4 actor-visible encoding") && !error.contains("InvalidActionReference"),
+            "the V4 encoding defect must be fixed: got {error}"
+        );
+        assert_eq!(
+            error, "only naturally completed games may become training trajectories",
+            "must now fail only at the separate, pre-existing engine defect \
+             (InvalidEffectContinuation), well past the formerly-crashing step 155, \
+             not at the V4 encoding layer"
+        );
+    }
+
+    /// V3 check for the campaign-001 block-1 seed/decks above, matching
+    /// `burst2_defect_seeds_complete_cleanly_through_v3_encoder`'s idiom
+    /// (`training_fixture_v3()`, self-contained, no evidence dependency).
+    /// Always-run.
+    #[test]
+    fn campaign001_block1_seed_completes_cleanly_through_v3_encoder() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "campaign001-block1-v3-check".into(),
+            seed: 3_157_112_932_801_185_221,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: None,
+            registered: [list("Wildfire"), list("Terror")],
+            selected: [list("Wildfire"), list("Terror")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode)
+            .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
+        validate_trajectory(&trajectory).unwrap();
     }
 
     /// The burst-2 fixture: two full ordinary-trainer iterations (Collect,
