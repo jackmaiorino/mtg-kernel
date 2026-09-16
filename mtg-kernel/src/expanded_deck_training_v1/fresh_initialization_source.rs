@@ -8,15 +8,15 @@
 use super::{FrozenPlayObservationTransferV3, FrozenPlayPolicyV1, PinnedFileV1};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1;
-use crate::native_flat_tensorizer_v3::{
-    FEATURES_SOURCE_SHA256_V3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3,
-    FEATURE_ENCODING_DIGEST_V3,
-};
 use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
     MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1, PARAMETER_COUNT_V1,
 };
-use crate::sideboard_play_policy_v1::FreshPlayPolicyIdentityV1;
+use crate::sideboard_play_policy_v1::{
+    fresh_lineage_generation_v1, FreshLineageGenerationV1, FreshPlayPolicyIdentityV1,
+};
+#[cfg(test)]
+use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -30,7 +30,9 @@ const PAYLOAD_BYTES: usize = 4_923_976;
 const SOURCE_CAP: u64 = 16 * 1024 * 1024;
 const RUNTIME_CAP: u64 = 2 * 1024 * 1024 * 1024;
 const REGISTRY: &[u8] = include_bytes!("../../../data/cards_v1.json");
-const SOURCE_PATHS: [&str; 8] = [
+/// V3 (frozen, `features_v6.py`) source pin inventory. Never touched by the
+/// V4 admission below; imported/frozen origins stay pinned to this forever.
+const SOURCE_PATHS_V3: [&str; 8] = [
     "python/mtg_kernel_rl/phase1_fresh_initialization_v1.py",
     "python/mtg_kernel_rl/model.py",
     "python/mtg_kernel_rl/features.py",
@@ -40,6 +42,26 @@ const SOURCE_PATHS: [&str; 8] = [
     "data/flat_policy_v3/feature_contract_v3.json",
     "data/cards_v1.json",
 ];
+/// V4 (fresh-lineage, `features_v7.py`) sibling of `SOURCE_PATHS_V3`. Every
+/// index but 5 and 6 (the feature-source and feature-contract pins) is
+/// identical between the two, by construction of the shared producer script.
+const SOURCE_PATHS_V4: [&str; 8] = [
+    "python/mtg_kernel_rl/phase1_fresh_initialization_v1.py",
+    "python/mtg_kernel_rl/model.py",
+    "python/mtg_kernel_rl/features.py",
+    "python/mtg_kernel_rl/determinism.py",
+    "python/mtg_kernel_rl/common_model_snapshot_v1.py",
+    "python/mtg_kernel_rl/features_v7.py",
+    "data/flat_policy_v4/feature_contract_v4.json",
+    "data/cards_v1.json",
+];
+
+fn source_paths_v1(generation: FreshLineageGenerationV1) -> [&'static str; 8] {
+    match generation {
+        FreshLineageGenerationV1::V3 => SOURCE_PATHS_V3,
+        FreshLineageGenerationV1::V4 => SOURCE_PATHS_V4,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -354,7 +376,7 @@ fn read_actual(pin: &PinnedFileV1, cap: usize) -> Result<Vec<u8>, String> {
 fn validate_metadata(
     manifest: &Manifest,
     features: &FrozenPlayObservationTransferV3,
-) -> Result<(), String> {
+) -> Result<FreshLineageGenerationV1, String> {
     require(
         manifest.schema == MANIFEST_SCHEMA,
         "unknown fresh initialization manifest schema",
@@ -367,27 +389,35 @@ fn validate_metadata(
         "fresh initializer authority differs",
     )?;
     let target = &manifest.target;
+    // Whole-tuple classification first: matches exactly the compiled V3 or
+    // V4 four-field tuple, so a mixed tuple (a V3 contract digest paired
+    // with a V4 encoding digest, say) is rejected here before any other
+    // target field is even checked, never accepted by a per-field OR.
+    let generation = fresh_lineage_generation_v1(
+        &target.feature_contract_digest,
+        &target.feature_encoding_digest,
+        &target.features_source_sha256,
+        &target.feature_descriptor_sha256,
+    )
+    .map_err(|_| "fresh target registry, features or token mapping differs from this runtime")?;
     require(
         provenance_absolute(&target.registry.path)
             && target.registry.sha256 == hash(REGISTRY)
             && target.registry_card_count == CARD_DEFS.len()
             && target.card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}")
-            && target.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
-            && target.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3
-            && target.features_source_sha256 == FEATURES_SOURCE_SHA256_V3
-            && target.feature_descriptor_sha256 == FEATURE_DESCRIPTOR_SHA256_V3
             && target.card_token_rule == "card-token=id+1; padding=0"
             && features.expected_feature_contract_digest == target.feature_contract_digest
             && features.expected_feature_encoding_digest == target.feature_encoding_digest,
         "fresh target registry, features or token mapping differs from this runtime",
     )?;
     let producer = &manifest.producer;
+    let source_paths = source_paths_v1(generation);
     require(
         is_hex(&producer.source_git_commit, 40)
-            && producer.source_files.len() == SOURCE_PATHS.len(),
+            && producer.source_files.len() == source_paths.len(),
         "fresh producer/source inventory differs",
     )?;
-    for (pin, expected) in producer.source_files.iter().zip(SOURCE_PATHS) {
+    for (pin, expected) in producer.source_files.iter().zip(source_paths) {
         require(
             pin.path == expected
                 && is_hex(&pin.sha256, 64)
@@ -466,7 +496,8 @@ fn validate_metadata(
             && optimizer.moment_initialization == "positive-zero-f32"
             && optimizer.value_head_gauge == "none",
         "fresh optimizer bootstrap differs",
-    )
+    )?;
+    Ok(generation)
 }
 
 pub(super) fn load_policy_v1(
@@ -482,7 +513,7 @@ pub(super) fn load_policy_v1(
         canonical_manifest == manifest_bytes,
         "fresh manifest is not canonical ASCII JSON plus LF",
     )?;
-    validate_metadata(&manifest, features)?;
+    let generation = validate_metadata(&manifest, features)?;
     require(
         source.parameters.sha256 == manifest.payload.sha256,
         "fresh descriptor/payload digest differs",
@@ -591,12 +622,393 @@ pub(super) fn load_policy_v1(
     };
     // The factory validates seed derivation, initial bytes and current target.
     // The caller creates/restores Adam only after the installed model is valid.
-    FrozenPlayPolicyV1::from_fresh_initialization_v1(model, identity)
+    // `validate_metadata` already classified this manifest's whole feature
+    // tuple; dispatch to the matching generation's constructor rather than
+    // re-deriving the choice from the identity a second time.
+    match generation {
+        FreshLineageGenerationV1::V3 => {
+            FrozenPlayPolicyV1::from_fresh_initialization_v1(model, identity)
+        }
+        FreshLineageGenerationV1::V4 => {
+            FrozenPlayPolicyV1::from_fresh_initialization_v4(model, identity)
+        }
+    }
+}
+
+/// Builds a real, on-disk fresh-initialization source (a real deterministic
+/// Net8 model, real weight/layout/model-config hashes, a canonical
+/// manifest) for one compiled generation. This is not RNG or Python
+/// producer execution evidence; it proves the Rust admission path (this
+/// module plus `FrozenPlayPolicyV1::from_fresh_initialization_v1`/`_v4`)
+/// end to end against real bytes.
+#[cfg(test)]
+pub(super) fn write_synthetic_fresh_source_v1(
+    dir: &std::path::Path,
+    feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+) -> ExpandedFreshInitializationSourceV1 {
+    use crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1;
+    std::fs::create_dir_all(dir).unwrap();
+
+    let model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .unwrap();
+    let parameters = model.parameter_snapshot_v1();
+    let expected: Vec<_> = native_train_state_parameter_layout_v1().collect();
+    assert_eq!(parameters.len(), expected.len());
+
+    let mut payload = vec![0u8; PAYLOAD_BYTES];
+    let mut offset = 0usize;
+    let mut parameter_rows = Vec::with_capacity(parameters.len());
+    let mut layout_values = Vec::with_capacity(parameters.len());
+    let mut anchor_bits: Option<u32> = None;
+    for (ordinal, (parameter, (name, shape))) in parameters.iter().zip(expected).enumerate() {
+        assert_eq!(parameter.name, name);
+        let byte_count = parameter.values.len() * 4;
+        for (i, value) in parameter.values.iter().enumerate() {
+            payload[offset + i * 4..offset + i * 4 + 4]
+                .copy_from_slice(&value.to_bits().to_le_bytes());
+        }
+        let row_sha256 = hash(&payload[offset..offset + byte_count]);
+        parameter_rows.push(Parameter {
+            ordinal,
+            name: name.to_string(),
+            shape: shape.to_vec(),
+            byte_offset: offset,
+            byte_count,
+            sha256: row_sha256,
+        });
+        layout_values.push(serde_json::json!({"ordinal": ordinal, "name": name,
+            "shape": shape, "byte_offset": offset, "byte_count": byte_count}));
+        if name == "scorer.2.bias" {
+            anchor_bits = Some(parameter.values[0].to_bits());
+        }
+        offset += byte_count;
+    }
+    assert_eq!(offset, PAYLOAD_BYTES);
+    let anchor_bits = anchor_bits.expect("scorer.2.bias parameter present");
+
+    let config = NativePolicyValueModelConfigV1::contract_v1();
+    let generator_model_config = GeneratorModelConfig {
+        schema_version: config.schema_version as u64,
+        model_architecture_version: config.model_architecture_version.to_string(),
+        feature_schema_version: config.feature_schema_version.to_string(),
+        feature_registry_version: config.feature_registry_version.to_string(),
+        feature_contract_digest: config.feature_contract_digest.to_string(),
+        feature_encoding_digest: config.feature_encoding_digest.to_string(),
+        card_vocab_size: config.card_vocab_size as u64,
+        card_embedding_dim: config.card_embedding_dim as u64,
+        hidden_dim: config.hidden_dim as u64,
+        state_dim: config.state_dim as u64,
+        object_feature_dim: config.object_feature_dim as u64,
+        edge_feature_dim: config.edge_feature_dim as u64,
+        action_feature_dim: config.action_feature_dim as u64,
+        object_group_count: config.object_group_count as u64,
+        action_ref_feature_dim: config.action_ref_feature_dim as u64,
+    };
+    let generator_model_config_sha256 = hash(
+        &canonical(&serde_json::to_value(&generator_model_config).unwrap()).unwrap(),
+    );
+    assert_eq!(generator_model_config_sha256, MODEL_CONFIG_FINGERPRINT_V1);
+
+    let paths = source_paths_v1(feature_identity.generation);
+    let mut source_files = Vec::with_capacity(8);
+    for (index, path) in paths.into_iter().enumerate() {
+        let sha256 = match index {
+            5 => feature_identity.features_source_sha256.to_string(),
+            6 => feature_identity.feature_descriptor_sha256.to_string(),
+            7 => hash(REGISTRY),
+            _ => format!("{:064x}", index + 1),
+        };
+        source_files.push(SizedHistoricalPin {
+            path: path.to_string(),
+            sha256,
+            bytes: 123,
+        });
+    }
+    let historical_pin = |suffix: &str| SizedHistoricalPin {
+        path: format!("C:/synthetic/{suffix}"),
+        sha256: "2".repeat(64),
+        bytes: 1,
+    };
+
+    let manifest = Manifest {
+        schema: MANIFEST_SCHEMA.into(),
+        lineage_id: "synthetic-fresh-fixture".into(),
+        initializer: Initializer {
+            identity: "trainer-seeded-v1".into(),
+            authority: "Python KernelPolicyValueNet.reset_seeded_parameters".into(),
+            base_seed: 0,
+            // The one known-good (base_seed, model_init_seed) pair also
+            // used by origin.rs's own synthetic fixtures.
+            model_init_seed: 6_443_515_232_517_447_393,
+            seed_derivation: "kernel-python-rl-trainer-sha256-v2".into(),
+        },
+        producer: Producer {
+            source_git_commit: "1".repeat(40),
+            source_git_clean: true,
+            source_files,
+            runtime: Runtime {
+                python_version: "synthetic".into(),
+                python_implementation: "synthetic".into(),
+                platform_system: "Windows".into(),
+                platform_machine: "synthetic".into(),
+                byte_order: "little".into(),
+                torch_version: "synthetic".into(),
+                device: "cpu".into(),
+                dtype: "torch.float32".into(),
+                deterministic_algorithms: true,
+                num_threads: 1,
+                num_interop_threads: 1,
+                python_executable: historical_pin("python.exe"),
+                torch_c: historical_pin("torch_C.pyd"),
+                torch_cpu_library: historical_pin("torch_cpu.dll"),
+            },
+        },
+        target: Target {
+            registry: HistoricalPin {
+                path: "C:/synthetic/cards.json".into(),
+                sha256: hash(REGISTRY),
+            },
+            card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            feature_contract_digest: feature_identity.feature_contract_digest.into(),
+            feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            features_source_sha256: feature_identity.features_source_sha256.into(),
+            feature_descriptor_sha256: feature_identity.feature_descriptor_sha256.into(),
+            registry_card_count: CARD_DEFS.len(),
+            card_token_rule: "card-token=id+1; padding=0".into(),
+        },
+        model: Model {
+            architecture: MODEL_ARCHITECTURE_VERSION_V1.into(),
+            generator_model_config,
+            generator_model_config_sha256,
+        },
+        payload: Payload {
+            file: "parameters.f32le".into(),
+            encoding: "ieee-754-binary32-little-endian".into(),
+            layout: "torch-named-parameters-c-contiguous-row-major-linear-output-input-no-padding-v1".into(),
+            bytes: PAYLOAD_BYTES,
+            sha256: hash(&payload),
+            model_parameter_sha256: model.parameter_manifest_sha256_v1(),
+            parameter_layout_sha256: hash(&canonical(&Value::Array(layout_values)).unwrap()),
+            tensor_count: 33,
+            element_count: PARAMETER_COUNT_V1,
+        },
+        parameters: parameter_rows,
+        optimizer_bootstrap: OptimizerBootstrap {
+            optimizer_identity: "native-adam-canonical-scorer-bias-gauge-v1".into(),
+            adam_step: 0,
+            moment_initialization: "positive-zero-f32".into(),
+            scorer_bias_anchor_bits: anchor_bits,
+            value_head_gauge: "none".into(),
+        },
+    };
+
+    let manifest_value = serde_json::to_value(&manifest).unwrap();
+    let mut manifest_bytes = canonical(&manifest_value).unwrap();
+    manifest_bytes.push(b'\n');
+
+    let manifest_path = dir.join("initialization.json");
+    std::fs::write(&manifest_path, &manifest_bytes).unwrap();
+    let parameters_path = dir.join("parameters.f32le");
+    std::fs::write(&parameters_path, &payload).unwrap();
+
+    ExpandedFreshInitializationSourceV1 {
+        schema: SOURCE_SCHEMA.into(),
+        initialization: PinnedFileV1 {
+            path: manifest_path.canonicalize().unwrap(),
+            sha256: hash(&manifest_bytes),
+        },
+        parameters: PinnedFileV1 {
+            path: parameters_path.canonicalize().unwrap(),
+            sha256: hash(&payload),
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sideboard_play_policy_v1::{FRESH_FEATURE_IDENTITY_V3, FRESH_FEATURE_IDENTITY_V4};
+
+    #[test]
+    fn fresh_v4_manifest_is_admitted_and_activates_fresh_successor() {
+        let dir = std::env::temp_dir().join(format!(
+            "fresh-v4-source-{}-{}",
+            std::process::id(),
+            "admitted"
+        ));
+        let source = write_synthetic_fresh_source_v1(&dir, FRESH_FEATURE_IDENTITY_V4);
+        let features = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FRESH_FEATURE_IDENTITY_V4
+                .feature_contract_digest
+                .into(),
+            expected_feature_encoding_digest: FRESH_FEATURE_IDENTITY_V4
+                .feature_encoding_digest
+                .into(),
+        };
+        let policy = load_policy_v1(&source, &features).unwrap();
+        assert_eq!(
+            policy.identity_v1().feature_contract_digest_v1(),
+            FRESH_FEATURE_IDENTITY_V4.feature_contract_digest
+        );
+        assert_eq!(
+            policy.identity_v1().feature_encoding_digest_v1(),
+            FRESH_FEATURE_IDENTITY_V4.feature_encoding_digest
+        );
+        // The V4 arm activates `fresh_successor`, never `successor`: proven
+        // indirectly here (in-module private fields are not visible from
+        // this test) by the wide sampler identity both generations share,
+        // and directly in sideboard_play_policy_v1.rs's own dispatch tests.
+        assert_eq!(
+            policy.runtime_sampler_identity_v1(),
+            crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1
+        );
+    }
+
+    #[test]
+    fn fresh_v3_manifest_still_admitted_and_a_v4_declared_manifest_is_rejected_by_v3_only_fields() {
+        let dir = std::env::temp_dir().join(format!(
+            "fresh-v3-source-{}-{}",
+            std::process::id(),
+            "admitted"
+        ));
+        let source = write_synthetic_fresh_source_v1(&dir, FRESH_FEATURE_IDENTITY_V3);
+        let features = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FRESH_FEATURE_IDENTITY_V3
+                .feature_contract_digest
+                .into(),
+            expected_feature_encoding_digest: FRESH_FEATURE_IDENTITY_V3
+                .feature_encoding_digest
+                .into(),
+        };
+        assert!(load_policy_v1(&source, &features).is_ok());
+
+        // A mixed tuple (V4 contract+source pins, but a V3-declared
+        // features/descriptor pair) must be rejected, never accepted by
+        // checking each field independently against "V3 or V4".
+        let mixed_dir = std::env::temp_dir().join(format!(
+            "fresh-mixed-source-{}-{}",
+            std::process::id(),
+            "rejected"
+        ));
+        let mut mixed_identity = FRESH_FEATURE_IDENTITY_V4;
+        mixed_identity.feature_encoding_digest = FRESH_FEATURE_IDENTITY_V3.feature_encoding_digest;
+        std::fs::create_dir_all(&mixed_dir).unwrap();
+        // validate_metadata's whole-tuple classifier rejects this target
+        // before any file is even read; parse the manifest bytes directly.
+        let bad_target = serde_json::json!({"registry":{"path":"C:/synthetic/cards.json",
+            "sha256": hash(REGISTRY)}, "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
+            "feature_contract_digest": mixed_identity.feature_contract_digest,
+            "feature_encoding_digest": mixed_identity.feature_encoding_digest,
+            "features_source_sha256": mixed_identity.features_source_sha256,
+            "feature_descriptor_sha256": mixed_identity.feature_descriptor_sha256,
+            "registry_card_count": CARD_DEFS.len(), "card_token_rule": "card-token=id+1; padding=0"});
+        let target: Target = serde_json::from_value(bad_target).unwrap();
+        let features = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: target.feature_contract_digest.clone(),
+            expected_feature_encoding_digest: target.feature_encoding_digest.clone(),
+        };
+        let manifest = Manifest {
+            schema: MANIFEST_SCHEMA.into(),
+            lineage_id: "synthetic-mixed-fixture".into(),
+            initializer: Initializer {
+                identity: "trainer-seeded-v1".into(),
+                authority: "Python KernelPolicyValueNet.reset_seeded_parameters".into(),
+                base_seed: 0,
+                model_init_seed: 6_443_515_232_517_447_393,
+                seed_derivation: "kernel-python-rl-trainer-sha256-v2".into(),
+            },
+            producer: Producer {
+                source_git_commit: "1".repeat(40),
+                source_git_clean: true,
+                source_files: source_paths_v1(FreshLineageGenerationV1::V4)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, path)| SizedHistoricalPin {
+                        path: path.to_string(),
+                        sha256: match index {
+                            5 => target.features_source_sha256.clone(),
+                            6 => target.feature_descriptor_sha256.clone(),
+                            7 => target.registry.sha256.clone(),
+                            _ => format!("{:064x}", index + 1),
+                        },
+                        bytes: 123,
+                    })
+                    .collect(),
+                runtime: Runtime {
+                    python_version: "synthetic".into(),
+                    python_implementation: "synthetic".into(),
+                    platform_system: "Windows".into(),
+                    platform_machine: "synthetic".into(),
+                    byte_order: "little".into(),
+                    torch_version: "synthetic".into(),
+                    device: "cpu".into(),
+                    dtype: "torch.float32".into(),
+                    deterministic_algorithms: true,
+                    num_threads: 1,
+                    num_interop_threads: 1,
+                    python_executable: SizedHistoricalPin {
+                        path: "C:/synthetic/python.exe".into(),
+                        sha256: "2".repeat(64),
+                        bytes: 1,
+                    },
+                    torch_c: SizedHistoricalPin {
+                        path: "C:/synthetic/torch_C.pyd".into(),
+                        sha256: "2".repeat(64),
+                        bytes: 1,
+                    },
+                    torch_cpu_library: SizedHistoricalPin {
+                        path: "C:/synthetic/torch_cpu.dll".into(),
+                        sha256: "2".repeat(64),
+                        bytes: 1,
+                    },
+                },
+            },
+            target,
+            model: Model {
+                architecture: MODEL_ARCHITECTURE_VERSION_V1.into(),
+                generator_model_config: GeneratorModelConfig {
+                    schema_version: 0,
+                    model_architecture_version: String::new(),
+                    feature_schema_version: String::new(),
+                    feature_registry_version: String::new(),
+                    feature_contract_digest: String::new(),
+                    feature_encoding_digest: String::new(),
+                    card_vocab_size: 0,
+                    card_embedding_dim: 0,
+                    hidden_dim: 0,
+                    state_dim: 0,
+                    object_feature_dim: 0,
+                    edge_feature_dim: 0,
+                    action_feature_dim: 0,
+                    object_group_count: 0,
+                    action_ref_feature_dim: 0,
+                },
+                generator_model_config_sha256: "0".repeat(64),
+            },
+            payload: Payload {
+                file: "parameters.f32le".into(),
+                encoding: "ieee-754-binary32-little-endian".into(),
+                layout: "torch-named-parameters-c-contiguous-row-major-linear-output-input-no-padding-v1".into(),
+                bytes: PAYLOAD_BYTES,
+                sha256: "0".repeat(64),
+                model_parameter_sha256: "0".repeat(64),
+                parameter_layout_sha256: "0".repeat(64),
+                tensor_count: 33,
+                element_count: PARAMETER_COUNT_V1,
+            },
+            parameters: Vec::new(),
+            optimizer_bootstrap: OptimizerBootstrap {
+                optimizer_identity: "native-adam-canonical-scorer-bias-gauge-v1".into(),
+                adam_step: 0,
+                moment_initialization: "positive-zero-f32".into(),
+                scorer_bias_anchor_bits: 0,
+                value_head_gauge: "none".into(),
+            },
+        };
+        assert!(validate_metadata(&manifest, &features).is_err());
+        let _ = mixed_dir; // no files needed: validate_metadata rejects first.
+    }
 
     #[test]
     fn fresh_source_rejects_duplicate_nested_unknown_and_wrong_pin_shapes() {

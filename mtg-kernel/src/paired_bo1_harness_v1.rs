@@ -56,6 +56,18 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             .encode_current_flat_scoring_decision_owned_v3(self.decision, encoder, buffers)
     }
 
+    /// V4 sibling of `encode_scoring_owned_v3`, for a policy whose
+    /// `feature_generation_v1()` is `PlayPolicyGenerationV1::V4`.
+    pub(crate) fn encode_scoring_owned_v4(
+        &self,
+        encoder: &mut crate::flat_policy_v4::FlatDecisionEncoderV4,
+        buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<crate::flat_policy_v4::FlatDecisionV4, crate::flat_policy_v2::FlatDecisionErrorV2>
+    {
+        self.session
+            .encode_current_flat_scoring_decision_owned_v4(self.decision, encoder, buffers)
+    }
+
     pub(crate) fn encode_scoring_owned_v2(
         &self,
         encoder: &mut crate::flat_policy_v2::FlatDecisionEncoderV2,
@@ -67,14 +79,43 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
     }
 }
 
+/// Tri-state generation a paired-BO1 policy actually scores/pairs under. `V2`
+/// is the legacy default; `V3` and `V4` are the two explicit inference
+/// feature-transfer generations, each with independently recorded identities.
+/// Never widen this into an open-ended allow-list: mixed-generation seat
+/// pairings must be rejected by strict equality of this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayPolicyGenerationV1 {
+    V2,
+    V3,
+    V4,
+}
+
 /// A frozen play policy with explicitly reset per-seat sampling streams.
 /// Implementations reset recurrent state and both sampling streams at every
 /// game boundary. Cache keys must include the episode's observation identity.
 pub trait PairedBo1PolicyV1 {
-    /// The default preserves every existing V2 consumer. V3 is explicit
-    /// inference feature transfer, with independently recorded identities.
+    /// The default preserves every existing V2 consumer. V3 (and, since the
+    /// fresh-lineage V4 sibling landed, V4 too) is explicit inference feature
+    /// transfer, with independently recorded identities. Both use the same
+    /// wide session/environment constructor (`play_one_side_v1` below), so
+    /// this stays a boolean; `feature_generation_v1` is the tri-state that
+    /// tells V3 and V4 apart for pairing/equality checks.
     fn uses_observation_successor_v3(&self) -> bool {
         false
+    }
+
+    /// True generation, derived from the boolean by default so no existing
+    /// V2/V3-only implementor needs to change. Only a policy that can
+    /// actually track fresh-lineage (V4) state needs to override this;
+    /// mixed-generation seat pairings must compare this, never the boolean,
+    /// since two different generations both report `true` for the boolean.
+    fn feature_generation_v1(&self) -> PlayPolicyGenerationV1 {
+        if self.uses_observation_successor_v3() {
+            PlayPolicyGenerationV1::V3
+        } else {
+            PlayPolicyGenerationV1::V2
+        }
     }
 
     fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError>;

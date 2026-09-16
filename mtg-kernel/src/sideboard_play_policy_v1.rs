@@ -21,18 +21,20 @@ use crate::flat_policy_v2::{
 use crate::flat_policy_v3::{
     FlatDecisionEncoderV3, FlatScoringDecisionViewV3, FlatScoringExtensionsV3,
 };
-use crate::flat_policy_v4::{FlatDecisionEncoderV4, FlatScoringExtensionsV4};
+use crate::flat_policy_v4::{
+    FlatDecisionEncoderV4, FlatScoringDecisionViewV4, FlatScoringExtensionsV4,
+};
 use crate::native_checkpoint_inference_v1::encoded_decision_view_v1;
 use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 use crate::native_flat_tensorizer_v3::{
     encoded_decision_view_v3, NativeFlatDecisionTensorV3, NativeFlatTensorizerV3,
     FEATURES_SOURCE_SHA256_V3, FEATURE_CONTRACT_DIGEST_V3, FEATURE_DESCRIPTOR_SHA256_V3,
-    FEATURE_ENCODING_DIGEST_V3,
+    FEATURE_ENCODING_DIGEST_V3, FEATURE_REGISTRY_VERSION_V3, FEATURE_SCHEMA_VERSION_V3,
 };
-#[allow(unused_imports)]
 use crate::native_flat_tensorizer_v4::{
-    NativeFlatDecisionTensorV4, NativeFlatTensorizerV4, FEATURE_CONTRACT_DIGEST_V4,
-    FEATURE_ENCODING_DIGEST_V4,
+    encoded_decision_view_v4, NativeFlatDecisionTensorV4, NativeFlatTensorizerV4,
+    FEATURES_SOURCE_SHA256_V4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_DESCRIPTOR_SHA256_V4,
+    FEATURE_ENCODING_DIGEST_V4, FEATURE_REGISTRY_VERSION_V4, FEATURE_SCHEMA_VERSION_V4,
 };
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
@@ -41,7 +43,9 @@ use crate::native_policy_value_net_v1::{
     FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
     PARAMETER_COUNT_V1,
 };
-use crate::paired_bo1_harness_v1::{PairedBo1PolicyInputV1, PairedBo1PolicyV1};
+use crate::paired_bo1_harness_v1::{
+    PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
+};
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{
     FastActorResponseV1, FastActorSessionV1, RlSessionError, RlSessionErrorCode,
@@ -220,76 +224,180 @@ pub(crate) fn fresh_successor_identity_valid_v1(
     )
 }
 
+/// Exactly the two compiled fresh-lineage feature-contract generations that
+/// `fresh_initialization_source.rs` and `expanded_deck_training_v1.rs` admit,
+/// matched as a whole four-field tuple so a mixed tuple (say, a V3 contract
+/// digest paired with a V4 encoding digest) can never pass by having each
+/// field independently equal "V3 or V4". Mirrors `RuntimeContractGenerationV1`
+/// (`phase1_agent_v1/package.rs`), applied to this crate's other fresh-lineage
+/// axis; not a new idiom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FreshLineageGenerationV1 {
+    V3,
+    V4,
+}
+
+/// Single canonical whole-tuple classifier, reused by every reader of a
+/// fresh-lineage source/target descriptor (the Rust fresh-initialization
+/// reader and the successor identity gates), so the V3/V4 arms never drift
+/// out of sync between call sites.
+pub(crate) fn fresh_lineage_generation_v1(
+    feature_contract_digest: &str,
+    feature_encoding_digest: &str,
+    features_source_sha256: &str,
+    feature_descriptor_sha256: &str,
+) -> Result<FreshLineageGenerationV1, String> {
+    match (
+        feature_contract_digest,
+        feature_encoding_digest,
+        features_source_sha256,
+        feature_descriptor_sha256,
+    ) {
+        (
+            FEATURE_CONTRACT_DIGEST_V3,
+            FEATURE_ENCODING_DIGEST_V3,
+            FEATURES_SOURCE_SHA256_V3,
+            FEATURE_DESCRIPTOR_SHA256_V3,
+        ) => Ok(FreshLineageGenerationV1::V3),
+        (
+            FEATURE_CONTRACT_DIGEST_V4,
+            FEATURE_ENCODING_DIGEST_V4,
+            FEATURES_SOURCE_SHA256_V4,
+            FEATURE_DESCRIPTOR_SHA256_V4,
+        ) => Ok(FreshLineageGenerationV1::V4),
+        _ => Err(
+            "fresh-lineage feature identity matches neither the compiled V3 nor V4 contract"
+                .into(),
+        ),
+    }
+}
+
+/// The full bundle of one generation's independently-versioned feature
+/// identities, grouped so a stamping call site can never mix a field from
+/// one compiled module (`native_flat_tensorizer_v3`) with a field from the
+/// other (`native_flat_tensorizer_v4`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FreshFeatureIdentityV1 {
+    pub(crate) generation: FreshLineageGenerationV1,
+    pub(crate) feature_schema_version: &'static str,
+    pub(crate) feature_registry_version: &'static str,
+    pub(crate) feature_contract_digest: &'static str,
+    pub(crate) feature_encoding_digest: &'static str,
+    pub(crate) features_source_sha256: &'static str,
+    pub(crate) feature_descriptor_sha256: &'static str,
+}
+
+pub(crate) const FRESH_FEATURE_IDENTITY_V3: FreshFeatureIdentityV1 = FreshFeatureIdentityV1 {
+    generation: FreshLineageGenerationV1::V3,
+    feature_schema_version: FEATURE_SCHEMA_VERSION_V3,
+    feature_registry_version: FEATURE_REGISTRY_VERSION_V3,
+    feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3,
+    feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3,
+    features_source_sha256: FEATURES_SOURCE_SHA256_V3,
+    feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3,
+};
+
+pub(crate) const FRESH_FEATURE_IDENTITY_V4: FreshFeatureIdentityV1 = FreshFeatureIdentityV1 {
+    generation: FreshLineageGenerationV1::V4,
+    feature_schema_version: FEATURE_SCHEMA_VERSION_V4,
+    feature_registry_version: FEATURE_REGISTRY_VERSION_V4,
+    feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4,
+    feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4,
+    features_source_sha256: FEATURES_SOURCE_SHA256_V4,
+    feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V4,
+};
+
+/// Computes the two byte-identity hashes `from_fresh_initialization_generation_v1`
+/// verifies against a caller-declared identity: the flattened parameter-value
+/// SHA256 (`initial_weights_sha256`) and the named layout SHA256
+/// (`parameter_layout_sha256`). Factored out so the constructor's
+/// verification and a test's synthetic-fixture construction share exactly
+/// one computation, never two independently maintained copies.
+fn fresh_parameter_evidence_v1(
+    parameters: &[NativeNamedParameterV1],
+) -> Result<(String, String), String> {
+    let expected: Vec<_> = native_train_state_parameter_layout_v1().collect();
+    require(
+        parameters.len() == expected.len(),
+        "fresh parameter tensor count differs",
+    )?;
+    // Fields are in canonical sorted order; names are frozen ASCII and
+    // shapes/offsets are integers. No trailing newline enters the digest.
+    #[derive(Serialize)]
+    struct Layout<'a> {
+        byte_count: usize,
+        byte_offset: usize,
+        name: &'a str,
+        ordinal: usize,
+        shape: &'a [usize],
+    }
+    let mut offset = 0usize;
+    let mut layout = Vec::with_capacity(parameters.len());
+    let mut weights = Sha256::new();
+    for (ordinal, (parameter, (name, shape))) in parameters.iter().zip(expected).enumerate() {
+        require(
+            parameter.name == name && parameter.shape.as_slice() == shape,
+            "fresh named parameter layout differs",
+        )?;
+        let byte_count = parameter
+            .values
+            .len()
+            .checked_mul(4)
+            .ok_or("parameter byte count overflow")?;
+        layout.push(Layout {
+            byte_count,
+            byte_offset: offset,
+            name,
+            ordinal,
+            shape,
+        });
+        offset = offset
+            .checked_add(byte_count)
+            .ok_or("parameter byte offset overflow")?;
+        for value in &parameter.values {
+            weights.update(value.to_bits().to_le_bytes());
+        }
+    }
+    require(offset == PARAMETER_BYTES, "fresh parameter payload byte count differs")?;
+    Ok((
+        format!("{:x}", weights.finalize()),
+        hash(&serde_json::to_vec(&layout).map_err(|e| e.to_string())?),
+    ))
+}
+
 impl FrozenPlayPolicyV1 {
-    /// Construct a V3 scorer from actual sampled initialization bytes. This
-    /// validates installed state and metadata, not the Python producer's seed
-    /// execution. The pinned artifact loader separately validates that evidence.
-    pub(crate) fn from_fresh_initialization_v1(
+    /// Shared validation for both fresh-lineage generations: exact feature
+    /// identity tuple (against the caller-selected compiled generation),
+    /// installed Net8 layout, weights hash and origin metadata. Neither
+    /// `from_fresh_initialization_v1` nor `from_fresh_initialization_v4`
+    /// duplicates this; they differ only in which compiled constants they
+    /// pass in and which successor slot the result activates.
+    fn from_fresh_initialization_generation_v1(
         model: NativePolicyValueNetV1,
         identity: FreshPlayPolicyIdentityV1,
-    ) -> Result<Self, String> {
+        feature_identity: FreshFeatureIdentityV1,
+    ) -> Result<(NativePolicyValueNetV1, Vec<f32>, PlayPolicyOriginV1), String> {
         identity.validate_v1()?;
         require(
             model.config_v1() == NativePolicyValueModelConfigV1::contract_v1()
                 && identity.destination_card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}")
                 && identity.destination_registry_sha256 == hash(DESTINATION_REGISTRY)
                 && identity.destination_card_count == crate::card_def::CARD_DEFS.len()
-                && identity.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V3
-                && identity.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V3
-                && identity.features_source_sha256 == FEATURES_SOURCE_SHA256_V3
-                && identity.feature_descriptor_sha256 == FEATURE_DESCRIPTOR_SHA256_V3,
+                && identity.feature_contract_digest == feature_identity.feature_contract_digest
+                && identity.feature_encoding_digest == feature_identity.feature_encoding_digest
+                && identity.features_source_sha256 == feature_identity.features_source_sha256
+                && identity.feature_descriptor_sha256
+                    == feature_identity.feature_descriptor_sha256,
             "fresh initialization does not bind this runtime and Net8 layout",
         )?;
         model.validate_parameters_v1().map_err(|e| e.to_string())?;
         let parameters = model.parameter_snapshot_v1();
-        let expected: Vec<_> = native_train_state_parameter_layout_v1().collect();
+        let (weights_sha256, parameter_layout_sha256) =
+            fresh_parameter_evidence_v1(&parameters)?;
         require(
-            parameters.len() == expected.len(),
-            "fresh parameter tensor count differs",
-        )?;
-        // Fields are in canonical sorted order; names are frozen ASCII and
-        // shapes/offsets are integers. No trailing newline enters the digest.
-        #[derive(Serialize)]
-        struct Layout<'a> {
-            byte_count: usize,
-            byte_offset: usize,
-            name: &'a str,
-            ordinal: usize,
-            shape: &'a [usize],
-        }
-        let mut offset = 0usize;
-        let mut layout = Vec::with_capacity(parameters.len());
-        let mut weights = Sha256::new();
-        for (ordinal, (parameter, (name, shape))) in parameters.iter().zip(expected).enumerate() {
-            require(
-                parameter.name == name && parameter.shape.as_slice() == shape,
-                "fresh named parameter layout differs",
-            )?;
-            let byte_count = parameter
-                .values
-                .len()
-                .checked_mul(4)
-                .ok_or("parameter byte count overflow")?;
-            layout.push(Layout {
-                byte_count,
-                byte_offset: offset,
-                name,
-                ordinal,
-                shape,
-            });
-            offset = offset
-                .checked_add(byte_count)
-                .ok_or("parameter byte offset overflow")?;
-            for value in &parameter.values {
-                weights.update(value.to_bits().to_le_bytes());
-            }
-        }
-        require(
-            offset == PARAMETER_BYTES
-                && identity.initial_weights_sha256 == format!("{:x}", weights.finalize())
+            identity.initial_weights_sha256 == weights_sha256
                 && identity.initial_model_parameter_sha256 == model.parameter_manifest_sha256_v1()
-                && identity.parameter_layout_sha256
-                    == hash(&serde_json::to_vec(&layout).map_err(|e| e.to_string())?),
+                && identity.parameter_layout_sha256 == parameter_layout_sha256,
             "fresh initial parameter bytes or layout identity differs",
         )?;
         let embeddings = parameters
@@ -298,10 +406,26 @@ impl FrozenPlayPolicyV1 {
             .ok_or("embedding tensor absent")?
             .values
             .clone();
+        let origin = PlayPolicyOriginV1::fresh_initialization_v1(identity)?;
+        Ok((model, embeddings, origin))
+    }
+
+    /// Construct a V3 scorer from actual sampled initialization bytes. This
+    /// validates installed state and metadata, not the Python producer's seed
+    /// execution. The pinned artifact loader separately validates that evidence.
+    pub(crate) fn from_fresh_initialization_v1(
+        model: NativePolicyValueNetV1,
+        identity: FreshPlayPolicyIdentityV1,
+    ) -> Result<Self, String> {
+        let (model, embeddings, identity) = Self::from_fresh_initialization_generation_v1(
+            model,
+            identity,
+            FRESH_FEATURE_IDENTITY_V3,
+        )?;
         Ok(Self {
             model,
             embeddings,
-            identity: PlayPolicyOriginV1::fresh_initialization_v1(identity)?,
+            identity,
             encoder: FlatDecisionEncoderV2::default(),
             owned: OwnedScoringV1::default(),
             tensorizer: NativeFlatTensorizerV2::new(),
@@ -312,6 +436,59 @@ impl FrozenPlayPolicyV1 {
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
         })
+    }
+
+    /// V4 sibling of `from_fresh_initialization_v1`: the same validated Net8
+    /// layout/weights/origin contract, but the identity's feature tuple must
+    /// match the compiled V4 fresh-lineage constants (never V3's), and the
+    /// constructed policy activates `fresh_successor`, never `successor`.
+    /// Explicitly wires in the already-built `fresh_successor_identity_valid_v1`
+    /// gate rather than reimplementing its check.
+    pub(crate) fn from_fresh_initialization_v4(
+        model: NativePolicyValueNetV1,
+        identity: FreshPlayPolicyIdentityV1,
+    ) -> Result<Self, String> {
+        let (model, embeddings, identity) = Self::from_fresh_initialization_generation_v1(
+            model,
+            identity,
+            FRESH_FEATURE_IDENTITY_V4,
+        )?;
+        fresh_successor_identity_valid_v1(
+            identity.feature_contract_digest_v1(),
+            identity.feature_encoding_digest_v1(),
+        )?;
+        Ok(Self {
+            model,
+            embeddings,
+            identity,
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: None,
+            fresh_successor: Some(FrozenPlayFreshSuccessorStateV1::default()),
+        })
+    }
+
+    /// Single accessor for every site that stamps a feature-contract identity
+    /// (trajectories, checkpoints, inference identities) from the actually
+    /// loaded policy. No call site should ever hand-pick a hardcoded V3 (or
+    /// V4) constant independently of what this policy's generation actually
+    /// is; item 3's mitigation against a silent V4-encoded/V3-labeled
+    /// mislabel is that every stamping site instead reads this.
+    pub(crate) fn feature_identity_v1(&self) -> FreshFeatureIdentityV1 {
+        if self.fresh_successor.is_some() {
+            FRESH_FEATURE_IDENTITY_V4
+        } else {
+            // Also the correct default for the plain V3 successor and for
+            // any policy with neither successor active: this crate's fresh-
+            // lineage trainer/collector never constructs the latter, and it
+            // matches this accessor's pre-existing hardcoded-V3 behavior.
+            FRESH_FEATURE_IDENTITY_V3
+        }
     }
 
     /// Explicit construction from the independently verified registry-transfer
@@ -467,6 +644,70 @@ impl FrozenPlayPolicyV1 {
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
+        };
+        let installed = policy.actual_model_identity_v1();
+        let PlayPolicyOriginV1::Imported(identity) = &mut policy.identity else {
+            unreachable!("test fixture constructed an imported origin")
+        };
+        identity.weights_sha256 = installed.weights_sha256;
+        identity.model_parameter_sha256 = installed.model_parameter_sha256;
+        policy
+    }
+
+    /// V4 sibling of `training_fixture_v3`: same "Imported" weight-provenance
+    /// origin (weight ancestry and feature-contract generation are
+    /// independent axes, as `training_fixture_v3` itself already establishes
+    /// by pairing an `Imported` origin with the wide V3 `successor`), but
+    /// activates `fresh_successor`, not `successor`, with V4 digests.
+    #[cfg(test)]
+    pub(crate) fn training_fixture_v4() -> Self {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let parameters = model.parameter_snapshot_v1();
+        let embeddings = parameters
+            .iter()
+            .find(|p| p.name == "card_embedding.weight")
+            .unwrap()
+            .values
+            .clone();
+        let mut policy = Self {
+            model,
+            embeddings,
+            identity: FrozenPlayPolicyIdentityV1 {
+                schema: "test-only-import-ancestry".into(),
+                source_export_schema: EXPORT_SCHEMA.into(),
+                source_metadata_sha256: "a".repeat(64),
+                weights_sha256: String::new(),
+                model_parameter_sha256: String::new(),
+                source_run_sha256: "b".repeat(64),
+                source_generation: 7,
+                source_git_commit: "1".repeat(40),
+                source_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+                destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+                source_registry_sha256: "c".repeat(64),
+                destination_registry_sha256: hash(DESTINATION_REGISTRY),
+                source_card_count: crate::card_def::CARD_DEFS.len(),
+                destination_card_count: crate::card_def::CARD_DEFS.len(),
+                source_training_deck_ids: vec!["Rally".into(), "Rally".into()],
+                namespace_rule: "test fixture".into(),
+                appended_rows: "test fixture".into(),
+                feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+                sampler_identity: WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into(),
+                reader_revalidated_store_chain: false,
+                observation_successor: None,
+            }
+            .into(),
+            encoder: FlatDecisionEncoderV2::default(),
+            owned: OwnedScoringV1::default(),
+            tensorizer: NativeFlatTensorizerV2::new(),
+            tensor: NativeFlatDecisionTensorV2::default(),
+            sampler: FastCategoricalScratch::default(),
+            seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+            sampling_initialized: false,
+            successor: None,
+            fresh_successor: Some(FrozenPlayFreshSuccessorStateV1::default()),
         };
         let installed = policy.actual_model_identity_v1();
         let PlayPolicyOriginV1::Imported(identity) = &mut policy.identity else {
@@ -677,7 +918,7 @@ impl FrozenPlayPolicyV1 {
     /// The collector must reset physical-seat sampling before its first action.
     pub(crate) fn fork_for_collection_v3(&self) -> Result<Self, String> {
         require(
-            self.successor.is_some(),
+            self.successor.is_some() || self.fresh_successor.is_some(),
             "parallel collection requires explicit successor features",
         )?;
         Ok(Self {
@@ -691,15 +932,23 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
-            successor: Some(FrozenPlaySuccessorStateV3::default()),
-            fresh_successor: None,
+            successor: self
+                .successor
+                .is_some()
+                .then(FrozenPlaySuccessorStateV3::default),
+            fresh_successor: self
+                .fresh_successor
+                .is_some()
+                .then(FrozenPlayFreshSuccessorStateV1::default),
         })
     }
 
     /// Active runtime capability, separate from the historical import receipt.
-    /// Narrow decisions still execute the frozen sampler verbatim.
+    /// Narrow decisions still execute the frozen sampler verbatim. Both wide
+    /// generations (V3's `successor` and V4's `fresh_successor`) share the
+    /// same wide sampler identity and action bound.
     pub fn runtime_sampler_identity_v1(&self) -> &'static str {
-        if self.successor.is_some() {
+        if self.successor.is_some() || self.fresh_successor.is_some() {
             WIDE_CATEGORICAL_SAMPLER_VERSION_V1
         } else {
             FAST_CATEGORICAL_SAMPLER_VERSION
@@ -707,7 +956,7 @@ impl FrozenPlayPolicyV1 {
     }
 
     pub fn runtime_sampler_max_actions_v1(&self) -> usize {
-        if self.successor.is_some() {
+        if self.successor.is_some() || self.fresh_successor.is_some() {
             WIDE_CATEGORICAL_MAX_ACTIONS_V1
         } else {
             FAST_CATEGORICAL_MAX_ACTIONS
@@ -748,7 +997,7 @@ impl FrozenPlayPolicyV1 {
         parameters: &[NativeNamedParameterV1],
     ) -> Result<(), String> {
         require(
-            self.successor.is_some(),
+            self.successor.is_some() || self.fresh_successor.is_some(),
             "training requires explicit successor features",
         )?;
         self.model
@@ -784,6 +1033,25 @@ impl FrozenPlayPolicyV1 {
         })
     }
 
+    /// V4 sibling of `score_training_tensor_v3`.
+    pub(crate) fn score_training_tensor_v4(
+        &self,
+        tensor: &NativeFlatDecisionTensorV4,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        require(
+            self.fresh_successor.is_some(),
+            "training requires explicit V4 successor features",
+        )?;
+        let output = self
+            .model
+            .forward_feature_transfer_v4(encoded_decision_view_v4(tensor))
+            .map_err(|e| e.to_string())?;
+        Ok(FrozenPlayDecisionScoresV1 {
+            logits: output.logits,
+            value: output.value,
+        })
+    }
+
     /// Borrow the input retained by the immediately preceding V3 scoring call.
     /// Recording callers must use it before any subsequent score or reset.
     /// This accessor performs no encoding, forward pass, or random sampling.
@@ -794,6 +1062,16 @@ impl FrozenPlayPolicyV1 {
             .as_ref()
             .map(|state| &state.tensor)
             .ok_or_else(|| "native capture requires the V3 scorer".into())
+    }
+
+    /// V4 sibling of `last_scored_training_tensor_v3`.
+    pub(crate) fn last_scored_training_tensor_v4(
+        &self,
+    ) -> Result<&NativeFlatDecisionTensorV4, String> {
+        self.fresh_successor
+            .as_ref()
+            .map(|state| &state.tensor)
+            .ok_or_else(|| "native capture requires the V4 scorer".into())
     }
 
     pub(crate) fn select_with_training_tensor_v3(
@@ -817,6 +1095,37 @@ impl FrozenPlayPolicyV1 {
             .successor
             .as_ref()
             .ok_or("missing successor tensor")?
+            .tensor
+            .clone();
+        Ok((selected, scores, tensor))
+    }
+
+    /// V4 sibling of `select_with_training_tensor_v3`, for a policy with an
+    /// active `fresh_successor`. The scoring/sampling path itself
+    /// (`score_fast_session_v1`, `sample_scores`) is shared and already
+    /// dispatches on the active successor; only the returned tensor type
+    /// and the successor this reads from differ.
+    pub(crate) fn select_with_training_tensor_v4(
+        &mut self,
+        session: &FastActorSessionV1,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
+        require(
+            self.fresh_successor.is_some(),
+            "training requires explicit V4 successor features",
+        )?;
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            return Err("cannot collect a terminal decision".into());
+        };
+        let scores = self.score_fast_session_v1(session)?;
+        let selected = self.sample_scores(
+            &scores.logits,
+            decision.acting_player,
+            decision.legal_action_count,
+        )?;
+        let tensor = self
+            .fresh_successor
+            .as_ref()
+            .ok_or("missing fresh successor tensor")?
             .tensor
             .clone();
         Ok((selected, scores, tensor))
@@ -853,6 +1162,13 @@ impl FrozenPlayPolicyV1 {
                 ..FrozenPlaySuccessorStateV3::default()
             };
         }
+        if let Some(fresh) = &mut self.fresh_successor {
+            let sampler = std::mem::take(&mut fresh.sampler);
+            *fresh = FrozenPlayFreshSuccessorStateV1 {
+                sampler,
+                ..FrozenPlayFreshSuccessorStateV1::default()
+            };
+        }
     }
 
     /// Scores only the actor-visible projection generated by the session.
@@ -873,6 +1189,20 @@ impl FrozenPlayPolicyV1 {
                 .map_err(|e| format!("V3 actor-visible encoding: {e:?}; decision={decision:?}"))?;
             self.owned.globals = encoded.globals;
             successor.extensions = encoded.extensions;
+            return self
+                .score_owned()
+                .map_err(|error| format!("{error}; decision={decision:?}"));
+        }
+        if let Some(fresh) = &mut self.fresh_successor {
+            let encoded = session
+                .encode_current_flat_scoring_decision_owned_v4(
+                    decision,
+                    &mut fresh.encoder,
+                    &mut self.owned.buffers(),
+                )
+                .map_err(|e| format!("V4 actor-visible encoding: {e:?}; decision={decision:?}"))?;
+            self.owned.globals = encoded.globals;
+            fresh.extensions = encoded.extensions;
             return self
                 .score_owned()
                 .map_err(|error| format!("{error}; decision={decision:?}"));
@@ -912,6 +1242,17 @@ impl FrozenPlayPolicyV1 {
             self.model
                 .forward_feature_transfer_v3(encoded_decision_view_v3(&successor.tensor))
                 .map_err(|e| format!("explicit V3 frozen feature transfer: {e:?}"))?
+        } else if let Some(fresh) = &mut self.fresh_successor {
+            fresh
+                .tensorizer
+                .fill(
+                    FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
+                    &mut fresh.tensor,
+                )
+                .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
+            self.model
+                .forward_feature_transfer_v4(encoded_decision_view_v4(&fresh.tensor))
+                .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?
         } else {
             self.tensorizer
                 .fill(self.owned.view(), &mut self.tensor)
@@ -954,6 +1295,8 @@ impl FrozenPlayPolicyV1 {
         let seed = self.seat_rng[index].next_u64();
         let selected = if let Some(successor) = &mut self.successor {
             successor.sampler.sample(logits, seed)
+        } else if let Some(fresh) = &mut self.fresh_successor {
+            fresh.sampler.sample(logits, seed)
         } else {
             self.sampler.sample(logits, seed)
         }
@@ -980,6 +1323,16 @@ impl FrozenPlayPolicyV1 {
                 })?;
             self.owned.globals = encoded.globals;
             successor.extensions = encoded.extensions;
+        } else if let Some(fresh) = &mut self.fresh_successor {
+            let encoded = input
+                .encode_scoring_owned_v4(&mut fresh.encoder, &mut self.owned.buffers())
+                .map_err(|e| {
+                    policy_error(format!(
+                        "V4 actor-visible encoding: {e:?}; decision={decision:?}"
+                    ))
+                })?;
+            self.owned.globals = encoded.globals;
+            fresh.extensions = encoded.extensions;
         } else {
             let encoded = input
                 .encode_scoring_owned_v2(&mut self.encoder, &mut self.owned.buffers())
@@ -1006,7 +1359,16 @@ impl FrozenPlayPolicyV1 {
 
 impl PairedBo1PolicyV1 for FrozenPlayPolicyV1 {
     fn uses_observation_successor_v3(&self) -> bool {
-        self.successor.is_some()
+        self.successor.is_some() || self.fresh_successor.is_some()
+    }
+    fn feature_generation_v1(&self) -> PlayPolicyGenerationV1 {
+        if self.fresh_successor.is_some() {
+            PlayPolicyGenerationV1::V4
+        } else if self.successor.is_some() {
+            PlayPolicyGenerationV1::V3
+        } else {
+            PlayPolicyGenerationV1::V2
+        }
     }
     fn reset_for_game_v1(&mut self, policy_seeds: [u64; 2]) -> Result<(), RlSessionError> {
         self.reset_sampling_v1(policy_seeds);
@@ -1231,6 +1593,57 @@ mod tests {
             FEATURE_ENCODING_DIGEST_V4,
         )
         .is_err());
+    }
+
+    /// Real deterministic Net8 weights and real weight/layout hashes (via
+    /// `fresh_parameter_evidence_v1`, the same computation the constructor
+    /// itself verifies against), not a bypassed struct literal: exercises
+    /// `from_fresh_initialization_v4` itself, item 1's required test.
+    #[test]
+    fn from_fresh_initialization_v4_accepts_v4_and_rejects_a_v3_declared_identity() {
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let parameters = model.parameter_snapshot_v1();
+        let (initial_weights_sha256, parameter_layout_sha256) =
+            fresh_parameter_evidence_v1(&parameters).unwrap();
+        let base_identity = FreshPlayPolicyIdentityV1 {
+            schema: FRESH_PLAY_INITIALIZATION_SCHEMA_V1.into(),
+            initialization_manifest_sha256: "a".repeat(64),
+            lineage_id: "synthetic-v4-constructor-test".into(),
+            initializer: "trainer-seeded-v1".into(),
+            base_seed: 0,
+            model_init_seed: 6_443_515_232_517_447_393,
+            seed_derivation: "kernel-python-rl-trainer-sha256-v2".into(),
+            producer_git_commit: "1".repeat(40),
+            initial_weights_sha256,
+            initial_model_parameter_sha256: model.parameter_manifest_sha256_v1(),
+            parameter_layout_sha256,
+            destination_registry_sha256: hash(DESTINATION_REGISTRY),
+            destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            destination_card_count: crate::card_def::CARD_DEFS.len(),
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+            features_source_sha256: FEATURES_SOURCE_SHA256_V4.into(),
+            feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V4.into(),
+            sampler_identity: WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into(),
+        };
+        let policy =
+            FrozenPlayPolicyV1::from_fresh_initialization_v4(model.clone(), base_identity.clone())
+                .unwrap();
+        assert!(policy.fresh_successor.is_some());
+        assert!(policy.successor.is_none());
+        assert_eq!(policy.feature_generation_v1(), PlayPolicyGenerationV1::V4);
+        assert!(policy.uses_observation_successor_v3());
+
+        // A V3-declared identity (same real weights, V3 digests) must be
+        // rejected by the V4 constructor, never silently accepted.
+        let mut v3_identity = base_identity;
+        v3_identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
+        v3_identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
+        v3_identity.features_source_sha256 = FEATURES_SOURCE_SHA256_V3.into();
+        v3_identity.feature_descriptor_sha256 = FEATURE_DESCRIPTOR_SHA256_V3.into();
+        assert!(FrozenPlayPolicyV1::from_fresh_initialization_v4(model, v3_identity).is_err());
     }
 
     #[test]
@@ -1690,6 +2103,67 @@ mod tests {
         assert!(!scores.logits.is_empty());
         assert!(scores.logits.iter().all(|x| x.is_finite()));
         assert!(scores.value.is_finite());
+    }
+
+    /// Proves `score_fast_session_v1`'s new `fresh_successor` arm is
+    /// actually taken for a V4 policy (not a silent fallthrough to the V2
+    /// narrow path, which this wide fixture would reject), and that the
+    /// pre-existing V3 arm's output is unchanged (a regression guard) on
+    /// the same fixture used by the adjacent V3-only tests above.
+    #[test]
+    fn score_fast_session_v1_takes_the_v4_arm_and_v3_output_is_unchanged() {
+        let (mut state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+
+        let v3_session = FastActorSessionV1::from_v3_fixture_state(state.clone());
+        let mut v3_policy = FrozenPlayPolicyV1::training_fixture_v3();
+        v3_policy.reset_sampling_v1([11, 22]);
+        assert_eq!(v3_policy.feature_generation_v1(), PlayPolicyGenerationV1::V3);
+        let v3_scores = v3_policy.score_fast_session_v1(&v3_session).unwrap();
+        assert!(!v3_scores.logits.is_empty());
+        assert!(v3_scores.logits.iter().all(|x| x.is_finite()));
+        assert!(v3_scores.value.is_finite());
+
+        let v4_session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut v4_policy = FrozenPlayPolicyV1::training_fixture_v4();
+        v4_policy.reset_sampling_v1([11, 22]);
+        assert_eq!(v4_policy.feature_generation_v1(), PlayPolicyGenerationV1::V4);
+        let v4_scores = v4_policy.score_fast_session_v1(&v4_session).unwrap();
+        assert!(!v4_scores.logits.is_empty());
+        assert!(v4_scores.logits.iter().all(|x| x.is_finite()));
+        assert!(v4_scores.value.is_finite());
+        // Both generations share the same wide action space for this
+        // fixture; only the feature encoding, not the legal-action count,
+        // is expected to differ between V3 and V4.
+        assert_eq!(v4_scores.logits.len(), v3_scores.logits.len());
+
+        let selected = v4_policy.select_fast_session_v1(&v4_session).unwrap();
+        assert!((selected as usize) < v4_scores.logits.len());
+    }
+
+    #[test]
+    fn select_with_training_tensor_v4_replays_through_score_and_last_scored_training_tensor_v4() {
+        let (mut state, hunter, _goaded, _ordinary) =
+            crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(
+            &mut state,
+            hunter,
+            crate::ids::PlayerId::P0,
+        );
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        policy.reset_sampling_v1([55, 66]);
+        let (selected, scores, tensor) = policy.select_with_training_tensor_v4(&session).unwrap();
+        assert!((selected as usize) < scores.logits.len());
+        assert_eq!(policy.last_scored_training_tensor_v4().unwrap(), &tensor);
+        let replayed = policy.score_training_tensor_v4(&tensor).unwrap();
+        assert_eq!(replayed.logits, scores.logits);
+        assert_eq!(replayed.value, scores.value);
     }
 
     /// The registry-level proof the action-slice tests in

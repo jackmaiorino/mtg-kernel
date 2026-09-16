@@ -658,6 +658,30 @@ impl NativePolicyValueNetV1 {
         self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
     }
 
+    /// V4 sibling of `feature_transfer_config_v3`, for the fresh-lineage
+    /// (V7 observation-schema) successor contract. Additive: `feature_transfer_config_v3`
+    /// is untouched, and this never compares against its constants.
+    pub(crate) fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v4::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V4,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V4,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4,
+            ..self.config
+        }
+    }
+
+    /// V4 sibling of `forward_feature_transfer_v3`. The ordinary loader and
+    /// forward, and the V3 feature-transfer path, retain their old contracts.
+    pub(crate) fn forward_feature_transfer_v4(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
+    }
+
     fn forward_validated_rows_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
