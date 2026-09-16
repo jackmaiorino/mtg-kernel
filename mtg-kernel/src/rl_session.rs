@@ -2318,18 +2318,45 @@ fn flat_validate_origin_decision_v1(
                 return Err(invalid());
             }
             for (index, candidate) in candidates.iter().enumerate() {
-                if !matches!(
-                    &candidate.semantic,
+                let matches = match &candidate.semantic {
                     ActionSemanticV1::ChooseEffectOption {
                         actor,
                         source: semantic_source,
                         option_index,
                         option_count: semantic_option_count,
-                    } if actor_matches(*actor, *player)
-                        && flat_ref_matches_object_v1(semantic_source, *source)
-                        && usize::from(*option_index) == index
-                        && semantic_option_count == option_count
-                ) {
+                    } => {
+                        actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(semantic_source, *source)
+                            && usize::from(*option_index) == index
+                            && semantic_option_count == option_count
+                    }
+                    // The RL candidate builder relabels a color-valued
+                    // option list (Gate lands choosing their excluded
+                    // color, Prismatic Strands choosing a color to
+                    // prevent) as `ChooseEffectColor` for model
+                    // readability; the underlying engine decision is
+                    // still `Decision::ChooseEffectOption` and the
+                    // executable action is still `Action::
+                    // ChooseEffectOption(index)` (see
+                    // `flat_validate_semantic_policy_pair_v1`). There is
+                    // no `option_index` on this semantic to re-check
+                    // against `index` here (it carries a `color` instead);
+                    // the stronger whole-candidate-list equality check in
+                    // `build_with_extensions` (`original.candidates !=
+                    // current.candidates`) against a fresh, independent
+                    // `core_policy_action_candidates_v5` re-derivation is
+                    // what actually guards index/color correspondence.
+                    ActionSemanticV1::ChooseEffectColor {
+                        actor,
+                        source: semantic_source,
+                        ..
+                    } => {
+                        actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(semantic_source, *source)
+                    }
+                    _ => false,
+                };
+                if !matches {
                     return Err(invalid());
                 }
             }
@@ -2677,6 +2704,22 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::ChooseEffectOption { option_index, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(actual))),
         ) => option_index == actual,
+        // Same underlying executable action as `ChooseEffectOption` above:
+        // the RL candidate builder relabels a color-valued option list as
+        // `ChooseEffectColor` (see `flat_validate_origin_decision_v1`'s
+        // `Decision::ChooseEffectOption` arm for the matching relabel on
+        // the raw-decision side). `ChooseEffectColor` carries a `color`,
+        // not the raw option index, so unlike the case above there is no
+        // field here to cross-check `actual` against; any `actual` index is
+        // accepted for this pairing shape. `core_policy_action_candidates_v5`
+        // is the only place that ever pairs a `ChooseEffectColor` semantic
+        // with a concrete `policy_action` (both built together from the
+        // same offered-color list), so this is a shape check, not a value
+        // check.
+        (
+            ActionSemanticV1::ChooseEffectColor { .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(_))),
+        ) => true,
         (
             ActionSemanticV1::ChooseEffectTarget { target, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectTarget(actual))),
@@ -2789,11 +2832,13 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::FinishTargetSelection { .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
-        (
-            ActionSemanticV1::ChooseEffectColor { .. }
-            | ActionSemanticV1::ChooseEffectNumber { .. },
-            _,
-        ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
+        // `ChooseEffectNumber` has no concrete engine `Action` (unlike the
+        // color case above, no `Action::ChooseEffectOption`-style primitive
+        // exists for an arbitrary-range numeric choice), so it stays
+        // rejected pending a contract-level decision kind for it.
+        (ActionSemanticV1::ChooseEffectNumber { .. }, _) => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
         (
             ActionSemanticV1::DeclareAttackers { .. }
             | ActionSemanticV1::DeclareBlockersForAttacker { .. }
@@ -12529,20 +12574,23 @@ mod tests {
         let actor_id = base.current.as_ref().unwrap().actor;
         let actor: PlayerSeatV1 = actor_id.into();
         let source = flat_test_ref(&base.state, base.state.players[actor_id.index()].hand[0]);
-        let semantics = [
-            ActionSemanticV1::ChooseEffectColor {
-                actor,
-                source: source.clone(),
-                color: ManaColor::R,
-            },
-            ActionSemanticV1::ChooseEffectNumber {
-                actor,
-                source,
-                number: 2,
-                minimum: 1,
-                maximum: 3,
-            },
-        ];
+        // `ChooseEffectColor` is deliberately NOT in this list: it has a
+        // real executable form (`Action::ChooseEffectOption`, the same
+        // primitive Gate lands and Prismatic Strands already use) and is
+        // covered instead by
+        // `flat_action_slice_rejects_a_mismatched_choose_effect_color_pairing`
+        // below (plus the real self-play regression
+        // `expanded_deck_training_v1::tests::caw_gates_choose_effect_color_v3_regression`
+        // for the accepting case). `ChooseEffectNumber` has no concrete
+        // engine `Action` at all and remains genuinely
+        // schema-only/unexecutable.
+        let semantics = [ActionSemanticV1::ChooseEffectNumber {
+            actor,
+            source,
+            number: 2,
+            minimum: 1,
+            maximum: 3,
+        }];
         for semantic in semantics {
             let mut session = base.clone();
             session.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
@@ -12570,6 +12618,60 @@ mod tests {
             assert_eq!(refs, refs_before);
             assert_eq!(objects, objects_before);
         }
+    }
+
+    /// `ChooseEffectColor` (DECK-GAPS-001, CawGates) is executable now: it
+    /// reuses `Action::ChooseEffectOption` (the same primitive Gate lands
+    /// and Prismatic Strands already step through; proved end to end by the
+    /// real self-play regression
+    /// `expanded_deck_training_v1::tests::caw_gates_choose_effect_color_v3_regression`).
+    /// A candidate still paired with an unrelated action (the shape the
+    /// removed `UnsupportedActionSemantic` case above used to catch,
+    /// indirectly, for every pairing regardless of what it actually was)
+    /// now falls through to the general mismatched-pairing check instead,
+    /// which is `InvalidDecisionRelation`, not `UnsupportedActionSemantic`.
+    #[test]
+    fn flat_action_slice_rejects_a_mismatched_choose_effect_color_pairing() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let mismatched = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
+        let actor_id = mismatched.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let source = flat_test_ref(
+            &mismatched.state,
+            mismatched.state.players[actor_id.index()].hand[0],
+        );
+        let semantic = ActionSemanticV1::ChooseEffectColor {
+            actor,
+            source,
+            color: ManaColor::R,
+        };
+        let mut mismatched = mismatched;
+        mismatched.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
+            semantic,
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass)),
+        }];
+        let mut actions = [poison_flat_action(); 2];
+        let mut refs = [poison_flat_ref(); 2];
+        let mut objects = [poison_flat_object(); 2];
+        let actions_before = actions;
+        let refs_before = refs;
+        let objects_before = objects;
+        assert_eq!(
+            mismatched.encode_current_flat_action_slice_v1(
+                flat_current_decision(&mismatched),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+        assert_eq!(actions, actions_before);
+        assert_eq!(refs, refs_before);
+        assert_eq!(objects, objects_before);
     }
 
     #[test]

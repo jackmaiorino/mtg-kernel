@@ -2713,16 +2713,28 @@ mod tests {
     /// distinctly. Real complete games (native engine compute), deliberately
     /// opt-in like its single-game sibling above.
     ///
-    /// Deliberately excludes `CawGates` (its Gate lands reach
-    /// `Decision::ChooseEffectColor`, which `flat_validate_semantic_policy_pair_v1`
-    /// rejects with `UnsupportedActionSemantic`/`InvalidDecisionRelation` for
-    /// every generation -- confirmed by running the identical seed/decks
-    /// through the V3 encoder, which fails identically) and `Spy`/`SpyV2`
-    /// (both hit `ActionReferenceShape` in the native tensorizer at a real
-    /// decision, again confirmed identical under V3 on the same seed). Both
-    /// are pre-existing, generation-agnostic gaps unrelated to the V4-vs-V3
-    /// divergence this soak exists to catch; see the fix report for the
-    /// residual-risk note. The eight V2 archetype variants (BurnV2,
+    /// Still excludes `CawGates` and `Spy`/`SpyV2`, though both gaps that
+    /// motivated the exclusion are now fixed (DECK-GAPS-001.md):
+    /// `CawGates`'s Gate lands staged a `Decision::ChooseEffectOption`
+    /// color choice that `core_policy_action_candidates_v5` legitimately
+    /// relabels as `ActionSemanticV1::ChooseEffectColor`, which two
+    /// `rl_session.rs` validators (`flat_validate_origin_decision_v1`,
+    /// `flat_validate_semantic_policy_pair_v1`) rejected outright with no
+    /// case for that relabeling; `Spy`/`SpyV2`'s Saruli Caretaker hit
+    /// `ActionReferenceShape` in the native tensorizer's
+    /// `FlatScorerActionKindV1::ActivateManaAbility` arm, which read only
+    /// the source reference and never the second `Candidate`-role
+    /// reference the wire encoder already wrote for its cost target. Both
+    /// were pre-existing, generation-agnostic gaps unrelated to the
+    /// V4-vs-V3 divergence this soak exists to catch (confirmed identical
+    /// under the V3 encoder), fixed without any contract, digest, or
+    /// golden change, and covered by their own real-game regressions
+    /// (`caw_gates_choose_effect_color_v3_regression`,
+    /// `spy_activate_mana_ability_cost_target_v3_regression`, both
+    /// above). Re-admitting them to this specific soak's rotation (and to
+    /// the breadth-training fixtures/campaign configs that also exclude
+    /// them) is a separate follow-up, not done by that fix. The eight V2
+    /// archetype variants (BurnV2,
     /// DelverV2, AffinityV2, RallyV2, WildfireV2, ElvesV2, TerrorV2,
     /// DimirTerrorV2) this soak previously also cycled through are dropped
     /// here to focus exactly on the seven standard decks the task named;
@@ -2766,6 +2778,86 @@ mod tests {
             "V4 gameplay soak failures:\n{}",
             failures.join("\n")
         );
+    }
+
+    /// CawGates deck-gap regression (DECK-GAPS-001). Real V3 self-play,
+    /// CawGates vs Burn, seed 2026090001, starting player 0: before the fix
+    /// this failed at step 6/turn 2 Main1 with `V3 actor-visible encoding:
+    /// Action(InvalidDecisionRelation)` when a Gate land (Citadel Gate or
+    /// Sea Gate) staged its `Decision::ChooseEffectOption` color choice,
+    /// which `core_policy_action_candidates_v5` legitimately relabels as
+    /// `ActionSemanticV1::ChooseEffectColor` candidates (see
+    /// `caw_gates_future_v1.rs`'s
+    /// `chosen_color_gates_stage_before_entry_and_expose_only_fixed_plus_chosen_mana`,
+    /// which already proved that relabeling correct at the candidate-list
+    /// level). Two validators in `rl_session.rs` had never been updated for
+    /// that relabeling and rejected it outright: `flat_validate_origin_decision_v1`'s
+    /// `Decision::ChooseEffectOption` arm only matched the
+    /// `ActionSemanticV1::ChooseEffectOption` semantic, and
+    /// `flat_validate_semantic_policy_pair_v1` unconditionally rejected
+    /// every `ChooseEffectColor` semantic with `UnsupportedActionSemantic`.
+    /// Both functions are shared (not V3/V4-specific), so this reproduces
+    /// identically under the V4 encoder; the fix is generation-agnostic and
+    /// touches no contract, digest, or golden file (`FlatActionKindV1::
+    /// ChooseEffectColor` and its full tensorizer/wire-core support already
+    /// existed and are already golden-tested, e.g.
+    /// `data/flat_policy_v2/python_action_features_v2.json`'s
+    /// `choose_effect_color` rows).
+    #[test]
+    #[ignore = "root-owned native qualification: real V3 self-play, CawGates deck gap"]
+    fn caw_gates_choose_effect_color_v3_regression() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "caw-gates-choose-effect-color-v3".into(),
+            seed: 2_026_090_001,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            registered: [list("CawGates"), list("Burn")],
+            selected: [list("CawGates"), list("Burn")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        collect_episode(&mut policy, &learner, None, &episode).unwrap();
+    }
+
+    /// Spy/SpyV2 deck-gap regression (DECK-GAPS-001). Real V3 self-play,
+    /// Spy vs SpyV2, seed 2026090001, starting player 0: before the fix
+    /// this failed at step 30 with `V3 visible tensorization:
+    /// ActionReferenceShape` on Saruli Caretaker's mana ability (its
+    /// printed cost pays with mana and taps another untapped controlled
+    /// creature, `engine::Action::ActivateManaAbilityWithCostTarget`,
+    /// `ActionSemanticV1::ActivateManaAbility { cost_target: Some(_), .. }`).
+    /// The wire encoder in `rl_session.rs` already wrote a second
+    /// `Candidate`-role reference for the cost target when present, but the
+    /// `FlatScorerActionKindV1::ActivateManaAbility` arm in
+    /// `native_flat_tensorizer_v2.rs` called `require_only_ref` (exactly
+    /// one reference), rejecting the two-reference shape outright. That
+    /// tensorizer function is shared across V3 and V4 (no per-generation
+    /// copy), so this reproduces identically under the V4 encoder; the fix
+    /// is generation-agnostic and touches no contract, digest, or golden
+    /// file (`FlatActionRefRoleV1::Candidate` already existed and is
+    /// already used, by `ChooseCostTarget`, for an unrelated action kind).
+    #[test]
+    #[ignore = "root-owned native qualification: real V3 self-play, Spy/SpyV2 deck gap"]
+    fn spy_activate_mana_ability_cost_target_v3_regression() {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let learner = test_behavior(&policy, false);
+        let episode = ExpandedEpisodeV1 {
+            id: "spy-activate-mana-ability-cost-target-v3".into(),
+            seed: 2_026_090_001,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            registered: [list("Spy"), list("SpyV2")],
+            selected: [list("Spy"), list("SpyV2")],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
 
     /// Loads the real `fresh-initialization-checks-002` inspection-a

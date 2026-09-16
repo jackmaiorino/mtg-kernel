@@ -1239,13 +1239,30 @@ fn encode_action_with_scratch_skip_hash_v1<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.mana_choice = action.mana_choice;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "mana_choice".to_owned(),
                 optional_one_based_name(action.mana_choice, &MANA_COLORS_V1),
             );
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            // Rich mana abilities with an additional object cost (currently
+            // only Saruli Caretaker: tap another untapped controlled
+            // creature) carry a second, optional `Candidate`-role reference
+            // for that cost target -- see `ActionSemanticV1::
+            // ActivateManaAbility.cost_target` and its wire encoder in
+            // `rl_session.rs` (`push_ref(FlatActionRefRoleV1::Candidate, ...)`
+            // when `cost_target` is `Some`). An ordinary single-ref mana
+            // ability still resolves with exactly one ref, matched above.
+            if resolved.len() > 1 {
+                let cost_target = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
+                require_ref_count(&resolved, 2)?;
+                semantic.insert(
+                    "cost_target".to_owned(),
+                    canonical_card_ref_v1(cost_target)?,
+                );
+                projected_refs.push(projected_singular(cost_target, ROLE_CANDIDATE_V1));
+            }
         }
         FlatScorerActionKindV1::ActivateAbility => {
             expected.ability_index = action.ability_index;
@@ -5991,13 +6008,30 @@ fn encode_action_with_scratch_contract_v3<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.mana_choice = action.mana_choice;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "mana_choice".to_owned(),
                 optional_one_based_name(action.mana_choice, &MANA_COLORS_V1),
             );
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            // Rich mana abilities with an additional object cost (currently
+            // only Saruli Caretaker: tap another untapped controlled
+            // creature) carry a second, optional `Candidate`-role reference
+            // for that cost target -- see `ActionSemanticV1::
+            // ActivateManaAbility.cost_target` and its wire encoder in
+            // `rl_session.rs` (`push_ref(FlatActionRefRoleV1::Candidate, ...)`
+            // when `cost_target` is `Some`). An ordinary single-ref mana
+            // ability still resolves with exactly one ref, matched above.
+            if resolved.len() > 1 {
+                let cost_target = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
+                require_ref_count(&resolved, 2)?;
+                semantic.insert(
+                    "cost_target".to_owned(),
+                    canonical_card_ref_v1(cost_target)?,
+                );
+                projected_refs.push(projected_singular(cost_target, ROLE_CANDIDATE_V1));
+            }
         }
         FlatScorerActionKindV1::ActivateAbility => {
             expected.ability_index = action.ability_index;
