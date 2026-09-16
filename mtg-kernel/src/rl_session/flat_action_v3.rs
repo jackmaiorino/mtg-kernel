@@ -209,7 +209,12 @@ fn effect_source_mut(semantic: &mut ActionSemanticV1) -> Option<&mut CardStableR
     }
 }
 
-fn normalize_candidates(
+/// `pub(super)`, not private: `flat_action_v4.rs` reuses this unmodified to
+/// re-derive the same decision-local-library canonical reordering its own
+/// `current.candidates` must already satisfy (see that module's
+/// `validate_origin_decision_against_reordered_candidates_v4`). Nothing
+/// about this function's behavior changes for the V3 path.
+pub(super) fn normalize_candidates(
     candidates: &mut Vec<CorePolicyActionCandidateV1>,
     extension: &PolicyObservationExtensionsV6,
     session: &FastActorSessionV1,

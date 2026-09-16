@@ -2573,13 +2573,70 @@ mod tests {
         );
     }
 
-    fn all_basic_deck(name: &str) -> ExpandedDeckListV1 {
-        let card = crate::card_def::card_id_by_name(name).unwrap();
-        ExpandedDeckListV1 {
-            label: name.into(),
-            mainboard: vec![card; 60],
-            sideboard: vec![card; 15],
+    /// Multi-seed regression soak for the V4 actor-visible encoder gap fixed
+    /// in `rl_session/flat_action_v4.rs` (see the doc comment on
+    /// `ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly`
+    /// for the original single-seed reproduction, and on
+    /// `validate_origin_decision_against_reordered_candidates_v4` /
+    /// `flat_validate_current_binding_staleness_v4` for the two further
+    /// instances this soak itself found: a `ChooseEffectTargets`
+    /// decision-local-library reorder, and a goaded-attacker
+    /// `AttackerInclusion` menu shrunk to one candidate). 20 real, untrained,
+    /// unmanipulated V4 self-play games across the checked-in Pauper pool
+    /// decks (cycled as consecutive pairs, so every included deck appears as
+    /// both learner and opponent mainboard across the run), each seeded
+    /// distinctly. Real complete games (native engine compute), deliberately
+    /// opt-in like its single-game sibling above.
+    ///
+    /// Deliberately excludes `CawGates` (its Gate lands reach
+    /// `Decision::ChooseEffectColor`, which `flat_validate_semantic_policy_pair_v1`
+    /// rejects with `UnsupportedActionSemantic`/`InvalidDecisionRelation` for
+    /// every generation -- confirmed by running the identical seed/decks
+    /// through the V3 encoder, which fails identically) and `Spy`/`SpyV2`
+    /// (both hit `ActionReferenceShape` in the native tensorizer at a real
+    /// decision, again confirmed identical under V3 on the same seed). Both
+    /// are pre-existing, generation-agnostic gaps unrelated to the V4-vs-V3
+    /// divergence this soak exists to catch; see the fix report for the
+    /// residual-risk note.
+    #[test]
+    #[ignore = "root-owned native qualification: 20 real V4 games across most checked-in Pauper decks"]
+    fn v4_gameplay_soak_over_standard_decks_completes_every_seed() {
+        const DECK_IDS: [&str; 15] = [
+            "Wildfire", "Rally", "Affinity", "Elves", "Burn", "Terror", "Faeries", "BurnV2",
+            "DelverV2", "AffinityV2", "RallyV2", "WildfireV2", "ElvesV2", "TerrorV2",
+            "DimirTerrorV2",
+        ];
+        const GAME_COUNT: usize = 20;
+        let mut failures = Vec::new();
+        for game_index in 0..GAME_COUNT {
+            let deck_a_id = DECK_IDS[game_index % DECK_IDS.len()];
+            let deck_b_id = DECK_IDS[(game_index + 1) % DECK_IDS.len()];
+            let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+            let learner = test_behavior(&policy, false);
+            let episode = ExpandedEpisodeV1 {
+                id: format!("v4-soak-{game_index}"),
+                seed: 2_026_091_601 + game_index as u64,
+                starting_player: (game_index % 2) as u8,
+                learner_seat: 0,
+                opponent: None,
+                registered: [list(deck_a_id), list(deck_b_id)],
+                selected: [list(deck_a_id), list(deck_b_id)],
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+            };
+            if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
+                failures.push(format!(
+                    "game {game_index} seed {} decks ({deck_a_id}, {deck_b_id}): {error}",
+                    episode.seed
+                ));
+            }
         }
+        assert!(
+            failures.is_empty(),
+            "V4 gameplay soak failures:\n{}",
+            failures.join("\n")
+        );
     }
 
     /// The burst-2 fixture: two full ordinary-trainer iterations (Collect,
@@ -2592,14 +2649,17 @@ mod tests {
     /// Collect against that same checkpoint additionally proves the
     /// ordinary Collect path (not just Update's own readback) loads it.
     ///
-    /// `mutate`/`decks` let a caller apply the same compact-board
-    /// weight-manipulation trick `compact_board_policy`/`compact_board_policy_v4`
-    /// (`phase1_bo3_collection_v1/tests.rs`) use for a real game that
-    /// terminates quickly and predictably by mutual decking, and the
-    /// matching all-basic-land deck pair that trick requires. The V3 caller
-    /// below passes a no-op mutation and the original real-deck pair,
-    /// matching exactly what this fixture measured before this function
-    /// existed (see the pinned hash on that test).
+    /// `mutate`/`decks` let a caller apply an arbitrary weight manipulation
+    /// and deck pair. Both the V3 and V4 callers below pass a no-op mutation
+    /// and the real constructed-deck pair (Affinity/Terror): the V4 caller
+    /// used to need the `compact_board_policy_v4`-style Pass-biased weights
+    /// and an all-basic-land opponent to sidestep a real V4 actor-visible
+    /// encoder gap on a library-search "Surface" decision
+    /// (`Action(InvalidDecisionRelation)`, see the fix at
+    /// `rl_session/flat_action_v4.rs`'s
+    /// `validate_origin_decision_against_reordered_candidates_v4` and
+    /// `flat_visible_action_object_extension_aware_v4`); now that the gap is
+    /// fixed, it plays the same real decks as V3, unmanipulated.
     ///
     /// Returns (final checkpoint's feature_contract_digest,
     /// feature_encoding_digest, after_state_sha256).
@@ -2681,49 +2741,58 @@ mod tests {
         (final_contract, final_encoding, final_state_sha256)
     }
 
-    /// Same weight-manipulation trick `compact_board_policy_v4`
-    /// (`phase1_bo3_collection_v1/tests.rs`) uses: strongly prefer the real
-    /// legal Pass action, so a real game against an all-basic-land opponent
-    /// terminates quickly and predictably by mutual decking. An
-    /// untrained/default-weight policy playing two full natural games of
-    /// real constructed decks (Affinity/Terror) discovered a real, narrow
-    /// gap in the V4 actor-visible encoder for at least one "Surface"
-    /// decision scenario (`Action(InvalidDecisionRelation)`) unrelated to
-    /// this follow-up's update/replay/checkpoint work; this fixture avoids
-    /// that unresolved gap deliberately (not by seed-hunting a lucky pass)
-    /// so the update-path dispatch itself can still be proven end to end.
-    /// See the discovery note in the commit message.
-    fn compact_board_parameters_v1(parameters: &mut Vec<NativeNamedParameterV1>) {
-        for parameter in parameters.iter_mut() {
-            parameter.values.fill(0.0);
-        }
-        for (name, input, value) in [
-            ("action_encoder.0.weight", 0, 4.0),
-            ("action_encoder.2.weight", 0, 4.0),
-            (
-                "scorer.0.weight",
-                crate::native_policy_value_net_v1::HIDDEN_DIM_V1,
-                4.0,
-            ),
-            ("scorer.2.weight", 0, 16.0),
-        ] {
-            let parameter = parameters.iter_mut().find(|p| p.name == name).unwrap();
-            assert_eq!(parameter.shape.len(), 2);
-            assert!(input < parameter.shape[1]);
-            parameter.values[input] = value;
-        }
-    }
-
+    /// Regression fixture for the V4 actor-visible encoder gap discovered
+    /// during the V4 fresh-lineage update-path follow-up: an
+    /// untrained/default-weight V4 policy playing two full natural games of
+    /// real constructed decks (Affinity/Terror, unmanipulated weights, same
+    /// seeds/decks as the V3 sibling below) used to fail deterministically
+    /// at seed 2_026_091_601 (this fixture's first iteration), step 42,
+    /// physical_decision_id 42, actor P1, a "Surface" decision (a
+    /// `Decision::ChooseEffectTargets` library search) with
+    /// `Action(InvalidDecisionRelation)`. Root cause: `current.candidates`
+    /// is reordered into decision-local-library canonical order by the
+    /// shared `flat_action_v3::prepare_and_build_v3` step every physical
+    /// decision runs through regardless of scoring generation, but
+    /// `encode_current_flat_action_slice_v4` validated the origin decision
+    /// directly against that already-reordered list (which
+    /// `flat_validate_origin_decision_v1`'s `ChooseEffectTargets` arm
+    /// assumes is still in raw engine-surfaced order), and separately never
+    /// resolved a decision-local-library target's `Zone::Library` reference
+    /// to an action-object row at all. Fixed by
+    /// `validate_origin_decision_against_reordered_candidates_v4` (re-derive
+    /// the raw order, validate that, then require the live, reordered
+    /// `current.candidates` to equal the proven normalization of it -- V3's
+    /// own technique, reused) and
+    /// `flat_visible_action_object_extension_aware_v4` (resolve a
+    /// decision-local-library/historical-PendingEffect reference through the
+    /// extension row first, exactly as V3's `build_with_extensions` closure
+    /// does, before falling back to the ordinary live zone lookup) in
+    /// `rl_session/flat_action_v4.rs`. The V3 path never needed either fix
+    /// (`ordinary_trainer_two_iteration_v3_fixture_state_hash_is_unchanged`,
+    /// same seeds/decks, has always passed) because `build_with_extensions`
+    /// already re-derives and validates the raw order itself.
     #[test]
     fn ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly() {
-        let (contract, encoding, _state) = run_ordinary_two_iteration_fixture_v1(
+        let (contract, encoding, state) = run_ordinary_two_iteration_fixture_v1(
             crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
             "v4",
-            compact_board_parameters_v1,
-            [all_basic_deck("Forest"), all_basic_deck("Island")],
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
         );
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        // Pinned against the value this fixture actually produced running it
+        // post-fix, 2026-09-16 (identical to the V3 sibling's pinned hash
+        // below: a fresh/default-weight V3 and V4 policy select the same
+        // action at every one of this seed pair's decisions here, so the two
+        // real games -- and their post-update state -- are byte-identical;
+        // this pin is this test's own independent measurement, not copied
+        // from the V3 constant).
+        assert_eq!(
+            state,
+            "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            "the V4 ordinary-trainer path over real constructed decks must stay reproducible"
+        );
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,

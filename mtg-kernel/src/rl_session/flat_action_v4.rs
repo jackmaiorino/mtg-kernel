@@ -353,17 +353,171 @@ fn flat_visible_action_object_v4(
     })
 }
 
+/// `current.candidates` is not always in `origin_decision`'s raw,
+/// engine-surfaced shape: `flat_action_v3::prepare_and_build_v3` (run by
+/// `advance_to_decision_or_terminal_profiled` for every physical decision,
+/// unconditionally, since a fast-actor session's `flat_action_contract_mode`
+/// is always `V3` regardless of which generation later scores it) calls
+/// `flat_action_v3::normalize_candidates` in place on `current.candidates`,
+/// which (a) reorders a `Decision::ChooseEffectTargets` menu into
+/// decision-local-library canonical (class-ordinal-grouped) order whenever
+/// the targets are cards being searched out of a library, and (b) *removes*
+/// a `ChooseAttackerInclusion { include: false, .. }` candidate outright
+/// when the attacker is goaded/forced, shrinking an `AttackerInclusion`
+/// decision's fixed `[exclude, include]` pair down to a single `[include]`
+/// entry (see `normalize_candidates`'s `decision_local_library` arm and its
+/// goaded-attacker `retain` call). Calling `flat_validate_origin_decision_v1`
+/// -- or, for the `AttackerInclusion`/`BlockerInclusion` shape check,
+/// `flat_validate_current_binding_header_v1`/
+/// `flat_validate_current_decision_relations_v1`'s
+/// `let [first, second] = current.candidates.as_slice() else { .. }` -- directly
+/// against `current` (as the V3 path never does -- see
+/// `flat_action_v3::build_with_extensions`, which validates a freshly
+/// re-derived *raw* candidate list instead) spuriously rejects both
+/// reordered and filtered cases with `InvalidDecisionRelation`.
+///
+/// This mirrors `build_with_extensions`'s exact technique instead: re-derive
+/// the raw candidate list from `origin_decision` with
+/// `core_policy_action_candidates_v5` (this is provably what
+/// `current.candidates` held immediately after the decision was surfaced,
+/// before any in-place normalization -- `advance_to_decision_or_terminal_profiled`
+/// builds it with that exact same call), validate the raw list against both
+/// `flat_validate_current_binding_header_v1` and `flat_validate_origin_decision_v1`,
+/// then apply the identical `normalize_candidates` transform (reused
+/// unmodified from the V3 module, not reimplemented) and require the result
+/// to equal `current.candidates` byte-for-byte, exactly as V3 already proves
+/// for its own cache. Only the origin/shape proof is redone here: the actual
+/// `(actions, refs, objects)` this function returns are still built from
+/// `current.candidates` (the real, live decision) below, via
+/// `flat_visible_action_object_v4`/`frozen_pending_trigger_semantic_v4`, not
+/// from this function's `raw` reconstruction.
+fn validate_origin_decision_against_reordered_candidates_v4(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    extension: &crate::policy_observation_v6::PolicyObservationExtensionsV6,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    let raw = crate::rl::core_policy_action_candidates_v5(&current.origin_decision, &session.state)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    let mut original = current.clone();
+    original.flat_action_cache = None;
+    original.flat_action_cache_error = None;
+    original.flat_action_cache_v2 = None;
+    original.flat_action_cache_error_v2 = None;
+    original.candidates = raw;
+    flat_validate_current_binding_header_v1(session, &original)?;
+    flat_validate_origin_decision_v1(&original, &session.state)?;
+    super::flat_action_v3::normalize_candidates(
+        &mut original.candidates,
+        extension,
+        session,
+        &original.origin_decision,
+    )?;
+    if original.candidates != current.candidates {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    Ok(())
+}
+
+/// V4 sibling of `flat_action_v3::extension_object` (byte-identical field
+/// construction, including the `DecisionLocalLibrary` group's forced
+/// `zone_change_count: 0`): builds an action-object row for a reference the
+/// caller has already matched against an extension row, rather than an
+/// ordinary live zone lookup.
+fn extension_object_v4(
+    reference: &CardStableRefV1,
+    actor: PlayerId,
+    group: FlatActionObjectGroupV1,
+    ordinal: usize,
+) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
+    Ok(FlatActionObjectV2 {
+        card_token: flat_card_token_v2(reference.card_db_id),
+        group,
+        actor_visible_ordinal: u16::try_from(ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: flat_relative_seat_v1(reference.owner, actor.into())?,
+        controller_relative: flat_relative_seat_v1(reference.controller, actor.into())?,
+        zone: flat_zone_v1(reference.zone),
+        zone_change_count: if group == FlatActionObjectGroupV1::DecisionLocalLibrary {
+            0
+        } else {
+            reference.zone_change_count
+        },
+    })
+}
+
+/// V4 sibling of `flat_action_v3::build_with_extensions`'s per-reference
+/// resolution closure: a `decision_local_library` search reveals cards sitting
+/// in `Zone::Library`, which `flat_visible_action_object_v4`'s ordinary
+/// zone-based lookup can never resolve (a library card has no
+/// `library_knowledge` entry precisely because it is privately, decision-
+/// locally revealed, not publicly known) -- and a `PendingEffect` historical
+/// source must resolve to the `HistoricalPublicSource` group/ordinal the
+/// registry (`register_extensions_v4`) assigns it, not whatever ordinary
+/// group its live zone happens to imply. Both extension rows are checked
+/// first, exactly as the V3 closure does (`historical` restricted to the
+/// `Source` role, `library` unconditional on role), falling through to the
+/// ordinary [`flat_visible_action_object_v4`] resolution -- which already
+/// covers the `PendingTrigger` case via [`pending_trigger_frozen_source_components_v4`]
+/// -- for every other reference.
+fn flat_visible_action_object_extension_aware_v4(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    position: u32,
+    role: FlatActionRefRoleV1,
+    reference: &CardStableRefV1,
+    extension: &crate::policy_observation_v6::PolicyObservationExtensionsV6,
+) -> Result<FlatActionObjectV2, FlatActionDecisionSliceErrorV1> {
+    if role == FlatActionRefRoleV1::Source {
+        if let Some((ordinal, _)) = extension
+            .historical_public_sources
+            .iter()
+            .enumerate()
+            .find(|(_, row)| {
+                row.context == crate::policy_observation_v6::HistoricalSourceContextV6::PendingEffect
+                    && row.source == *reference
+            })
+        {
+            return extension_object_v4(
+                reference,
+                actor,
+                FlatActionObjectGroupV1::HistoricalPublicSource,
+                ordinal,
+            );
+        }
+    }
+    if let Some(ordinal) = extension
+        .decision_local_library
+        .as_ref()
+        .and_then(|search| search.cards.iter().position(|card| card.stable == *reference))
+    {
+        return extension_object_v4(reference, actor, FlatActionObjectGroupV1::DecisionLocalLibrary, ordinal);
+    }
+    flat_visible_action_object_v4(state, actor, position, reference)
+}
+
 impl FastActorSessionV1 {
     /// V4 sibling of `encode_current_flat_action_slice_v3`. Cache-free: it
     /// re-derives `(actions, refs, objects)` fresh from `current.candidates`
     /// every call, using [`flat_visible_action_object_v4`] in place of
     /// `flat_visible_action_object_v2`, instead of consulting or installing
     /// `current.flat_action_cache_v2` (a V3-mode-gated field this function
-    /// never touches). Every other validation
-    /// (`flat_validate_expected_decision_v1`,
-    /// `flat_validate_current_binding_header_v1`,
-    /// `flat_validate_origin_decision_v1`,
-    /// `flat_validate_semantic_policy_pair_v1`) is reused unmodified.
+    /// never touches). `flat_validate_expected_decision_v1` is reused
+    /// unmodified, directly against `current` (it only compares counts and
+    /// metadata, never candidate order or arity, so `current.candidates`
+    /// already being reordered/filtered by `flat_action_v3::prepare_and_build_v3`
+    /// does not affect it). `flat_validate_current_binding_header_v1` and
+    /// `flat_validate_origin_decision_v1` are reused too, but never called
+    /// directly against `current`: both assume `candidates` is still in
+    /// `origin_decision`'s raw, unfiltered, engine-surfaced shape (a fixed
+    /// `[exclude, include]` pair for `AttackerInclusion`/`BlockerInclusion`,
+    /// raw order for a library-search `ChooseEffectTargets`), which
+    /// `prepare_and_build_v3`'s `normalize_candidates` may no longer hold --
+    /// it reorders decision-local-library targets, and its goaded-attacker
+    /// retain-filter can shrink a forced attacker's menu from 2 candidates to
+    /// 1. See [`validate_origin_decision_against_reordered_candidates_v4`],
+    /// which re-derives the raw shape, validates both functions against
+    /// that, then proves the live (possibly reordered/filtered)
+    /// `current.candidates` really is `normalize_candidates`'s output.
     pub(crate) fn encode_current_flat_action_slice_v4(
         &self,
         expected: FastActorDecisionV1,
@@ -373,9 +527,10 @@ impl FastActorSessionV1 {
             .current
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
-        flat_validate_current_binding_header_v1(self, current)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
-        flat_validate_origin_decision_v1(current, &self.state)?;
+        let extension = crate::rl::policy_observation_extensions_v6(&self.state, current.actor)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+        validate_origin_decision_against_reordered_candidates_v4(self, current, &extension)?;
         let actor: PlayerSeatV1 = current.actor.into();
         let mut actions_out: Vec<FlatActionCoreV1> = Vec::with_capacity(current.candidates.len());
         let mut unindexed_refs: Vec<FlatUnindexedActionRefV2> = Vec::new();
@@ -401,8 +556,14 @@ impl FastActorSessionV1 {
                 ref_start,
                 |role, order_index, associated_order, reference| {
                     let position = u32::from(order_index);
-                    let object =
-                        flat_visible_action_object_v4(&self.state, current.actor, position, reference)?;
+                    let object = flat_visible_action_object_extension_aware_v4(
+                        &self.state,
+                        current.actor,
+                        position,
+                        role,
+                        reference,
+                        &extension,
+                    )?;
                     if let Some(previous) = resolved_objects
                         .iter()
                         .find(|candidate| candidate.arena_id == reference.arena_id && candidate.position == position)
@@ -510,12 +671,20 @@ impl FastActorSessionV1 {
     /// from `build_scoring_owned_v4` would therefore fail before ever
     /// reaching this module's own resolver. This function instead performs
     /// only the two validations that do not depend on that cache
-    /// (`flat_validate_current_binding_header_v1`,
+    /// (staleness/non-emptiness via
+    /// [`flat_validate_current_binding_staleness_v4`], not the full shared
+    /// `flat_validate_current_binding_header_v1` -- see that helper's doc
+    /// comment for why calling the shared one directly against `current` is
+    /// unsafe here too, and
     /// `flat_validate_expected_decision_v1`) and then builds the
     /// observation the same way `flat_policy_observation_v3` does
     /// (`rl::observe_policy_v6_unhashed_for_flat_policy`, unmodified) --
     /// the observation itself does not depend on the V3 action cache at
     /// all, only `flat_policy_observation_v3`'s own validation gate did.
+    /// The full origin-decision/candidate-shape proof is not redone here:
+    /// this function's only caller, `build_scoring_owned_v4`, always calls
+    /// `encode_current_flat_action_slice_v4` first, which already proved it
+    /// (via `validate_origin_decision_against_reordered_candidates_v4`).
     pub(crate) fn flat_policy_observation_v4(
         &self,
         expected: FastActorDecisionV1,
@@ -524,7 +693,7 @@ impl FastActorSessionV1 {
             .current
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
-        flat_validate_current_binding_header_v1(self, current)?;
+        flat_validate_current_binding_staleness_v4(self, current)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
         crate::rl::observe_policy_v6_unhashed_for_flat_policy(
             &self.state,
@@ -537,6 +706,35 @@ impl FastActorSessionV1 {
         )
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)
     }
+}
+
+/// The staleness/non-emptiness half of the shared
+/// `flat_validate_current_binding_header_v1` (`rl_session.rs`), without its
+/// `flat_validate_current_decision_relations_v1` call: that call's
+/// `AttackerInclusion`/`BlockerInclusion` arm requires `current.candidates`
+/// to still be the origin's raw, unfiltered `[exclude, include]` pair, which
+/// does not hold once `flat_action_v3::prepare_and_build_v3`'s
+/// goaded-attacker retain-filter has shrunk it to a single forced `include`
+/// candidate (the same class of problem
+/// `validate_origin_decision_against_reordered_candidates_v4` fixes for the
+/// action slice). [`flat_policy_observation_v4`] never needs that relations
+/// proof redone (its only caller already ran it, successfully, through the
+/// action slice first), only proof that `current` is still the session's
+/// live, bound, non-empty decision.
+fn flat_validate_current_binding_staleness_v4(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if current.environment_revision != session.environment_revision
+        || current.bound_policy_step_count != session.policy_step_count
+        || current.bound_physical_decision_count != session.physical_decision_count
+    {
+        return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
+    }
+    if current.candidates.is_empty() {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    Ok(())
 }
 
 /// Builds `count` distinct same-controller (`PlayerId::P0`), untargeted
