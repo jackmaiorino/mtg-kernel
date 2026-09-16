@@ -1006,3 +1006,159 @@ fn fresh_identity_with_v3_runtime_rejects_learned_opening() {
         Err(error) => assert!(error.contains("fresh-lineage (V4) runtime contract")),
     }
 }
+
+// Follow-up coverage from the refutation pass on item 19: the earlier
+// `imported_gameplay_identity_rejects_learned_opening_package` used
+// `package()`'s placeholder runtime digests, so the origin gate fired before
+// `verify_current_runtime_v1` ever ran. These tests force a genuinely
+// verifying V4 runtime alongside an Imported origin, so the origin gate is
+// proven to hold on its own merits, not merely because the runtime also
+// failed to verify. They also add direct `AgentPlayDrawPolicyV1::LearnedV1`
+// coverage, mirroring the existing `LearnedLondonV1` opening tests.
+
+/// Starts from `learned_opening_fresh_package` (fresh origin, runtime-aligned
+/// digests, a real non-checkpoint `play_import` file) and forces the
+/// gameplay identity back to an Imported (frozen) origin, keeping every
+/// digest field aligned with `runtime` so `validate_metadata_v1` still
+/// passes and the rejection can only come from the origin's own kind.
+fn imported_learned_opening_package(runtime: AgentRuntimeIdentityV1) -> CompleteAgentPackageV1 {
+    let mut value = learned_opening_fresh_package(runtime);
+    value.gameplay.identity.schema = "mtg-kernel-expanded-deck-inference/v1".into();
+    value.gameplay.identity.source_import = FrozenPlayPolicyIdentityV1 {
+        schema: "fixture-ancestry".into(),
+        source_export_schema: "fixture".into(),
+        source_metadata_sha256: digest('1'),
+        weights_sha256: digest('9'),
+        model_parameter_sha256: digest('9'),
+        source_run_sha256: digest('1'),
+        source_generation: 1,
+        source_git_commit: "a".repeat(40),
+        source_card_db_hash: value.runtime.card_db_hash.clone(),
+        destination_card_db_hash: value.runtime.card_db_hash.clone(),
+        source_registry_sha256: digest('1'),
+        destination_registry_sha256: value.runtime.card_registry_sha256.clone(),
+        source_card_count: 184,
+        destination_card_count: 184,
+        source_training_deck_ids: vec!["fixture".into()],
+        namespace_rule: "fixture".into(),
+        appended_rows: "fixture".into(),
+        feature_contract_digest: value.runtime.feature_contract_digest.clone(),
+        feature_encoding_digest: value.runtime.feature_encoding_digest.clone(),
+        sampler_identity: WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into(),
+        reader_revalidated_store_chain: false,
+        observation_successor: None,
+    }
+    .into();
+    value
+}
+
+#[test]
+fn imported_gameplay_identity_rejects_learned_opening_even_on_a_genuine_v4_runtime() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    let value = imported_learned_opening_package(v4_runtime_fixture());
+    value.validate_metadata_v1().unwrap();
+    assert!(!value.gameplay.identity.source_import.is_fresh_v1());
+    // Proves the origin gate holds on its own: the runtime genuinely
+    // verifies as V4, not just as some unverifiable placeholder.
+    assert_eq!(
+        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        RuntimeContractGenerationV1::V4
+    );
+    match value.load_supported_components_v1() {
+        Ok(_) => panic!(
+            "an imported (frozen) gameplay identity must not admit a learned opening, \
+             even on a genuine V4 runtime"
+        ),
+        Err(error) => assert!(error.contains("imported (frozen) gameplay identity")),
+    }
+}
+
+/// `learned_opening_fresh_package` with the opening reverted to the ordinary
+/// `Existing{KeepSevenV2}` path and `play_draw` switched to `LearnedV1`,
+/// exercising the play-draw half of the gate directly.
+fn learned_play_draw_fresh_package(runtime: AgentRuntimeIdentityV1) -> CompleteAgentPackageV1 {
+    let mut value = learned_opening_fresh_package(runtime);
+    value.opening = AgentOpeningPolicyV1::Existing {
+        protocol: Bo3OpeningProtocolV1::KeepSevenV2,
+    };
+    value.play_draw = AgentPlayDrawPolicyV1::LearnedV1 {
+        policy: AuxiliaryPolicyBindingV1 {
+            checkpoint: pin("fixture-learned-play-draw"),
+            play_weights_sha256: value.gameplay.identity.model.weights_sha256.clone(),
+            embedding_table_sha256: value.gameplay.identity.model.embedding_table_sha256.clone(),
+            feature_contract_digest: value.runtime.feature_contract_digest.clone(),
+            feature_encoding_digest: value.runtime.feature_encoding_digest.clone(),
+            card_db_hash: value.runtime.card_db_hash.clone(),
+        },
+    };
+    value
+}
+
+#[test]
+fn fresh_identity_with_v4_runtime_admits_learned_play_draw_past_the_gate() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    let value = learned_play_draw_fresh_package(v4_runtime_fixture());
+    value.validate_metadata_v1().unwrap();
+    assert!(value.gameplay.identity.source_import.is_fresh_v1());
+    assert_eq!(
+        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        RuntimeContractGenerationV1::V4
+    );
+    match value.load_supported_components_v1() {
+        Ok(_) => panic!(
+            "the play_import fixture is deliberately not a loadable checkpoint; \
+             full success is not expected here"
+        ),
+        Err(error) => {
+            assert!(!error.contains("learned opening/play-draw"));
+            assert!(!error.contains("not implemented by this interface"));
+        }
+    }
+}
+
+/// `imported_learned_opening_package` with the opening reverted to
+/// `Existing{KeepSevenV2}` and `play_draw` switched to `LearnedV1`, proving
+/// the same structural gate rejects an imported origin for play-draw too,
+/// even on a genuine V4 runtime.
+fn imported_learned_play_draw_package(runtime: AgentRuntimeIdentityV1) -> CompleteAgentPackageV1 {
+    let mut value = imported_learned_opening_package(runtime);
+    value.opening = AgentOpeningPolicyV1::Existing {
+        protocol: Bo3OpeningProtocolV1::KeepSevenV2,
+    };
+    value.play_draw = AgentPlayDrawPolicyV1::LearnedV1 {
+        policy: AuxiliaryPolicyBindingV1 {
+            checkpoint: pin("fixture-learned-play-draw"),
+            play_weights_sha256: value.gameplay.identity.model.weights_sha256.clone(),
+            embedding_table_sha256: value.gameplay.identity.model.embedding_table_sha256.clone(),
+            feature_contract_digest: value.runtime.feature_contract_digest.clone(),
+            feature_encoding_digest: value.runtime.feature_encoding_digest.clone(),
+            card_db_hash: value.runtime.card_db_hash.clone(),
+        },
+    };
+    value
+}
+
+#[test]
+fn imported_gameplay_identity_rejects_learned_play_draw_even_on_a_genuine_v4_runtime() {
+    if env!("MTG_KERNEL_BUILD_GIT_CLEAN") != "true" {
+        return;
+    }
+    let value = imported_learned_play_draw_package(v4_runtime_fixture());
+    value.validate_metadata_v1().unwrap();
+    assert!(!value.gameplay.identity.source_import.is_fresh_v1());
+    assert_eq!(
+        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        RuntimeContractGenerationV1::V4
+    );
+    match value.load_supported_components_v1() {
+        Ok(_) => panic!(
+            "an imported (frozen) gameplay identity must not admit a learned play-draw \
+             policy, even on a genuine V4 runtime"
+        ),
+        Err(error) => assert!(error.contains("imported (frozen) gameplay identity")),
+    }
+}
