@@ -61,7 +61,8 @@ use std::path::{Path, PathBuf};
 mod origin;
 pub use origin::{
     FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,
-    FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
+    FRESH_PLAY_INITIALIZATION_SCHEMA_V1, REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1,
+    TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
 };
 
 const DESTINATION_REGISTRY: &[u8] = include_bytes!("../../data/cards_v1.json");
@@ -491,6 +492,17 @@ impl FrozenPlayPolicyV1 {
         }
     }
 
+    /// True only for a policy `from_registry_transfer_v1` built: V3-generation
+    /// (scored through the V3 encoder) and specifically the registry-
+    /// transferred origin, never an ordinary V3 import. The expanded
+    /// trainer's collection guard is the sole reader that may pair this with
+    /// a V4 learner (`expanded_deck_training_v1::collect_episode`); every
+    /// other cross-generation pairing stays rejected exactly as before.
+    pub(crate) fn is_v3_registry_transfer_opponent_v1(&self) -> bool {
+        self.feature_identity_v1().generation == FreshLineageGenerationV1::V3
+            && self.identity.is_registry_transferred_v1()
+    }
+
     /// Explicit construction from the independently verified registry-transfer
     /// envelope. The old import loader is unchanged and cannot select this path.
     pub(crate) fn from_registry_transfer_v1(
@@ -517,15 +529,24 @@ impl FrozenPlayPolicyV1 {
         let mut identity = transfer.source_import_v1().clone();
         // Source export fields remain ancestry. Destination fields describe
         // the actual installed registry; actual_model_identity_v1 owns weights.
-        identity.schema = "mtg-kernel-registry-transferred-play/v1".into();
+        identity.schema = REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1.into();
         identity.destination_registry_sha256 =
             transfer.request_v1().destination_registry_sha256.clone();
         identity.destination_card_db_hash = transfer.request_v1().destination_card_db_hash.clone();
         identity.destination_card_count = transfer.receipt_v1().cards.len();
         identity.namespace_rule = transfer.receipt_v1().mapping_rule.clone();
+        // Provenance a receipt reader needs without re-deriving anything: the
+        // envelope this candidate came from, the exact source checkpoint it
+        // was transferred from, and the build that computed
+        // `destination_build_git_head` (the loader that verifies this same
+        // envelope already requires that build head to equal the running
+        // build's own, so recording it here makes the binding legible on any
+        // receipt that carries this identity, not just re-derivable from it).
         identity.appended_rows = format!(
-            "{}; envelope_sha256={envelope_sha256}",
-            transfer.receipt_v1().initializer
+            "{}; envelope_sha256={envelope_sha256}; source_checkpoint_sha256={}; destination_build_git_head={}",
+            transfer.receipt_v1().initializer,
+            transfer.request_v1().source_checkpoint_sha256,
+            transfer.receipt_v1().destination_build_git_head,
         );
         Ok(Self {
             model,

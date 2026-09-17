@@ -8,7 +8,7 @@ use crate::phase1_registry_transfer_v1::{
 pub(super) const SOURCE_SCHEMA: &str = "mtg-kernel-expanded-registry-transfer-source/v1";
 pub(super) const CHECKPOINT_SCHEMA_TRANSFER: &str =
     "mtg-kernel-expanded-deck-checkpoint/v2-registry-transfer";
-const SCHEDULE_SCHEMA: &str = "mtg-kernel-expanded-registry-resolved-schedule/v1";
+pub(super) const SCHEDULE_SCHEMA: &str = "mtg-kernel-expanded-registry-resolved-schedule/v1";
 const CONTINUATION_SCHEMA: &str = "mtg-kernel-expanded-registry-continuation/v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

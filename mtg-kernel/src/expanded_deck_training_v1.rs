@@ -77,6 +77,12 @@ pub use fresh_initialization_source::ExpandedFreshInitializationSourceV1;
 pub use registry_transfer_source::{
     ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
 };
+/// Crate-wide test-only fixture builder, re-exported so any module's own
+/// hermetic tests (not just this module's descendants) can build a real,
+/// on-disk fresh V3 or V4 source without a trained checkpoint. See
+/// `fresh_initialization_source::write_synthetic_fresh_source_v1`.
+#[cfg(test)]
+pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_v1;
 
 /// Which registry-transfer family produced a `TransferTrainingContextV1`.
 /// Both families reuse the exact same context type (imported and fresh
@@ -1001,10 +1007,21 @@ fn collect_episode(
         // Strict whole-generation equality (never a flag): a trajectory
         // stamps one feature-contract identity from the learner alone
         // (below), so a learner/opponent generation mismatch would tensorize
-        // some rows under a generation the trajectory never declares.
+        // some rows under a generation the trajectory never declares. The one
+        // deliberate exception is a V4 learner paired with a V3
+        // registry-transfer opponent (`is_v3_registry_transfer_opponent_v1`,
+        // true only for `FrozenPlayPolicyV1::from_registry_transfer_v1`'s
+        // exact origin): that opponent still scores and selects entirely
+        // through its own V3 encoder per decision (`acting_policy_v1`
+        // dispatch below), so the trajectory's learner-derived V4 identity
+        // never mislabels an opponent row. Every other mismatch -- including
+        // an ordinary, non-transferred V3 opponent -- stays rejected exactly
+        // as before.
         ensure(
             policy.feature_identity_v1().generation
-                == other.policy.feature_identity_v1().generation,
+                == other.policy.feature_identity_v1().generation
+                || (policy.feature_identity_v1().generation == FreshLineageGenerationV1::V4
+                    && other.policy.is_v3_registry_transfer_opponent_v1()),
             "learner and opponent use different fresh-lineage feature generations",
         )?;
     }
@@ -1576,20 +1593,6 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
 
 type LearnerTensorGroupV1<'a> = (i8, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV2)>);
 
-/// The trajectory's own recorded whole-pair generation, never a caller flag.
-/// `validate_trajectory` (called by every caller of this) already proved the
-/// pair is a legitimate V3-or-V4 whole pair via `identity_valid`, so
-/// anything that is not the V4 pair here is therefore the V3 pair.
-fn trajectory_generation_v1(t: &ExpandedTrajectoryV1) -> FreshLineageGenerationV1 {
-    if t.feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
-        && t.feature_encoding_digest == FEATURE_ENCODING_DIGEST_V4
-    {
-        FreshLineageGenerationV1::V4
-    } else {
-        FreshLineageGenerationV1::V3
-    }
-}
-
 /// A `NativeEncodedDecisionViewV1` over the shared common tensor, stamped
 /// with exactly the compiled V3 or V4 schema for `generation`. Avoids
 /// needing a `NativeFlatDecisionTensorV3`/`V4` wrapper (and the temporary
@@ -1624,8 +1627,15 @@ pub(crate) fn encoded_decision_view_generic_v1(
 
 /// Validate every stored actor-visible forward before returning learner-only
 /// physical decisions. Opponent tensors never enter the optimizer input.
-/// Dispatches the replay/verification score call on the trajectory's own
-/// recorded generation (`trajectory_generation_v1`), never a caller flag.
+/// Dispatches the replay/verification score call on the row's own acting
+/// policy's generation (`acting.feature_identity_v1().generation`), never
+/// the trajectory's single learner-derived digest pair: that pair is always
+/// the learner's own generation (see `collect_episode`), so for an ordinary
+/// homogeneous trajectory this is exactly equivalent to the old dispatch,
+/// but it also replays correctly a V3 registry-transfer opponent's own rows
+/// under a V4-learner trajectory (`collect_episode`'s narrow cross-generation
+/// admission), where the trajectory-wide digest is V4 but that opponent's
+/// rows were scored through its own V3 encoder.
 fn replay_learner_groups_v1<'a>(
     t: &'a ExpandedTrajectoryV1,
     learner: &FrozenPlayPolicyV1,
@@ -1636,7 +1646,6 @@ fn replay_learner_groups_v1<'a>(
         t.episode.opponent.is_some() == opponent.is_some(),
         "opponent replay source missing",
     )?;
-    let generation = trajectory_generation_v1(t);
     let mut groups = Vec::new();
     let mut index = 0;
     while index < t.decisions.len() {
@@ -1650,7 +1659,7 @@ fn replay_learner_groups_v1<'a>(
             } else {
                 opponent.unwrap_or(learner)
             };
-            let output = match generation {
+            let output = match acting.feature_identity_v1().generation {
                 FreshLineageGenerationV1::V3 => {
                     acting.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
                         common: common.clone(),
@@ -2876,6 +2885,270 @@ pub(crate) mod tests {
             registry_transfer: None,
         };
         (policy, model, saved)
+    }
+
+    /// Hermetic, self-contained V3 "registry transfer" opponent, reusable by
+    /// any test in the crate that needs a `Fixed` V4-learner-vs-V3-transfer-
+    /// opponent pairing (the trainer's narrow cross-generation admission;
+    /// see `collect_episode`) without this build's `registry_transfer_v1`
+    /// CLI or the real production envelope. A same-registry transfer (source
+    /// and destination registry are byte-identical, so zero cards are
+    /// appended) exercises the exact loader/identity path a production
+    /// transfer uses end to end, without needing a real multi-megabyte
+    /// checkpoint. `root` is the caller's own directory, which the caller
+    /// creates and must clean up; it must not already contain any of the
+    /// file names this writes.
+    pub(crate) fn v3_registry_transfer_opponent_source_for_test_v1(
+        root: &Path,
+    ) -> ExpandedModelSourceV1 {
+        const REGISTRY: &[u8] = include_bytes!("../../data/cards_v1.json");
+        let (_, _, mut saved) = checkpoint_fixture_v1();
+        let PlayPolicyOriginV1::Imported(origin) = &mut saved.source_import else {
+            panic!("registry transfer fixture must retain imported origin")
+        };
+        origin.destination_registry_sha256 = sha(REGISTRY);
+        origin.observation_successor = Some(crate::sideboard_play_policy_v1::FrozenPlayObservationReceiptV3 {
+            schema: "mtg-kernel-frozen-play-observation-transfer/v3".into(),
+            source_feature_contract_digest: "1".repeat(64),
+            source_feature_encoding_digest: "2".repeat(64),
+            destination: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            },
+            features_source_sha256: FEATURES_SOURCE_SHA256_V3.into(),
+            feature_descriptor_sha256: FEATURE_DESCRIPTOR_SHA256_V3.into(),
+            semantics: "synthetic unit-test ancestry; no evidence claim".into(),
+        });
+        let checkpoint_bytes = serde_json::to_vec(&saved).unwrap();
+        let request = crate::phase1_registry_transfer_v1::RegistryTransferRequestV1 {
+            source_checkpoint_sha256: sha(&checkpoint_bytes),
+            source_registry_sha256: sha(REGISTRY),
+            source_state_sha256: saved.state_sha256.clone(),
+            source_adam_step: saved.adam_step,
+            source_card_db_hash: saved.card_db_hash.clone(),
+            destination_registry_sha256: sha(REGISTRY),
+            destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+            features: crate::phase1_registry_transfer_v1::RegistryTransferFeaturesV1::current_v1(),
+            initialization_seed: 917_711,
+        };
+        let transfer =
+            crate::phase1_registry_transfer_v1::transfer_expanded_checkpoint_to_current_registry_v1(
+                &checkpoint_bytes,
+                REGISTRY,
+                &request,
+            )
+            .unwrap();
+        let schedule = ExpandedRegistryTransferScheduleV1 {
+            schema: super::registry_transfer_source::SCHEDULE_SCHEMA.into(),
+            initial_adam_step: saved.adam_step,
+            learning_rate_bits: saved.learning_rate_bits,
+            value_coefficient_bits: saved.value_coefficient_bits,
+            batches: vec![vec![test_episode(0, None)]],
+        };
+        fn pin_bytes(root: &Path, name: &str, bytes: &[u8]) -> PinnedFileV1 {
+            let path = root.join(name);
+            fs::write(&path, bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: sha(bytes),
+            }
+        }
+        fn pin_json(root: &Path, name: &str, value: &impl Serialize) -> PinnedFileV1 {
+            pin_bytes(root, name, &serde_json::to_vec(value).unwrap())
+        }
+        fs::create_dir_all(root).unwrap();
+        let descriptor = ExpandedRegistryTransferSourceV1 {
+            schema: super::registry_transfer_source::SOURCE_SCHEMA.into(),
+            source_checkpoint: pin_bytes(root, "v3-source-checkpoint.json", &checkpoint_bytes),
+            source_registry: pin_bytes(root, "v3-source-registry.json", REGISTRY),
+            transfer_envelope: pin_bytes(
+                root,
+                "v3-transfer-envelope.json",
+                &transfer.artifact_bytes_v1().unwrap(),
+            ),
+            continuation_schedule: pin_json(root, "v3-continuation-schedule.json", &schedule),
+        };
+        ExpandedModelSourceV1 {
+            play_import: pin_json(root, "v3-opponent-play-import.json", &descriptor),
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+            },
+            checkpoint: None,
+        }
+    }
+
+    fn fresh_source_for_test_v1(
+        root: &Path,
+        name: &str,
+        feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
+    ) -> ExpandedModelSourceV1 {
+        let descriptor = write_synthetic_fresh_source_v1(&root.join(name), feature_identity);
+        let descriptor_bytes = serde_json::to_vec(&descriptor).unwrap();
+        let descriptor_path = root.join(format!("{name}-descriptor.json"));
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        }
+    }
+
+    /// Hermetic end-to-end proof of the trainer's cross-generation opponent
+    /// admission: a fresh V4 learner collects a real natural game against a
+    /// V3 registry-transfer opponent, twice (determinism), and both the
+    /// serial and prepared/parallel update-replay paths
+    /// (`replay_learner_groups_v1` and
+    /// `ordered_update_preparation::prepare_with_loader_v1`) accept the
+    /// opponent's own V3-scored rows and reach the same resulting state.
+    /// Also proves the admission is narrow: an ordinary, non-transferred V3
+    /// opponent is still rejected against the same V4 learner.
+    #[test]
+    fn v3_registry_transfer_opponent_collects_and_updates_deterministically_under_a_v4_learner() {
+        let root =
+            std::env::temp_dir().join(format!("v3-transfer-opponent-{}", std::process::id()));
+        let opponent_source =
+            v3_registry_transfer_opponent_source_for_test_v1(&root.join("opponent"));
+        let learner_source = fresh_source_for_test_v1(
+            &root,
+            "learner",
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+        );
+
+        let (opponent_policy, _) = load_expanded_inference_v1(&opponent_source).unwrap();
+        assert!(opponent_policy.is_v3_registry_transfer_opponent_v1());
+
+        let episode = ExpandedEpisodeV1 {
+            id: "v3-opponent-collect".into(),
+            seed: 4_004_004_004,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: Some(opponent_source),
+            registered: [list("Affinity"), list("Terror")],
+            selected: [list("Affinity"), list("Terror")],
+            postboard: false,
+            // Matches `run_ordinary_two_iteration_fixture_v1`'s proven-safe
+            // bounds for a real Affinity/Terror game with an untrained
+            // policy, not a tighter guess.
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+
+        let mut trajectory_pins = Vec::new();
+        let mut trajectories = Vec::new();
+        for attempt in 0..2 {
+            let result = execute_v1(ExpandedTrainingCommandV1::Collect {
+                source: learner_source.clone(),
+                episodes: vec![episode.clone()],
+                max_non_natural_episode_fraction: 0.0,
+                output_directory: root.join(format!("collect-{attempt}")),
+            })
+            .unwrap();
+            let pins: Vec<PinnedFileV1> =
+                serde_json::from_value(result["trajectories"].clone()).unwrap();
+            assert_eq!(
+                pins.len(),
+                1,
+                "one episode must collect exactly one trajectory"
+            );
+            let saved: ExpandedTrajectoryV1 = read_pinned(&pins[0]).unwrap();
+            assert_eq!(saved.feature_contract_digest, FEATURE_CONTRACT_DIGEST_V4);
+            assert_eq!(saved.feature_encoding_digest, FEATURE_ENCODING_DIGEST_V4);
+            let behaviors = saved.seat_behaviors.as_ref().unwrap();
+            let opponent_identity = behaviors[1]
+                .identity
+                .source_import
+                .as_imported_v1()
+                .unwrap();
+            assert_eq!(
+                opponent_identity.schema,
+                crate::sideboard_play_policy_v1::REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1
+            );
+            assert!(
+                opponent_identity
+                    .appended_rows
+                    .contains("destination_build_git_head="),
+                "{}",
+                opponent_identity.appended_rows
+            );
+            trajectory_pins.push(pins.into_iter().next().unwrap());
+            trajectories.push(saved);
+        }
+        assert_eq!(
+            serde_json::to_value(&trajectories[0]).unwrap(),
+            serde_json::to_value(&trajectories[1]).unwrap(),
+            "collection against a V3 transfer opponent must be deterministic run to run"
+        );
+
+        let serial_result = execute_v1(ExpandedTrainingCommandV1::Update {
+            source: learner_source.clone(),
+            trajectories: vec![trajectory_pins[0].clone()],
+            learning_rate: 0.0003,
+            value_coefficient: 0.5,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            output_directory: root.join("update-serial"),
+        })
+        .unwrap();
+        let prepared_result = execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+            source: learner_source.clone(),
+            trajectories: vec![trajectory_pins[0].clone()],
+            learning_rate: 0.0003,
+            value_coefficient: 0.5,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            preparation_workers: 4,
+            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            output_directory: root.join("update-prepared"),
+        })
+        .unwrap();
+        assert_eq!(
+            serial_result["after_state_sha256"], prepared_result["after_state_sha256"],
+            "serial and prepared replay of a V3-opponent trajectory must reach the same state"
+        );
+        let serial_checkpoint: PinnedFileV1 =
+            serde_json::from_value(serial_result["checkpoint"].clone()).unwrap();
+        let saved_checkpoint: ExpandedCheckpointV1 = read_pinned(&serial_checkpoint).unwrap();
+        assert_eq!(
+            saved_checkpoint.feature_contract_digest,
+            FEATURE_CONTRACT_DIGEST_V4
+        );
+        assert_eq!(
+            saved_checkpoint.feature_encoding_digest,
+            FEATURE_ENCODING_DIGEST_V4
+        );
+
+        // Narrow admission, not a blanket relaxation: an ordinary
+        // (non-transferred) V3 opponent must still be rejected against this
+        // same V4 learner.
+        let ordinary_v3_source = fresh_source_for_test_v1(
+            &root,
+            "ordinary-v3",
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3,
+        );
+        let (ordinary_policy, _) = load_expanded_inference_v1(&ordinary_v3_source).unwrap();
+        assert!(!ordinary_policy.is_v3_registry_transfer_opponent_v1());
+        let rejected_episode = ExpandedEpisodeV1 {
+            opponent: Some(ordinary_v3_source),
+            ..episode
+        };
+        let error = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: learner_source,
+            episodes: vec![rejected_episode],
+            max_non_natural_episode_fraction: 0.0,
+            output_directory: root.join("collect-rejected"),
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("different fresh-lineage feature generations"),
+            "{error}"
+        );
     }
 
     #[test]
