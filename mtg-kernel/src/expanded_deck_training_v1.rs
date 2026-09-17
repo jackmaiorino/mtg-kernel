@@ -3398,6 +3398,252 @@ mod tests {
         validate_trajectory(&trajectory).unwrap();
     }
 
+    /// Root-cause regression for campaign-002 lineage a's block-1 dry block,
+    /// iteration 99 (0-based), slot 9 (`breadth-471c72b49348799e7c232ce7-b0-
+    /// i99-s9`), Faeries (opponent, fixed policy fresh-b, no checkpoint)
+    /// versus Burn (learner, seat 1, the real iteration-98 checkpoint),
+    /// starting player 1, seed 7192816189450623184. Every path, hash, seed
+    /// and deck list below is copied verbatim from the real collection
+    /// command receipt at `Q/campaign-002/a/block1/run/iterations/000099/
+    /// attempt-000000/collect-command.json`. Reads the real evidence tree
+    /// (Q = `E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-
+    /// preparation-001/phase1-training-qualification-001`), never writes to
+    /// it.
+    ///
+    /// Before the fix below, this game halted at step 119 with
+    /// `engine_halted:InvalidEffectContinuation:source:19` (recorded
+    /// verbatim in the same iteration's `collect/non-natural.json`). Object
+    /// 19 (a Faeries ninjutsu creature, Ninja of the Deep Hours or
+    /// Moon-Circuit Hacker) had attacked earlier in the same Declare
+    /// Blockers step and was returned to hand by Snap's own "return target
+    /// creature to its owner's hand" resolution effect
+    /// (`effect::EffectOp::MoveObject`, executed through the ordinary
+    /// `event::propose_and_commit`/`commit_zone_change` path, not a cost
+    /// payment). That departure never removed object 19 from
+    /// `state.engine.combat.attackers`; when it then legally ninjutsu'd
+    /// back into the same combat, `put_ninjutsu_source_onto_battlefield_
+    /// attacking`'s own-duplicate guard (`combat.attackers.contains`) found
+    /// the stale id from its earlier, no-longer-live attack and rejected a
+    /// legal ninjutsu chain as "ninjutsu source already appears in combat",
+    /// which `collect_episode` correctly refuses to turn into a training
+    /// trajectory.
+    ///
+    /// Fixed per 506.4 (a permanent that leaves the battlefield leaves
+    /// combat) by pruning `combat.attackers` centrally in
+    /// `event::commit_zone_change` for every departure from the
+    /// battlefield, not only the two `pay_cost_components_with_x` cost
+    /// components already covered. Real native-engine compute against a
+    /// real trained checkpoint, deliberately opt-in like its siblings
+    /// above.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-002 block1 iteration 99 slot 9 against the real evidence tree"]
+    fn campaign_002_block1_iteration_99_slot_9_snap_then_ninjutsu_completes_naturally() {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-002/a/block1/run/iterations/000098/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "4f3cfdaed698e5d6cad84299072d468e36c339d6f0f11414e536015e7c3397b9".into(),
+            }),
+        };
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer,
+            checkpoint: None,
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let faeries = ExpandedDeckListV1 {
+            label: "Faeries/a8c6f236b1b4".into(),
+            mainboard: vec![
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
+                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
+                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
+                110,
+            ],
+            sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
+        };
+        let burn = ExpandedDeckListV1 {
+            label: "Burn/767fd2c27db3".into(),
+            mainboard: vec![
+                34, 34, 36, 36, 36, 36, 37, 37, 37, 37, 47, 47, 47, 47, 51, 51, 51, 51, 54, 54,
+                54, 54, 63, 63, 63, 63, 66, 66, 66, 66, 70, 70, 70, 70, 76, 76, 76, 76, 76, 76,
+                76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 107, 107, 107, 107, 127, 127,
+                127, 127,
+            ],
+            sideboard: vec![
+                90, 90, 90, 90, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101, 101,
+            ],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-471c72b49348799e7c232ce7-b0-i99-s9".into(),
+            seed: 7_192_816_189_450_623_184,
+            starting_player: 1,
+            learner_seat: 1,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [faeries.clone(), burn.clone()],
+            selected: [faeries, burn],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "the combat.attackers 506.4 centralization fix regressed: this exact \
+                     seed/deck/checkpoint combination (campaign-002 block1 iteration 99 slot 9) \
+                     should complete naturally again, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// Sibling regression for campaign-002 lineage a's block-1 dry block,
+    /// iteration 111 (0-based), slot 9 (`breadth-4472af672354ecd58b975bfd-
+    /// b0-i111-s9`), Burn (learner, seat 0, the real iteration-110
+    /// checkpoint) versus Faeries (opponent, fixed policy fresh-a, no
+    /// checkpoint), starting player 1, seed 10638601314057086381. Every
+    /// path, hash, seed and deck list below is copied verbatim from the
+    /// real collection command receipt at `Q/campaign-002/a/block1/run/
+    /// iterations/000111/attempt-000000/collect-command.json`. Reads the
+    /// real evidence tree (Q = `E:/mtg-kernel-learned-sideboarding-
+    /// evidence/bo3-post480-preparation-001/phase1-training-qualification-
+    /// 001`), never writes to it.
+    ///
+    /// Before the fix below, this game halted at step 172 with
+    /// `engine_halted:InvalidEffectContinuation:source:83` (recorded
+    /// verbatim in the same iteration's `collect/non-natural.json`) --
+    /// object 83 the same stale-`combat.attackers`-after-Snap defect as the
+    /// sibling test above, in the same Faeries deck, reproduced against a
+    /// different checkpoint, seed, starting player and learner seat. Fixed
+    /// by the same central `event::commit_zone_change` prune.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-002 block1 iteration 111 slot 9 against the real evidence tree"]
+    fn campaign_002_block1_iteration_111_slot_9_snap_then_ninjutsu_completes_naturally() {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-002/a/block1/run/iterations/000110/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "0a8f4228d22184c65a7e225f7425a9b6ccbb1b36617fc3d2c67ebe83b09ac464".into(),
+            }),
+        };
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer,
+            checkpoint: None,
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let burn = ExpandedDeckListV1 {
+            label: "Burn/767fd2c27db3".into(),
+            mainboard: vec![
+                34, 34, 36, 36, 36, 36, 37, 37, 37, 37, 47, 47, 47, 47, 51, 51, 51, 51, 54, 54,
+                54, 54, 63, 63, 63, 63, 66, 66, 66, 66, 70, 70, 70, 70, 76, 76, 76, 76, 76, 76,
+                76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 107, 107, 107, 107, 127, 127,
+                127, 127,
+            ],
+            sideboard: vec![
+                90, 90, 90, 90, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101, 101,
+            ],
+        };
+        let faeries = ExpandedDeckListV1 {
+            label: "Faeries/a8c6f236b1b4".into(),
+            mainboard: vec![
+                17, 17, 17, 17, 22, 22, 32, 32, 32, 32, 33, 33, 33, 33, 38, 38, 52, 52, 55, 55,
+                55, 55, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60,
+                75, 75, 75, 75, 80, 80, 80, 80, 82, 82, 82, 82, 99, 106, 106, 106, 110, 110, 110,
+                110,
+            ],
+            sideboard: vec![0, 0, 0, 4, 4, 4, 7, 7, 7, 7, 22, 57, 57, 113, 113],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-4472af672354ecd58b975bfd-b0-i111-s9".into(),
+            seed: 10_638_601_314_057_086_381,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [burn.clone(), faeries.clone()],
+            selected: [burn, faeries],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "the combat.attackers 506.4 centralization fix regressed: this exact \
+                     seed/deck/checkpoint combination (campaign-002 block1 iteration 111 slot 9) \
+                     should complete naturally again, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
     /// Root-cause regression for campaign-001 lineage a's nine-deck block-2
     /// dry run, iteration 0 (0-based), collector 2, episode index 2
     /// (`breadth-8576bc14e77629db60f4b54b-b1-i0-s2`), CawGates (opponent,

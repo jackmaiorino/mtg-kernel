@@ -14820,6 +14820,78 @@ mod tests {
         );
     }
 
+    /// Third sibling of the two tests above, in the same `combat.attackers`
+    /// staleness family (506.4) but via a departure that is not a cost
+    /// payment at all: an ordinary resolution effect that returns a
+    /// permanent to its owner's hand, the shape of Snap's own "Return
+    /// target creature to its owner's hand" (`effect::EffectOp::MoveObject`,
+    /// executed via the same `event::propose_and_commit(..., zone_change(_,
+    /// Zone::Hand))` every other departure path uses). Only the two cost
+    /// components covered above ever pruned `combat.attackers`; this
+    /// resolution-effect path left the stale id behind exactly as the
+    /// unpruned cost payment used to, and `put_ninjutsu_source_onto_
+    /// battlefield_attacking`'s own-duplicate guard
+    /// (`combat.attackers.contains`) fails closed on a later, entirely
+    /// legal ninjutsu re-entry by that same object later in the same
+    /// Declare Blockers step. Root cause for the Faeries-deck halt family
+    /// reported after both ninjutsu fixes above: campaign-002 lineage a
+    /// block-1 iteration 99 slot 9 (seed 7192816189450623184,
+    /// `engine_halted:InvalidEffectContinuation:source:19`) and iteration
+    /// 111 slot 9 (seed 10638601314057086381, `...:source:83`); both games
+    /// ran a Faeries ninjutsu creature (Ninja of the Deep Hours or
+    /// Moon-Circuit Hacker) that attacked, was bounced by Snap (or Snap
+    /// bounced a different attacker while this one stayed stale from an
+    /// earlier departure) without leaving `combat.attackers`, then
+    /// legally ninjutsu'd back into the same combat.
+    ///
+    /// Fixed centrally in `event::commit_zone_change` (every zone change
+    /// away from the battlefield prunes `combat.attackers` there, not just
+    /// the two cost-payment call sites), so no future departure path can
+    /// reintroduce this defect by forgetting a local prune.
+    #[test]
+    fn bouncing_an_attacker_via_an_ordinary_resolution_effect_also_prunes_combat_attackers() {
+        let mut state = empty_game();
+        let ninja = put_on_battlefield(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.objects.get_mut(ninja).tapped = true;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![ninja];
+
+        // Snap's own resolution effect ("return target creature to its
+        // owner's hand") is exactly this zone-change proposal; no cost is
+        // being paid, and no `CostComponent` is involved at all.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(ninja, Zone::Hand));
+        assert_eq!(state.objects.get(ninja).zone, Zone::Hand);
+        assert!(
+            !state.engine.combat.attackers.contains(&ninja),
+            "a permanent bounced by an ordinary resolution effect must also leave \
+             combat.attackers (506.4), not only a permanent returned as an activation \
+             cost: {:?}",
+            state.engine.combat.attackers
+        );
+
+        // The same physical card now legally re-enters combat later this
+        // turn via its own ninjutsu ability (its cost -- returning a
+        // *different* unblocked attacker -- is not modeled here since it
+        // is not this guard's concern).
+        let expected_source = Some(ObjectLinkV4 {
+            object: ninja,
+            zone_change_count: state.objects.get(ninja).zone_change_count,
+        });
+        put_ninjutsu_source_onto_battlefield_attacking(&mut state, ninja, PlayerId::P0, expected_source)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "a legal ninjutsu re-entry must not be rejected by a stale \
+                     pre-bounce combat.attackers entry: {error}"
+                )
+            });
+        assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+        assert!(state.engine.combat.attackers.contains(&ninja));
+    }
+
     /// Root cause for campaign-001 block1-cuda-2 iteration 95 slot 2 (seed
     /// 14378628175672525038, turn 8): once a ninjutsu activation is staged,
     /// its cost paid, and its ability pushed onto the stack (this kernel
