@@ -3,8 +3,10 @@
 //! original order. No model/RNG state is mutated by these workers.
 
 use super::*;
+use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Instant;
 
@@ -54,6 +56,7 @@ pub(super) struct PreparationTelemetryV1 {
     physical_group_jobs: usize,
     distinct_opponent_sources: usize,
     opponent_load_calls: usize,
+    opponent_cache_hits: usize,
     current_model_reuses: usize,
     decoded_tensor_payload_bytes: usize,
     max_decoded_tensor_bytes: usize,
@@ -265,6 +268,88 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     })
 }
 
+/// Process-wide cache of loaded opponent models keyed by their pinned source.
+/// A run's fixed opponents (the block's initial policy and the frozen partner)
+/// were parsed from their 20 MB checkpoints twice per update; now each source
+/// is loaded once per process and every update receives a private fork
+/// (`fork_for_collection_v3`, the path the current model already takes).
+/// Replay still checks every row against the rollout's recorded logits, so a
+/// fork that scored differently would fail the update rather than pass.
+/// Bounded and least-recently-used; entries are immutable once inserted. A
+/// policy that cannot be forked is used directly and never cached, as before.
+const OPPONENT_CACHE_ENTRIES: usize = 8;
+
+struct CachedOpponentV1 {
+    source: ExpandedModelSourceV1,
+    policy: Arc<FrozenPlayPolicyV1>,
+    identity: ExpandedInferenceIdentityV1,
+}
+
+static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::new();
+
+/// Load one opponent, forking it from the cache when its source is cached;
+/// the flag reports a cache hit.
+fn load_opponent_cached_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<(LoadedOpponentV1, bool), String> {
+    let cache = OPPONENT_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
+    let cached = {
+        let mut entries = cache
+            .lock()
+            .map_err(|_| "opponent cache poisoned".to_string())?;
+        match entries.iter().position(|entry| &entry.source == source) {
+            Some(index) => {
+                let entry = entries.remove(index).ok_or("opponent cache index")?;
+                let policy = Arc::clone(&entry.policy);
+                let identity = entry.identity.clone();
+                entries.push_back(entry);
+                Some((policy, identity))
+            }
+            None => None,
+        }
+    };
+    if let Some((policy, identity)) = cached {
+        return Ok((
+            LoadedOpponentV1 {
+                policy: policy.fork_for_collection_v3()?,
+                behavior: ExpandedSeatBehaviorV1 {
+                    source: source.clone(),
+                    identity,
+                },
+            },
+            true,
+        ));
+    }
+    let (policy, identity) = load_expanded_inference_v1(source)?;
+    let behavior = ExpandedSeatBehaviorV1 {
+        source: source.clone(),
+        identity: identity.clone(),
+    };
+    match policy.fork_for_collection_v3() {
+        Ok(fork) => {
+            let mut entries = cache
+                .lock()
+                .map_err(|_| "opponent cache poisoned".to_string())?;
+            while entries.len() >= OPPONENT_CACHE_ENTRIES {
+                entries.pop_front();
+            }
+            entries.push_back(CachedOpponentV1 {
+                source: source.clone(),
+                policy: Arc::new(policy),
+                identity,
+            });
+            Ok((
+                LoadedOpponentV1 {
+                    policy: fork,
+                    behavior,
+                },
+                false,
+            ))
+        }
+        Err(_) => Ok((LoadedOpponentV1 { policy, behavior }, false)),
+    }
+}
+
 pub(super) fn prepare_v1<'a>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
@@ -272,16 +357,21 @@ pub(super) fn prepare_v1<'a>(
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
 ) -> Result<PreparedGroupsV1<'a>, String> {
-    prepare_with_loader_v1(episodes, policy, learner, workers, max_prepared_tensor_mebibytes, |source| {
-        let (policy, identity) = load_expanded_inference_v1(source)?;
-        Ok(LoadedOpponentV1 {
-            policy,
-            behavior: ExpandedSeatBehaviorV1 {
-                source: source.clone(),
-                identity,
-            },
-        })
-    })
+    let mut hits = 0;
+    let mut prepared = prepare_with_loader_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        |source| {
+            let (loaded, hit) = load_opponent_cached_v1(source)?;
+            hits += usize::from(hit);
+            Ok(loaded)
+        },
+    )?;
+    prepared.telemetry.opponent_cache_hits = hits;
+    Ok(prepared)
 }
 
 fn prepare_with_loader_v1<'a, F>(
@@ -401,6 +491,7 @@ where
             physical_group_jobs: jobs.len(),
             distinct_opponent_sources: sources.len(),
             opponent_load_calls: loads,
+            opponent_cache_hits: 0,
             current_model_reuses: current_reuses,
             decoded_tensor_payload_bytes: payload,
             max_decoded_tensor_bytes,

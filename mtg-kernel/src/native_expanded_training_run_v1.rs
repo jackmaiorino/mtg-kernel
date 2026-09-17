@@ -463,11 +463,30 @@ fn validate_collection_episodes(
             crate::expanded_deck_training_v1::ledgered_retry_seed_overrides_v1(&pin, episodes)?
         }
     };
-    for ((trajectory, episode), seed_override) in
-        trajectories.iter().zip(episodes).zip(&seed_overrides)
-    {
-        verify_pin(trajectory)?;
-        let saved = read_json(&trajectory.path, ARTIFACT_CAP)?;
+    // Hash and parse the trajectory files concurrently (one short-lived thread
+    // per file, ten to sixty per update); the checks below still run in order
+    // and report the first failing trajectory exactly as the serial loop did.
+    let saved: Vec<Result<Value, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = trajectories
+            .iter()
+            .map(|trajectory| {
+                scope.spawn(move || -> Result<Value, String> {
+                    verify_pin(trajectory)?;
+                    read_json(&trajectory.path, ARTIFACT_CAP)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("collection validation worker panicked".to_string()))
+            })
+            .collect()
+    });
+    for ((episode, seed_override), saved) in episodes.iter().zip(&seed_overrides).zip(saved) {
+        let saved = saved?;
         let mut expected = episode.clone();
         if let Some(seed) = seed_override {
             expected.seed = *seed;
