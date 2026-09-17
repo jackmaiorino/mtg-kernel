@@ -1116,6 +1116,35 @@ fn commit_zone_change(
     remove_from_zone(state, owner, id, from_zone);
     state.forget_hand_object(id);
     state.clear_object_relations(id);
+    if from_zone == Zone::Battlefield {
+        // 506.4: a permanent that leaves the battlefield leaves combat.
+        // `state.engine.combat.attackers` is a bare `Vec<ObjectId>` with no
+        // accompanying zone-change generation, so a stale entry left behind
+        // by a departure is indistinguishable, by id alone, from a live one
+        // if this same id later returns to combat later the same turn.
+        // `engine::put_ninjutsu_source_onto_battlefield_attacking`'s
+        // own-duplicate guard trusts a bare `combat.attackers.contains(&
+        // source)`, so it fails closed on that entirely legal re-entry
+        // (`engine_halted:InvalidEffectContinuation`) unless every
+        // departure keeps the list clean. Two `pay_cost_components_with_x`
+        // cost components (`ReturnControlledUnblockedAttackerToOwnersHand`,
+        // `ReturnControlledPermanentToOwnersHand`) already pruned this by
+        // hand for their own departures; centralizing it here, on every
+        // zone change away from the battlefield, covers every other
+        // departure path too -- Snap's own "return target creature to its
+        // owner's hand" resolution effect (`effect::EffectOp::MoveObject`)
+        // among them -- instead of requiring each one to remember it
+        // individually. Root cause for the Faeries-deck halt family
+        // reported after both ninjutsu fixes: a ninjutsu creature (Ninja of
+        // the Deep Hours or Moon-Circuit Hacker) attacked, was bounced by
+        // Snap without leaving `combat.attackers`, and then legally
+        // ninjutsu'd back into the same combat.
+        state
+            .engine
+            .combat
+            .attackers
+            .retain(|&attacker| attacker != id);
+    }
 
     match to_zone {
         Zone::Library => {
