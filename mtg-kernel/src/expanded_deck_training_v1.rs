@@ -3494,6 +3494,266 @@ mod tests {
         validate_trajectory(&trajectory).unwrap();
     }
 
+    /// Root-cause reproduction for campaign-002's nine-deck block-2 dry run,
+    /// iteration 2 (0-based), lineage a, collector 9, episode slot 7
+    /// (`breadth-8f6cf0203feebd1abbd5726e-b1-i2-s7`), CawGates (opponent,
+    /// seat 0, lineage b's block-1-end checkpoint) versus Rally (learner,
+    /// seat 1, lineage a's own iteration-1 checkpoint), starting player 0,
+    /// seed 18284309016128593444. Every path, hash, seed and deck list below
+    /// is copied verbatim from the real collection command receipt at
+    /// `Q/campaign-002/a/block2/run/iterations/000002/attempt-000000/
+    /// collect-command.json`, episode index 7 (the learner source is that
+    /// file's top-level `source`; the opponent source is the episode's own
+    /// `opponent`). Reads the real evidence tree (Q = `E:/mtg-kernel-
+    /// learned-sideboarding-evidence/bo3-post480-preparation-001/
+    /// phase1-training-qualification-001`), never writes to it.
+    ///
+    /// Both lineages' block-2 iteration-2 collection aborted on this pairing
+    /// with `V4 actor-visible encoding: Action(CorruptCurrentBinding)` on a
+    /// Surface decision (this game: P0/CawGates at step 84, 3 legal
+    /// actions). See the sibling `campaign_002_b_block2_iteration_2_slot_0_*`
+    /// test below for lineage b's independent failure on the same two decks.
+    ///
+    /// Root cause (CawGates Journey to Nowhere vs. a Rally token): Journey
+    /// to Nowhere exiles a Rally token (e.g. a Rally at the Hornburg Human),
+    /// registering a `LinkedExileRecordV4`. `trigger::sba_fixed_point`'s
+    /// 111.8/704.5d sweep then immediately ceases the token (a token is
+    /// never on the battlefield once exiled), but `event::cease_to_exist`
+    /// removed it from `state.exile` without dropping that record. The
+    /// record's `exiled_zone_change_count` still matched the ceased token's
+    /// unchanged `zone_change_count` (`cease_to_exist` deliberately never
+    /// touches zone/zone_change_count), so `rl::
+    /// validate_linked_exile_records_public_v4` expected that exact
+    /// incarnation to be uniquely in `state.exile`, found it gone, and
+    /// failed with "linked-exile exact card incarnation is not uniquely in
+    /// exile" -- swallowed by `flat_policy_observation_v4`'s blanket
+    /// `map_err` into the misleading `CorruptCurrentBinding`. Fixed by
+    /// having `cease_to_exist` also drop every `linked_exile_records` row
+    /// naming the ceasing identity on either side. Hermetic unit-test
+    /// coverage: `event::tests::
+    /// cease_to_exist_drops_stale_linked_exile_records_on_either_side`.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-002 block2 iteration 2 slot 7 against the real evidence tree"]
+    fn campaign_002_a_block2_iteration_2_slot_7_cawgates_vs_rally_surface_encoding_completes_naturally(
+    ) {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-002/a/block2/run/iterations/000001/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "7ab89dea50edbe10a546849a1dd71a39c8781264c0d82871008fd1c748a717c3".into(),
+            }),
+        };
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer,
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-002/b/block1/run/iterations/000199/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "8519bd678cd9f4a09056176ae3821374476fabfa5100d0e078f4993028543d80".into(),
+            }),
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let caw_gates = ExpandedDeckListV1 {
+            label: "CawGates/e20cd1d12a56".into(),
+            mainboard: vec![
+                2, 2, 3, 3, 3, 3, 8, 8, 8, 14, 14, 14, 14, 17, 17, 17, 17, 49, 53, 53, 59, 60, 60,
+                60, 60, 61, 61, 61, 61, 68, 68, 68, 83, 83, 86, 86, 88, 88, 88, 88, 98, 98, 98, 98,
+                100, 100, 100, 100, 109, 109, 112, 112, 112, 112, 115, 115, 115, 115, 118, 118,
+            ],
+            sideboard: vec![7, 7, 7, 22, 22, 25, 25, 25, 28, 28, 57, 57, 90, 90, 90],
+        };
+        let rally = ExpandedDeckListV1 {
+            label: "Rally/1e349fa4fa7a".into(),
+            mainboard: vec![
+                10, 10, 10, 10, 13, 13, 16, 16, 16, 16, 27, 30, 30, 30, 41, 41, 41, 41, 44, 44, 44,
+                44, 45, 45, 45, 45, 48, 48, 48, 48, 66, 66, 66, 66, 76, 76, 76, 76, 76, 76, 76, 76,
+                76, 76, 76, 76, 76, 76, 92, 92, 92, 92, 93, 93, 93, 93, 127, 127, 127, 127,
+            ],
+            sideboard: vec![12, 12, 12, 27, 27, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-8f6cf0203feebd1abbd5726e-b1-i2-s7".into(),
+            seed: 18_284_309_016_128_593_444,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [caw_gates.clone(), rally.clone()],
+            selected: [caw_gates, rally],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "campaign-002 a/block2 iteration 2 slot 7 (CawGates vs Rally) should \
+                     complete naturally, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
+    /// Root-cause reproduction for campaign-002's nine-deck block-2 dry run,
+    /// iteration 2 (0-based), lineage b, collector 1, episode slot 0
+    /// (`breadth-1e5a1ccd4a462cd1fe3cb4f8-b1-i2-s0`), CawGates (learner, seat
+    /// 0, lineage b's own iteration-1 checkpoint) versus Rally (opponent,
+    /// seat 1, lineage a's block-1-end checkpoint), starting player 0, seed
+    /// 9426649155461169341. Every path, hash, seed and deck list below is
+    /// copied verbatim from the real collection command receipt at
+    /// `Q/campaign-002/b/block2/run/iterations/000002/attempt-000000/
+    /// collect-command.json`, episode index 0 (the learner source is that
+    /// file's top-level `source`; the opponent source is the episode's own
+    /// `opponent`). Reads the real evidence tree (Q = `E:/mtg-kernel-
+    /// learned-sideboarding-evidence/bo3-post480-preparation-001/
+    /// phase1-training-qualification-001`), never writes to it.
+    ///
+    /// Both lineages' block-2 iteration-2 collection aborted on this pairing
+    /// with `V4 actor-visible encoding: Action(CorruptCurrentBinding)` on a
+    /// Surface decision (this game: P1/Rally at step 214, 8 legal actions).
+    /// Same two decks and same defect family as the sibling
+    /// `campaign_002_a_block2_iteration_2_slot_7_*` test above, but the
+    /// opposite learner/opponent assignment and a different seed, so this
+    /// proves the defect is not specific to one lineage's checkpoint.
+    ///
+    /// Root cause and fix: see that sibling test's doc comment (a Rally
+    /// token exiled by CawGates' Journey to Nowhere never had its
+    /// `LinkedExileRecordV4` cleaned up when `trigger::sba_fixed_point`
+    /// ceased it, `event::cease_to_exist` now does). Hermetic unit-test
+    /// coverage: `event::tests::
+    /// cease_to_exist_drops_stale_linked_exile_records_on_either_side`.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-002 block2 iteration 2 slot 0 against the real evidence tree"]
+    fn campaign_002_b_block2_iteration_2_slot_0_cawgates_vs_rally_surface_encoding_completes_naturally(
+    ) {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-002/b/block2/run/iterations/000001/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "1ba4135e286529be44cabe35357423fb794965854e9ec5f8b6f0eca8ff425d0e".into(),
+            }),
+        };
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/a-descriptor-windows.json").into(),
+                sha256: "7b39fa26ef0ca72d7e3d660f32a266ef82692739b4d44f1870630fbd463d28f7".into(),
+            },
+            feature_transfer,
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{Q}/campaign-002/a/block1/run/iterations/000199/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "97ac8aa60017c46d3e9c45688ca19e7fdf67a923a67d3c9d3a661563546c9299".into(),
+            }),
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let caw_gates = ExpandedDeckListV1 {
+            label: "CawGates/e20cd1d12a56".into(),
+            mainboard: vec![
+                2, 2, 3, 3, 3, 3, 8, 8, 8, 14, 14, 14, 14, 17, 17, 17, 17, 49, 53, 53, 59, 60, 60,
+                60, 60, 61, 61, 61, 61, 68, 68, 68, 83, 83, 86, 86, 88, 88, 88, 88, 98, 98, 98, 98,
+                100, 100, 100, 100, 109, 109, 112, 112, 112, 112, 115, 115, 115, 115, 118, 118,
+            ],
+            sideboard: vec![7, 7, 7, 22, 22, 25, 25, 25, 28, 28, 57, 57, 90, 90, 90],
+        };
+        let rally = ExpandedDeckListV1 {
+            label: "Rally/1e349fa4fa7a".into(),
+            mainboard: vec![
+                10, 10, 10, 10, 13, 13, 16, 16, 16, 16, 27, 30, 30, 30, 41, 41, 41, 41, 44, 44, 44,
+                44, 45, 45, 45, 45, 48, 48, 48, 48, 66, 66, 66, 66, 76, 76, 76, 76, 76, 76, 76, 76,
+                76, 76, 76, 76, 76, 76, 92, 92, 92, 92, 93, 93, 93, 93, 127, 127, 127, 127,
+            ],
+            sideboard: vec![12, 12, 12, 27, 27, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-1e5a1ccd4a462cd1fe3cb4f8-b1-i2-s0".into(),
+            seed: 9_426_649_155_461_169_341,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [caw_gates.clone(), rally.clone()],
+            selected: [caw_gates, rally],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "campaign-002 b/block2 iteration 2 slot 0 (CawGates vs Rally) should \
+                     complete naturally, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
     // ---- max_non_natural_episode_fraction: tolerant collection with a
     // ---- ledger (Part 2). `derived_retry_seed_v1` is exercised directly
     // ---- (no game); the retry/ledger bookkeeping tests use
