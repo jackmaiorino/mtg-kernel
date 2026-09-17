@@ -156,6 +156,35 @@ pub struct SearchWrappedPlayPolicyV1<'a> {
     budget: u32,
     case_seed: u64,
     stats: EndSeatSearchStatsV1,
+    diagnostic_mode: DiagnosticModeV1,
+}
+
+/// Investigation-only leaf-evaluation variants, selected once via the
+/// `PHASE1_V4_SEARCH_DIAGNOSTIC_MODE` environment variable, never the
+/// default: `Normal` (unset, or any other value) is byte-identical to the
+/// committed behavior above. `SignFlipped` negates the leaf value used in
+/// `Normal` mode, to test whether the leaf's perspective is inverted.
+/// `PriorOnly` skips the session clone/step entirely and uses the root
+/// policy's own logit for each sampled candidate as its score instead (so
+/// selection reduces to an argmax over the sampled candidates, isolating
+/// "argmax over samples" from "value head as leaf"). Not wired into any
+/// config field; a diagnostic scaffold read only from the process
+/// environment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagnosticModeV1 {
+    Normal,
+    SignFlipped,
+    PriorOnly,
+}
+
+impl DiagnosticModeV1 {
+    fn from_env_v1() -> Self {
+        match std::env::var("PHASE1_V4_SEARCH_DIAGNOSTIC_MODE").ok().as_deref() {
+            Some("sign_flipped") => Self::SignFlipped,
+            Some("prior_only") => Self::PriorOnly,
+            _ => Self::Normal,
+        }
+    }
 }
 
 impl<'a> SearchWrappedPlayPolicyV1<'a> {
@@ -165,6 +194,7 @@ impl<'a> SearchWrappedPlayPolicyV1<'a> {
             budget,
             case_seed,
             stats: EndSeatSearchStatsV1::default(),
+            diagnostic_mode: DiagnosticModeV1::from_env_v1(),
         }
     }
 
@@ -267,11 +297,22 @@ impl PairedBo1PolicyV1 for SearchWrappedPlayPolicyV1<'_> {
 
         let mut best: Option<(u32, f32)> = None;
         for action in candidates {
+            // PriorOnly (diagnostic-only, never the default): no clone or
+            // step at all, just the root policy's own logit for this
+            // candidate, isolating "argmax over the sampled candidates"
+            // from "value head as leaf".
+            if self.diagnostic_mode == DiagnosticModeV1::PriorOnly {
+                let value = scores.logits[action as usize];
+                if best.is_none_or(|(_, best_value)| value > best_value) {
+                    best = Some((action, value));
+                }
+                continue;
+            }
             let mut branch = root_session.clone();
             let Ok(response) = branch.step(decision.episode_id, decision.step, action) else {
                 continue;
             };
-            let value = match response {
+            let mut value = match response {
                 FastActorResponseV1::Terminal(terminal) => {
                     terminal.terminal_reward[seat_index_v1(root_seat)] as f32
                 }
@@ -286,6 +327,12 @@ impl PairedBo1PolicyV1 for SearchWrappedPlayPolicyV1<'_> {
                     }
                 }
             };
+            // SignFlipped (diagnostic-only, never the default): negate the
+            // exact same leaf value Normal mode would have used, to test
+            // whether the leaf's perspective is inverted.
+            if self.diagnostic_mode == DiagnosticModeV1::SignFlipped {
+                value = -value;
+            }
             if best.is_none_or(|(_, best_value)| value > best_value) {
                 best = Some((action, value));
             }
@@ -422,5 +469,181 @@ mod tests {
         let after_raw = raw_policy.select_fast_session_v1(&next_session).unwrap();
 
         assert_eq!(after_search, after_raw);
+    }
+
+    /// Diagnostic requested after the r block-24 development read came back
+    /// far worse than the raw policy: a real position where attacking with
+    /// an untapped, unblocked creature for its exact power is immediately
+    /// lethal, alongside a legal "do not attack" alternative that is not.
+    /// If the wrapper picks the losing action here, the leaf sign or the
+    /// seat perspective is inverted.
+    #[test]
+    fn wrapper_selects_a_lethal_attack_over_not_attacking() {
+        use crate::card_def::{card_id_by_name, CARD_DEFS};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::rl::ActionSemanticV1;
+        use crate::state::{Step, Zone};
+
+        let attacker_card = "Voldaren Epicure";
+        let mut state = ready_state();
+        put(&mut state, PlayerId::P0, attacker_card, Zone::Battlefield);
+        let card_def_id = card_id_by_name(attacker_card)
+            .unwrap_or_else(|| panic!("fixture card not found: {attacker_card}"));
+        let power = CARD_DEFS[card_def_id as usize]
+            .power
+            .unwrap_or_else(|| panic!("{attacker_card} has no power"));
+        state.players[PlayerId::P1.index()].life = i32::from(power);
+        // `ready_state()` gives both players an empty library. Declining to
+        // attack has no real decision left this turn, so the engine's
+        // "advance until a real decision or terminal" loop races all the
+        // way into P1's own draw step within this same one-step call; an
+        // empty library there makes P1 lose to decking regardless of the
+        // attack choice, which would make this fixture prove nothing.
+        // Twenty basic lands on each side rules that out for this test's
+        // one-turn horizon.
+        for _ in 0..20 {
+            put(&mut state, PlayerId::P0, "Forest", Zone::Library);
+            put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        }
+        state.step = Step::DeclareAttackers;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.engine.combat.attackers_declared = false;
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let decision = match session.current_response() {
+            FastActorResponseV1::Decision(decision) => decision,
+            FastActorResponseV1::Terminal(_) => panic!("fixture must start at a live decision"),
+        };
+        assert!(decision.legal_action_count >= 2);
+        let semantics = session.diagnostic_current_action_semantics().unwrap();
+        let attack_index = semantics
+            .iter()
+            .position(|semantic| {
+                matches!(
+                    semantic,
+                    ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                )
+            })
+            .expect("no attack candidate present") as u32;
+        let no_attack_index = semantics
+            .iter()
+            .position(|semantic| {
+                matches!(
+                    semantic,
+                    ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+                )
+            })
+            .expect("no decline-to-attack candidate present") as u32;
+        assert_ne!(attack_index, no_attack_index);
+
+        // Ground truth: attacking (through any forced, single-option steps
+        // combat resolution needs) reaches Terminal with P0 as the winner.
+        // Diagnostic instrumentation: record the very first step's response
+        // kind, since the wrapper only looks one ply ahead.
+        let mut ground_truth = session.clone();
+        let first_response = ground_truth
+            .step(decision.episode_id, decision.step, attack_index)
+            .unwrap();
+        let first_step_is_terminal = matches!(first_response, FastActorResponseV1::Terminal(_));
+        let mut response = first_response;
+        let mut forced_step_count = 0u32;
+        loop {
+            match response {
+                FastActorResponseV1::Terminal(terminal) => {
+                    assert_eq!(
+                        terminal.winner,
+                        Some(PlayerSeatV1::P0),
+                        "attacking for exact lethal must win the game"
+                    );
+                    break;
+                }
+                FastActorResponseV1::Decision(forced) => {
+                    assert_eq!(
+                        forced.legal_action_count, 1,
+                        "only a forced single-option step is expected en route to lethal"
+                    );
+                    forced_step_count += 1;
+                    response = ground_truth
+                        .step(forced.episode_id, forced.step, 0)
+                        .unwrap();
+                }
+            }
+        }
+
+        // One-ply diagnostic: exactly what the wrapper itself computes for
+        // each candidate, so a failure below is legible without a debugger.
+        let mut diag_policy = FrozenPlayPolicyV1::training_fixture_v4();
+        diag_policy.reset_sampling_v1([1, 2]);
+        let attack_branch_report = {
+            let mut branch = session.clone();
+            match branch
+                .step(decision.episode_id, decision.step, attack_index)
+                .unwrap()
+            {
+                FastActorResponseV1::Terminal(terminal) => format!(
+                    "terminal reward[root_seat]={}",
+                    terminal.terminal_reward[seat_index_v1(decision.acting_player)]
+                ),
+                FastActorResponseV1::Decision(next) => {
+                    let scores = diag_policy.score_fast_session_v1(&branch).unwrap();
+                    format!(
+                        "decision next_actor={:?} root_seat={:?} raw_value={} oriented_value={}",
+                        next.acting_player,
+                        decision.acting_player,
+                        scores.value,
+                        if next.acting_player == decision.acting_player {
+                            scores.value
+                        } else {
+                            -scores.value
+                        }
+                    )
+                }
+            }
+        };
+        let no_attack_branch_report = {
+            let mut branch = session.clone();
+            match branch
+                .step(decision.episode_id, decision.step, no_attack_index)
+                .unwrap()
+            {
+                FastActorResponseV1::Terminal(terminal) => format!(
+                    "terminal reward[root_seat]={}",
+                    terminal.terminal_reward[seat_index_v1(decision.acting_player)]
+                ),
+                FastActorResponseV1::Decision(next) => {
+                    let scores = diag_policy.score_fast_session_v1(&branch).unwrap();
+                    format!(
+                        "decision next_actor={:?} root_seat={:?} raw_value={} oriented_value={}",
+                        next.acting_player,
+                        decision.acting_player,
+                        scores.value,
+                        if next.acting_player == decision.acting_player {
+                            scores.value
+                        } else {
+                            -scores.value
+                        }
+                    )
+                }
+            }
+        };
+
+        // The actual check: with a budget covering both candidates, the
+        // wrapper must select the winning action, not the losing one.
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        policy.reset_sampling_v1([1, 2]);
+        let mut wrapped = SearchWrappedPlayPolicyV1::new_v1(&mut policy, 2, 424_242);
+        let selected = wrapped
+            .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+            .unwrap();
+        assert_eq!(
+            selected, attack_index,
+            "wrapper picked the losing action; leaf sign or seat perspective is inverted.\n\
+             root_seat={:?} attack_index={attack_index} no_attack_index={no_attack_index}\n\
+             first_step_is_terminal={first_step_is_terminal} forced_step_count_to_terminal={forced_step_count}\n\
+             attack branch: {attack_branch_report}\n\
+             no_attack branch: {no_attack_branch_report}",
+            decision.acting_player,
+        );
     }
 }
