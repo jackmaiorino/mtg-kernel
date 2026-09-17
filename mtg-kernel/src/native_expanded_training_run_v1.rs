@@ -73,6 +73,14 @@ pub struct NativeExpandedTrainingRunV1 {
     pub value_coefficient: f32,
     #[serde(default, skip_serializing_if = "ExpandedUpdateBackendV1::is_cpu")]
     pub update_backend: ExpandedUpdateBackendV1,
+    /// Config-driven; default `TerminalReinforceValueV3` keeps every
+    /// existing config, its wire bytes, and its run identity byte-identical.
+    /// See `ExpandedLossSelectionV1`.
+    #[serde(
+        default,
+        skip_serializing_if = "ExpandedLossSelectionV1::is_terminal_reinforce_value_v3"
+    )]
+    pub loss_selection: ExpandedLossSelectionV1,
     /// Config-driven; default `Sequential` keeps every existing config and
     /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
     #[serde(
@@ -154,6 +162,7 @@ impl NativeExpandedTrainingRunV1 {
     pub fn validate_v1(&self) -> Result<(), String> {
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         self.update_backend.validate_v1()?;
+        self.loss_selection.validate_v1()?;
         crate::expanded_deck_training_v1::validate_collection_workers_v1(self.collection_workers)?;
         crate::expanded_deck_training_v1::validate_preparation_workers_v1(
             self.preparation_workers,
@@ -615,6 +624,17 @@ fn collection_command(
     }
 }
 
+/// Writes `loss_selection` into `document` next to `update_backend`,
+/// exactly when it is not the default v3 identity, so a manifest or result
+/// for a legacy config gains no new key, and a gae_advantage_value/v1 run's
+/// receipt proves which loss ran without needing to parse the nested
+/// `config` object.
+fn record_loss_selection_execution(config: &NativeExpandedTrainingRunV1, document: &mut Value) {
+    if !config.loss_selection.is_terminal_reinforce_value_v3() {
+        document["loss_selection"] = json!(config.loss_selection);
+    }
+}
+
 fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &mut Value) {
     if config.collection_workers > 1 {
         document["collection_backend"] = json!("native-cpu-parallel-episodes-v1");
@@ -635,9 +655,6 @@ fn update_command(
     trajectories: Vec<PinnedFileV1>,
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
-    // This run harness's own config has no `loss_selection` field (out of
-    // scope for this change; see `TRAINING-SIGNAL-DESIGN-001.md`'s task
-    // list); every command it issues stays the default v3 identity.
     if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
             source: source.clone(),
@@ -646,7 +663,7 @@ fn update_command(
             value_coefficient: config.value_coefficient,
             update_backend: config.update_backend,
             update_backward_execution: config.update_backward_execution,
-            loss_selection: ExpandedLossSelectionV1::default(),
+            loss_selection: config.loss_selection,
             output_directory,
         }
     } else {
@@ -657,7 +674,7 @@ fn update_command(
             value_coefficient: config.value_coefficient,
             update_backend: config.update_backend,
             update_backward_execution: config.update_backward_execution,
-            loss_selection: ExpandedLossSelectionV1::default(),
+            loss_selection: config.loss_selection,
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
             output_directory,
@@ -697,6 +714,7 @@ pub fn run_native_expanded_training_v1(
         "device":"cpu", "gpu_ordinal":null,
         "implementation_sha256":digest(include_bytes!("native_expanded_training_run_v1.rs"))});
     config.update_backend.record_run_execution_v1(&mut manifest);
+    record_loss_selection_execution(config, &mut manifest);
     record_collection_execution(config, &mut manifest);
     let manifest_path = root.join("run.json");
     if manifest_path.exists() {
@@ -952,8 +970,9 @@ pub fn run_native_expanded_training_v1(
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
         "planned_iterations":config.iterations.len(),"iterations":receipts,"source":current,
         "actual_identity":current_identity,"device":"cpu","gpu_ordinal":null,
-        "loss_identity":"terminal_reinforce_value/v3","strength_claim":false});
+        "loss_identity":config.loss_selection.loss_identity_v1(),"strength_claim":false});
     config.update_backend.record_run_execution_v1(&mut result);
+    record_loss_selection_execution(config, &mut result);
     record_collection_execution(config, &mut result);
     let final_path = root.join("completion.json");
     if complete {
@@ -1074,6 +1093,7 @@ mod tests {
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
+            loss_selection: ExpandedLossSelectionV1::default(),
             update_backward_execution: UpdateBackwardExecutionV1::Sequential,
             collection_workers: 1,
             preparation_workers: 1,
@@ -1517,6 +1537,231 @@ mod tests {
         assert_ne!(
             value(episodes[0].opponent.as_ref().unwrap()).unwrap(),
             value(&current).unwrap()
+        );
+    }
+
+    // --- Follow-up: the run harness must carry `loss_selection`, or arm g
+    // cannot launch. Mirrors `update_backend_is_explicit_in_run_identity_and_legacy_cpu_is_unchanged`'s
+    // structural style, plus a real end-to-end run for the forwarding proof.
+
+    #[test]
+    fn loss_selection_preserves_legacy_wire_and_is_explicit_in_run_identity() {
+        let legacy = schedule();
+        let legacy_value = value(&legacy).unwrap();
+        assert!(legacy_value.get("loss_selection").is_none());
+        let restored: NativeExpandedTrainingRunV1 =
+            serde_json::from_value(legacy_value.clone()).unwrap();
+        assert_eq!(restored.loss_selection, ExpandedLossSelectionV1::default());
+        assert_eq!(value(&restored).unwrap(), legacy_value);
+        let mut manifest = json!({});
+        record_loss_selection_execution(&legacy, &mut manifest);
+        assert_eq!(manifest, json!({}));
+        let mut result = json!({});
+        record_loss_selection_execution(&legacy, &mut result);
+        assert_eq!(result, json!({}));
+
+        let mut gae = legacy.clone();
+        gae.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        gae.validate_v1().unwrap();
+        assert_ne!(identity(&legacy).unwrap(), identity(&gae).unwrap());
+        let mut gae_manifest = json!({});
+        record_loss_selection_execution(&gae, &mut gae_manifest);
+        assert_eq!(gae_manifest["loss_selection"]["kind"], "gae_advantage_value_v1");
+        assert_eq!(gae_manifest["loss_selection"]["gamma"], 1.0);
+        assert_eq!(gae_manifest["loss_selection"]["lambda"], 0.9_f32 as f64);
+        assert_eq!(gae_manifest["loss_selection"]["entropy_coefficient"], 0.0);
+
+        // The forwarded selection reaches the actual Update command.
+        let legacy_command = update_command(
+            &legacy,
+            &legacy.initial_source,
+            vec![],
+            legacy.output_directory.clone(),
+        );
+        match legacy_command {
+            ExpandedTrainingCommandV1::Update { loss_selection, .. } => {
+                assert_eq!(loss_selection, ExpandedLossSelectionV1::default());
+            }
+            _ => panic!("expected an Update command"),
+        }
+        let gae_command = update_command(
+            &gae,
+            &gae.initial_source,
+            vec![],
+            gae.output_directory.clone(),
+        );
+        match gae_command {
+            ExpandedTrainingCommandV1::Update { loss_selection, .. } => {
+                assert_eq!(loss_selection, gae.loss_selection);
+            }
+            _ => panic!("expected an Update command"),
+        }
+    }
+
+    #[test]
+    fn unknown_loss_selection_kind_is_rejected_with_a_readable_error() {
+        let mut legacy_value = value(&schedule()).unwrap();
+        legacy_value["loss_selection"] = json!({"kind": "not_a_real_loss"});
+        let error = serde_json::from_value::<NativeExpandedTrainingRunV1>(legacy_value)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("unknown variant") && error.contains("not_a_real_loss"),
+            "{error}"
+        );
+    }
+
+    /// A real fresh V4 source plus a real two-iteration, self-play (`Current`
+    /// opponent) schedule over real constructed decks, run end to end
+    /// through the actual `run_native_expanded_training_v1` production path
+    /// (not the lower-level `execute_v1` calls
+    /// `expanded_deck_training_v1::tests::run_ordinary_two_iteration_fixture_v1`
+    /// makes directly): this is what proves `update_command`'s forwarding,
+    /// not just the structural match above.
+    fn real_two_iteration_config_v1(
+        label: &str,
+        loss_selection: ExpandedLossSelectionV1,
+        update_backend: ExpandedUpdateBackendV1,
+    ) -> NativeExpandedTrainingRunV1 {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root = std::env::temp_dir().join(format!(
+            "native-expanded-loss-selection-{label}-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            crate::expanded_deck_training_v1::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let play_import = PinnedFileV1 {
+            path: descriptor_path.canonicalize().unwrap(),
+            sha256: digest(&descriptor_bytes),
+        };
+        let feature_transfer = crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+        };
+        let initial_source = ExpandedModelSourceV1 {
+            play_import,
+            feature_transfer,
+            checkpoint: None,
+        };
+        let list = |id: &str| {
+            let registration =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            let cards = registration.registered_configuration();
+            crate::expanded_deck_training_v1::ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: cards.mainboard().to_vec(),
+                sideboard: cards.sideboard().to_vec(),
+            }
+        };
+        let decks = [list("Affinity"), list("Terror")];
+        let iterations = (0..2u64)
+            .map(|iteration| ExpandedRunIterationV1 {
+                episodes: vec![ScheduledExpandedEpisodeV1 {
+                    episode: ExpandedEpisodeV1 {
+                        id: format!("{label}-iter-{iteration}"),
+                        seed: 2_026_091_601 + iteration,
+                        starting_player: 0,
+                        learner_seat: 0,
+                        opponent: None,
+                        registered: decks.clone(),
+                        selected: decks.clone(),
+                        postboard: false,
+                        max_physical_decisions: 100_000,
+                        max_policy_steps: 1_000_000,
+                    },
+                    opponent: ExpandedOpponentAssignmentV1::Current,
+                }],
+            })
+            .collect();
+        NativeExpandedTrainingRunV1 {
+            schema: SCHEMA.into(),
+            initial_source,
+            opponents: vec![],
+            iterations,
+            learning_rate: 0.0003,
+            value_coefficient: 0.5,
+            update_backend,
+            loss_selection,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            collection_workers: 1,
+            preparation_workers: 1,
+            max_non_natural_episode_fraction: 0.0,
+            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            output_directory: root.join("run"),
+        }
+    }
+
+    /// `result["iterations"]` is a `Vec<PinnedFileV1>`, one pin per
+    /// iteration's own `complete.json` (see `receipts.push` at both the
+    /// resume-path and the newly-completed-path call sites); each
+    /// `complete.json` in turn carries its own `update` field as a second
+    /// `PinnedFileV1` pin to that iteration's `update.json`. Two levels of
+    /// indirection to read back, not one.
+    fn last_update_loss_identity_v1(result: &Value) -> String {
+        let complete_pin: PinnedFileV1 =
+            serde_json::from_value(result["iterations"][1].clone()).unwrap();
+        let complete_document: Value =
+            serde_json::from_str(&fs::read_to_string(&complete_pin.path).unwrap()).unwrap();
+        let update_pin: PinnedFileV1 =
+            serde_json::from_value(complete_document["update"].clone()).unwrap();
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(&update_pin.path).unwrap()).unwrap();
+        document["loss_identity"].as_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn loss_selection_reaches_a_real_two_iteration_cpu_run_receipt() {
+        let config = real_two_iteration_config_v1(
+            "cpu",
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        config.validate_v1().unwrap();
+        let result = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(result["loss_identity"], "gae_advantage_value/v1");
+        assert_eq!(
+            last_update_loss_identity_v1(&result),
+            "gae_advantage_value/v1"
+        );
+        let manifest: Value = read_json(&config.output_directory.join("run.json"), SMALL_CAP)
+            .unwrap();
+        assert_eq!(manifest["loss_selection"]["kind"], "gae_advantage_value_v1");
+    }
+
+    #[test]
+    #[ignore = "requires a real GPU; explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn loss_selection_reaches_a_real_two_iteration_cuda_run_receipt() {
+        let config = real_two_iteration_config_v1(
+            "cuda",
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 },
+        );
+        config.validate_v1().unwrap();
+        let result = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(result["loss_identity"], "gae_advantage_value/v1");
+        assert_eq!(
+            last_update_loss_identity_v1(&result),
+            "gae_advantage_value/v1"
         );
     }
 }

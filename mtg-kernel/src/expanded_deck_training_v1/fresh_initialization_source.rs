@@ -657,7 +657,7 @@ pub(super) fn write_synthetic_fresh_source_v1(
 /// quickly by mutual decking), keeping the model, the payload bytes and
 /// every computed hash mutually consistent.
 #[cfg(test)]
-pub(super) fn write_synthetic_fresh_source_with_parameters_v1(
+pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
     dir: &std::path::Path,
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
     mutate: impl FnOnce(&mut Vec<crate::native_policy_value_net_v1::NativeNamedParameterV1>),

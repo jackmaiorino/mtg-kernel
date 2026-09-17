@@ -79,6 +79,8 @@ mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod registry_transfer_source;
 pub use fresh_initialization_source::ExpandedFreshInitializationSourceV1;
+#[cfg(test)]
+pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
 pub use registry_transfer_source::{
     ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
 };
