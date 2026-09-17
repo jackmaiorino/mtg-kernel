@@ -485,3 +485,35 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     assert!(value.get("update_backward_execution").is_none());
     assert!(value.get("max_prepared_tensor_mebibytes").is_none());
 }
+
+/// The exact JSON shape a compiled block config must carry to select
+/// `gae_advantage_value/v1` on `Update`/`UpdatePrepared`: a `loss_selection`
+/// object, sibling to `update_backend`, with `"kind":
+/// "gae_advantage_value_v1"` plus the three scalar fields. Pins the tagged
+/// enum's serde rendering precisely (verified here, not just predicted from
+/// the crate's other `snake_case` variants), since the lead patches configs
+/// from this shape directly.
+#[test]
+fn phase1_gae_loss_selection_wire_shape_is_exact() {
+    let selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+    };
+    let value = serde_json::to_value(selection).unwrap();
+    assert_eq!(
+        value,
+        // `0.9_f32 as f64` (not the `0.9` f64 literal): `float_roundtrip`
+        // preserves the f32 bit pattern exactly, and 0.9 is not exactly
+        // representable in either width, so the two widths' nearest values
+        // differ past the 7th digit.
+        serde_json::json!({
+            "kind": "gae_advantage_value_v1",
+            "gamma": 1.0,
+            "lambda": 0.9_f32 as f64,
+            "entropy_coefficient": 0.0
+        })
+    );
+    let round_tripped: ExpandedLossSelectionV1 = serde_json::from_value(value).unwrap();
+    assert_eq!(round_tripped, selection);
+}
