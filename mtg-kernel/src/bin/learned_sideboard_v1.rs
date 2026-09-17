@@ -110,6 +110,12 @@ impl ExpandedBo3MatchV1 {
     }
 }
 
+/// `skip_serializing_if` predicate for a plain `bool` field that defaults to
+/// `false`, so a config that never set it keeps an unchanged wire shape.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum CommandV1 {
@@ -137,6 +143,15 @@ enum CommandV1 {
         output_directory: PathBuf,
         policies: [SeatPolicyV1; 2],
         matches: Vec<ExpandedBo3MatchV1>,
+        /// Evaluation-only opt-in (design doc section 6): lets the two seats
+        /// carry different feature generations (for example a V3 incumbent
+        /// against a fresh V4 checkpoint), each still scoring its own
+        /// decisions with its own generation's encoder and policy. Defaults
+        /// to `false` and is omitted from the wire at that default, so every
+        /// existing config keeps decoding and behaving exactly as before:
+        /// a mismatched seat pair is still rejected.
+        #[serde(default, skip_serializing_if = "is_false")]
+        cross_generation_evaluation: bool,
     },
     TrainImitation {
         play_import: PathBuf,

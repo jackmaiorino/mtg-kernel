@@ -49,10 +49,12 @@ pub(super) fn run_population_command_v1(
         output_directory: output,
         policies,
         matches,
+        cross_generation_evaluation,
     } = command
     else {
         return Err("expected population BO3 command".into());
     };
+    let cross_generation_evaluation = *cross_generation_evaluation;
     absolute(output)?;
     if matches.is_empty() || matches.len() > 1024 {
         return Err("match count must be 1..1024".into());
@@ -118,6 +120,7 @@ pub(super) fn run_population_command_v1(
     )?;
     let execution = (|| -> Result<Value, String> {
         let mut total_games = 0usize;
+        let mut seat_generations: Option<[String; 2]> = None;
         for (index, (item, registered)) in matches.iter().zip(registrations).enumerate() {
             let mut s0 = prepared[0].bind_explicit(&item.config, &registered, 0, &embeddings[0])?;
             let mut s1 = prepared[1].bind_explicit(&item.config, &registered, 1, &embeddings[1])?;
@@ -129,8 +132,13 @@ pub(super) fn run_population_command_v1(
                 &tags,
                 &mut play,
                 [&mut s0, &mut s1],
+                cross_generation_evaluation,
             )?;
             total_games += result.games.len();
+            // Every match in one command shares the same loaded models, so
+            // every result reports the same `seat_generations`; capture it
+            // once, from the first completed match, for the batch receipt.
+            seat_generations.get_or_insert_with(|| result.seat_generations.clone());
             write_json(&output.join(format!("match-{index:06}.json")), &result)?;
             println!(
                 "{}",
@@ -138,11 +146,15 @@ pub(super) fn run_population_command_v1(
                 "artifact":format!("match-{index:06}.json")})
             );
         }
+        let seat_generations =
+            seat_generations.expect("matches is non-empty; checked above");
         Ok(
             json!({"mode":"run_population_batch", "completed_matches":matches.len(),
             "physical_games":total_games, "inputs":inputs, "play_models":identities,
             "sideboard_policy_identities":policy_identities,
-            "no_training_performed":true, "strength_claim":false}),
+            "no_training_performed":true, "strength_claim":false,
+            "cross_generation_evaluation":cross_generation_evaluation,
+            "seat_generations":seat_generations}),
         )
     })();
     match execution {
@@ -239,5 +251,47 @@ mod tests {
         assert!(serde_json::from_value::<CommandV1>(config.clone()).is_ok());
         config["model_sources"].as_array_mut().unwrap().pop();
         assert!(serde_json::from_value::<CommandV1>(config).is_err());
+    }
+
+    /// Test 1 of the cross-generation evaluation task: the opt-in decodes
+    /// and defaults to `false`, and a config that never mentions it keeps an
+    /// unchanged wire shape (no key added on re-encode), so no existing
+    /// `run_population_batch` config changes behavior just by being read by
+    /// a binary built with this opt-in compiled in.
+    #[test]
+    fn population_command_cross_generation_evaluation_defaults_false_with_wire_unchanged() {
+        let source = json!({"play_import":{"path":"C:/import.json","sha256":"a".repeat(64)},
+            "feature_transfer":{"expected_feature_contract_digest":"b".repeat(64),
+                "expected_feature_encoding_digest":"c".repeat(64)},"checkpoint":null});
+        let without_field = json!({"mode":"run_population_batch",
+            "model_sources":[source.clone(), source],
+            "output_directory":"C:/new", "policies":[{"kind":"keep"},{"kind":"keep"}],
+            "matches":[]});
+
+        let decoded: CommandV1 = serde_json::from_value(without_field.clone()).unwrap();
+        let CommandV1::RunPopulationBatch {
+            cross_generation_evaluation,
+            ..
+        } = &decoded
+        else {
+            panic!("expected RunPopulationBatch");
+        };
+        assert!(!cross_generation_evaluation);
+        let reencoded = serde_json::to_value(&decoded).unwrap();
+        assert_eq!(reencoded, without_field, "defaulting must not add the key");
+        assert!(reencoded.get("cross_generation_evaluation").is_none());
+
+        let mut with_field = without_field;
+        with_field["cross_generation_evaluation"] = json!(true);
+        let decoded_true: CommandV1 = serde_json::from_value(with_field.clone()).unwrap();
+        let CommandV1::RunPopulationBatch {
+            cross_generation_evaluation,
+            ..
+        } = &decoded_true
+        else {
+            panic!("expected RunPopulationBatch");
+        };
+        assert!(cross_generation_evaluation);
+        assert_eq!(serde_json::to_value(&decoded_true).unwrap(), with_field);
     }
 }

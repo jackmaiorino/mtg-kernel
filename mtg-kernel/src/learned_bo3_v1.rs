@@ -120,6 +120,16 @@ pub struct LearnedPopulationBo3ResultV1 {
     pub explicit_registrations: [LearnedBo3RegistrationRecordV1; 2],
     pub play_models: [ExpandedInferenceIdentityV1; 2],
     pub sideboard_policy_identities: [String; 2],
+    /// `true` only for a `run_population_bo3_v1` call made through the
+    /// evaluation-only opt-in (`SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1`).
+    /// Always present, never inferred, so a reader never has to re-derive it
+    /// from `seat_generations` differing.
+    pub cross_generation_evaluation: bool,
+    /// Each seat's own `feature_generation_v1()`, labeled ("v2"/"v3"/"v4"),
+    /// in physical seat order. Named explicitly here (not just left
+    /// derivable) so a cross-generation receipt states both generations
+    /// without a reader needing the installed policies to know them.
+    pub seat_generations: [String; 2],
     pub outcome: MatchOutcomeV1,
     pub games: Vec<LearnedBo3GameRecordV1>,
     pub sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
@@ -135,11 +145,44 @@ pub struct SeatRoutedBo3PlayPolicyV1<'a> {
 
 impl<'a> SeatRoutedBo3PlayPolicyV1<'a> {
     pub fn new_v1(policies: [&'a mut dyn PairedBo1PolicyV1; 2]) -> Result<Self, String> {
+        Self::new_checked_v1(policies, false)
+    }
+
+    /// Evaluation-only: comparing one generation against another (for
+    /// example a V4 checkpoint against the frozen V3 incumbent) requires
+    /// each seat to score its own decisions with its own generation's
+    /// encoder and policy, which this router already does per seat in
+    /// `select_action_v1` below. This constructor is the ONLY place that may
+    /// accept a seat pair whose `feature_generation_v1()` values differ, and
+    /// it is `pub(crate)` specifically so no other crate (any training or
+    /// collection binary included) can reach it directly: the sole caller is
+    /// `run_population_bo3_v1`'s own `cross_generation_evaluation` opt-in,
+    /// which itself is reachable only from `learned_sideboard_v1`'s
+    /// `run_population_batch` command when its config explicitly sets
+    /// `cross_generation_evaluation: true`. No trajectory or training
+    /// artifact is produced by this router either way; it only selects
+    /// actions.
+    pub(crate) fn new_cross_generation_evaluation_v1(
+        policies: [&'a mut dyn PairedBo1PolicyV1; 2],
+    ) -> Result<Self, String> {
+        Self::new_checked_v1(policies, true)
+    }
+
+    fn new_checked_v1(
+        policies: [&'a mut dyn PairedBo1PolicyV1; 2],
+        allow_cross_generation_evaluation: bool,
+    ) -> Result<Self, String> {
         // Strict whole-generation equality, not just the wide-vs-narrow
         // boolean: two different wide generations (V3 and V4) both report
         // `true` for `uses_observation_successor_v3`, so comparing only that
-        // boolean would silently accept a mixed V3/V4 seat pairing.
-        if policies[0].feature_generation_v1() != policies[1].feature_generation_v1() {
+        // boolean would silently accept a mixed V3/V4 seat pairing. Lifted
+        // only when `allow_cross_generation_evaluation` is set, which is
+        // reachable only through `new_cross_generation_evaluation_v1` above;
+        // `new_v1`'s default path keeps rejecting a mismatch exactly as
+        // before, unconditionally, for every training and collection caller.
+        if !allow_cross_generation_evaluation
+            && policies[0].feature_generation_v1() != policies[1].feature_generation_v1()
+        {
             return Err("per-seat BO3 policies require the same feature generation".into());
         }
         let uses_v3 = policies[0].uses_observation_successor_v3();
@@ -445,10 +488,35 @@ fn recognized_population_feature_contract_v1(model: &ExpandedInferenceIdentityV1
     )
 }
 
+/// "v2"/"v3"/"v4", for naming a seat's generation in a receipt. Never used
+/// for any gate: every gate compares `PlayPolicyGenerationV1` values
+/// directly, never these labels.
+fn feature_generation_label_v1(
+    generation: crate::paired_bo1_harness_v1::PlayPolicyGenerationV1,
+) -> String {
+    use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
+    match generation {
+        PlayPolicyGenerationV1::V2 => "v2",
+        PlayPolicyGenerationV1::V3 => "v3",
+        PlayPolicyGenerationV1::V4 => "v4",
+    }
+    .to_owned()
+}
+
 /// Evaluate separately loaded current/historical players without substituting
 /// either seat's model or registration. The strict CLI loader supplies the
 /// checkpoint receipts; this boundary also checks them against installed model
 /// parameters, embeddings and import ancestry before any gameplay.
+///
+/// `cross_generation_evaluation` is the evaluation-only opt-in (named
+/// explicitly by the caller's config, never inferred): when `true`, the two
+/// seats may carry different feature generations (for example a V3
+/// incumbent against a fresh V4 checkpoint), each still scoring its own
+/// decisions with its own generation's encoder and policy. When `false`
+/// (the default for every existing caller), behavior is unchanged: a
+/// mismatched pair is still rejected exactly as before. Either way, no
+/// trajectory or training artifact is written here; this function only
+/// plays the match and returns its result.
 pub fn run_population_bo3_v1(
     config: LearnedBo3RunConfigV1,
     registered_decks: [RegisteredDeckV1; 2],
@@ -457,6 +525,7 @@ pub fn run_population_bo3_v1(
     tags: &RemovalCounterspellTagsV1,
     play_policies: &mut [FrozenPlayPolicyV1; 2],
     sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
+    cross_generation_evaluation: bool,
 ) -> Result<LearnedPopulationBo3ResultV1, String> {
     validate_run_limits_v1(&config)?;
     for seat in 0..2 {
@@ -480,13 +549,21 @@ pub fn run_population_bo3_v1(
             ));
         }
     }
+    let seat_generations = [
+        feature_generation_label_v1(play_policies[0].feature_generation_v1()),
+        feature_generation_label_v1(play_policies[1].feature_generation_v1()),
+    ];
     let registrations = registered_decks
         .each_ref()
         .map(LearnedBo3RegistrationRecordV1::from_registered_v1);
     let session = BestOfThreeDeckMatchV1::new_live_v1(registered_decks, config.game_one_chooser)
         .map_err(|error| error.to_string())?;
     let [p0, p1] = play_policies;
-    let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([p0, p1])?;
+    let mut router = if cross_generation_evaluation {
+        SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([p0, p1])?
+    } else {
+        SeatRoutedBo3PlayPolicyV1::new_v1([p0, p1])?
+    };
     let played = run_learned_bo3_session_v1(
         config,
         session,
@@ -505,6 +582,8 @@ pub fn run_population_bo3_v1(
         explicit_registrations: registrations,
         play_models,
         sideboard_policy_identities,
+        cross_generation_evaluation,
+        seat_generations,
         outcome: played.outcome,
         games: played.games,
         sideboard_decisions: played.sideboard_decisions,
@@ -720,7 +799,7 @@ mod tests {
     use crate::state::Zone;
 
     struct RoutingSpy {
-        uses_v3: bool,
+        generation: PlayPolicyGenerationV1,
         resets: Vec<[u64; 2]>,
         actors: Vec<crate::rl::PlayerSeatV1>,
         rng: [SplitMix64; 2],
@@ -728,8 +807,20 @@ mod tests {
 
     impl RoutingSpy {
         fn new(uses_v3: bool) -> Self {
+            Self::new_with_generation_v1(if uses_v3 {
+                PlayPolicyGenerationV1::V3
+            } else {
+                PlayPolicyGenerationV1::V2
+            })
+        }
+
+        /// A V4 spy needs an explicit generation: deriving it from
+        /// `uses_observation_successor_v3` alone (as `new` above still does,
+        /// for every pre-existing caller) can only ever produce V2 or V3,
+        /// never V4, since V3 and V4 both report `true` for that boolean.
+        fn new_with_generation_v1(generation: PlayPolicyGenerationV1) -> Self {
             Self {
-                uses_v3,
+                generation,
                 resets: vec![],
                 actors: vec![],
                 rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
@@ -739,7 +830,10 @@ mod tests {
 
     impl PairedBo1PolicyV1 for RoutingSpy {
         fn uses_observation_successor_v3(&self) -> bool {
-            self.uses_v3
+            self.generation != PlayPolicyGenerationV1::V2
+        }
+        fn feature_generation_v1(&self) -> PlayPolicyGenerationV1 {
+            self.generation
         }
         fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
             self.resets.push(seeds);
@@ -815,6 +909,57 @@ mod tests {
         assert!(SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0, &mut p1]).is_err());
         assert!(p0.resets.is_empty());
         assert!(p1.resets.is_empty());
+    }
+
+    /// Test 2 of the cross-generation evaluation task: the default
+    /// constructor keeps rejecting a mixed V3/V4 pair exactly as before, and
+    /// only the dedicated evaluation-only constructor accepts it, then
+    /// actually routes each seat's decisions to only its own stub (standing
+    /// in for each seat scoring with its own generation's encoder/policy).
+    #[test]
+    fn population_router_cross_generation_evaluation_opt_in_allows_mixed_seats_but_default_still_rejects(
+    ) {
+        use crate::rl::PlayerSeatV1::{P0, P1};
+        let mut v3 = RoutingSpy::new_with_generation_v1(PlayPolicyGenerationV1::V3);
+        let mut v4 = RoutingSpy::new_with_generation_v1(PlayPolicyGenerationV1::V4);
+        {
+            let policies: [&mut dyn PairedBo1PolicyV1; 2] = [&mut v3, &mut v4];
+            let Err(error) = SeatRoutedBo3PlayPolicyV1::new_v1(policies) else {
+                panic!("expected the default constructor to reject a mixed V3/V4 pair")
+            };
+            assert_eq!(error, "per-seat BO3 policies require the same feature generation");
+        }
+        assert!(v3.resets.is_empty());
+        assert!(v4.resets.is_empty());
+
+        let session = FastActorSessionV1::reset(7, 92, 1);
+        let crate::rl_session::FastActorResponseV1::Decision(base) = session.current_response()
+        else {
+            panic!("initial actor decision required")
+        };
+        let seeds = paired_policy_seeds_v1(4343);
+        {
+            let policies: [&mut dyn PairedBo1PolicyV1; 2] = [&mut v3, &mut v4];
+            let mut router = SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1(
+                policies,
+            )
+            .expect("the evaluation-only opt-in must accept a mixed V3/V4 pair");
+            router.reset_for_game_v1(seeds).unwrap();
+            for actor in [P0, P1, P0] {
+                let decision = crate::rl_session::FastActorDecisionV1 {
+                    acting_player: actor,
+                    legal_action_count: 32,
+                    ..base
+                };
+                router
+                    .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                    .unwrap();
+            }
+        }
+        assert_eq!(v3.actors, vec![P0, P0]);
+        assert_eq!(v4.actors, vec![P1]);
+        assert_eq!(v3.resets, vec![seeds]);
+        assert_eq!(v4.resets, vec![seeds]);
     }
 
     /// A minimal stand-in that reports only a generation, for gates that
@@ -905,6 +1050,85 @@ mod tests {
         assert_eq!(serde_json::to_value(&output).unwrap(), expected);
         assert_eq!(serde_json::to_vec(&output).unwrap(),
             br#"{"schema":"kernel_learned_bo3/v1","config":{"deck_ids":["Rally","Burn"],"seed":17,"game_one_chooser":0,"max_physical_games":3,"max_physical_decisions":4000,"max_policy_steps":40000},"play_weights_sha256":"weights","sideboard_policy_identity":"sideboard","outcome":{"winner":{"winner":0}},"games":[],"sideboard_decisions":[]}"#);
+    }
+
+    /// Test 4 of the cross-generation evaluation task: a population batch
+    /// receipt (the per-match record `run_population_bo3_v1` returns and
+    /// `learned_sideboard_v1` writes as `match-NNNNNN.json`) names both
+    /// seats' feature generations explicitly and states the opt-in flag,
+    /// rather than leaving a reader to re-derive either from the installed
+    /// models.
+    #[test]
+    fn population_result_serialization_names_both_seat_generations() {
+        let v3_policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let v4_policy = FrozenPlayPolicyV1::training_fixture_v4();
+        let play_models = [&v3_policy, &v4_policy].map(|policy| ExpandedInferenceIdentityV1 {
+            schema: "mtg-kernel-expanded-deck-inference/v1".into(),
+            source_import: policy.identity_v1().clone(),
+            checkpoint_sha256: None,
+            model: policy.actual_model_identity_v1(),
+            state_sha256: "c".repeat(64),
+            adam_step: 0,
+            feature_schema_version: "test-fixture".into(),
+            feature_registry_version: "test-fixture".into(),
+            features_source_sha256: "test-fixture".into(),
+            feature_descriptor_sha256: "test-fixture".into(),
+        });
+        let registration = LearnedBo3RegistrationRecordV1 {
+            label: "Rally".into(),
+            mainboard: vec![],
+            sideboard: vec![],
+            registered_75_sha256: "a".repeat(64),
+            mainboard_sha256: "b".repeat(64),
+            sideboard_sha256: "c".repeat(64),
+        };
+        let result = LearnedPopulationBo3ResultV1 {
+            schema: "kernel_population_bo3/v1".into(),
+            config: LearnedBo3RunConfigV1 {
+                deck_ids: ["Rally".into(), "Burn".into()],
+                seed: 5,
+                game_one_chooser: PlayerId::P0,
+                max_physical_games: 3,
+                max_physical_decisions: 4000,
+                max_policy_steps: 40000,
+                opening_protocol: Default::default(),
+            },
+            explicit_registrations: [registration.clone(), registration],
+            play_models,
+            sideboard_policy_identities: ["sideboard-0".into(), "sideboard-1".into()],
+            cross_generation_evaluation: true,
+            seat_generations: ["v3".into(), "v4".into()],
+            outcome: MatchOutcomeV1::Winner {
+                winner: PlayerId::P0,
+            },
+            games: vec![],
+            sideboard_decisions: vec![],
+        };
+        let encoded = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            encoded["cross_generation_evaluation"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            encoded["seat_generations"],
+            serde_json::json!(["v3", "v4"])
+        );
+    }
+
+    #[test]
+    fn feature_generation_label_matches_each_generation() {
+        assert_eq!(
+            feature_generation_label_v1(PlayPolicyGenerationV1::V2),
+            "v2"
+        );
+        assert_eq!(
+            feature_generation_label_v1(PlayPolicyGenerationV1::V3),
+            "v3"
+        );
+        assert_eq!(
+            feature_generation_label_v1(PlayPolicyGenerationV1::V4),
+            "v4"
+        );
     }
 
     fn opening_test_config() -> LearnedBo3RunConfigV1 {

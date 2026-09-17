@@ -918,3 +918,36 @@ fn policy_level_generation_equality_rejects_a_mixed_pairing_directly() {
          model-identity check) must be what rejects this"
     );
 }
+
+/// Test 3 of the cross-generation evaluation task: the evaluation-only
+/// `cross_generation_evaluation` opt-in added to `learned_sideboard_v1`'s
+/// `run_population_batch` command (`CommandV1::RunPopulationBatch` in
+/// `src/bin/learned_sideboard_v1.rs`, threaded through
+/// `learned_bo3_v1::run_population_bo3_v1`) lives solely on that one CLI
+/// command. `Bo3CollectionConfigV1` has no such field and rejects one if
+/// injected, and `collect_loaded_inner`'s cross-seat generation check above
+/// takes no opt-in parameter at all: a real mixed V3/V4 pairing still
+/// cannot reach a training/collection run either way.
+#[test]
+fn collection_path_has_no_cross_generation_evaluation_opt_in() {
+    let mut injected = serde_json::to_value(config("no-cross-gen-opt-in")).unwrap();
+    injected["cross_generation_evaluation"] = serde_json::json!(true);
+    let error = serde_json::from_value::<Bo3CollectionConfigV1>(injected)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unknown field"), "unexpected error: {error}");
+
+    let cfg = config("no-cross-gen-opt-in-mixed");
+    let (_agreeing_policies, packages) =
+        fixtures([PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw]);
+    let mut mismatched = [
+        FrozenPlayPolicyV1::training_fixture_v3(),
+        FrozenPlayPolicyV1::training_fixture_v4(),
+    ];
+    let error = collect_loaded(&cfg, packages.each_ref(), &mut mismatched, [None, None])
+        .unwrap_err();
+    assert_eq!(
+        error, "installed BO3 gameplay seats use different fresh-lineage feature generations",
+        "the collection path's own gate has no opt-in and must still reject this"
+    );
+}
