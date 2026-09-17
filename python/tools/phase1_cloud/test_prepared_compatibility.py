@@ -77,6 +77,23 @@ class PreparedConfigurationTests(unittest.TestCase):
             with self.subTest(execution=execution), self.assertRaisesRegex(ValueError, 'update_backward_execution'):
                 update_backward_execution(config|{'update_backward_execution':execution})
 
+    def test_max_prepared_tensor_mebibytes_default_and_explicit_256_have_same_exact_contract(self):
+        """Same convention as the fields above: 256 strips like absent, a raised
+        bound is kept and changes the contract, and a raised bound needs a
+        prepared (preparation_workers > 1) run."""
+        config={'initial_source':{},'opponents':[],'iterations':[],'output_directory':'unused',
+                'learning_rate':1e-5,'value_coefficient':.5}
+        self.assertEqual(canonical_training_config(config),
+                         canonical_training_config(config|{'max_prepared_tensor_mebibytes':256}))
+        prepared=config|{'preparation_workers':4}
+        raised=prepared|{'max_prepared_tensor_mebibytes':1024}
+        self.assertEqual(canonical_training_config(raised)['max_prepared_tensor_mebibytes'],1024)
+        self.assertNotEqual(training_contract(prepared),training_contract(raised))
+        with self.assertRaisesRegex(ValueError,'max_prepared_tensor_mebibytes'):
+            canonical_training_config(config|{'max_prepared_tensor_mebibytes':1024})
+        with self.assertRaisesRegex(ValueError,'max_prepared_tensor_mebibytes'):
+            canonical_training_config(prepared|{'max_prepared_tensor_mebibytes':8192})
+
     def test_max_non_natural_episode_fraction_default_and_explicit_zero_have_same_exact_contract(self):
         """Mirrors `test_backward_execution_default_and_explicit_sequential_have_same_exact_contract`
         above for `max_non_natural_episode_fraction` (mtg-kernel

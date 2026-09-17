@@ -7,7 +7,7 @@ use crate::durable_publication_v1::{
 use crate::expanded_deck_training_v1::{
     execute_v1, load_expanded_inference_v1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
     ExpandedModelSourceV1, ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, PinnedFileV1,
-    UpdateBackwardExecutionV1,
+    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -95,11 +95,30 @@ pub struct NativeExpandedTrainingRunV1 {
     /// `expanded_deck_training_v1::collect_episode_tolerant_v1`.
     #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction")]
     pub max_non_natural_episode_fraction: f32,
+    /// Config-driven bound (MiB) on the decoded tensor payload of one
+    /// prepared update; default 256 keeps every existing config byte-identical
+    /// on the wire and every prepared update's bound unchanged. Raising it
+    /// admits updates of more than about fifty games. Recorded in run.json
+    /// when non-default and re-verified against each update's preparation
+    /// telemetry. See `ordered_update_preparation`.
+    #[serde(
+        default = "default_max_prepared_tensor_mebibytes",
+        skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
+    )]
+    pub max_prepared_tensor_mebibytes: usize,
     pub output_directory: PathBuf,
 }
 
 fn is_zero_non_natural_fraction(value: &f32) -> bool {
     *value == 0.0
+}
+
+fn default_max_prepared_tensor_mebibytes() -> usize {
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
+
+fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
 
 fn check(ok: bool, message: &str) -> Result<(), String> {
@@ -140,6 +159,14 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         crate::expanded_deck_training_v1::validate_max_non_natural_episode_fraction_v1(
             self.max_non_natural_episode_fraction,
+        )?;
+        crate::expanded_deck_training_v1::validate_max_prepared_tensor_mebibytes_v1(
+            self.max_prepared_tensor_mebibytes,
+        )?;
+        check(
+            self.preparation_workers > 1
+                || self.max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            "max_prepared_tensor_mebibytes applies to prepared updates only (preparation_workers > 1)",
         )?;
         check(
             self.output_directory.is_absolute(),
@@ -453,7 +480,11 @@ fn validate_collection_episodes(
     Ok(trajectories)
 }
 
-fn validate_preparation_execution(document: &Value, workers: usize) -> Result<(), String> {
+fn validate_preparation_execution(
+    document: &Value,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+) -> Result<(), String> {
     let telemetry = document.get("update_preparation");
     if workers == 1 {
         return check(
@@ -472,6 +503,19 @@ fn validate_preparation_execution(document: &Value, workers: usize) -> Result<()
             && (1..=65_536).contains(&jobs)
             && telemetry["started_workers"] == (workers as u64).min(jobs),
         "recovered update preparation differs from run configuration",
+    )?;
+    // Receipts written before the bound became config-driven carry no
+    // `max_decoded_tensor_bytes`; they are valid only at the historical
+    // default. A receipt that records the bound must record this run's.
+    let expected_bytes = (max_prepared_tensor_mebibytes as u64) * 1024 * 1024;
+    check(
+        match telemetry.get("max_decoded_tensor_bytes") {
+            None | Some(Value::Null) => {
+                max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+            }
+            Some(recorded) => recorded == &json!(expected_bytes),
+        },
+        "recovered update preparation bound differs from run configuration",
     )
 }
 
@@ -485,10 +529,15 @@ fn validate_update(
     value_coefficient: f32,
     update_backend: ExpandedUpdateBackendV1,
     preparation_workers: usize,
+    max_prepared_tensor_mebibytes: usize,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     update_backend.validate_update_execution_v1(&document)?;
-    validate_preparation_execution(&document, preparation_workers)?;
+    validate_preparation_execution(
+        &document,
+        preparation_workers,
+        max_prepared_tensor_mebibytes,
+    )?;
     check(
         document["complete"] == true
             && document["source"] == value(source)?
@@ -555,6 +604,9 @@ fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &
         document["preparation_backend"] = json!("native-cpu-ordered-physical-groups-v1");
         document["preparation_workers_requested"] = json!(config.preparation_workers);
     }
+    if config.max_prepared_tensor_mebibytes != DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES {
+        document["max_prepared_tensor_mebibytes"] = json!(config.max_prepared_tensor_mebibytes);
+    }
 }
 
 fn update_command(
@@ -582,6 +634,7 @@ fn update_command(
             update_backend: config.update_backend,
             update_backward_execution: config.update_backward_execution,
             preparation_workers: config.preparation_workers,
+            max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
             output_directory,
         }
     }
@@ -686,6 +739,7 @@ pub fn run_native_expanded_training_v1(
                 config.value_coefficient,
                 config.update_backend,
                 config.preparation_workers,
+                config.max_prepared_tensor_mebibytes,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -774,6 +828,7 @@ pub fn run_native_expanded_training_v1(
                     config.value_coefficient,
                     config.update_backend,
                     config.preparation_workers,
+                    config.max_prepared_tensor_mebibytes,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -840,6 +895,7 @@ pub fn run_native_expanded_training_v1(
             config.value_coefficient,
             config.update_backend,
             config.preparation_workers,
+            config.max_prepared_tensor_mebibytes,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -997,6 +1053,7 @@ mod tests {
             collection_workers: 1,
             preparation_workers: 1,
             max_non_natural_episode_fraction: 0.0,
+            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -1099,6 +1156,57 @@ mod tests {
             parallel.preparation_workers = invalid;
             assert!(parallel.validate_v1().is_err());
         }
+    }
+
+    #[test]
+    fn max_prepared_tensor_mebibytes_preserves_wire_and_validates() {
+        let plan = schedule();
+        let wire = value(&plan).unwrap();
+        assert!(wire.get("max_prepared_tensor_mebibytes").is_none());
+        let decoded: NativeExpandedTrainingRunV1 = serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.max_prepared_tensor_mebibytes, 256);
+        let mut raised = schedule();
+        raised.preparation_workers = 4;
+        raised.max_prepared_tensor_mebibytes = 1024;
+        let wire = value(&raised).unwrap();
+        assert_eq!(wire["max_prepared_tensor_mebibytes"], json!(1024));
+        raised.validate_v1().unwrap();
+        let mut serial = schedule();
+        serial.max_prepared_tensor_mebibytes = 1024;
+        assert!(serial
+            .validate_v1()
+            .unwrap_err()
+            .contains("prepared updates only"));
+        let mut out_of_range = schedule();
+        out_of_range.preparation_workers = 4;
+        out_of_range.max_prepared_tensor_mebibytes = 8192;
+        assert!(out_of_range.validate_v1().unwrap_err().contains("64..=4096"));
+        let mut manifest = json!({});
+        record_collection_execution(&raised, &mut manifest);
+        assert_eq!(manifest["max_prepared_tensor_mebibytes"], json!(1024));
+        let mut default_manifest = json!({});
+        record_collection_execution(&schedule(), &mut default_manifest);
+        assert!(default_manifest
+            .get("max_prepared_tensor_mebibytes")
+            .is_none());
+        match update_command(&raised, &raised.initial_source, Vec::new(), PathBuf::new()) {
+            ExpandedTrainingCommandV1::UpdatePrepared {
+                max_prepared_tensor_mebibytes,
+                ..
+            } => assert_eq!(max_prepared_tensor_mebibytes, 1024),
+            _ => panic!("prepared run must issue a prepared update"),
+        }
+        let legacy = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
+            "requested_workers": 4, "physical_group_jobs": 10, "started_workers": 4}});
+        validate_preparation_execution(&legacy, 4, 256).unwrap();
+        assert!(validate_preparation_execution(&legacy, 4, 1024)
+            .unwrap_err()
+            .contains("preparation bound differs"));
+        let recorded = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
+            "requested_workers": 4, "physical_group_jobs": 10, "started_workers": 4,
+            "max_decoded_tensor_bytes": 1024u64 * 1024 * 1024}});
+        validate_preparation_execution(&recorded, 4, 1024).unwrap();
+        assert!(validate_preparation_execution(&recorded, 4, 256).is_err());
     }
 
     #[test]
@@ -1272,14 +1380,14 @@ mod tests {
     #[test]
     fn recovered_update_must_match_actual_preparation_mode() {
         let serial = json!({});
-        validate_preparation_execution(&serial, 1).unwrap();
-        assert!(validate_preparation_execution(&serial, 4).is_err());
+        validate_preparation_execution(&serial, 1, 256).unwrap();
+        assert!(validate_preparation_execution(&serial, 4, 256).is_err());
         let prepared = json!({"update_preparation":{
             "schema":"mtg-kernel-ordered-update-preparation/v1",
             "requested_workers":4,"started_workers":3,"physical_group_jobs":3}});
-        validate_preparation_execution(&prepared, 4).unwrap();
-        assert!(validate_preparation_execution(&prepared, 1).is_err());
-        assert!(validate_preparation_execution(&prepared, 2).is_err());
+        validate_preparation_execution(&prepared, 4, 256).unwrap();
+        assert!(validate_preparation_execution(&prepared, 1, 256).is_err());
+        assert!(validate_preparation_execution(&prepared, 2, 256).is_err());
         for (field, bad) in [
             ("schema", json!("unknown")),
             ("started_workers", json!(4)),
@@ -1288,7 +1396,7 @@ mod tests {
         ] {
             let mut changed = prepared.clone();
             changed["update_preparation"][field] = bad;
-            assert!(validate_preparation_execution(&changed, 4).is_err());
+            assert!(validate_preparation_execution(&changed, 4, 256).is_err());
         }
     }
 

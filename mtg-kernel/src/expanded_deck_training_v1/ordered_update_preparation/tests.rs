@@ -153,7 +153,7 @@ fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
             }
             let mut loads = 0;
             let prepared =
-                prepare_with_loader_v1(&episodes, &parallel_policy, &learner, workers, |source| {
+                prepare_with_loader_v1(&episodes, &parallel_policy, &learner, workers, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |source| {
                     loads += 1;
                     assert_eq!(source, &other.as_ref().unwrap().source);
                     Ok(LoadedOpponentV1 {
@@ -202,7 +202,7 @@ fn phase1_preparation_current_model_reuse_avoids_disk_load_and_keeps_rng_outputs
     t.seat_behaviors = Some([learner.clone(), learner.clone()]);
     validate_trajectory(&t).unwrap();
     let expected = replay_learner_groups_v1(&t, &policy, Some(&policy)).unwrap();
-    let prepared = prepare_with_loader_v1(std::slice::from_ref(&t), &policy, &learner, 4, |_| {
+    let prepared = prepare_with_loader_v1(std::slice::from_ref(&t), &policy, &learner, 4, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |_| {
         panic!("current source should reuse the already validated learner")
     })
     .unwrap();
@@ -244,6 +244,7 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
                 &policy,
                 &learner,
                 workers,
+                DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
                 |_| {
                     if kind == "missing_opponent" {
                         return Err("deliberate missing frozen source".into());
@@ -334,22 +335,40 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
             t
         })
         .collect();
-    let result = prepare_with_loader_v1(&episodes, &policy, &learner, 4, |_| {
+    let result = prepare_with_loader_v1(&episodes, &policy, &learner, 4, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |_| {
         panic!("opponent bound must be checked before loading")
     });
     assert!(result.err().unwrap().contains("32 distinct opponents"));
     let mut oversized = template;
     // Actual vector payload, not a mocked limit: no forward or source load may
     // begin when one decoded tensor already exceeds the preparation budget.
-    oversized.decisions[0].tensor.state = vec![0; MAX_DECODED_TENSOR_BYTES / 4 + 1];
+    oversized.decisions[0].tensor.state = vec![0; DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES * MEBIBYTE / 4 + 1];
     let result = prepare_with_loader_v1(
         std::slice::from_ref(&oversized),
         &policy,
         &learner,
         4,
+        DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         |_| panic!("tensor bound must be checked before loading"),
     );
     assert!(result.err().unwrap().contains("256 MiB decoded tensor"));
+    // The bound is the caller's, not a constant: a smaller configured bound
+    // rejects a smaller payload and the message names the actual bound.
+    let mut small = oversized.clone();
+    small.decisions[0].tensor.state = vec![0; MIN_PREPARED_TENSOR_MEBIBYTES * MEBIBYTE / 4 + 1];
+    let result = prepare_with_loader_v1(
+        std::slice::from_ref(&small),
+        &policy,
+        &learner,
+        4,
+        MIN_PREPARED_TENSOR_MEBIBYTES,
+        |_| panic!("tensor bound must be checked before loading"),
+    );
+    assert!(result.err().unwrap().contains("64 MiB decoded tensor"));
+    assert!(validate_max_prepared_tensor_mebibytes_v1(63).is_err());
+    assert!(validate_max_prepared_tensor_mebibytes_v1(4097).is_err());
+    assert!(validate_max_prepared_tensor_mebibytes_v1(64).is_ok());
+    assert!(validate_max_prepared_tensor_mebibytes_v1(4096).is_ok());
 }
 
 #[test]
@@ -387,6 +406,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         update_backend: ExpandedUpdateBackendV1::Cpu,
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
         preparation_workers: 4,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         output_directory: PathBuf::from("prepared-output"),
     };
     let value = serde_json::to_value(explicit).unwrap();
@@ -394,4 +414,5 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     assert_eq!(value["preparation_workers"], 4);
     assert!(value.get("update_backend").is_none());
     assert!(value.get("update_backward_execution").is_none());
+    assert!(value.get("max_prepared_tensor_mebibytes").is_none());
 }

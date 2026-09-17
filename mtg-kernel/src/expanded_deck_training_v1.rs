@@ -59,6 +59,17 @@ mod phase1_parallel_collection;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
+pub(crate) use ordered_update_preparation::{
+    validate_max_prepared_tensor_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+};
+
+fn default_max_prepared_tensor_mebibytes() -> usize {
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
+
+fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod registry_transfer_source;
@@ -1725,6 +1736,14 @@ pub enum ExpandedTrainingCommandV1 {
         )]
         update_backward_execution: UpdateBackwardExecutionV1,
         preparation_workers: usize,
+        /// Decoded tensor payload bound for this prepared update in MiB;
+        /// absent means the historical 256 (byte-identical wire for every
+        /// existing command). See `ordered_update_preparation`.
+        #[serde(
+            default = "default_max_prepared_tensor_mebibytes",
+            skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
+        )]
+        max_prepared_tensor_mebibytes: usize,
         output_directory: PathBuf,
     },
 }
@@ -1863,6 +1882,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             update_backward_execution,
             output_directory,
             None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -1872,9 +1892,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             update_backend,
             update_backward_execution,
             preparation_workers,
+            max_prepared_tensor_mebibytes,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
+            validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
             execute_update_v1(
                 source,
                 trajectories,
@@ -1884,6 +1906,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 update_backward_execution,
                 output_directory,
                 Some(preparation_workers),
+                max_prepared_tensor_mebibytes,
             )
         }
     }
@@ -1933,6 +1956,7 @@ fn execute_update_v1(
     backward_execution: UpdateBackwardExecutionV1,
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -2004,7 +2028,13 @@ fn execute_update_v1(
     // before constructing learner groups. No private state is decoded.
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
         let prepared =
-            ordered_update_preparation::prepare_v1(&episodes, &policy, &learner, workers)?;
+            ordered_update_preparation::prepare_v1(
+                &episodes,
+                &policy,
+                &learner,
+                workers,
+                max_prepared_tensor_mebibytes,
+            )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {
         let mut tensor_groups = Vec::new();

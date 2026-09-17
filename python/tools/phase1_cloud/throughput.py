@@ -46,6 +46,21 @@ def max_non_natural_episode_fraction(config):
     return fraction
 
 
+def max_prepared_tensor_mebibytes(config):
+    """mtg-kernel `NativeExpandedTrainingRunV1.max_prepared_tensor_mebibytes`
+    (and the same-named field on `ExpandedTrainingCommandV1::UpdatePrepared`):
+    a bare integer on the wire, mirroring `preparation_workers` above.
+    Default 256 keeps every existing config unchanged; admitted range
+    64..=4096, matching the Rust-side validator exactly; a non-default value
+    requires preparation_workers > 1 (prepared updates only)."""
+    mebibytes=config.get('max_prepared_tensor_mebibytes',256)
+    require(type(mebibytes) is int and 64<=mebibytes<=4096,
+            'invalid max_prepared_tensor_mebibytes; integer in 64..=4096 required')
+    require(mebibytes==256 or preparation_workers(config)>1,
+            'max_prepared_tensor_mebibytes applies to prepared updates only (preparation_workers > 1)')
+    return mebibytes
+
+
 def validate_preparation_runner(config,document):
     workers=preparation_workers(config)
     if workers==1:
@@ -89,6 +104,8 @@ def canonical_training_config(config):
     # fixed_partition_4 is supposed to differ from one computed with the
     # (explicit or implicit) sequential default.
     if update_backward_execution(value)=='sequential':value.pop('update_backward_execution',None)
+    # Same convention: stripped only at the byte-identical default of 256.
+    if max_prepared_tensor_mebibytes(value)==256:value.pop('max_prepared_tensor_mebibytes',None)
     # Same convention again: stripped only at the byte-identical 0.0 default.
     # f32-round-tripped like learning_rate/value_coefficient below (it is an
     # f32 field on the Rust side too) before that comparison, so an explicit

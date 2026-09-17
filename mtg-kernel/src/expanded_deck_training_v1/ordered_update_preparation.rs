@@ -11,7 +11,25 @@ use std::time::Instant;
 const MAX_WORKERS: usize = 32;
 const MAX_OPPONENTS: usize = 32;
 const MAX_GROUPS: usize = 65_536;
-const MAX_DECODED_TENSOR_BYTES: usize = 256 * 1024 * 1024;
+/// Bound on the decoded tensor payload one prepared update may hold. The
+/// historical constant (256 MiB) is the default; since campaign 002 it is
+/// config-driven through `max_prepared_tensor_mebibytes` on the run config
+/// and the prepared update command, so an update can carry more games than
+/// ten without silently changing any existing config (absent means 256).
+/// Admitted range 64..=4096 MiB; the actual bound is recorded in the
+/// preparation telemetry (`max_decoded_tensor_bytes`) and re-verified on
+/// resume against the run configuration.
+pub(crate) const DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES: usize = 256;
+pub(crate) const MIN_PREPARED_TENSOR_MEBIBYTES: usize = 64;
+pub(crate) const MAX_PREPARED_TENSOR_MEBIBYTES: usize = 4096;
+const MEBIBYTE: usize = 1024 * 1024;
+
+pub(crate) fn validate_max_prepared_tensor_mebibytes_v1(mebibytes: usize) -> Result<(), String> {
+    ensure(
+        (MIN_PREPARED_TENSOR_MEBIBYTES..=MAX_PREPARED_TENSOR_MEBIBYTES).contains(&mebibytes),
+        "max_prepared_tensor_mebibytes must be in 64..=4096",
+    )
+}
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) fn validate_preparation_workers_v1(workers: usize) -> Result<(), String> {
@@ -38,6 +56,7 @@ pub(super) struct PreparationTelemetryV1 {
     opponent_load_calls: usize,
     current_model_reuses: usize,
     decoded_tensor_payload_bytes: usize,
+    max_decoded_tensor_bytes: usize,
     worker_stack_reservation_bytes: usize,
     validation_and_planning_seconds: f64,
     opponent_loading_seconds: f64,
@@ -94,6 +113,7 @@ fn decoded_payload_bytes(t: &TensorBitsV1) -> Result<usize, String> {
 
 fn plan_v1(
     episodes: &[ExpandedTrajectoryV1],
+    max_decoded_tensor_bytes: usize,
 ) -> Result<(Vec<GroupJobV1>, Vec<ExpandedModelSourceV1>, usize), String> {
     ensure(
         !episodes.is_empty() && episodes.len() <= 1024,
@@ -129,10 +149,12 @@ fn plan_v1(
                 payload = payload
                     .checked_add(decoded_payload_bytes(&row.tensor)?)
                     .ok_or("preparation tensor payload overflow")?;
-                ensure(
-                    payload <= MAX_DECODED_TENSOR_BYTES,
-                    "preparation exceeds 256 MiB decoded tensor payload",
-                )?;
+                if payload > max_decoded_tensor_bytes {
+                    return Err(format!(
+                        "preparation exceeds {} MiB decoded tensor payload",
+                        max_decoded_tensor_bytes / MEBIBYTE
+                    ));
+                }
             }
             ensure(
                 jobs.len() < MAX_GROUPS,
@@ -248,8 +270,9 @@ pub(super) fn prepare_v1<'a>(
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
+    max_prepared_tensor_mebibytes: usize,
 ) -> Result<PreparedGroupsV1<'a>, String> {
-    prepare_with_loader_v1(episodes, policy, learner, workers, |source| {
+    prepare_with_loader_v1(episodes, policy, learner, workers, max_prepared_tensor_mebibytes, |source| {
         let (policy, identity) = load_expanded_inference_v1(source)?;
         Ok(LoadedOpponentV1 {
             policy,
@@ -266,14 +289,17 @@ fn prepare_with_loader_v1<'a, F>(
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
+    max_prepared_tensor_mebibytes: usize,
     mut load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
 where
     F: FnMut(&ExpandedModelSourceV1) -> Result<LoadedOpponentV1, String>,
 {
     validate_preparation_workers_v1(workers)?;
+    validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+    let max_decoded_tensor_bytes = max_prepared_tensor_mebibytes * MEBIBYTE;
     let started = Instant::now();
-    let (jobs, sources, payload) = plan_v1(episodes)?;
+    let (jobs, sources, payload) = plan_v1(episodes, max_decoded_tensor_bytes)?;
     let planning = started.elapsed().as_secs_f64();
     let loading_started = Instant::now();
     let mut loads = 0;
@@ -377,6 +403,7 @@ where
             opponent_load_calls: loads,
             current_model_reuses: current_reuses,
             decoded_tensor_payload_bytes: payload,
+            max_decoded_tensor_bytes,
             worker_stack_reservation_bytes: workers.min(jobs.len()) * WORKER_STACK_BYTES,
             validation_and_planning_seconds: planning,
             opponent_loading_seconds: loading,
