@@ -22,6 +22,9 @@ use crate::paired_bo1_harness_v1::{
 };
 #[cfg(test)]
 use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
+use crate::phase1_v4_decision_search_v1::{
+    EndSeatSearchRequestV1, SearchUsageReceiptV1, SearchWrappedPlayPolicyV1,
+};
 use crate::rl_session::{FastActorSessionV1, RlSessionError};
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
@@ -133,6 +136,11 @@ pub struct LearnedPopulationBo3ResultV1 {
     pub outcome: MatchOutcomeV1,
     pub games: Vec<LearnedBo3GameRecordV1>,
     pub sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
+    /// Decision-time search usage for this match (requirement: label the
+    /// read). Additive and absent unless the caller's config set
+    /// `end_seat_search`; every existing receipt's wire shape is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_usage: Option<SearchUsageReceiptV1>,
 }
 
 /// Each policy sees only the input belonging to its assigned physical seat.
@@ -517,6 +525,7 @@ fn feature_generation_label_v1(
 /// mismatched pair is still rejected exactly as before. Either way, no
 /// trajectory or training artifact is written here; this function only
 /// plays the match and returns its result.
+#[allow(clippy::too_many_arguments)]
 pub fn run_population_bo3_v1(
     config: LearnedBo3RunConfigV1,
     registered_decks: [RegisteredDeckV1; 2],
@@ -526,6 +535,7 @@ pub fn run_population_bo3_v1(
     play_policies: &mut [FrozenPlayPolicyV1; 2],
     sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
     cross_generation_evaluation: bool,
+    end_seat_search: Option<EndSeatSearchRequestV1>,
 ) -> Result<LearnedPopulationBo3ResultV1, String> {
     validate_run_limits_v1(&config)?;
     for seat in 0..2 {
@@ -558,11 +568,24 @@ pub fn run_population_bo3_v1(
         .map(LearnedBo3RegistrationRecordV1::from_registered_v1);
     let session = BestOfThreeDeckMatchV1::new_live_v1(registered_decks, config.game_one_chooser)
         .map_err(|error| error.to_string())?;
+    // Every seat is always wrapped; the unconfigured (or non-"end") seat
+    // simply gets budget 0, which this module's own tests prove is
+    // behaviorally identical to no wrapper at all. That is what "leaving
+    // the start/opponent seat's scoring unchanged" means by construction
+    // here, rather than by a second, separately maintained code path.
+    let budgets = match end_seat_search {
+        Some(request) if request.seat == 0 => [request.budget, 0],
+        Some(request) if request.seat == 1 => [0, request.budget],
+        Some(_) => return Err("end_seat_search.seat must be 0 or 1".into()),
+        None => [0, 0],
+    };
     let [p0, p1] = play_policies;
+    let mut w0 = SearchWrappedPlayPolicyV1::new_v1(p0, budgets[0], config.seed);
+    let mut w1 = SearchWrappedPlayPolicyV1::new_v1(p1, budgets[1], config.seed);
     let mut router = if cross_generation_evaluation {
-        SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([p0, p1])?
+        SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([&mut w0, &mut w1])?
     } else {
-        SeatRoutedBo3PlayPolicyV1::new_v1([p0, p1])?
+        SeatRoutedBo3PlayPolicyV1::new_v1([&mut w0, &mut w1])?
     };
     let played = run_learned_bo3_session_v1(
         config,
@@ -576,6 +599,14 @@ pub fn run_population_bo3_v1(
         &mut router,
         sideboard_policies,
     )?;
+    let search_usage = end_seat_search.map(|request| {
+        let stats = if request.seat == 0 {
+            w0.stats_v1()
+        } else {
+            w1.stats_v1()
+        };
+        SearchUsageReceiptV1::new_v1(request, stats)
+    });
     Ok(LearnedPopulationBo3ResultV1 {
         schema: "kernel_population_bo3/v1".into(),
         config: played.config,
@@ -587,6 +618,7 @@ pub fn run_population_bo3_v1(
         outcome: played.outcome,
         games: played.games,
         sideboard_decisions: played.sideboard_decisions,
+        search_usage,
     })
 }
 
@@ -1103,6 +1135,7 @@ mod tests {
             },
             games: vec![],
             sideboard_decisions: vec![],
+            search_usage: None,
         };
         let encoded = serde_json::to_value(&result).unwrap();
         assert_eq!(

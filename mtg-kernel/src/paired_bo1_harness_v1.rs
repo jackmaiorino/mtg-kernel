@@ -77,6 +77,25 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         self.session
             .encode_current_flat_scoring_decision_owned_v2(self.decision, encoder, buffers)
     }
+
+    /// Additive, `pub(crate)` escape hatch for a bounded, deterministic
+    /// decision-time search wrapper (`phase1_v4_decision_search_v1`): lets
+    /// crate-internal search code clone the live session to step a short,
+    /// bounded simulated lookahead forward, without widening any external
+    /// caller's access (this stays `pub(crate)`, never `pub`). The returned
+    /// reference is not redeterminized: unlike
+    /// `FastActorSessionV1::kernel_search_redeterminized_clone_v1` (which
+    /// only supports the older `FlatActionContractModeV1::V2` sessions), a
+    /// plain `.clone()` of it keeps the session's true hidden zones, so a
+    /// simulated rollout built from it can see information a real decision
+    /// maker would not have yet. That is a deliberate, documented
+    /// simplification for a development-only search wrapper (see that
+    /// module's doc comment), not a general license to leak hidden state:
+    /// every caller of this method must record the limitation wherever it
+    /// uses the clone.
+    pub(crate) fn live_session_for_bounded_search_v1(&self) -> &'a FastActorSessionV1 {
+        self.session
+    }
 }
 
 /// Tri-state generation a paired-BO1 policy actually scores/pairs under. `V2`

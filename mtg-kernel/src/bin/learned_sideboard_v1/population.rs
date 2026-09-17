@@ -4,6 +4,7 @@
 use super::*;
 use mtg_kernel::expanded_deck_training_v1::ExpandedInferenceIdentityV1;
 use mtg_kernel::learned_bo3_v1::run_population_bo3_v1;
+use mtg_kernel::phase1_v4_decision_search_v1::SearchUsageReceiptV1;
 
 fn embeddings_for_seat<'a>(
     values: &'a [f32],
@@ -50,11 +51,13 @@ pub(super) fn run_population_command_v1(
         policies,
         matches,
         cross_generation_evaluation,
+        end_seat_search,
     } = command
     else {
         return Err("expected population BO3 command".into());
     };
     let cross_generation_evaluation = *cross_generation_evaluation;
+    let end_seat_search = *end_seat_search;
     absolute(output)?;
     if matches.is_empty() || matches.len() > 1024 {
         return Err("match count must be 1..1024".into());
@@ -121,6 +124,11 @@ pub(super) fn run_population_command_v1(
     let execution = (|| -> Result<Value, String> {
         let mut total_games = 0usize;
         let mut seat_generations: Option<[String; 2]> = None;
+        // Chunk-summary aggregate of every match's search usage (requirement:
+        // label the read). Stays `None` (and so omitted below) unless
+        // `end_seat_search` was set, matching the per-match receipt's own
+        // additive, absent-by-default shape.
+        let mut search_usage_total: Option<SearchUsageReceiptV1> = None;
         for (index, (item, registered)) in matches.iter().zip(registrations).enumerate() {
             let mut s0 = prepared[0].bind_explicit(&item.config, &registered, 0, &embeddings[0])?;
             let mut s1 = prepared[1].bind_explicit(&item.config, &registered, 1, &embeddings[1])?;
@@ -133,12 +141,19 @@ pub(super) fn run_population_command_v1(
                 &mut play,
                 [&mut s0, &mut s1],
                 cross_generation_evaluation,
+                end_seat_search,
             )?;
             total_games += result.games.len();
             // Every match in one command shares the same loaded models, so
             // every result reports the same `seat_generations`; capture it
             // once, from the first completed match, for the batch receipt.
             seat_generations.get_or_insert_with(|| result.seat_generations.clone());
+            if let Some(usage) = result.search_usage {
+                match &mut search_usage_total {
+                    Some(total) => total.accumulate_v1(&usage),
+                    None => search_usage_total = Some(usage),
+                }
+            }
             write_json(&output.join(format!("match-{index:06}.json")), &result)?;
             println!(
                 "{}",
@@ -148,14 +163,18 @@ pub(super) fn run_population_command_v1(
         }
         let seat_generations =
             seat_generations.expect("matches is non-empty; checked above");
-        Ok(
+        let mut completion =
             json!({"mode":"run_population_batch", "completed_matches":matches.len(),
             "physical_games":total_games, "inputs":inputs, "play_models":identities,
             "sideboard_policy_identities":policy_identities,
             "no_training_performed":true, "strength_claim":false,
             "cross_generation_evaluation":cross_generation_evaluation,
-            "seat_generations":seat_generations}),
-        )
+            "seat_generations":seat_generations});
+        if let Some(usage) = search_usage_total {
+            completion["search_usage"] =
+                serde_json::to_value(usage).map_err(|error| error.to_string())?;
+        }
+        Ok(completion)
     })();
     match execution {
         Ok(completion) => {
@@ -293,5 +312,48 @@ mod tests {
         };
         assert!(cross_generation_evaluation);
         assert_eq!(serde_json::to_value(&decoded_true).unwrap(), with_field);
+    }
+
+    /// Sibling of the cross-generation-evaluation test above, for
+    /// `end_seat_search` (requirement 4): the field decodes, defaults to
+    /// `None`, and a config that never mentions it keeps an unchanged wire
+    /// shape, so no existing `run_population_batch` config changes behavior
+    /// just by being read by a binary built with this option compiled in.
+    #[test]
+    fn population_command_end_seat_search_defaults_absent_with_wire_unchanged() {
+        let source = json!({"play_import":{"path":"C:/import.json","sha256":"a".repeat(64)},
+            "feature_transfer":{"expected_feature_contract_digest":"b".repeat(64),
+                "expected_feature_encoding_digest":"c".repeat(64)},"checkpoint":null});
+        let without_field = json!({"mode":"run_population_batch",
+            "model_sources":[source.clone(), source],
+            "output_directory":"C:/new", "policies":[{"kind":"keep"},{"kind":"keep"}],
+            "matches":[]});
+
+        let decoded: CommandV1 = serde_json::from_value(without_field.clone()).unwrap();
+        let CommandV1::RunPopulationBatch {
+            end_seat_search, ..
+        } = &decoded
+        else {
+            panic!("expected RunPopulationBatch");
+        };
+        assert!(end_seat_search.is_none());
+        let reencoded = serde_json::to_value(&decoded).unwrap();
+        assert_eq!(reencoded, without_field, "defaulting must not add the key");
+        assert!(reencoded.get("end_seat_search").is_none());
+
+        let mut with_field = without_field;
+        with_field["end_seat_search"] = json!({"seat": 0, "budget": 8});
+        let decoded_with: CommandV1 = serde_json::from_value(with_field.clone()).unwrap();
+        let CommandV1::RunPopulationBatch {
+            end_seat_search, ..
+        } = &decoded_with
+        else {
+            panic!("expected RunPopulationBatch");
+        };
+        assert_eq!(
+            *end_seat_search,
+            Some(EndSeatSearchRequestV1 { seat: 0, budget: 8 })
+        );
+        assert_eq!(serde_json::to_value(&decoded_with).unwrap(), with_field);
     }
 }

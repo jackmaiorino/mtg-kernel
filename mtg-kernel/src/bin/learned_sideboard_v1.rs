@@ -13,6 +13,7 @@ use mtg_kernel::learned_sideboard_v1::{
     LearnedSideboardModelV1, SideboardActionV1, SideboardImitationExampleV1,
     SideboardPlayIdentityV1, SideboardTrainingConfigV1,
 };
+use mtg_kernel::phase1_v4_decision_search_v1::EndSeatSearchRequestV1;
 use mtg_kernel::sideboard::{
     checked_in_pauper_registered_deck_by_id_v1, CardCountV1, DeckConfigurationV1, RegisteredDeckV1,
     SideboardPlanV1,
@@ -152,6 +153,13 @@ enum CommandV1 {
         /// a mismatched seat pair is still rejected.
         #[serde(default, skip_serializing_if = "is_false")]
         cross_generation_evaluation: bool,
+        /// Optional decision-time search wrapper (design ruling 2026-09-01)
+        /// for exactly one seat's play policy: the "end" seat under
+        /// evaluation in a yardstick read. Additive and config-driven;
+        /// omitted (the default) keeps every existing config's wire shape
+        /// and behavior byte-identical. See `phase1_v4_decision_search_v1`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end_seat_search: Option<EndSeatSearchRequestV1>,
     },
     TrainImitation {
         play_import: PathBuf,
@@ -1006,6 +1014,7 @@ fn compiled_sources() -> Value {
         "tensorizer_v3":hash(include_bytes!("../native_flat_tensorizer_v3.rs")),
         "feature_descriptor_v3":hash(include_bytes!("../../../data/flat_policy_v3/feature_contract_v3.json")),
         "paired_harness":hash(include_bytes!("../paired_bo1_harness_v1.rs")),
+        "decision_time_search":hash(include_bytes!("../phase1_v4_decision_search_v1.rs")),
         "game_summary":hash(include_bytes!("../game_summary_v1.rs")),
         "library_registration":hash(include_bytes!("../lib.rs")),
         "card_registry":hash(include_bytes!("../../../data/cards_v1.json")),
