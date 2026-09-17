@@ -4174,6 +4174,153 @@ pub(crate) mod tests {
         validate_trajectory(&trajectory).unwrap();
     }
 
+    /// Root-cause reproduction for campaign-002's lineage-c block-1 run,
+    /// iteration 66 (0-based), collector 0, episode slot 8
+    /// (`breadth-cad7af74b4d0299df3789c2d-b0-i66-s8`), Burn (opponent, seat
+    /// 0, the run config's `initial_source` checkpoint, itself lineage b's
+    /// block-10-end checkpoint) versus CawGates (learner, seat 1, lineage
+    /// c's own iteration-65 checkpoint), starting player 0, seed
+    /// 9088280813418980347. Every path, hash, seed and deck list below is
+    /// copied verbatim from the real collection command receipt at
+    /// `D:/phase1-live/campaign-002/c/block1/run/iterations/000066/
+    /// attempt-000000/collect-command.json`, episode index 8 (the learner
+    /// source is that file's top-level `source`; the opponent source is
+    /// the episode's own `opponent`, resolved here to the run config's
+    /// `initial_source` kind). Reads the real evidence tree and the real
+    /// `D:/phase1-live` run tree, never writes to either.
+    ///
+    /// Collection halted on this pairing with the tolerant collector's
+    /// fail-closed guard: `fail_closed:nonterminal decision produced zero
+    /// legal actions` at policy step 74 (`D:/phase1-live/campaign-002/c/
+    /// block1/run/iterations/000066/attempt-000000/collect/
+    /// non-natural.json`).
+    ///
+    /// Root cause: CawGates' own Guardian of the Guildpact (protection
+    /// from monocolored) was the only creature on either battlefield when
+    /// CawGates cast Journey to Nowhere (itself monocolored white); its
+    /// mandatory "exile target creature" ETB trigger therefore had zero
+    /// legal targets (`legal_targets_for_controller_from_source` correctly
+    /// excludes a protected creature). `drain_pending_triggers_or_decide`
+    /// (`engine.rs`) still exposed that untargetable trigger as a real
+    /// `Decision::ChooseTargets` (empty `legal_targets`, `can_finish:
+    /// false`) instead of dropping it, unlike `drain_pending_cast_or_decide`,
+    /// which already reverts an impossible spell cast rather than exposing
+    /// an empty targeting decision. Fixed by adding the same
+    /// `target_prefix_can_complete_for_controller_and_source` completability
+    /// check to the trigger-targeting path and dropping the pending trigger
+    /// (603.3c: a triggered ability with no legal targets does nothing)
+    /// instead of returning the impossible decision. Hermetic unit-test
+    /// coverage: `engine::tests::
+    /// journey_to_nowhere_etb_trigger_is_dropped_when_its_only_possible_target_has_protection_from_monocolored`.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-002 c/block1 iteration 66 slot 8 against the real evidence tree"]
+    fn campaign_002_c_block1_iteration_66_slot_8_burn_vs_cawgates_zero_legal_actions_completes_naturally(
+    ) {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        const D: &str = "D:/phase1-live/campaign-002";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        // Seat 1 (CawGates), the learner: lineage c's own current policy,
+        // the checkpoint iteration 66 collection actually loaded (iteration
+        // 65's update), imported through the run config's `initial_source`
+        // descriptor.
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{D}/c/block1/run/iterations/000065/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "1917db9d1a132b9180ff638e991a7f2570f74577933cb10ce199125426da42c1".into(),
+            }),
+        };
+        // Seat 0 (Burn), the opponent: this episode's `opponent.kind` is
+        // "initial", i.e. the run config's own `initial_source` checkpoint
+        // (lineage b's block-10-end checkpoint), not the lineage's current
+        // policy and not the `fresh-a-block10-end` fixed opponent.
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer,
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{D}/b/block10/run/iterations/000199/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "7af505e551efa5f524bc969a96f6fd00e0ab19d0e24570268a1fff1ae1906cc1".into(),
+            }),
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let burn = ExpandedDeckListV1 {
+            label: "Burn/767fd2c27db3".into(),
+            mainboard: vec![
+                34, 34, 36, 36, 36, 36, 37, 37, 37, 37, 47, 47, 47, 47, 51, 51, 51, 51, 54, 54,
+                54, 54, 63, 63, 63, 63, 66, 66, 66, 66, 70, 70, 70, 70, 76, 76, 76, 76, 76, 76,
+                76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 76, 107, 107, 107, 107, 127, 127,
+                127, 127,
+            ],
+            sideboard: vec![
+                90, 90, 90, 90, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101, 101,
+            ],
+        };
+        let caw_gates = ExpandedDeckListV1 {
+            label: "CawGates/e20cd1d12a56".into(),
+            mainboard: vec![
+                2, 2, 3, 3, 3, 3, 8, 8, 8, 14, 14, 14, 14, 17, 17, 17, 17, 49, 53, 53, 59, 60, 60,
+                60, 60, 61, 61, 61, 61, 68, 68, 68, 83, 83, 86, 86, 88, 88, 88, 88, 98, 98, 98, 98,
+                100, 100, 100, 100, 109, 109, 112, 112, 112, 112, 115, 115, 115, 115, 118, 118,
+            ],
+            sideboard: vec![7, 7, 7, 22, 22, 25, 25, 25, 28, 28, 57, 57, 90, 90, 90],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-cad7af74b4d0299df3789c2d-b0-i66-s8".into(),
+            seed: 9_088_280_813_418_980_347,
+            starting_player: 0,
+            learner_seat: 1,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [burn.clone(), caw_gates.clone()],
+            selected: [burn, caw_gates],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "campaign-002 c/block1 iteration 66 slot 8 (Burn vs CawGates) should \
+                     complete naturally, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
     // ---- max_non_natural_episode_fraction: tolerant collection with a
     // ---- ledger (Part 2). `derived_retry_seed_v1` is exercised directly
     // ---- (no game); the retry/ledger bookkeeping tests use

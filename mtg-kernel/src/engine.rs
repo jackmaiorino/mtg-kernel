@@ -8586,6 +8586,30 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
+            let trigger_source = pending.source_contract.map(|contract| TargetingSource {
+                object: pending.source,
+                card_def: contract.card_def,
+            });
+            if !target_prefix_can_complete_for_controller_and_source(
+                pending.target_spec,
+                &pending.targets,
+                pending.controller,
+                trigger_source,
+                state,
+            ) {
+                // 603.3c: if all of a triggered ability's targets are
+                // illegal (here: none were ever legal, e.g. every creature
+                // on the battlefield has protection from this monocolored
+                // source), the ability is removed instead of being put on
+                // the stack -- it does nothing. Drop it and keep draining
+                // rather than exposing an impossible `Decision::
+                // ChooseTargets` (empty `legal_targets`, `can_finish:
+                // false`), which `drain_pending_cast_or_decide`'s matching
+                // `targeting_can_complete`/`abort_cast` guard already
+                // avoids for spell casts.
+                state.engine.pending_triggers.remove(0);
+                continue;
+            }
             return Some(Decision::ChooseTargets {
                 player: pending.controller,
                 spell: pending.source,
@@ -8594,10 +8618,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     pending.target_spec,
                     &pending.targets,
                     pending.controller,
-                    pending.source_contract.map(|contract| TargetingSource {
-                        object: pending.source,
-                        card_def: contract.card_def,
-                    }),
+                    trigger_source,
                     state,
                 ),
                 can_finish: pending.targets.len()
@@ -15246,6 +15267,59 @@ mod tests {
         assert_eq!(state.stack.len(), 2);
         assert_eq!(state.stack[0].source, second);
         assert_eq!(state.stack[1].source, first);
+    }
+
+    /// Root-cause regression for the campaign-002 lineage-c block-1
+    /// iteration-66 slot-8 halt (Burn vs CawGates, seed
+    /// 9088280813418980347, step 74): `fail_closed:nonterminal decision
+    /// produced zero legal actions`. CawGates' own Guardian of the
+    /// Guildpact (protection from monocolored) was the only creature on
+    /// either battlefield when CawGates' Journey to Nowhere entered;
+    /// Journey to Nowhere is itself monocolored white, so Guardian of the
+    /// Guildpact is not a legal target of its "exile target creature" ETB
+    /// trigger -- `legal_targets_for_controller_from_source` correctly
+    /// returns empty. Before this fix, `drain_pending_triggers_or_decide`
+    /// still exposed that mandatory-target trigger as a real
+    /// `Decision::ChooseTargets` (empty `legal_targets`, `can_finish:
+    /// false`): a decision with no legal action, tripping the tolerant
+    /// collector's fail-closed guard. Per 603.3c a triggered ability with
+    /// no legal targets is removed instead of going on the stack --
+    /// `drain_pending_cast_or_decide` already reverts an impossible spell
+    /// cast the same way (see its `targeting_can_complete`/`abort_cast`
+    /// guard above); this fix adds the equivalent
+    /// `target_prefix_can_complete_for_controller_and_source` check here
+    /// and drops the pending trigger instead of returning the impossible
+    /// decision. Real-game proof: `expanded_deck_training_v1::tests::
+    /// campaign_002_c_block1_iteration_66_slot_8_burn_vs_cawgates_zero_legal_actions_completes_naturally`.
+    #[test]
+    fn journey_to_nowhere_etb_trigger_is_dropped_when_its_only_possible_target_has_protection_from_monocolored(
+    ) {
+        let mut state = ready_game_in_main1(0);
+        let guardian = put_in_hand(&mut state, PlayerId::P0, "Guardian of the Guildpact");
+        let journey = put_in_hand(&mut state, PlayerId::P0, "Journey to Nowhere");
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(guardian, Zone::Battlefield),
+                ProposedEvent::zone_change(journey, Zone::Battlefield),
+            ],
+        );
+        collect_and_queue_triggers(&mut state);
+
+        match advance_until_decision(&mut state) {
+            Decision::CastSpellOrPass { player, .. } => assert_eq!(player, PlayerId::P0),
+            other => panic!(
+                "expected the untargetable ETB trigger to be dropped and priority to return \
+                 normally, got: {other:?}"
+            ),
+        }
+        assert!(
+            state.engine.pending_triggers.is_empty(),
+            "the trigger with no legal target must be dropped, not left pending"
+        );
+        assert!(state.exile.is_empty(), "nothing was exiled: there was no legal target");
+        assert_eq!(state.objects.get(journey).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(guardian).zone, Zone::Battlefield);
     }
 
     #[test]
