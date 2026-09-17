@@ -2215,17 +2215,47 @@ pub(crate) fn historical_public_source_ordinal_ceiling_v1(
 /// V4 fresh-lineage helper, additive beside [`pending_trigger_choose_targets_gate_v1`]
 /// (which stays exactly as committed for the V3/frozen path). Factors out
 /// only the *hiddenness* half of that gate's predicate -- the trigger's live
-/// `source` sits in `Zone::Library` and carries no
-/// `state.library_knowledge` entry for its exact live incarnation, from the
-/// perspective of `pending.controller` observing `pending.source`'s owner's
-/// library -- without the ChooseTargets-only decision-shape constraints
-/// (`pending_triggers[0]`, `target_spec`/`targets` length, APNAP group
-/// ordering). The V7 observation-extensions producer
+/// `source` sits in a zone `pending.controller` cannot resolve it from
+/// without prior knowledge, and carries no matching knowledge entry for its
+/// exact live incarnation -- without the ChooseTargets-only decision-shape
+/// constraints (`pending_triggers[0]`, `target_spec`/`targets` length, APNAP
+/// group ordering). The V7 observation-extensions producer
 /// (`policy_observation_v7::policy_observation_extensions_v7`) and the V4
 /// action-slice component resolver (`rl_session::flat_action_v4`) both call
 /// this instead of re-deriving the check, so the two layers cannot
 /// independently drift, mirroring how both V3 layers already share
 /// [`pending_trigger_choose_targets_gate_v1`] itself.
+///
+/// Two hidden shapes are recognized:
+///
+/// - `Zone::Library`: `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`'s
+///   shape (the original case this helper covered). Checked against
+///   `state.library_knowledge[pending.controller][live.owner]`.
+/// - `Zone::Hand` with `live.owner != pending.controller`: the Initiative
+///   mechanic's shape (real gameplay: campaign yardstick-cumulative3-b-001,
+///   chunk-13-end-seat0, matches[10], Elves vs Terror, match seed
+///   3641832355271763964, game 2, step 414). `event::log_initiative_trigger`
+///   freezes the granting permanent's identity into `PendingTrigger::source`/
+///   `source_contract` but reassigns `controller` to whichever player
+///   currently holds the initiative (its own `source.controller = player`),
+///   which can differ from the granting permanent's owner once the
+///   initiative transfers to an opponent via combat damage
+///   (`engine::deal_combat_damage`'s `InitiativeTriggerKindV1::CombatTransfer`).
+///   The granting permanent itself is free to return to its owner's hand
+///   through any unrelated effect in the meantime, which is exactly the
+///   production shape: Avenging Hunter granted the initiative, Terror later
+///   took it via combat damage, and Avenging Hunter itself was back in
+///   Elves' hand by the time Terror's own frozen-source Undercity trigger
+///   needed a target. Checked against
+///   `state.hand_knowledge[pending.controller][live.owner]`, the same
+///   knowledge table the ordinary `KnownOpponentHand` action-object arm
+///   already consults (`rl_session::known_opponent_hand_canonical_ordinal_v1`),
+///   so a genuinely revealed hand card still resolves through the ordinary
+///   path instead of this fallback.
+///
+/// A same-controller hand (`live.owner == pending.controller`) is never
+/// hidden: that is the ordinary `SelfHand` arm's business, which needs no
+/// knowledge table at all.
 ///
 /// Returns `false` (never hidden) when `pending.source` is not a live
 /// object at all -- a defensive default, not a case any real caller should
@@ -2237,14 +2267,22 @@ pub(crate) fn pending_trigger_hidden_source_v1(
     let Some(live) = state.objects.try_get(pending.source) else {
         return false;
     };
-    if live.zone != Zone::Library {
-        return false;
+    match live.zone {
+        Zone::Library => !state.library_knowledge[pending.controller.index()][live.owner.index()]
+            .iter()
+            .any(|entry| {
+                entry.object == pending.source && entry.zone_change_count == live.zone_change_count
+            }),
+        Zone::Hand if live.owner != pending.controller => {
+            !state.hand_knowledge[pending.controller.index()][live.owner.index()]
+                .iter()
+                .any(|entry| {
+                    entry.object == pending.source
+                        && entry.zone_change_count == live.zone_change_count
+                })
+        }
+        _ => false,
     }
-    !state.library_knowledge[pending.controller.index()][live.owner.index()]
-        .iter()
-        .any(|entry| {
-            entry.object == pending.source && entry.zone_change_count == live.zone_change_count
-        })
 }
 
 /// Whether the currently active decision is `Decision::ChooseTargets` for
@@ -2373,6 +2411,74 @@ mod tests {
         assert!(creature_dies_to_state_based_actions(0, 0, false, true));
         assert!(creature_dies_to_state_based_actions(3, 1, true, false));
         assert!(!creature_dies_to_state_based_actions(3, 1, true, true));
+    }
+
+    /// Root-cause regression for the V4 action-encoder gap found via
+    /// yardstick-cumulative3-b-001 chunk-13-end-seat0 matches[10] (Elves vs
+    /// Terror, match seed 3641832355271763964, game 2, step 414):
+    /// `pending_trigger_hidden_source_v1` recognized only a source shuffled
+    /// into its owner's library, never a source sitting in its OWNER's hand
+    /// while a DIFFERENT player (the pending trigger's controller) is the
+    /// one resolving it -- the shape the Initiative mechanic produces once
+    /// the initiative transfers to an opponent via combat damage while the
+    /// granting permanent itself returns to its owner's hand through an
+    /// unrelated effect. See [`pending_trigger_hidden_source_v1`]'s own doc
+    /// comment for the full production trace.
+    #[test]
+    fn hidden_source_v1_recognizes_an_opponent_relative_hand_not_just_a_shuffled_library() {
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::AbilitySourceContractV4;
+
+        let mut state = ready_state();
+        let source = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+        let contract = AbilitySourceContractV4::capture(&state, source);
+        let pending = PendingTrigger {
+            controller: PlayerId::P1,
+            source,
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::Creature,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(contract),
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        };
+        // Still on the battlefield: visible, never hidden.
+        assert!(!pending_trigger_hidden_source_v1(&state, &pending));
+
+        state.players[PlayerId::P0.index()]
+            .battlefield
+            .retain(|&id| id != source);
+        {
+            let live = state.objects.get_mut(source);
+            assert_eq!(live.zone, Zone::Battlefield);
+            live.zone = Zone::Hand;
+            live.zone_change_count += 1;
+        }
+        state.players[PlayerId::P0.index()].hand.push(source);
+
+        // In its owner's (P0's) hand, unknown to the trigger's controller
+        // (P1): the real-gameplay shape, and the exact defect this fix
+        // closes. Before the fix this returned `false` (only `Zone::Library`
+        // was ever considered hidden), so `frozen_pending_trigger_semantic_v4`
+        // never substituted the frozen source and the ordinary Hand-zone arm
+        // failed closed with `HiddenActionReference`.
+        assert!(pending_trigger_hidden_source_v1(&state, &pending));
+
+        // Once the controller is told about it (a reveal effect, say), it is
+        // resolvable through the ordinary `KnownOpponentHand` path again,
+        // exactly like a known library card already is.
+        state.hand_knowledge[PlayerId::P1.index()][PlayerId::P0.index()].push(
+            crate::state::HandKnowledgeEntry {
+                object: source,
+                zone_change_count: state.objects.get(source).zone_change_count,
+            },
+        );
+        assert!(!pending_trigger_hidden_source_v1(&state, &pending));
     }
 
     #[test]
