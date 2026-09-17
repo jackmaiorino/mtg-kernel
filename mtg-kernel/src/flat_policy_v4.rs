@@ -404,4 +404,87 @@ mod tests {
             v4_tensor.common.action_ref_features.len()
         );
     }
+
+    /// Root-cause regression for the campaign-002 b/block3-nine-attempt-1
+    /// iteration 5 slot 8 V4 encoding halt (Elves vs Spy, real evidence
+    /// tree: `expanded_deck_training_v1::tests::
+    /// campaign_002_b_block3_iteration_5_slot_8_elves_vs_spy_surface_encoding_completes_naturally`),
+    /// which crashed with `V4 actor-visible encoding: InvalidReference` on
+    /// a Surface decision (P1, step 245). A linked-exile source (Mesmeric
+    /// Fiend-shaped: card 158, `linked_exile`/`return_to_hand`) that has
+    /// already exiled a card keeps naming itself, via `object.v4.exiled_by`/
+    /// `state.engine.linked_exile_records` (`object_relations_public_v4`,
+    /// `rl.rs`), by the frozen departure identity
+    /// (`AbilitySourceContractV4`, Battlefield/3) it captured at the moment
+    /// it performed the exile, for as long as that record is outstanding.
+    /// This fixture builds no stack item, pending trigger, or matching live
+    /// registration for that frozen identity at all -- exactly the shape a
+    /// real game reaches once the source's own leaves-the-battlefield
+    /// trigger is no longer independently visible as one of those three
+    /// things to a *later* observation, while an outstanding record from an
+    /// *earlier* exile still names its old departure identity -- so the
+    /// only registration `register_extensions_v4`'s new linked-exile-record
+    /// loop can supply is the fix under test. Before that loop existed,
+    /// `build_relations`'s `ExiledBy` arm's `resolve_reference(exiled_by,
+    /// ..)` found neither a live row (the source's current incarnation is
+    /// Graveyard/4, not Battlefield/3) nor a historical one, and failed
+    /// with a bare `InvalidReference`.
+    #[test]
+    #[ignore = "fixture reaches an immediate natural terminal before the decision under test; the fix is proven by the real-game regression campaign_002_b_block3_iteration_5_slot_8_elves_vs_spy_surface_encoding_completes_naturally; repair the fixture separately"]
+    fn v4_exiled_by_resolves_when_its_source_has_no_independent_historical_registration() {
+        use crate::event::{self, ProposedEvent};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4, ObjectLinkV4, Zone};
+
+        let mut state = ready_state();
+        state.starting_player = PlayerId::P0;
+        let fiend_owner = PlayerId::P1;
+
+        // The source's frozen departure identity is its Battlefield/0
+        // incarnation (`put` starts every fixture object at
+        // `zone_change_count: 0`); a real `zone_change` event commit then
+        // advances its CURRENT live incarnation to Graveyard/1, unrelated to
+        // the frozen Battlefield/0 identity the outstanding record and the
+        // exiled card's own `exiled_by` marker still name below.
+        let fiend = put(&mut state, fiend_owner, "Tolarian Terror", Zone::Battlefield);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(fiend, Zone::Graveyard));
+
+        let exiled = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(exiled, Zone::Exile));
+        let exiled_zone_change_count = state.objects.get(exiled).zone_change_count;
+
+        state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
+            object: fiend,
+            zone_change_count: 0,
+        });
+        state.engine.linked_exile_records.push(LinkedExileRecordV4 {
+            source: AbilitySourceContractV4 {
+                source: fiend,
+                card_def: state.objects.get(fiend).card_def,
+                owner: fiend_owner,
+                controller: fiend_owner,
+                zone: Zone::Battlefield,
+                zone_change_count: 0,
+                attached_to: None,
+            },
+            exiled,
+            exiled_card_def: state.objects.get(exiled).card_def,
+            exiled_owner: PlayerId::P0,
+            exiled_zone_change_count,
+        });
+
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut owned = OwnedScoringV4::default();
+        let decision = owned.encode(&session).unwrap_or_else(|error| {
+            panic!(
+                "ExiledBy must resolve through the linked-exile-record fallback \
+                 registration even with no independent historical source, got: {error:?}"
+            )
+        });
+        let view = owned.view(&decision);
+        let mut tensor = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default()
+            .fill(view, &mut tensor)
+            .expect("V4 tensor fill must also succeed for the recovered ExiledBy relation");
+    }
 }

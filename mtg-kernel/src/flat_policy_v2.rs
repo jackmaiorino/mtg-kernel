@@ -4900,6 +4900,70 @@ impl FlatDecisionEncoderV2 {
                 });
         }
 
+        // Root cause (campaign-002 b/block3-nine-attempt-1 iteration 5 slot
+        // 8, Elves vs Spy, P1 Surface step 245): a linked-exile source
+        // (Mesmeric Fiend) that has already exiled a card under
+        // `object.v4.exiled_by` names itself, in `object_relations_public_v4`
+        // (`rl.rs`), by the frozen `AbilitySourceContractV4` identity it
+        // captured in `state.engine.linked_exile_records` at the moment it
+        // performed the exile -- and keeps doing so, via `ExiledBy`'s
+        // `exiled_by` field, for as long as that record is outstanding
+        // (until its own leaves-the-battlefield trigger resolves
+        // `EffectOp::ReturnObjectsExiledBySource`, which removes the
+        // record). The historical-source loop above only ever registers a
+        // source's frozen identity while it is independently visible to
+        // this observation as a nonspell stack item
+        // (`HistoricalSourceContextV7::Stack`/`PendingEffect`) or a hidden
+        // pending trigger (`PendingTrigger`); once the source's own
+        // leaves-the-battlefield trigger is no longer any of those three
+        // things this observation's `extensions_v7.historical_public_sources`
+        // can see -- for example because that trigger has already resolved
+        // even though a *different*, still-outstanding record naming the
+        // same frozen incarnation has not (a linked-exile source can record
+        // more than one outstanding exile across its lifetime) -- nothing
+        // registers it, and `build_relations`'s `ExiledBy` arm
+        // (`resolve_reference`) fails with a bare `InvalidReference`:
+        // `object_keys` has no live row (the source's live incarnation, if
+        // it still exists at all, is a later, different `zone_change_count`)
+        // and no historical one either.
+        //
+        // Registering every outstanding record's frozen source here,
+        // unconditionally, closes that gap: `add_validated_historical_source_v3`
+        // already dedups by-incarnation against any row the loop above just
+        // added (or any ordinary live registration, if the source in fact
+        // never left), so this is a pure safety net, never a duplicate. The
+        // ordinal namespace is deliberately placed past every position a
+        // `PendingTrigger` row could ever claim (`ceiling +
+        // FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1 + index`, `ceiling` itself
+        // already proven past every `Stack`/`PendingEffect` ordinal --
+        // `historical_public_source_ordinal_ceiling_v1`'s own doc comment),
+        // so it can never collide with the loop above under the tensorizer's
+        // `(group, visible_ordinal)` uniqueness requirement
+        // (`native_flat_tensorizer_v2.rs`'s `NativeFlatTensorErrorV2::ObjectOrder`).
+        //
+        // Hermetic coverage: `flat_policy_v4::tests::
+        // v4_exiled_by_resolves_when_its_source_has_no_independent_historical_registration`.
+        // V4-only: this function is never called from the frozen V3 path,
+        // and `register_extensions_v3` is untouched.
+        for (index, record) in state.engine.linked_exile_records.iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+            let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
+                .and_then(|ceiling| {
+                    ceiling.checked_add(u32::try_from(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1).ok()?)
+                })
+                .and_then(|base| base.checked_add(index))
+                .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+            let source = CardStableRefV1 {
+                arena_id: record.source.source.0,
+                card_db_id: record.source.card_def,
+                owner: record.source.owner.into(),
+                controller: record.source.controller.into(),
+                zone: record.source.zone,
+                zone_change_count: record.source.zone_change_count,
+            };
+            self.add_validated_historical_source_v3(&source, actor, ordinal)?;
+        }
+
         if let Some(cost) = &extensions_v7.pending_cast_object_cost {
             let selected_count = usize_u32(cost.selected.len())?;
             if selected_count.checked_add(cost.remaining_count) != Some(cost.required_count)

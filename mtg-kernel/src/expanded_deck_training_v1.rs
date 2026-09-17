@@ -3784,6 +3784,150 @@ mod tests {
         validate_trajectory(&trajectory).unwrap();
     }
 
+    /// Root-cause reproduction for campaign-002's nine-deck block-3 dry run
+    /// (`block3-nine-attempt-1`), iteration 5 (0-based), lineage b, episode
+    /// slot 8 (`breadth-f095edfd13e105770858346e-b2-i5-s8`), Elves (learner,
+    /// seat 0, lineage b's own block3-nine-attempt-1 iteration-4 checkpoint)
+    /// versus Spy (opponent, seat 1, lineage b's block2-repair-3e-4
+    /// iteration-199 checkpoint), starting player 0, seed
+    /// 8631497784021223748. Every path, hash, seed and deck list below is
+    /// copied verbatim from the real collection command receipt at
+    /// `D:/phase1-live/campaign-002/b/block3-nine-attempt-1/run/iterations/
+    /// 000005/attempt-000000/collect-command.json`, episode index 8 (the
+    /// learner source is that file's top-level `source`; the opponent
+    /// source is the episode's own `opponent`). Reads the real evidence
+    /// tree and the real `D:/phase1-live` run tree, never writes to either.
+    ///
+    /// Collection aborted on this pairing with `V4 actor-visible encoding:
+    /// InvalidReference` on a Surface decision (this game: P1/Spy at step
+    /// 245, 2 legal actions).
+    ///
+    /// Root cause: Mesmeric Fiend (card 158, `linked_exile`/
+    /// `return_to_hand`) exiled a card from Spy's own ETB, recording an
+    /// outstanding `state.engine.linked_exile_records` entry and an
+    /// `object.v4.exiled_by` marker naming Mesmeric Fiend by its frozen
+    /// departure identity (`AbilitySourceContractV4`, Battlefield/3).
+    /// `object_relations_public_v4` (`rl.rs`) keeps surfacing
+    /// `ObjectRelationPublicV4::ExiledBy`'s `exiled_by` with that exact
+    /// frozen identity for as long as the record is outstanding, but
+    /// `register_extensions_v4` (`flat_policy_v2.rs`) only ever registered
+    /// a source's frozen identity while it was independently visible to
+    /// *this* observation as a nonspell stack item or a hidden pending
+    /// trigger; once Mesmeric Fiend's own leaves-the-battlefield trigger
+    /// was no longer any of those three things this observation could see,
+    /// nothing registered it, and `build_relations`'s `ExiledBy` arm
+    /// (`resolve_reference`) failed with a bare `InvalidReference`. Fixed
+    /// by having `register_extensions_v4` also register every outstanding
+    /// `linked_exile_records` entry's frozen source, unconditionally (a
+    /// pure safety net: `add_validated_historical_source_v3` already dedups
+    /// against any row the existing historical-source loop or an ordinary
+    /// live registration already added). Hermetic unit-test coverage:
+    /// `flat_policy_v4::tests::
+    /// v4_exiled_by_resolves_when_its_source_has_no_independent_historical_registration`.
+    #[test]
+    #[ignore = "root-owned native qualification: reproduces campaign-002 block3-nine-attempt-1 iteration 5 slot 8 against the real evidence tree"]
+    fn campaign_002_b_block3_iteration_5_slot_8_elves_vs_spy_surface_encoding_completes_naturally(
+    ) {
+        const Q: &str = "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001";
+        const D: &str = "D:/phase1-live/campaign-002/b";
+        let feature_transfer = FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest:
+                "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b".into(),
+            expected_feature_encoding_digest:
+                "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de".into(),
+        };
+        let learner_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer: feature_transfer.clone(),
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{D}/block3-nine-attempt-1/run/iterations/000004/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "382b5d3c259baa81ddfede7b76296ccbcf5b4746e8e4d6c107119689c065b1e3".into(),
+            }),
+        };
+        let opponent_source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: format!("{Q}/campaign-001/block1/catalog/b-descriptor-windows.json").into(),
+                sha256: "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808".into(),
+            },
+            feature_transfer,
+            checkpoint: Some(PinnedFileV1 {
+                path: format!(
+                    "{D}/block2-repair-3e-4/run/iterations/000199/attempt-000000/update/checkpoint.json"
+                )
+                .into(),
+                sha256: "a5c66d7c17f6cfd7a8491ca6cdf747dc821474d70046ce8b344299177a8ec941".into(),
+            }),
+        };
+        let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
+        let learner = ExpandedSeatBehaviorV1 {
+            source: learner_source,
+            identity: learner_identity,
+        };
+        let (opponent_policy, opponent_identity) =
+            load_expanded_inference_v1(&opponent_source).unwrap();
+        let mut opponent = LoadedOpponentV1 {
+            policy: opponent_policy,
+            behavior: ExpandedSeatBehaviorV1 {
+                source: opponent_source,
+                identity: opponent_identity,
+            },
+        };
+        let elves = ExpandedDeckListV1 {
+            label: "Elves/0643b1494373".into(),
+            mainboard: vec![
+                1, 1, 1, 1, 26, 26, 26, 26, 40, 40, 40, 42, 42, 42, 42, 64, 64, 64, 64, 67, 67, 71,
+                71, 71, 71, 81, 81, 81, 81, 87, 87, 87, 87, 91, 91, 91, 91, 108, 108, 108, 108,
+                108, 108, 108, 108, 108, 108, 108, 108, 108, 119, 119, 119, 119, 129, 129, 130,
+                130, 130, 130,
+            ],
+            sideboard: vec![
+                43, 74, 74, 74, 74, 89, 89, 89, 111, 111, 111, 126, 126, 126, 126,
+            ],
+        };
+        let spy = ExpandedDeckListV1 {
+            label: "Spy/4d47f8a74557".into(),
+            mainboard: vec![
+                39, 39, 39, 42, 42, 42, 42, 64, 64, 64, 64, 71, 71, 71, 91, 91, 114, 130, 130, 130,
+                130, 136, 136, 137, 137, 138, 138, 138, 138, 139, 139, 139, 139, 140, 140, 141,
+                141, 141, 142, 142, 142, 142, 143, 145, 145, 145, 150, 150, 150, 150, 151, 151,
+                152, 152, 152, 152, 153, 153, 158, 158,
+            ],
+            sideboard: vec![
+                71, 114, 126, 126, 146, 146, 146, 146, 155, 155, 156, 157, 157, 158, 158,
+            ],
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "breadth-f095edfd13e105770858346e-b2-i5-s8".into(),
+            seed: 8_631_497_784_021_223_748,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: Some(opponent.behavior.source.clone()),
+            registered: [elves.clone(), spy.clone()],
+            selected: [elves, spy],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 200_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "campaign-002 b/block3-nine-attempt-1 iteration 5 slot 8 (Elves vs Spy) \
+                     should complete naturally, got: {error}"
+                )
+            });
+        assert_eq!(
+            trajectory.terminal.terminal_classification,
+            TerminalClassificationV1::Natural
+        );
+        validate_trajectory(&trajectory).unwrap();
+    }
+
     // ---- max_non_natural_episode_fraction: tolerant collection with a
     // ---- ledger (Part 2). `derived_retry_seed_v1` is exercised directly
     // ---- (no game); the retry/ledger bookkeeping tests use
