@@ -116,7 +116,7 @@ fn run_probe_v1(plan: ProbePlanV1, with_device: bool) -> Result<Value, String> {
     let mut cache = OpponentCacheV1::default();
     let mut tensor_groups = Vec::new();
     let mut group_episode_ids = Vec::new();
-    for episode in &episodes {
+    for (episode_ordinal, episode) in episodes.iter().enumerate() {
         let opponent = episode
             .episode
             .opponent
@@ -124,8 +124,12 @@ fn run_probe_v1(plan: ProbePlanV1, with_device: bool) -> Result<Value, String> {
             .map(|s| cache.load(s))
             .transpose()?;
         validate_actual_behaviors_v1(episode, &learner, opponent.as_ref().map(|o| &o.behavior))?;
-        let episode_groups =
-            replay_learner_groups_v1(episode, &policy, opponent.as_ref().map(|o| &o.policy))?;
+        let episode_groups = replay_learner_groups_v1(
+            episode_ordinal,
+            episode,
+            &policy,
+            opponent.as_ref().map(|o| &o.policy),
+        )?;
         group_episode_ids.extend(std::iter::repeat_n(
             episode.episode.id.clone(),
             episode_groups.len(),
@@ -136,7 +140,7 @@ fn run_probe_v1(plan: ProbePlanV1, with_device: bool) -> Result<Value, String> {
     ensure(!tensor_groups.is_empty(), "no learner probe groups")?;
     let substeps: Vec<Vec<_>> = tensor_groups
         .iter()
-        .map(|(_, rows)| {
+        .map(|(_, _, rows)| {
             rows.iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
@@ -152,7 +156,7 @@ fn run_probe_v1(plan: ProbePlanV1, with_device: bool) -> Result<Value, String> {
     let groups: Vec<_> = substeps
         .iter()
         .zip(&tensor_groups)
-        .map(|(steps, (reward, _))| NativePolicyPhysicalDecisionV1 {
+        .map(|(steps, (reward, _, _))| NativePolicyPhysicalDecisionV1 {
             substeps: steps,
             terminal_return: *reward,
             baseline_bits: 0,
@@ -191,7 +195,7 @@ fn run_probe_v1(plan: ProbePlanV1, with_device: bool) -> Result<Value, String> {
         "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V3,
         "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V3,
         "group_episode_ids": group_episode_ids,
-        "groups": tensor_groups.iter().map(|(reward, rows)| json!({
+        "groups": tensor_groups.iter().map(|(reward, _, rows)| json!({
             "terminal_return": reward, "baseline_bits": 0,
             "rows": rows.iter().map(|(row, _)| *row).collect::<Vec<_>>()
         })).collect::<Vec<_>>(),

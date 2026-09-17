@@ -15,11 +15,12 @@
 //! exported device state is parked for the next update.
 
 use super::training::{
-    build_dense_group_loss_plan_v1, DenseGroupLossPlanV1, ExperimentalDeviceTrainStateV1,
+    build_dense_group_loss_plan_gae_v1, build_dense_group_loss_plan_v1, DenseGroupLossPlanGaeV1,
+    DenseGroupLossPlanV1, ExperimentalDeviceTrainStateV1,
 };
 use super::{DevicePackedBatch, HostPackingWorkspace};
 use crate::native_policy_train_step_v1::{
-    selected_log_softmax, NativePhysicalLossTermV1, NativePolicyForwardInputV1,
+    finite_scalar, selected_log_softmax, NativePhysicalLossTermV1, NativePolicyForwardInputV1,
     NativePolicyPhysicalDecisionV1, NativePolicyTrainErrorV1, NativePolicyTrainStepResultV1,
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
     NativePolicyValueTrainStateWideV1, NativeSelectedOutputV1, ScorerBiasGaugeAccumulatorV1,
@@ -1364,6 +1365,445 @@ fn train_step_cuda_burn_dense_inner_v1(
         },
         updated_snapshot,
     ))
+}
+
+/// `"gae_advantage_value/v1"` sibling of `train_step_cuda_burn_dense_inner_v1`
+/// (`TRAINING-SIGNAL-DESIGN-001.md` section 2, task 3). Shares its resident
+/// device state reuse/import, substep-aligned chunking (`chunk_group_starts`
+/// and `BRIDGE_CHUNK_SUBSTEP_TARGET_V1`), Adam application
+/// (`apply_accumulated_v1`, unchanged and loss-agnostic), and the tolerance-
+/// check-then-CPU-refold evidence pattern; only the loss plan/loss function
+/// and the two evidence-fold scalars differ. `value_targets`/`advantages`
+/// are precomputed, one pair per group in the same order as `groups`,
+/// already normalized: unlike v3's advantage (`target - transported value -
+/// baseline`, rederived here every update from the live per-group value),
+/// GAE's advantage never depends on this forward's own output at all, so
+/// there is no baseline field and no per-group rederivation. There is no
+/// `wide` parameter (production GAE callers never select the experimental
+/// wide net8 width, matching `train_step_cuda_burn_dense_feature_transfer_v3`/
+/// `_v4`'s own hardcoded `false`) and no test-only numerical-capture
+/// instrumentation (new work, no existing probe to preserve).
+fn train_step_cuda_burn_dense_gae_inner_v1(
+    snapshot: NativePolicyValueTrainSnapshotV1,
+    device_ordinal: usize,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_targets: &[f32],
+    advantages: &[f32],
+    value_coefficient: f32,
+    learning_rate: f32,
+) -> Result<
+    (
+        NativePolicyTrainStepResultV1,
+        NativePolicyValueTrainSnapshotV1,
+    ),
+    NativePolicyTrainErrorV1,
+> {
+    if groups.is_empty() {
+        return Err(NativePolicyTrainErrorV1::EmptyBatch);
+    }
+    if groups.len() != value_targets.len() || groups.len() != advantages.len() {
+        return Err(NativePolicyTrainErrorV1::GaeGroupCountMismatch {
+            groups: groups.len(),
+            value_targets: value_targets.len(),
+            advantages: advantages.len(),
+        });
+    }
+    for (index, value) in value_targets.iter().chain(advantages).enumerate() {
+        if !value.is_finite() {
+            return Err(NativePolicyTrainErrorV1::NonFinite {
+                stage: "gae_cuda_precomputed_target_or_advantage",
+                index,
+            });
+        }
+    }
+    let mut views = Vec::new();
+    let mut selected_action_indices = Vec::new();
+    let mut substep_group_indices = Vec::new();
+    let mut group_first_substeps = Vec::with_capacity(groups.len());
+    for (group_index, group) in groups.iter().enumerate() {
+        if group.substeps.is_empty() {
+            return Err(NativePolicyTrainErrorV1::EmptyPhysicalDecision { group_index });
+        }
+        if group.baseline_bits != 0 {
+            return Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index });
+        }
+        group_first_substeps.push(views.len());
+        for substep in group.substeps.iter() {
+            let encoded = match &substep.forward {
+                NativePolicyForwardInputV1::Encoded(encoded) => **encoded,
+                NativePolicyForwardInputV1::Packed { encoded, .. } => **encoded,
+            };
+            views.push(encoded);
+            selected_action_indices.push(substep.selected_action_index);
+            substep_group_indices.push(group_index);
+        }
+    }
+
+    let parameter_before_bits =
+        snapshot.parameters[SCORER_SECOND_BIAS_ORDINAL_V1].values[0].to_bits();
+    let device = burn_cuda::CudaDevice::new(device_ordinal);
+    let resident = resident_device_state_slot_v1().take();
+    let mut device_state = match resident {
+        Some(resident)
+            if resident_snapshot_matches_v1(
+                resident.device_ordinal,
+                device_ordinal,
+                &resident.exported,
+                &snapshot,
+            ) =>
+        {
+            resident.device_state
+        }
+        stale => {
+            drop(stale);
+            ExperimentalDeviceTrainStateV1::import_snapshot_v1(&snapshot, &device)
+                .map_err(bridge_error_v1)?
+        }
+    };
+    let mut chunk_group_starts = vec![0_usize];
+    for (group_index, group_first) in group_first_substeps.iter().enumerate().skip(1) {
+        let chunk_start_group = *chunk_group_starts.last().expect("nonempty starts");
+        let chunk_first = group_first_substeps[chunk_start_group];
+        if group_first - chunk_first >= BRIDGE_CHUNK_SUBSTEP_TARGET_V1 {
+            chunk_group_starts.push(group_index);
+        }
+    }
+    let mut accumulator = burn::optim::GradientsAccumulator::new();
+    let mut raw_residual = 0.0_f32;
+    let mut logit_outputs = Vec::new();
+    let mut value_outputs = Vec::with_capacity(views.len());
+    let mut global_action_offsets = Vec::with_capacity(views.len() + 1);
+    global_action_offsets.push(0_usize);
+    let total_group_count = groups.len() as f32;
+    for (ordinal, chunk_start_group) in chunk_group_starts.iter().copied().enumerate() {
+        let chunk_end_group = chunk_group_starts
+            .get(ordinal + 1)
+            .copied()
+            .unwrap_or(groups.len());
+        let substep_begin = group_first_substeps[chunk_start_group];
+        let substep_end = group_first_substeps
+            .get(chunk_end_group)
+            .copied()
+            .unwrap_or(views.len());
+        let chunk_group_first_substeps = group_first_substeps[chunk_start_group..chunk_end_group]
+            .iter()
+            .map(|first| first - substep_begin)
+            .collect::<Vec<_>>();
+        let chunk_substep_group_indices = substep_group_indices[substep_begin..substep_end]
+            .iter()
+            .map(|group| group - chunk_start_group)
+            .collect::<Vec<_>>();
+        let mut chunk_workspace = HostPackingWorkspace::default();
+        chunk_workspace
+            .pack_views(&views[substep_begin..substep_end])
+            .map_err(bridge_error_v1)?;
+        let chunk_plan: DenseGroupLossPlanGaeV1 = build_dense_group_loss_plan_gae_v1(
+            &chunk_workspace,
+            &selected_action_indices[substep_begin..substep_end],
+            &chunk_substep_group_indices,
+            &chunk_group_first_substeps,
+            &value_targets[chunk_start_group..chunk_end_group],
+            &advantages[chunk_start_group..chunk_end_group],
+            &device,
+        )
+        .map_err(bridge_error_v1)?;
+        let chunk_batch = DevicePackedBatch::upload_feature_transfer_v3(&device, &chunk_workspace);
+        let chunk_outputs = device_state
+            .chunk_backward_gae_v1(
+                &mut accumulator,
+                &chunk_batch,
+                &chunk_plan,
+                value_coefficient,
+                total_group_count,
+            )
+            .map_err(bridge_error_v1)?;
+        let chunk_substep_count = substep_end - substep_begin;
+        if chunk_workspace.action_offsets.len() != chunk_substep_count + 1 {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-gae-bridge-chunk-action-offset-cardinality",
+            });
+        }
+        let expected_chunk_logits = chunk_workspace.action_offsets.last().copied().ok_or(
+            NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-gae-bridge-chunk-action-offset-empty",
+            },
+        )?;
+        if chunk_outputs.logit_outputs.len() != expected_chunk_logits {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-gae-bridge-chunk-logit-cardinality",
+            });
+        }
+        if chunk_outputs.value_outputs.len() != chunk_substep_count {
+            return Err(NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-gae-bridge-chunk-value-cardinality",
+            });
+        }
+        let global_action_base = *global_action_offsets
+            .last()
+            .expect("global action offsets are initialized");
+        for local_end in chunk_workspace.action_offsets.iter().copied().skip(1) {
+            global_action_offsets.push(global_action_base.checked_add(local_end).ok_or(
+                NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-gae-bridge-action-offset-overflow",
+                },
+            )?);
+        }
+        raw_residual += chunk_outputs.raw_gauge_residual;
+        logit_outputs.extend(chunk_outputs.logit_outputs);
+        value_outputs.extend(chunk_outputs.value_outputs);
+    }
+    if global_action_offsets.len() != views.len() + 1 {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-gae-bridge-action-offset-cardinality",
+        });
+    }
+    if global_action_offsets.last().copied() != Some(logit_outputs.len()) {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-gae-bridge-logit-cardinality",
+        });
+    }
+    if value_outputs.len() != views.len() {
+        return Err(NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-burn-dense-gae-bridge-value-cardinality",
+        });
+    }
+    device_state
+        .apply_accumulated_v1(accumulator, learning_rate)
+        .map_err(bridge_error_v1)?;
+
+    // Tolerance-gate the CUDA outputs against the transported scorer bits,
+    // then build every evidence field from the transported bits in the
+    // exact CPU f32 fold order, exactly as `train_step_cuda_burn_dense_inner_v1`
+    // does: the device update itself used its own live forward output (via
+    // `dense_group_loss_gae_v1`'s `group_values`), but every receipted
+    // number below is refolded from `expected_value_bits`/
+    // `expected_raw_action_logit_bits`, so the receipt stays bit-reproducible
+    // run to run even though raw device kernels are not.
+    let mut selected_outputs = Vec::with_capacity(selected_action_indices.len());
+    let mut physical_terms = Vec::with_capacity(groups.len());
+    let mut policy_sum = 0.0_f32;
+    let mut value_sum = 0.0_f32;
+    let group_count = groups.len() as f32;
+    let mut flat_substep = 0_usize;
+    for (group_index, group) in groups.iter().enumerate() {
+        let mut joint_log_probability: Option<f32> = None;
+        value_outputs.get(group_first_substeps[group_index]).ok_or(
+            NativePolicyTrainErrorV1::CudaBackend {
+                code: "cuda-burn-dense-gae-bridge-value-cardinality",
+            },
+        )?;
+        let transported_first_value = f32::from_bits(group.substeps[0].expected_value_bits);
+        let value_target = value_targets[group_index];
+        let advantage = advantages[group_index];
+        for (substep_index, substep) in group.substeps.iter().enumerate() {
+            let begin = global_action_offsets[flat_substep];
+            let end = global_action_offsets[flat_substep + 1];
+            let row = &logit_outputs[begin..end];
+            if substep.selected_action_index >= row.len() {
+                return Err(NativePolicyTrainErrorV1::SelectedActionOutOfRange {
+                    group_index,
+                    substep_index,
+                    selected: substep.selected_action_index,
+                    action_count: row.len(),
+                });
+            }
+            if substep.expected_raw_action_logit_bits.len() != row.len() {
+                return Err(NativePolicyTrainErrorV1::ExpectedLogitCountMismatch {
+                    group_index,
+                    substep_index,
+                    expected: substep.expected_raw_action_logit_bits.len(),
+                    actual: row.len(),
+                });
+            }
+            if let Err(code) =
+                validate_transported_logit_row_v2(row, substep.expected_raw_action_logit_bits)
+            {
+                return Err(NativePolicyTrainErrorV1::CudaBackend { code });
+            }
+            let substep_value = value_outputs[flat_substep];
+            if !substep_value.is_finite() {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-gae-bridge-nonfinite-device-output",
+                });
+            }
+            if !f32::from_bits(substep.expected_value_bits).is_finite() {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-gae-bridge-nonfinite-transported-value",
+                });
+            }
+            if !tolerance_ok_v1(substep_value, f32::from_bits(substep.expected_value_bits)) {
+                return Err(NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-burn-dense-gae-bridge-transported-value-tolerance",
+                });
+            }
+            let transported_row = substep
+                .expected_raw_action_logit_bits
+                .iter()
+                .map(|bits| f32::from_bits(*bits))
+                .collect::<Vec<f32>>();
+            let (selected_log_probability, _log_probabilities) =
+                selected_log_softmax(&transported_row, substep.selected_action_index)?;
+            joint_log_probability = Some(match joint_log_probability {
+                None => selected_log_probability,
+                Some(active) => active + selected_log_probability,
+            });
+            selected_outputs.push(NativeSelectedOutputV1 {
+                group_index,
+                substep_index,
+                selected_action_index: substep.selected_action_index,
+                selected_logit: transported_row[substep.selected_action_index],
+                value: f32::from_bits(substep.expected_value_bits),
+                selected_log_probability,
+            });
+            flat_substep += 1;
+        }
+        let joint_log_probability = joint_log_probability.expect("nonempty group checked above");
+        let substep_count = u32::try_from(group.substeps.len()).map_err(|_| {
+            NativePolicyTrainErrorV1::PhysicalSubstepCountOverflow {
+                group_index,
+                substep_count: group.substeps.len(),
+            }
+        })?;
+        let policy_term = -joint_log_probability * advantage;
+        let value_error = transported_first_value - value_target;
+        let value_term = value_error * value_error;
+        policy_sum += policy_term;
+        value_sum += value_term;
+        physical_terms.push(NativePhysicalLossTermV1 {
+            joint_log_probability,
+            value: transported_first_value,
+            terminal_return: group.terminal_return,
+            substep_count,
+        });
+    }
+    let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+    finite_scalar("gae_cuda_loss", 0, policy_sum)?;
+    finite_scalar("gae_cuda_loss", 1, value_sum)?;
+    finite_scalar("gae_cuda_loss", 2, loss)?;
+
+    let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+    for group_index in (0..groups.len()).rev() {
+        let group = &groups[group_index];
+        let coefficient = -advantages[group_index] / group_count;
+        for substep_index in (0..group.substeps.len()).rev() {
+            let substep = &group.substeps[substep_index];
+            let transported_row = substep
+                .expected_raw_action_logit_bits
+                .iter()
+                .map(|bits| f32::from_bits(*bits))
+                .collect::<Vec<f32>>();
+            gauge_accumulator.observe(
+                &transported_row,
+                substep.selected_action_index,
+                coefficient,
+            )?;
+        }
+    }
+    let scorer_bias_gauge = gauge_accumulator.finish(raw_residual, parameter_before_bits)?;
+
+    let updated_snapshot = device_state.export_snapshot_v1().map_err(bridge_error_v1)?;
+    let adam_step = updated_snapshot.adam_step;
+    *resident_device_state_slot_v1() = Some(ResidentDeviceStateV1 {
+        device_ordinal,
+        exported: updated_snapshot.clone(),
+        device_state,
+    });
+
+    Ok((
+        NativePolicyTrainStepResultV1 {
+            policy_sum,
+            value_sum,
+            loss,
+            adam_step,
+            selected_outputs,
+            physical_terms,
+            gradients: Vec::new(),
+            scorer_bias_gauge,
+        },
+        updated_snapshot,
+    ))
+}
+
+/// V3 CUDA GAE update. `groups`/`value_targets`/`advantages` cardinality is
+/// validated above; identity validation reuses
+/// `validate_cuda_feature_transfer_update_v3` unchanged (it checks the
+/// encoded-view schema and per-substep bit shapes, nothing loss-specific).
+pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v3(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_targets: &[f32],
+    advantages: &[f32],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    state.validate_cuda_feature_transfer_update_v3(
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+    )?;
+    let snapshot = state.snapshot_v1()?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_gae_inner_v1(
+        snapshot,
+        device_ordinal,
+        groups,
+        value_targets,
+        advantages,
+        value_coefficient,
+        learning_rate,
+    )?;
+    let candidate =
+        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
+            .map_err(|_| {
+                *resident_device_state_slot_v1() = None;
+                NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-gae-v3-state-reimport-failure",
+                }
+            })?;
+    *state = candidate;
+    Ok(result)
+}
+
+/// V4 sibling of `train_step_cuda_burn_dense_gae_feature_transfer_v3`. Same
+/// shared inner body (dims-oblivious, generation-agnostic); only the
+/// identity validation differs, exactly mirroring how the unweighted v3/v4
+/// CUDA wrappers share one device kernel path.
+pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v4(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_targets: &[f32],
+    advantages: &[f32],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    state.validate_cuda_feature_transfer_update_v4(
+        groups,
+        value_coefficient,
+        learning_rate,
+        device_ordinal,
+    )?;
+    let snapshot = state.snapshot_v1()?;
+    let (result, updated_snapshot) = train_step_cuda_burn_dense_gae_inner_v1(
+        snapshot,
+        device_ordinal,
+        groups,
+        value_targets,
+        advantages,
+        value_coefficient,
+        learning_rate,
+    )?;
+    let candidate =
+        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
+            .map_err(|_| {
+                *resident_device_state_slot_v1() = None;
+                NativePolicyTrainErrorV1::CudaBackend {
+                    code: "cuda-gae-v4-state-reimport-failure",
+                }
+            })?;
+    *state = candidate;
+    Ok(result)
 }
 
 /// Run one production training update on the CudaBurnDense backend.

@@ -70,6 +70,7 @@ use std::sync::Arc;
 use std::thread;
 
 mod weighted_v3;
+mod gae_v1;
 
 #[cfg(test)]
 thread_local! {
@@ -887,6 +888,13 @@ pub(crate) enum NativePolicyTrainErrorV1 {
         stage: &'static str,
         index: usize,
     },
+    /// `gae_v1`'s `groups`/`value_targets`/`advantages` cardinality differs;
+    /// mirrors `WeightedGroupCountMismatch`'s shape for the new loss.
+    GaeGroupCountMismatch {
+        groups: usize,
+        value_targets: usize,
+        advantages: usize,
+    },
 }
 
 impl Display for NativePolicyTrainErrorV1 {
@@ -1511,6 +1519,51 @@ impl NativePolicyValueTrainStateV1 {
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+        )
+    }
+
+    /// V3 CUDA GAE update (`TRAINING-SIGNAL-DESIGN-001.md` section 2), the
+    /// CUDA sibling of `train_step_gae_feature_transfer_v3`.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn train_step_cuda_gae_feature_transfer_v3(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v3(
+            self,
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+        )
+    }
+
+    /// V4 sibling of `train_step_cuda_gae_feature_transfer_v3`.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn train_step_cuda_gae_feature_transfer_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v4(
+            self,
+            groups,
+            value_targets,
+            advantages,
             value_coefficient,
             learning_rate,
             device_ordinal,
@@ -4738,7 +4791,7 @@ fn validate_finite_nested(
     Ok(())
 }
 
-fn finite_scalar(
+pub(crate) fn finite_scalar(
     stage: &'static str,
     index: usize,
     value: f32,

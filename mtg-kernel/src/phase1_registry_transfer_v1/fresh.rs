@@ -61,6 +61,16 @@ struct FreshExpandedCheckpointInputV1 {
     second_moments: Vec<TensorBitsV1>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
+    // See `phase1_registry_transfer_v1::ExpandedCheckpointInputV1`'s
+    // identical fields for why these exist here and are read, then ignored
+    // (registry transfer stays v3-only; `loss_identity == LOSS` below is
+    // the actual, clear rejection).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gamma_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gae_lambda_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entropy_coefficient_bits: Option<u32>,
     learning_rate_bits: u32,
     value_coefficient_bits: u32,
 }
@@ -458,6 +468,9 @@ mod tests {
                 sha256: "3".repeat(64),
             }],
             loss_identity: LOSS.into(),
+            gamma_bits: None,
+            gae_lambda_bits: None,
+            entropy_coefficient_bits: None,
             learning_rate_bits: LEARNING_RATE.to_bits(),
             value_coefficient_bits: VALUE_COEFFICIENT.to_bits(),
         }

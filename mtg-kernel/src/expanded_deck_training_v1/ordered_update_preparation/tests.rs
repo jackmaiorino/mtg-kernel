@@ -8,7 +8,7 @@ const VC: f32 = 0.75;
 fn train_groups(state: &mut NativePolicyValueTrainStateV1, groups: &[LearnerTensorGroupV1<'_>]) {
     let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = groups
         .iter()
-        .map(|(_, rows)| {
+        .map(|(_, _, rows)| {
             rows.iter()
                 .map(|(row, tensor)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
@@ -24,7 +24,7 @@ fn train_groups(state: &mut NativePolicyValueTrainStateV1, groups: &[LearnerTens
     let native: Vec<_> = substeps
         .iter()
         .zip(groups)
-        .map(|(substeps, (reward, _))| NativePolicyPhysicalDecisionV1 {
+        .map(|(substeps, (reward, _, _))| NativePolicyPhysicalDecisionV1 {
             substeps,
             terminal_return: *reward,
             baseline_bits: 0,
@@ -75,9 +75,10 @@ fn paired_substeps(t: &mut ExpandedTrajectoryV1) {
 fn group_bytes(groups: &[LearnerTensorGroupV1<'_>]) -> Vec<u8> {
     let rows: Vec<_> = groups
         .iter()
-        .map(|(reward, rows)| {
+        .map(|(reward, episode_ordinal, rows)| {
             (
                 *reward,
+                *episode_ordinal,
                 rows.iter()
                     .map(|(record, tensor)| {
                         (
@@ -145,10 +146,16 @@ fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
             second.episode.id = format!("ordered-preparation-{update}-1");
             let episodes = [first, second];
             let mut reference = Vec::new();
-            for episode in &episodes {
+            for (episode_ordinal, episode) in episodes.iter().enumerate() {
                 validate_actual_behaviors_v1(episode, &learner, other.as_ref()).unwrap();
                 reference.extend(
-                    replay_learner_groups_v1(episode, &serial_policy, Some(&opponent)).unwrap(),
+                    replay_learner_groups_v1(
+                        episode_ordinal,
+                        episode,
+                        &serial_policy,
+                        Some(&opponent),
+                    )
+                    .unwrap(),
                 );
             }
             let mut loads = 0;
@@ -193,6 +200,64 @@ fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
     }
 }
 
+/// Task 2 (`TRAINING-SIGNAL-DESIGN-001.md` section 5): both preparation
+/// paths compute an episode index while grouping physical decisions and,
+/// before this change, discarded it once the per-episode lists were
+/// flattened. Three synthetic episodes of different learner-group counts
+/// (1, 2, 1) prove the recovered `episode_ordinal` on every returned group
+/// exactly reconstructs the input partition, for both the parallel path
+/// (`prepare_with_loader_v1`) and the sequential path
+/// (`replay_learner_groups_v1`): the parallel-vs-sequential parity style of
+/// `phase1_preparation_real_updates_preserve_all_state_bits_and_group_order`
+/// (`group_bytes` equality, which now also covers `episode_ordinal` since
+/// `group_bytes` was extended to serialize it) extended to episode
+/// boundaries specifically, checked directly against the input rather than
+/// only against each other.
+#[test]
+fn phase1_preparation_recovers_episode_boundaries_matching_input_for_both_paths() {
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let actor_lists: [&[u8]; 3] = [&[0], &[0, 1, 0, 1], &[0, 1]];
+    let expected_group_counts: Vec<usize> = actor_lists
+        .iter()
+        .map(|actors| actors.iter().filter(|&&actor| actor == 0).count())
+        .collect();
+    let mut episodes = Vec::new();
+    let mut learner = None;
+    for (index, actors) in actor_lists.iter().enumerate() {
+        let (mut t, behavior, _) = replay_fixture(&mut policy, None, 0, actors);
+        t.episode.id = format!("episode-boundary-{index}");
+        episodes.push(t);
+        learner = Some(behavior);
+    }
+    let learner = learner.unwrap();
+    let sequential: Vec<_> = episodes
+        .iter()
+        .enumerate()
+        .flat_map(|(episode_ordinal, episode)| {
+            replay_learner_groups_v1(episode_ordinal, episode, &policy, None).unwrap()
+        })
+        .collect();
+    let prepared = prepare_with_loader_v1(
+        &episodes,
+        &policy,
+        &learner,
+        4,
+        DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        |_| panic!("no opponent expected in this fixture"),
+    )
+    .unwrap();
+    let expected_ordinals: Vec<usize> = expected_group_counts
+        .iter()
+        .enumerate()
+        .flat_map(|(episode_ordinal, count)| std::iter::repeat_n(episode_ordinal, *count))
+        .collect();
+    for (label, groups) in [("sequential", &sequential), ("parallel", &prepared.groups)] {
+        let actual_ordinals: Vec<usize> = groups.iter().map(|(_, ordinal, _)| *ordinal).collect();
+        assert_eq!(actual_ordinals, expected_ordinals, "{label} episode boundaries");
+    }
+    assert_eq!(group_bytes(&sequential), group_bytes(&prepared.groups));
+}
+
 #[test]
 fn phase1_preparation_current_model_reuse_avoids_disk_load_and_keeps_rng_outputs() {
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
@@ -201,7 +266,7 @@ fn phase1_preparation_current_model_reuse_avoids_disk_load_and_keeps_rng_outputs
     t.episode.opponent = Some(learner.source.clone());
     t.seat_behaviors = Some([learner.clone(), learner.clone()]);
     validate_trajectory(&t).unwrap();
-    let expected = replay_learner_groups_v1(&t, &policy, Some(&policy)).unwrap();
+    let expected = replay_learner_groups_v1(0, &t, &policy, Some(&policy)).unwrap();
     let prepared = prepare_with_loader_v1(std::slice::from_ref(&t), &policy, &learner, 4, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |_| {
         panic!("current source should reuse the already validated learner")
     })
@@ -385,6 +450,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: ExpandedLossSelectionV1::default(),
         output_directory: PathBuf::from("legacy-output"),
     };
     let value = serde_json::to_value(&command).unwrap();
@@ -392,6 +458,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     assert!(value.get("preparation_workers").is_none());
     assert!(value.get("update_backend").is_none());
     assert!(value.get("update_backward_execution").is_none());
+    assert!(value.get("loss_selection").is_none());
     let bytes = serde_json::to_vec(&command).unwrap();
     assert_eq!(
         bytes,
@@ -405,6 +472,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: ExpandedLossSelectionV1::default(),
         preparation_workers: 4,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         output_directory: PathBuf::from("prepared-output"),
@@ -412,6 +480,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     let value = serde_json::to_value(explicit).unwrap();
     assert_eq!(value["mode"], "update_prepared");
     assert_eq!(value["preparation_workers"], 4);
+    assert!(value.get("loss_selection").is_none());
     assert!(value.get("update_backend").is_none());
     assert!(value.get("update_backward_execution").is_none());
     assert!(value.get("max_prepared_tensor_mebibytes").is_none());

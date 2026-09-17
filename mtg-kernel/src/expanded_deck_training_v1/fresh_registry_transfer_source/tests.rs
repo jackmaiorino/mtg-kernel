@@ -77,10 +77,10 @@ fn apply(
     policy: &FrozenPlayPolicyV1,
     trajectory: &ExpandedTrajectoryV1,
 ) {
-    let tensors = replay_learner_groups_v1(trajectory, policy, None).unwrap();
+    let tensors = replay_learner_groups_v1(0, trajectory, policy, None).unwrap();
     let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensors
         .iter()
-        .map(|(_, rows)| {
+        .map(|(_, _, rows)| {
             rows.iter()
                 .map(|(row, tensor)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
@@ -96,7 +96,7 @@ fn apply(
     let groups: Vec<_> = substeps
         .iter()
         .zip(&tensors)
-        .map(|(steps, (reward, _))| NativePolicyPhysicalDecisionV1 {
+        .map(|(steps, (reward, _, _))| NativePolicyPhysicalDecisionV1 {
             substeps: steps,
             terminal_return: *reward,
             baseline_bits: 0,
@@ -292,6 +292,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: ExpandedLossSelectionV1::default(),
         output_directory: f.root.join("update-0"),
     })
     .unwrap();
@@ -335,6 +336,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: ExpandedLossSelectionV1::default(),
         output_directory: f.root.join("update-1"),
     })
     .unwrap();
@@ -363,6 +365,7 @@ fn phase1_fresh_registry_trainer_rejects_wrong_scalars_before_publication() {
         value_coefficient: VC,
         update_backend: ExpandedUpdateBackendV1::Cpu,
         update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: ExpandedLossSelectionV1::default(),
         output_directory: output.clone(),
     })
     .unwrap_err();

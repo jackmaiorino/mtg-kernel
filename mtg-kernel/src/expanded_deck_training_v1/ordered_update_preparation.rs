@@ -475,6 +475,7 @@ where
         } else {
             Some((
                 trajectory.terminal.terminal_reward[first.actor as usize] as i8,
+                job.episode,
                 rows,
             ))
         })

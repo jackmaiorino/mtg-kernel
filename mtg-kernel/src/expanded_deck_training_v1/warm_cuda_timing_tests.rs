@@ -171,11 +171,11 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
     validate_trajectory(&episode)?;
     validate_actual_behaviors_v1(&episode, &learner_behavior, None)?;
     let episodes_len = 1_usize;
-    let tensor_groups = replay_learner_groups_v1(&episode, &learner_policy, None)?;
+    let tensor_groups = replay_learner_groups_v1(0, &episode, &learner_policy, None)?;
     ensure(!tensor_groups.is_empty(), "no learner probe groups")?;
     let substeps: Vec<Vec<_>> = tensor_groups
         .iter()
-        .map(|(_, rows)| {
+        .map(|(_, _, rows)| {
             rows.iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
                     forward: NativePolicyForwardInputV1::Encoded(Box::new(
@@ -192,7 +192,7 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
     let base_groups: Vec<_> = substeps
         .iter()
         .zip(&tensor_groups)
-        .map(|(steps, (reward, _))| NativePolicyPhysicalDecisionV1 {
+        .map(|(steps, (reward, _, _))| NativePolicyPhysicalDecisionV1 {
             substeps: steps,
             terminal_return: *reward,
             baseline_bits: 0,

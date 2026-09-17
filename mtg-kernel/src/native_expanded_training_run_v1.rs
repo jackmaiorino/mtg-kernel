@@ -6,8 +6,9 @@ use crate::durable_publication_v1::{
 };
 use crate::expanded_deck_training_v1::{
     execute_v1, load_expanded_inference_v1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
-    ExpandedModelSourceV1, ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
+    ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -634,6 +635,9 @@ fn update_command(
     trajectories: Vec<PinnedFileV1>,
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
+    // This run harness's own config has no `loss_selection` field (out of
+    // scope for this change; see `TRAINING-SIGNAL-DESIGN-001.md`'s task
+    // list); every command it issues stays the default v3 identity.
     if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
             source: source.clone(),
@@ -642,6 +646,7 @@ fn update_command(
             value_coefficient: config.value_coefficient,
             update_backend: config.update_backend,
             update_backward_execution: config.update_backward_execution,
+            loss_selection: ExpandedLossSelectionV1::default(),
             output_directory,
         }
     } else {
@@ -652,6 +657,7 @@ fn update_command(
             value_coefficient: config.value_coefficient,
             update_backend: config.update_backend,
             update_backward_execution: config.update_backward_execution,
+            loss_selection: ExpandedLossSelectionV1::default(),
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
             output_directory,

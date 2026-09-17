@@ -57,6 +57,11 @@ const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
 mod phase1_parallel_collection;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
+mod bootstrapped_advantage_v1;
+pub(crate) use bootstrapped_advantage_v1::{
+    gae_episode_advantages_v1, normalize_advantages_v1, AdvantageStatisticsV1,
+    GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+};
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
@@ -196,6 +201,74 @@ impl ExpandedUpdateBackendV1 {
             )?;
         }
         Ok(())
+    }
+}
+
+/// Selects the training-signal identity for the ordinary trainer's update
+/// (`execute_update_v1`, both `Update` and `UpdatePrepared`). Additive
+/// default (`TerminalReinforceValueV3`), the same idiom as
+/// `ExpandedUpdateBackendV1` above: every existing config, checkpoint and
+/// golden keeps the exact `:1629-1995` v3 arithmetic and the
+/// `"terminal_reinforce_value/v3"` receipt string byte-identical.
+/// `GaeAdvantageValueV1` selects the new bootstrapped-advantage estimator
+/// (`sideboarding-integration-20260912/phase1/TRAINING-SIGNAL-DESIGN-001.md`
+/// section 2), loss identity `"gae_advantage_value/v1"`
+/// (`GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1`). `entropy_coefficient` is
+/// threaded through the schema and checkpoint now so a later change can
+/// enable it without another schema migration (section 2), but its
+/// arithmetic is not implemented by this change: `validate_v1` refuses any
+/// value other than exactly `0.0`, the pre-registered constant for every
+/// section 4 validation read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExpandedLossSelectionV1 {
+    #[default]
+    TerminalReinforceValueV3,
+    GaeAdvantageValueV1 {
+        gamma: f32,
+        lambda: f32,
+        entropy_coefficient: f32,
+    },
+}
+
+impl ExpandedLossSelectionV1 {
+    pub(crate) fn is_terminal_reinforce_value_v3(&self) -> bool {
+        matches!(self, Self::TerminalReinforceValueV3)
+    }
+
+    /// Validates the selection's own scalars only; callers separately run
+    /// whatever batch/model admission checks their backend requires.
+    pub(crate) fn validate_v1(&self) -> Result<(), String> {
+        match self {
+            Self::TerminalReinforceValueV3 => Ok(()),
+            Self::GaeAdvantageValueV1 {
+                gamma,
+                lambda,
+                entropy_coefficient,
+            } => {
+                ensure(
+                    gamma.is_finite() && (0.0..=1.0).contains(gamma),
+                    "gae gamma must be finite in 0.0..=1.0",
+                )?;
+                ensure(
+                    lambda.is_finite() && (0.0..=1.0).contains(lambda),
+                    "gae lambda must be finite in 0.0..=1.0",
+                )?;
+                ensure(
+                    *entropy_coefficient == 0.0,
+                    "gae entropy_coefficient is schema-reserved for a future change \
+                     (design section 2) and is not yet implemented; it must be exactly 0.0",
+                )?;
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn loss_identity_v1(&self) -> &'static str {
+        match self {
+            Self::TerminalReinforceValueV3 => "terminal_reinforce_value/v3",
+            Self::GaeAdvantageValueV1 { .. } => GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+        }
     }
 }
 
@@ -655,6 +728,15 @@ pub(crate) struct ExpandedCheckpointV1 {
     second_moments: Vec<ParameterBitsV1>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
+    /// `Some` exactly when `loss_identity == "gae_advantage_value/v1"`,
+    /// `None` otherwise: checked at load the same way `loss_identity ==
+    /// "terminal_reinforce_value/v3"` is asserted today (design section 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gamma_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gae_lambda_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entropy_coefficient_bits: Option<u32>,
     learning_rate_bits: u32,
     value_coefficient_bits: u32,
     #[serde(
@@ -923,8 +1005,23 @@ fn restore_checkpoint_fields_v1(
         "checkpoint warm-start provenance differs",
     )?;
     ensure(
-        saved.loss_identity == "terminal_reinforce_value/v3",
+        saved.loss_identity == "terminal_reinforce_value/v3"
+            || saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
         "checkpoint loss differs",
+    )?;
+    // `gamma_bits`/`gae_lambda_bits`/`entropy_coefficient_bits` are required
+    // exactly when the checkpoint's own loss is the new identity, and
+    // refused otherwise (design section 3), so a v3 checkpoint that somehow
+    // carries them (or a gae checkpoint missing one) fails closed here
+    // rather than silently resuming under a different loss than the one
+    // that actually produced these parameters.
+    let is_gae = saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1;
+    ensure(
+        is_gae
+            == (saved.gamma_bits.is_some()
+                && saved.gae_lambda_bits.is_some()
+                && saved.entropy_coefficient_bits.is_some()),
+        "checkpoint gae scalar presence does not match its loss_identity",
     )?;
     let template = model.parameter_snapshot_v1();
     let snapshot = NativePolicyValueTrainSnapshotV1 {
@@ -1574,7 +1671,16 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     )
 }
 
-type LearnerTensorGroupV1<'a> = (i8, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV2)>);
+/// `(terminal_return, episode_ordinal, rows)`. `episode_ordinal` is this
+/// update's own 0-based episode index (position in the caller's `episodes`
+/// slice, not a global or cross-update identity): the episode-boundary
+/// marker both preparation paths compute and, before this change, discarded
+/// (`TRAINING-SIGNAL-DESIGN-001.md` section 2). Groups sharing one episode
+/// are always contiguous and in time order in the flat lists both paths
+/// return, so a change in `episode_ordinal` between adjacent groups (or the
+/// end of the list) is exactly an episode boundary; nothing downstream may
+/// rely on its absolute value.
+type LearnerTensorGroupV1<'a> = (i8, usize, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV2)>);
 
 /// The trajectory's own recorded whole-pair generation, never a caller flag.
 /// `validate_trajectory` (called by every caller of this) already proved the
@@ -1627,6 +1733,7 @@ pub(crate) fn encoded_decision_view_generic_v1(
 /// Dispatches the replay/verification score call on the trajectory's own
 /// recorded generation (`trajectory_generation_v1`), never a caller flag.
 fn replay_learner_groups_v1<'a>(
+    episode_ordinal: usize,
     t: &'a ExpandedTrajectoryV1,
     learner: &FrozenPlayPolicyV1,
     opponent: Option<&FrozenPlayPolicyV1>,
@@ -1673,6 +1780,7 @@ fn replay_learner_groups_v1<'a>(
         if !group.is_empty() {
             groups.push((
                 t.terminal.terminal_reward[first.actor as usize] as i8,
+                episode_ordinal,
                 group,
             ));
         }
@@ -1719,6 +1827,14 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential"
         )]
         update_backward_execution: UpdateBackwardExecutionV1,
+        /// Config-driven; default `TerminalReinforceValueV3` keeps every
+        /// existing config, checkpoint and golden byte-identical. See
+        /// `ExpandedLossSelectionV1`.
+        #[serde(
+            default,
+            skip_serializing_if = "ExpandedLossSelectionV1::is_terminal_reinforce_value_v3"
+        )]
+        loss_selection: ExpandedLossSelectionV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -1735,6 +1851,11 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential"
         )]
         update_backward_execution: UpdateBackwardExecutionV1,
+        #[serde(
+            default,
+            skip_serializing_if = "ExpandedLossSelectionV1::is_terminal_reinforce_value_v3"
+        )]
+        loss_selection: ExpandedLossSelectionV1,
         preparation_workers: usize,
         /// Decoded tensor payload bound for this prepared update in MiB;
         /// absent means the historical 256 (byte-identical wire for every
@@ -1872,6 +1993,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             value_coefficient,
             update_backend,
             update_backward_execution,
+            loss_selection,
             output_directory,
         } => execute_update_v1(
             source,
@@ -1880,6 +2002,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             value_coefficient,
             update_backend,
             update_backward_execution,
+            loss_selection,
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
@@ -1891,6 +2014,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             value_coefficient,
             update_backend,
             update_backward_execution,
+            loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
             output_directory,
@@ -1904,6 +2028,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 value_coefficient,
                 update_backend,
                 update_backward_execution,
+                loss_selection,
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
@@ -1947,6 +2072,92 @@ fn fixed_partition_backward_worker_limit_v1() -> usize {
     crate::native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1
 }
 
+/// Pre-registered constant (the lead's decision; not tuned): the epsilon
+/// guard in `normalize_advantages_v1`'s `std + epsilon` denominator.
+const GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1: f32 = 1.0e-6;
+
+/// Precomputed, per-update GAE inputs for the train-step dispatch: one
+/// `value_target`/`advantage` pair per group, in the same order as
+/// `groups`. `advantages` is already normalized (design section 2).
+struct GaeTargetsV1 {
+    value_targets: Vec<f32>,
+    advantages: Vec<f32>,
+    statistics: AdvantageStatisticsV1,
+}
+
+/// Computes this update's GAE value targets and normalized advantages from
+/// `groups`/`episode_ordinals`, entirely on CPU, before either backend's
+/// train step runs (design section 2). The per-decision value each episode
+/// bootstraps from is `expected_value_bits` on that group's first substep:
+/// the same bits both preparation paths already independently proved
+/// reproduce the current-parameter forward pass exactly
+/// (`ordered_update_preparation.rs`'s and `replay_learner_groups_v1`'s own
+/// "stored tensor does not reproduce rollout outputs" check), so this needs
+/// no new forward pass and is identical input for the CPU and CUDA GAE
+/// paths: `train_step_gae_*` (CPU) and `train_step_cuda_gae_*` (CUDA) both
+/// receive these same numbers rather than each independently deriving them
+/// from their own backend's forward output.
+fn compute_gae_targets_v1(
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        groups.len() == episode_ordinals.len(),
+        "gae group and episode-ordinal counts differ",
+    )?;
+    ensure(
+        !groups.is_empty(),
+        "gae update requires at least one physical decision",
+    )?;
+    let mut values = Vec::with_capacity(groups.len());
+    for (index, group) in groups.iter().enumerate() {
+        let first = group
+            .substeps
+            .first()
+            .ok_or_else(|| format!("gae group {index} has no substeps"))?;
+        values.push(f32::from_bits(first.expected_value_bits));
+    }
+    let mut advantage_and_target = vec![(0.0f32, 0.0f32); groups.len()];
+    let mut start = 0usize;
+    while start < groups.len() {
+        let mut end = start + 1;
+        while end < groups.len() && episode_ordinals[end] == episode_ordinals[start] {
+            end += 1;
+        }
+        for offset in start..end {
+            ensure(
+                groups[offset].terminal_return == groups[start].terminal_return,
+                "gae episode's physical decisions must share one terminal_return",
+            )?;
+        }
+        let terminal_return = f32::from(groups[start].terminal_return);
+        let decisions: Vec<(f32, bool)> = (start..end)
+            .map(|offset| (values[offset], offset == end - 1))
+            .collect();
+        let episode_results =
+            gae_episode_advantages_v1(&decisions, terminal_return, gamma, lambda)?;
+        advantage_and_target[start..end].copy_from_slice(&episode_results);
+        start = end;
+    }
+    let raw_advantages: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(advantage, _)| *advantage)
+        .collect();
+    let value_targets: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(_, value_target)| *value_target)
+        .collect();
+    let (advantages, statistics) =
+        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    Ok(GaeTargetsV1 {
+        value_targets,
+        advantages,
+        statistics,
+    })
+}
+
 fn execute_update_v1(
     source: ExpandedModelSourceV1,
     trajectories: Vec<PinnedFileV1>,
@@ -1954,12 +2165,14 @@ fn execute_update_v1(
     value_coefficient: f32,
     update_backend: ExpandedUpdateBackendV1,
     backward_execution: UpdateBackwardExecutionV1,
+    loss_selection: ExpandedLossSelectionV1,
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
+    loss_selection.validate_v1()?;
     ensure(
         !trajectories.is_empty() && trajectories.len() <= 1024,
         "invalid update size",
@@ -1978,6 +2191,16 @@ fn execute_update_v1(
     let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
     if let Some(context) = &transfer {
         context.validate_scalars(learning_rate, value_coefficient)?;
+        // Risk (design section 6, "Registry-transfer scalar pinning"): the
+        // simplest mitigation, taken here. `TransferTrainingContextV1`
+        // pins `learning_rate_bits`/`value_coefficient_bits` across a
+        // resumed registry-transfer lineage but not a loss identity; rather
+        // than extend that pinning, the new loss stays unavailable to every
+        // registry-transfer source (imported or fresh) for now.
+        ensure(
+            loss_selection.is_terminal_reinforce_value_v3(),
+            "gae_advantage_value/v1 is not available to registry-transfer sources",
+        )?;
     }
     let before = hex(&state.state_sha256_v1().map_err(err)?);
     let learner = ExpandedSeatBehaviorV1 {
@@ -2039,7 +2262,7 @@ fn execute_update_v1(
     } else {
         let mut tensor_groups = Vec::new();
         let mut opponent_cache = OpponentCacheV1::default();
-        for episode in &episodes {
+        for (episode_ordinal, episode) in episodes.iter().enumerate() {
             let opponent = episode
                 .episode
                 .opponent
@@ -2052,6 +2275,7 @@ fn execute_update_v1(
                 opponent.as_ref().map(|o| &o.behavior),
             )?;
             tensor_groups.extend(replay_learner_groups_v1(
+                episode_ordinal,
                 episode,
                 &policy,
                 opponent.as_ref().map(|o| &o.policy),
@@ -2087,7 +2311,7 @@ fn execute_update_v1(
     }
     let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = tensor_groups
         .iter()
-        .map(|(_, group)| {
+        .map(|(_, _, group)| {
             group
                 .iter()
                 .map(|(row, t)| NativePolicySubstepV1 {
@@ -2105,12 +2329,21 @@ fn execute_update_v1(
         .iter()
         .zip(&tensor_groups)
         .map(
-            |(substeps, (terminal_return, _))| NativePolicyPhysicalDecisionV1 {
+            |(substeps, (terminal_return, _, _))| NativePolicyPhysicalDecisionV1 {
                 substeps,
                 terminal_return: *terminal_return,
                 baseline_bits: 0,
             },
         )
+        .collect();
+    // Episode-boundary marker for the new GAE loss path only (section 2):
+    // one entry per group, in the same order as `groups`, never read by the
+    // unmodified v3 dispatch below. See `LearnerTensorGroupV1`'s doc comment
+    // for why a change between adjacent entries (or the list's end) is
+    // exactly an episode boundary.
+    let episode_ordinals: Vec<usize> = tensor_groups
+        .iter()
+        .map(|(_, episode_ordinal, _)| *episode_ordinal)
         .collect();
     eprintln!(
         "native {:?} update: {} episodes, {} learner physical decisions",
@@ -2118,65 +2351,163 @@ fn execute_update_v1(
         episodes.len(),
         groups.len()
     );
+    // Computed, and used, only when the new loss identity is selected. The
+    // v3 dispatch arm below never reads this, so its arithmetic and JSON
+    // stay byte-identical (design section 2/6).
+    let gae_targets = match &loss_selection {
+        ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. } => Some(
+            compute_gae_targets_v1(&groups, &episode_ordinals, *gamma, *lambda)?,
+        ),
+    };
     let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
     let learner_started = std::time::Instant::now();
-    let update = match (update_backend, generation) {
-        (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
-            .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
-            .map_err(err)?,
-        (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => match backward_execution {
-            UpdateBackwardExecutionV1::Sequential => state
-                .train_step_feature_transfer_v4(&groups, value_coefficient, learning_rate)
+    let update = match &loss_selection {
+        ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
+            (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
+                .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
                 .map_err(err)?,
-            UpdateBackwardExecutionV1::FixedPartition4 => state
-                .train_step_feature_transfer_v4_fixed_partition_v1(
-                    &groups,
-                    value_coefficient,
-                    learning_rate,
-                    fixed_partition_backward_worker_limit_v1(),
-                )
-                .map_err(err)?,
+            (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => {
+                match backward_execution {
+                    UpdateBackwardExecutionV1::Sequential => state
+                        .train_step_feature_transfer_v4(&groups, value_coefficient, learning_rate)
+                        .map_err(err)?,
+                    UpdateBackwardExecutionV1::FixedPartition4 => state
+                        .train_step_feature_transfer_v4_fixed_partition_v1(
+                            &groups,
+                            value_coefficient,
+                            learning_rate,
+                            fixed_partition_backward_worker_limit_v1(),
+                        )
+                        .map_err(err)?,
+                }
+            }
+            (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V3) => {
+                #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                {
+                    state
+                        .train_step_cuda_feature_transfer_v3(
+                            &groups,
+                            value_coefficient,
+                            learning_rate,
+                            device_ordinal,
+                        )
+                        .map_err(err)?
+                }
+                #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                {
+                    let _ = device_ordinal;
+                    return Err("CUDA update backend was not compiled".into());
+                }
+            }
+            (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V4) => {
+                // `backward_execution` is already proven `Sequential` here: the
+                // guard above rejects any non-CPU backend paired with
+                // `fixed_partition_4` before this match ever runs, matching
+                // `NativeTrainingNumericalBackendV1::CudaBurnDense`'s
+                // `accepts_backward_worker_limit_v1` rule (worker_limit == 1
+                // only). Nothing below needs to check it again.
+                #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                {
+                    state
+                        .train_step_cuda_feature_transfer_v4(
+                            &groups,
+                            value_coefficient,
+                            learning_rate,
+                            device_ordinal,
+                        )
+                        .map_err(err)?
+                }
+                #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                {
+                    let _ = device_ordinal;
+                    return Err("CUDA update backend was not compiled".into());
+                }
+            }
         },
-        (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V3) => {
-            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-            {
-                state
-                    .train_step_cuda_feature_transfer_v3(
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. } => {
+            let gae = gae_targets
+                .as_ref()
+                .expect("computed above whenever loss_selection is gae_advantage_value/v1");
+            match (update_backend, generation) {
+                (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
+                    .train_step_gae_feature_transfer_v3(
                         &groups,
+                        &gae.value_targets,
+                        &gae.advantages,
                         value_coefficient,
                         learning_rate,
-                        device_ordinal,
                     )
-                    .map_err(err)?
-            }
-            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
-            {
-                let _ = device_ordinal;
-                return Err("CUDA update backend was not compiled".into());
-            }
-        }
-        (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V4) => {
-            // `backward_execution` is already proven `Sequential` here: the
-            // guard above rejects any non-CPU backend paired with
-            // `fixed_partition_4` before this match ever runs, matching
-            // `NativeTrainingNumericalBackendV1::CudaBurnDense`'s
-            // `accepts_backward_worker_limit_v1` rule (worker_limit == 1
-            // only). Nothing below needs to check it again.
-            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-            {
-                state
-                    .train_step_cuda_feature_transfer_v4(
-                        &groups,
-                        value_coefficient,
-                        learning_rate,
-                        device_ordinal,
-                    )
-                    .map_err(err)?
-            }
-            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
-            {
-                let _ = device_ordinal;
-                return Err("CUDA update backend was not compiled".into());
+                    .map_err(err)?,
+                (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V4) => {
+                    match backward_execution {
+                        UpdateBackwardExecutionV1::Sequential => state
+                            .train_step_gae_feature_transfer_v4(
+                                &groups,
+                                &gae.value_targets,
+                                &gae.advantages,
+                                value_coefficient,
+                                learning_rate,
+                            )
+                            .map_err(err)?,
+                        UpdateBackwardExecutionV1::FixedPartition4 => state
+                            .train_step_gae_feature_transfer_v4_fixed_partition_v1(
+                                &groups,
+                                &gae.value_targets,
+                                &gae.advantages,
+                                value_coefficient,
+                                learning_rate,
+                                fixed_partition_backward_worker_limit_v1(),
+                            )
+                            .map_err(err)?,
+                    }
+                }
+                (
+                    ExpandedUpdateBackendV1::Cuda { device_ordinal },
+                    FreshLineageGenerationV1::V3,
+                ) => {
+                    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                    {
+                        state
+                            .train_step_cuda_gae_feature_transfer_v3(
+                                &groups,
+                                &gae.value_targets,
+                                &gae.advantages,
+                                value_coefficient,
+                                learning_rate,
+                                device_ordinal,
+                            )
+                            .map_err(err)?
+                    }
+                    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                    {
+                        let _ = device_ordinal;
+                        return Err("CUDA update backend was not compiled".into());
+                    }
+                }
+                (
+                    ExpandedUpdateBackendV1::Cuda { device_ordinal },
+                    FreshLineageGenerationV1::V4,
+                ) => {
+                    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                    {
+                        state
+                            .train_step_cuda_gae_feature_transfer_v4(
+                                &groups,
+                                &gae.value_targets,
+                                &gae.advantages,
+                                value_coefficient,
+                                learning_rate,
+                                device_ordinal,
+                            )
+                            .map_err(err)?
+                    }
+                    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                    {
+                        let _ = device_ordinal;
+                        return Err("CUDA update backend was not compiled".into());
+                    }
+                }
             }
         }
     };
@@ -2220,7 +2551,22 @@ fn execute_update_v1(
             .map(ParameterBitsV1::from_native)
             .collect(),
         trajectories: trajectories.clone(),
-        loss_identity: "terminal_reinforce_value/v3".into(),
+        loss_identity: loss_selection.loss_identity_v1().into(),
+        gamma_bits: match &loss_selection {
+            ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, .. } => Some(gamma.to_bits()),
+        },
+        gae_lambda_bits: match &loss_selection {
+            ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 { lambda, .. } => Some(lambda.to_bits()),
+        },
+        entropy_coefficient_bits: match &loss_selection {
+            ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                entropy_coefficient,
+                ..
+            } => Some(entropy_coefficient.to_bits()),
+        },
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
@@ -2240,8 +2586,14 @@ fn execute_update_v1(
         hex(&restored.state_sha256_v1().map_err(err)?) == after,
         "published checkpoint round trip differs",
     )?;
-    let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":"terminal_reinforce_value/v3", "claim":"engineering update only; no playing-strength or production-throughput claim"});
+    let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     update_backend.record_update_execution_v1(&mut result);
+    // Advantage statistics (design section 3), gated on the new loss
+    // identity only: a v3 update's `gae_targets` is always `None`, so v3
+    // receipts gain zero new keys.
+    if let Some(gae) = &gae_targets {
+        result["advantage_statistics"] = json!(gae.statistics);
+    }
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
     }
@@ -2695,11 +3047,13 @@ pub(crate) mod tests {
             let mut opponent = distinct_opponent();
             let (trajectory, learner_behavior, opponent_behavior) =
                 replay_fixture(&mut learner, Some(&mut opponent), learner_seat, &[0, 1]);
-            let groups = replay_learner_groups_v1(&trajectory, &learner, Some(&opponent)).unwrap();
+            let groups =
+                replay_learner_groups_v1(0, &trajectory, &learner, Some(&opponent)).unwrap();
             assert_eq!(groups.len(), 1);
             assert_eq!(groups[0].0, if learner_seat == 0 { 1 } else { -1 });
-            assert!(groups[0].1.iter().all(|(row, _)| row.actor == learner_seat));
-            assert!(replay_learner_groups_v1(&trajectory, &learner, Some(&learner)).is_err());
+            assert_eq!(groups[0].1, 0);
+            assert!(groups[0].2.iter().all(|(row, _)| row.actor == learner_seat));
+            assert!(replay_learner_groups_v1(0, &trajectory, &learner, Some(&learner)).is_err());
             let mut changed = trajectory.clone();
             let other = (1 - learner_seat) as usize;
             changed.seat_behaviors.as_mut().unwrap()[other]
@@ -2730,10 +3084,10 @@ pub(crate) mod tests {
             .is_err());
             changed = trajectory.clone();
             changed.decisions[other].tensor.state[0] = f32::NAN.to_bits();
-            assert!(replay_learner_groups_v1(&changed, &learner, Some(&opponent)).is_err());
+            assert!(replay_learner_groups_v1(0, &changed, &learner, Some(&opponent)).is_err());
             changed = trajectory.clone();
             changed.decisions[other].value ^= 1;
-            assert!(replay_learner_groups_v1(&changed, &learner, Some(&opponent)).is_err());
+            assert!(replay_learner_groups_v1(0, &changed, &learner, Some(&opponent)).is_err());
             changed = trajectory.clone();
             let row = &mut changed.decisions[other];
             row.selected = (row.selected + 1) % row.logits.len() as u32;
@@ -2759,10 +3113,10 @@ pub(crate) mod tests {
             let mut updated_hashes = Vec::new();
             for trajectory in [&short, &long] {
                 let captured =
-                    replay_learner_groups_v1(trajectory, &learner, Some(&opponent)).unwrap();
+                    replay_learner_groups_v1(0, trajectory, &learner, Some(&opponent)).unwrap();
                 assert_eq!(captured.len(), 1);
                 let steps: Vec<_> = captured[0]
-                    .1
+                    .2
                     .iter()
                     .map(|(row, tensor)| NativePolicySubstepV1 {
                         forward: NativePolicyForwardInputV1::Encoded(Box::new(
@@ -2812,7 +3166,7 @@ pub(crate) mod tests {
         assert_eq!(serde_json::to_value(&decoded).unwrap(), value);
         validate_actual_behaviors_v1(&decoded, &behavior, None).unwrap();
         assert_eq!(
-            replay_learner_groups_v1(&decoded, &learner, None)
+            replay_learner_groups_v1(0, &decoded, &learner, None)
                 .unwrap()
                 .len(),
             2
@@ -2871,6 +3225,9 @@ pub(crate) mod tests {
                 .collect(),
             trajectories: Vec::new(),
             loss_identity: "terminal_reinforce_value/v3".into(),
+            gamma_bits: None,
+            gae_lambda_bits: None,
+            entropy_coefficient_bits: None,
             learning_rate_bits: 0.001_f32.to_bits(),
             value_coefficient_bits: 0.5_f32.to_bits(),
             registry_transfer: None,
@@ -5387,6 +5744,7 @@ pub(crate) mod tests {
         decks: [ExpandedDeckListV1; 2],
         backward_execution: UpdateBackwardExecutionV1,
         update_backend: ExpandedUpdateBackendV1,
+        loss_selection: ExpandedLossSelectionV1,
     ) -> Result<(String, String, String), String> {
         let root = std::env::temp_dir().join(format!(
             "ordinary-two-iteration-{label}-{}",
@@ -5445,6 +5803,7 @@ pub(crate) mod tests {
                 value_coefficient: 0.5,
                 update_backend,
                 update_backward_execution: backward_execution,
+                loss_selection,
                 output_directory: root.join(format!("update-{iteration}")),
             })?;
             // Engineering timing note only (never a claim): visible in the
@@ -5512,6 +5871,7 @@ pub(crate) mod tests {
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::Sequential,
             ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::default(),
         )
         .unwrap();
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
@@ -5546,6 +5906,7 @@ pub(crate) mod tests {
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::Sequential,
             ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::default(),
         )
         .unwrap();
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V3);
@@ -5592,6 +5953,7 @@ pub(crate) mod tests {
                 [list("Affinity"), list("Terror")],
                 UpdateBackwardExecutionV1::FixedPartition4,
                 ExpandedUpdateBackendV1::Cpu,
+                ExpandedLossSelectionV1::default(),
             )
             .unwrap();
             set_fixed_partition_backward_worker_limit_override_for_test_v1(None);
@@ -5632,6 +5994,7 @@ pub(crate) mod tests {
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::FixedPartition4,
             ExpandedUpdateBackendV1::Cpu,
+            ExpandedLossSelectionV1::default(),
         )
         .unwrap_err();
         assert!(
@@ -5664,6 +6027,7 @@ pub(crate) mod tests {
             [list("Affinity"), list("Terror")],
             UpdateBackwardExecutionV1::FixedPartition4,
             ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 },
+            ExpandedLossSelectionV1::default(),
         )
         .unwrap_err();
         assert!(
@@ -5723,6 +6087,7 @@ pub(crate) mod tests {
             ExpandedUpdateBackendV1::Cuda {
                 device_ordinal: V4_CUDA_DEVICE_ORDINAL_V1,
             },
+            ExpandedLossSelectionV1::default(),
         )
         .unwrap()
     }
@@ -5844,5 +6209,248 @@ pub(crate) mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         println!("{V4_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
+    }
+
+    // --- Task 3 (`TRAINING-SIGNAL-DESIGN-001.md` section 5): new hermetic
+    // two-iteration fixtures for `gae_advantage_value/v1`, CPU and CUDA,
+    // built on `run_ordinary_two_iteration_fixture_v1` exactly as directed,
+    // including its own determinism check mirroring the V4 CUDA pair above.
+    // Pre-registered constants (the lead's decision; not tuned against any
+    // read): gamma 1.0, lambda 0.9, entropy_coefficient 0.0.
+
+    fn gae_loss_selection_v1() -> ExpandedLossSelectionV1 {
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        }
+    }
+
+    /// Pinned against the value this exact fixture (same seeds, decks,
+    /// learning rate, value coefficient, unmanipulated real weights, CPU
+    /// sequential backend) actually produced running it end to end through
+    /// the real `execute_v1`/`execute_update_v1` production path, 2026-09-17.
+    #[test]
+    fn ordinary_trainer_two_iteration_gae_fixture_cpu_state_hash_is_pinned() {
+        let (contract, encoding, state) = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            "gae-cpu",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
+            gae_loss_selection_v1(),
+        )
+        .unwrap();
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(
+            state, "5aabee1d46b0882ebbf63d93d1906571f30e1191e9606234903799e061a4d671",
+            "the gae_advantage_value/v1 CPU ordinary-trainer path over real constructed decks \
+             must stay reproducible"
+        );
+    }
+
+    /// Config-driven fixed-partition GAE update, same real fixture: the
+    /// Sequential and FixedPartitions backward arms of
+    /// `train_step_gae_with_input_config_v1` are both exercised by real
+    /// data (not only the synthetic unit fixtures in
+    /// `native_policy_train_step_v1::gae_v1::tests`), mirroring the
+    /// existing `fixed_partition_4`-vs-`sequential` real-fixture topology
+    /// tests above for the unweighted path.
+    #[test]
+    fn ordinary_trainer_two_iteration_gae_fixture_cpu_fixed_partition_completes() {
+        let (contract, encoding, state) = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            "gae-cpu-fixed-partition",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::FixedPartition4,
+            ExpandedUpdateBackendV1::Cpu,
+            gae_loss_selection_v1(),
+        )
+        .unwrap();
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        assert!(!state.is_empty());
+    }
+
+    /// Bit-identical final state across two consecutive runs of the GAE CPU
+    /// fixture in the same process (fresh model/state each run, same
+    /// seeds/decks; only the output directories differ), mirroring the V4
+    /// CUDA in-process determinism check for the CPU GAE path.
+    #[test]
+    fn ordinary_trainer_two_iteration_gae_fixture_cpu_is_bit_identical_across_two_runs_in_one_process(
+    ) {
+        let (contract_a, encoding_a, state_a) = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            "gae-cpu-det-inprocess-a",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
+            gae_loss_selection_v1(),
+        )
+        .unwrap();
+        let (contract_b, encoding_b, state_b) = run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            "gae-cpu-det-inprocess-b",
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cpu,
+            gae_loss_selection_v1(),
+        )
+        .unwrap();
+        assert_eq!(contract_a, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding_a, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(contract_b, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding_b, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(
+            state_a, state_b,
+            "two consecutive CPU GAE updates in one process must be bit-identical"
+        );
+    }
+
+    /// Device ordinal 0 (RTX 4070 SUPER) for this one short GAE CUDA
+    /// validation only, by explicit instruction for this task: every other
+    /// CUDA fixture in this module deliberately stays on ordinal 1 (see
+    /// `V4_CUDA_DEVICE_ORDINAL_V1`'s own doc comment) to avoid the GUI
+    /// device; this is a one-off exception, not a new default.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_CUDA_DEVICE_ORDINAL_V1: usize = 0;
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn run_gae_cuda_fixture_v1(label: &str) -> (String, String, String) {
+        run_ordinary_two_iteration_fixture_v1(
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+            label,
+            |_parameters| {},
+            [list("Affinity"), list("Terror")],
+            UpdateBackwardExecutionV1::Sequential,
+            ExpandedUpdateBackendV1::Cuda {
+                device_ordinal: GAE_CUDA_DEVICE_ORDINAL_V1,
+            },
+            gae_loss_selection_v1(),
+        )
+        .unwrap()
+    }
+
+    /// Pinned against the value this exact fixture actually produced
+    /// running it end to end through the real `execute_v1`/
+    /// `execute_update_v1` production path, CUDA backend, device ordinal 0,
+    /// 2026-09-17. Deliberately not equal to the CPU pin above: CUDA is
+    /// tolerance-bounded against the CPU reference and run-to-run
+    /// bit-deterministic on one device, but never bit-identical to the CPU
+    /// identity, exactly as already established for the unweighted V4 CUDA
+    /// path.
+    #[test]
+    #[ignore = "requires a real GPU; explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_gae_fixture_cuda_stamps_and_restores_cleanly() {
+        let (contract, encoding, state) = run_gae_cuda_fixture_v1("gae-cuda-golden");
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        assert_ne!(
+            state, "5aabee1d46b0882ebbf63d93d1906571f30e1191e9606234903799e061a4d671",
+            "CUDA differs from CPU sequential by design (tolerance-bounded, never bit-identical); \
+             an exact match here would itself be suspicious"
+        );
+        assert_eq!(
+            state, GAE_CUDA_GOLDEN_STATE_SHA256_V1,
+            "the gae_advantage_value/v1 CUDA ordinary-trainer path over real constructed decks \
+             must stay reproducible"
+        );
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_CUDA_GOLDEN_STATE_SHA256_V1: &str =
+        "cdbfb9784ef841839b6c1f6cc3611e050b0c63187c7757bd80a3b329fa8a2645";
+
+    /// Bit-identical final state across two consecutive runs of the GAE
+    /// fixture on CUDA in the same process, mirroring
+    /// `ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_runs_in_one_process`.
+    #[test]
+    #[ignore = "requires a real GPU; explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_gae_fixture_cuda_is_bit_identical_across_two_runs_in_one_process(
+    ) {
+        let (contract_a, encoding_a, state_a) = run_gae_cuda_fixture_v1("gae-cuda-det-inprocess-a");
+        let (contract_b, encoding_b, state_b) = run_gae_cuda_fixture_v1("gae-cuda-det-inprocess-b");
+        assert_eq!(contract_a, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding_a, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(contract_b, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding_b, FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(
+            state_a, state_b,
+            "two consecutive CUDA GAE updates in one process must be bit-identical"
+        );
+        assert_eq!(state_a, GAE_CUDA_GOLDEN_STATE_SHA256_V1);
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_CUDA_SUBPROCESS_MARKER_ENV_V1: &str = "MTG_KERNEL_GAE_CUDA_DETERMINISM_SUBPROCESS_V1";
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    const GAE_CUDA_SUBPROCESS_HASH_PREFIX_V1: &str = "MTG_KERNEL_GAE_CUDA_STATE_SHA256_V1=";
+
+    /// Bit-identical final state across two separate OS processes on the
+    /// same device, mirroring
+    /// `ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes`.
+    #[test]
+    #[ignore = "requires a real GPU; explicit GPU execution only"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_gae_fixture_cuda_is_bit_identical_across_two_processes() {
+        let exe = std::env::current_exe().expect("current_exe must resolve for the test binary");
+        let mut hashes = Vec::with_capacity(2);
+        for attempt in 0..2u32 {
+            let output = std::process::Command::new(&exe)
+                .arg("--ignored")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg(
+                    "expanded_deck_training_v1::tests::\
+                     ordinary_trainer_two_iteration_gae_fixture_cuda_subprocess_worker_v1",
+                )
+                .env(GAE_CUDA_SUBPROCESS_MARKER_ENV_V1, "1")
+                .output()
+                .expect("subprocess spawn must succeed");
+            assert!(
+                output.status.success(),
+                "subprocess {attempt} exited non-zero: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let hash_line = stdout
+                .lines()
+                .find(|line| line.starts_with(GAE_CUDA_SUBPROCESS_HASH_PREFIX_V1))
+                .unwrap_or_else(|| {
+                    panic!("subprocess {attempt} printed no hash line; stdout was: {stdout}")
+                });
+            hashes.push(hash_line[GAE_CUDA_SUBPROCESS_HASH_PREFIX_V1.len()..].to_owned());
+        }
+        assert_eq!(
+            hashes[0], hashes[1],
+            "two separate OS processes on the same device must be bit-identical"
+        );
+        assert_eq!(hashes[0], GAE_CUDA_GOLDEN_STATE_SHA256_V1);
+    }
+
+    /// One-shot worker invoked as a subprocess by
+    /// `ordinary_trainer_two_iteration_gae_fixture_cuda_is_bit_identical_across_two_processes`.
+    #[test]
+    #[ignore = "subprocess worker for ordinary_trainer_two_iteration_gae_fixture_cuda_is_bit_identical_across_two_processes; do not run directly"]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn ordinary_trainer_two_iteration_gae_fixture_cuda_subprocess_worker_v1() {
+        if std::env::var_os(GAE_CUDA_SUBPROCESS_MARKER_ENV_V1).is_none() {
+            panic!(
+                "this test is a subprocess worker; run it via \
+                 ordinary_trainer_two_iteration_gae_fixture_cuda_is_bit_identical_across_two_processes"
+            );
+        }
+        let (contract, encoding, state) = run_gae_cuda_fixture_v1("gae-cuda-det-subprocess");
+        assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
+        println!("{GAE_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
     }
 }

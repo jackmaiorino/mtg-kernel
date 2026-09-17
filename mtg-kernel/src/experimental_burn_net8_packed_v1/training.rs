@@ -819,6 +819,83 @@ impl ExperimentalDeviceTrainStateV1 {
         })
     }
 
+    /// GAE sibling of `chunk_backward_v1` (design section 2): runs one
+    /// chunk's forward, the GAE dense group loss, and backward, folding
+    /// gradients into `accumulator`. No test-only capture path exists here:
+    /// unlike the v3 chunk, GAE has no existing numerical-evidence probe to
+    /// preserve, so this is the one and only body in every build.
+    pub(crate) fn chunk_backward_gae_v1(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseGroupLossPlanGaeV1,
+        value_coefficient: f32,
+        normalization_group_count: f32,
+    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
+        let (logits, values) = if self.wide {
+            self.model.forward_wide_v1(batch)
+        } else {
+            self.model.forward(batch)
+        };
+        let logit_outputs = logits.clone().inner();
+        let value_outputs = values.clone().inner();
+        let loss = dense_group_loss_gae_v1(
+            logits,
+            values,
+            plan,
+            value_coefficient,
+            normalization_group_count,
+        )?;
+        let raw_gradients = loss.backward();
+        let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
+        if batch.empty_relations_v3 {
+            register_empty_relation_gradients_v3(&self.model, batch, &mut gradients)?;
+        }
+        if gradients.len() != PARAMETER_TENSOR_COUNT_V1 {
+            return Err(training_error(format!(
+                "CUDA gae chunk gradient tensor count mismatch: {} != {PARAMETER_TENSOR_COUNT_V1}",
+                gradients.len()
+            )));
+        }
+        let gauge_parameter = self
+            .model
+            .scorer
+            .output
+            .bias
+            .as_ref()
+            .ok_or_else(|| training_error("scorer output has no bias"))?;
+        let gauge_gradient = gradients
+            .remove::<CudaBackendV1, 1>(gauge_parameter.id)
+            .ok_or_else(|| training_error("scorer output bias gradient is missing"))?;
+        let readback = Transaction::<CudaBackendV1>::default()
+            .register(logit_outputs)
+            .register(value_outputs)
+            .register(gauge_gradient.clone())
+            .try_execute()?;
+        let readback_count = readback.len();
+        let [logit_data, value_data, gauge_data]: [TensorData; 3] =
+            readback.try_into().map_err(|_| {
+                training_error(format!(
+                    "CUDA gae chunk readback cardinality mismatch: {readback_count} != 3"
+                ))
+            })?;
+        let logit_outputs = logit_data.into_vec::<f32>()?;
+        let value_outputs = value_data.into_vec::<f32>()?;
+        let chunk_raw = gauge_data.into_vec::<f32>()?;
+        let chunk_raw = *chunk_raw
+            .first()
+            .ok_or_else(|| training_error("scorer output bias gradient is empty"))?;
+        gradients.register(gauge_parameter.id, gauge_gradient);
+        accumulator.accumulate(&self.model, gradients);
+        Ok(ChunkBackwardOutputsV1 {
+            raw_gauge_residual: chunk_raw,
+            logit_outputs,
+            value_outputs,
+            #[cfg(test)]
+            device_objective: None,
+        })
+    }
+
     /// Canonicalizes the accumulated gauge gradient to exact zero, applies one
     /// Adam step over the accumulated gradients, and commits the candidate
     /// model and moments.
@@ -1933,6 +2010,123 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     })
 }
 
+/// `"gae_advantage_value/v1"` sibling of `DenseGroupLossPlanV1`
+/// (`TRAINING-SIGNAL-DESIGN-001.md` section 2). Packing fields (`pad_gather`,
+/// `pad_mask`, `selected_gather`, `group_scatter`, `group_first_gather`) are
+/// built identically to the v3 plan's own (pure function of the packed
+/// action rows, independent of loss identity); `value_targets`/`advantages`
+/// replace `targets`/`baseline`: both are precomputed, already-normalized
+/// per-group constants (computed once on CPU from every group's bit-exact
+/// `expected_value_bits`, never from this device's own forward output), so
+/// there is no baseline field here at all, v4-candidate or otherwise.
+pub(crate) struct DenseGroupLossPlanGaeV1 {
+    pad_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    pad_mask: Tensor<CudaAutodiffBackendV1, 2>,
+    selected_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    group_scatter: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    group_first_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
+    value_targets: Tensor<CudaAutodiffBackendV1, 1>,
+    advantages: Tensor<CudaAutodiffBackendV1, 1>,
+    substeps: usize,
+    group_count: usize,
+    max_actions: usize,
+}
+
+pub(crate) fn build_dense_group_loss_plan_gae_v1(
+    host: &HostPackingWorkspace,
+    selected_action_indices: &[usize],
+    substep_group_indices: &[usize],
+    group_first_substeps: &[usize],
+    value_targets: &[f32],
+    advantages: &[f32],
+    device: &burn_cuda::CudaDevice,
+) -> Result<DenseGroupLossPlanGaeV1, Box<dyn Error>> {
+    let substeps = selected_action_indices.len();
+    let group_count = value_targets.len();
+    if substeps == 0
+        || group_count == 0
+        || substep_group_indices.len() != substeps
+        || group_first_substeps.len() != group_count
+        || advantages.len() != group_count
+        || host.action_offsets.len() != substeps + 1
+    {
+        return Err(training_error("dense gae group plan cardinality mismatch"));
+    }
+    let mut max_actions = 0_usize;
+    for offsets in host.action_offsets.windows(2) {
+        let count = offsets[1]
+            .checked_sub(offsets[0])
+            .filter(|count| *count > 0)
+            .ok_or_else(|| training_error("dense gae group plan found an empty action row"))?;
+        max_actions = max_actions.max(count);
+    }
+    let mut pad_gather = Vec::with_capacity(substeps * max_actions);
+    let mut pad_mask = Vec::with_capacity(substeps * max_actions);
+    let mut selected_gather = Vec::with_capacity(substeps);
+    let mut group_scatter = Vec::with_capacity(substeps);
+    for substep in 0..substeps {
+        let begin = host.action_offsets[substep];
+        let end = host.action_offsets[substep + 1];
+        let count = end - begin;
+        let selected = selected_action_indices[substep];
+        let group = substep_group_indices[substep];
+        if selected >= count || group >= group_count {
+            return Err(training_error(format!(
+                "dense gae group plan substep {substep} is invalid"
+            )));
+        }
+        for action in 0..max_actions {
+            if action < count {
+                pad_gather.push(i32::try_from(begin + action)?);
+                pad_mask.push(0.0_f32);
+            } else {
+                pad_gather.push(i32::try_from(begin)?);
+                pad_mask.push(DENSE_PAD_MASK_NEGATIVE_V1);
+            }
+        }
+        selected_gather.push(i32::try_from(begin + selected)?);
+        group_scatter.push(i32::try_from(group)?);
+    }
+    let mut group_first_gather = Vec::with_capacity(group_count);
+    for group in 0..group_count {
+        let first = group_first_substeps[group];
+        if first >= substeps
+            || substep_group_indices[first] != group
+            || !value_targets[group].is_finite()
+            || !advantages[group].is_finite()
+        {
+            return Err(training_error(format!(
+                "dense gae group plan group {group} is invalid"
+            )));
+        }
+        group_first_gather.push(i32::try_from(first)?);
+    }
+    Ok(DenseGroupLossPlanGaeV1 {
+        pad_gather: Tensor::from_data(
+            TensorData::new(pad_gather, [substeps * max_actions]),
+            device,
+        ),
+        pad_mask: Tensor::from_data(TensorData::new(pad_mask, [substeps, max_actions]), device),
+        selected_gather: Tensor::from_data(TensorData::new(selected_gather, [substeps]), device),
+        group_scatter: Tensor::from_data(TensorData::new(group_scatter, [substeps]), device),
+        group_first_gather: Tensor::from_data(
+            TensorData::new(group_first_gather, [group_count]),
+            device,
+        ),
+        value_targets: Tensor::from_data(
+            TensorData::new(value_targets.to_vec(), [group_count]),
+            device,
+        ),
+        advantages: Tensor::from_data(
+            TensorData::new(advantages.to_vec(), [group_count]),
+            device,
+        ),
+        substeps,
+        group_count,
+        max_actions,
+    })
+}
+
 /// Reinterprets an autodiff-typed device batch on the inner backend. Tensor
 /// handles are shared, not copied; the returned batch simply cannot record an
 /// autodiff graph.
@@ -2020,6 +2214,61 @@ fn dense_group_loss_v1(
         .mul_scalar(-1.0)
         .sum();
     let value_error = group_values - plan.targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+    Ok(
+        (policy_sum + value_sum.mul_scalar(value_coefficient))
+            .div_scalar(normalization_group_count),
+    )
+}
+
+/// `"gae_advantage_value/v1"` sibling of `dense_group_loss_v1`. Packing/
+/// reduction (padding, row log-sum-exp, scatter-add joint log-probability)
+/// is identical; the difference is entirely in the two terms it feeds:
+/// `plan.advantages` is a precomputed constant multiplying the policy term
+/// directly (design section 2's `Â_g`), so unlike v3's `advantage` it never
+/// touches `group_values` (no `.detach()` needed: a tensor that was never
+/// part of this forward's graph carries no gradient path to detach), and
+/// `plan.value_targets` is likewise a precomputed constant subtracted from
+/// the live `group_values` for the value term, matching "stop-gradient
+/// value target" exactly (design section 2: `(value_g -
+/// stopgrad(value_target_g))^2`).
+fn dense_group_loss_gae_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanGaeV1,
+    value_coefficient: f32,
+    normalization_group_count: f32,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    if values.dims()[0] != plan.substeps
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+        || !normalization_group_count.is_finite()
+        || normalization_group_count < plan.group_count as f32
+    {
+        return Err(training_error("dense gae group loss shape/parameter mismatch"));
+    }
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.substeps, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let log_sum_exp = (padded - row_max.clone()).exp().sum_dim(1).log() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let joint_log_probabilities = Tensor::zeros([plan.group_count], &plan.value_targets.device())
+        .scatter(
+            0,
+            plan.group_scatter.clone(),
+            selected_log_probabilities,
+            IndexingUpdateOp::Add,
+        );
+    let group_values = values.select(0, plan.group_first_gather.clone());
+    let policy_sum = joint_log_probabilities
+        .mul(plan.advantages.clone())
+        .mul_scalar(-1.0)
+        .sum();
+    let value_error = group_values - plan.value_targets.clone();
     let value_sum = value_error.clone().mul(value_error).sum();
     Ok(
         (policy_sum + value_sum.mul_scalar(value_coefficient))

@@ -121,6 +121,9 @@ fn checkpoint(
             sha256: "3".repeat(64),
         }],
         loss_identity: LOSS.into(),
+        gamma_bits: None,
+        gae_lambda_bits: None,
+        entropy_coefficient_bits: None,
         learning_rate_bits: LEARNING_RATE.to_bits(),
         value_coefficient_bits: VALUE_COEFFICIENT.to_bits(),
     }

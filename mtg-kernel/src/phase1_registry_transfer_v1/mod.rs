@@ -160,6 +160,19 @@ struct ExpandedCheckpointInputV1 {
     second_moments: Vec<TensorBitsV1>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
+    // Present only on a `gae_advantage_value/v1` source checkpoint
+    // (`ExpandedCheckpointV1`'s own additive fields); registry transfer
+    // stays v3-only (`TRAINING-SIGNAL-DESIGN-001.md` section 6, "Registry-
+    // transfer scalar pinning"), so these are read (never denied by this
+    // struct's own `deny_unknown_fields`) and then ignored: the
+    // `loss_identity == LOSS` check below is what actually rejects such a
+    // checkpoint, with a clear error instead of an opaque parse failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gamma_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gae_lambda_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entropy_coefficient_bits: Option<u32>,
     learning_rate_bits: u32,
     value_coefficient_bits: u32,
 }
