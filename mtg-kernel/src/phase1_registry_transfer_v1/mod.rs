@@ -21,9 +21,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
+mod cli;
 mod fresh;
 mod strict_registry_json;
 
+pub use cli::{run_registry_transfer_cli_v1, RegistryTransferCliRequestV1};
 pub use fresh::{
     transfer_fresh_expanded_checkpoint_to_current_registry_v1,
     verify_fresh_registry_transfer_artifact_v1, FreshRegistryTransferReceiptV1,

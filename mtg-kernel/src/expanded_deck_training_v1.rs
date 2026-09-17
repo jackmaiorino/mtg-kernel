@@ -641,7 +641,7 @@ fn restore_parameters(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExpandedCheckpointV1 {
+pub(crate) struct ExpandedCheckpointV1 {
     schema: String,
     feature_contract_digest: String,
     feature_encoding_digest: String,
@@ -2324,7 +2324,7 @@ mod cuda_probe_tests;
 mod warm_cuda_timing_tests;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
 
@@ -2825,7 +2825,7 @@ mod tests {
         assert!(validate_trajectory(&changed).is_err());
     }
 
-    pub(super) fn checkpoint_fixture_v1() -> (
+    pub(crate) fn checkpoint_fixture_v1() -> (
         FrozenPlayPolicyV1,
         NativePolicyValueNetV1,
         ExpandedCheckpointV1,
