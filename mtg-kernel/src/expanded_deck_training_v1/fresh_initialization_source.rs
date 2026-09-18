@@ -642,7 +642,7 @@ pub(super) fn load_policy_v1(
 /// module plus `FrozenPlayPolicyV1::from_fresh_initialization_v1`/`_v4`)
 /// end to end against real bytes.
 #[cfg(test)]
-pub(super) fn write_synthetic_fresh_source_v1(
+pub(crate) fn write_synthetic_fresh_source_v1(
     dir: &std::path::Path,
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
 ) -> ExpandedFreshInitializationSourceV1 {

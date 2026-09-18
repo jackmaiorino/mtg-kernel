@@ -446,7 +446,15 @@ where
         } else {
             opponent.map_or(policy, |other| &other.policy)
         };
-        let generation = trajectory_generation_v1(trajectory);
+        // The acting policy's own generation, not the trajectory's single
+        // learner-derived digest pair: for an ordinary homogeneous
+        // trajectory the two always agree (see `collect_episode`), but a V3
+        // registry-transfer opponent's own rows under a V4-learner
+        // trajectory must replay through its own V3 encoder even though the
+        // trajectory-wide digest is V4. See
+        // `expanded_deck_training_v1::replay_learner_groups_v1`, the serial
+        // sibling of this same dispatch.
+        let generation = acting.feature_identity_v1().generation;
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();

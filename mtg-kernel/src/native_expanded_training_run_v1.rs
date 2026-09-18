@@ -380,6 +380,62 @@ fn parse_pin(document: &Value, field: &str) -> Result<PinnedFileV1, String> {
     .map_err(err)
 }
 
+/// The archetype id a compiled breadth-block label carries before its
+/// "/<variant-hash>" suffix (`python/tools/phase1_breadth_v1/catalog_v1.py`:
+/// `archetype+'/'+key[:12]`); an uncatalogued label with no '/' is its own
+/// whole archetype id.
+fn deck_archetype_v1(label: &str) -> &str {
+    label.split('/').next().unwrap_or(label)
+}
+
+/// The registry transfer that makes a frozen V3 opponent usable against a V4
+/// learner appends only embedding rows for cards new to its destination
+/// registry; the V3 action encoder itself is frozen (see
+/// `expanded_deck_training_v1::collect_episode`'s cross-generation
+/// admission) and cannot reference an appended card in an action. Wildfire
+/// (Jund Wildfire's Tron package) is the one registered archetype that needs
+/// such cards; every other registered archetype, Rally included, predates
+/// the transfer and is fully covered by the opponent's own source registry.
+/// Refuses, before any episode compute, any episode that would hand a V3
+/// registry-transfer opponent seat a Wildfire deck, in either its preboard
+/// registration or a postboard selection.
+fn reject_wildfire_for_v3_transfer_opponents_v1(
+    config: &NativeExpandedTrainingRunV1,
+    v3_transfer_opponent_ids: &BTreeSet<String>,
+) -> Result<(), String> {
+    if v3_transfer_opponent_ids.is_empty() {
+        return Ok(());
+    }
+    for iteration in &config.iterations {
+        for scheduled in &iteration.episodes {
+            let ExpandedOpponentAssignmentV1::Fixed { id } = &scheduled.opponent else {
+                continue;
+            };
+            if !v3_transfer_opponent_ids.contains(id) {
+                continue;
+            }
+            let opponent_seat = 1 - scheduled.episode.learner_seat as usize;
+            for list in [
+                &scheduled.episode.registered[opponent_seat],
+                &scheduled.episode.selected[opponent_seat],
+            ] {
+                check(
+                    deck_archetype_v1(&list.label) != "Wildfire",
+                    &format!(
+                        "episode '{}' assigns the V3 registry-transfer opponent '{id}' the \
+                         Wildfire archetype; its V3 action encoder cannot reference cards the \
+                         transfer appended, so this opponent may only be assigned archetypes its \
+                         own source registry already covers (Rally-only lanes are the intended \
+                         use)",
+                        scheduled.episode.id
+                    ),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn resolve_episodes(
     config: &NativeExpandedTrainingRunV1,
     index: usize,
@@ -732,10 +788,20 @@ pub fn run_native_expanded_training_v1(
     let iterations_root = root.join("iterations");
     fs::create_dir_all(&iterations_root).map_err(err)?;
     let (_, mut current_identity) = load_expanded_inference_v1(&config.initial_source)?;
-    // Validate the complete fixed roster before spending episode compute.
+    // Validate the complete fixed roster before spending episode compute, and
+    // note which roster ids are V3 registry-transfer opponents: the only
+    // ones `collect_episode` (expanded_deck_training_v1.rs) may pair with a
+    // V4 learner, and the only ones the Wildfire/appended-card deck guard
+    // below applies to. Every other opponent, including any other V3
+    // source, is unaffected by either check.
+    let mut v3_transfer_opponent_ids = BTreeSet::new();
     for opponent in &config.opponents {
-        load_expanded_inference_v1(&opponent.source)?;
+        let (policy, _) = load_expanded_inference_v1(&opponent.source)?;
+        if policy.is_v3_registry_transfer_opponent_v1() {
+            v3_transfer_opponent_ids.insert(opponent.id.clone());
+        }
     }
+    reject_wildfire_for_v3_transfer_opponents_v1(config, &v3_transfer_opponent_ids)?;
     let mut current = config.initial_source.clone();
     let mut history = Vec::new();
     let mut receipts = Vec::new();
@@ -1763,5 +1829,71 @@ mod tests {
             last_update_loss_identity_v1(&result),
             "gae_advantage_value/v1"
         );
+    }
+
+    /// `deck_archetype_v1` strips exactly the compiled breadth-block label
+    /// shape (`archetype+'/'+key[:12]`, `python/tools/phase1_breadth_v1/
+    /// catalog_v1.py`); an uncatalogued whole-archetype label (this file's
+    /// own `schedule()` fixture, and any hand-authored config) has no '/'
+    /// and is returned unchanged.
+    #[test]
+    fn reject_wildfire_for_v3_transfer_opponents_v1_only_refuses_the_transferred_seat_and_only_wildfire(
+    ) {
+        assert_eq!(deck_archetype_v1("Wildfire/1e349fa4fa7a"), "Wildfire");
+        assert_eq!(deck_archetype_v1("Rally"), "Rally");
+
+        let mut config = schedule();
+        config.opponents.push(NamedExpandedOpponentV1 {
+            id: "v3-candidate".into(),
+            source: config.initial_source.clone(),
+        });
+        config.iterations[0].episodes[0].opponent = ExpandedOpponentAssignmentV1::Fixed {
+            id: "v3-candidate".into(),
+        };
+        let transferred: BTreeSet<String> = ["v3-candidate".to_string()].into_iter().collect();
+
+        // The baseline fixture's own decks (Affinity/Elves) are unaffected.
+        reject_wildfire_for_v3_transfer_opponents_v1(&config, &transferred).unwrap();
+        // An empty set -- every existing V4-only or ordinary config -- never
+        // triggers this check, whatever the decks are: the wire-compatible
+        // no-op for every config that predates this guard.
+        reject_wildfire_for_v3_transfer_opponents_v1(&config, &BTreeSet::new()).unwrap();
+
+        let opponent_seat = 1 - config.iterations[0].episodes[0].episode.learner_seat as usize;
+        let mut wildfire = config.clone();
+        wildfire.iterations[0].episodes[0].episode.registered[opponent_seat].label =
+            "Wildfire/deadbeefcafe1234".into();
+        let error =
+            reject_wildfire_for_v3_transfer_opponents_v1(&wildfire, &transferred).unwrap_err();
+        assert!(
+            error.contains("Wildfire") && error.contains("v3-candidate"),
+            "{error}"
+        );
+
+        // The 'selected' (game-one/postboard) list is checked too, not just
+        // the preboard registration.
+        let mut wildfire_selected = config.clone();
+        wildfire_selected.iterations[0].episodes[0].episode.selected[opponent_seat].label =
+            "Wildfire".into();
+        assert!(
+            reject_wildfire_for_v3_transfer_opponents_v1(&wildfire_selected, &transferred)
+                .unwrap_err()
+                .contains("Wildfire")
+        );
+
+        // The learner's own seat may still be Wildfire: only the
+        // transferred opponent's own seat is restricted.
+        let learner_seat = config.iterations[0].episodes[0].episode.learner_seat as usize;
+        let mut learner_wildfire = config.clone();
+        learner_wildfire.iterations[0].episodes[0].episode.registered[learner_seat].label =
+            "Wildfire/deadbeefcafe1234".into();
+        reject_wildfire_for_v3_transfer_opponents_v1(&learner_wildfire, &transferred).unwrap();
+
+        // Only a `Fixed` assignment resolves to a named roster opponent;
+        // `current`/`initial`/`completed_iteration` can never reach it, so a
+        // Wildfire deck under one of those kinds is unaffected.
+        let mut not_fixed = wildfire;
+        not_fixed.iterations[0].episodes[0].opponent = ExpandedOpponentAssignmentV1::Current;
+        reject_wildfire_for_v3_transfer_opponents_v1(&not_fixed, &transferred).unwrap();
     }
 }

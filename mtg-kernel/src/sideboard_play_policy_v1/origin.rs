@@ -13,6 +13,13 @@ use std::fmt;
 
 pub const FRESH_PLAY_INITIALIZATION_SCHEMA_V1: &str = "mtg-kernel-fresh-play-initialization/v1";
 pub const TRANSFERRED_FRESH_PLAY_SCHEMA_V1: &str = "mtg-kernel-fresh-play-registry-transfer/v1";
+/// `FrozenPlayPolicyIdentityV1::schema` for an `Imported` origin that
+/// `FrozenPlayPolicyV1::from_registry_transfer_v1` produced: a frozen V3
+/// checkpoint whose card registry was append-transferred to the current
+/// build's registry, still scored through the V3 encoder. Single constant so
+/// every reader (the trainer's cross-generation opponent admission, the
+/// Wildfire/appended-card deck guard) matches the one writer exactly.
+pub const REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1: &str = "mtg-kernel-registry-transferred-play/v1";
 const INITIALIZER: &str = "trainer-seeded-v1";
 const SEED_DERIVATION: &str = "kernel-python-rl-trainer-sha256-v2";
 
@@ -168,6 +175,17 @@ impl PlayPolicyOriginV1 {
             Self::Imported(value) => Some(value),
             Self::FreshInitialization(_) | Self::TransferredFreshInitialization(_) => None,
         }
+    }
+    /// True only for the one `Imported` sub-case
+    /// `FrozenPlayPolicyV1::from_registry_transfer_v1` writes
+    /// (`schema == REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1`), never for an
+    /// ordinary imported checkpoint or either fresh origin. The sole reader
+    /// today is the expanded trainer's narrow cross-generation opponent
+    /// admission (a V4 learner may pair only with this exact origin, never
+    /// any other V3 source) and the deck-eligibility guard beside it.
+    pub fn is_registry_transferred_v1(&self) -> bool {
+        self.as_imported_v1()
+            .is_some_and(|imported| imported.schema == REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1)
     }
     /// True for both fresh origins: plain fresh initialization and a fresh
     /// origin that has since undergone a registry transfer. Both stay on the
