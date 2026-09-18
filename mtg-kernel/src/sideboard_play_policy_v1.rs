@@ -1284,15 +1284,45 @@ impl FrozenPlayPolicyV1 {
             self.sampling_initialized,
             "reset both policy seeds before a game",
         )?;
-        require(
-            logits.len() == legal_count as usize,
-            "scorer and legal action counts differ",
-        )?;
         let index = match seat {
             PlayerSeatV1::P0 => 0,
             PlayerSeatV1::P1 => 1,
         };
         let seed = self.seat_rng[index].next_u64();
+        self.sample_with_seed_v1(logits, legal_count, seed)
+    }
+
+    /// Same production categorical sampler `sample_scores` uses for real
+    /// play, given an explicit seed instead of drawing one from the live,
+    /// stateful `seat_rng` stream. Never reads or advances `seat_rng`, so a
+    /// caller driving many independent, reproducible samples (for example
+    /// `phase1_v4_decision_search_v1`'s rollout leaf, self-playing a
+    /// position forward with this same policy for both seats) cannot
+    /// perturb this policy's own real decision stream, no matter how many
+    /// times it is called.
+    pub(crate) fn sample_deterministic_v1(
+        &mut self,
+        logits: &[f32],
+        legal_count: u32,
+        seed: u64,
+    ) -> Result<u32, String> {
+        require(
+            self.sampling_initialized,
+            "reset both policy seeds before a game",
+        )?;
+        self.sample_with_seed_v1(logits, legal_count, seed)
+    }
+
+    fn sample_with_seed_v1(
+        &mut self,
+        logits: &[f32],
+        legal_count: u32,
+        seed: u64,
+    ) -> Result<u32, String> {
+        require(
+            logits.len() == legal_count as usize,
+            "scorer and legal action counts differ",
+        )?;
         let selected = if let Some(successor) = &mut self.successor {
             successor.sampler.sample(logits, seed)
         } else if let Some(fresh) = &mut self.fresh_successor {

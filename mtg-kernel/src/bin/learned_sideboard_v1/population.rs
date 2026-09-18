@@ -341,8 +341,32 @@ mod tests {
         assert_eq!(reencoded, without_field, "defaulting must not add the key");
         assert!(reencoded.get("end_seat_search").is_none());
 
+        // `rollouts` (rollout-leaf follow-up) is a sibling of `budget` on
+        // `EndSeatSearchRequestV1` itself, `#[serde(default)]`: a config
+        // written before this field existed, but that already sets
+        // `end_seat_search`, still decodes, defaulting to `rollouts: 0`
+        // (the committed one-ply leaf, byte-identical to before).
+        let mut without_rollouts = without_field.clone();
+        without_rollouts["end_seat_search"] = json!({"seat": 0, "budget": 8});
+        let decoded_without_rollouts: CommandV1 =
+            serde_json::from_value(without_rollouts).unwrap();
+        let CommandV1::RunPopulationBatch {
+            end_seat_search, ..
+        } = &decoded_without_rollouts
+        else {
+            panic!("expected RunPopulationBatch");
+        };
+        assert_eq!(
+            *end_seat_search,
+            Some(EndSeatSearchRequestV1 {
+                seat: 0,
+                budget: 8,
+                rollouts: 0
+            })
+        );
+
         let mut with_field = without_field;
-        with_field["end_seat_search"] = json!({"seat": 0, "budget": 8});
+        with_field["end_seat_search"] = json!({"seat": 0, "budget": 8, "rollouts": 4});
         let decoded_with: CommandV1 = serde_json::from_value(with_field.clone()).unwrap();
         let CommandV1::RunPopulationBatch {
             end_seat_search, ..
@@ -352,7 +376,11 @@ mod tests {
         };
         assert_eq!(
             *end_seat_search,
-            Some(EndSeatSearchRequestV1 { seat: 0, budget: 8 })
+            Some(EndSeatSearchRequestV1 {
+                seat: 0,
+                budget: 8,
+                rollouts: 4
+            })
         );
         assert_eq!(serde_json::to_value(&decoded_with).unwrap(), with_field);
     }

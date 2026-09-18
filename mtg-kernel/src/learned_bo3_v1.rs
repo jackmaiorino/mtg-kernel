@@ -573,15 +573,15 @@ pub fn run_population_bo3_v1(
     // behaviorally identical to no wrapper at all. That is what "leaving
     // the start/opponent seat's scoring unchanged" means by construction
     // here, rather than by a second, separately maintained code path.
-    let budgets = match end_seat_search {
-        Some(request) if request.seat == 0 => [request.budget, 0],
-        Some(request) if request.seat == 1 => [0, request.budget],
+    let (budgets, rollouts) = match end_seat_search {
+        Some(request) if request.seat == 0 => ([request.budget, 0], [request.rollouts, 0]),
+        Some(request) if request.seat == 1 => ([0, request.budget], [0, request.rollouts]),
         Some(_) => return Err("end_seat_search.seat must be 0 or 1".into()),
-        None => [0, 0],
+        None => ([0, 0], [0, 0]),
     };
     let [p0, p1] = play_policies;
-    let mut w0 = SearchWrappedPlayPolicyV1::new_v1(p0, budgets[0], config.seed);
-    let mut w1 = SearchWrappedPlayPolicyV1::new_v1(p1, budgets[1], config.seed);
+    let mut w0 = SearchWrappedPlayPolicyV1::new_v1(p0, budgets[0], rollouts[0], config.seed);
+    let mut w1 = SearchWrappedPlayPolicyV1::new_v1(p1, budgets[1], rollouts[1], config.seed);
     let mut router = if cross_generation_evaluation {
         SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([&mut w0, &mut w1])?
     } else {

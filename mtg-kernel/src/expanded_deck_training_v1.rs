@@ -657,6 +657,17 @@ pub(crate) struct ExpandedCheckpointV1 {
     loss_identity: String,
     learning_rate_bits: u32,
     value_coefficient_bits: u32,
+    /// GAE training scalars (`lead/phase1-gae-v3opp-v1`): present on a GAE
+    /// checkpoint, absent on every checkpoint before that line of work.
+    /// Optional and additive so both keep reading unchanged; inference
+    /// never needs them (they govern advantage estimation during training
+    /// only), so they are accepted and otherwise unused here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gamma_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gae_lambda_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entropy_coefficient_bits: Option<u32>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -2223,6 +2234,11 @@ fn execute_update_v1(
         loss_identity: "terminal_reinforce_value/v3".into(),
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
+        // This ordinary (non-GAE) update path does not compute a GAE
+        // advantage estimate, so it does not claim these scalars.
+        gamma_bits: None,
+        gae_lambda_bits: None,
+        entropy_coefficient_bits: None,
         registry_transfer: transfer
             .as_ref()
             .map(|context| context.after_update(snapshot.adam_step))
@@ -2873,6 +2889,9 @@ pub(crate) mod tests {
             loss_identity: "terminal_reinforce_value/v3".into(),
             learning_rate_bits: 0.001_f32.to_bits(),
             value_coefficient_bits: 0.5_f32.to_bits(),
+            gamma_bits: None,
+            gae_lambda_bits: None,
+            entropy_coefficient_bits: None,
             registry_transfer: None,
         };
         (policy, model, saved)
