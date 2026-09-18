@@ -3452,6 +3452,7 @@ pub(crate) mod tests {
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
             update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: ExpandedLossSelectionV1::default(),
             output_directory: root.join("update-serial"),
         })
         .unwrap();
@@ -3462,6 +3463,7 @@ pub(crate) mod tests {
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
             update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: ExpandedLossSelectionV1::default(),
             preparation_workers: 4,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             output_directory: root.join("update-prepared"),
@@ -3507,6 +3509,144 @@ pub(crate) mod tests {
         assert!(
             error.contains("different fresh-lineage feature generations"),
             "{error}"
+        );
+    }
+
+    // --- Merge proof (GAE trainer x V3-opponent): the run harness's fixed
+    // pool (`native_expanded_training_run_v1::NativeExpandedTrainingRunV1::
+    // opponents` plus `ExpandedOpponentAssignmentV1::Fixed`) can carry a V3
+    // registry-transfer opponent while the update itself runs under the new
+    // `gae_advantage_value/v1` loss, end to end through the production
+    // `run_native_expanded_training_v1` path (not the lower-level
+    // `execute_v1` calls the serial/prepared-path test above makes
+    // directly).
+
+    /// Builds and runs a real two-iteration, fixed-pool-V3-opponent,
+    /// `gae_advantage_value/v1` config through `run_native_expanded_training_v1`.
+    /// Fresh fixtures and a fresh output root every call, so two calls (even
+    /// in one process) are two fully independent constructions, not one
+    /// construction read twice.
+    fn run_v3_opponent_gae_fixed_pool_two_iteration_fixture_v1(label: &str) -> Value {
+        let root = std::env::temp_dir().join(format!(
+            "v3-opponent-gae-fixed-pool-{label}-{}",
+            std::process::id()
+        ));
+        let opponent_source =
+            v3_registry_transfer_opponent_source_for_test_v1(&root.join("opponent"));
+        let learner_source = fresh_source_for_test_v1(
+            &root,
+            "learner",
+            crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+        );
+        let decks = [list("Affinity"), list("Terror")];
+        let iterations = (0..2u64)
+            .map(|iteration| crate::native_expanded_training_run_v1::ExpandedRunIterationV1 {
+                episodes: vec![
+                    crate::native_expanded_training_run_v1::ScheduledExpandedEpisodeV1 {
+                        episode: ExpandedEpisodeV1 {
+                            id: format!("{label}-iter-{iteration}"),
+                            seed: 5_005_005_005 + iteration,
+                            starting_player: 0,
+                            learner_seat: 0,
+                            opponent: None,
+                            registered: decks.clone(),
+                            selected: decks.clone(),
+                            postboard: false,
+                            max_physical_decisions: 100_000,
+                            max_policy_steps: 1_000_000,
+                        },
+                        opponent:
+                            crate::native_expanded_training_run_v1::ExpandedOpponentAssignmentV1::Fixed {
+                                id: "v3-transfer-opponent".into(),
+                            },
+                    },
+                ],
+            })
+            .collect();
+        let config = crate::native_expanded_training_run_v1::NativeExpandedTrainingRunV1 {
+            schema: "mtg-kernel-native-expanded-training-run/v1".into(),
+            initial_source: learner_source,
+            opponents: vec![crate::native_expanded_training_run_v1::NamedExpandedOpponentV1 {
+                id: "v3-transfer-opponent".into(),
+                source: opponent_source,
+            }],
+            iterations,
+            learning_rate: 0.0003,
+            value_coefficient: 0.5,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            loss_selection: ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            collection_workers: 1,
+            preparation_workers: 1,
+            max_non_natural_episode_fraction: 0.0,
+            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            output_directory: root.join("run"),
+        };
+        crate::native_expanded_training_run_v1::run_native_expanded_training_v1(&config, None)
+            .unwrap()
+    }
+
+    /// (a) `loss_identity` is `gae_advantage_value/v1` in the last
+    /// iteration's `update.json`; (b) the V3 registry-transfer opponent's own
+    /// provenance (`REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1`, a
+    /// `destination_build_git_head=` appended row) survives collection
+    /// through the fixed pool into the trajectory's own seat-behavior policy
+    /// identity; (c) two fully independent runs of this same config reach a
+    /// bit-identical final state hash.
+    #[test]
+    fn v3_registry_transfer_opponent_in_the_fixed_pool_reaches_a_real_gae_update_deterministically()
+    {
+        let result_a = run_v3_opponent_gae_fixed_pool_two_iteration_fixture_v1("a");
+        let result_b = run_v3_opponent_gae_fixed_pool_two_iteration_fixture_v1("b");
+
+        let complete_pin: PinnedFileV1 =
+            serde_json::from_value(result_a["iterations"][1].clone()).unwrap();
+        let complete_document: Value =
+            serde_json::from_str(&fs::read_to_string(&complete_pin.path).unwrap()).unwrap();
+        let update_pin: PinnedFileV1 =
+            serde_json::from_value(complete_document["update"].clone()).unwrap();
+        let update_document: Value =
+            serde_json::from_str(&fs::read_to_string(&update_pin.path).unwrap()).unwrap();
+        // (a)
+        assert_eq!(update_document["loss_identity"], "gae_advantage_value/v1");
+        assert!(update_document["advantage_statistics"].is_object());
+
+        // (b)
+        let collection_pin: PinnedFileV1 =
+            serde_json::from_value(complete_document["collection"].clone()).unwrap();
+        let collection_document: Value =
+            serde_json::from_str(&fs::read_to_string(&collection_pin.path).unwrap()).unwrap();
+        let trajectory_pins: Vec<PinnedFileV1> =
+            serde_json::from_value(collection_document["trajectories"].clone()).unwrap();
+        let trajectory: ExpandedTrajectoryV1 = read_pinned(&trajectory_pins[0]).unwrap();
+        let behaviors = trajectory.seat_behaviors.as_ref().unwrap();
+        let opponent_identity = behaviors[1]
+            .identity
+            .source_import
+            .as_imported_v1()
+            .unwrap();
+        assert_eq!(
+            opponent_identity.schema,
+            crate::sideboard_play_policy_v1::REGISTRY_TRANSFERRED_PLAY_SCHEMA_V1
+        );
+        assert!(
+            opponent_identity
+                .appended_rows
+                .contains("destination_build_git_head="),
+            "{}",
+            opponent_identity.appended_rows
+        );
+
+        // (c)
+        let state_a = result_a["actual_identity"]["state_sha256"].as_str().unwrap();
+        let state_b = result_b["actual_identity"]["state_sha256"].as_str().unwrap();
+        assert_eq!(
+            state_a, state_b,
+            "two independent runs of the same fixed-pool V3-opponent GAE config must be bit-identical"
         );
     }
 
