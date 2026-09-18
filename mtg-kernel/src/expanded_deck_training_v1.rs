@@ -52,6 +52,17 @@ const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/
 const FRESH_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v3";
 const CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-checkpoint/v1";
 const FRESH_CHECKPOINT_SCHEMA: &str = "mtg-kernel-expanded-deck-fresh-checkpoint/v1";
+/// This ordinary path's own loss objective (every checkpoint this crate's
+/// trainer writes today).
+const ORDINARY_LOSS_IDENTITY: &str = "terminal_reinforce_value/v3";
+/// `lead/phase1-gae-v3opp-v1` (not merged): a GAE-trained checkpoint's own
+/// loss identity. Admitted here so `restore_checkpoint_fields_v1` (shared
+/// by inference loading and ordinary-path warm starts) accepts a GAE
+/// checkpoint's bytes at all; the crate has no GAE-aware ordinary training
+/// step, so nothing here actually continues training under this objective
+/// today. This module's own read-only inference caller
+/// (`load_expanded_inference_v1`) is the only exercised consumer.
+const GAE_LOSS_IDENTITY: &str = "gae_advantage_value/v1";
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -934,7 +945,7 @@ fn restore_checkpoint_fields_v1(
         "checkpoint warm-start provenance differs",
     )?;
     ensure(
-        saved.loss_identity == "terminal_reinforce_value/v3",
+        saved.loss_identity == ORDINARY_LOSS_IDENTITY || saved.loss_identity == GAE_LOSS_IDENTITY,
         "checkpoint loss differs",
     )?;
     let template = model.parameter_snapshot_v1();
