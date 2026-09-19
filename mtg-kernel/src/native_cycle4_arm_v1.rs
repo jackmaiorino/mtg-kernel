@@ -3488,6 +3488,17 @@ mod tests {
         )
     }
 
+    /// An absolute store-root path for the locator fixture on any platform:
+    /// `D:/...` is absolute only on Windows, and the decode gate rejects a
+    /// relative root before any of the checks these tests exercise.
+    fn absolute_slot_root_v1(index: impl std::fmt::Display) -> String {
+        if cfg!(windows) {
+            format!("D:/cycle4/slot-{index}")
+        } else {
+            format!("/cycle4/slot-{index}")
+        }
+    }
+
     fn locator_for_v1(manifest: &Cycle4RefreshManifestV1) -> Cycle4SlotLocatorV1 {
         Cycle4SlotLocatorV1 {
             schema: CYCLE4_ARM_SLOT_LOCATOR_SCHEMA_V1.to_owned(),
@@ -3496,7 +3507,7 @@ mod tests {
                 .iter()
                 .map(|slot| Cycle4SlotLocatorEntryV1 {
                     checkpoint_manifest_sha256: slot.checkpoint_manifest_sha256.clone(),
-                    store_root: format!("D:/cycle4/slot-{}", slot.slot_index),
+                    store_root: absolute_slot_root_v1(slot.slot_index),
                 })
                 .collect(),
             genesis_parent_store_root: None,
@@ -3813,7 +3824,7 @@ mod tests {
         let roots = slot_store_roots_for_manifest_v1(&locator, &manifest).expect("resolve");
         assert_eq!(roots.len(), CYCLE4_SLOT_COUNT_V1);
         for (index, root) in roots.iter().enumerate() {
-            assert_eq!(root, &PathBuf::from(format!("D:/cycle4/slot-{index}")));
+            assert_eq!(root, &PathBuf::from(absolute_slot_root_v1(index)));
         }
     }
 
