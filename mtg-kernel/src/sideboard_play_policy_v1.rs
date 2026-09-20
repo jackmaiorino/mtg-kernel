@@ -59,6 +59,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod origin;
+pub(crate) mod public_inputs;
 pub use origin::{
     FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,
     FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,

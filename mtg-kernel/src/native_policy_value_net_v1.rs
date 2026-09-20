@@ -10,6 +10,8 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+pub(crate) mod public_inputs_v1;
+
 /// Selects which `tanh` implementation the forward pass's activation
 /// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's
 /// unchanged production behavior (`f32::tanh()`, which resolves to the
@@ -686,8 +688,19 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         counts: ValidatedCountsV1,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_public_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode, None)
+    }
+
+    fn forward_public_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
         mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
+        public: Option<(&public_inputs_v1::PublicInputWeightsV1, &crate::public_cost_features_v1::PublicFeatureRowsV1)>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
@@ -701,11 +714,12 @@ impl NativePolicyValueNetV1 {
                 &self.card_embedding[embedding_begin..embedding_begin + CARD_EMBEDDING_DIM_V1],
             );
         }
-        let object_base_hidden = apply_two_layer_tanh_rows_v1(
+        let object_base_hidden = public_inputs_v1::apply_optional_public_projection_v1(
             &self.object_encoder,
             &object_input,
             counts.object_count,
             activation_mode,
+            public.map(|(weights, rows)| (weights.object.as_slice(), rows.objects.iter().flatten().copied().collect::<Vec<_>>(), crate::public_cost_features_v1::OBJECT_WIDTH)),
         );
 
         let mut edge_pooled = vec![0.0; counts.object_count * HIDDEN_DIM_V1];
@@ -758,8 +772,10 @@ impl NativePolicyValueNetV1 {
         let mut state_input = Vec::with_capacity(STATE_ENCODER_INPUT_V1);
         state_input.extend_from_slice(encoded.state);
         state_input.extend_from_slice(&pooled_objects);
-        let state_hidden =
-            apply_two_layer_tanh_rows_v1(&self.state_encoder, &state_input, 1, activation_mode);
+        let state_hidden = public_inputs_v1::apply_optional_public_projection_v1(
+            &self.state_encoder, &state_input, 1, activation_mode,
+            public.map(|(weights, rows)| (weights.state.as_slice(), rows.state.clone(), crate::public_cost_features_v1::STATE_WIDTH)),
+        );
 
         let mut action_ref_pooled = vec![0.0; counts.action_count * HIDDEN_DIM_V1];
         if counts.action_ref_count > 0 {
