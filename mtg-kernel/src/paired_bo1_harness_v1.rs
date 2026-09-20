@@ -67,6 +67,14 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             .encode_current_flat_scoring_decision_owned_v3(self.decision, encoder, buffers)
     }
 
+    pub(crate) fn encode_scoring_v3_spell_target_adapter_v1(
+        &self,
+        encoder: &mut crate::flat_policy_v3::FlatDecisionEncoderV3,
+        buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
+    ) -> Result<(crate::flat_policy_v3::FlatDecisionV3, bool), crate::flat_policy_v2::FlatDecisionErrorV2> {
+        self.session.encode_v3_spell_target_adapter_v1(self.decision, encoder, buffers)
+    }
+
     /// V4 sibling of `encode_scoring_owned_v3`, for a policy whose
     /// `feature_generation_v1()` is `PlayPolicyGenerationV1::V4`.
     pub(crate) fn encode_scoring_owned_v4(

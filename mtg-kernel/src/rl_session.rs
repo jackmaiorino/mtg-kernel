@@ -281,6 +281,9 @@ pub enum FlatActionObjectGroupV1 {
 }
 
 mod flat_action_v3;
+mod v3_spell_target_adapter_v1;
+#[cfg(test)]
+pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
 mod flat_action_v4;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
@@ -4198,6 +4201,8 @@ pub struct FastActorSessionV1 {
     physical_decision_count: u64,
     current: Option<FastActorCurrentDecisionV1>,
     flat_action_contract_mode: FlatActionContractModeV1,
+    // Only enabled on a private, non-stepping encoding copy by the opt-in adapter.
+    v3_spell_target_reference_adapter: bool,
     flat_action_cache_spare: Option<FlatActionDecisionCacheV1>,
     flat_action_cache_spare_v2: Option<FlatActionDecisionCacheV2>,
     terminal: Option<RlSessionTerminalV1>,
@@ -5222,6 +5227,7 @@ impl FastActorSessionV1 {
             physical_decision_count: 0,
             current: None,
             flat_action_contract_mode: FlatActionContractModeV1::V2,
+            v3_spell_target_reference_adapter: false,
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,
@@ -5277,6 +5283,7 @@ impl FastActorSessionV1 {
             physical_decision_count: 0,
             current: None,
             flat_action_contract_mode,
+            v3_spell_target_reference_adapter: false,
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,

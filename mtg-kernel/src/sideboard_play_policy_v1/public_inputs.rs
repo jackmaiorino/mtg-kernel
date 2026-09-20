@@ -24,6 +24,44 @@ pub(crate) fn select_forced_v3_for_evaluation(
         .map_err(policy_error)
 }
 
+/// Explicit evaluation-only counterpart of the previously qualified adapter.
+/// The session method tries the original encoder first and never steps its
+/// private repair copy. The installed policy and all training paths stay V3.
+pub(crate) fn select_spell_adapter_v3_for_evaluation(
+    policy: &mut FrozenPlayPolicyV1,
+    input: &PairedBo1PolicyInputV1<'_>,
+) -> Result<(u32, FrozenPlayDecisionScoresV1, bool), RlSessionError> {
+    if policy.feature_generation_v1() != PlayPolicyGenerationV1::V3 {
+        return Err(policy_error("spell-target evaluation requires V3".into()));
+    }
+    let decision = input.decision();
+    let successor = policy
+        .successor
+        .as_mut()
+        .ok_or_else(|| policy_error("missing V3 encoder".into()))?;
+    let (encoded, repaired) = input
+        .encode_scoring_v3_spell_target_adapter_v1(
+            &mut successor.encoder,
+            &mut policy.owned.buffers(),
+        )
+        .map_err(|e| {
+            policy_error(format!(
+                "V3 spell-target evaluation: {e:?}; decision={decision:?}"
+            ))
+        })?;
+    policy.owned.globals = encoded.globals;
+    successor.extensions = encoded.extensions;
+    let scores = policy.score_owned().map_err(policy_error)?;
+    let selected = policy
+        .sample_scores(
+            &scores.logits,
+            decision.acting_player,
+            decision.legal_action_count,
+        )
+        .map_err(policy_error)?;
+    Ok((selected, scores, repaired))
+}
+
 pub(crate) struct PublicInputPlayPolicyV1 {
     base: FrozenPlayPolicyV1,
     model: NativePublicInputNetV1,
@@ -190,6 +228,91 @@ impl PairedBo1PolicyV1 for PublicInputPlayPolicyV1 {
 #[cfg(test)]
 mod evaluation_tests {
     use super::*;
+
+    #[test]
+    fn v3_spell_target_evaluation_preserves_hidden_invariance_and_replay() {
+        use crate::ids::PlayerId;
+        use crate::policy_observation_v6::tests::put;
+        use crate::state::Zone;
+        let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
+        let mut outputs = Vec::new();
+        let mut tensors = Vec::new();
+        for variant in 0..2 {
+            let mut state = state.clone();
+            put(
+                &mut state,
+                PlayerId::P1,
+                if variant == 0 { "Island" } else { "Mountain" },
+                Zone::Hand,
+            );
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                for name in ["Island", "Mountain"] {
+                    put(&mut state, actor, name, Zone::Library);
+                }
+                if variant == 1 {
+                    state.players[actor.index()].library.reverse();
+                }
+            }
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let response = session.current_response();
+            let FastActorResponseV1::Decision(decision) = response else {
+                panic!("expected target choice")
+            };
+            let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+            policy.reset_sampling_v1([123, 456]);
+            let input = PairedBo1PolicyInputV1::new(&session, decision);
+            assert!(policy.select_paired_with_scores_v1(&input).is_err());
+            let (action, scores, repaired) =
+                select_spell_adapter_v3_for_evaluation(&mut policy, &input).unwrap();
+            assert!(repaired);
+            assert_eq!(scores.logits.len(), 2);
+            assert_eq!(session.current_response(), response);
+            assert!(scores.logits.iter().all(|x| x.is_finite()) && scores.value.is_finite());
+            tensors.push(policy.successor.as_ref().unwrap().tensor.clone());
+            outputs.push((action, scores.logits, scores.value.to_bits()));
+            policy.reset_sampling_v1([123, 456]);
+            assert_eq!(
+                select_spell_adapter_v3_for_evaluation(&mut policy, &input)
+                    .unwrap()
+                    .0,
+                action
+            );
+            assert!(select_spell_adapter_v3_for_evaluation(
+                &mut FrozenPlayPolicyV1::training_fixture_v4(),
+                &input
+            )
+            .is_err());
+        }
+        assert_eq!(outputs[0], outputs[1]);
+        assert_eq!(tensors[0], tensors[1]);
+    }
+
+    #[test]
+    fn v3_spell_target_evaluation_preserves_valid_scores_tensors_and_rng() {
+        let (mut state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
+        state.stack.remove(1);
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!()
+        };
+        let input = PairedBo1PolicyInputV1::new(&session, decision);
+        let mut original = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut adapted = FrozenPlayPolicyV1::training_fixture_v3();
+        original.reset_sampling_v1([222, 444]);
+        adapted.reset_sampling_v1([222, 444]);
+        for _ in 0..8 {
+            let a = original.select_paired_with_scores_v1(&input).unwrap();
+            let b = select_spell_adapter_v3_for_evaluation(&mut adapted, &input).unwrap();
+            assert!(!b.2);
+            assert_eq!(a.0, b.0);
+            assert_eq!(a.1.logits, b.1.logits);
+            assert_eq!(a.1.value.to_bits(), b.1.value.to_bits());
+            assert_eq!(
+                original.successor.as_ref().unwrap().tensor,
+                adapted.successor.as_ref().unwrap().tensor
+            );
+        }
+    }
 
     #[test]
     fn forced_v3_evaluation_preserves_both_rng_streams_and_rejects_v4() {

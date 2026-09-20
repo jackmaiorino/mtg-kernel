@@ -31,6 +31,7 @@ impl FastActorSessionV1 {
             physical_decision_count: 0,
             current: None,
             flat_action_contract_mode: FlatActionContractModeV1::V3,
+            v3_spell_target_reference_adapter: false,
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,

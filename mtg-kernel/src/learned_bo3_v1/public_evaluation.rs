@@ -11,7 +11,8 @@ use crate::learned_sideboard_v1::actions_between_configurations_v1;
 use crate::native_policy_value_net_v1::public_inputs_v1::{PublicInputWeightsV1, ARCHITECTURE};
 use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
 use crate::sideboard_play_policy_v1::public_inputs::{
-    select_forced_v3_for_evaluation, PublicInputPlayPolicyV1,
+    select_forced_v3_for_evaluation, select_spell_adapter_v3_for_evaluation,
+    PublicInputPlayPolicyV1,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -23,6 +24,8 @@ pub enum ModelSource {
     Legacy {
         source: ExpandedModelSourceV1,
         v3_forced_actions: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        v3_spell_target_reference_adapter: bool,
     },
     PublicWarmStart {
         source: ExpandedModelSourceV1,
@@ -31,6 +34,10 @@ pub enum ModelSource {
         config: PinnedFileV1,
         checkpoint: PinnedFileV1,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,6 +65,8 @@ enum Play {
         policy: FrozenPlayPolicyV1,
         forced: bool,
         count: u64,
+        spell_adapter: bool,
+        repairs: u64,
     },
     Public(PublicInputPlayPolicyV1),
 }
@@ -72,6 +81,12 @@ impl Play {
     fn forced_count(&self) -> u64 {
         match self {
             Self::Legacy { count, .. } => *count,
+            _ => 0,
+        }
+    }
+    fn repair_count(&self) -> u64 {
+        match self {
+            Self::Legacy { repairs, .. } => *repairs,
             _ => 0,
         }
     }
@@ -98,6 +113,7 @@ impl PairedBo1PolicyV1 for Play {
             policy,
             forced: true,
             count,
+            ..
         } = self
         {
             if input.decision().legal_action_count == 1 {
@@ -105,6 +121,17 @@ impl PairedBo1PolicyV1 for Play {
                 *count += 1;
                 return Ok(selected);
             }
+        }
+        if let Self::Legacy {
+            policy,
+            spell_adapter: true,
+            repairs,
+            ..
+        } = self
+        {
+            let (selected, _, repaired) = select_spell_adapter_v3_for_evaluation(policy, &input)?;
+            *repairs += u64::from(repaired);
+            return Ok(selected);
         }
         self.base().select_action_v1(input)
     }
@@ -121,23 +148,27 @@ fn load(source: &ModelSource) -> Result<(Play, Value), String> {
         ModelSource::Legacy {
             source,
             v3_forced_actions,
+            v3_spell_target_reference_adapter,
         } => {
             let (policy, identity) = load_expanded_inference_v1(source)?;
             if !policy.uses_observation_successor_v3()
-                || (*v3_forced_actions
+                || ((*v3_forced_actions || *v3_spell_target_reference_adapter)
                     && policy.feature_generation_v1() != PlayPolicyGenerationV1::V3)
             {
                 return Err(
-                    "legacy evaluation requires V3/V4; forced-action opt-in requires V3".into(),
+                    "legacy evaluation requires V3/V4; authority adapters require V3".into(),
                 );
             }
             let receipt = json!({"schema":"legacy-evaluation-model/v1","weights_sha256":identity.model.weights_sha256,
-                "identity":identity,"v3_forced_actions":v3_forced_actions});
+                "identity":identity,"v3_forced_actions":v3_forced_actions,
+                "v3_spell_target_reference_adapter":v3_spell_target_reference_adapter});
             Ok((
                 Play::Legacy {
                     policy,
                     forced: *v3_forced_actions,
                     count: 0,
+                    spell_adapter: *v3_spell_target_reference_adapter,
+                    repairs: 0,
                 },
                 receipt,
             ))
@@ -365,6 +396,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 BestOfThreeDeckMatchV1::new_live_v1(registered, item.config.game_one_chooser)
                     .map_err(error)?;
             let before = [p0.forced_count(), p1.forced_count()];
+            let repairs_before = [p0.repair_count(), p1.repair_count()];
             let mut router = if command.cross_generation_evaluation {
                 SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([&mut p0, &mut p1])?
             } else {
@@ -405,6 +437,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             drop(router);
             result["v3_forced_actions"] =
                 json!([p0.forced_count() - before[0], p1.forced_count() - before[1]]);
+            result["v3_spell_target_repairs"] = json!([
+                p0.repair_count() - repairs_before[0],
+                p1.repair_count() - repairs_before[1]
+            ]);
             hashes.push(save(
                 &command.output_directory,
                 &format!("match-{index:06}.json"),

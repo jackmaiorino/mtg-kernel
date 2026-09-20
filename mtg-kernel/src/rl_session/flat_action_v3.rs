@@ -499,7 +499,15 @@ fn build_with_extensions(
                         ordinal,
                     )?
                 } else {
-                    flat_visible_action_object_v2(&session.state, current.actor, reference)?
+                    if session.v3_spell_target_reference_adapter
+                        && role == FlatActionRefRoleV1::TargetObject
+                    {
+                        super::v3_spell_target_adapter_v1::visible_spell_target(
+                            &session.state, current.actor, reference,
+                        )?
+                    } else {
+                        flat_visible_action_object_v2(&session.state, current.actor, reference)?
+                    }
                 };
                 // Full frozen identity and authority group/ordinal form the
                 // key. A historical source and live later incarnation may
