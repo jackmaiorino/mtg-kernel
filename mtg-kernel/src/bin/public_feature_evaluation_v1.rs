@@ -1,5 +1,20 @@
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn main() {
+    // Native debug policy construction has large stack frames on Windows.
+    // Match the existing fresh-initialization and training CLI convention.
+    let worker = std::thread::Builder::new()
+        .name("public-feature-evaluation".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(run)
+        .expect("create evaluator worker");
+    if worker.join().is_err() {
+        eprintln!("public evaluator worker panicked");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+fn run() {
     let result = (|| -> Result<(), String> {
         let path = std::env::args()
             .nth(1)

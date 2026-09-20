@@ -431,3 +431,46 @@ pub fn run(command: Command) -> Result<Value, String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn postboard_preflight_rejects_changed_registration_and_unbounded_match() {
+        let registered = ["Burn", "Affinity"].map(|name| {
+            let deck = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(name).unwrap();
+            ExpandedDeckListV1 {
+                label: name.into(),
+                mainboard: deck.registered_configuration().mainboard().to_vec(),
+                sideboard: deck.registered_configuration().sideboard().to_vec(),
+            }
+        });
+        let item = Match {
+            config: LearnedBo3RunConfigV1 {
+                deck_ids: ["Burn".into(), "Affinity".into()],
+                seed: 1,
+                game_one_chooser: PlayerId::P0,
+                max_physical_games: 3,
+                max_physical_decisions: 4000,
+                max_policy_steps: 40000,
+                opening_protocol: Bo3OpeningProtocolV1::KeepSevenV2,
+            },
+            registered: registered.clone(),
+            postboard: Some(registered),
+        };
+        prepare(&item).unwrap();
+        let mut changed = item.clone();
+        changed.postboard.as_mut().unwrap()[0].sideboard.pop();
+        assert!(prepare(&changed).is_err());
+        changed = item.clone();
+        changed.postboard.as_mut().unwrap()[0].label = "wrong".into();
+        assert!(prepare(&changed).is_err());
+        changed = item.clone();
+        changed.config.max_physical_games = 33;
+        assert!(prepare(&changed).is_err());
+        changed = item;
+        changed.config.opening_protocol = Bo3OpeningProtocolV1::LegacyKeepSevenV1;
+        assert!(prepare(&changed).is_err());
+    }
+}

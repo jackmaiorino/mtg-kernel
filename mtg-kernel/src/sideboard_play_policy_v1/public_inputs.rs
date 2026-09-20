@@ -186,3 +186,52 @@ impl PairedBo1PolicyV1 for PublicInputPlayPolicyV1 {
             .map(|(selected, _)| selected)
     }
 }
+
+#[cfg(test)]
+mod evaluation_tests {
+    use super::*;
+
+    #[test]
+    fn forced_v3_evaluation_preserves_both_rng_streams_and_rejects_v4() {
+        for seeds in [[341, 982], [982, 341]] {
+            let (state, _, _) = crate::rl_session::goaded_attacker_fixture_state_v3(true);
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected live decision")
+            };
+            assert_eq!(decision.legal_action_count, 1);
+            let mut reference = FrozenPlayPolicyV1::training_fixture_v3();
+            let mut adapted = FrozenPlayPolicyV1::training_fixture_v3();
+            reference.reset_sampling_v1(seeds);
+            adapted.reset_sampling_v1(seeds);
+            assert_eq!(
+                reference
+                    .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                select_forced_v3_for_evaluation(
+                    &mut adapted,
+                    &PairedBo1PolicyInputV1::new(&session, decision)
+                )
+                .unwrap(),
+                0
+            );
+            for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+                for _ in 0..16 {
+                    let logits = [-0.7, 0.0, 0.1, 0.8, 1.5];
+                    assert_eq!(
+                        reference.sample_scores(&logits, seat, 5).unwrap(),
+                        adapted.sample_scores(&logits, seat, 5).unwrap()
+                    );
+                }
+            }
+            assert!(select_forced_v3_for_evaluation(
+                &mut FrozenPlayPolicyV1::training_fixture_v4(),
+                &PairedBo1PolicyInputV1::new(&session, decision)
+            )
+            .is_err());
+        }
+    }
+}

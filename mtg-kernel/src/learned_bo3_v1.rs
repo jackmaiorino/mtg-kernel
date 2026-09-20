@@ -157,13 +157,10 @@ impl<'a> SeatRoutedBo3PlayPolicyV1<'a> {
     /// each seat to score its own decisions with its own generation's
     /// encoder and policy, which this router already does per seat in
     /// `select_action_v1` below. This constructor is the ONLY place that may
-    /// accept a seat pair whose `feature_generation_v1()` values differ, and
-    /// it is `pub(crate)` specifically so no other crate (any training or
-    /// collection binary included) can reach it directly: the sole caller is
-    /// `run_population_bo3_v1`'s own `cross_generation_evaluation` opt-in,
-    /// which itself is reachable only from `learned_sideboard_v1`'s
-    /// `run_population_batch` command when its config explicitly sets
-    /// `cross_generation_evaluation: true`. No trajectory or training
+    /// accept a seat pair whose `feature_generation_v1()` values differ.
+    /// It is crate-private; the population runner and explicit public-input
+    /// evaluator require `cross_generation_evaluation: true` in their own
+    /// configurations before using it. No trajectory or training
     /// artifact is produced by this router either way; it only selects
     /// actions.
     pub(crate) fn new_cross_generation_evaluation_v1(

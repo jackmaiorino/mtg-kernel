@@ -94,4 +94,31 @@ Evidence: `E:/mtg-postboard-campaign-20260920/public-learning-engineering-001`. 
 
 This is eight scheduled cases across three ordered matchups and both learner seats, all preboard against familiar A48. There are 86 learner decisions per arm with active public prevention and none with the cannot-prevent flag. The four-update endpoints are engineering artifacts, not selected candidates. No win-rate comparison, cost-versus-prevention attribution, held-out opponent result, sideboarding competence, human game or competitive-strength claim follows.
 
-Next: qualify successor checkpoint loading in the actual match evaluator, including nonzero projections and replay, before spending on a matched learning pilot. Then freeze training/evaluation schedules and analysis gates, start both learning arms from untouched g115, preserve canonical retention and evaluate against opposition outside the training pool. Compare corrected-runtime g115, the zero-input continuation and the structured continuation under the same evaluator. Do not reuse these four-update endpoints as pilot parents, substitute familiar-A48 engineering games for independent evaluation, or repeat the earlier failed broader-exposure pilot. No new paid compute or broad campaign is authorized. Fable's zero-read quota failure remains an explicit independent-review gap.
+The evaluator qualification below completes the next integration step. A matched learning pilot must still start both arms from untouched g115, preserve canonical retention and evaluate against opposition outside the training pool. Do not reuse these four-update endpoints as pilot parents, substitute familiar-A48 engineering games for independent evaluation, or repeat the earlier failed broader-exposure pilot. No new paid compute or broad campaign is authorized. Fable's zero-read quota failure remains an explicit independent-review gap.
+
+## Successor checkpoint BO3 evaluation
+
+`public_feature_evaluation_v1` loads explicitly tagged legacy, zero-projection warm-start or public-checkpoint sources. Public checkpoints bind their training configuration and optimizer state, validate both ages, and install the actual parameters plus projections. Their combined model identity includes legacy weights, both projection matrices and the input-enabled flag. Inference creates no GPU device and performs no update. The source is compiled with the CUDA feature to reuse the qualified snapshot decoder.
+
+The evaluator reuses `run_learned_bo3_session_v1`, the existing physical-seat router, KeepSevenV2, terminal handling, seed resets and sideboard-action validation. Fixed game-two configurations must preserve the registered 75 and carry into game three. The V3 opponent has an explicit unscored singleton opt-in that still consumes its normal physical-seat sampler draw; legacy scoring/training APIs are unchanged. Full decision traces are optional for later timed evaluation.
+
+Evidence: `E:/mtg-postboard-campaign-20260920/public-evaluation-engineering-002`. The evaluator implementation parent is `9c73bc7f`, plus the CLI stack correction. `public-evaluation-engineering-001` is preserved: its first reference process hit Windows stack overflow before writing an output directory or completing any match. A named 16 MiB worker, already used by other native CLIs, fixed the debug stack limit. No gameplay settings, seeds or gates changed.
+
+| Completed engineering condition | BO3 executions | Natural games | Decisions | Sideboard moves |
+| --- | ---: | ---: | ---: | ---: |
+| Corrected-runtime g115 reference, both seats | 2 | 4 | 698 | 0 |
+| Zero-projection warm start, both seats | 2 | 4 | 698 | 0 |
+| Four-update structured checkpoint | 2 | 4 | 490 | 40 |
+| Four-update zero-input control checkpoint | 2 | 4 | 490 | 40 |
+| Structured checkpoint versus independent V3 | 2 | 6 | 1097 | 40 |
+| Structured full-match replay in fresh processes | 2 | 4 | 490 | 40 |
+
+All 12 executions completed: ten distinct arm/case units plus two replays, 26 games and 3,963 decisions. Reference/warm starts have exactly equal visible decision hashes, legal indices, seed resets, games and outcomes. Both learned match outputs replay byte for byte. Fixed sideboarding changes were exercised, including carrying the resulting configuration into game three. The V3 path handled eleven forced actions. Swapping in the control configuration for a structured checkpoint and corrupting the checkpoint pin were both rejected before gameplay.
+
+V3 was regenerated from the original checkpoint, registry and initializer. Complete old/new transfer envelopes are equal after changing only `receipt.destination_build_git_head`; weights and Adam remain unchanged. This is explicit build-provenance rebinding, not raw cross-build hash equality. `import-comparison.json` records it. `qualification.json` and `independent-counts.json` audit complete output hashes, counts and decision sequences.
+
+Evaluation process time was 156.47 seconds, below the unchanged 360-second engineering bound; V3 transfer took another 7.88 seconds. These are debug timings with full visible traces and per-process model loading, not production pilot throughput. The two matchup fixtures are Gates/Affinity and Faeries/Terror; these results establish execution and replay, not competitive playing strength. No engineering outcome was used to select a model. The original g115 human package is unchanged.
+
+Six focused regressions passed: actual forced-V3 selection preserves both subsequent sampler streams and rejects V4; postboard preflight rejects changed registrations and unbounded matches; four existing seat-routing and cross-generation tests pass. The first new sampler test incorrectly assumed an empty main-phase menu was a singleton. Its failure is preserved in `regression-build-forced.log`; the corrected test uses the existing actual forced goaded-attacker fixture. Production gameplay code was unchanged by this test correction.
+
+Next: build pinned release training/evaluation tools, qualify useful timing with traces disabled and all canonical ordered matchups, and freeze the matched public-input learning comparison before measurement. Preserve untouched corrected-runtime g115 as reference, zero-input continuation as control, independent V3 evaluation, matched physical seeds, canonical retention and paired analysis. The comparison changes both cost and prevention inputs together, so any eventual gain would not identify their separate effects. Fable remains unavailable until the recorded September 22 reset; no endorsement is implied.
