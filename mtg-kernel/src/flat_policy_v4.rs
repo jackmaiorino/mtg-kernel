@@ -172,11 +172,10 @@ mod tests {
         }
     }
 
-    /// Audit the current observation defect without changing the frozen V4
-    /// producer. This intentionally demonstrates aliasing, not correctness.
+    /// The pre-fix aliasing reproduction is preserved in commit 4877f86f.
+    /// The same engine states must now differ in the actual model input.
     #[test]
-    #[ignore = "diagnostic for missing public Strands prevention; not an acceptance test"]
-    fn diagnostic_active_prevention_aliases_all_v4_tensors() {
+    fn v4_prevention_is_visible_in_actual_tensors_both_seats() {
         use crate::event::{install_color_damage_prevention, propose_and_commit, ProposedEvent};
         use crate::ids::PlayerId;
         use crate::mana::ManaColor;
@@ -205,13 +204,83 @@ mod tests {
                 NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
                 tensors.push(tensor);
             }
-            assert_eq!(views[0], views[1], "legacy observation/menu unexpectedly exposes prevention");
-            assert_eq!(tensors[0], tensors[1], "legacy native features unexpectedly expose prevention");
+            assert_eq!(views[0].1, views[1].1, "prevention must not change legal menus");
+            assert_ne!(views[0].0, views[1].0, "public prevention must distinguish observations");
+            let shields: Vec<_> = views[1].0.projection.surface.continuous_effects.iter().filter(|e| e.prevent_damage_from_color_mask != 0).collect();
+            assert_eq!(shields.len(), 1);
+            assert_eq!(shields[0].prevent_damage_from_color_mask, 8);
+            assert_ne!(tensors[0], tensors[1], "public prevention must distinguish native features");
             propose_and_commit(&mut plain, ProposedEvent::damage(red, Target::Player(actor), 5));
             propose_and_commit(&mut protected, ProposedEvent::damage(red, Target::Player(actor), 5));
             assert_eq!(plain.players[actor.index()].life, 15);
             assert_eq!(protected.players[actor.index()].life, 20);
-            eprintln!("seat {}: identical visible observation/menu and all V4 tensors; same red damage leaves life 15 versus 20", actor.index());
+            eprintln!("seat {}: corrected visible observation and native tensors differ, legal menu unchanged; same red damage leaves life 15 versus 20", actor.index());
+        }
+    }
+
+    fn prevention_tensor(state: crate::state::GameState) -> (crate::policy_observation_v6::ObservationV6, NativeFlatDecisionTensorV4) {
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(d) = session.current_response() else { panic!("expected live decision") };
+        let (observation, _) = crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, d).diagnostic_visible_v1().unwrap();
+        let mut owned = OwnedScoringV4::default();
+        let encoded = owned.encode(&session).unwrap();
+        let mut tensor = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
+        (observation, tensor)
+    }
+
+    #[test]
+    fn v4_prevention_aggregation_hides_source_and_replacement_allocation() {
+        use crate::event::install_color_damage_prevention;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Zone;
+        let mut a = ready_state();
+        put(&mut a, PlayerId::P0, "Sacred Cat", Zone::Battlefield);
+        let first = put(&mut a, PlayerId::P1, "Prismatic Strands", Zone::Library);
+        let second = put(&mut a, PlayerId::P1, "Mountain", Zone::Library);
+        put(&mut a, PlayerId::P1, "Counterspell", Zone::Hand);
+        let mut b = a.clone();
+        install_color_damage_prevention(&mut a, first, ManaColor::R).unwrap();
+        install_color_damage_prevention(&mut a, first, ManaColor::U).unwrap();
+        b.engine.next_replacement_id = 891;
+        b.players[1].library.reverse();
+        // Public shield does not track its originating card after resolution.
+        // A different hidden object reference is deliberately adversarial here.
+        install_color_damage_prevention(&mut b, second, ManaColor::U).unwrap();
+        install_color_damage_prevention(&mut b, second, ManaColor::R).unwrap();
+        install_color_damage_prevention(&mut b, second, ManaColor::R).unwrap();
+        let (view_a, tensor_a) = prevention_tensor(a);
+        let (view_b, tensor_b) = prevention_tensor(b);
+        assert_eq!(view_a, view_b);
+        assert_eq!(tensor_a, tensor_b);
+        let effects: Vec<_> = view_a.projection.surface.continuous_effects.iter().filter(|e| e.prevent_damage_from_color_mask != 0).collect();
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].prevent_damage_from_color_mask, 10);
+        assert!(effects[0].global && effects[0].source.is_none() && effects[0].controller.is_none());
+        assert!(effects[0].affected_objects.is_empty() && effects[0].affected_players.is_empty());
+    }
+
+    #[test]
+    fn v4_prevention_expires_on_either_turn_counter_or_active_player_change() {
+        use crate::event::install_color_damage_prevention;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::Zone;
+        for color in [ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G] {
+            let mut original = ready_state();
+            let source = put(&mut original, PlayerId::P0, "Prismatic Strands", Zone::Graveyard);
+            put(&mut original, PlayerId::P0, "Sacred Cat", Zone::Battlefield);
+            install_color_damage_prevention(&mut original, source, color).unwrap();
+            let mask = |state| prevention_tensor(state).0.projection.surface.continuous_effects.iter().fold(0, |m,e| m | e.prevent_damage_from_color_mask);
+            assert_eq!(mask(original.clone()), crate::card_def::mana_color_mask(color));
+            let mut next_counter = original.clone();
+            next_counter.turn += 1;
+            assert_eq!(mask(next_counter), 0);
+            let mut next_actor = original;
+            next_actor.active_player = PlayerId::P1;
+            next_actor.priority_player = PlayerId::P1;
+            assert_eq!(mask(next_actor), 0);
         }
     }
 

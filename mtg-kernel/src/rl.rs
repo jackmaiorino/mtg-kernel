@@ -5766,6 +5766,49 @@ fn continuous_effects_public_v2(
             }
         }
     }
+    // Strands prevention lives in active_replacements, not until_end_of_turn.
+    // Its chosen colors are public and affect every matching damage source.
+    // Aggregate equal-duration shields: duplicate installations have no extra
+    // effect, and neither source allocation nor replacement IDs belong in the
+    // actor's observation. In particular the originating card can have moved
+    // to a hidden zone without making its already-resolved effect secret.
+    let prevention_mask = state.engine.active_replacements.iter().fold(0, |mask, replacement| {
+        match replacement.kind {
+            crate::event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { color, turn, active_player }
+                if turn == state.turn && active_player == state.active_player =>
+                mask | crate::card_def::mana_color_mask(color),
+            _ => mask,
+        }
+    });
+    if prevention_mask != 0 {
+        out.push(ContinuousEffectPublicV2 {
+            source: None,
+            controller: None,
+            affected_objects: Vec::new(),
+            affected_players: Vec::new(),
+            global: true,
+            layers: 0,
+            timestamp: 0,
+            duration: EffectDurationV2::EndOfTurn,
+            power_delta: 0,
+            toughness_delta: 0,
+            grants_haste: false,
+            set_power: None,
+            set_toughness: None,
+            add_color_mask: 0,
+            remove_color_mask: 0,
+            add_subtype_ids: Vec::new(),
+            remove_subtype_ids: Vec::new(),
+            add_keyword_mask: 0,
+            remove_keyword_mask: 0,
+            ward_generic_delta: 0,
+            minimum_blockers: None,
+            add_landwalk_mask: 0,
+            remove_landwalk_mask: 0,
+            prevent_damage_from_color_mask: prevention_mask,
+            damage_cannot_be_prevented: false,
+        });
+    }
     Ok(out)
 }
 
