@@ -103,7 +103,9 @@ def analyze(root):
         assert completion["decisions"]==doc["decision_count"]==len(doc["decisions"])
         assert all(0<=row["selected"]<row["legal_action_count"] for row in doc["decisions"])
     assert sum(docs["failed"]["v3_spell_target_repairs"])==1
+    assert sum(docs["failed"]["diagnostic_spell_target_repairs"])==1
     assert sum(docs["valid-on"]["v3_spell_target_repairs"])==sum(docs["valid-off"]["v3_spell_target_repairs"])==0
+    assert sum(docs["valid-on"]["diagnostic_spell_target_repairs"])==sum(docs["valid-off"]["diagnostic_spell_target_repairs"])==0
     for a,b in [("failed","failed-replay"),("structured-s0","structured-replay")]:
         assert (root/a/"match-000000.json").read_bytes()==(root/b/"match-000000.json").read_bytes()
     for key in ["games","outcome","seed_resets","decisions","decision_count"]:
@@ -114,6 +116,7 @@ def analyze(root):
     result=dict(status="PUBLIC-EVALUATOR-SPELL-REPAIR-ENGINEERING-PASS",executed_matches=len(docs),
         natural_games=sum(len(d["games"]) for d in docs.values()),decisions=sum(d["decision_count"] for d in docs.values()),
         repaired_decisions=sum(sum(d["v3_spell_target_repairs"]) for d in docs.values()),
+        diagnostic_repairs=sum(sum(d["diagnostic_spell_target_repairs"]) for d in docs.values()),
         historical_gameplay_exact=True,valid_on_off_decisions_exact=True,two_fresh_replays_bytes_exact=True,
         process_seconds=sum(read(root/f"{label}.execution.json")["seconds"] for label in docs),
         non_claim="Local engineering verification, not playing-strength or promotion evidence.")

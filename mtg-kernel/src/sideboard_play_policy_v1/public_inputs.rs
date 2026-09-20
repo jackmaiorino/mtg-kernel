@@ -237,6 +237,7 @@ mod evaluation_tests {
         let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
         let mut outputs = Vec::new();
         let mut tensors = Vec::new();
+        let mut diagnostics = Vec::new();
         for variant in 0..2 {
             let mut state = state.clone();
             put(
@@ -261,6 +262,16 @@ mod evaluation_tests {
             let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
             policy.reset_sampling_v1([123, 456]);
             let input = PairedBo1PolicyInputV1::new(&session, decision);
+            assert!(input.diagnostic_visible_v1().is_err());
+            let (observation, actions, diagnostic_repaired) =
+                input.diagnostic_visible_spell_adapter_v1().unwrap();
+            assert!(diagnostic_repaired);
+            assert_eq!(actions.len(), 2);
+            diagnostics.push(serde_json::to_vec(&(observation, actions)).unwrap());
+            let mut stale = decision;
+            stale.step += 1;
+            assert!(PairedBo1PolicyInputV1::new(&session, stale)
+                .diagnostic_visible_spell_adapter_v1().is_err());
             assert!(policy.select_paired_with_scores_v1(&input).is_err());
             let (action, scores, repaired) =
                 select_spell_adapter_v3_for_evaluation(&mut policy, &input).unwrap();
@@ -285,6 +296,7 @@ mod evaluation_tests {
         }
         assert_eq!(outputs[0], outputs[1]);
         assert_eq!(tensors[0], tensors[1]);
+        assert_eq!(diagnostics[0], diagnostics[1]);
     }
 
     #[test]
@@ -296,6 +308,11 @@ mod evaluation_tests {
             panic!()
         };
         let input = PairedBo1PolicyInputV1::new(&session, decision);
+        let original_visible = input.diagnostic_visible_v1().unwrap();
+        let (observation, actions, repaired) = input.diagnostic_visible_spell_adapter_v1().unwrap();
+        assert!(!repaired);
+        assert_eq!(serde_json::to_vec(&original_visible).unwrap(),
+            serde_json::to_vec(&(observation, actions)).unwrap());
         let mut original = FrozenPlayPolicyV1::training_fixture_v3();
         let mut adapted = FrozenPlayPolicyV1::training_fixture_v3();
         original.reset_sampling_v1([222, 444]);

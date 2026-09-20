@@ -1,6 +1,7 @@
 //! Explicit evaluation-only extension of V3's previously rejected spell targets.
 //! No rollout is performed. Only actor-visible encoder rows leave this module.
 use super::*;
+use crate::policy_observation_v6::ObservationV6;
 
 pub(super) fn visible_spell_target(
     state: &crate::state::GameState,
@@ -63,6 +64,32 @@ impl FastActorSessionV1 {
             Err(FlatDecisionErrorV2::Action(FlatActionDecisionSliceErrorV1::InvalidActionReference)) => {}
             Err(error) => return Err(error),
         }
+        let view = self.v3_spell_target_adapter_view(expected)?;
+        let value = view.encode_current_flat_scoring_decision_owned_v3(expected, encoder, buffers)?;
+        Ok((value, true))
+    }
+
+    /// Diagnostic recording must validate the same public references as the
+    /// explicitly adapted scorer. The original human transport stays unchanged.
+    pub(crate) fn diagnostic_visible_spell_adapter_v1(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<(ObservationV6, Vec<ActionSemanticV1>, bool), FlatActionDecisionSliceErrorV1> {
+        match self.human_current_decision_input_v1(expected, expected.acting_player) {
+            Ok((observation, actions, _)) => return Ok((observation, actions, false)),
+            Err(FlatActionDecisionSliceErrorV1::InvalidActionReference) => {}
+            Err(error) => return Err(error),
+        }
+        let view = self.v3_spell_target_adapter_view(expected)?;
+        let (observation, actions, _) =
+            view.human_current_decision_input_v1(expected, expected.acting_player)?;
+        Ok((observation, actions, true))
+    }
+
+    fn v3_spell_target_adapter_view(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<Self, FlatActionDecisionSliceErrorV1> {
         let mut view = self.clone();
         view.v3_spell_target_reference_adapter = true;
         let mut current = view.current.take()
@@ -72,12 +99,11 @@ impl FastActorSessionV1 {
         let cache = super::flat_action_v3::prepare_and_build_v3(&view, &mut current)?;
         // Never remap a returned action onto another executable decision.
         if current.candidates != original {
-            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding.into());
+            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
         flat_install_action_cache_build_result_v2(&mut current, Ok(cache));
         view.current = Some(current);
-        let value = view.encode_current_flat_scoring_decision_owned_v3(expected, encoder, buffers)?;
-        Ok((value, true))
+        Ok(view)
     }
 }
 

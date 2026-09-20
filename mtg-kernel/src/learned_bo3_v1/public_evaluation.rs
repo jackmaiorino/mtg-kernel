@@ -208,6 +208,8 @@ fn load(source: &ModelSource) -> Result<(Play, Value), String> {
 struct Trace<'a> {
     base: &'a mut dyn PairedBo1PolicyV1,
     capture: bool,
+    spell_adapter: [bool; 2],
+    diagnostic_repairs: [u64; 2],
     resets: Vec<[u64; 2]>,
     rows: Vec<Value>,
     decisions: u64,
@@ -233,7 +235,15 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             message,
         };
         let mut row = if self.capture {
-            let (observation, actions) = input.diagnostic_visible_v1().map_err(fail)?;
+            let seat = usize::from(input.decision().acting_player == crate::rl::PlayerSeatV1::P1);
+            let (observation, actions) = if self.spell_adapter[seat] {
+                let (observation, actions, repaired) =
+                    input.diagnostic_visible_spell_adapter_v1().map_err(fail)?;
+                self.diagnostic_repairs[seat] += u64::from(repaired);
+                (observation, actions)
+            } else {
+                input.diagnostic_visible_v1().map_err(fail)?
+            };
             let visible =
                 hash(&serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?);
             let d = input.decision();
@@ -397,6 +407,8 @@ pub fn run(command: Command) -> Result<Value, String> {
                     .map_err(error)?;
             let before = [p0.forced_count(), p1.forced_count()];
             let repairs_before = [p0.repair_count(), p1.repair_count()];
+            let spell_adapter = command.sources.each_ref().map(|source| matches!(source,
+                ModelSource::Legacy { v3_spell_target_reference_adapter: true, .. }));
             let mut router = if command.cross_generation_evaluation {
                 SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([&mut p0, &mut p1])?
             } else {
@@ -405,6 +417,8 @@ pub fn run(command: Command) -> Result<Value, String> {
             let mut trace = Trace {
                 base: &mut router,
                 capture: command.capture_decisions,
+                spell_adapter,
+                diagnostic_repairs: [0; 2],
                 resets: vec![],
                 rows: vec![],
                 decisions: 0,
@@ -432,7 +446,8 @@ pub fn run(command: Command) -> Result<Value, String> {
             let mut result = json!({"schema":"public-input-evaluation-match/v1","match":item,"models":identities,
                 "registrations":registrations,"seat_generations":generations,"cross_generation_evaluation":command.cross_generation_evaluation,
                 "outcome":played.outcome,"games":played.games,"sideboard_decisions":played.sideboard_decisions,
-                "seed_resets":trace.resets,"decision_count":trace.decisions,"decisions":trace.rows});
+                "seed_resets":trace.resets,"decision_count":trace.decisions,"decisions":trace.rows,
+                "diagnostic_spell_target_repairs":trace.diagnostic_repairs});
             drop(trace);
             drop(router);
             result["v3_forced_actions"] =
@@ -471,6 +486,37 @@ pub fn run(command: Command) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v3_spell_target_trace_requires_opt_in_and_preserves_selection() {
+        use crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1;
+        use crate::rl_session::{FastActorSessionV1, FastActorResponseV1};
+        let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let response = session.current_response();
+        let FastActorResponseV1::Decision(decision) = response else { panic!() };
+        let mut base = Play::Legacy { policy: FrozenPlayPolicyV1::training_fixture_v3(),
+            forced: true, count: 0, spell_adapter: true, repairs: 0 };
+        let mut reference = FrozenPlayPolicyV1::training_fixture_v3();
+        reference.reset_sampling_v1([123, 456]);
+        let mut trace = Trace { base: &mut base, capture: true, spell_adapter: [false; 2],
+            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0 };
+        trace.reset_for_game_v1([123, 456]).unwrap();
+        assert!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).is_err());
+        assert_eq!(trace.decisions, 0);
+        trace.spell_adapter = [true, false];
+        for _ in 0..8 {
+            let expected = select_spell_adapter_v3_for_evaluation(&mut reference,
+                &PairedBo1PolicyInputV1::new(&session, decision)).unwrap().0;
+            assert_eq!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap(), expected);
+        }
+        assert_eq!(trace.diagnostic_repairs, [8, 0]);
+        assert_eq!(trace.rows.len(), 8);
+        assert_eq!(trace.decisions, 8);
+        assert_eq!(session.current_response(), response);
+        drop(trace);
+        assert_eq!(base.repair_count(), 8);
+    }
 
     #[test]
     fn postboard_preflight_rejects_changed_registration_and_unbounded_match() {
