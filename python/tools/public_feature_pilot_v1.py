@@ -11,6 +11,7 @@ import subprocess
 import time
 
 import numpy as np
+from compute_throughput_v1 import require_choice
 from qualify_public_evaluation_v1 import read, write, sha, pin, CAMPAIGN
 
 ARMS = ("g115", "control", "structured")
@@ -126,7 +127,8 @@ def prepare(root):
                          template=pin(root/f"templates/{job['label']}.json")))
     assert len(jobs) == 14 and len(eval_seeds) == 392
     write(root/"manifest.json", dict(schema="matched-public-input-pilot/v1", runner=pin(__file__),
-        dependencies=[pin(Path(__file__).with_name("qualify_public_evaluation_v1.py"))],
+        dependencies=[pin(Path(__file__).with_name(name)) for name in
+                      ["qualify_public_evaluation_v1.py", "compute_throughput_v1.py"]],
         runner_commit=subprocess.check_output(["git","rev-parse","HEAD"], text=True).strip(),
         native_build=pin(TOOLS/"build-completion.json"), toolchain=read(TOOLS/"build-start.json"),
         training_binary=pin(root/"public_feature_training_v1.exe"), evaluation_binary=pin(root/"public_feature_evaluation_v1.exe"),
@@ -178,10 +180,12 @@ def execute(root, label, binary, request, seconds):
     return result
 
 
-def train_segment(root, m, arm, label, stop, resume, seconds):
+def train_segment(root, m, arm, label, stop, resume, seconds, workers=1):
     config = read(verify(m["training_configs"][arm]))
     request = root/f"requests/{label}.json"
-    write(request, dict(config=config, output_directory=str(root/"outputs"/label), stop_after=stop, resume=resume))
+    command = dict(config=config, output_directory=str(root/"outputs"/label), stop_after=stop, resume=resume)
+    if workers != 1: command["collector_workers"] = workers
+    write(request, command)
     return execute(root, label, m["training_binary"], request, seconds)
 
 
@@ -324,10 +328,14 @@ def train(root):
     m = manifest(root)
     assert read(root/"training-qualification.json")["status"] == "FULL-BATCH-REPLAY-PASS"
     assert read(root/"g115-evaluation-audit.json")["complete"]
+    choices = {arm: require_choice(root/f"{arm}-compute-choice.json", m["training_binary"]["sha256"],
+                                  m["training_configs"][arm]["sha256"], 200)
+               for arm in ["control", "structured"]}
+    assert all(c["host"] == "jack" for c in choices.values()), "dispatch the qualified remote placement with its supported runner"
     for arm in ["control","structured"]:
         used = read(root/f"logs/{arm}-prefix.execution.json")["seconds"]
         assert used < 1800
-        train_segment(root,m,arm,arm,200,pin(root/f"outputs/{arm}-prefix/0001/checkpoint.json"),1800-used)
+        train_segment(root,m,arm,arm,200,pin(root/f"outputs/{arm}-prefix/0001/checkpoint.json"),1800-used,choices[arm]["workers"])
         audit = audit_training(root,arm,[arm+"-prefix",arm],200)
         assert audit["seconds"] < 1800
         write(root/f"{arm}-training-audit.json",audit)

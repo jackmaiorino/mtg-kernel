@@ -31,6 +31,13 @@ pub struct Command {
     pub output_directory: PathBuf,
     pub resume: Option<PinnedFileV1>,
     pub stop_after: Option<usize>,
+    /// Execution placement only; excluded from the scientific config hash.
+    #[serde(default = "default_collector_workers")]
+    pub collector_workers: usize,
+}
+
+fn default_collector_workers() -> usize {
+    1
 }
 
 #[derive(Serialize, Deserialize)]
@@ -217,8 +224,100 @@ fn publish_bytes(directory: &Path, name: &str, bytes: &[u8]) -> Result<String, S
     Ok(sha(bytes))
 }
 
+/// All collectors use the current batch's parameters. Results are ordered by
+/// the original schedule before publication and the single learning update.
+fn collect_parallel(
+    policy: &PublicInputPlayPolicyV1,
+    episodes: &[ExpandedEpisodeV1],
+    config_hash: &str,
+    state_hash: &str,
+    enabled: bool,
+    workers: usize,
+) -> Result<Vec<Trajectory>, String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let policies = (0..workers.min(episodes.len()))
+        .map(|_| policy.fork_for_collection())
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut results = std::thread::scope(|scope| -> Result<Vec<(usize, Trajectory)>, String> {
+        let mut handles = Vec::new();
+        for (worker, mut policy) in policies.into_iter().enumerate() {
+            let next = &next;
+            handles.push(
+                std::thread::Builder::new()
+                    .name(format!("public-collector-{worker}"))
+                    .stack_size(16 * 1024 * 1024)
+                    .spawn_scoped(
+                        scope,
+                        move || -> Result<Vec<(usize, Trajectory)>, String> {
+                            let mut completed = Vec::new();
+                            loop {
+                                let index = next.fetch_add(1, Ordering::Relaxed);
+                                let Some(episode) = episodes.get(index) else {
+                                    break;
+                                };
+                                eprintln!(
+                                    "public collector {worker}: episode {index} {}",
+                                    episode.id
+                                );
+                                completed.push((
+                                    index,
+                                    collect(
+                                        &mut policy,
+                                        episode,
+                                        config_hash,
+                                        state_hash,
+                                        enabled,
+                                    )?,
+                                ));
+                            }
+                            Ok(completed)
+                        },
+                    )
+                    .map_err(err)?,
+            );
+        }
+        let mut results = Vec::new();
+        // Join every worker before returning an error. No collector survives
+        // into an optimizer update or starts a speculative next batch.
+        let mut failure = None;
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(mut rows)) => results.append(&mut rows),
+                Ok(Err(error)) => {
+                    failure.get_or_insert(error);
+                }
+                Err(_) => {
+                    failure.get_or_insert("public collector panicked".into());
+                }
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(results)
+    })?;
+    results.sort_by_key(|(index, _)| *index);
+    ensure(
+        results.len() == episodes.len()
+            && results
+                .iter()
+                .enumerate()
+                .all(|(i, (index, _))| i == *index),
+        "parallel public collection lost or duplicated an episode",
+    )?;
+    Ok(results
+        .into_iter()
+        .map(|(_, trajectory)| trajectory)
+        .collect())
+}
+
 pub fn run(command: Command) -> Result<Value, String> {
     let config = &command.config;
+    ensure(
+        (1..=64).contains(&command.collector_workers),
+        "public collector count outside bounds",
+    )?;
     ensure(
         !config.updates.is_empty() && config.updates.len() <= 256,
         "public update count outside bounds",
@@ -312,24 +411,42 @@ pub fn run(command: Command) -> Result<Value, String> {
         let before = sha(&before_bytes);
         let mut trajectories = Vec::new();
         let mut trajectory_hashes = Vec::new();
-        for (index, episode) in config.updates[update].iter().enumerate() {
-            eprintln!(
-                "public update {update}: collect {}/{} {}",
-                index + 1,
-                config.updates[update].len(),
-                episode.id
-            );
-            let trajectory = collect(
-                &mut policy,
-                episode,
+        if command.collector_workers > 1 {
+            trajectories = collect_parallel(
+                &policy,
+                &config.updates[update],
                 &config_hash,
                 &before,
                 config.inputs_enabled,
+                command.collector_workers,
             )?;
-            trajectory_hashes.push(
-                publish_json(&directory, &format!("episode-{index:03}.json"), &trajectory)?.sha256,
-            );
-            trajectories.push(trajectory);
+            for (index, trajectory) in trajectories.iter().enumerate() {
+                trajectory_hashes.push(
+                    publish_json(&directory, &format!("episode-{index:03}.json"), trajectory)?
+                        .sha256,
+                );
+            }
+        } else {
+            for (index, episode) in config.updates[update].iter().enumerate() {
+                eprintln!(
+                    "public update {update}: collect {}/{} {}",
+                    index + 1,
+                    config.updates[update].len(),
+                    episode.id
+                );
+                let trajectory = collect(
+                    &mut policy,
+                    episode,
+                    &config_hash,
+                    &before,
+                    config.inputs_enabled,
+                )?;
+                trajectory_hashes.push(
+                    publish_json(&directory, &format!("episode-{index:03}.json"), &trajectory)?
+                        .sha256,
+                );
+                trajectories.push(trajectory);
+            }
         }
         let collection_seconds = started.elapsed().as_secs_f64();
         let mut records: Vec<

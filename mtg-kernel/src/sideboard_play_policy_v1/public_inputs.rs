@@ -70,6 +70,16 @@ pub(crate) struct PublicInputPlayPolicyV1 {
 }
 
 impl PublicInputPlayPolicyV1 {
+    /// Same immutable learned parameters, private encoders and per-game RNG.
+    pub(crate) fn fork_for_collection(&self) -> Result<Self, String> {
+        Ok(Self {
+            base: self.base.fork_for_collection_v3()?,
+            model: self.model.clone(),
+            inputs_enabled: self.inputs_enabled,
+            auxiliary: None,
+        })
+    }
+
     pub(crate) fn new(
         base: FrozenPlayPolicyV1,
         weights: PublicInputWeightsV1,
