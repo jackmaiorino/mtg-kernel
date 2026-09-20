@@ -151,7 +151,7 @@ impl PublicInputPlayPolicyV1 {
         let decision = input.decision();
         // Both representations come from this same bound decision. No live
         // session, registered opponent deck or hidden state enters the scorer.
-        let (observation, actions) = input.diagnostic_visible_v1().map_err(policy_error)?;
+        let (observation, actions) = input.diagnostic_visible_v4().map_err(policy_error)?;
         let fresh = self
             .base
             .fresh_successor
@@ -228,6 +228,48 @@ impl PairedBo1PolicyV1 for PublicInputPlayPolicyV1 {
 #[cfg(test)]
 mod evaluation_tests {
     use super::*;
+
+    #[test]
+    fn public_v4_spell_target_features_preserve_zero_control_and_hidden_invariance() {
+        use crate::ids::PlayerId;
+        use crate::policy_observation_v6::tests::put;
+        use crate::state::Zone;
+        let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
+        let mut outputs = Vec::new();
+        for variant in 0..2 {
+            let mut state = state.clone();
+            put(&mut state, PlayerId::P1, if variant == 0 { "Island" } else { "Mountain" }, Zone::Hand);
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                for name in ["Island", "Mountain"] { put(&mut state, actor, name, Zone::Library); }
+                if variant == 1 { state.players[actor.index()].library.reverse(); }
+            }
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let response = session.current_response();
+            let FastActorResponseV1::Decision(decision) = response else { panic!() };
+            let input = PairedBo1PolicyInputV1::new(&session, decision);
+            assert!(input.diagnostic_visible_v1().is_err());
+            let mut reference = FrozenPlayPolicyV1::training_fixture_v4();
+            let mut zero = PublicInputPlayPolicyV1::new(FrozenPlayPolicyV1::training_fixture_v4(), PublicInputWeightsV1::zero()).unwrap();
+            reference.reset_sampling_v1([321, 654]);
+            zero.reset_for_game_v1([321, 654]).unwrap();
+            for _ in 0..8 {
+                let expected = reference.select_paired_with_scores_v1(&input).unwrap();
+                let actual = zero.select_with_scores(&input).unwrap();
+                assert_eq!(actual.0, expected.0);
+                assert_eq!(actual.1.logits, expected.1.logits);
+                assert_eq!(actual.1.value.to_bits(), expected.1.value.to_bits());
+            }
+            let mut nonzero = PublicInputPlayPolicyV1::new(FrozenPlayPolicyV1::training_fixture_v4(),
+                PublicInputWeightsV1::new(vec![0.01; 2048], vec![0.02; 384]).unwrap()).unwrap();
+            nonzero.reset_for_game_v1([321, 654]).unwrap();
+            let (action, scores) = nonzero.select_with_scores(&input).unwrap();
+            assert!(action < 2 && scores.logits.len() == 2 && scores.logits.iter().all(|x| x.is_finite()));
+            outputs.push((action, scores.logits, scores.value.to_bits(),
+                serde_json::to_vec(nonzero.auxiliary.as_ref().unwrap()).unwrap()));
+            assert_eq!(session.current_response(), response);
+        }
+        assert_eq!(outputs[0], outputs[1]);
+    }
 
     #[test]
     fn v3_spell_target_evaluation_preserves_hidden_invariance_and_replay() {

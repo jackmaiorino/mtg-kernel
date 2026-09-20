@@ -13,7 +13,7 @@ from qualify_public_evaluation_v1 import read, pin, sha, write, execute, CAMPAIG
 from qualify_public_spell_adapter_v1 import selected_zones
 
 OLD = CAMPAIGN / "bo3-qualification-003"
-ADAPTER = CAMPAIGN / "public-spell-adapter-qualification-003"
+ADAPTER = CAMPAIGN / "public-spell-adapter-qualification-004"
 
 
 def prepare(root, binary):

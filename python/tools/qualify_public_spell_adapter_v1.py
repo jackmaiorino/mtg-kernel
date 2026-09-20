@@ -20,8 +20,9 @@ def prepare(root):
     request["output_directory"] = str(root / "adapter")
     write(root / "transfer-request.json", request)
     write(root / "design.json", dict(question="Does the existing public unique-Spell authority repair retain its behavior in the successor evaluator?",
-        matches=7, cases=["historical failed multi-choice match and replay", "historical valid control with repair on/off",
-                          "learned successor versus repaired V3 in both seats and seat0 replay"],
+        matches=9, cases=["historical failed multi-choice match and replay", "historical valid control with repair on/off",
+                          "learned successor versus repaired V3 in both seats and seat0 replay",
+                          "public-feature V4 extraction failure from canonical coverage and replay"],
         gates=dict(all_natural=True, historical_failure_repairs=1, valid_control_repairs=0,
                    gameplay_parity_with_historical_repaired_output=True, fresh_process_replay_bytes_exact=True,
                    total_seconds=360, per_process_seconds=180),
@@ -77,6 +78,14 @@ def run(root, binary, transfer_binary):
         other["source"]["play_import"]=pin(root/"adapter/play-import-source.json")
         other["v3_spell_target_reference_adapter"]=True
         requests[label]=command
+    for label in ["public-failed", "public-failed-replay"]:
+        command=read(CAMPAIGN/"public-canonical-coverage-001/Terror-p0-request.json")
+        command["matches"]=command["matches"][-1:]
+        assert command["matches"][0]["config"]["deck_ids"]==["Terror","Wildfire"]
+        command["sources"][1]["source"]["play_import"]=pin(root/"adapter/play-import-source.json")
+        command["capture_decisions"]=True
+        command["output_directory"]=str(root/label)
+        requests[label]=command
     for label, command in requests.items():write(root/f"{label}-request.json",command)
     write(root/"manifest.json",dict(binary=pin(binary),transfer_binary=pin(transfer_binary),
         commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
@@ -110,6 +119,8 @@ def analyze(root):
     assert sum(docs["valid-on"]["diagnostic_spell_target_repairs"])==sum(docs["valid-off"]["diagnostic_spell_target_repairs"])==0
     for a,b in [("failed","failed-replay"),("structured-s0","structured-replay")]:
         assert (root/a/"match-000000.json").read_bytes()==(root/b/"match-000000.json").read_bytes()
+    if "public-failed" in docs:
+        assert (root/"public-failed/match-000000.json").read_bytes()==(root/"public-failed-replay/match-000000.json").read_bytes()
     for key in ["games","outcome","seed_resets","decisions","decision_count"]:
         assert docs["valid-on"][key]==docs["valid-off"][key],key
     serialization_changes=[]
@@ -142,6 +153,7 @@ def analyze(root):
         repaired_decisions=sum(sum(d["v3_spell_target_repairs"]) for d in docs.values()),
         diagnostic_repairs=sum(sum(d["diagnostic_spell_target_repairs"]) for d in docs.values()),
         historical_gameplay_exact=True,valid_on_off_decisions_exact=True,two_fresh_replays_bytes_exact=True,
+        public_feature_failed_case_replay_bytes_exact="public-failed" in docs,
         historical_sideboard_comparison="All fields exact; two schema-declared f32 resource means compared by exact bits",
         serialization_changes=serialization_changes,
         process_seconds=sum(read(root/f"{label}.execution.json")["seconds"] for label in docs),
