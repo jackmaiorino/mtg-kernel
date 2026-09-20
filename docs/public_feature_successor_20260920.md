@@ -17,7 +17,7 @@ The earlier `python-001` qualification stopped before checkpoint transport becau
 
 No terminal-reward training, native successor scoring/update integration, CUDA optimizer parity, stronger candidate or human-strength result follows from these tests. The synthetic loss is only a gradient-connectivity probe. Existing human delivery and g115 checkpoint remain unchanged.
 
-Next: implement explicit native successor scoring and checkpoint/optimizer support, qualify CPU/CUDA numerical behavior and actual rollout replay, then freeze a small matched learning comparison. Both arms must use the corrected observation runtime, matched seeds and terminal rewards. Keep canonical retention checks and independent opposition; do not select from CP7 outcomes.
+The subsequent sections record native scoring and CUDA optimizer qualification. The next learning comparison must use the corrected observation runtime, matched seeds and terminal rewards in both arms. Keep canonical retention checks and independent opposition; do not select from CP7 outcomes.
 
 Fable's September 19 consultation failed HTTP429 before source reads, with reset September 22 at 07:00 EDT. No retry or endorsement is implied. Bounded local work proceeds under Jack's explicit authority with this review gap unresolved. No paid compute or broad training campaign is launched.
 
@@ -40,4 +40,30 @@ Evidence root: `E:/mtg-postboard-campaign-20260920/public-native-forward-001`.
 
 Two unique BO3s/four games; three executions/six games including replay. Match tests took 13.43, 9.52 and 13.25 seconds, excluding builds. Debug build times were 43.17 and 44.51 seconds. Both models' added projections were zero in the complete games; no nonzero full-game or learned-model claim follows. The separate numerical probes used fixed signed binary-fraction matrices, not outcomes or training. All runs finished successfully. Existing g115 human delivery remains untouched.
 
-Remaining native training work is concrete: add the two projection branches to `experimental_burn_net8_packed_v1::ProductionNet8::forward_core`, using separate pre-tanh matmuls; retain the existing graph for controls. Add separate projection parameters/moments and age-zero Adam state alongside the imported legacy state, with an explicit successor checkpoint identity. `training.rs::ExperimentalDeviceTrainStateV1` currently assumes 33 tensors and one Adam age, so it cannot yet train this model. Qualify actual gradients, update/save/resume and CPU/CUDA agreement before collecting a reward-based pilot. Do not label the current Python synthetic probe as this qualification.
+These scorer checks preceded the CUDA work below. The existing `training.rs::ExperimentalDeviceTrainStateV1` assumes 33 tensors and one Adam age, requiring separate successor state rather than admitting the new matrices under its old identity.
+
+## CUDA update and optimizer-state transport
+
+The CUDA core is now implemented separately in `training/public_inputs.rs`. It reuses the established GAE loss and legacy Adam mapper, while the two public matrices have separate moments and a shared new-parameter age. Both projections use separate pre-tanh matmuls. The original forward path passes no additions. Updates prepare the legacy and public candidates before publishing both ages and parameter sets together.
+
+`training/public_inputs/snapshot.rs` serializes all parameters, both moments and both ages under `mtg-kernel-public-input-optimizer-state/v1`, with exact V4, registry and auxiliary contract identities. It validates the legacy state hash and projection dimensions, finiteness and nonnegative second moments. This is optimizer-state transport, not yet a complete campaign checkpoint containing rollout progress, seeds and loss configuration. Existing loaders and the existing 33-tensor optimizer are unchanged.
+
+Final evidence: `E:/mtg-postboard-campaign-20260920/public-cuda-qualification-002/qualification.json`. Earlier `public-cuda-qualification-001` is preserved; it passed the original 12-fixture check before the dummy-card guard was added. The same fixed numerical gates apply in both roots.
+
+| Qualification on physical GPU 1, RTX 3050 | Result |
+| --- | --- |
+| Exact import of g115 parameters, moments and ages | Pass |
+| Initial CUDA legacy/successor logits and values | Bit-identical |
+| 35 gradient tensors versus Python | Pass, maximum absolute difference 0.0000023842 |
+| Two updates versus Python | Pass, maximum parameter-delta difference 0.00000005961 |
+| Both moment sets versus Python | Pass under the fixed absolute/relative envelopes |
+| Fresh native process restores step 1 and reproduces step 2 | Byte-identical complete optimizer-state snapshot |
+| Dummy-card raw gradient is nonzero, but padding parameters and moments stay zero | Pass, raw gradient L1 18.3531 |
+| Invalid projection moments/ages and mismatched/corrupt snapshots | Rejected |
+| Existing CUDA empty-relation Adam continuation regression | Pass |
+
+The final ages are 32402 for legacy parameters and 2 for the new matrices. The repeated state SHA256 is `5c1686a9a1063c8f48a62f7d39615e103804aaf7eecfd8121e2020a5603d41dc`. The dummy guard preserves Python's `Embedding(padding_idx=0)` derivative; Burn's embedding operation has no padding parameter. This correction is confined to the new training path. A later matched control must share it with treatment.
+
+The final start suite passed three tests in 18.77 seconds; the fresh-process resume passed in 15.74 seconds; the legacy CUDA regression took 12.21 seconds. The final build took 46.40 seconds, after the first CUDA test build took 2m26s. These are debug qualification timings, not production training throughput. The actual targets and advantages were fixed synthetic numbers on real visible fixtures. No episodes were trained, no new candidate was selected, and no playing-strength result follows.
+
+The remaining implementation is the real collection/update loop: record auxiliary rows alongside each learner tensor from the same bound decision, derive GAE from terminal rewards with the existing grouping, install updated legacy/public parameters into the native play adapter, and persist complete iteration/resume provenance. Add a bridge that validates each V4 view and per-decision row alignment before packing and bounds chunk memory. Then qualify a few real updates and resumed rollout replay before freezing and launching a matched learning pilot. Do not treat the low-level CUDA core's synthetic qualification as that end-to-end qualification. Fable review remains unavailable as recorded above.

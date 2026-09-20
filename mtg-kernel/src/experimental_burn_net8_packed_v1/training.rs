@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::process::Command;
 
+pub(crate) mod public_inputs;
+
 type CudaAutodiffBackendV1 = Autodiff<CudaBackendV1>;
 
 const TRAINING_DIAGNOSTIC_IDENTITY_CANDIDATE_V1: &str =

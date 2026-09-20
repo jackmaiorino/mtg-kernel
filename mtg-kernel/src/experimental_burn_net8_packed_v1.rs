@@ -215,14 +215,27 @@ impl<B: Backend> ProductionNet8<B> {
         &self,
         batch: &DevicePackedBatch<B>,
     ) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core_with_public::<D>(batch, None)
+    }
+
+    fn forward_core_with_public<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+        public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
         let object_card = self
             .card_embedding
             .forward(batch.object_card_ids.clone().unsqueeze_dim::<2>(1))
             .squeeze_dim::<2>(1);
-        let object_base = self.object_encoder.forward(Tensor::cat(
+        let object_input = Tensor::cat(
             vec![batch.object_features.clone(), object_card],
             1,
-        ));
+        );
+        let object_base = match &public {
+            Some((addition, _)) => self.object_encoder.second.forward(
+                (self.object_encoder.first.forward(object_input) + addition.clone()).tanh()).tanh(),
+            None => self.object_encoder.forward(object_input),
+        };
 
         let edge_pooled = if batch.empty_relations_v3 && batch.edge_count == 0 {
             // No relation rows exist. This is the exact empty reduction,
@@ -285,9 +298,12 @@ impl<B: Backend> ProductionNet8<B> {
             IndexingUpdateOp::Add,
         )
         .reshape([batch.decision_count, OBJECT_GROUP_COUNT_V1 * D::HIDDEN_DIM]);
-        let state_hidden = self
-            .state_encoder
-            .forward(Tensor::cat(vec![batch.state.clone(), pooled_objects], 1));
+        let state_input = Tensor::cat(vec![batch.state.clone(), pooled_objects], 1);
+        let state_hidden = match public {
+            Some((_, addition)) => self.state_encoder.second.forward(
+                (self.state_encoder.first.forward(state_input) + addition).tanh()).tanh(),
+            None => self.state_encoder.forward(state_input),
+        };
 
         let action_ref_pooled = if batch.empty_relations_v3 && batch.action_ref_count == 0 {
             Tensor::zeros([batch.action_count, D::HIDDEN_DIM], &batch.device)
