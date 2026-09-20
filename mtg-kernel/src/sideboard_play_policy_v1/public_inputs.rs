@@ -5,6 +5,25 @@ use crate::native_policy_value_net_v1::public_inputs_v1::{
     NativePublicInputNetV1, PublicInputWeightsV1,
 };
 
+/// Evaluation-only forced V3 action. Matches the qualified unscored adapter:
+/// the singleton still consumes the physical seat's usual sampler draw.
+pub(crate) fn select_forced_v3_for_evaluation(
+    policy: &mut FrozenPlayPolicyV1,
+    input: &PairedBo1PolicyInputV1<'_>,
+) -> Result<u32, RlSessionError> {
+    let decision = input.decision();
+    if policy.feature_generation_v1() != PlayPolicyGenerationV1::V3
+        || decision.legal_action_count != 1
+    {
+        return Err(policy_error(
+            "forced evaluation requires V3 singleton".into(),
+        ));
+    }
+    policy
+        .sample_scores(&[0.0], decision.acting_player, 1)
+        .map_err(policy_error)
+}
+
 pub(crate) struct PublicInputPlayPolicyV1 {
     base: FrozenPlayPolicyV1,
     model: NativePublicInputNetV1,

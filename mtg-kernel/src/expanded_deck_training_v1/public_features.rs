@@ -63,6 +63,63 @@ fn weights(public: &ProjectionSnapshot) -> Result<PublicInputWeightsV1, String> 
     PublicInputWeightsV1::new(floats(&public.object), floats(&public.state)).map_err(err)
 }
 
+/// CPU inference load only. Reading a CUDA-produced checkpoint creates no GPU
+/// device and cannot advance either optimizer.
+pub(crate) fn load_for_evaluation(
+    config_pin: &PinnedFileV1,
+    checkpoint_pin: &PinnedFileV1,
+) -> Result<(PublicInputPlayPolicyV1, Value), String> {
+    let config: Config = serde_json::from_slice(&read_pinned_bytes(config_pin)?).map_err(err)?;
+    let checkpoint: Checkpoint =
+        serde_json::from_slice(&read_pinned_bytes(checkpoint_pin)?).map_err(err)?;
+    let config_hash = sha(&serde_json::to_vec(&config).map_err(err)?);
+    ensure(
+        checkpoint.schema == "mtg-kernel-public-input-checkpoint/v1"
+            && checkpoint.config_sha256 == config_hash
+            && checkpoint.optimizer_file == "optimizer.json"
+            && checkpoint.next_update > 0
+            && checkpoint.next_update <= config.updates.len(),
+        "public evaluation checkpoint/config identity differs",
+    )?;
+    let optimizer_path = checkpoint_pin
+        .path
+        .parent()
+        .ok_or("checkpoint has no parent")?
+        .join("optimizer.json");
+    let saved = read_pinned_bytes(&PinnedFileV1 {
+        path: optimizer_path,
+        sha256: checkpoint.optimizer_sha256.clone(),
+    })?;
+    let (legacy, public) = public_training::snapshot::decode(&saved).map_err(err)?;
+    let (mut base, initial) = initialize(&config.source)?;
+    ensure(
+        legacy.adam_step == initial.adam_step_v1() + checkpoint.next_update as u64
+            && public.adam_step == checkpoint.next_update as u64,
+        "public evaluation ages differ",
+    )?;
+    base.replace_training_parameters_v3(&legacy.parameters)?;
+    let base_model = base.actual_model_identity_v1();
+    let weights_sha256 = sha(&serde_json::to_vec(&(
+        crate::native_policy_value_net_v1::public_inputs_v1::ARCHITECTURE,
+        &base_model.weights_sha256,
+        &public.object,
+        &public.state,
+        config.inputs_enabled,
+    ))
+    .map_err(err)?);
+    let identity = json!({"schema":"public-input-evaluation-model/v1",
+        "architecture":crate::native_policy_value_net_v1::public_inputs_v1::ARCHITECTURE,
+        "config_pin":config_pin,"checkpoint_pin":checkpoint_pin,"config_sha256":config_hash,
+        "optimizer_sha256":checkpoint.optimizer_sha256,"weights_sha256":weights_sha256,
+        "actual_base_model":base_model,"inputs_enabled":config.inputs_enabled,
+        "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step});
+    Ok((
+        PublicInputPlayPolicyV1::new(base, weights(&public)?)?
+            .with_inputs_enabled(config.inputs_enabled),
+        identity,
+    ))
+}
+
 fn collect(
     policy: &mut PublicInputPlayPolicyV1,
     episode: &ExpandedEpisodeV1,

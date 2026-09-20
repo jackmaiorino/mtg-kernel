@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod gate_color_diagnostic;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub mod public_evaluation;
 
 /// Opening identity is separate from the observation contract. Omitted values
 /// preserve historical fixed-opening behavior and serialized result bytes.
