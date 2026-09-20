@@ -4,6 +4,8 @@ import json
 import shutil
 import subprocess
 import time
+import csv
+import io
 from pathlib import Path
 
 from public_feature_pilot_v1 import audit_training, execute, read, write, pin, verify
@@ -42,10 +44,17 @@ def prepare(root):
 
 
 def check_gpu_idle():
-    gpu = subprocess.check_output(["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader"], text=True)
-    uuid = next(row.split(",")[1].strip() for row in gpu.splitlines() if row.split(",")[0].strip() == "1")
-    processes = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"], text=True)
-    assert all(uuid not in row for row in processes.splitlines()), "GPU1 still has a compute process; preserve its run"
+    gpu = subprocess.check_output(["nvidia-smi", "--query-gpu=index,uuid,memory.used,utilization.gpu", "--format=csv,noheader,nounits"], text=True)
+    row = next([v.strip() for v in r] for r in csv.reader(io.StringIO(gpu)) if r[0].strip() == "1")
+    processes = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid,process_name,gpu_uuid", "--format=csv,noheader"], text=True)
+    contexts = [[v.strip() for v in r] for r in csv.reader(io.StringIO(processes)) if len(r) == 3 and r[2].strip() == row[1]]
+    for context in contexts:
+        path = context[1].replace("\\", "/").lower()
+        # WDDM reports this verified desktop UI context as C+G even when no
+        # learner exists. Unknown applications still block the qualification.
+        assert path.startswith("c:/program files/windowsapps/openai.codex_") and path.endswith("/app/chatgpt.exe"), "GPU1 has an unrelated context; preserve its run"
+    assert int(row[2]) <= 16 and int(row[3]) == 0, "GPU1 is not idle"
+    return dict(gpu=row, desktop_contexts=contexts)
 
 
 def run(root):
@@ -58,7 +67,7 @@ def run(root):
     for arm in ARMS:
         assert read(PILOT/f"{arm}-training-audit.json")["complete"]
     assert read(PILOT/"analysis.json")["complete"]
-    check_gpu_idle()
+    write(root/"gpu-preflight.json", check_gpu_idle())
     started = time.monotonic()
     results = []
     baseline = {}
