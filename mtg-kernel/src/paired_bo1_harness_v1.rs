@@ -27,6 +27,17 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         self.decision
     }
 
+    /// Bound actor-visible data for diagnostic recording, without the session
+    /// or the consumable action binding. Stable references are transport only.
+    pub(crate) fn diagnostic_visible_v1(
+        &self,
+    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<crate::rl::ActionSemanticV1>), String> {
+        self.session
+            .human_current_decision_input_v1(self.decision, self.decision.acting_player)
+            .map(|(observation, actions, _)| (observation, actions))
+            .map_err(|error| format!("{error:?}"))
+    }
+
     /// Trusted BO3 recording uses the same bound actor projection as scoring.
     /// This deliberately does not expose the session or either hidden hand.
     pub(crate) fn capture_bo3_gameplay_v1(

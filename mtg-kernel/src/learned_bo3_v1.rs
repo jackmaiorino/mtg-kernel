@@ -29,6 +29,8 @@ use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod gate_color_diagnostic;
+
 /// Opening identity is separate from the observation contract. Omitted values
 /// preserve historical fixed-opening behavior and serialized result bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
