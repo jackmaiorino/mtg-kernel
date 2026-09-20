@@ -25,3 +25,23 @@ Only after qualification, prepare a separate matched 200-update control versus b
 This first slice is explicitly preboard. Exact-registration sideboard plans and learned openings remain necessary for the BO3 goal; do not call Keep-sideboard games a sideboard-policy evaluation. No meta-weighted, held-out opponent or human-strength claim is justified. A48 has distinct fresh initialization but is familiar training opposition. No CP7 outcomes are used.
 
 Fable review remains unavailable following the known zero-read HTTP429 until September 22 07:00 EDT. Jack authorized bounded local continuation and instructed no repeated quota retries. Record that gap and residual uncertainty, without implying endorsement or adding a user-approval step. No paid compute or broad training campaign is authorized here.
+
+## Four-update qualification completed
+
+E:/mtg-postboard-campaign-20260920/broader-exposure-qualification-001 passed the actual native collection/update/restart checks. The exact reused training binary is pinned in manifest.json; it was not rebuilt. All three configurations passed native validation. GPU1 was idle before launch and released afterward. The known Fable review gap remains; no native/build process remains.
+
+| Branch | Natural games | Additional learner-list games | Physical decisions | Native wall seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Existing-list control | 40 | 0 | 4,913 | 36.95 |
+| Broader exposure | 40 | 20 | 5,793 | 38.72 |
+| Broader exposure, stopped and resumed | 40 | 20 | 5,793 | 54.56 |
+
+The 20 substituted slots are balanced ten per learner seat, with all eight lists occurring in both seats; four lists occur three times and four twice. The complete 40-game engineering schedule retains its original 24/16 learner-seat split and 19 initial/10 current/11 fixed-A48 opponent assignments. Twelve substituted games start with the learner on the play, eight on the draw. These small-sample imbalances are shared with the matched control and do not constitute a strength measurement. Both branches differ only in the five intended learner registrations per update and output paths. All games are explicitly preboard, with selected decks equal to registered decks.
+
+Full audits checked all 120 trajectories, natural terminal classifications/rewards, source/opponent resolution, optimizer continuation, GAE scalar bits and four actual CUDA updates per branch. The resumed branch stopped after update one and completed in a fresh native process. Its parameters, both Adam moments, scorer anchor and Adam step equal the uninterrupted branch at every update. Ten trajectories are byte-identical; all 40 match after rebinding only checkpoint provenance already proven to identify equal full model/optimizer states. Do not call all 40 raw hashes identical.
+
+The broader branch changed 35 formerly unchanged card embeddings from substituted mainboards, with nonzero retained optimizer moments. One additional row for the Sacred Cat Embalmed Token also changed. The control changed none of the 90 previously unchanged registry rows. The full resumed update list equals the uninterrupted list. Named changes include Basilisk Gate, Journey to Nowhere, Guardian of the Guildpact, Balustrade Spy, Land Grant and Lotleth Giant. This demonstrates actual retained learning on the new card identities, not improved decisions or wins.
+
+Both endpoints finish at Adam32404. Broader full state: 3b7358201bbf1e9fb236287b015e9dac0eb00fabe9dcdae4d339c6e15ad41546. Control full state: 534bc18880a431cb81d058f01ad8321ed553de0baeb868a4be85092fd18f7134. These are engineering endpoints, not promoted candidates or starts for the next measurement. Use untouched g115 for both full branches.
+
+Next prepare the separate bounded 200-update comparison described above, including fresh complete schedules, frozen additional-list improvement and canonical retention gates, untouched-g115 reference, and actual evaluator cost qualification. Do not rerun this successful qualification or interpret its training wins. Cold first-update times are substantial, so four-update wall time is not a reliable linear forecast for 200 updates. Current wall caps passed; no larger run has launched.
