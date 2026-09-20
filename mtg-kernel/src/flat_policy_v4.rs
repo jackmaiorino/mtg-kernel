@@ -172,6 +172,74 @@ mod tests {
         }
     }
 
+    #[test]
+    fn v4_structured_public_features_use_visible_nodes_and_explicit_colors() {
+        use crate::event::install_color_damage_prevention;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::public_cost_features_v1::{catalog_v1, from_actor_v4_v1};
+        use crate::state::Zone;
+        let mut samples = Vec::new();
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let opponent = if actor == PlayerId::P0 { PlayerId::P1 } else { PlayerId::P0 };
+            for colors in [vec![], vec![ManaColor::W], vec![ManaColor::B, ManaColor::R]] {
+                let mut paired = Vec::new();
+                for hidden in [false, true] {
+                    let mut state = ready_state();
+                    state.active_player = actor;
+                    state.priority_player = actor;
+                    // Different hidden identities and allocation before visible cards.
+                    if hidden { put(&mut state, opponent, "Gut Shot", Zone::Hand); }
+                    for name in ["Island", "Counterspell", "Burning-Tree Emissary", "Nyxborn Hydra"] {
+                        put(&mut state, actor, name, Zone::Hand);
+                    }
+                    put(&mut state, actor, "Sacred Cat", Zone::Battlefield);
+                    let source = put(&mut state, actor, "Prismatic Strands", Zone::Graveyard);
+                    if !hidden { put(&mut state, opponent, "Lotus Petal", Zone::Hand); }
+                    for name in if hidden { ["Mountain", "Forest"] } else { ["Forest", "Mountain"] } {
+                        put(&mut state, opponent, name, Zone::Library);
+                    }
+                    for color in &colors { install_color_damage_prevention(&mut state, source, *color).unwrap(); }
+                    let session = FastActorSessionV1::from_v3_fixture_state(state);
+                    let FastActorResponseV1::Decision(d) = session.current_response() else { panic!("expected live decision") };
+                    let (observation, actions) = crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session,d).diagnostic_visible_v1().unwrap();
+                    let mut owned = OwnedScoringV4::default();
+                    let encoded = owned.encode(&session).unwrap();
+                    let mut tensor = NativeFlatDecisionTensorV4::default();
+                    NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
+                    let public = from_actor_v4_v1(&observation, &tensor.common.object_card_ids).unwrap();
+                    for (bit,value) in public.state.iter().enumerate().take(5) {
+                        assert_eq!(*value, f32::from(colors.iter().any(|c| c.pool_index() == bit)));
+                    }
+                    assert_eq!(public.objects.len(), tensor.common.object_card_ids.len());
+                    for forbidden in ["Gut Shot", "Lotus Petal", "Mountain", "Forest"] {
+                        let token = i64::from(crate::card_def::card_id_by_name(forbidden).unwrap()) + 1;
+                        assert!(!tensor.common.object_card_ids.contains(&token));
+                    }
+                    assert!(from_actor_v4_v1(&observation, &[-1]).is_err());
+                    assert!(from_actor_v4_v1(&observation, &[i64::MIN]).is_err());
+                    assert!(from_actor_v4_v1(&observation, &[65536]).is_err());
+                    assert_eq!(from_actor_v4_v1(&observation, &[0]).unwrap().objects, vec![vec![0.0;32]]);
+                    let t = &tensor.common;
+                    samples.push(serde_json::json!({"actor":actor.index(),"hidden_variant":hidden,
+                        "observation":observation,"actions":actions,"public":public,
+                        "native":{"state":t.state,"object_features":t.object_features,"object_card_ids":t.object_card_ids,
+                            "object_groups":t.object_groups,"object_node_ids":t.object_node_ids,"edge_features":t.edge_features,
+                            "edge_source_indices":t.edge_source_indices,"edge_target_indices":t.edge_target_indices,
+                            "action_features":t.action_features,"action_ref_features":t.action_ref_features,
+                            "action_ref_card_ids":t.action_ref_card_ids,"action_ref_action_indices":t.action_ref_action_indices,
+                            "action_ref_node_indices":t.action_ref_node_indices}}));
+                    paired.push(public);
+                }
+                assert_eq!(paired[0], paired[1], "hidden cards or allocation changed public features");
+            }
+        }
+        if let Ok(path) = std::env::var("MTG_PUBLIC_FEATURE_SAMPLES") {
+            let output = std::fs::OpenOptions::new().create_new(true).write(true).open(path).unwrap();
+            serde_json::to_writer(output, &serde_json::json!({"catalog":catalog_v1().unwrap(),"samples":samples})).unwrap();
+        }
+    }
+
     /// The pre-fix aliasing reproduction is preserved in commit 4877f86f.
     /// The same engine states must now differ in the actual model input.
     #[test]
