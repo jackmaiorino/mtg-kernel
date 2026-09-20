@@ -209,6 +209,7 @@ struct Trace<'a> {
     base: &'a mut dyn PairedBo1PolicyV1,
     capture: bool,
     spell_adapter: [bool; 2],
+    generations: [PlayPolicyGenerationV1; 2],
     diagnostic_repairs: [u64; 2],
     resets: Vec<[u64; 2]>,
     rows: Vec<Value>,
@@ -236,13 +237,18 @@ impl PairedBo1PolicyV1 for Trace<'_> {
         };
         let mut row = if self.capture {
             let seat = usize::from(input.decision().acting_player == crate::rl::PlayerSeatV1::P1);
-            let (observation, actions) = if self.spell_adapter[seat] {
+            let diagnostic_error = |error: String| fail(format!(
+                "diagnostic seat={seat} generation={:?} decision={:?}: {error}",
+                self.generations[seat], input.decision()));
+            let (observation, actions) = if self.generations[seat] == PlayPolicyGenerationV1::V4 {
+                input.diagnostic_visible_v4().map_err(diagnostic_error)?
+            } else if self.spell_adapter[seat] {
                 let (observation, actions, repaired) =
-                    input.diagnostic_visible_spell_adapter_v1().map_err(fail)?;
+                    input.diagnostic_visible_spell_adapter_v1().map_err(diagnostic_error)?;
                 self.diagnostic_repairs[seat] += u64::from(repaired);
                 (observation, actions)
             } else {
-                input.diagnostic_visible_v1().map_err(fail)?
+                input.diagnostic_visible_v1().map_err(diagnostic_error)?
             };
             let visible =
                 hash(&serde_json::to_vec(&(&observation, &actions)).map_err(|e| fail(error(e)))?);
@@ -371,8 +377,8 @@ pub fn run(command: Command) -> Result<Value, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let [(mut p0, i0), (mut p1, i1)] = [load(&command.sources[0])?, load(&command.sources[1])?];
     let identities = [i0, i1];
-    let generations =
-        [p0.feature_generation_v1(), p1.feature_generation_v1()].map(feature_generation_label_v1);
+    let generation_ids = [p0.feature_generation_v1(), p1.feature_generation_v1()];
+    let generations = generation_ids.map(feature_generation_label_v1);
     if !command.cross_generation_evaluation && generations[0] != generations[1] {
         return Err("cross-generation evaluation requires explicit opt-in".into());
     }
@@ -418,6 +424,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 base: &mut router,
                 capture: command.capture_decisions,
                 spell_adapter,
+                generations: generation_ids,
                 diagnostic_repairs: [0; 2],
                 resets: vec![],
                 rows: vec![],
@@ -500,6 +507,7 @@ mod tests {
         let mut reference = FrozenPlayPolicyV1::training_fixture_v3();
         reference.reset_sampling_v1([123, 456]);
         let mut trace = Trace { base: &mut base, capture: true, spell_adapter: [false; 2],
+            generations: [PlayPolicyGenerationV1::V3; 2],
             diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0 };
         trace.reset_for_game_v1([123, 456]).unwrap();
         assert!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).is_err());
@@ -516,6 +524,20 @@ mod tests {
         assert_eq!(session.current_response(), response);
         drop(trace);
         assert_eq!(base.repair_count(), 8);
+        let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
+        let mut reference = FrozenPlayPolicyV1::training_fixture_v4();
+        reference.reset_sampling_v1([123, 456]);
+        let mut trace = Trace { base: &mut v4, capture: true, spell_adapter: [false; 2],
+            generations: [PlayPolicyGenerationV1::V4; 2],
+            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0 };
+        trace.reset_for_game_v1([123, 456]).unwrap();
+        for _ in 0..8 {
+            let expected = reference.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap();
+            assert_eq!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap(), expected);
+        }
+        assert_eq!(trace.rows.len(), 8);
+        assert_eq!(trace.diagnostic_repairs, [0; 2]);
+        assert_eq!(session.current_response(), response);
     }
 
     #[test]

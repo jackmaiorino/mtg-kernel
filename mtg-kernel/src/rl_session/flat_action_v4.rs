@@ -620,6 +620,28 @@ fn flat_visible_action_object_extension_aware_v4(
 }
 
 impl FastActorSessionV1 {
+    /// Evaluation diagnostics for a V4 actor must validate V4 references,
+    /// not require a V3 cache that its scorer deliberately does not use.
+    pub(crate) fn diagnostic_current_decision_input_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<ActionSemanticV1>), FlatActionDecisionSliceErrorV1> {
+        let current = self.current.as_ref()
+            .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
+        flat_validate_expected_decision_v1(self, current, expected)?;
+        let count = current.candidates.len();
+        let max_refs = count.checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?.max(256);
+        let mut actions = vec![FlatActionCoreV1::default(); count];
+        let mut refs = vec![FlatActionRefV2::default(); max_refs];
+        let mut objects = vec![FlatActionObjectV2::default(); max_refs];
+        self.encode_current_flat_action_slice_v4(expected, &mut FlatActionDecisionSliceBuffersV2 {
+            actions: &mut actions, refs: &mut refs, objects: &mut objects,
+        })?;
+        Ok((self.flat_policy_observation_v4(expected)?,
+            current.candidates.iter().map(|candidate| candidate.semantic.clone()).collect()))
+    }
+
     /// V4 sibling of `encode_current_flat_action_slice_v3`. Cache-free: it
     /// re-derives `(actions, refs, objects)` fresh from `current.candidates`
     /// every call, using [`flat_visible_action_object_v4`] in place of

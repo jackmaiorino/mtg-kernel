@@ -45,6 +45,13 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             .map_err(|error| format!("{error:?}"))
     }
 
+    pub(crate) fn diagnostic_visible_v4(
+        &self,
+    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<crate::rl::ActionSemanticV1>), String> {
+        self.session.diagnostic_current_decision_input_v4(self.decision)
+            .map_err(|error| format!("{error:?}"))
+    }
+
     /// Trusted BO3 recording uses the same bound actor projection as scoring.
     /// This deliberately does not expose the session or either hidden hand.
     pub(crate) fn capture_bo3_gameplay_v1(

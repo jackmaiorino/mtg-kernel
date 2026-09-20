@@ -268,10 +268,14 @@ mod evaluation_tests {
             assert!(diagnostic_repaired);
             assert_eq!(actions.len(), 2);
             diagnostics.push(serde_json::to_vec(&(observation, actions)).unwrap());
+            assert_eq!(*diagnostics.last().unwrap(),
+                serde_json::to_vec(&input.diagnostic_visible_v4().unwrap()).unwrap());
             let mut stale = decision;
             stale.step += 1;
             assert!(PairedBo1PolicyInputV1::new(&session, stale)
                 .diagnostic_visible_spell_adapter_v1().is_err());
+            assert!(PairedBo1PolicyInputV1::new(&session, stale)
+                .diagnostic_visible_v4().is_err());
             assert!(policy.select_paired_with_scores_v1(&input).is_err());
             let (action, scores, repaired) =
                 select_spell_adapter_v3_for_evaluation(&mut policy, &input).unwrap();
@@ -309,6 +313,8 @@ mod evaluation_tests {
         };
         let input = PairedBo1PolicyInputV1::new(&session, decision);
         let original_visible = input.diagnostic_visible_v1().unwrap();
+        assert_eq!(serde_json::to_vec(&original_visible).unwrap(),
+            serde_json::to_vec(&input.diagnostic_visible_v4().unwrap()).unwrap());
         let (observation, actions, repaired) = input.diagnostic_visible_spell_adapter_v1().unwrap();
         assert!(!repaired);
         assert_eq!(serde_json::to_vec(&original_visible).unwrap(),
