@@ -24,7 +24,7 @@ def prepare(root, binary):
     candidate, opponent = template["sources"]
     jobs = []
     cells = set()
-    for path in sorted((OLD / "configs").glob("*.json")):
+    for path in sorted((OLD / "configs").glob("*-p[01].json")):
         historical = read(path)
         seat = int(path.stem[-1])
         items = []
@@ -46,12 +46,19 @@ def prepare(root, binary):
     replay["matches"] = replay["matches"][:1]
     replay["output_directory"] = str(root / "replay")
     write(root / "replay-request.json", replay)
+    profile = read(ADAPTER / "failed-request.json")
+    profile["output_directory"] = str(root / "profile-replay")
+    write(root / "profile-replay-request.json", profile)
     write(root / "manifest.json", dict(binary=pin(root / binary.name), jobs=jobs,
         replay=pin(root / "replay-request.json"), qualification=pin(ADAPTER / "qualification.json"),
-        source_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        profile_replay=pin(root / "profile-replay-request.json"),
+        debug_reference=pin(ADAPTER / "failed/match-000000.json"),
+        runner_source_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        qualified_native_source_commit=read(ADAPTER / "failed/start.json")["git_head"],
         runner=pin(__file__), cells=sorted(cells),
         design=dict(question="Can a learned public-input model finish every canonical matchup in both seats with deterministic replay at useful release cost?",
-            unique_matches=98, executed_matches=99, workers=4, all_natural=True,
+            canonical_matches=98, executed_matches=100, workers=4, all_natural=True,
+            debug_release_failed_case_bytes_exact=True,
             replay_bytes_exact=True, first_job_projected_worker_seconds_limit=300,
             total_worker_seconds_limit=300, per_job_seconds_limit=180,
             projected_2352_match_seconds_limit=3600,
@@ -66,6 +73,10 @@ def run(root):
     def job(item):
         assert sha(item["request"]["path"]) == item["request"]["sha256"]
         return execute(root, item["label"], binary, Path(item["request"]["path"]))
+    assert sha(manifest["profile_replay"]["path"]) == manifest["profile_replay"]["sha256"]
+    execute(root, "profile-replay", binary, Path(manifest["profile_replay"]["path"]))
+    assert read(root / "profile-replay/start.json")["git_head"] == manifest["qualified_native_source_commit"]
+    assert sha(root / "profile-replay/match-000000.json") == manifest["debug_reference"]["sha256"], "release gameplay differs from debug qualification"
     first = job(manifest["jobs"][0])
     projected = first["seconds"] / 7 * 98
     write(root / "timing.json", dict(first_job_seconds=first["seconds"], projected_worker_seconds=projected, limit=300))
@@ -127,9 +138,14 @@ def analyze(root):
     b = root / "replay/match-000000.json"
     assert a.read_bytes() == b.read_bytes()
     projected = seconds / 98 * 2352
-    assert seconds + replay["seconds"] < 300 and projected < 3600
+    profile = read(root / "profile-replay.execution.json")
+    assert profile["exit_code"] == 0 and not profile["timeout"]
+    assert sha(root / "profile-replay/match-000000.json") == manifest["debug_reference"]["sha256"]
+    assert seconds + replay["seconds"] + profile["seconds"] < 300 and projected < 3600
     write(root / "qualification.json", dict(status="PUBLIC-CANONICAL-COVERAGE-ENGINEERING-PASS",
-        distinct_matches=98, executed_matches=99, natural_games=games,
+        canonical_matches=98, executed_matches=100, canonical_natural_games=games,
+        profile_replay_games=len(read(root / "profile-replay/match-000000.json")["games"]),
+        debug_release_failed_case_bytes_exact=True, profile_replay_seconds=profile["seconds"],
         replay_games=len(read(b)["games"]), decisions=decisions, scoring_repairs=repaired,
         sideboard_moves=moves, exact_fresh_process_replay=True,
         worker_seconds=seconds, replay_seconds=replay["seconds"],

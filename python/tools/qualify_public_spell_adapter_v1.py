@@ -2,9 +2,11 @@
 import argparse
 import copy
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 
 from qualify_public_evaluation_v1 import read, pin, sha, write, execute, CAMPAIGN
 
@@ -110,14 +112,38 @@ def analyze(root):
         assert (root/a/"match-000000.json").read_bytes()==(root/b/"match-000000.json").read_bytes()
     for key in ["games","outcome","seed_resets","decisions","decision_count"]:
         assert docs["valid-on"][key]==docs["valid-off"][key],key
+    serialization_changes=[]
     for label,original in [("failed","failed-case"),("valid-on","valid-control")]:
         old=read(OLD/f"outputs/{original}/match-000000.json")
-        for key in ["games","outcome","sideboard_decisions"]:assert old[key]==docs[label][key],(label,key)
+        for key in ["games","outcome"]:assert old[key]==docs[label][key],(label,key)
+        # SideboardGameResourceV1 declares exactly these two means as f32.
+        # Typed serialization writes the shortest f32 decimal; json! Value
+        # construction promotes that same f32 to f64 before serializing it.
+        # Compare their exact native bits, with no tolerance or other changes.
+        a,b=copy.deepcopy(old["sideboard_decisions"]),copy.deepcopy(docs[label]["sideboard_decisions"])
+        assert len(a)==len(b)
+        for index,(left,right) in enumerate(zip(a,b)):
+            lrows,rrows=left["input"]["resource_summaries"],right["input"]["resource_summaries"]
+            assert len(lrows)==len(rrows)
+            for row,(lrow,rrow) in enumerate(zip(lrows,rrows)):
+                for name in ["own_lands_mean","own_hand_mean"]:
+                    x,y=lrow[name],rrow[name]
+                    if x is None or y is None:
+                        assert x is None and y is None
+                        continue
+                    assert math.isfinite(x) and math.isfinite(y)
+                    xb,yb=struct.pack("<f",x).hex(),struct.pack("<f",y).hex()
+                    assert xb==yb,(label,index,row,name,x,y)
+                    if x!=y:serialization_changes.append(dict(case=label,decision=index,row=row,field=name,old=x,new=y,f32_bits_le=xb))
+                    lrow[name]=xb;rrow[name]=yb
+        assert a==b,(label,"sideboard_decisions")
     result=dict(status="PUBLIC-EVALUATOR-SPELL-REPAIR-ENGINEERING-PASS",executed_matches=len(docs),
         natural_games=sum(len(d["games"]) for d in docs.values()),decisions=sum(d["decision_count"] for d in docs.values()),
         repaired_decisions=sum(sum(d["v3_spell_target_repairs"]) for d in docs.values()),
         diagnostic_repairs=sum(sum(d["diagnostic_spell_target_repairs"]) for d in docs.values()),
         historical_gameplay_exact=True,valid_on_off_decisions_exact=True,two_fresh_replays_bytes_exact=True,
+        historical_sideboard_comparison="All fields exact; two schema-declared f32 resource means compared by exact bits",
+        serialization_changes=serialization_changes,
         process_seconds=sum(read(root/f"{label}.execution.json")["seconds"] for label in docs),
         non_claim="Local engineering verification, not playing-strength or promotion evidence.")
     write(root/"qualification.json",result);print(json.dumps(result,indent=2))
