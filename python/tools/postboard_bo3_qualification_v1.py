@@ -166,7 +166,7 @@ def audit_match(path, config, plans, allow_draws=False):
     for actual, expected in zip(match['explicit_registrations'], config['registered']):
         assert {k: actual[k] for k in ('label', 'mainboard', 'sideboard')} == expected
     assert match['games'][0]['mainboard_sha256'] == [r['mainboard_sha256'] for r in match['explicit_registrations']]
-    assert 'winner' in match['outcome'] and len(match['games']) >= 2
+    assert ('winner' in match['outcome'] or (allow_draws and match['outcome'] == 'draw')) and len(match['games']) >= 2
     # Native finish_natural_v1 rejects any capped/halted game before publication.
     assert allow_draws or all(g['winner'] is not None for g in match['games'])
     sideboard_games = set()
