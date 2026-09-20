@@ -14,16 +14,29 @@ pub(crate) struct PublicInputWeightsV1 {
 
 impl PublicInputWeightsV1 {
     pub(crate) fn new(object: Vec<f32>, state: Vec<f32>) -> Result<Self, NativePolicyValueErrorV1> {
-        exact_len("public_object_weights", object.len(), HIDDEN_DIM_V1 * OBJECT_WIDTH)?;
-        exact_len("public_state_weights", state.len(), HIDDEN_DIM_V1 * STATE_WIDTH)?;
+        exact_len(
+            "public_object_weights",
+            object.len(),
+            HIDDEN_DIM_V1 * OBJECT_WIDTH,
+        )?;
+        exact_len(
+            "public_state_weights",
+            state.len(),
+            HIDDEN_DIM_V1 * STATE_WIDTH,
+        )?;
         if object.iter().chain(&state).any(|v| !v.is_finite()) {
-            return Err(NativePolicyValueErrorV1::ParameterInvariant("public_weights_nonfinite"));
+            return Err(NativePolicyValueErrorV1::ParameterInvariant(
+                "public_weights_nonfinite",
+            ));
         }
         Ok(Self { object, state })
     }
 
     pub(crate) fn zero() -> Self {
-        Self { object: vec![0.0; HIDDEN_DIM_V1 * OBJECT_WIDTH], state: vec![0.0; HIDDEN_DIM_V1 * STATE_WIDTH] }
+        Self {
+            object: vec![0.0; HIDDEN_DIM_V1 * OBJECT_WIDTH],
+            state: vec![0.0; HIDDEN_DIM_V1 * STATE_WIDTH],
+        }
     }
 }
 
@@ -31,15 +44,30 @@ impl PublicInputWeightsV1 {
 pub(crate) struct NativePublicInputNetV1 {
     base: NativePolicyValueNetV1,
     weights: PublicInputWeightsV1,
+    inputs_enabled: bool,
 }
 
 impl NativePublicInputNetV1 {
-    pub(crate) fn new(base: NativePolicyValueNetV1, weights: PublicInputWeightsV1) -> Result<Self, NativePolicyValueErrorV1> {
+    pub(crate) fn new(
+        base: NativePolicyValueNetV1,
+        weights: PublicInputWeightsV1,
+    ) -> Result<Self, NativePolicyValueErrorV1> {
         base.validate_parameters_v1()?;
-        Ok(Self { base, weights })
+        Ok(Self {
+            base,
+            weights,
+            inputs_enabled: true,
+        })
     }
 
-    pub(crate) fn architecture(&self) -> &'static str { ARCHITECTURE }
+    pub(crate) fn architecture(&self) -> &'static str {
+        ARCHITECTURE
+    }
+
+    pub(crate) fn with_inputs_enabled(mut self, enabled: bool) -> Self {
+        self.inputs_enabled = enabled;
+        self
+    }
 
     /// Both arguments must describe the same validated actor decision. Auxiliary
     /// features are derived here, never accepted from hidden-state callers.
@@ -48,11 +76,34 @@ impl NativePublicInputNetV1 {
         encoded: NativeEncodedDecisionViewV1<'_>,
         observation: &ObservationV6,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let rows = from_actor_v4_v1(observation, encoded.object_card_ids).map_err(|_| {
+            NativePolicyValueErrorV1::ParameterInvariant("public_observation_contract")
+        })?;
+        self.forward_rows(encoded, &rows)
+    }
+
+    pub(crate) fn forward_rows(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        rows: &crate::public_cost_features_v1::PublicFeatureRowsV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.base.feature_transfer_config_v4())?;
-        let rows = from_actor_v4_v1(observation, encoded.object_card_ids)
-            .map_err(|_| NativePolicyValueErrorV1::ParameterInvariant("public_observation_contract"))?;
-        self.base.forward_public_validated_rows_v1(encoded, counts, None,
-            ForwardActivationModeV1::LibmTanh, Some((&self.weights, &rows)))
+        rows.validate_tokens(encoded.object_card_ids)
+            .map_err(|_| NativePolicyValueErrorV1::ParameterInvariant("public_row_alignment"))?;
+        let mut rows = rows.clone();
+        if !self.inputs_enabled {
+            rows.state.fill(0.0);
+            for row in &mut rows.objects {
+                row.fill(0.0);
+            }
+        }
+        self.base.forward_public_validated_rows_v1(
+            encoded,
+            counts,
+            None,
+            ForwardActivationModeV1::LibmTanh,
+            Some((&self.weights, &rows)),
+        )
     }
 }
 
@@ -78,7 +129,9 @@ pub(super) fn apply_optional_public_projection_v1(
                 addition += features[row * width + col] * weights[out * width + col];
             }
             // Preserve even a negative-zero legacy result at zero projection.
-            if addition != 0.0 { hidden[row * HIDDEN_DIM_V1 + out] += addition; }
+            if addition != 0.0 {
+                hidden[row * HIDDEN_DIM_V1 + out] += addition;
+            }
         }
     }
     tanh_in_place_v1(&mut hidden, activation);

@@ -56,6 +56,8 @@ const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 
 mod phase1_parallel_collection;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub mod public_features;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
 mod bootstrapped_advantage_v1;
 pub(crate) use bootstrapped_advantage_v1::{
@@ -78,9 +80,9 @@ fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod registry_transfer_source;
-pub use fresh_initialization_source::ExpandedFreshInitializationSourceV1;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
+pub use fresh_initialization_source::ExpandedFreshInitializationSourceV1;
 pub use registry_transfer_source::{
     ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
 };
@@ -1575,56 +1577,70 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         &t.feature_encoding_digest,
         &t.card_db_hash,
     )?;
-    let configs = t.episode.configurations()?;
+    validate_episode_records_v1(
+        &t.episode,
+        &t.configuration_sha256,
+        &t.decisions,
+        &t.terminal,
+    )
+}
+
+fn validate_episode_records_v1(
+    episode: &ExpandedEpisodeV1,
+    configuration_sha256: &[String; 2],
+    decisions: &[DecisionRecordV1],
+    terminal: &RlSessionTerminalV1,
+) -> Result<(), String> {
+    let configs = episode.configurations()?;
     ensure(
-        t.configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
+        *configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
         "selected deck hash differs",
     )?;
     ensure(
-        t.terminal.terminal_classification == TerminalClassificationV1::Natural,
+        terminal.terminal_classification == TerminalClassificationV1::Natural,
         "incomplete or halted trajectory",
     )?;
     ensure(
-        t.terminal.terminal_code == TerminalSafeCodeV2::NaturalGameOver
+        terminal.terminal_code == TerminalSafeCodeV2::NaturalGameOver
             && terminal_tuple_is_valid_v1(
-                t.terminal.terminal_outcome,
-                t.terminal.terminal_classification,
-                t.terminal.winner,
-                t.terminal.terminal_reward,
+                terminal.terminal_outcome,
+                terminal.terminal_classification,
+                terminal.winner,
+                terminal.terminal_reward,
             ),
         "terminal outcome, code and reward disagree",
     )?;
     ensure(
-        t.terminal.schema_version == RL_SESSION_SCHEMA_VERSION && t.terminal.episode_id == 1,
+        terminal.schema_version == RL_SESSION_SCHEMA_VERSION && terminal.episode_id == 1,
         "terminal schema or episode binding differs",
     )?;
     ensure(
-        t.terminal.deck_ids == t.episode.selected.each_ref().map(|d| d.label.clone())
-            && t.terminal.deck_hashes
+        terminal.deck_ids == episode.selected.each_ref().map(|d| d.label.clone())
+            && terminal.deck_hashes
                 == configs
                     .each_ref()
                     .map(|c| explicit_deck_hash_v1(c.mainboard())),
         "terminal deck binding differs",
     )?;
     ensure(
-        t.terminal.policy_step_count == t.decisions.len() as u64 && !t.decisions.is_empty(),
+        terminal.policy_step_count == decisions.len() as u64 && !decisions.is_empty(),
         "trajectory step count differs",
     )?;
-    let expected_rewards = match t.terminal.winner {
+    let expected_rewards = match terminal.winner {
         Some(PlayerSeatV1::P0) => [1, -1],
         Some(PlayerSeatV1::P1) => [-1, 1],
         None => [0, 0],
     };
     ensure(
-        t.terminal.terminal_reward == expected_rewards,
+        terminal.terminal_reward == expected_rewards,
         "terminal rewards contradict winner",
     )?;
     let mut physical = 0u64;
     let mut index = 0usize;
-    let mut rng = paired_policy_seeds_v1(t.episode.seed).map(SplitMix64::seed);
+    let mut rng = paired_policy_seeds_v1(episode.seed).map(SplitMix64::seed);
     let mut sampler = WideCategoricalScratchV1::default();
-    while index < t.decisions.len() {
-        let first = &t.decisions[index];
+    while index < decisions.len() {
+        let first = &decisions[index];
         ensure(
             first.physical_decision_id == physical
                 && first.substep_index == 0
@@ -1635,8 +1651,8 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         let end = index
             .checked_add(first.substep_count as usize)
             .ok_or("group length overflow")?;
-        ensure(end <= t.decisions.len(), "truncated physical decision")?;
-        for (substep, row) in t.decisions[index..end].iter().enumerate() {
+        ensure(end <= decisions.len(), "truncated physical decision")?;
+        for (substep, row) in decisions[index..end].iter().enumerate() {
             ensure(
                 row.step == (index + substep) as u64
                     && row.physical_decision_id == physical
@@ -1668,7 +1684,7 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         index = end;
     }
     ensure(
-        physical == t.terminal.physical_decision_count,
+        physical == terminal.physical_decision_count,
         "terminal physical count differs",
     )
 }
@@ -1682,7 +1698,11 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
 /// return, so a change in `episode_ordinal` between adjacent groups (or the
 /// end of the list) is exactly an episode boundary; nothing downstream may
 /// rely on its absolute value.
-type LearnerTensorGroupV1<'a> = (i8, usize, Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV2)>);
+type LearnerTensorGroupV1<'a> = (
+    i8,
+    usize,
+    Vec<(&'a DecisionRecordV1, NativeFlatDecisionTensorV2)>,
+);
 
 /// The trajectory's own recorded whole-pair generation, never a caller flag.
 /// `validate_trajectory` (called by every caller of this) already proved the
@@ -2252,14 +2272,13 @@ fn execute_update_v1(
     // Recompute all actor-visible rows, including opponent decisions,
     // before constructing learner groups. No private state is decoded.
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared =
-            ordered_update_preparation::prepare_v1(
-                &episodes,
-                &policy,
-                &learner,
-                workers,
-                max_prepared_tensor_mebibytes,
-            )?;
+        let prepared = ordered_update_preparation::prepare_v1(
+            &episodes,
+            &policy,
+            &learner,
+            workers,
+            max_prepared_tensor_mebibytes,
+        )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {
         let mut tensor_groups = Vec::new();

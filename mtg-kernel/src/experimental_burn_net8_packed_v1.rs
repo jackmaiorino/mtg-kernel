@@ -8,6 +8,7 @@
 pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
 mod training;
+pub(crate) use training::public_inputs as public_training;
 #[cfg(test)]
 mod v3_adapter_tests;
 

@@ -5,7 +5,9 @@ use crate::public_cost_features_v1::{
     catalog_v1, PublicFeatureRowsV1, OBJECT_WIDTH, SCHEMA, STATE_WIDTH,
 };
 
+mod bridge;
 pub(crate) mod snapshot;
+pub(crate) use bridge::{PublicTrainingGroup, PublicTrainingStep};
 #[cfg(test)]
 mod tests;
 
@@ -231,7 +233,7 @@ impl PublicDeviceTrainState {
         Ok((legacy, public))
     }
 
-    pub(crate) fn chunk_backward_gae(
+    fn chunk_backward_gae(
         &self,
         accumulator: &mut PublicGradientAccumulator,
         batch: &DevicePackedBatch<CudaAutodiffBackendV1>,

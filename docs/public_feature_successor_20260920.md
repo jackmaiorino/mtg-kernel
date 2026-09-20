@@ -66,4 +66,32 @@ The final ages are 32402 for legacy parameters and 2 for the new matrices. The r
 
 The final start suite passed three tests in 18.77 seconds; the fresh-process resume passed in 15.74 seconds; the legacy CUDA regression took 12.21 seconds. The final build took 46.40 seconds, after the first CUDA test build took 2m26s. These are debug qualification timings, not production training throughput. The actual targets and advantages were fixed synthetic numbers on real visible fixtures. No episodes were trained, no new candidate was selected, and no playing-strength result follows.
 
-The remaining implementation is the real collection/update loop: record auxiliary rows alongside each learner tensor from the same bound decision, derive GAE from terminal rewards with the existing grouping, install updated legacy/public parameters into the native play adapter, and persist complete iteration/resume provenance. Add a bridge that validates each V4 view and per-decision row alignment before packing and bounds chunk memory. Then qualify a few real updates and resumed rollout replay before freezing and launching a matched learning pilot. Do not treat the low-level CUDA core's synthetic qualification as that end-to-end qualification. Fable review remains unavailable as recorded above.
+The following qualification completes the real collection/update loop. The low-level CUDA core's synthetic qualification alone did not establish this. Fable review remains unavailable as recorded above.
+
+## Real terminal-reward collection, update and restart
+
+`public_feature_training_v1` now collects actual games with the successor, derives the existing terminal-reward GAE over complete learner physical decisions, updates on GPU 1, and installs both parameter sets before collecting the next batch. Both arms use the corrected observation runtime and padding guard. The control validates and records the same auxiliary rows, then zeros only the added inputs during scoring and training. The original features, terminal rewards and optimizer settings are identical.
+
+The separate trajectory schema `mtg-kernel-public-input-trajectory/v1` binds the collection configuration, full behavior optimizer state, opponent identity, learner tensor and public rows. The separate checkpoint schema `mtg-kernel-public-input-checkpoint/v1` binds the full configuration, next update, optimizer hash and episode hashes. Relative optimizer filenames make fresh-output-root replay possible without provenance normalization. No existing trajectory or inference loader is relabeled.
+
+Evidence: `E:/mtg-postboard-campaign-20260920/public-learning-engineering-001`. The source parent is `d232de0f`; `manifest.json` records the exact implementation-file hashes compiled before final formatting and tests. Frozen release binary SHA256: `60501745925b1f25204bc0aa0c952a3fd11d6abb53c6d3c1e4bec1ca43d10855`. The final changes after that build are formatting, a narrower internal method visibility and an added alignment rejection test. The frozen binary is preserved; the debug regression build checks the final code.
+
+| Real-game engineering check | Result |
+| --- | --- |
+| Two arms, four updates and eight games each | 8 distinct arm/update units, 16 arm/game units; all natural |
+| Structured arm repeated with restart after update 1 | 4 additional updates and 8 games; all natural |
+| First-update trajectories across arms | Equal after removing only configuration identity and the input-enabled flag |
+| Uninterrupted versus fresh-process restart | All four optimizer snapshots, checkpoints and all eight trajectories byte-identical |
+| Actual learner data per arm | 1,100 physical groups, 1,194 substeps, maximum group width 6 |
+| Control projections and both moments | Remain zero |
+| Structured cost and prevention projections | Both acquire nonzero weights |
+| Final Adam ages | Legacy 32404, public 4 |
+| Fixed timing gate | First update 21.70 seconds, projected four-update 86.80 seconds below 180 |
+| Actual process times | Control 29.01 seconds; structured 26.84; split replay 22.94 plus 23.94 |
+| Shared collection, replay and population regressions | Four passed; public catalogue/alignment tests two passed |
+
+`completion-audit.json` independently checks schedules, hashes, state chains, natural terminals, group boundaries, auxiliary alignment, counts and receipts. Final structured optimizer SHA256 is `09766f6c5d03023874bb6975b2b8a672d7b1a26a00a431769c5ac93fcbce4a9b`. Compilation took 8m15s for the first release binary and 1m09s for the debug regression build. Total native qualification process time was 102.73 seconds. Collection accounted for approximately 5.5 seconds per complete arm; update/replay/publication dominates this tiny workload.
+
+This is eight scheduled cases across three ordered matchups and both learner seats, all preboard against familiar A48. There are 86 learner decisions per arm with active public prevention and none with the cannot-prevent flag. The four-update endpoints are engineering artifacts, not selected candidates. No win-rate comparison, cost-versus-prevention attribution, held-out opponent result, sideboarding competence, human game or competitive-strength claim follows.
+
+Next: qualify successor checkpoint loading in the actual match evaluator, including nonzero projections and replay, before spending on a matched learning pilot. Then freeze training/evaluation schedules and analysis gates, start both learning arms from untouched g115, preserve canonical retention and evaluate against opposition outside the training pool. Compare corrected-runtime g115, the zero-input continuation and the structured continuation under the same evaluator. Do not reuse these four-update endpoints as pilot parents, substitute familiar-A48 engineering games for independent evaluation, or repeat the earlier failed broader-exposure pilot. No new paid compute or broad campaign is authorized. Fable's zero-read quota failure remains an explicit independent-review gap.
