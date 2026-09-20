@@ -172,6 +172,49 @@ mod tests {
         }
     }
 
+    /// Audit the current observation defect without changing the frozen V4
+    /// producer. This intentionally demonstrates aliasing, not correctness.
+    #[test]
+    #[ignore = "diagnostic for missing public Strands prevention; not an acceptance test"]
+    fn diagnostic_active_prevention_aliases_all_v4_tensors() {
+        use crate::event::{install_color_damage_prevention, propose_and_commit, ProposedEvent};
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let opponent = if actor == PlayerId::P0 { PlayerId::P1 } else { PlayerId::P0 };
+            let mut plain = ready_state();
+            plain.active_player = actor;
+            plain.priority_player = actor;
+            let strands = put(&mut plain, actor, "Prismatic Strands", Zone::Graveyard);
+            put(&mut plain, actor, "Sacred Cat", Zone::Battlefield);
+            let red = put(&mut plain, opponent, "Voldaren Epicure", Zone::Battlefield);
+            let mut protected = plain.clone();
+            install_color_damage_prevention(&mut protected, strands, ManaColor::R).unwrap();
+            assert_ne!(plain, protected);
+            let mut tensors = Vec::new();
+            let mut views = Vec::new();
+            for state in [plain.clone(), protected.clone()] {
+                let session = FastActorSessionV1::from_v3_fixture_state(state);
+                let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("expected live decision") };
+                views.push(crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, decision).diagnostic_visible_v1().unwrap());
+                let mut owned = OwnedScoringV4::default();
+                let encoded = owned.encode(&session).unwrap();
+                let mut tensor = NativeFlatDecisionTensorV4::default();
+                NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
+                tensors.push(tensor);
+            }
+            assert_eq!(views[0], views[1], "legacy observation/menu unexpectedly exposes prevention");
+            assert_eq!(tensors[0], tensors[1], "legacy native features unexpectedly expose prevention");
+            propose_and_commit(&mut plain, ProposedEvent::damage(red, Target::Player(actor), 5));
+            propose_and_commit(&mut protected, ProposedEvent::damage(red, Target::Player(actor), 5));
+            assert_eq!(plain.players[actor.index()].life, 15);
+            assert_eq!(protected.players[actor.index()].life, 20);
+            eprintln!("seat {}: identical visible observation/menu and all V4 tensors; same red damage leaves life 15 versus 20", actor.index());
+        }
+    }
+
     /// Hidden `ChooseTargets` fixture (item 14's regression list) driven
     /// through the V4 producer/registry/tensorizer end to end: the row
     /// produced must be a real `PendingTrigger { position: 0 }` historical
