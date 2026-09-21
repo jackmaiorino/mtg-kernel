@@ -1,4 +1,4 @@
-"""Evaluate both frozen entropy replicas together; analyze each independently."""
+"""Evaluate complete replica panels as available; interpret only after both finish."""
 import argparse
 import copy
 from pathlib import Path
@@ -11,7 +11,7 @@ from evaluation_throughput_v1 import require_choice
 from public_entropy_analysis_v1 import ARMS, bound_opponent, analyze
 
 
-def prepare(root, experiment):
+def prepare(root, experiment, only_replica=None):
     top = read(experiment / "manifest.json")
     assert top["training_games"] == 8000 and top["evaluation_bo3"] == 6144
     replicas, jobs, samples, assets = [], [], [], {}
@@ -22,6 +22,8 @@ def prepare(root, experiment):
     for pilot_pin in top["replicas"]:
         pilot = checked(pilot_pin).parent
         manifest = read(checked(pilot_pin))
+        if only_replica is not None and manifest["replica"] != only_replica:
+            continue
         training = read(pilot / "training-audit.json")
         assert training["complete"] and training["full_natural_games"] == 4000
         launch = read(pilot / "training-launch.json")
@@ -62,36 +64,46 @@ def prepare(root, experiment):
                 samples.append(sample)
         replicas.append(dict(replica=manifest["replica"], pilot=pilot_pin,
             training=pin(pilot / "training-audit.json"), binding=pin(pilot / "evaluation-binding.json"), endpoints=endpoints))
-    assert len(jobs) == len(samples) == 96
-    assert sum(len(job["command"]["matches"]) for job in jobs) == 6144
+    expected_jobs, expected_matches = 48 * len(replicas), 3072 * len(replicas)
+    assert len(replicas) in [1, 2] and len(jobs) == len(samples) == expected_jobs
+    assert sum(len(job["command"]["matches"]) for job in jobs) == expected_matches
     # Interleave replicas/endpoints to avoid assigning one condition wholesale
     # to the slower host under weighted deterministic dispatch.
     jobs.sort(key=lambda j: (j["label"], j["arm"], j["replica"]))
     samples.sort(key=lambda j: (j["label"], j["arm"], j["replica"]))
     root.mkdir()
     write(root / "plan.json", dict(experiment=pin(experiment / "manifest.json"), replicas=replicas,
-        binary=binary, jobs=jobs, qualification_jobs=samples, expected_matches=6144, expected_jobs=96,
+        binary=binary, jobs=jobs, qualification_jobs=samples, expected_matches=expected_matches, expected_jobs=expected_jobs,
         runner=pin(__file__), analysis=pin(Path(__file__).with_name("public_entropy_analysis_v1.py")),
         bootstrap_implementation=pin(Path(__file__).with_name("state_prevention_analysis_v1.py")),
         full_group_wall_cap_seconds=1800, projection_cap_seconds=1800,
-        qualification_matches=96, no_prefix_selection=True, no_paid_compute=True))
+        qualification_matches=len(samples), no_prefix_selection=True, no_paid_compute=True,
+        analysis_waits_for_both_replicas=True))
     remote = prepare_remote(root, list(assets.values()))
-    print(dict(prepared=str(root), matches=6144, qualification_matches=96, staging_seconds=remote["seconds"]), flush=True)
+    print(dict(prepared=str(root), matches=expected_matches, qualification_matches=len(samples), staging_seconds=remote["seconds"]), flush=True)
 
 
-def qualify(root):
+def qualify(root, evidence=None, reuse_choice=None):
     plan = read(root / "plan.json")
     for name in ["runner", "analysis", "bootstrap_implementation"]:
         checked(plan[name])
     remote = read(root / "remote-staging.json")
+    evidence = evidence or root
+    if evidence != root:
+        evidence.mkdir()
+    prior = None if reuse_choice is None else read(reuse_choice)
+    if prior:
+        assert prior["plan"] == pin(root / "plan.json") and prior["binary"] == plan["binary"]
     availability, stores = {}, {}
     for host, drives in [("jack", ["C", "D", "E"]), ("haleyspc", ["C"])]:
         snapshot = inventory(host)
-        assert not snapshot["active"], "preserve competing native owners"
-        path = root / f"{host}-inventory.json"
+        eligible = not snapshot["active"]
+        path = evidence / f"{host}-inventory.json"
         write(path, snapshot)
-        availability[host] = dict(checked_at=snapshot["at"], evidence=pin(path), eligible=True,
-            reason="Current idle native inventory; bounded BelowNormal CPU evaluation.")
+        availability[host] = dict(checked_at=snapshot["at"], evidence=pin(path), eligible=eligible,
+            reason="Current idle native inventory; bounded BelowNormal CPU evaluation." if eligible else "Active native owner recorded; preserve that work.")
+        if not eligible:
+            continue
         for drive in drives:
             stores[host, drive] = storage(snapshot, drive)
     cloud_path = Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
@@ -101,18 +113,29 @@ def qualify(root):
     def placement(host, drive, workers, weight=1):
         store = stores[host, drive]
         return dict(drive=drive, disk_serial=store["disk_serial"], disk_name=store["disk_name"], workers=workers, job_weight=weight)
-    cases = [(f"jack-{drive.lower()}-w{count}", dict(jack=placement("jack", drive, count)))
-             for drive in ["C", "D", "E"] for count in [1, 16]]
-    cases += [("jack-d-w24", dict(jack=placement("jack", "D", 24)))]
-    cases += [(f"haley-w{count}", dict(haleyspc=placement("haleyspc", "C", count))) for count in [1, 8, 16]]
-    cases += [(f"both-weight{weight}", dict(jack=placement("jack", "D", 24, weight),
-        haleyspc=placement("haleyspc", "C", 16))) for weight in [1, 3]]
-    write(root / "qualification-design.json", dict(plan=pin(root / "plan.json"), cases=cases,
-        matches_per_case=96, maximum_executed_matches=1152, group_wall_seconds=300,
+    cases = []
+    if availability["jack"]["eligible"]:
+        cases += [(f"jack-{drive.lower()}-w{count}", dict(jack=placement("jack", drive, count)))
+                  for drive in ["C", "D", "E"] for count in [1, 16]]
+        cases += [("jack-d-w24", dict(jack=placement("jack", "D", 24)))]
+    if availability["haleyspc"]["eligible"]:
+        cases += [(f"haley-w{count}", dict(haleyspc=placement("haleyspc", "C", count))) for count in [1, 8, 16]]
+    if availability["jack"]["eligible"] and availability["haleyspc"]["eligible"]:
+        cases += [(f"both-weight{weight}", dict(jack=placement("jack", "D", 24, weight),
+            haleyspc=placement("haleyspc", "C", 16))) for weight in [1, 3]]
+    assert cases, "no currently eligible host"
+    count = len(plan["qualification_jobs"])
+    write(evidence / "qualification-design.json", dict(plan=pin(root / "plan.json"), cases=cases,
+        matches_per_case=count, maximum_executed_matches=count*len(cases), group_wall_seconds=300,
+        reused_choice=None if reuse_choice is None else pin(reuse_choice),
         first_serial_cap_seconds=180, no_outcome_selection=True))
     candidates, projections, reference = [], {}, None
     for label, allocation in cases:
-        result_pin = dispatch(root, label, plan["binary"], plan["qualification_jobs"], allocation, remote, 300)
+        old = next((item for item in prior["candidates"] if item["id"] == label), None) if prior else None
+        if old is not None and read(checked(old["report"]))["allocation"] == allocation:
+            result_pin = old["report"]
+        else:
+            result_pin = dispatch(evidence, label, plan["binary"], plan["qualification_jobs"], allocation, remote, 300)
         result = read(checked(result_pin))
         assert reference is None or reference == result["fingerprints"], "placement changed gameplay"
         reference = result["fingerprints"]
@@ -125,27 +148,31 @@ def qualify(root):
         inventory=availability, eligible_storage=[(host, drive, value["disk_serial"]) for (host, drive), value in stores.items()],
         remote_setup_seconds=remote["seconds"], candidates=candidates, selected=min(projections, key=projections.get),
         dependencies=[pin(Path(__file__).with_name(n)) for n in ["public_evaluation_dispatch_v1.py", "public_evaluation_dispatch_v2.py", "evaluation_throughput_v1.py"]])
-    write(root / "compute-choice.json", choice)
-    selected = require_choice(root / "compute-choice.json", pin(root / "plan.json"), plan["binary"])
-    write(root / "qualification.json", dict(complete=True, selected=selected, projections=projections,
-        qualification_matches=1152, unique_cases=96, exact_match_file_comparisons=1056))
+    write(evidence / "compute-choice.json", choice)
+    selected = require_choice(evidence / "compute-choice.json", pin(root / "plan.json"), plan["binary"])
+    write(evidence / "qualification.json", dict(complete=True, selected=selected, projections=projections,
+        qualification_matches=count*len(cases), unique_cases=count, exact_match_file_comparisons=count*(len(cases)-1)))
 
 
-def run(root):
+def run(root, compute=None):
     plan = read(root / "plan.json")
     for name in ["runner", "analysis", "bootstrap_implementation"]:
         checked(plan[name])
-    qualification = read(root / "qualification.json")
-    selected = require_choice(root / "compute-choice.json", pin(root / "plan.json"), plan["binary"])
+    compute = compute or root
+    qualification = read(compute / "qualification.json")
+    selected = require_choice(compute / "compute-choice.json", pin(root / "plan.json"), plan["binary"])
     assert qualification["complete"] and selected == qualification["selected"]
     assert selected["projected_seconds"] < plan["projection_cap_seconds"]
-    write(root / "launch.json", dict(plan=pin(root / "plan.json"), choice=pin(root / "compute-choice.json"),
-        qualification=pin(root / "qualification.json"), selected=selected))
+    choice = read(compute / "compute-choice.json")
+    fresh = {host: inventory(host) for host in ["jack", "haleyspc"]}
+    assert all(snapshot["active"] or choice["inventory"][host]["eligible"] for host, snapshot in fresh.items()), "availability expanded: qualify newly available hosts before launch"
+    write(root / "launch.json", dict(plan=pin(root / "plan.json"), choice=pin(compute / "compute-choice.json"),
+        qualification=pin(compute / "qualification.json"), selected=selected, current_inventory=fresh))
     result_pin = dispatch(root, "full-panel", plan["binary"], plan["jobs"], selected["allocation"],
                           read(root / "remote-staging.json"), plan["full_group_wall_cap_seconds"])
     result = read(checked(result_pin))
-    assert result["matches"] == 6144 and len(result["jobs"]) == 96
-    analyses = []
+    assert result["matches"] == plan["expected_matches"] and len(result["jobs"]) == plan["expected_jobs"]
+    outputs = []
     for replica in plan["replicas"]:
         pilot = checked(replica["pilot"]).parent
         jobs = [job for job in result["jobs"] if job["id"].startswith(f"r{replica['replica']}-")]
@@ -153,7 +180,31 @@ def run(root):
         path = root / f"replica-{replica['replica']}-evaluation.json"
         write(path, dict(pilot=replica["pilot"], binding=replica["binding"], endpoints=replica["endpoints"],
             jobs=jobs, dispatch=result_pin, launch=pin(root / "launch.json")))
-        analyze(pilot, path)
+        outputs.append(pin(path))
+        write(pilot / "evaluation-completion.json", dict(complete=True, matches=3072,
+            evaluation=pin(path), plan=pin(root / "plan.json"), outcome_analysis_performed=False))
+    write(root / "completion.json", dict(complete=True, matches=result["matches"], evaluations=outputs,
+        dispatch=result_pin, outcome_analysis_performed=False))
+    print(dict(complete=True, matches=result["matches"], analysis="held until both replicas complete"), flush=True)
+
+
+def analyze_both(root, experiment):
+    top = read(experiment / "manifest.json")
+    assert len(top["replicas"]) == 2 and top["evaluation_bo3"] == 6144
+    pending = []
+    for item in top["replicas"]:
+        pilot = checked(item).parent
+        completion = read(pilot / "evaluation-completion.json")
+        assert completion["complete"] and completion["matches"] == 3072
+        evaluation = checked(completion["evaluation"])
+        plan = read(checked(completion["plan"]))
+        for key in ["analysis", "bootstrap_implementation"]:
+            checked(plan[key])
+        pending.append((pilot, evaluation))
+    root.mkdir()
+    analyses = []
+    for pilot, evaluation in pending:
+        analyze(pilot, evaluation)
         analyses.append(pin(pilot / "analysis.json"))
     both_pass = all(read(checked(item))["verdict"] == "REPLICA-PASS" for item in analyses)
     write(root / "result.json", dict(complete=True, matches=6144, analyses=analyses,
@@ -163,15 +214,20 @@ def run(root):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["prepare", "qualify", "run"])
+    parser.add_argument("mode", choices=["prepare", "qualify", "run", "analyze"])
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--experiment", type=Path)
+    parser.add_argument("--replica", type=int, choices=[1, 2])
+    parser.add_argument("--compute", type=Path)
+    parser.add_argument("--reuse-choice", type=Path)
     args = parser.parse_args()
     if not __debug__:
         raise RuntimeError("run with Python validation enabled")
     if args.mode == "prepare":
-        prepare(args.root, args.experiment)
+        prepare(args.root, args.experiment, args.replica)
     elif args.mode == "qualify":
-        qualify(args.root)
+        qualify(args.root, args.compute, args.reuse_choice)
+    elif args.mode == "run":
+        run(args.root, args.compute)
     else:
-        run(args.root)
+        analyze_both(args.root, args.experiment)
