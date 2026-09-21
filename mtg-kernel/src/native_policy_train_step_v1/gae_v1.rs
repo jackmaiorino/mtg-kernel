@@ -100,6 +100,7 @@ impl NativePolicyValueTrainStateV1 {
             learning_rate,
             BackwardExecutionV1::Sequential,
             input_config,
+            false,
         )
     }
 
@@ -122,6 +123,7 @@ impl NativePolicyValueTrainStateV1 {
             learning_rate,
             BackwardExecutionV1::Sequential,
             input_config,
+            false,
         )
     }
 
@@ -151,6 +153,29 @@ impl NativePolicyValueTrainStateV1 {
                 worker_limit: backward_worker_limit,
             },
             input_config,
+            false,
+        )
+    }
+
+    /// Explicit supervised imitation seam. Unit coefficients give mean
+    /// selected-action cross entropy; no value target is fitted. This does not
+    /// relax the positive value-coefficient contract of any GAE entry point.
+    pub(crate) fn train_step_terminal_winner_imitation_v4(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        learning_rate: f32,
+        backward_worker_limit: usize,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let input_config = self.model.feature_transfer_config_v4();
+        self.train_step_gae_with_input_config_v1(
+            groups,
+            &vec![0.0; groups.len()],
+            &vec![1.0; groups.len()],
+            0.0,
+            learning_rate,
+            BackwardExecutionV1::FixedPartitions { worker_limit: backward_worker_limit },
+            input_config,
+            true,
         )
     }
 
@@ -163,9 +188,10 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         backward_execution: BackwardExecutionV1,
         input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
-        if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
+        if !value_coefficient.is_finite() || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0)) {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {

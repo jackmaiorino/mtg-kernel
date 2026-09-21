@@ -59,7 +59,10 @@ pub fn run(command:Command)->Result<Value,String> {
     let groups:Vec<_>=substeps.iter().map(|substeps|NativePolicyPhysicalDecisionV1{substeps,
         terminal_return:if command.target_permuted {0} else {1},baseline_bits:0}).collect();
     let coefficients=vec![1f32;groups.len()];let unused_value_targets=vec![0f32;groups.len()];
-    let update=state.train_step_gae_feature_transfer_v4_fixed_partition_v1(&groups,&unused_value_targets,&coefficients,0.0,0.0001,command.workers).map_err(err)?;
+    let ordinary_rejection=state.train_step_gae_feature_transfer_v4_fixed_partition_v1(&groups,&unused_value_targets,&coefficients,0.0,0.0001,command.workers);
+    ensure(matches!(ordinary_rejection,Err(crate::native_policy_train_step_v1::NativePolicyTrainErrorV1::InvalidValueCoefficient)),"ordinary GAE zero-value guard changed")?;
+    ensure(hex(&state.state_sha256_v1().map_err(err)?)==before_state,"rejected GAE update mutated optimizer")?;
+    let update=state.train_step_terminal_winner_imitation_v4(&groups,0.0001,command.workers).map_err(err)?;
     let expected=before.iter().map(|r|r["target_cross_entropy"].as_f64().unwrap()).sum::<f64>()/before.len() as f64;
     ensure((update.loss as f64-expected).abs()<=1e-4+1e-5*expected.abs(),"imitation loss differs from direct cross entropy")?;
     let snapshot=state.snapshot_v1().map_err(err)?;
