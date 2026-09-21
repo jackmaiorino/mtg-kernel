@@ -35,7 +35,9 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
             && t.episode.learner_seat < 2 && ids.insert(t.episode.id.clone()),
             "natural audit archive identity differs")?;
         let opponent_is_parent = serde_json::to_value(&t.episode.opponent).map_err(err)? == serde_json::to_value(&c.source).map_err(err)?;
-        let archived_opponent = if opponent_is_parent { None } else { Some(initialize(&t.episode.opponent)?.0) };
+        let archived_opponent = if opponent_is_parent { None } else {
+            Some(initialize(t.episode.opponent.as_ref().ok_or("archive lacks opponent source")?)?.0)
+        };
         let mut rows = Vec::new();
         let mut exact = 0;
         let mut exact_opponent = 0;
