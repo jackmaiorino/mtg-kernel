@@ -16,6 +16,8 @@ Independent Fable review remains unavailable after the known zero-read429 untilS
 
 ## Completed qualification, September 21, 09:25 EDT
 
+**Timing correction, September21 09:34EDT:** a subsequent live inventory found Kimi's Cargo build started during the final `b-w10` case. `public-stack-compute-001/timing-contamination-correction.json` records the process creation and overlapping native executions. Saved-file parity remains valid, but the selected37.06-minute placement forecast is withdrawn pending an uncontended remeasurement. Do not launch using this original compute-choice. The guard checked ownership before each group but did not reject owners starting during the group. Future qualification must check ownership afterward as well. Original receipts and reported projections below remain preserved as historical observations, not accepted allocation evidence.
+
 `E:/mtg-meta-recovery-20260921/public-stack-compute-001/result.json` passes the production allocation and storage guards. All 570 engineering game executions completed naturally: 30 cheap timing executions plus six 90-game cases. These repeat 90 unique arm/seed slots, not 570 independent strength observations. All 540 cross-allocation saved trajectory/checkpoint/optimizer comparisons are exact; the cheap first-update outputs also match. All seven archive receipts report zero mismatches. Controller session56329 ended with exit0; fresh local and remote process checks found no remaining qualification trainer or worker.
 
 | Collectors per learner | A projected minutes | B projected minutes |

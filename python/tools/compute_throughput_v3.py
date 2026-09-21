@@ -23,6 +23,9 @@ def queued_makespan(placements, executions, projections):
 
 
 def require_allocation(path, binary_sha256, job_configs):
+    revocation = Path(path).parent / 'qualification-revocation.json'
+    if revocation.exists():
+        raise ValueError('qualification revoked: ' + read(revocation)['reason'])
     plan = read(path)
     if plan.get("schema") != "public-training-allocation/v3":
         raise ValueError("unsupported allocation schema")
