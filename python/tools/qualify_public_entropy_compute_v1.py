@@ -35,7 +35,7 @@ def audit(report):
                 optimizer_continuation=True, checkpoint_trajectory_links_verified=True)
 
 
-def run(root, pilot):
+def run(root, pilot, reuse=None):
     if not __debug__:
         raise RuntimeError("run with Python validation enabled")
     m = read(pilot / "manifest.json")
@@ -44,6 +44,13 @@ def run(root, pilot):
     assert set(configs) == {"control", "entropy"}
     for item in [binary, m["runner"], m["design"], *configs.values()]:
         checked(item)
+    prior = None
+    if reuse is not None:
+        prior = read(reuse / "manifest.json")
+        assert prior["pilot"] == pin(pilot / "manifest.json") and prior["binary"] == binary
+        assert prior["configs"] == configs and prior["prefix_updates"] == 3
+        for item in prior["dependencies"]:
+            checked(item)
     root.mkdir()
     cuda = Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8")
     os.environ["CUDA_PATH"] = str(cuda)
@@ -86,13 +93,22 @@ def run(root, pilot):
         prefix_updates=3, games_per_case=60, maximum_executed_games=540, unique_arm_games=60,
         native_process_cap_seconds=300, remaining_case_launch_budget_seconds=1200,
         archive_scheme=ARCHIVE, full_training_launched=False,
+        reused_completed_cases_from=None if reuse is None else pin(reuse / "manifest.json"),
         non_claim="Fixed-prefix engineering, no outcome selection. Same config hashes required by full launch guard."))
     started = time.monotonic()
     candidates, projections, reference, learning = [], {}, {}, {}
     comparisons = 0
     for label, store, placements, mode in cases:
         assert time.monotonic() - started < 1200, "qualification launch budget exhausted"
-        group_pin = dispatch(root / f"{root.name}-{label}", binary, configs, placements, store, 3, mode=mode)
+        old_group = None if reuse is None else reuse / f"{reuse.name}-{label}/group-benchmark.json"
+        if old_group is not None and old_group.is_file():
+            previous_case = next(case for case in prior["cases"] if case["id"] == label)
+            assert previous_case["placements"] == placements and previous_case["mode"] == mode
+            assert previous_case["storage"]["disk_serial"] == store["disk_serial"]
+            group_pin = pin(old_group)
+        else:
+            # No incomplete case is imported. Fresh roots preserve any prior failure.
+            group_pin = dispatch(root / f"{root.name}-{label}", binary, configs, placements, store, 3, mode=mode)
         group = read(checked(group_pin))
         times = []
         for arm, report in reports(group_pin).items():
@@ -131,5 +147,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--pilot", type=Path, required=True)
+    parser.add_argument("--reuse-complete", type=Path)
     args = parser.parse_args()
-    run(args.root, args.pilot)
+    run(args.root, args.pilot, args.reuse_complete)
