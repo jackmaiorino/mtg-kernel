@@ -13,16 +13,27 @@ from run_state_prevention_training_v1 import snapshot
 from public_entropy_analysis_v1 import statistical_checks, bound_opponent
 
 
-def audit(group_pin, manifest, root):
+def audit(group_pin, manifest, root, remote_only=False):
     group = read(checked(group_pin))
     assert set(group["jobs"]) == {"control", "entropy"}
-    archived = read(checked(group["archive"]))
-    assert archived["mismatches"] == 0
-    for shard in archived["shards"]:
-        checked(shard["archive"])
+    if remote_only:
+        recovery_path = checked(group_pin).parent / "haleyspc/recovery-verification.json"
+        archived = read(recovery_path)
+        assert archived["mismatches"] == 0
+        archive = recovery_path.parent / "results.zip"
+        assert pin(archive)["sha256"] == archived["archive"]["zip_sha256"]
+        archive_pin = pin(recovery_path)
+    else:
+        archived = read(checked(group["archive"]))
+        assert archived["mismatches"] == 0
+        for shard in archived["shards"]:
+            checked(shard["archive"])
+        archive_pin = group["archive"]
     arms = {}
     for arm, report_pin in group["jobs"].items():
         report = read(checked(report_pin))
+        if remote_only:
+            assert report["placement"]["host"] == "haleyspc"
         assert report["config"] == manifest["training_configs"][arm]
         execution = read(checked(report["execution"]))
         assert execution["exit_code"] == 0 and not execution["timeout"]
@@ -54,7 +65,7 @@ def audit(group_pin, manifest, root):
             assert pins[field]["sha256"] == original["sha256"]
         arms[arm] = dict(complete=True, updates=200, natural_games=2000, legacy_adam_step=32600,
             public_adam_step=200, **pins, report=report_pin, seconds=execution["seconds"], placement=report["placement"])
-    return dict(complete=True, full_natural_games=4000, arms=arms, group=group_pin, archive=group["archive"],
+    return dict(complete=True, full_natural_games=4000, arms=arms, group=group_pin, archive=archive_pin,
         non_claim="Completed learning only. Do not select or claim strength before both complete independent BO3 panels.")
 
 
