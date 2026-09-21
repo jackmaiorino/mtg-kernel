@@ -377,6 +377,11 @@ pub fn load_expanded_inference_v1(
     {
         return crate::phase1_bo3_learning_v1::load_bo3_inference_v1(source);
     }
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(stack_features::terminal_tactics::learning::campaign::TEACHER_INFERENCE_SCHEMA)
+    {
+        return stack_features::terminal_tactics::learning::campaign::load_teacher_inference(source);
+    }
     let (policy, state) = initialize(source)?;
     let receipt = inference_identity_v1(source, &policy, &state)?;
     Ok((policy, receipt))

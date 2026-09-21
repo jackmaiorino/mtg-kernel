@@ -48,6 +48,91 @@ struct Model {
     state_hash: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TeacherInferenceSource {
+    schema: String,
+    contract: Contract,
+    playing_arm: String,
+}
+
+/// Restore the actual equal128 checkpoint through the existing strict reader.
+/// Retain its CE identity and full Adam ancestry; never admit the wrong-label
+/// semantic control as a playing source or reinterpret this as an RL update.
+pub(super) fn load_teacher_inference(
+    source: &ExpandedModelSourceV1,
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    let descriptor: TeacherInferenceSource =
+        serde_json::from_slice(&read_pinned_bytes(&source.play_import)?).map_err(err)?;
+    ensure(
+        descriptor.schema == TEACHER_INFERENCE_SCHEMA
+            && descriptor.contract.budget.is_some()
+            && matches!(descriptor.playing_arm.as_str(), "unretained" | "retained"),
+        "teacher inference requires a correct-label equal128 endpoint",
+    )?;
+    ensure(
+        source.feature_transfer == descriptor.contract.source.feature_transfer,
+        "teacher inference feature transfer differs",
+    )?;
+    let models = load(&descriptor.contract)?;
+    let model = models.into_iter().find(|m| m.label == descriptor.playing_arm)
+        .ok_or("teacher inference arm missing")?;
+    ensure(source.checkpoint.is_some() && same(&source.checkpoint, &model.checkpoint)?,
+        "teacher inference checkpoint pin differs")?;
+    let identity = inference_identity_v1(source, &model.policy, &model.state)?;
+    ensure(identity.state_sha256 == model.state_hash && identity.adam_step == 32528,
+        "teacher inference restored state differs")?;
+    Ok((model.policy, identity))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherInferenceCheck {
+    source: ExpandedModelSourceV1,
+    output_directory: PathBuf,
+}
+
+/// Bounded engineering check through the public inference entry point. Only
+/// the already consumed 32 teaching tensors are read, never a held-out panel.
+pub(super) fn teacher_inference_check(c: TeacherInferenceCheck) -> Result<Value, String> {
+    let (policy, identity) = load_expanded_inference_v1(&c.source)?;
+    let descriptor: TeacherInferenceSource =
+        serde_json::from_slice(&read_pinned_bytes(&c.source.play_import)?).map_err(err)?;
+    let models = load(&descriptor.contract)?;
+    let reference = models.iter().find(|m| m.label == descriptor.playing_arm)
+        .ok_or("teacher inference reference missing")?;
+    ensure(identity.model == reference.policy.actual_model_identity_v1()
+        && identity.state_sha256 == reference.state_hash
+        && identity.adam_step == reference.state.adam_step_v1(),
+        "teacher inference identity differs from evaluator")?;
+    ensure(initialize(&c.source).is_err(),
+        "ordinary training unexpectedly accepts teacher inference source")?;
+    let data: Value = serde_json::from_slice(
+        &read_pinned_bytes(&descriptor.contract.teacher)?).map_err(err)?;
+    let rows = data["records"].as_array().ok_or("missing teacher records")?;
+    ensure(rows.len() == 32, "teacher inference check requires32 training rows")?;
+    let mut records = Vec::new();
+    for row in rows {
+        let t: TensorBitsV1 = serde_json::from_value(row["data"]["tensor"].clone()).map_err(err)?;
+        let tensor = NativeFlatDecisionTensorV4 { common: t.tensor() };
+        let actual = policy.score_training_tensor_v4(&tensor)?;
+        let expected = reference.policy.score_training_tensor_v4(&tensor)?;
+        ensure(bits(&actual.logits) == bits(&expected.logits)
+            && actual.value.to_bits() == expected.value.to_bits(),
+            "teacher inference scores differ from evaluator")?;
+        records.push(json!({"id":row["id"],"logits_bits":bits(&actual.logits),
+            "value_bits":actual.value.to_bits()}));
+    }
+    unchanged(&models)?;
+    let result = json!({"schema":"terminal-teacher-inference-check/v1","complete":true,
+        "source":c.source,"identity":identity,"playing_arm":descriptor.playing_arm,
+        "positions":32,"updates":0,"new_games":0,"ordinary_training_rejected":true,
+        "records":records,"non_claim":"Loader parity only; no whole-match or human-strength evidence."});
+    fs::create_dir(&c.output_directory).map_err(err)?;
+    publish_json(&c.output_directory, "result.json", &result)?;
+    Ok(result)
+}
+
 fn same<T: Serialize>(a: &T, b: &T) -> Result<bool, String> {
     Ok(serde_json::to_value(a).map_err(err)? == serde_json::to_value(b).map_err(err)?)
 }
