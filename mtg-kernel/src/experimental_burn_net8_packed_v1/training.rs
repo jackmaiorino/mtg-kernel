@@ -28,6 +28,7 @@ use std::fmt::{Display, Formatter};
 use std::process::Command;
 
 pub(crate) mod public_inputs;
+pub(crate) mod entropy;
 
 type CudaAutodiffBackendV1 = Autodiff<CudaBackendV1>;
 

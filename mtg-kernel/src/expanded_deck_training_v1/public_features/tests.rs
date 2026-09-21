@@ -22,6 +22,32 @@ fn config() -> Config {
         gpu_ordinal: 1,
         max_chunk_substeps: 128,
         projection_mode: ProjectionMode::All,
+        entropy_coefficient: 0.0,
+    }
+}
+
+#[test]
+fn public_entropy_preserves_zero_config_and_rejects_invalid_values() {
+    let old = config();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let mut wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(wire.get("entropy_coefficient").is_none());
+    for coefficient in [0.0_f32, -0.0] {
+        wire["entropy_coefficient"] = json!(coefficient);
+        let parsed: Config = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_vec(&parsed).unwrap(), bytes);
+        validate_entropy(&parsed).unwrap();
+    }
+    for coefficient in [0.01, 0.05, 1.0] {
+        let mut changed = old.clone();
+        changed.entropy_coefficient = coefficient;
+        validate_entropy(&changed).unwrap();
+        assert_ne!(serde_json::to_vec(&changed).unwrap(), bytes);
+    }
+    for coefficient in [-0.1, 1.01, f32::NAN, f32::INFINITY] {
+        let mut invalid = old.clone();
+        invalid.entropy_coefficient = coefficient;
+        assert!(validate_entropy(&invalid).is_err());
     }
 }
 

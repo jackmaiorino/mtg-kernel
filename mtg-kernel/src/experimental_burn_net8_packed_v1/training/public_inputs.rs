@@ -241,6 +241,7 @@ impl PublicDeviceTrainState {
         plan: &DenseGroupLossPlanGaeV1,
         value_coefficient: f32,
         normalization_group_count: f32,
+        entropy_coefficient: f32,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
         let auxiliary = PublicBatch::upload(rows, batch)?;
         let model = PublicModel {
@@ -250,12 +251,13 @@ impl PublicDeviceTrainState {
         let (logits, values) = model.forward(batch, &auxiliary);
         let logit_outputs = logits.clone().inner();
         let value_outputs = values.clone().inner();
-        let loss = dense_group_loss_gae_v1(
+        let loss = entropy::dense_group_loss_with_entropy(
             logits,
             values,
             plan,
             value_coefficient,
             normalization_group_count,
+            entropy_coefficient,
         )?;
         let mut gradients = GradientsParams::from_grads(loss.backward(), &model);
         if batch.empty_relations_v3 {

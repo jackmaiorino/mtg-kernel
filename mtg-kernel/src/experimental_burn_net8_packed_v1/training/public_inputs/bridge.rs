@@ -20,6 +20,7 @@ impl PublicDeviceTrainState {
         advantages: &[f32],
         learning_rate: f32,
         value_coefficient: f32,
+        entropy_coefficient: f32,
         inputs_enabled: bool,
         object_inputs_enabled: bool,
         max_chunk_substeps: usize,
@@ -116,6 +117,7 @@ impl PublicDeviceTrainState {
                 &plan,
                 value_coefficient,
                 groups.len() as f32,
+                entropy_coefficient,
             )?;
             let close = |actual: f32, bits: u32| {
                 actual.is_finite()

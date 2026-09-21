@@ -207,6 +207,7 @@ fn public_cuda_g115_update_and_fresh_process_resume() {
                 &plan,
                 0.5,
                 samples.len() as f32,
+                0.0,
             )
             .unwrap();
         if step == 1 {
@@ -323,6 +324,7 @@ fn public_cuda_g115_update_and_fresh_process_resume() {
                 &plan,
                 0.5,
                 samples.len() as f32,
+                0.0,
             )
             .unwrap();
         dummy.apply(accumulator, 0.0001).unwrap();

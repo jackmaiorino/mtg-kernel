@@ -43,6 +43,21 @@ pub struct Config {
     /// Omitted default preserves every prior serialized configuration/hash.
     #[serde(default, skip_serializing_if = "ProjectionMode::is_all")]
     pub projection_mode: ProjectionMode,
+    /// A learning-only opt-in. Zero preserves all prior config bytes/hashes.
+    #[serde(default, skip_serializing_if = "entropy_is_zero")]
+    pub entropy_coefficient: f32,
+}
+
+fn entropy_is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
+
+fn validate_entropy(config: &Config) -> Result<(), String> {
+    ensure(
+        config.entropy_coefficient.is_finite()
+            && (0.0..=1.0).contains(&config.entropy_coefficient),
+        "public entropy coefficient must be finite in [0,1]",
+    )
 }
 
 #[derive(Deserialize)]
@@ -120,6 +135,7 @@ pub(crate) fn load_for_evaluation(
     checkpoint_pin: &PinnedFileV1,
 ) -> Result<(PublicInputPlayPolicyV1, Value), String> {
     let config: Config = serde_json::from_slice(&read_pinned_bytes(config_pin)?).map_err(err)?;
+    validate_entropy(&config)?;
     let checkpoint: Checkpoint =
         serde_json::from_slice(&read_pinned_bytes(checkpoint_pin)?).map_err(err)?;
     let config_hash = sha(&serde_json::to_vec(&config).map_err(err)?);
@@ -361,6 +377,7 @@ fn collect_parallel(
 
 pub fn run(command: Command) -> Result<Value, String> {
     let config = &command.config;
+    validate_entropy(config)?;
     let execution_gpu_ordinal = command.execution_gpu_ordinal.unwrap_or(config.gpu_ordinal);
     ensure(execution_gpu_ordinal < 16, "execution GPU ordinal outside bounds")?;
     ensure(
@@ -589,6 +606,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 &advantages,
                 config.learning_rate,
                 config.value_coefficient,
+                config.entropy_coefficient,
                 config.inputs_enabled,
                 config.projection_mode == ProjectionMode::All,
                 config.max_chunk_substeps,

@@ -9,6 +9,7 @@ pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
 mod training;
 pub(crate) use training::public_inputs as public_training;
+pub use training::entropy::run_gradient_probe as run_public_entropy_gradient_probe_v1;
 #[cfg(test)]
 mod v3_adapter_tests;
 
