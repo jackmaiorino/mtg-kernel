@@ -55,6 +55,10 @@ pub struct Command {
     /// Execution placement only; excluded from the scientific config hash.
     #[serde(default = "default_collector_workers")]
     pub collector_workers: usize,
+    /// Explicit execution placement; preserves the frozen scientific config.
+    /// Omission retains its original device assignment.
+    #[serde(default)]
+    pub execution_gpu_ordinal: Option<usize>,
 }
 
 fn default_collector_workers() -> usize {
@@ -357,6 +361,8 @@ fn collect_parallel(
 
 pub fn run(command: Command) -> Result<Value, String> {
     let config = &command.config;
+    let execution_gpu_ordinal = command.execution_gpu_ordinal.unwrap_or(config.gpu_ordinal);
+    ensure(execution_gpu_ordinal < 16, "execution GPU ordinal outside bounds")?;
     ensure(
         (1..=64).contains(&command.collector_workers),
         "public collector count outside bounds",
@@ -441,7 +447,7 @@ pub fn run(command: Command) -> Result<Value, String> {
     let mut device = PublicDeviceTrainState::import(
         &legacy,
         &public,
-        &burn_cuda::CudaDevice::new(config.gpu_ordinal),
+        &burn_cuda::CudaDevice::new(execution_gpu_ordinal),
     )
     .map_err(err)?;
     fs::create_dir(&command.output_directory).map_err(err)?;
@@ -621,13 +627,13 @@ pub fn run(command: Command) -> Result<Value, String> {
             trajectory_sha256: trajectory_hashes,
         };
         publish_json(&directory, "checkpoint.json", &checkpoint)?;
-        let receipt = json!({"update":update,"episodes":trajectories.len(),"natural_games":trajectories.len(),"learner_groups":groups.len(),"learner_substeps":steps.iter().map(Vec::len).sum::<usize>(),
+        let receipt = json!({"update":update,"execution_gpu_ordinal":execution_gpu_ordinal,"collector_workers":command.collector_workers,"episodes":trajectories.len(),"natural_games":trajectories.len(),"learner_groups":groups.len(),"learner_substeps":steps.iter().map(Vec::len).sum::<usize>(),
             "physical_decisions":trajectories.iter().map(|t|t.terminal.physical_decision_count).sum::<u64>(),"before_state_sha256":before,"after_state_sha256":optimizer_hash,
             "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step,"advantage_statistics":statistics,"collection_seconds":collection_seconds,"seconds":started.elapsed().as_secs_f64()});
         publish_json(&directory, "receipt.json", &receipt)?;
         receipts.push(receipt);
     }
-    let result = json!({"schema":"mtg-kernel-public-input-run/v1","config_sha256":config_hash,"first_update":first_update,"next_update":last,"receipts":receipts,
+    let result = json!({"schema":"mtg-kernel-public-input-run/v1","execution_gpu_ordinal":execution_gpu_ordinal,"collector_workers":command.collector_workers,"config_sha256":config_hash,"first_update":first_update,"next_update":last,"receipts":receipts,
         "non_claim":"Bounded local continuation only; no evaluation, promotion or human-strength claim."});
     publish_json(&command.output_directory, "completion.json", &result)?;
     Ok(result)

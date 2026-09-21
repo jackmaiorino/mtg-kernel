@@ -67,3 +67,27 @@ fn public_projection_mode_rejects_masked_parameters_and_moments() {
     config.inputs_enabled = false;
     assert!(validate_projection_mode(&config, &learned).is_err());
 }
+
+#[test]
+fn public_execution_device_preserves_config_and_legacy_default() {
+    let source = config();
+    let bytes = serde_json::to_vec(&source).unwrap();
+    let mut wire =
+        json!({"config":source,"output_directory":"test-output","resume":null,"stop_after":1});
+    let original: Command = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(original.execution_gpu_ordinal, None);
+    assert_eq!(
+        original
+            .execution_gpu_ordinal
+            .unwrap_or(original.config.gpu_ordinal),
+        1
+    );
+    for device in [0, 1] {
+        wire["execution_gpu_ordinal"] = json!(device);
+        let placed: Command = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(placed.execution_gpu_ordinal, Some(device));
+        assert_eq!(serde_json::to_vec(&placed.config).unwrap(), bytes);
+    }
+    wire["execution_gpu_ordinal"] = json!(-1);
+    assert!(serde_json::from_value::<Command>(wire).is_err());
+}
