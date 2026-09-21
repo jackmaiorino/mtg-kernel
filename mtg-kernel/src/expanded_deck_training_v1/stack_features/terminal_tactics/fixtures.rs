@@ -11,7 +11,11 @@ use crate::state::{Counters,GameObject,GameState,ObjectStateV4,Step,Zone};
 pub struct Command {
     pub source: ExpandedModelSourceV1,
     pub output_directory: PathBuf,
+    #[serde(default)]
+    pub combat_controls: bool,
 }
+
+mod combat;
 
 fn put(state:&mut GameState,owner:PlayerId,name:&str,zone:Zone)->ObjectId {
     let card_def=card_id_by_name(name).expect("declared fixture card");
@@ -45,6 +49,7 @@ fn fixture(card:&str,damage:i32,artifacts:usize,actor:u8,hidden:bool)->Result<Fa
 }
 
 pub fn run(command:Command)->Result<Value,String> {
+    if command.combat_controls {return combat::run(command);}
     let (mut policy,_)=initialize(&command.source)?;
     let mut records=Vec::new();
     for (card,damage,artifacts) in [("Lightning Bolt",3,0),("Lava Dart",1,0),("Galvanic Blast",2,0),("Galvanic Blast",4,3)] {
