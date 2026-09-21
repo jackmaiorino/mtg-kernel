@@ -21,6 +21,8 @@ pub struct Command {
     pub teacher_dataset: bool,
     #[serde(default)]
     pub retention_validation: bool,
+    #[serde(default)]
+    pub equal_budget_validation: bool,
 }
 
 mod combat;
@@ -61,8 +63,8 @@ fn fixture(card:&str,damage:i32,artifacts:usize,actor:u8,hidden:bool)->Result<Fa
 }
 
 pub fn run(command:Command)->Result<Value,String> {
-    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset,command.retention_validation].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
-    if command.retention_validation {return retention_validation::run(command);}
+    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset,command.retention_validation,command.equal_budget_validation].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    if command.retention_validation || command.equal_budget_validation {return retention_validation::run(command);}
     if command.teacher_dataset {return teacher_data::run(command);}
     if command.forced_loss_controls {return forced_loss::run(command);}
     if command.lethal_distractor_controls {return distractor::run(command);}

@@ -3,7 +3,17 @@ use super::*;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct BudgetContract {
+    predecessors: BTreeMap<String,PinnedFileV1>,
+    semantic_design: PinnedFileV1,
+    semantic_checkpoint: PinnedFileV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Contract {
+    #[serde(default)]
+    budget: Option<BudgetContract>,
     source: ExpandedModelSourceV1,
     teacher: PinnedFileV1,
     retention: PinnedFileV1,
@@ -75,16 +85,52 @@ fn load(c: &Contract) -> Result<Vec<Model>,String> {
     let template=parent_state.snapshot_v1().map_err(err)?;
     let mut models=vec![Model {label:"g115".into(),checkpoint:None,state_hash:hex(&parent_state.state_sha256_v1().map_err(err)?),policy:parent,state:parent_state}];
     let mut arms=BTreeSet::new();
+    if let Some(b)=&c.budget {
+        ensure(b.predecessors.keys().map(String::as_str).collect::<BTreeSet<_>>()==BTreeSet::from(["unretained","retained","semantic"]),"equal budget predecessor set differs")?;
+        read_pinned_bytes(&b.semantic_design)?;
+    }
     for pin in &c.checkpoints {
         let saved:retained_campaign::Saved=serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
         let s=&saved.checkpoint;
-        ensure(matches!(saved.arm.as_str(),"unretained"|"retained"|"semantic") && arms.insert(saved.arm.clone())
-            && same(&saved.labels,&c.labels)? && same(&saved.design,&c.design)?
+        let label=if c.budget.is_some() && saved.arm=="semantic_retained" {"semantic"} else {saved.arm.as_str()};
+        let lineage=if let Some(b)=&c.budget {
+            let predecessor=b.predecessors.get(label).ok_or("equal budget endpoint arm differs")?;
+            let old:retained_campaign::Saved=serde_json::from_slice(&read_pinned_bytes(predecessor)?).map_err(err)?;
+            let t=&old.checkpoint;
+            read_pinned_bytes(&old.design)?;
+            ensure(old.arm==label && old.predecessor.is_none() && old.trajectory.is_none()
+                && same(&old.labels,&c.labels)? && same(&old.retention_dataset,&Some(c.retention.clone()))?
+                && old.selected_rows==selected && same(&t.source,&c.source)? && same(&t.dataset,&c.teacher)?
+                && t.schema==retained_campaign::RETAINED_SCHEMA && t.loss_identity==retained_campaign::RETAINED_LOSS
+                && t.initial_adam==32400 && t.completed_updates==32 && t.adam_step==32432
+                && t.target_permuted==(label=="semantic") && t.backend=="cpu" && t.device_ordinal==0,
+                "equal budget predecessor contract differs")?;
+            let predecessor_state=NativePolicyValueTrainSnapshotV1 {
+                parameters:restore_parameters(&t.parameters,&template.parameters)?,
+                first_moments:restore_parameters(&t.first_moments,&template.first_moments)?,
+                second_moments:restore_parameters(&t.second_moments,&template.second_moments)?,
+                adam_step:t.adam_step,scorer_bias_anchor_bits:t.scorer_bias_anchor_bits,
+            };
+            ensure(hex(&predecessor_state.state_sha256_v1().map_err(err)?)==t.state_sha256,"equal budget predecessor state hash differs")?;
+            same(&saved.predecessor,&Some(predecessor.clone()))?
+                && s.completed_updates==128 && s.adam_step==32528
+                && if label=="semantic" {
+                    same(pin,&b.semantic_checkpoint)? && same(&saved.design,&b.semantic_design)?
+                    && s.schema=="terminal-semantic-budget-diagnostic/v1" && s.loss_identity=="terminal-semantic-ce-fixed128-budget/v1"
+                } else {
+                    same(&saved.design,&c.design)? && s.schema==retained_campaign::EQUAL_SCHEMA && s.loss_identity==retained_campaign::EQUAL_LOSS
+                }
+        } else {
+            saved.predecessor.is_none() && same(&saved.design,&c.design)?
+                && s.schema==retained_campaign::RETAINED_SCHEMA && s.loss_identity==retained_campaign::RETAINED_LOSS
+                && s.completed_updates==32 && s.adam_step==32432
+        };
+        ensure(matches!(label,"unretained"|"retained"|"semantic") && arms.insert(label.to_string())
+            && lineage && same(&saved.labels,&c.labels)?
             && saved.trajectory.is_none() && same(&saved.retention_dataset,&Some(c.retention.clone()))?
             && saved.selected_rows==selected && same(&s.source,&c.source)? && same(&s.dataset,&c.teacher)?
-            && s.schema==retained_campaign::RETAINED_SCHEMA && s.loss_identity==retained_campaign::RETAINED_LOSS
-            && s.completed_updates==32 && s.initial_adam==32400 && s.adam_step==32432
-            && s.target_permuted==(saved.arm=="semantic") && s.backend=="cpu" && s.device_ordinal==0,
+            && s.initial_adam==32400
+            && s.target_permuted==(label=="semantic") && s.backend=="cpu" && s.device_ordinal==0,
             "retained evaluation endpoint contract differs")?;
         let snapshot=NativePolicyValueTrainSnapshotV1 {
             parameters:restore_parameters(&s.parameters,&template.parameters)?,
@@ -96,7 +142,7 @@ fn load(c: &Contract) -> Result<Vec<Model>,String> {
         let (mut policy,original)=initialize(&c.source)?;
         let state=NativePolicyValueTrainStateV1::from_snapshot_v1(original.model_v1().clone(),&snapshot).map_err(err)?;
         policy.replace_training_parameters_v3(&snapshot.parameters)?;
-        models.push(Model {label:saved.arm,checkpoint:Some(pin.clone()),policy,state,state_hash:s.state_sha256.clone()});
+        models.push(Model {label:label.to_string(),checkpoint:Some(pin.clone()),policy,state,state_hash:s.state_sha256.clone()});
     }
     Ok(models)
 }

@@ -3,6 +3,9 @@ use super::*;
 use crate::native_policy_train_step_v1::retention_v1::{RetentionGroupV1, RetentionRowV1};
 
 pub(super) const RETAINED_SCHEMA: &str = "terminal-retained-campaign/v1";
+pub(super) const EQUAL_SCHEMA: &str = "terminal-equal-budget-continuation/v1";
+pub(super) const EQUAL_LOSS: &str = "terminal-correct-ce-retention-fixed128/v1";
+
 pub(super) const RETAINED_LOSS: &str = "terminal-ce-plus-parent-forward-kl-three-arm/v1";
 
 
@@ -76,7 +79,7 @@ fn qualify(c:&Train,diagnostic:bool,budget:bool)->Result<(),String> {
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(err)?.as_secs_f64();
     let at=q["checked_unix"].as_f64().ok_or("missing retention qualification time")?;
     let exe=std::env::current_exe().map_err(err)?;
-    let schema=if budget {"semantic-budget-diagnostic-compute/v1"} else if diagnostic {"semantic-retention-diagnostic-compute/v1"} else {"retained-teacher-compute/v1"};
+    let schema=if budget && !diagnostic {"terminal-equal-budget-compute/v1"} else if budget {"semantic-budget-diagnostic-compute/v1"} else if diagnostic {"semantic-retention-diagnostic-compute/v1"} else {"retained-teacher-compute/v1"};
     ensure(q["schema"]==schema && q["complete"]==true && q["replay_verified"]==true && now>=at && now-at<86400.0
         && q["binary_sha256"]==sha(&fs::read(exe).map_err(err)?) && q["dataset_sha256"]==c.dataset.sha256
         && q["retention_sha256"]==c.retention_dataset.as_ref().unwrap().sha256 && q["labels_sha256"]==c.labels.sha256
@@ -99,6 +102,10 @@ pub(super) fn budget_diagnostic(c: Train) -> Result<Value, String> {
     run_inner(c,true,true,false)
 }
 
+pub(super) fn equal_budget(c: Train) -> Result<Value,String> {
+    run_inner(c,false,true,false)
+}
+
 pub(super) fn publication_replay(c: Train) -> Result<Value,String> {
     run_inner(c,true,true,true)
 }
@@ -108,15 +115,15 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,publication_replay:bool) -> Re
         && c.replay_reference.is_some()==publication_replay,"checkpoint publication contract differs")?;
     ensure(!publication_replay || (c.resume.is_some() && c.end_update==49),"publication replay requires fixed47/48-to49 state")?;
     let reference:Option<Saved>=c.replay_reference.as_ref().map(|p|serde_json::from_slice(&read_pinned_bytes(p)?).map_err(err)).transpose()?;
-    let valid_arm=if diagnostic {matches!(c.arm.as_str(),"semantic_unretained"|"semantic_retained")} else {matches!(c.arm.as_str(),"unretained"|"retained"|"semantic")};
+    let valid_arm=if budget && !diagnostic {matches!(c.arm.as_str(),"unretained"|"retained")} else if diagnostic {matches!(c.arm.as_str(),"semantic_unretained"|"semantic_retained")} else {matches!(c.arm.as_str(),"unretained"|"retained"|"semantic")};
     let valid_end=if publication_replay {c.end_update==49} else if budget {matches!(c.end_update,33|34|128)} else {(1..=2).contains(&c.end_update)||c.end_update==32};
     ensure(matches!(c.workers,1|4) && valid_arm && valid_end && c.predecessor.is_some()==budget,"retained campaign bounds differ")?;
     ensure(budget || !diagnostic || c.arm!="semantic_retained" || c.end_update<=2,"reuse the completed retained semantic baseline")?;
     ensure(c.trajectory.is_none() && c.retention_dataset.is_some(),"retained campaign requires pinned full retention data")?;
     let beta=if matches!(c.arm.as_str(),"unretained"|"semantic_unretained") {0.0} else {0.5};
     let control=diagnostic || c.arm=="semantic";
-    let schema=if budget {"terminal-semantic-budget-diagnostic/v1"} else if diagnostic {"terminal-semantic-retention-diagnostic/v1"} else {RETAINED_SCHEMA};
-    let loss=if budget {"terminal-semantic-ce-fixed128-budget/v1"} else if diagnostic {"terminal-semantic-ce-retention-ablation/v1"} else {RETAINED_LOSS};
+    let schema=if budget && !diagnostic {EQUAL_SCHEMA} else if budget {"terminal-semantic-budget-diagnostic/v1"} else if diagnostic {"terminal-semantic-retention-diagnostic/v1"} else {RETAINED_SCHEMA};
+    let loss=if budget && !diagnostic {EQUAL_LOSS} else if budget {"terminal-semantic-ce-fixed128-budget/v1"} else if diagnostic {"terminal-semantic-ce-retention-ablation/v1"} else {RETAINED_LOSS};
     if publication_replay {read_pinned_bytes(&c.design)?;} else {qualify(&c,diagnostic,budget)?;}
     let labels:Value=serde_json::from_slice(&read_pinned_bytes(&c.labels)?).map_err(err)?;
     ensure(labels["schema"]=="terminal-semantic-teacher-labels/v1" && labels["training"]==serde_json::to_value(&c.dataset).map_err(err)? && labels["parent_source"]==serde_json::to_value(&c.source).map_err(err)?,"retained labels identity differs")?;
@@ -163,7 +170,7 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,publication_replay:bool) -> Re
         let root=budget && c.resume.is_none();
         let identity=if root {
             read_pinned_bytes(&saved.design)?;
-            let old=if beta==0.0 {("semantic_unretained","terminal-semantic-retention-diagnostic/v1","terminal-semantic-ce-retention-ablation/v1")}
+            let old=if !diagnostic {(c.arm.as_str(),RETAINED_SCHEMA,RETAINED_LOSS)} else if beta==0.0 {("semantic_unretained","terminal-semantic-retention-diagnostic/v1","terminal-semantic-ce-retention-ablation/v1")}
                 else {("semantic",RETAINED_SCHEMA,RETAINED_LOSS)};
             saved.arm==old.0 && s.schema==old.1 && s.loss_identity==old.2 && saved.predecessor.is_none() && s.completed_updates==32
         } else {
