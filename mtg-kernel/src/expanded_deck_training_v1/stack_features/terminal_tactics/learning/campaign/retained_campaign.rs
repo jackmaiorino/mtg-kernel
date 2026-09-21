@@ -59,14 +59,15 @@ pub(super) fn semantic_target(actions:&[Value],actor:u8,winner:usize)->Result<us
     Ok(order[(index+1)%order.len()])
 }
 
-fn qualify(c:&Train)->Result<(),String> {
+fn qualify(c:&Train,diagnostic:bool)->Result<(),String> {
     read_pinned_bytes(&c.design)?;
     if c.end_update<=2 {return Ok(());}
     let q:Value=serde_json::from_slice(&read_pinned_bytes(c.qualification.as_ref().ok_or("qualified retention throughput receipt required")?)?).map_err(err)?;
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(err)?.as_secs_f64();
     let at=q["checked_unix"].as_f64().ok_or("missing retention qualification time")?;
     let exe=std::env::current_exe().map_err(err)?;
-    ensure(q["schema"]=="retained-teacher-compute/v1" && q["complete"]==true && q["replay_verified"]==true && now>=at && now-at<86400.0
+    let schema=if diagnostic {"semantic-retention-diagnostic-compute/v1"} else {"retained-teacher-compute/v1"};
+    ensure(q["schema"]==schema && q["complete"]==true && q["replay_verified"]==true && now>=at && now-at<86400.0
         && q["binary_sha256"]==sha(&fs::read(exe).map_err(err)?) && q["dataset_sha256"]==c.dataset.sha256
         && q["retention_sha256"]==c.retention_dataset.as_ref().unwrap().sha256 && q["labels_sha256"]==c.labels.sha256
         && q["design_sha256"]==c.design.sha256 && q["source"]==serde_json::to_value(&c.source).map_err(err)?,"retention throughput receipt incompatible")?;
@@ -75,11 +76,23 @@ fn qualify(c:&Train)->Result<(),String> {
 }
 
 pub(super) fn run(c: Train) -> Result<Value, String> {
-    ensure(matches!(c.workers,1|4) && matches!(c.arm.as_str(),"unretained"|"retained"|"semantic") && ((1..=2).contains(&c.end_update)||c.end_update==32),"retained campaign bounds differ")?;
+    run_inner(c,false)
+}
+
+pub(super) fn diagnostic(c: Train) -> Result<Value, String> {
+    run_inner(c,true)
+}
+
+fn run_inner(c: Train,diagnostic:bool) -> Result<Value, String> {
+    let valid_arm=if diagnostic {matches!(c.arm.as_str(),"semantic_unretained"|"semantic_retained")} else {matches!(c.arm.as_str(),"unretained"|"retained"|"semantic")};
+    ensure(matches!(c.workers,1|4) && valid_arm && ((1..=2).contains(&c.end_update)||c.end_update==32),"retained campaign bounds differ")?;
+    ensure(!diagnostic || c.arm!="semantic_retained" || c.end_update<=2,"reuse the completed retained semantic baseline")?;
     ensure(c.trajectory.is_none() && c.retention_dataset.is_some(),"retained campaign requires pinned full retention data")?;
-    let beta=if c.arm=="unretained" {0.0} else {0.5};
-    let control=c.arm=="semantic";
-    qualify(&c)?;
+    let beta=if matches!(c.arm.as_str(),"unretained"|"semantic_unretained") {0.0} else {0.5};
+    let control=diagnostic || c.arm=="semantic";
+    let schema=if diagnostic {"terminal-semantic-retention-diagnostic/v1"} else {RETAINED_SCHEMA};
+    let loss=if diagnostic {"terminal-semantic-ce-retention-ablation/v1"} else {RETAINED_LOSS};
+    qualify(&c,diagnostic)?;
     let labels:Value=serde_json::from_slice(&read_pinned_bytes(&c.labels)?).map_err(err)?;
     ensure(labels["schema"]=="terminal-semantic-teacher-labels/v1" && labels["training"]==serde_json::to_value(&c.dataset).map_err(err)? && labels["parent_source"]==serde_json::to_value(&c.source).map_err(err)?,"retained labels identity differs")?;
     let labels=labels["records"].as_array().ok_or("missing semantic labels")?;
@@ -121,7 +134,7 @@ pub(super) fn run(c: Train) -> Result<Value, String> {
     if let Some(pin) = &c.resume {
         let saved: Saved = serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
         let s = &saved.checkpoint;
-        ensure(saved.arm==c.arm && same(&saved.labels,&c.labels)? && same(&saved.design,&c.design)? && s.schema == RETAINED_SCHEMA && s.loss_identity == RETAINED_LOSS && same(&s.source, &c.source)? && same(&s.dataset, &c.dataset)? && same(&saved.trajectory, &c.trajectory)? && same(&saved.retention_dataset,&c.retention_dataset)? && saved.selected_rows == selected && s.target_permuted==control && s.backend == "cpu" && s.device_ordinal == 0 && s.initial_adam == initial_adam && s.completed_updates>0 && s.completed_updates<32 && s.adam_step == initial_adam + s.completed_updates as u64, "retained resume contract differs")?;
+        ensure(saved.arm==c.arm && same(&saved.labels,&c.labels)? && same(&saved.design,&c.design)? && s.schema == schema && s.loss_identity == loss && same(&s.source, &c.source)? && same(&s.dataset, &c.dataset)? && same(&saved.trajectory, &c.trajectory)? && same(&saved.retention_dataset,&c.retention_dataset)? && saved.selected_rows == selected && s.target_permuted==control && s.backend == "cpu" && s.device_ordinal == 0 && s.initial_adam == initial_adam && s.completed_updates>0 && s.completed_updates<32 && s.adam_step == initial_adam + s.completed_updates as u64, "retained resume contract differs")?;
         let template = state.snapshot_v1().map_err(err)?;
         let snapshot = NativePolicyValueTrainSnapshotV1 { parameters: restore_parameters(&s.parameters, &template.parameters)?, first_moments: restore_parameters(&s.first_moments, &template.first_moments)?, second_moments: restore_parameters(&s.second_moments, &template.second_moments)?, adam_step: s.adam_step, scorer_bias_anchor_bits: s.scorer_bias_anchor_bits };
         ensure(hex(&snapshot.state_sha256_v1().map_err(err)?) == s.state_sha256, "retained resume state hash differs")?;
@@ -153,13 +166,27 @@ pub(super) fn run(c: Train) -> Result<Value, String> {
         completed += 1; let snapshot = state.snapshot_v1().map_err(err)?;
         ensure(snapshot.adam_step == initial_adam + completed as u64, "retained Adam age differs")?;
         policy.replace_training_parameters_v3(&snapshot.parameters)?;
-        let saved = Saved { arm:c.arm.clone(),labels:c.labels.clone(),design:c.design.clone(),trajectory:c.trajectory.clone(), retention_dataset:c.retention_dataset.clone(), selected_rows:selected.clone(), checkpoint: Checkpoint { schema:RETAINED_SCHEMA.into(), loss_identity:RETAINED_LOSS.into(), source:c.source.clone(), dataset:c.dataset.clone(), target_permuted:control, backend:"cpu".into(), device_ordinal:0, completed_updates:completed, initial_adam, adam_step:snapshot.adam_step, scorer_bias_anchor_bits:snapshot.scorer_bias_anchor_bits, state_sha256:hex(&snapshot.state_sha256_v1().map_err(err)?), parameters:snapshot.parameters.iter().map(ParameterBitsV1::from_native).collect(), first_moments:snapshot.first_moments.iter().map(ParameterBitsV1::from_native).collect(), second_moments:snapshot.second_moments.iter().map(ParameterBitsV1::from_native).collect() }};
+        let saved = Saved { arm:c.arm.clone(),labels:c.labels.clone(),design:c.design.clone(),trajectory:c.trajectory.clone(), retention_dataset:c.retention_dataset.clone(), selected_rows:selected.clone(), checkpoint: Checkpoint { schema:schema.into(), loss_identity:loss.into(), source:c.source.clone(), dataset:c.dataset.clone(), target_permuted:control, backend:"cpu".into(), device_ordinal:0, completed_updates:completed, initial_adam, adam_step:snapshot.adam_step, scorer_bias_anchor_bits:snapshot.scorer_bias_anchor_bits, state_sha256:hex(&snapshot.state_sha256_v1().map_err(err)?), parameters:snapshot.parameters.iter().map(ParameterBitsV1::from_native).collect(), first_moments:snapshot.first_moments.iter().map(ParameterBitsV1::from_native).collect(), second_moments:snapshot.second_moments.iter().map(ParameterBitsV1::from_native).collect() }};
         publish_json(&c.output_directory,&format!("checkpoint-{completed:03}.json"),&saved)?;
         timings.push(tick.elapsed().as_secs_f64());
         updates.push(json!({"update":completed,"teacher_loss":result.teacher_loss,"retention_kl":result.retention_kl,"weighted_retention_loss":result.weighted_retention_loss,"loss":result.loss,"state_sha256":saved.checkpoint.state_sha256}));
     }
     ensure(original_hash == hex(&original.state_sha256_v1().map_err(err)?), "retained original mutated")?;
-    let mut result = json!({"schema":RETAINED_SCHEMA,"complete":true,"initial_state":original_hash,"final_state":hex(&state.state_sha256_v1().map_err(err)?),"initial_adam":initial_adam,"final_adam":state.adam_step_v1(),"completed_updates":completed,"updates":updates,"selected_rows":selected,"arm":c.arm,"beta":beta,"teacher_positions":32,"retention_physical_groups":retained.len(),"retention_rows":retained.iter().map(Vec::len).sum::<usize>(),"evaluation_positions_read":0,"non_claim":"Frozen terminal imitation continuation; completed training is not playing-strength evidence."});
+    let mut result = json!({"schema":schema,"complete":true,"initial_state":original_hash,"final_state":hex(&state.state_sha256_v1().map_err(err)?),"initial_adam":initial_adam,"final_adam":state.adam_step_v1(),"completed_updates":completed,"updates":updates,"selected_rows":selected,"arm":c.arm,"beta":beta,"teacher_positions":32,"retention_physical_groups":retained.len(),"retention_rows":retained.iter().map(Vec::len).sum::<usize>(),"evaluation_positions_read":0,"non_claim":"Frozen terminal imitation continuation; completed training is not playing-strength evidence."});
+    if diagnostic {
+        let mut fit=Vec::new();let mut sampler=WideCategoricalScratchV1::default();
+        for (i,t) in teaching.iter().enumerate() {
+            let s=policy.score_training_tensor_v4(t)?;
+            let mut best=0;for j in 1..s.logits.len(){if s.logits[j]>s.logits[best]{best=j;}}
+            let masses=sampler.apportion(&s.logits).map_err(err)?;
+            ensure(masses.iter().sum::<u128>()==(1u128<<64),"diagnostic probability mass differs")?;
+            fit.push(json!({"id":rows[i]["id"],"spec":rows[i]["spec"],"target":targets[i],"argmax":best,"correct":best==targets[i],
+                "cross_entropy":cross_entropy(&s.logits,targets[i]),"logits_bits":bits(&s.logits),"value_bits":s.value.to_bits(),
+                "probabilities":masses.iter().map(|&m|m as f64/18446744073709551616.0).collect::<Vec<_>>()}));
+        }
+        result["training_fit"]=json!(fit);
+        result["non_claim"]=json!("Training-only semantic-control optimization diagnostic; no validation, candidate promotion or playing-strength claim.");
+    }
     if let Some(pin)=&c.retention_dataset {
         result["retention_dataset"]=json!(pin);result["parent_score_replay_rows"]=json!(parent_score_replay_rows);
     }

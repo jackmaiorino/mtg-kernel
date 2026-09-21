@@ -9,7 +9,7 @@ mod retained_evaluation;
 
 #[derive(Deserialize)]
 #[serde(tag="mode",rename_all="snake_case",deny_unknown_fields)]
-pub enum Command { Train(Train), Evaluate(Evaluate), TrainingDiagnostic(Evaluate), NaturalAudit(natural_audit::Command), RetainedEngineering(retained_engineering::Command), RetentionDataCheck(retention_data::Command), RetainedTrain(retained_campaign::Train), RetainedEvaluate(retained_evaluation::Fixtures), RetainedNatural(retained_evaluation::Natural) }
+pub enum Command { Train(Train), Evaluate(Evaluate), TrainingDiagnostic(Evaluate), NaturalAudit(natural_audit::Command), RetainedEngineering(retained_engineering::Command), RetentionDataCheck(retention_data::Command), RetainedTrain(retained_campaign::Train), RetainedEvaluate(retained_evaluation::Fixtures), RetainedNatural(retained_evaluation::Natural), SemanticDiagnostic(retained_campaign::Train) }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,4 +162,4 @@ fn evaluate(c:Evaluate)->Result<Value,String> {
     fs::create_dir(&c.output_directory).map_err(err)?;publish_json(&c.output_directory,"result.json",&result)?;Ok(result)
 }
 
-pub fn run(command:Command)->Result<Value,String> {match command {Command::Train(c)=>train(c),Command::Evaluate(c)=>evaluate(c),Command::TrainingDiagnostic(c)=>training_diagnostic::run(c),Command::NaturalAudit(c)=>natural_audit::run(c),Command::RetainedEngineering(c)=>retained_engineering::run(c),Command::RetentionDataCheck(c)=>retention_data::run(c),Command::RetainedTrain(c)=>retained_campaign::run(c),Command::RetainedEvaluate(c)=>retained_evaluation::fixtures(c),Command::RetainedNatural(c)=>retained_evaluation::natural(c)}}
+pub fn run(command:Command)->Result<Value,String> {match command {Command::Train(c)=>train(c),Command::Evaluate(c)=>evaluate(c),Command::TrainingDiagnostic(c)=>training_diagnostic::run(c),Command::NaturalAudit(c)=>natural_audit::run(c),Command::RetainedEngineering(c)=>retained_engineering::run(c),Command::RetentionDataCheck(c)=>retention_data::run(c),Command::RetainedTrain(c)=>retained_campaign::run(c),Command::RetainedEvaluate(c)=>retained_evaluation::fixtures(c),Command::RetainedNatural(c)=>retained_evaluation::natural(c),Command::SemanticDiagnostic(c)=>retained_campaign::diagnostic(c)}}
