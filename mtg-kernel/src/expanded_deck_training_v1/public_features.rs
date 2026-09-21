@@ -10,6 +10,8 @@ use crate::paired_bo1_harness_v1::{PairedBo1PolicyInputV1, PairedBo1PolicyV1};
 use crate::public_cost_features_v1::PublicFeatureRowsV1;
 use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
+pub mod replay_audit;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
