@@ -78,6 +78,20 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         )
     }
 
+    pub(crate) fn capture_bo3_gameplay_v4(
+        &self,
+        decision_index: u64,
+        package_sha256: String,
+        behavior: crate::phase1_agent_v1::BehaviorDistributionV1,
+    ) -> Result<crate::phase1_agent_v1::Bo3DecisionRecordV1, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
+            return Err("BO3 capture differs from the scoring decision binding".into());
+        }
+        crate::phase1_agent_v1::Bo3DecisionRecordV1::gameplay_from_session_v4(
+            decision_index, package_sha256, behavior, self.session,
+        )
+    }
+
     pub(crate) fn encode_scoring_owned_v3(
         &self,
         encoder: &mut crate::flat_policy_v3::FlatDecisionEncoderV3,

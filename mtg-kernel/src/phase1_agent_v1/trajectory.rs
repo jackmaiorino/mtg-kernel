@@ -164,7 +164,7 @@ pub enum LearningComponentV1 {
 
 /// Only this actor-specific value is exposed to the policy. Match metadata,
 /// both registrations, outcome targets, and opponent package identities remain
-/// outside it. Gameplay references still require the existing V3 tensorizer;
+/// outside it. Gameplay references require the recorded policy's tensorizer generation;
 /// raw arena identities must never become model features.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -249,15 +249,39 @@ impl Bo3DecisionRecordV1 {
         behavior: BehaviorDistributionV1,
         session: &FastActorSessionV1,
     ) -> Result<Self, String> {
+        Self::gameplay_from_session_generation(decision_index, behavior_package_sha256, behavior, session, false)
+    }
+
+    /// V4 recording validates the actual V4 actor projection, including spell
+    /// targets whose source also owns a trigger. It never falls back to V3.
+    pub(crate) fn gameplay_from_session_v4(
+        decision_index: u64,
+        behavior_package_sha256: String,
+        behavior: BehaviorDistributionV1,
+        session: &FastActorSessionV1,
+    ) -> Result<Self, String> {
+        Self::gameplay_from_session_generation(decision_index, behavior_package_sha256, behavior, session, true)
+    }
+
+    fn gameplay_from_session_generation(
+        decision_index: u64,
+        behavior_package_sha256: String,
+        behavior: BehaviorDistributionV1,
+        session: &FastActorSessionV1,
+        v4: bool,
+    ) -> Result<Self, String> {
         let expected = match session.current_response() {
             FastActorResponseV1::Decision(value) => value,
             FastActorResponseV1::Terminal(_) => {
                 return Err("cannot capture a decision after terminal".into())
             }
         };
-        let (observation, ordered_actions, _) = session
-            .human_current_decision_input_v1(expected, expected.acting_player)
-            .map_err(|error| format!("actor-visible binding unavailable: {error:?}"))?;
+        let (observation, ordered_actions) = if v4 {
+            session.diagnostic_current_decision_input_v4(expected)
+        } else {
+            session.human_current_decision_input_v1(expected, expected.acting_player)
+                .map(|(observation, actions, _)| (observation, actions))
+        }.map_err(|error| format!("actor-visible binding unavailable: {error:?}"))?;
         behavior.selected_probability_v1(ordered_actions.len())?;
         require(
             hex_digest(&behavior_package_sha256, 64),

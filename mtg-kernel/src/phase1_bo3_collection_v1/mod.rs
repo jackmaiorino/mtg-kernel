@@ -30,7 +30,10 @@ use std::collections::BTreeSet;
 
 pub const BO3_COLLECTION_CONFIG_SCHEMA_V1: &str = "mtg-kernel-bo3-collection-config/v1";
 pub const BO3_COLLECTION_RESULT_SCHEMA_V1: &str = "mtg-kernel-bo3-collection-result/v1";
-const MAX_RECORD_BYTES: u64 = 256 * 1024 * 1024;
+// Admission ceiling only. Each request retains its explicit byte limit; old
+// 256 MiB requests are not silently enlarged. Long BO3 mirrors need more room
+// for repeated public observations even at modest physical decision counts.
+const MAX_RECORD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_RECORDS: u64 = 100_000;
 pub const MAX_BO3_COLLECTION_REQUEST_BYTES_V1: usize = 4 * 1024 * 1024;
 
@@ -787,8 +790,14 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
         self.rejected_selections += 1;
         let behavior = BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected)
             .map_err(recording_error)?;
-        let record = input
-            .capture_bo3_gameplay_v1(
+        let capture = if self.policies[seat(decision.acting_player)].feature_generation_v1()
+            == PlayPolicyGenerationV1::V4 {
+            PairedBo1PolicyInputV1::capture_bo3_gameplay_v4
+        } else {
+            PairedBo1PolicyInputV1::capture_bo3_gameplay_v1
+        };
+        let record = capture(
+                &input,
                 self.budget.count,
                 self.hashes[seat(decision.acting_player)].clone(),
                 behavior,
