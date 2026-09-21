@@ -266,6 +266,34 @@ pub fn run_gradient_probe() -> Result<serde_json::Value, Box<dyn Error>> {
     {
         return Err(training_error("entropy chunk/group normalization differs"));
     }
+    // Permute each legal menu and its selected action together. Neither the
+    // objective nor the unpermuted derivatives may depend on action ordering.
+    let permutation = [0, 2, 1, 5, 4, 3];
+    let permuted = permutation.map(|i| fixture[i]);
+    let permuted_result = evaluate(
+        &permuted,
+        &offsets,
+        &[0, 0, 0],
+        &groups,
+        &first,
+        &values,
+        &targets,
+        &advantages,
+        0.05,
+        false,
+    )?;
+    if (full.0 - permuted_result.0).abs() > TOLERANCE as f32
+        || permutation.iter().enumerate().any(|(i, original)| {
+            (permuted_result.1[i] - full.1[*original]).abs() > TOLERANCE as f32
+        })
+        || full
+            .2
+            .iter()
+            .zip(&permuted_result.2)
+            .any(|(a, b)| (*a - *b).abs() > TOLERANCE as f32)
+    {
+        return Err(training_error("entropy action-permutation control differs"));
+    }
     for invalid in [-0.1, 1.01, f32::INFINITY, f32::NAN] {
         if evaluate(
             &fixture,
@@ -288,7 +316,7 @@ pub fn run_gradient_probe() -> Result<serde_json::Value, Box<dyn Error>> {
     Ok(
         serde_json::json!({"schema":"public-entropy-gradient-probe/v1","complete":true,"gpu_ordinal":1,
         "cases":cases,"absolute_gradient_tolerance":TOLERANCE,"zero_loss_gradient_bit_exact":true,
-        "chunk_normalization_consistent":true,"invalid_coefficients_rejected":true,
+        "chunk_normalization_consistent":true,"action_permutation_control_passed":true,"invalid_coefficients_rejected":true,
         "non_claim":"CUDA loss/gradient engineering only; no model update, rollout or strength evidence."}),
     )
 }
