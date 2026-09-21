@@ -1,5 +1,6 @@
 """Bounded exact natural replay and public terminal witnesses across fixed jobs."""
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
@@ -7,13 +8,26 @@ import subprocess
 import sys
 import time
 from public_training_dispatch_v2 import read,write,pin,checked
-from public_evaluation_dispatch_v1 import inventory,ssh,REMOTE
+from public_evaluation_dispatch_v1 import inventory as base_inventory,ssh,REMOTE
 
 PILOT=Path('E:/mtg-postboard-campaign-20260921/public-stack-screen-001')
 TOOLS=Path('E:/mtg-meta-recovery-20260921/public-terminal-tactics-tools-002')
 REMOTE_BASE='C:/mtg-node/public-terminal-tactics-001'
 LOCAL_DATA='D:/mtg-training-working/stack-screen-training-native-0/haleyspc/recovered/jobs/structured/outputs'
 REMOTE_DATA='C:/mtg-node/stack-screen-training-native-0/jobs/structured/outputs'
+
+def inventory(host):
+    result=base_inventory(host)
+    script=r"@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^diagnostic\.exe$|public_terminal_tactics|stack_sensitivity|stack_feature_training|human_match'} | Select-Object Name,ProcessId,CreationDate,CommandLine) | ConvertTo-Json -Depth 4"
+    if host=='haleyspc':raw=ssh(script)
+    else:
+        encoded=base64.b64encode(script.encode('utf-16le')).decode()
+        raw=subprocess.check_output(['powershell','-NoProfile','-EncodedCommand',encoded],text=True)
+    extra=json.loads(raw) if raw.strip() else []
+    if isinstance(extra,dict):extra=[extra]
+    found={p['ProcessId']:p for p in result['active']+extra}
+    result['active']=list(found.values())
+    return result
 
 def signature(result):
     # Host-specific archive paths are metadata; hashes, witnesses and scores
@@ -45,7 +59,7 @@ def worker(spec):
 def main(root):
     root.mkdir();start=time.monotonic()
     probe=read('E:/mtg-meta-recovery-20260921/public-terminal-tactics-probe-001/result.json')
-    assert probe['complete'] and probe['byte_identical']
+    assert probe['complete'] and probe['byte_identical'] and probe['changed_tensor_rejected']
     owners={h:inventory(h) for h in ['jack','haleyspc']}
     assert all(not s['active'] for s in owners.values())
     write(root/'owners-before.json',owners)
