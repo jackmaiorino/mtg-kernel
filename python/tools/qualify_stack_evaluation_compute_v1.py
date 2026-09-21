@@ -9,6 +9,7 @@ from public_evaluation_dispatch_v2 import dispatch
 from public_training_storage_v1 import storage
 from stack_evaluation_recovery_v1 import build,calibrate
 from stack_evaluation_throughput_v1 import validate_report,require_choice
+from stack_evaluation_staging_v1 import measure as measure_staging
 
 
 def qualify(root,plan_path):
@@ -32,7 +33,7 @@ def qualify(root,plan_path):
         for count in counts:cases.append((f'{host}-w{count}',{host:dict(stores[host],workers=count,job_weight=1)}))
     dependencies=[pin(Path(__file__).with_name(n)) for n in ['stack_evaluation_throughput_v1.py',
         'stack_evaluation_recovery_v1.py','public_evaluation_dispatch_v1.py','public_evaluation_dispatch_v2.py',
-        'evaluation_recovery_fixture_v1.py','qualify_evaluation_placements_v6.py']]
+        'evaluation_recovery_fixture_v1.py','qualify_evaluation_placements_v6.py','stack_evaluation_staging_v1.py']]
     write(root/'design.json',dict(plan=plan_pin,runner=pin(__file__),dependencies=dependencies,
         question='Choose useful completed eight-match throughput on both PCs including staging and copied full-count recovery.',
         unique_native_cases=256,maximum_native_matches=2050,cases=cases,
@@ -59,7 +60,7 @@ def qualify(root,plan_path):
         assert r['execution_seconds']<30 and r['matches']==1
         assert cheap_fingerprint is None or cheap_fingerprint==r['fingerprints']
         cheap_fingerprint=r['fingerprints']
-    candidates=[];baseline=None;fixture=None;remote_source=None;calibrations={}
+    candidates=[];baseline=None;fixture=None;remote_source=None;calibrations={};staging_costs={}
     def measure(label,allocation):
         nonlocal baseline,fixture,remote_source
         assert time.monotonic()-began<1200,'new-case launch budget exhausted'
@@ -75,9 +76,11 @@ def qualify(root,plan_path):
             owners('after-fixture-build')
         key=json.dumps({h:{k:v for k,v in a.items() if k!='workers'} for h,a in allocation.items()},sort_keys=True)
         if key not in calibrations:
+            staging_costs[key]=measure_staging(root,label,plan_pin,allocation,remote)
+            owners('after-full-staging-'+label)
             calibrations[key]=calibrate(root,label,allocation,fixture,remote,remote_source)
             owners('after-recovery-'+label)
-        candidates.append(dict(id=label,report=result,before_owners=before,after_owners=after,recovery=calibrations[key]))
+        candidates.append(dict(id=label,report=result,before_owners=before,after_owners=after,recovery=calibrations[key],full_staging=staging_costs[key]))
         print(dict(case=label,matches=report['matches'],native_seconds=report['execution_seconds']),flush=True)
         return report
     native={}

@@ -79,14 +79,17 @@ def require_choice(path,plan_pin):
         cache_key=json.dumps([calibration,{h:{k:v for k,v in a.items() if k!='workers'} for h,a in report['allocation'].items()}],sort_keys=True)
         if cache_key not in cache:cache[cache_key]=validate(calibration,report['allocation'],plan_pin)
         recovery=cache[cache_key]
-        # The qualification uses whole eight-match jobs. Scale native execution
-        # and request staging by job count; recovery uses a full-count fixture.
+        # Scale complete native jobs only. Fixed staging and export costs must
+        # not be multiplied by the sample-to-panel ratio.
         scale=512/32
         setup=choice['remote_setup_seconds'] if 'haleyspc' in report['allocation'] else 0
         assert math.isfinite(setup) and setup>=0
-        projected=setup+scale*(report['execution_seconds']+report['staging_seconds'])+recovery
+        from stack_evaluation_staging_v1 import validate as validate_staging
+        staging=validate_staging(candidate['full_staging'],report['allocation'],plan_pin)
+        assert math.isfinite(staging)
+        projected=setup+scale*report['execution_seconds']+staging+recovery
         options.append(dict(id=candidate['id'],allocation=report['allocation'],projected_seconds=projected,
-            scaled_native_seconds=scale*report['execution_seconds'],scaled_staging_seconds=scale*report['staging_seconds'],
+            scaled_native_seconds=scale*report['execution_seconds'],measured_full_staging_seconds=staging,
             fixture_recovery_seconds=recovery,scope='Point forecast from one matched timing per allocation and two copied full-count recovery samples. Not a confidence bound.'))
     assert all(1 in v and any(n>1 for n in v) for v in counts.values())
     assert len({c['id'] for c in choice['candidates']})==len(choice['candidates'])
