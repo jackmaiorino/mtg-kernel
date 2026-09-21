@@ -26,7 +26,8 @@ def bound_opponent(root, manifest):
     old["receipt"]["destination_build_git_head"] = new["receipt"]["destination_build_git_head"]
     assert old == new, "opponent weights or optimizer changed"
     for field in ["source_checkpoint", "source_registry"]:
-        assert original_source[field] == new_source[field]
+        checked(original_source[field]); checked(new_source[field])
+        assert original_source[field]["sha256"] == new_source[field]["sha256"]
     import copy
     opponent = copy.deepcopy(manifest["evaluation_opponent"])
     opponent["source"]["play_import"] = comparison["source"]

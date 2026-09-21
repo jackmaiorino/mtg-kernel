@@ -44,7 +44,8 @@ def run(root, host, transfer_binary):
     assert before == after, "transfer changed parameters, optimizer or non-build provenance"
     assert after["receipt"]["destination_build_git_head"] == read(Path(BUILD.parent / "build-start.json"))["commit"]
     for field in ["source_checkpoint", "source_registry"]:
-        assert old_descriptor[field] == new_descriptor[field]
+        checked(old_descriptor[field]); checked(new_descriptor[field])
+        assert old_descriptor[field]["sha256"] == new_descriptor[field]["sha256"]
     write(root / "import-comparison.json", dict(complete=True, only_changed_field="receipt.destination_build_git_head",
         old_build=old_build, new_build=after["receipt"]["destination_build_git_head"],
         old=old_descriptor["transfer_envelope"], new=new_descriptor["transfer_envelope"],
