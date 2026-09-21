@@ -34,10 +34,11 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
             && t.decisions.len() == t.auxiliary.len() && !t.decisions.is_empty()
             && t.episode.learner_seat < 2 && ids.insert(t.episode.id.clone()),
             "natural audit archive identity differs")?;
-        ensure(serde_json::to_value(&t.episode.opponent).map_err(err)? == serde_json::to_value(&c.source).map_err(err)?,
-            "natural audit archived opponent is not the parent source")?;
+        let opponent_is_parent = serde_json::to_value(&t.episode.opponent).map_err(err)? == serde_json::to_value(&c.source).map_err(err)?;
+        let archived_opponent = if opponent_is_parent { None } else { Some(initialize(&t.episode.opponent)?.0) };
         let mut rows = Vec::new();
         let mut exact = 0;
+        let mut exact_opponent = 0;
         for (index, row) in t.decisions.iter().enumerate() {
             ensure(row.actor < 2 && (row.selected as usize) < row.logits.len(), "invalid archive action")?;
             let tensor = NativeFlatDecisionTensorV4 { common: row.tensor.tensor() };
@@ -45,11 +46,15 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
             let q = teacher.score_training_tensor_v4(&tensor)?;
             ensure(p.logits.len() == row.logits.len() && q.logits.len() == p.logits.len(),
                 "natural audit menu differs")?;
-            let is_parent_actor = row.actor != t.episode.learner_seat;
-            if is_parent_actor {
-                ensure(bits(&p.logits) == row.logits && p.value.to_bits() == row.value,
+            let is_opponent_actor = row.actor != t.episode.learner_seat;
+            let is_parent_actor = is_opponent_actor && opponent_is_parent;
+            if is_opponent_actor {
+                let other = archived_opponent.as_ref().map(|model| model.score_training_tensor_v4(&tensor)).transpose()?;
+                let replay = other.as_ref().unwrap_or(&p);
+                ensure(bits(&replay.logits) == row.logits && replay.value.to_bits() == row.value,
                     "natural audit parent behavior replay differs")?;
-                exact += 1;
+                exact_opponent += 1;
+                exact += usize::from(is_parent_actor);
             }
             let pp: Vec<_> = sampler.apportion(&p.logits).map_err(err)?.iter()
                 .map(|&m| m as f64 / 18446744073709551616.0).collect();
@@ -73,7 +78,7 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
             let pt = top(&p.logits); let qt = top(&q.logits);
             rows.push(json!({"archive_row":index,"step":row.step,"physical_decision_id":row.physical_decision_id,
                 "substep_index":row.substep_index,"substep_count":row.substep_count,"actor":row.actor,
-                "deck":t.episode.selected[row.actor as usize].label,"parent_actor":is_parent_actor,
+                "deck":t.episode.selected[row.actor as usize].label,"parent_actor":is_parent_actor,"opponent_actor":is_opponent_actor,
                 "action_count":p.logits.len(),"action_kinds":kinds,"behavior_selected":row.selected,
                 "parent_top":pt,"teacher_top":qt,"top_changed":pt!=qt,"total_variation":tv,"jensen_shannon":js,
                 "parent_selected_probability":pp[row.selected as usize],"teacher_selected_probability":qp[row.selected as usize],
@@ -81,9 +86,10 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
                 "teacher_logits_bits":bits(&q.logits),"parent_value_bits":p.value.to_bits(),"teacher_value_bits":q.value.to_bits(),
                 "absolute_value_change":(p.value as f64-q.value as f64).abs()}));
         }
-        ensure(exact>0, "natural audit lacks parent behavior rows")?;
+        ensure(exact_opponent>0, "natural audit lacks opponent behavior rows")?;
         archives.push(json!({"trajectory":pin,"episode_id":t.episode.id,"learner_seat":t.episode.learner_seat,
-            "postboard":t.episode.postboard,"parent_behavior_rows":exact,"rows":rows}));
+            "postboard":t.episode.postboard,"parent_behavior_rows":exact,"opponent_behavior_rows":exact_opponent,
+            "opponent_is_parent":opponent_is_parent,"opponent_source":t.episode.opponent,"rows":rows}));
     }
     ensure(parent_hash == hex(&parent_state.state_sha256_v1().map_err(err)?)
         && teacher_hash == hex(&state.state_sha256_v1().map_err(err)?), "natural audit mutated optimizer")?;
