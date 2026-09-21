@@ -16,3 +16,11 @@ That owner discovery corrected the earlier training timing choice. Kimi's build 
 Full training launched September21 about09:42EDT through `run_public_stack_screen_v1.py` and the supported storage/allocation guard. It runs structured on Haley GPU0 and queues permuted then disabled on Jack GPU1, ten synchronous collectors each. All three start from g115 and run200 updates x10 natural games. Jack GPU0 remains reserved. Owned native processes and their requested GPU UUIDs were observed on both hosts; the parent controller is session71632. Exact paths and continuation instructions are in the current RESEARCH-STATE.md handoff. No paid compute, outcome-prefix analysis or formal evaluation has started.
 
 Independent Fable review remains the explicitly recorded zero-read429 gap untilSeptember22 07:00EDT. A screen pass permits consideration of independent replication only. Training completion, a development win-rate improvement, human competitiveness and league readiness are separate claims; none is asserted here.
+
+## Audited training completion, 10:02 EDT
+
+`training-audit.json` now passes:6,000 natural games,200 updates for each arm, imported Adam age32600 and stack-projection age200, with final endpoint/checkpoint links verified. Session71632 ended with exit0; all owned trainer processes ended. End-to-end elapsed time including recovery and audit was1,221.60seconds (20.36minutes). Native times were716.39seconds structured on Haley,417.04seconds permuted and413.60seconds disabled queued on Jack. These overlap across hosts and must not be summed as elapsed time.
+
+Canonical archives cover7,846 files,39,572,584,162 uncompressed bytes and15,462,472,338 compressed bytes, with zero readback mismatches. Archive construction and verification took225.76seconds. Recovery accounting across hosts can overlap native work on the other host; it is not an additional disjoint wall-time phase. The39.72-minute prelaunch forecast was conservative for this realized workload, not a missed target.
+
+The final-checkpoint panel is prepared at `E:/mtg-meta-recovery-20260921/public-stack-panel-001/plan.json`. Its bounded compute qualification is running under session16221 in `public-stack-panel-compute-001`. The full4,096-match panel has not started and no playing-strength result exists yet. Keep the frozen analyzer and final endpoints unchanged.
