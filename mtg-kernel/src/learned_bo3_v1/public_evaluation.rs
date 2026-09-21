@@ -14,6 +14,9 @@ use crate::sideboard_play_policy_v1::public_inputs::{
     select_forced_v3_for_evaluation, select_spell_adapter_v3_for_evaluation,
     PublicInputPlayPolicyV1,
 };
+use crate::native_policy_value_net_v1::stack_inputs_v1::{StackInputWeightsV1, ARCHITECTURE as STACK_ARCHITECTURE};
+use crate::public_stack_features_v1::StackInputModeV1;
+use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -21,6 +24,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelSource {
+    StackWarmStart { source: ExpandedModelSourceV1, input_mode: StackInputModeV1 },
+    StackCheckpoint { config: PinnedFileV1, checkpoint: PinnedFileV1 },
     Legacy {
         source: ExpandedModelSourceV1,
         v3_forced_actions: bool,
@@ -69,6 +74,7 @@ enum Play {
         repairs: u64,
     },
     Public(PublicInputPlayPolicyV1),
+    Stack(StackInputPlayPolicyV1),
 }
 
 impl Play {
@@ -76,6 +82,7 @@ impl Play {
         match self {
             Self::Legacy { policy, .. } => policy,
             Self::Public(policy) => policy,
+            Self::Stack(policy) => policy,
         }
     }
     fn forced_count(&self) -> u64 {
@@ -100,6 +107,7 @@ impl PairedBo1PolicyV1 for Play {
         match self {
             Self::Legacy { policy, .. } => policy.feature_generation_v1(),
             Self::Public(policy) => policy.feature_generation_v1(),
+            Self::Stack(policy) => policy.feature_generation_v1(),
         }
     }
     fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
@@ -172,6 +180,19 @@ fn load(source: &ModelSource) -> Result<(Play, Value), String> {
                 },
                 receipt,
             ))
+        }
+        ModelSource::StackWarmStart { source, input_mode } => {
+            let (base, identity) = load_expanded_inference_v1(source)?;
+            let weights = StackInputWeightsV1::zero();
+            let weights_hash = hash(&serde_json::to_vec(&(STACK_ARCHITECTURE,
+                &identity.model.weights_sha256, weights.values.iter().map(|v|v.to_bits()).collect::<Vec<_>>(), input_mode)).map_err(error)?);
+            let receipt=json!({"schema":"public-stack-warm-start-model/v1","architecture":STACK_ARCHITECTURE,
+                "weights_sha256":weights_hash,"initial_base":identity,"input_mode":input_mode,"stack_adam_step":0});
+            Ok((Play::Stack(StackInputPlayPolicyV1::new(base,weights)?.with_mode(*input_mode)),receipt))
+        }
+        ModelSource::StackCheckpoint { config, checkpoint } => {
+            let (policy,identity)=crate::expanded_deck_training_v1::stack_features::load_for_evaluation(config,checkpoint)?;
+            Ok((Play::Stack(policy),identity))
         }
         ModelSource::PublicWarmStart { source } => {
             let (base, identity) = load_expanded_inference_v1(source)?;
