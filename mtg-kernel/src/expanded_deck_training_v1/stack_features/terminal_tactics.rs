@@ -88,7 +88,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 let (visible,actions)=PairedBo1PolicyInputV1::new(&session,d).diagnostic_visible_v4()?;
                 let admitted=actions.iter().all(|a| match a {
                     ActionSemanticV1::ChooseTarget {source,remaining,..} => *remaining==1
-                        && matches!(crate::rl::card_name(source.card_db_id),"Lightning Bolt"|"Lava Dart"|"Galvanic Blast"|"Fireblast"),
+                        && matches!(crate::rl::card_name(source.card_db_id).as_str(),"Lightning Bolt"|"Lava Dart"|"Galvanic Blast"|"Fireblast"),
                     _=>false,
                 });
                 if admitted {
@@ -100,7 +100,9 @@ pub fn run(command: Command) -> Result<Value, String> {
                     let p=probability(&scores.logits);
                     let mass=|label:&str| -> f64 {p.iter().zip(&outcomes).filter(|(_,o)|o["classification"]==label).map(|(v,_)|v).sum()};
                     let mut best=0;for i in 1..scores.logits.len() {if scores.logits[i]>scores.logits[best] {best=i;}}
-                    roots.push(json!({"trajectory":pin,"episode":episode.id,"decision":d,"visible":visible,
+                    roots.push(json!({"trajectory":pin,"episode":episode.id,
+                        "decision":{"step":d.step,"physical_decision_id":d.physical_decision_id,
+                            "substep_index":d.substep_index,"actor":d.acting_player},"visible":visible,
                         "actions":actions,"logits":bits(&scores.logits),"probabilities":p,"argmax":best,
                         "winning_mass":mass("win"),"losing_mass":mass("loss"),"outcomes":outcomes}));
                 }
