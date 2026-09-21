@@ -208,7 +208,7 @@ pub mod native_opponent_sampler_v1;
 // frozen forever; this module owns only the new ladder identity strings.
 #[allow(dead_code)]
 pub mod native_opponent_policy_v2;
-#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) mod native_policy_anchor_v1;
 // Cell-centered advantage-baseline state for terminal_reinforce_value/v4:
 // strict-lag EMA, canonical hashing, and the checkpoint wire form.
