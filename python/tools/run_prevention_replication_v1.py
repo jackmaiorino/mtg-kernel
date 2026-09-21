@@ -19,6 +19,10 @@ def run(root, compute):
     if m["schema"] != "matched-state-prevention-replication/v1":
         raise ValueError("requires the independently seeded replication")
     qualification = read(compute/"qualification.json")
+    guard_checks = read(compute/"guard-checks.json")
+    if not guard_checks["complete"] or not guard_checks["valid_choice_accepted"] or not all(
+            item["rejected"] for item in guard_checks["rejected_invalid_choices"].values()):
+        raise ValueError("storage launch rejection checks have not passed")
     cm = read(compute/"manifest.json")
     if not qualification["complete"] or qualification["full_training_launched"]:
         raise ValueError("incomplete qualification")
@@ -35,6 +39,7 @@ def run(root, compute):
     dispatch_root = root/"state-prevention-replication-training-002"
     write(root/"training-launch.json", dict(pilot=pin(root/"manifest.json"),
         compute_choice=pin(compute/"compute-choice.json"), compute_qualification=pin(compute/"qualification.json"),
+        guard_checks=pin(compute/"guard-checks.json"),
         allocation=selected, runner=pin(__file__), dependencies=[pin(Path(__file__).with_name(name)) for name in [
             "public_training_storage_v1.py", "run_state_prevention_training_v1.py", "state_prevention_analysis_v1.py"]],
         native_wall_cap_seconds=2400, allocation_projection_cap_seconds=1800,
