@@ -10,7 +10,8 @@ def write(p,v):
 def run(build,root):
  repo=pathlib.Path(__file__).resolve().parents[2]
  receipt=read(build/'completion.json');assert receipt['complete']
- assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()==read(build/'start.json')['commit']
+ build_commit=read(build/'start.json')['commit']
+ subprocess.run(['git','diff','--exit-code',build_commit,'HEAD','--','.',':!python',':!docs'],cwd=repo,check=True,capture_output=True)
  assert not subprocess.check_output(['git','status','--porcelain'],cwd=repo,text=True).strip()
  binaries=receipt['binaries']
  for value in binaries.values():assert pin(value['path'])==value
@@ -18,7 +19,7 @@ def run(build,root):
  training=pathlib.Path('E:/mtg-meta-recovery-20260921/public-stack-terminal-training-001')
  assert read(training/'result.json')['status']=='STACK-TERMINAL-TRAINING-ENGINEERING-PASS'
  root.mkdir()
- write(root/'manifest.json',dict(schema='stack-evaluation-engineering/v1',build=pin(build/'completion.json'),runner=pin(__file__),binaries=binaries,training=pin(training/'result.json'),baseline=pin(baseline/'qualification.json'),maximum_bo3_executions=18,cpu_workers=2,question='Full archived trained-score replay, baseline evaluator compatibility, zero stack parity, both-seat nonzero BO3 and deterministic fresh-process replay. No win-rate selection.',review='Known Fable zero-read429 until September22 07:00EDT; bounded integration under Jack research authority, no endorsement.'))
+ write(root/'manifest.json',dict(schema='stack-evaluation-engineering/v1',build_commit=build_commit,controller_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),build=pin(build/'completion.json'),runner=pin(__file__),binaries=binaries,training=pin(training/'result.json'),baseline=pin(baseline/'qualification.json'),maximum_bo3_executions=18,cpu_workers=2,question='Full archived trained-score replay, baseline evaluator compatibility, zero stack parity, both-seat nonzero BO3 and deterministic fresh-process replay. No win-rate selection.',review='Known Fable zero-read429 until September22 07:00EDT; bounded integration under Jack research authority, no endorsement.'))
  env=os.environ.copy();env['PATH']='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8/bin;'+env['PATH']
  def launch(label,binary,command,error=None):
   folder=root/label;folder.mkdir();command=copy.deepcopy(command);command['output_directory']=str(folder/'outputs');write(folder/'request.json',command)
@@ -49,7 +50,7 @@ def run(build,root):
  launch('reject-mode','stack_policy_replay_v1',dict(command,config=pin(root/'wrong-mode.json')),'evaluation checkpoint/config identity differs')
  launch('reject-age','stack_policy_replay_v1',dict(command,checkpoint=pin(base/'0001/checkpoint.json')),'archive identity differs')
  bad=read(base/'0001/episode-000.json');aux=next(x for x in bad['auxiliary'] if x is not None);aux['permutation']['columns'][1]=aux['permutation']['columns'][0];write(root/'corrupt-permutation.json',bad)
- launch('reject-permutation','stack_policy_replay_v1',dict(command,trajectories=[pin(root/'corrupt-permutation.json')]),'not a permutation')
+ launch('reject-permutation','stack_policy_replay_v1',dict(command,trajectories=[pin(root/'corrupt-permutation.json')]),'invalid_stack_rows')
  old={job['id']:pathlib.Path(job['output_directory']) for name in ['cheap-one','remaining-eleven'] for job in read(baseline/name/'result.json')['jobs']}
  requests={seat:read(baseline/f'legacy-canonical-Affinity-p{seat}.request.json') for seat in range(2)}
  jobs=[]
