@@ -33,7 +33,7 @@ fn fixture(card:&str,damage:i32,artifacts:usize,actor:u8,hidden:bool)->Result<Fa
     state.step=Step::Main1;state.active_player=actor;state.priority_player=actor;
     state.players[0].life=damage;state.players[1].life=damage;
     let spell=put(&mut state,actor,card,Zone::Hand);
-    for _ in 0..artifacts {put(&mut state,actor,"Ornithopter",Zone::Battlefield);}
+    for _ in 0..artifacts {put(&mut state,actor,"Myr Enforcer",Zone::Battlefield);}
     for owner in [PlayerId::P0,PlayerId::P1] {
         for name in ["Forest","Island","Mountain","Swamp"] {put(&mut state,owner,name,Zone::Library);}
         if hidden {state.players[owner.index()].library.reverse();}
