@@ -35,7 +35,7 @@ fn combat_witness(session:&FastActorSessionV1,root:crate::rl_session::FastActorD
         if initial.turn!=after.turn || initial.library_knowledge!=after.library_knowledge
             || !(0..2).all(|i|initial.players[i].library==after.players[i].library && initial.players[i].draws_this_turn==after.players[i].draws_this_turn)
             || !matches!(after.step,Step::DeclareBlockers|Step::CombatDamage|Step::EndCombat|Step::Main2) {
-            return Ok(json!({"classification":"unresolved_information_boundary","line":line}));
+            return Ok(json!({"classification":"unresolved_information_boundary","line":line,"after_step":format!("{:?}",after.step),"after_turn":after.turn,"after_life":[after.players[0].life,after.players[1].life],"library_same":(0..2).all(|i|initial.players[i].library==after.players[i].library),"knowledge_same":initial.library_knowledge==after.library_knowledge,"draws_same":(0..2).all(|i|initial.players[i].draws_this_turn==after.players[i].draws_this_turn),"combat":format!("{:?}",after.engine.combat)}));
         }
         match branch.current_response() {
             FastActorResponseV1::Terminal(t)=>return Ok(json!({"classification":if t.terminal_classification!=TerminalClassificationV1::Natural {"unresolved_non_natural"}
