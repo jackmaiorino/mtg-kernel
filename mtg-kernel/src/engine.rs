@@ -11054,15 +11054,10 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
     Ok(())
 }
 
-/// 510.1c, no-trample simplification: lethal damage (toughness minus
-/// damage already marked) goes to each blocker in `blockers`' order
-/// except the last, which absorbs whatever power remains (there being no
-/// trample in this pool, that's the only legal recipient once the
-/// attacker itself has already been assigned to blockers rather than the
-/// player). A single blocker just gets it all directly. The order itself
-/// is `CombatState::blocked_by`'s fixed deterministic sort -- see that
-/// field's doc for why this is a stubbed decision point, not a real one,
-/// this increment.
+/// Deterministic combat-assignment policy. Trample assigns lethal to each
+/// remaining blocker, then excess to the defending player (702.19b,d).
+/// Other attackers retain the existing blocker-order assignment policy.
+/// This is one legal allocation, not an exposed choice among all allocations.
 fn assign_attacker_damage_to_blockers(
     state: &GameState,
     attacker: ObjectId,
@@ -11070,6 +11065,25 @@ fn assign_attacker_damage_to_blockers(
     blockers: &[ObjectId],
     events: &mut Vec<ProposedEvent>,
 ) {
+    if has_effective_keyword(state, attacker, Keywords::TRAMPLE) {
+        let mut remaining = power;
+        let deathtouch = has_effective_keyword(state, attacker, Keywords::DEATHTOUCH);
+        for &blocker in blockers.iter().filter(|&&id| is_still_in_combat(state, id)) {
+            let lethal = (effective_toughness(state, blocker)
+                - state.objects.get(blocker).damage as i32).max(0);
+            let assign = remaining.min(if deathtouch { lethal.min(1) } else { lethal });
+            if assign > 0 {
+                events.push(ProposedEvent::damage(attacker, Target::Object(blocker), assign));
+                remaining -= assign;
+            }
+            if remaining == 0 { break; }
+        }
+        if remaining > 0 {
+            events.push(ProposedEvent::damage(attacker,
+                Target::Player(state.objects.get(attacker).controller.opponent()), remaining));
+        }
+        return;
+    }
     if blockers.len() == 1 {
         events.push(ProposedEvent::damage(
             attacker,
@@ -11106,6 +11120,9 @@ fn assign_attacker_damage_to_blockers(
         remaining -= assign;
     }
 }
+
+#[cfg(test)]
+mod combat_trample_tests;
 
 // ---------------------------------------------------------------- actions
 
