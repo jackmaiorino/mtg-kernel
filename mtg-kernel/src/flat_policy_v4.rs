@@ -336,7 +336,12 @@ mod tests {
             for hidden in [false,true] {
                 let session=if scenario=="ward" {stack_fixture_v1(actor,hidden)}else{stack_simple_fixture_v1(actor,hidden,scenario)};
                 let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
-                let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
+                let mut encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
+                if std::env::var("MTG_STACK_PERMUTED_EXPORT").is_ok() {
+                    let kind=match scenario {"ward"=>0,"player"=>1,"kicked"=>2,"empty"=>3,_=>unreachable!()};
+                    let mut rng=crate::state::SplitMix64::seed(918273+actor.index() as u64*4+kind);
+                    encoded.stack.permutation=Some(StackColumnPermutationV1::sample(&mut rng));
+                }
                 let legacy=base.forward_feature_transfer_v4(encoded.view()).unwrap();
                 let z=zero.forward(&encoded).unwrap();let n=nonzero.forward(&encoded).unwrap();
                 assert_eq!(bits(&legacy),bits(&z));

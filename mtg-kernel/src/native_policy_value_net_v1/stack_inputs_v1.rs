@@ -36,7 +36,7 @@ impl StackInputWeightsV1 {
     ) {
         for row in &rows.rows {
             let mut input = Vec::with_capacity(INPUT_WIDTH);
-            input.extend_from_slice(&row.features);
+            rows.append_model_features(row, &mut input);
             input.extend_from_slice(
                 &objects[row.source_node * HIDDEN_DIM_V1..(row.source_node + 1) * HIDDEN_DIM_V1],
             );

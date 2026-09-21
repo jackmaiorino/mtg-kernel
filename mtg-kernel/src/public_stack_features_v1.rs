@@ -15,6 +15,62 @@ pub(crate) const SCHEMA: &str = "mtg-kernel-public-stack-input/v1";
 pub(crate) const FEATURE_WIDTH: usize = 312;
 pub(crate) const CONTRACT: &[u8] =
     include_bytes!("../../data/public_stack_features_v1/contract.json");
+pub(crate) const PERMUTATION_CONTRACT: &[u8] =
+    include_bytes!("../../data/public_stack_features_v1/permutation.json");
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StackInputModeV1 {
+    Disabled,
+    Structured,
+    Permuted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StackColumnPermutationV1 {
+    pub(crate) schema: String,
+    pub(crate) contract_sha256: String,
+    pub(crate) columns: Vec<u16>,
+}
+impl StackColumnPermutationV1 {
+    pub(crate) fn sample(rng: &mut crate::state::SplitMix64) -> Self {
+        let mut columns: Vec<_> = (0..FEATURE_WIDTH as u16).collect();
+        for i in (1..FEATURE_WIDTH).rev() {
+            let bound = i as u64 + 1;
+            let reject = bound.wrapping_neg() % bound;
+            let value = loop {
+                let v = rng.next_u64();
+                if v >= reject {
+                    break v;
+                }
+            };
+            columns.swap(i, (value % bound) as usize);
+        }
+        Self {
+            schema: "public-stack-column-permutation/v1".into(),
+            contract_sha256: format!("{:x}", Sha256::digest(PERMUTATION_CONTRACT)),
+            columns,
+        }
+    }
+    fn validate(&self) -> Result<(), String> {
+        if self.schema != "public-stack-column-permutation/v1"
+            || self.contract_sha256 != format!("{:x}", Sha256::digest(PERMUTATION_CONTRACT))
+            || self.columns.len() != FEATURE_WIDTH
+        {
+            return Err("stack permutation contract differs".into());
+        }
+        let mut seen = [false; FEATURE_WIDTH];
+        for &column in &self.columns {
+            if column as usize >= FEATURE_WIDTH
+                || std::mem::replace(&mut seen[column as usize], true)
+            {
+                return Err("stack columns are not a permutation".into());
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +88,8 @@ pub(crate) struct StackFeatureRowsV1 {
     pub(crate) object_count: usize,
     pub(crate) stack_items: usize,
     pub(crate) rows: Vec<StackMessageRowV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) permutation: Option<StackColumnPermutationV1>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,7 +105,16 @@ impl StackEncodedDecisionV1 {
 }
 
 impl StackFeatureRowsV1 {
+    pub(crate) fn append_model_features(&self, row: &StackMessageRowV1, output: &mut Vec<f32>) {
+        match &self.permutation {
+            None => output.extend_from_slice(&row.features),
+            Some(p) => output.extend(p.columns.iter().map(|&c| row.features[c as usize])),
+        }
+    }
     pub(crate) fn validate(&self, object_count: usize) -> Result<(), String> {
+        if let Some(p) = &self.permutation {
+            p.validate()?;
+        }
         if self.schema != SCHEMA
             || self.contract_sha256 != format!("{:x}", Sha256::digest(CONTRACT))
             || self.object_count != object_count
@@ -195,9 +262,36 @@ pub(crate) fn encode_stack_decision_v1(
         object_count: legacy.common.object_card_ids.len(),
         stack_items,
         rows,
+        permutation: None,
     };
     stack
         .validate(legacy.common.object_card_ids.len())
         .map_err(|_| NativeFlatTensorErrorV2::OutputInvariant)?;
     Ok(StackEncodedDecisionV1 { legacy, stack })
+}
+
+#[cfg(test)]
+mod permutation_tests {
+    use super::*;
+    #[test]
+    fn public_stack_permutation_is_complete_replayable_and_rejects_corruption() {
+        let mut a = crate::state::SplitMix64::seed(812);
+        let mut b = a;
+        let first = StackColumnPermutationV1::sample(&mut a);
+        assert_eq!(first, StackColumnPermutationV1::sample(&mut b));
+        first.validate().unwrap();
+        assert_ne!(first, StackColumnPermutationV1::sample(&mut a));
+        let json = serde_json::to_vec(&first).unwrap();
+        let decoded: StackColumnPermutationV1 = serde_json::from_slice(&json).unwrap();
+        assert_eq!(first, decoded);
+        let mut bad = first.clone();
+        bad.columns[0] = bad.columns[1];
+        assert!(bad.validate().is_err());
+        let mut bad = first.clone();
+        bad.columns[0] = FEATURE_WIDTH as u16;
+        assert!(bad.validate().is_err());
+        let mut bad = first;
+        bad.contract_sha256.clear();
+        assert!(bad.validate().is_err());
+    }
 }

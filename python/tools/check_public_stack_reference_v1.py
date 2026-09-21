@@ -35,7 +35,12 @@ def forward(model,weight,e,stack):
  # Sequential row additions match the declared native message order.
  for row in stack['rows']:
   source,target=row['source_node'],row['target_node']
-  inputs=torch.cat([torch.tensor(row['features'],dtype=objects.dtype),objects[source],objects[target] if target is not None else torch.zeros_like(objects[source])])
+  raw=row['features'];permutation=stack.get('permutation')
+  if permutation is not None:
+   assert permutation['schema']=='public-stack-column-permutation/v1' and sorted(permutation['columns'])==list(range(312))
+   assert permutation['contract_sha256']==hashlib.sha256((repo/'data/public_stack_features_v1/permutation.json').read_bytes()).hexdigest()
+   raw=[raw[index] for index in permutation['columns']]
+  inputs=torch.cat([torch.tensor(raw,dtype=objects.dtype),objects[source],objects[target] if target is not None else torch.zeros_like(objects[source])])
   message=F.linear(inputs,weight).tanh()
   index=torch.tensor([source] if target is None or target==source else [source,target])
   pooled=pooled.index_add(0,index,message.unsqueeze(0).expand(len(index),-1))

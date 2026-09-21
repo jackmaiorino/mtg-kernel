@@ -3,12 +3,16 @@ use super::*;
 use crate::native_policy_value_net_v1::stack_inputs_v1::{
     NativeStackInputNetV1, StackInputWeightsV1,
 };
-use crate::public_stack_features_v1::{encode_stack_decision_v1, StackEncodedDecisionV1};
+use crate::public_stack_features_v1::{
+    encode_stack_decision_v1, StackColumnPermutationV1, StackEncodedDecisionV1, StackInputModeV1,
+};
 
 pub(crate) struct StackInputPlayPolicyV1 {
     base: FrozenPlayPolicyV1,
     model: NativeStackInputNetV1,
     inputs_enabled: bool,
+    mode: StackInputModeV1,
+    permutation_rng: [SplitMix64; 2],
     captured: Option<StackEncodedDecisionV1>,
 }
 impl StackInputPlayPolicyV1 {
@@ -26,12 +30,25 @@ impl StackInputPlayPolicyV1 {
             base,
             model,
             inputs_enabled: true,
+            mode: StackInputModeV1::Structured,
+            permutation_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             captured: None,
         })
     }
     pub(crate) fn with_inputs_enabled(mut self, enabled: bool) -> Self {
         self.inputs_enabled = enabled;
+        self.mode = if enabled {
+            StackInputModeV1::Structured
+        } else {
+            StackInputModeV1::Disabled
+        };
         self.model = self.model.with_inputs_enabled(enabled);
+        self
+    }
+    pub(crate) fn with_mode(mut self, mode: StackInputModeV1) -> Self {
+        self.inputs_enabled = mode != StackInputModeV1::Disabled;
+        self.mode = mode;
+        self.model = self.model.with_inputs_enabled(self.inputs_enabled);
         self
     }
     pub(crate) fn fork_for_collection(&self) -> Result<Self, String> {
@@ -39,6 +56,8 @@ impl StackInputPlayPolicyV1 {
             base: self.base.fork_for_collection_v3()?,
             model: self.model.clone(),
             inputs_enabled: self.inputs_enabled,
+            mode: self.mode,
+            permutation_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             captured: None,
         })
     }
@@ -68,6 +87,10 @@ impl StackInputPlayPolicyV1 {
         &self,
         decision: &StackEncodedDecisionV1,
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        require(
+            decision.stack.permutation.is_some() == (self.mode == StackInputModeV1::Permuted),
+            "captured stack transform differs from policy mode",
+        )?;
         let output = self.model.forward(decision).map_err(|e| e.to_string())?;
         Ok(FrozenPlayDecisionScoresV1 {
             logits: output.logits,
@@ -92,11 +115,16 @@ impl StackInputPlayPolicyV1 {
             .map_err(|e| policy_error(format!("stack-input V4 encoding: {e:?}")))?;
         self.base.owned.globals = encoded.globals;
         fresh.extensions = encoded.extensions;
-        let paired = encode_stack_decision_v1(FlatScoringDecisionViewV4::new(
+        let mut paired = encode_stack_decision_v1(FlatScoringDecisionViewV4::new(
             self.base.owned.view(),
             &fresh.extensions,
         ))
         .map_err(|e| policy_error(format!("stack-input V4 tensorization: {e:?}")))?;
+        let actor = decision.acting_player as usize;
+        let mut permutation_rng = self.permutation_rng[actor].clone();
+        if self.mode == StackInputModeV1::Permuted {
+            paired.stack.permutation = Some(StackColumnPermutationV1::sample(&mut permutation_rng));
+        }
         let output = self
             .model
             .forward(&paired)
@@ -113,6 +141,7 @@ impl StackInputPlayPolicyV1 {
             )
             .map_err(policy_error)?;
         self.captured = Some(paired);
+        self.permutation_rng[actor] = permutation_rng;
         Ok((
             selected,
             FrozenPlayDecisionScoresV1 {
@@ -131,7 +160,9 @@ impl PairedBo1PolicyV1 for StackInputPlayPolicyV1 {
     }
     fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
         self.captured = None;
-        self.base.reset_for_game_v1(seeds)
+        self.base.reset_for_game_v1(seeds)?;
+        self.permutation_rng = seeds.map(|s| SplitMix64::seed(s ^ 0x5374_6163_6b50_6572));
+        Ok(())
     }
     fn select_action_v1(
         &mut self,
@@ -152,6 +183,7 @@ mod tests {
         use crate::state::Zone;
         let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
         let mut outputs = Vec::new();
+        let mut permuted_outputs = Vec::new();
         for hidden in [false, true] {
             let mut state = state.clone();
             put(
@@ -234,6 +266,58 @@ mod tests {
             let r = reference.select_paired_with_scores_v1(&input).unwrap();
             assert_eq!(c.0, r.0);
             assert_eq!(c.1.logits, r.1.logits);
+            let mut permuted_zero = StackInputPlayPolicyV1::new(
+                FrozenPlayPolicyV1::training_fixture_v4(),
+                StackInputWeightsV1::zero(),
+            )
+            .unwrap()
+            .with_mode(StackInputModeV1::Permuted);
+            permuted_zero.reset_for_game_v1([321, 654]).unwrap();
+            reference.reset_sampling_v1([321, 654]);
+            let mut previous_columns = None;
+            for _ in 0..8 {
+                let p = permuted_zero.select_with_scores(&input).unwrap();
+                let r = reference.select_paired_with_scores_v1(&input).unwrap();
+                assert_eq!(p.0, r.0);
+                assert_eq!(p.1.logits, r.1.logits);
+                assert_eq!(p.1.value.to_bits(), r.1.value.to_bits());
+                let captured = permuted_zero.captured().unwrap();
+                let columns = &captured.stack.permutation.as_ref().unwrap().columns;
+                if let Some(old) = previous_columns {
+                    assert_ne!(&old, columns);
+                }
+                previous_columns = Some(columns.clone());
+                for row in &captured.stack.rows {
+                    let mut raw = row.features.clone();
+                    let mut transformed = Vec::new();
+                    captured.stack.append_model_features(row, &mut transformed);
+                    raw.sort_by(f32::total_cmp);
+                    transformed.sort_by(f32::total_cmp);
+                    assert_eq!(raw, transformed);
+                }
+            }
+            let mut permuted = StackInputPlayPolicyV1::new(
+                FrozenPlayPolicyV1::training_fixture_v4(),
+                weights.clone(),
+            )
+            .unwrap()
+            .with_mode(StackInputModeV1::Permuted);
+            permuted.reset_for_game_v1([321, 654]).unwrap();
+            let first = permuted.select_with_scores(&input).unwrap();
+            let captured = permuted.captured().unwrap().clone();
+            let replay = permuted.replay(&captured).unwrap();
+            assert_eq!(first.1.logits, replay.logits);
+            assert!(
+                nonzero.replay(&captured).is_err(),
+                "structured policy rejects a permuted capture"
+            );
+            let mut fork = permuted.fork_for_collection().unwrap();
+            fork.reset_for_game_v1([321, 654]).unwrap();
+            let from_fork = fork.select_with_scores(&input).unwrap();
+            assert_eq!(first.0, from_fork.0);
+            assert_eq!(first.1.logits, from_fork.1.logits);
+            assert_eq!(&captured, fork.captured().unwrap());
+            permuted_outputs.push((first.0, first.1.logits, first.1.value.to_bits(), captured));
             let mut stale = decision;
             stale.step += 1;
             assert!(nonzero
@@ -246,5 +330,6 @@ mod tests {
             assert_eq!(session.current_response(), response);
         }
         assert_eq!(outputs[0], outputs[1]);
+        assert_eq!(permuted_outputs[0], permuted_outputs[1]);
     }
 }

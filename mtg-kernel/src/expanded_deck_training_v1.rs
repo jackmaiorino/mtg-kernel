@@ -58,6 +58,8 @@ const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 mod phase1_parallel_collection;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub mod public_features;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub mod stack_features;
 pub(crate) use phase1_parallel_collection::validate_collection_workers_v1;
 mod bootstrapped_advantage_v1;
 pub(crate) use bootstrapped_advantage_v1::{

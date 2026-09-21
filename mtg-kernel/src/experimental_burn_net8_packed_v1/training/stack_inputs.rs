@@ -78,7 +78,7 @@ impl<B: Backend> StackBatch<B> {
                 } else {
                     0.0
                 });
-                features.extend_from_slice(&row.features);
+                state.append_model_features(row, &mut features);
                 message_indices.push(index);
                 nodes.push(source);
                 if let Some(target) = row.target_node.filter(|t| *t != row.source_node) {

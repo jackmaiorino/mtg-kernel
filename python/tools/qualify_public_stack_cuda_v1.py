@@ -1,6 +1,6 @@
 """Bounded correctness checks only, not a training or evaluation launcher."""
 import argparse,hashlib,json,os,pathlib,re,subprocess,time
-p=argparse.ArgumentParser();p.add_argument('--build',type=pathlib.Path,required=True);p.add_argument('--root',type=pathlib.Path,required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--build',type=pathlib.Path,required=True);p.add_argument('--root',type=pathlib.Path,required=True);p.add_argument('--fixture',type=pathlib.Path);a=p.parse_args()
 repo=pathlib.Path(__file__).resolve().parents[2]
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(name,data):
@@ -14,7 +14,7 @@ line=[line for line in inventory.splitlines() if line.startswith('1,')][0]
 assert 'GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3' in line and ', 0 %,' in line,line
 assert int(line.rsplit(',',1)[1].strip().split()[0])<100,'GPU1 memory is occupied'
 a.root.mkdir();(a.root/'temp').mkdir();(a.root/'gpu-before.txt').write_text(inventory)
-fixture_path=a.build/'g115-reference.json';fixture=json.loads(fixture_path.read_text());samples=fixture['samples'];assert len(samples)==16
+fixture_path=a.fixture or a.build/'g115-reference.json';fixture=json.loads(fixture_path.read_text());samples=fixture['samples'];assert len(samples)==16
 manifest=dict(schema='public-stack-cuda-engineering/v1',source_commit=build['commit'],gpu_ordinal=1,gpu_uuid='GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3',checkpoint=fixture['checkpoint'],checkpoint_sha256=fixture['checkpoint_sha256'],fixture=str(fixture_path),fixture_sha256=sha(fixture_path),binary=str(binary),binary_sha256=sha(binary),selected_indices=[i%len(s['zero']['logits']) for i,s in enumerate(samples)],targets=[[-1.,0.,1.][i%3] for i in range(8)],advantages=[[-.5,.25,.75][i%3] for i in range(8)],group_size=2,learning_rate=0.0001,value_coefficient=.5,entropy_coefficient=0.,gates=dict(forward=[1e-3,1e-3],gradient=[1e-4,1e-3],parameter_delta=[2e-6,.005],first_moments=[1e-5,1e-3],second_moments=[1e-7,1e-3],stack_gradient_relative_l2=1e-3,stack_update_relative_l2=.005),non_claim='Two synthetic grouped GAE updates on 16 fixed actor fixtures, control derivative and chunking checks. No collected games, reward-based training, model selection or strength measurement.')
 write('manifest.json',manifest)
 env=os.environ.copy();env['PATH']='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8/bin;'+env['PATH'];env['TEMP']=env['TMP']=str(a.root/'temp');env['MTG_STACK_CUDA_ROOT']=str(a.root)
