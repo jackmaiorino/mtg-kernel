@@ -8,6 +8,13 @@ Full request placement is timed separately by `stack_evaluation_staging_v1.py`; 
 
 The supported `stack_evaluation_throughput_v1.py` guard checks exact endpoint requests, native binary and worker identities, full sample coverage, matching gameplay bytes, current inventory, before/after ownership, copied-fixture provenance and recovery hashes. It scales native complete-job execution only; full request staging and full-count recovery are included once. It rejects a revoked choice and requires the lowest measured projected time before dispatch. One timing per allocation gives a point forecast, not a confidence bound or an exhaustive optimum. Post-run checks cannot establish continuous absence of a short-lived competing owner.
 
-Five focused guard tests pass: complete coverage, duplicate/missing job rejection, wrong seed rejection despite internally consistent mock hashes, wrong model rejection and revocation before input access. All new Python modules compile. The final-endpoint qualification and full panel have **not** run yet. Do not describe prepared code as a qualified allocation. Full pipeline verification will use the actual final endpoints after audited training recovery.
+Five focused guard tests pass: complete coverage, duplicate/missing job rejection, wrong seed rejection despite internally consistent mock hashes, wrong model rejection and revocation before input access. All new Python modules compile. The actual final-endpoint qualification is now complete, with the results below. The formal panel is live and remains uninterpreted until complete.
 
 Fable's known zero-read429 untilSeptember22 07:00EDT remains unresolved. No CP7 selection, paid compute, candidate promotion or human/league-strength claim is implied.
+
+
+## Qualification completed September 21, 10:30 EDT
+
+Canonical result: `E:/mtg-meta-recovery-20260921/public-stack-panel-compute-002/qualification.json`. All eight allocations passed identical match-byte checks: 2,050 native BO3 executions, 256 unique cases, 1,792 cross-allocation comparisons. The original controller completed seven cases and stopped before the eighth because its new-launch time budget expired. Its outputs and terminal receipt remain in root001. `resume_stack_evaluation_compute_v1.py` ran only the unlaunched 256-case allocation in root002 after verifying exact original pins and idle owners. No native case failed.
+
+The selected allocation is equal job shares, Jack 24 workers on D SSD and Haley 16 workers on C SSD. The point forecast is 666.917 seconds (11.12 minutes): 601.766 scaled native seconds, 12.214 full staging, 47.828 full recovery and 5.109 remote setup. Source and endpoint pins are unchanged. The supported formal launcher passed its guard and started at 10:30:25 EDT, session10415/PID90652, root `E:/mtg-meta-recovery-20260921/public-stack-panel-001`. Scientific results are still pending. Copied recovery fixtures are not scientific observations.
