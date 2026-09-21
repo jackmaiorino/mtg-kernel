@@ -9,6 +9,31 @@ from state_prevention_analysis_v1 import bootstrap
 ARMS = ["g115", "control", "entropy"]
 
 
+def bound_opponent(root, manifest):
+    binding = read(root / "evaluation-binding.json")
+    assert binding["pilot"] == pin(root / "manifest.json")
+    assert binding["binary"] == manifest["evaluation_binary"]
+    checked(binding["binary"])
+    qualification = read(checked(binding["qualification"]))
+    assert qualification["complete"] and qualification["original_gameplay_replays"] == 4
+    comparison = read(checked(qualification["import_comparison"]))
+    assert comparison["complete"] and comparison["only_changed_field"] == "receipt.destination_build_git_head"
+    original_source = read(checked(manifest["evaluation_opponent"]["source"]["play_import"]))
+    new_source = read(checked(comparison["source"]))
+    assert original_source["transfer_envelope"] == comparison["old"]
+    assert new_source["transfer_envelope"] == comparison["new"]
+    old, new = read(checked(comparison["old"])), read(checked(comparison["new"]))
+    old["receipt"]["destination_build_git_head"] = new["receipt"]["destination_build_git_head"]
+    assert old == new, "opponent weights or optimizer changed"
+    for field in ["source_checkpoint", "source_registry"]:
+        assert original_source[field] == new_source[field]
+    import copy
+    opponent = copy.deepcopy(manifest["evaluation_opponent"])
+    opponent["source"]["play_import"] = comparison["source"]
+    assert opponent == binding["opponent"]
+    return opponent
+
+
 def statistical_checks():
     values = np.zeros((64, 8, 2, 3, 2))
     noise = np.random.default_rng(720).integers(0, 2, size=(64, 8, 2, 2)) * .5
@@ -31,8 +56,10 @@ def analyze(root, evaluation_manifest):
     statistical_checks()
     manifest = read(root / "manifest.json")
     assert manifest["schema"] == "matched-public-entropy/v1"
+    opponent = bound_opponent(root, manifest)
     evaluation = read(evaluation_manifest)
     assert checked(evaluation["pilot"]).resolve() == (root / "manifest.json").resolve()
+    assert evaluation["binding"] == pin(root / "evaluation-binding.json")
     training = read(root / "training-audit.json")
     assert training["complete"] and training["full_natural_games"] == 4000
     assert evaluation["endpoints"]["g115"] == dict(kind="legacy", source=manifest["source"], v3_forced_actions=False)
@@ -57,7 +84,7 @@ def analyze(root, evaluation_manifest):
         assert request["matches"] == original["matches"] and request["cross_generation_evaluation"]
         assert request["capture_decisions"] is False
         seat = template["candidate_seat"]
-        assert request["sources"][1-seat] == manifest["evaluation_opponent"]
+        assert request["sources"][1-seat] == opponent
         assert request["sources"][seat] == evaluation["endpoints"][arm]
         execution = read(checked(job["execution"]))
         assert execution["exit_code"] == 0 and not execution["timeout"]

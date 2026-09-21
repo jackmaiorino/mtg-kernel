@@ -15,7 +15,7 @@ ENGINEERING = Path("E:/mtg-meta-recovery-20260921/public-entropy-engineering-001
 BUILD = Path("E:/mtg-meta-recovery-20260921/public-entropy-tools-002/build-completion.json")
 
 
-def run(root, host):
+def run(root, host, transfer_binary):
     current = inventory(host)
     assert not current["active"], "preserve competing native owners"
     build = read(BUILD)
@@ -28,6 +28,27 @@ def run(root, host):
                  checkpoint=pin(ENGINEERING / "entropy-w10/outputs/0001/checkpoint.json"))
     root.mkdir()
     old = read(OLD)
+    # The verifier reproduces the full transfer envelope including build provenance.
+    # Use the native writer from the scorer's exact source, never edit its receipt.
+    transfer_request = read(Path("E:/mtg-postboard-campaign-20260920/state-prevention-evaluation-002/transfer-request.json"))
+    transfer_request["output_directory"] = str(root / "adapter")
+    write(root / "transfer-request.json", transfer_request)
+    execute(root, "transfer", transfer_binary, root / "transfer-request.json")
+    old_descriptor = read(Path("E:/mtg-postboard-campaign-20260920/state-prevention-evaluation-002/adapter/play-import-source.json"))
+    new_descriptor_pin = pin(root / "adapter/play-import-source.json")
+    new_descriptor = read(checked(new_descriptor_pin))
+    before = read(checked(old_descriptor["transfer_envelope"]))
+    after = read(checked(new_descriptor["transfer_envelope"]))
+    old_build = before["receipt"]["destination_build_git_head"]
+    before["receipt"]["destination_build_git_head"] = after["receipt"]["destination_build_git_head"]
+    assert before == after, "transfer changed parameters, optimizer or non-build provenance"
+    assert after["receipt"]["destination_build_git_head"] == read(Path(BUILD.parent / "build-start.json"))["commit"]
+    for field in ["source_checkpoint", "source_registry"]:
+        assert old_descriptor[field] == new_descriptor[field]
+    write(root / "import-comparison.json", dict(complete=True, only_changed_field="receipt.destination_build_git_head",
+        old_build=old_build, new_build=after["receipt"]["destination_build_git_head"],
+        old=old_descriptor["transfer_envelope"], new=new_descriptor["transfer_envelope"],
+        source=new_descriptor_pin, writer=pin(transfer_binary), execution=pin(root / "transfer.execution.json")))
     labels = [f"{cohort}-{own}-p{seat}" for cohort, own in [
         ("canonical", "Affinity"), ("focal", "published-44ae71e1e126b63d")] for seat in [0, 1]]
     jobs = []
@@ -42,6 +63,7 @@ def run(root, host):
         for variant in ["legacy", "entropy", "replay"]:
             name = f"{variant}-{label}"
             command = copy.deepcopy(request)
+            command["sources"][1-seat]["source"]["play_import"] = new_descriptor_pin
             if variant != "legacy":
                 command["sources"][seat] = model
             command["output_directory"] = str(root / name)
@@ -50,10 +72,11 @@ def run(root, host):
                 request=pin(root / f"{name}.request.json"), reference=reference))
     write(root / "manifest.json", dict(runner=pin(__file__), build=pin(BUILD), binary=binary_pin,
         original=pin(OLD), engineering=pin(ENGINEERING / "result.json"), model=model,
+        import_comparison=pin(root / "import-comparison.json"),
         jobs=jobs, inventory=current, host=host, maximum_matches=12, workers=4,
         dependencies=[pin(Path(__file__).with_name(n)) for n in ["qualify_public_evaluation_v1.py", "public_evaluation_dispatch_v1.py"]],
         question="Does the new scorer preserve original BO3 bytes and deterministically play learned nonzero-entropy checkpoints in both seats?",
-        non_claim="Reused fixed engineering cases, no strength or throughput qualification; no outcome selection or receipt rewriting."))
+        non_claim="Reused fixed engineering cases, no strength or throughput qualification; native transfer writer changes only verified build provenance, not weights."))
     started = time.monotonic()
     def one(job):
         return execute(root, job["label"], binary, checked(job["request"]))
@@ -99,7 +122,12 @@ def run(root, host):
         assert completion["natural_games"] == len(match["games"]) == len(match["seed_resets"])
         assert match["diagnostic_spell_target_repairs"] == [0, 0]
         if job["variant"] == "legacy":
-            assert match_pin["sha256"] == job["reference"]["sha256"], "new scorer changed original gameplay"
+            expected = read(checked(job["reference"]))
+            provenance = expected["models"][1-job["seat"]]["identity"]["source_import"]
+            suffix = "; envelope_sha256=" + old_descriptor["transfer_envelope"]["sha256"]
+            assert provenance["appended_rows"].endswith(suffix)
+            provenance["appended_rows"] = provenance["appended_rows"][:-len(suffix)] + "; envelope_sha256=" + new_descriptor["transfer_envelope"]["sha256"]
+            assert match == expected, "new scorer changed more than the verified import provenance"
         else:
             assert match["models"][job["seat"]]["public_adam_step"] == 2
             assert match["models"][job["seat"]]["inputs_enabled"] is False
@@ -108,8 +136,9 @@ def run(root, host):
         games += completion["natural_games"]
         decisions += completion["decisions"]
     result = dict(complete=True, matches=12, natural_games=games, decisions=decisions,
-        exact_original_bo3_replays=4, exact_new_entropy_bo3_replays=4,
-        source_adapter_preserved=True, physical_seats=[0, 1],
+        original_gameplay_replays=4, exact_new_entropy_bo3_replays=4,
+        original_comparison="All JSON fields equal after only opponent identity.source_import.appended_rows envelope digest changes; raw old/new files are not byte-identical.",
+        source_parameters_and_optimizer_preserved=True, import_comparison=pin(root / "import-comparison.json"), physical_seats=[0, 1],
         native_seconds=sum(item["seconds"] for item in executions), wall_seconds=time.monotonic()-started,
         non_claim="Engineering only, not a playing-strength estimate or allocation qualification.")
     write(root / "qualification.json", result)
@@ -120,7 +149,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--host", choices=["jack", "haleyspc"], default="jack")
+    parser.add_argument("--transfer-binary", type=Path, required=True)
     if not __debug__:
         raise RuntimeError("run with Python validation enabled")
     args = parser.parse_args()
-    run(args.root, args.host)
+    run(args.root, args.host, args.transfer_binary)

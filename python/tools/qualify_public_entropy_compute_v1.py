@@ -36,7 +36,7 @@ def audit(report):
                 optimizer_continuation=True, checkpoint_trajectory_links_verified=True)
 
 
-def run(root, pilot, reuse=None):
+def run(root, pilot, reuse=None, exclude_reused=()):
     if not __debug__:
         raise RuntimeError("run with Python validation enabled")
     m = read(pilot / "manifest.json")
@@ -111,6 +111,7 @@ def run(root, pilot, reuse=None):
         native_process_cap_seconds=300, remaining_case_launch_budget_seconds=1200,
         archive_scheme=ARCHIVE, full_training_launched=False,
         reused_completed_cases_from=None if reuse is None else pin(reuse / "manifest.json"),
+        excluded_reused_cases=list(exclude_reused),
         non_claim="Fixed-prefix engineering, no outcome selection. Same config hashes required by full launch guard."))
     started = time.monotonic()
     candidates, projections, reference, learning = [], {}, {}, {}
@@ -119,6 +120,8 @@ def run(root, pilot, reuse=None):
         assert time.monotonic() - started < 1200, "qualification launch budget exhausted"
         old_group = next((source / f"{source.name}-{label}/group-benchmark.json" for source in reuse_roots
                           if (source / f"{source.name}-{label}/group-benchmark.json").is_file()), None)
+        if label in exclude_reused:
+            old_group = None
         if old_group is not None:
             source_manifest = read(old_group.parent.parent / "manifest.json")
             previous_case = next(case for case in source_manifest["cases"] if case["id"] == label)
@@ -167,5 +170,6 @@ if __name__ == "__main__":
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--pilot", type=Path, required=True)
     parser.add_argument("--reuse-complete", type=Path)
+    parser.add_argument("--exclude-reused", action="append", default=[])
     args = parser.parse_args()
-    run(args.root, args.pilot, args.reuse_complete)
+    run(args.root, args.pilot, args.reuse_complete, args.exclude_reused)

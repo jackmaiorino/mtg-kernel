@@ -1,5 +1,6 @@
 """Storage/throughput-guarded entropy continuation with complete output audit."""
 import argparse
+import copy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import os
@@ -9,7 +10,7 @@ import time
 from public_training_dispatch_v2 import read, write, pin, checked
 from public_training_storage_v1 import require_storage_choice, dispatch_qualified
 from run_state_prevention_training_v1 import snapshot
-from public_entropy_analysis_v1 import statistical_checks
+from public_entropy_analysis_v1 import statistical_checks, bound_opponent
 
 
 def audit(group_pin, manifest, root):
@@ -70,13 +71,20 @@ def run(root, compute, scorer_qualification):
         checked(item)
     scorer = read(scorer_qualification / "qualification.json")
     scorer_manifest = read(scorer_qualification / "manifest.json")
-    assert scorer["complete"] and scorer["exact_original_bo3_replays"] == scorer["exact_new_entropy_bo3_replays"] == 4
+    assert scorer["complete"] and scorer["original_gameplay_replays"] == scorer["exact_new_entropy_bo3_replays"] == 4
     assert scorer_manifest["binary"] == m["evaluation_binary"]
     checked(scorer_manifest["binary"])
     selected = require_storage_choice(compute / "compute-choice.json", m["training_binary"], m["training_configs"])
     assert selected == q["selected"]
     assert selected["projected_seconds"] < 1350, "reserve time for second replica and evaluation within bounded design"
     statistical_checks()
+    comparison = read(checked(scorer["import_comparison"]))
+    opponent = copy.deepcopy(m["evaluation_opponent"])
+    opponent["source"]["play_import"] = comparison["source"]
+    write(root / "evaluation-binding.json", dict(pilot=pin(root / "manifest.json"), binary=m["evaluation_binary"],
+        qualification=pin(scorer_qualification / "qualification.json"), opponent=opponent,
+        note="Native writer regenerated build-bound import; source weights, optimizer, feature mapping and frozen matches unchanged."))
+    bound_opponent(root, m)
     cuda = Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8")
     os.environ["CUDA_PATH"] = str(cuda)
     os.environ["PATH"] = str(cuda / "bin") + os.pathsep + os.environ["PATH"]
@@ -86,6 +94,7 @@ def run(root, compute, scorer_qualification):
     write(root / "training-launch.json", dict(pilot=pin(root / "manifest.json"), compute=pin(compute / "qualification.json"),
         choice=pin(compute / "compute-choice.json"), selected=selected, scorer=pin(scorer_qualification / "qualification.json"),
         runner=pin(__file__), analysis=pin(Path(__file__).with_name("public_entropy_analysis_v1.py")),
+        evaluation_binding=pin(root / "evaluation-binding.json"),
         bootstrap_implementation=pin(Path(__file__).with_name("state_prevention_analysis_v1.py")),
         draw_rule="Draws count as zero wins in both BO3 and game-one win-rate gates and are reported separately.",
         expected_natural_games=4000, native_wall_cap_seconds=1800, full_measurement_started=True,
