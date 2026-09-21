@@ -8,7 +8,7 @@ The versioned312-column contract explicitly represents kind, cast method includi
 
 Initial checks cover actual engine-created Ward stacks with duplicate Lightning Bolt sources and repeated Ward-source abilities, both seats, different hidden cards/library order and arena allocation; exact V4 tensors/legal references, zero-projection logits/value parity and deterministic nonzero forward; deliberately counterfactual public metadata to test full X/mode encoding and per-instance alignment; and real kicked/unkicked Goblin Bushwhacker casts with no targets. These are engineering checks, not tactical-quality or playing-strength evidence.
 
-Current scope includes the extractor, scalar model, independent CPU reference, CUDA grouped update/optimizer transport, actor-bound gameplay adapter, synchronous terminal-game trainer and replayable permutation control. Useful-compute qualification and evaluation integration remain required before a learning comparison. The device implementation preserves per-item nonlinearity before pooling. No experiment gate or coefficient is selected by this document.
+Current scope includes the extractor, scalar model, independent CPU reference, CUDA grouped update/optimizer transport, actor-bound gameplay adapter, synchronous terminal-game trainer and replayable permutation control. Useful-compute qualification and a predeclared experiment remain required before a learning comparison. The device implementation preserves per-item nonlinearity before pooling. No experiment gate or coefficient is selected by this document.
 
 ## September 21, 07:48 initial validation
 
@@ -72,3 +72,27 @@ The native test build took272.02seconds; the trainer build took163.40seconds. Se
 Supported local launch path: `python/tools/run_stack_training_v1.py`. Engineering mode caps execution at3 updates,12 games and900seconds. Substantial mode invokes `compute_throughput_v2.require_allocation` for exact binary/config-bound complete-update benchmarks, checks the selected local placement against the request and verifies live GPU1 identity. A faster selected remote placement is rejected rather than replaced by local work. Remote stack dispatch still needs integration. The raw native CLI remains technically callable; this is launcher enforcement, not an OS sandbox or proof that every other agent uses it. `qualify_public_stack_training_v1.py` versions the bounded engineering controller, whose executed copy and hash are in the result manifest.
 
 Next: connect trained stack checkpoints to the existing BO3 evaluator and qualify deterministic trained-model replay; then benchmark representative full updates across both PCs, check RunPod availability/cost within authority, and freeze a bounded matched comparison. This slice does not enable costs/prevention or Escape. No formal learning comparison, model promotion, external-opponent result, human calibration or league-readiness evidence follows. Fable's known zero-read HTTP429 throughSeptember22 07:00EDT remains an independent review gap; the implementation proceeded under Jack's research assignment without claiming endorsement.
+
+
+## September 21, 08:59 trained checkpoint evaluation
+
+`a96e3e2b` adds explicit `StackWarmStart` and `StackCheckpoint` sources to the existing CPU BO3 evaluator, plus `stack_policy_replay_v1`. The replay tool loads the checkpoint independently, requires exact config/mode/optimizer identity, and verifies every captured learner score without sampling or GPU execution. The native source is unchanged by the subsequent qualifier fixes; final binaries were built at `4bb72b61` in `public-stack-evaluation-tools-002` with the registry-transfer writer.
+
+`public-stack-evaluation-003/result.json` passes the fixed engineering panel:
+
+| Check | Result |
+| --- | --- |
+| Full trained checkpoint score replay |1,098 learner decisions across12 archives, both seats and2 learned ages for structured/permuted/disabled modes, bit-identical |
+| Rejection checks | Wrong mode/config, wrong checkpoint age and corrupt permutation rejected before output publication |
+| Existing legacy/public evaluator |4 archived cases match all JSON fields except the independently verified opponent-import provenance digest |
+| Zero stack projection |6 cases across3 input modes and both seats preserve every gameplay field; only model identity differs |
+| Nonzero trained BO3 |6 cases across3 modes and both seats complete with captured legal selections |
+| Fresh-process trained replay | Structured and permuted first-seat matches are byte-identical on repetition |
+
+All18 BO3 executions/36 decisive natural games/4,026 decision executions have complete output hashes; see `final-file-verification.json`. These are repetitions of a tiny fixed engineering panel against one frozen development opponent. They estimate neither strength nor generalization. Summed native match execution time is14.36seconds with2CPU workers. No training or paid work occurred during this panel; all owned processes ended.
+
+Two preliminary roots are preserved. Root001 stopped because the test expected an inner validation message while the native scorer correctly reported `invalid_stack_rows`. Root002 passed replay/corruption checks but completed zero matches: the old V3 opponent's registry-transfer envelope was bound to its old build. The final panel regenerates that import using the current native writer. `transfer-comparison.json` proves the envelope differs only in `receipt.destination_build_git_head`; parameters and optimizer remain exact. Baseline comparisons allow only the consequent `models[opponent].identity.source_import.appended_rows` digest difference. No receipt was manually edited and no native provenance check was relaxed.
+
+The small training-input coverage audit also qualifies what remains unknown: the6 structured engineering games contained497 learner decisions,118 with nonempty stacks,3 flashback decisions,2 kicked decisions,2 nonzero-X decisions,4 nondefault cast-method decisions, and no nondefault modes. Flags/cast/X received nonzero learned coefficients; this does not establish correct tactical use. Modal learned behavior remains uncovered. Evidence: `public-stack-terminal-training-001/structured-input-coverage.json`.
+
+Next work is the supported throughput qualification for representative complete updates and a frozen matched structured/permuted/disabled experiment. The basic local launcher currently permits only12 engineering games; a dedicated bounded timing-qualification path is needed for3 full10-game updates. Do not treat the2-game correctness batches as production qualification or bypass the launcher. Include both PCs and current RunPod availability/cost within authority, preserve frozen measurements, and qualify smaller deterministic evaluation chunks before a substantial panel. Independent Fable review is still missing because of the known zero-read429 throughSeptember22 07:00EDT. Human calibration, competent independent opposition and league readiness remain unproven.
