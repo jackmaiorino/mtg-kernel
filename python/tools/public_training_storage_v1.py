@@ -48,7 +48,7 @@ def archive_native(native, root):
     return result
 
 
-def dispatch(root, binary, configs, placements, store, updates, wall_seconds=2400):
+def dispatch(root, binary, configs, placements, store, updates, wall_seconds=2400, mode="parallel"):
     root.mkdir()
     snapshot = inventory("jack")
     assert not snapshot["active"]
@@ -62,12 +62,12 @@ def dispatch(root, binary, configs, placements, store, updates, wall_seconds=240
         native.parent.mkdir(exist_ok=True)
         write(root/f"dispatch-{attempt}.json", dict(binary=binary, configs=configs, placements=placements,
             native_root=str(native), local_storage=store, archive_scheme=ARCHIVE,
-            updates=updates, wall_seconds=wall_seconds))
+            updates=updates, wall_seconds=wall_seconds, mode=mode))
         try:
             if updates is not None:
-                group_pin = dispatch_qualification(native,binary,configs,placements,"parallel",updates=updates)
+                group_pin = dispatch_qualification(native,binary,configs,placements,mode,updates=updates)
             else:
-                group_pin = _dispatch_group(native,binary,configs,placements,"parallel",None,wall_seconds)
+                group_pin = _dispatch_group(native,binary,configs,placements,mode,None,wall_seconds)
             break
         except ValueError as error:
             # The dispatcher checks all hosts before creating any host job tree.
@@ -76,7 +76,7 @@ def dispatch(root, binary, configs, placements, store, updates, wall_seconds=240
             if str(error) != "selected GPU is unavailable; preserve its current work" or not untouched:
                 raise
             retries.append(dict(attempt=attempt, native_root=str(native), error=str(error), no_jobs_staged=True))
-            write(root/"preflight-retries.json", retries)
+            write(root/f"preflight-retry-{attempt}.json", retries[-1])
             if attempt == 2:
                 raise
             time.sleep(2)
@@ -125,4 +125,4 @@ def require_storage_choice(path,binary,configs):
 
 def dispatch_qualified(root,binary,configs,choice_path,wall_seconds):
     selected = require_storage_choice(choice_path,binary,configs)
-    return dispatch(root,binary,configs,selected["placements"],selected["local_storage"],None,wall_seconds)
+    return dispatch(root,binary,configs,selected["placements"],selected["local_storage"],None,wall_seconds,selected["mode"])

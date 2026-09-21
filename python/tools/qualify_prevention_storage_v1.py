@@ -26,12 +26,27 @@ def run(root,pilot):
     hardware={host:inventory(host) for host in ["jack","haleyspc"]}
     assert all(not item["active"] for item in hardware.values())
     placements={}
+    available={}
     for host,devices in [("jack",[0,1]),("haleyspc",[0])]:
-        snapshot=idle_preflight(host,[place(host,d,1) for d in devices])
+        statuses=[]
+        for d in devices:
+            try:
+                idle_preflight(host,[place(host,d,1)])
+                eligible=True;reason="Available GPU."
+            except ValueError as error:
+                if str(error) != "selected GPU is unavailable; preserve its current work":raise
+                eligible=False;reason="Failed five current idle/free-VRAM checks; preserve current device activity."
+            available[host,d]=eligible
+            statuses.append(dict(ordinal=d,uuid=place(host,d,1)["gpu_uuid"],eligible=eligible,reason=reason))
+        snapshot=preflight(host,[])
         snapshot["hardware"]=hardware[host]
+        snapshot["device_availability"]=statuses
         path=root/f"{host}-inventory.json";write(path,snapshot)
         placements[host]=dict(checked_at=snapshot["at"],eligible=True,reason="Idle native/GPU resources under whole-PC assignment.",
-            evidence=pin(path),devices=[dict(ordinal=d,uuid=place(host,d,1)["gpu_uuid"],eligible=True,reason="Available GPU.") for d in devices])
+            evidence=pin(path),devices=statuses)
+    assert available["jack",1] and available["haleyspc",0], "need both dedicated devices for this qualification"
+    local_mode="parallel" if available["jack",0] else "sequential"
+    treatment_device=0 if available["jack",0] else 1
     cloud_path=Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
     cloud=read(cloud_path)
     placements["runpod"]=dict(checked_at=cloud["checked_at"],eligible=False,evidence=pin(cloud_path),devices=[],
@@ -40,20 +55,21 @@ def run(root,pilot):
     cases=[]
     for drive,counts in [("C",[1,10]),("D",[1,4,10]),("E",[1,10])]:
         for n in counts:
-            cases.append((f"local-{drive.lower()}-w{n}",stores[drive],dict(control=place("jack",1,n),structured=place("jack",0,n))))
+            cases.append((f"local-{drive.lower()}-w{n}",stores[drive],dict(control=place("jack",1,n),structured=place("jack",treatment_device,n)),local_mode))
     for n in [1,10]:
-        cases.append((f"cross-d-w{n}",stores["D"],dict(control=place("jack",1,n),structured=place("haleyspc",0,n))))
-    cases.append(("cross-fast-d-w10",stores["D"],dict(control=place("jack",0,10),structured=place("haleyspc",0,10))))
+        cases.append((f"cross-d-w{n}",stores["D"],dict(control=place("jack",1,n),structured=place("haleyspc",0,n)),"parallel"))
+    if available["jack",0]:
+        cases.append(("cross-fast-d-w10",stores["D"],dict(control=place("jack",0,10),structured=place("haleyspc",0,10)),"parallel"))
     write(root/"manifest.json",dict(pilot=pin(pilot/"manifest.json"),runner=pin(__file__),binary=binary,configs=configs,
         dependencies=[pin(Path(__file__).with_name(name)) for name in ["public_training_storage_v1.py","compute_throughput_v2.py","public_training_dispatch_v2.py","qualify_state_prevention_compute_v1.py"]],
-        cases=[dict(id=name,storage=s,placements=p) for name,s,p in cases],prefix_updates=3,
-        native_case_games=60,maximum_executed_games=640,unique_arm_games=60,
+        cases=[dict(id=name,storage=s,placements=p,mode=mode) for name,s,p,mode in cases],prefix_updates=3,
+        native_case_games=60,maximum_executed_games=60*len(cases)+40,unique_arm_games=60,
         process_wall_cap_seconds=300,archive_scheme=ARCHIVE,
         non_claim="Engineering timing, exposure and exact replay only. No prefix outcome selection or full training launch."))
     started=time.monotonic(); candidates=[]; projections={}; reference={}; exposure={}; comparisons=0
     first_reports=None
-    for label,store,assignment in cases:
-        group_pin=dispatch(root/f"{root.name}-{label}",binary,configs,assignment,store,3)
+    for label,store,assignment,mode in cases:
+        group_pin=dispatch(root/f"{root.name}-{label}",binary,configs,assignment,store,3,mode=mode)
         group=read(checked(group_pin)); times=[]
         current=reports(group_pin)
         if first_reports is None:first_reports=current
@@ -68,7 +84,7 @@ def run(root,pilot):
             if len(candidates)==0:assert execution["seconds"]<90,"cheap timing envelope exceeded"
             steady=sum(r["seconds"] for r in completion["receipts"][1:])/2
             times.append(execution["seconds"]+197*steady)
-        projections[label]=max(times)+group["staging_seconds"]+group["recovery_seconds"]*200/3
+        projections[label]=(max(times) if mode=="parallel" else sum(times))+group["staging_seconds"]+group["recovery_seconds"]*200/3
         candidates.append(dict(id=label,benchmark=group_pin))
         print(label,"complete; archive-inclusive projected seconds",round(projections[label],2),flush=True)
     # Independently restart from update0, then compare updates1 and2 exactly.
