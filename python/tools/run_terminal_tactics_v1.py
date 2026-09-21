@@ -1,6 +1,7 @@
 """Bounded exact natural replay and public terminal witnesses across fixed jobs."""
 import argparse
 import base64
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
@@ -18,14 +19,29 @@ REMOTE_DATA='C:/mtg-node/stack-screen-training-native-0/jobs/structured/outputs'
 
 def inventory(host):
     result=base_inventory(host)
-    script=r"@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^diagnostic\.exe$|public_terminal_tactics|stack_sensitivity|stack_feature_training|human_match'} | Select-Object Name,ProcessId,CreationDate,CommandLine) | ConvertTo-Json -Depth 4"
+    script=r"$ProgressPreference='SilentlyContinue'; @(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^diagnostic\.exe$|public_terminal_tactics|stack_sensitivity|stack_feature_training|human_match'} | Select-Object Name,ProcessId,CreationDate,CommandLine,KernelModeTime,UserModeTime,ReadTransferCount,WriteTransferCount) | ConvertTo-Json -Depth 4"
     if host=='haleyspc':raw=ssh(script)
     else:
         encoded=base64.b64encode(script.encode('utf-16le')).decode()
         raw=subprocess.check_output(['powershell','-NoProfile','-EncodedCommand',encoded],text=True)
     extra=json.loads(raw) if raw.strip() else []
     if isinstance(extra,dict):extra=[extra]
-    found={p['ProcessId']:p for p in result['active']+extra}
+    baseline=read('E:/mtg-meta-recovery-20260921/public-terminal-tactics-001/preserved-human-owners.json') if host=='jack' else dict(before=[],after=[])
+    def stamp(value):
+        return int(value.split('(')[1].split(')')[0])/1000 if value.startswith('/Date(') else datetime.fromisoformat(value).timestamp()
+    preserved=[];blocking=[]
+    for row in extra:
+        before=next((r for r in baseline['before'] if r['ProcessId']==row['ProcessId']),None)
+        after=next((r for r in baseline['after'] if r['ProcessId']==row['ProcessId']),None)
+        if row['Name']=='human_match_v2.exe' and before and after:
+            counters=['KernelModeTime','UserModeTime','ReadTransferCount','WriteTransferCount']
+            exact_identity=row['CommandLine']==after['CommandLine']==before['CommandLine'] and abs(stamp(row['CreationDate'])-stamp(after['CreationDate']))<.002
+            idle=all(int(row[k])==int(before[k])==int(after[k]) for k in counters)
+            if exact_identity and idle:
+                preserved.append(row);continue
+        blocking.append(row)
+    result['preserved_idle_human']=preserved
+    found={p['ProcessId']:p for p in result['active']+blocking}
     result['active']=list(found.values())
     return result
 
@@ -113,6 +129,7 @@ try {{
             r=json.loads(ssh(script,timeout=240))
             write(root/(label+'-result.json'),r)
         r['wall_seconds']=time.monotonic()-begin
+        assert not inventory('haleyspc' if remote else 'jack')['active'],'owner resumed during timing'
         return r
     sample=[jobs[i] for i in [0,3,6,9]]
     cases={};reference=None
