@@ -632,6 +632,25 @@ fn validate_cache(
 }
 
 impl FastActorSessionV1 {
+    /// Research-only engine fixture ingress. Never used by policy execution or
+    /// a measurement's reset path; the caller declares a synthetic position.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn from_public_terminal_fixture_v1(state: GameState) -> Self {
+        let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
     #[cfg(test)]
     pub(crate) fn from_v3_fixture_state(state: GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);

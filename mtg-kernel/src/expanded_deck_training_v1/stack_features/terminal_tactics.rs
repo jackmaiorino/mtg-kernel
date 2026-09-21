@@ -1,6 +1,7 @@
 //! Exact natural-trajectory reconstruction and narrow public terminal witnesses.
 use super::*;
 use crate::rl::ActionSemanticV1;
+pub mod fixtures;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,8 +49,12 @@ fn witness(session: &FastActorSessionV1, root: crate::rl_session::FastActorDecis
             FastActorResponseV1::Decision(d) => {
                 let (_, actions) = PairedBo1PolicyInputV1::new(&branch,d).diagnostic_visible_v4()?;
                 let pass = actions.iter().position(|a| matches!(a,ActionSemanticV1::Pass{..}));
-                if pass.is_none() || (d.acting_player != root.acting_player && actions.len()!=1) {
-                    return Ok(json!({"classification":"unresolved_next_choice","line":line}));
+                if actions.len()==1 {
+                    current=d;action=0;continue;
+                }
+                if pass.is_none() || d.acting_player != root.acting_player {
+                    return Ok(json!({"classification":"unresolved_next_choice","line":line,
+                        "next_actor":d.acting_player,"next_actions":actions}));
                 }
                 current=d;action=pass.unwrap() as u32;
             }
