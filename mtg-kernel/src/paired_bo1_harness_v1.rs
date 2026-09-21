@@ -27,6 +27,13 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         self.decision
     }
 
+    /// Opt-in evaluation recorder only. The playing policy is not changed by
+    /// these bounded counterfactuals and receives no cloned hidden game state.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_terminal_targets_v1(&self)->Result<serde_json::Value,String> {
+        crate::expanded_deck_training_v1::stack_features::terminal_tactics::audit_live_burn_targets_v1(self.session,self.decision)
+    }
+
     /// Bound actor-visible data for diagnostic recording, without the session
     /// or the consumable action binding. Stable references are transport only.
     pub(crate) fn diagnostic_visible_v1(

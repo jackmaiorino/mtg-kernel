@@ -3,6 +3,26 @@ use super::*;
 use crate::rl::ActionSemanticV1;
 pub mod fixtures;
 
+/// Shadow-only census. This does not select an action or expose a live session.
+/// Restrict witnesses to visible burn targets and a publicly empty opposing hand.
+pub(crate) fn audit_live_burn_targets_v1(session:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1)->Result<Value,String> {
+    ensure(session.current_response()==FastActorResponseV1::Decision(root),"shadow root binding differs")?;
+    if !(2..=32).contains(&root.legal_action_count) {return Ok(json!({"status":"menu_outside_bounds"}));}
+    let (visible,actions)=PairedBo1PolicyInputV1::new(session,root).diagnostic_visible_v4()?;
+    let admitted=actions.iter().all(|a| match a {
+        ActionSemanticV1::ChooseTarget{source,remaining,..}=>*remaining==1
+            && matches!(crate::rl::card_name(source.card_db_id).as_str(),"Lightning Bolt"|"Lava Dart"|"Galvanic Blast"|"Fireblast"),
+        _=>false,
+    });
+    if !admitted {return Ok(json!({"status":"not_supported_burn_target"}));}
+    let actor=seat(root.acting_player) as usize;
+    if !session.game_state().players[1-actor].hand.is_empty() {return Ok(json!({"status":"opponent_hand_nonempty"}));}
+    let mut outcomes=Vec::new();
+    for i in 0..root.legal_action_count {outcomes.push(witness(session,root,i)?);}
+    ensure(session.current_response()==FastActorResponseV1::Decision(root),"shadow witness mutated root")?;
+    Ok(json!({"status":"audited","visible":visible,"actions":actions,"outcomes":outcomes}))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command {

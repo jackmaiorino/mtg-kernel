@@ -62,6 +62,8 @@ pub struct Command {
     pub matches: Vec<Match>,
     pub cross_generation_evaluation: bool,
     pub capture_decisions: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub terminal_audit_v1: bool,
     pub output_directory: PathBuf,
 }
 
@@ -235,6 +237,10 @@ struct Trace<'a> {
     resets: Vec<[u64; 2]>,
     rows: Vec<Value>,
     decisions: u64,
+    terminal_audit: bool,
+    terminal_counts: std::collections::BTreeMap<String,u64>,
+    terminal_roots: Vec<Value>,
+    terminal_branches: u64,
 }
 impl PairedBo1PolicyV1 for Trace<'_> {
     fn uses_observation_successor_v3(&self) -> bool {
@@ -256,6 +262,19 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             code: crate::rl_session::RlSessionErrorCode::StaleEnvironmentBinding,
             message,
         };
+        let root=input.decision();
+        let acting=usize::from(root.acting_player==crate::rl::PlayerSeatV1::P1);
+        let mut terminal_row=if self.terminal_audit && self.generations[acting]==PlayPolicyGenerationV1::V4 {
+            let record=input.diagnostic_terminal_targets_v1().map_err(fail)?;
+            let status=record["status"].as_str().ok_or_else(||fail("shadow status missing".into()))?;
+            *self.terminal_counts.entry(status.into()).or_default()+=1;
+            if status=="audited" {
+                self.terminal_branches+=u64::from(root.legal_action_count);
+                if self.terminal_roots.len()>=512 || self.terminal_branches>4096 {return Err(fail("shadow per-match budget exceeded".into()));}
+                Some(json!({"game_index":self.resets.len(),"step":root.step,"physical_decision_id":root.physical_decision_id,
+                    "actor":root.acting_player,"audit":record}))
+            } else {None}
+        } else {None};
         let mut row = if self.capture {
             let seat = usize::from(input.decision().acting_player == crate::rl::PlayerSeatV1::P1);
             let diagnostic_error = |error: String| fail(format!(
@@ -285,6 +304,10 @@ impl PairedBo1PolicyV1 for Trace<'_> {
         let selected = self.base.select_action_v1(input)?;
         if selected >= legal {
             return Err(fail("evaluation selected outside legal menu".into()));
+        }
+        if let Some(ref mut r)=terminal_row {
+            r["selected"]=json!(selected);
+            self.terminal_roots.push(r.take());
         }
         self.decisions += 1;
         if let Some(ref mut r) = row {
@@ -450,6 +473,10 @@ pub fn run(command: Command) -> Result<Value, String> {
                 resets: vec![],
                 rows: vec![],
                 decisions: 0,
+                terminal_audit: command.terminal_audit_v1,
+                terminal_counts: Default::default(),
+                terminal_roots: vec![],
+                terminal_branches: 0,
             };
             let fixed = |seat: usize| {
                 let target = targets[seat].clone();
@@ -476,6 +503,9 @@ pub fn run(command: Command) -> Result<Value, String> {
                 "outcome":played.outcome,"games":played.games,"sideboard_decisions":played.sideboard_decisions,
                 "seed_resets":trace.resets,"decision_count":trace.decisions,"decisions":trace.rows,
                 "diagnostic_spell_target_repairs":trace.diagnostic_repairs});
+            if command.terminal_audit_v1 {
+                result["terminal_audit_v1"]=json!({"counts":trace.terminal_counts,"branches":trace.terminal_branches,"roots":trace.terminal_roots});
+            }
             drop(trace);
             drop(router);
             result["v3_forced_actions"] =
@@ -529,7 +559,8 @@ mod tests {
         reference.reset_sampling_v1([123, 456]);
         let mut trace = Trace { base: &mut base, capture: true, spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V3; 2],
-            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0 };
+            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0,
+            terminal_audit:false, terminal_counts:Default::default(), terminal_roots:vec![],terminal_branches:0 };
         trace.reset_for_game_v1([123, 456]).unwrap();
         assert!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).is_err());
         assert_eq!(trace.decisions, 0);
@@ -550,7 +581,8 @@ mod tests {
         reference.reset_sampling_v1([123, 456]);
         let mut trace = Trace { base: &mut v4, capture: true, spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V4; 2],
-            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0 };
+            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0,
+            terminal_audit:false, terminal_counts:Default::default(), terminal_roots:vec![],terminal_branches:0 };
         trace.reset_for_game_v1([123, 456]).unwrap();
         for _ in 0..8 {
             let expected = reference.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap();
