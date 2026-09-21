@@ -51,12 +51,21 @@ def run(build,root):
  launch('reject-age','stack_policy_replay_v1',dict(command,checkpoint=pin(base/'0001/checkpoint.json')),'archive identity differs')
  bad=read(base/'0001/episode-000.json');aux=next(x for x in bad['auxiliary'] if x is not None);aux['permutation']['columns'][1]=aux['permutation']['columns'][0];write(root/'corrupt-permutation.json',bad)
  launch('reject-permutation','stack_policy_replay_v1',dict(command,trajectories=[pin(root/'corrupt-permutation.json')]),'invalid_stack_rows')
+ transfer=read(baseline/'transfer-request.json')
+ adapter=launch('registry-transfer','registry_transfer_v1',transfer)
+ previous_envelope=read(baseline/'adapter/transfer-envelope.json');current_envelope=read(adapter/'transfer-envelope.json')
+ expected_envelope=copy.deepcopy(previous_envelope);expected_envelope['receipt']['destination_build_git_head']=build_commit
+ assert current_envelope==expected_envelope,'native registry transfer changed more than build provenance'
+ write(root/'transfer-comparison.json',dict(only_changed_field='receipt.destination_build_git_head',parameters_and_optimizer_exact=True,old=pin(baseline/'adapter/transfer-envelope.json'),new=pin(adapter/'transfer-envelope.json')))
+ opponent_pin=pin(adapter/'play-import-source.json')
+ def update_opponent(command,seat):
+  command=copy.deepcopy(command);command['sources'][1-seat]['source']['play_import']=opponent_pin;return command
  old={job['id']:pathlib.Path(job['output_directory']) for name in ['cheap-one','remaining-eleven'] for job in read(baseline/name/'result.json')['jobs']}
- requests={seat:read(baseline/f'legacy-canonical-Affinity-p{seat}.request.json') for seat in range(2)}
+ requests={seat:update_opponent(read(baseline/f'legacy-canonical-Affinity-p{seat}.request.json'),seat) for seat in range(2)}
  jobs=[]
  for seat in range(2):
   for prefix in ['legacy','entropy']:
-   name=f'{prefix}-canonical-Affinity-p{seat}';jobs.append((name,read(baseline/(name+'.request.json')),'old',old[name]))
+   name=f'{prefix}-canonical-Affinity-p{seat}';jobs.append((name,update_opponent(read(baseline/(name+'.request.json')),seat),'old',old[name]))
   for mode in ['structured','permuted','disabled']:
    zero=copy.deepcopy(requests[seat]);zero['sources'][seat]=dict(kind='stack_warm_start',source=zero['sources'][seat]['source'],input_mode=mode)
    jobs.append((f'zero-{mode}-p{seat}',zero,'zero',old[f'legacy-canonical-Affinity-p{seat}']))
@@ -68,7 +77,10 @@ def run(build,root):
   name,command,kind,reference=job
   output=launch(name,'public_feature_evaluation_v1',command);completed=read(output/'completion.json');assert completed['matches']==1
   actual=read(output/'match-000000.json');assert len(actual['games'])==completed['natural_games'] and actual['decision_count']==completed['decisions']
-  if kind=='old':assert pin(output/'match-000000.json')['sha256']==pin(reference/'match-000000.json')['sha256'],name
+  if kind=='old':
+   expected=read(reference/'match-000000.json');seat=int(name[-1]);old_import=expected['models'][1-seat]['identity']['source_import'];new_import=actual['models'][1-seat]['identity']['source_import']
+   old_import['appended_rows']=new_import['appended_rows']
+   assert actual==expected,name
   if kind=='zero':
    expected=read(reference/'match-000000.json');assert {k:v for k,v in actual.items() if k!='models'}=={k:v for k,v in expected.items() if k!='models'},name
   if kind=='trained':
@@ -80,7 +92,7 @@ def run(build,root):
   name=f'trained-{mode}-p0';command=read(root/name/'request.json');repeat=launch(name+'-repeat','public_feature_evaluation_v1',command)
   first=pathlib.Path(reports[name]['output']);assert (repeat/'match-000000.json').read_bytes()==(first/'match-000000.json').read_bytes()
   reports[name+'-repeat']=dict(output=str(repeat),games=reports[name]['games'],decisions=reports[name]['decisions'],kind='repeat')
- result=dict(status='STACK-BO3-AND-LOADED-REPLAY-ENGINEERING-PASS',bo3_executions=len(reports),natural_game_executions=sum(x['games'] for x in reports.values()),decision_executions=sum(x['decisions'] for x in reports.values()),complete_archived_behavior_rows=replay_rows,rejected_before_output=['mode','age','corrupt-permutation'],cases=reports,non_claim='Fixed engineering seeds, repeated for parity. No playing-strength estimate, trained model selection, general opponent coverage or production allocation qualification.')
+ result=dict(status='STACK-BO3-AND-LOADED-REPLAY-ENGINEERING-PASS',bo3_executions=len(reports),natural_game_executions=sum(x['games'] for x in reports.values()),decision_executions=sum(x['decisions'] for x in reports.values()),complete_archived_behavior_rows=replay_rows,rejected_before_output=['mode','age','corrupt-permutation'],baseline_comparison='All JSON fields identical except verified regenerated opponent envelope digest in source_import.appended_rows; raw old/new match bytes differ',cases=reports,non_claim='Fixed engineering seeds, repeated for parity. No playing-strength estimate, trained model selection, general opponent coverage or production allocation qualification.')
  write(root/'result.json',result);print(json.dumps({k:v for k,v in result.items() if k!='cases'},indent=2))
 
 if __name__=='__main__':
