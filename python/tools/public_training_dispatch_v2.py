@@ -131,7 +131,7 @@ def export_group(root):
 
 
 def ssh_ps(script, timeout=60):
-    encoded = base64.b64encode(script.encode("utf-16le")).decode()
+    encoded = base64.b64encode(("$ProgressPreference='SilentlyContinue'\n"+script).encode("utf-16le")).decode()
     result = subprocess.run(["ssh","-o","BatchMode=yes","-o","ConnectTimeout=10",REMOTE,
                              "powershell","-NoProfile","-EncodedCommand",encoded],capture_output=True,text=True,timeout=timeout)
     if result.returncode:
@@ -141,7 +141,8 @@ def ssh_ps(script, timeout=60):
 
 def preflight(host, placements):
     script=r'''$ErrorActionPreference='Stop'
-$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match 'public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
+$ProgressPreference='SilentlyContinue'
+$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
 [pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''
     if host == "haleyspc":
         result=json.loads(ssh_ps(script))
