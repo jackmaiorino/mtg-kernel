@@ -10,7 +10,7 @@ from public_evaluation_dispatch_v1 import read, write, pin, checked, inventory, 
 from public_evaluation_dispatch_v2 import dispatch
 from public_training_storage_v1 import storage
 from evaluation_recovery_fixture_v1 import assignment, host_hashes, fingerprint, stage, recover_local
-from evaluation_throughput_v3 import require_choice
+from evaluation_throughput_v4 import require_choice
 
 
 def remote_recovery(root, remote, native, hashes, map_path, index):
@@ -116,7 +116,7 @@ def compatible_recovery(choice_root, reference_pin, allocation, snapshots):
     completion = read(choice_root/'qualification.json')
     assert completion['complete']
     choice = read(checked(completion['compute_choice']))
-    assert choice['schema'] == 'cpu-bo3-allocation/v3'
+    assert choice['schema'] in ('cpu-bo3-allocation/v3', 'cpu-bo3-allocation/v4')
     for host in allocation:
         prior_inventory = read(checked(choice['inventory'][host]['evidence']))
         assert prior_inventory['cpu'] == snapshots[host]['cpu'], 'Recovery hardware changed'
@@ -212,7 +212,6 @@ def qualify(root, reference, target, reuse=None, reuse_recovery=None):
     def measure(label, allocation):
         nonlocal new_matches, reused_matches
         assert time.monotonic()-started < 1200, 'Bounded qualification launch budget exhausted'
-        owners()
         key = json.dumps({h:{k:v for k,v in a.items() if k != 'workers'} for h,a in allocation.items()},sort_keys=True)
         if key not in cache:
             previous_calibration = next((r/f'fixture-{label}'/'calibration.json' for r in reuse_roots if (r/f'fixture-{label}'/'calibration.json').is_file()), None)
@@ -227,27 +226,29 @@ def qualify(root, reference, target, reuse=None, reuse_recovery=None):
                 validate_calibration(shared_calibration, allocation, plan, plan['binary'])
                 cache[key] = shared_calibration
             else:
+                owners()
                 cache[key] = calibrate(root,label,allocation,reference_pin,source_pin,recovery_pin,remote)
-            owners()
+                owners()
         calibrations[label] = cache[key]
         for repeat in range(2):
-            owners()
             previous_report = next((r/f'{label}-r{repeat}'/'result.json' for r in reuse_roots if (r/f'{label}-r{repeat}'/'result.json').is_file()), None)
             if previous_report is not None and previous_report.is_file():
                 report = reuse_completed_report(previous_report, allocation, snapshots, previous_report.parents[1])
                 reused_matches += 48
             else:
+                owners()
                 report = dispatch(root,f'{label}-r{repeat}',plan['binary'],plan['qualification_jobs'],allocation,remote,300)
                 new_matches += 48
-            owners()
+                owners()
             candidates.append(dict(id=f'{label}-r{repeat}',allocation_id=label,report=report))
             value=read(checked(report))
             print(dict(case=label,repeat=repeat,execution=value['execution_seconds']),flush=True)
     for label,allocation in cases: measure(label,allocation)
-    choice = dict(schema='cpu-bo3-allocation/v3', plan=target_pin,binary=plan['binary'],inventory=available,
+    choice = dict(schema='cpu-bo3-allocation/v4', plan=target_pin,binary=plan['binary'],inventory=available,
+          recovery_projection=dict(method='linear-output-bytes-with-fixed-cost-floor',max_byte_ratio=1.10),
           eligible_storage=stores,remote_setup_seconds=0 if remote is None else remote['seconds'],candidates=candidates,
           selected=None,recovery_calibrations=calibrations,dependencies=[pin(Path(__file__).with_name(n)) for n in
-          ('evaluation_throughput_v3.py','evaluation_recovery_fixture_v1.py','public_evaluation_dispatch_v1.py','public_evaluation_dispatch_v2.py')])
+          ('evaluation_throughput_v4.py','evaluation_recovery_fixture_v1.py','public_evaluation_dispatch_v1.py','public_evaluation_dispatch_v2.py')])
     # Pick cross-host storage/worker settings from completed same-host timings,
     # not outcomes. Preserve all earlier measurements as candidate evidence.
     if all(available[h]['eligible'] for h in snapshots):
@@ -263,6 +264,7 @@ def qualify(root, reference, target, reuse=None, reuse_recovery=None):
     write(root/'choice-draft.json',choice)
     selected = require_choice(root/'choice-draft.json',target_pin,plan['binary'])
     choice['selected'] = selected['id']
+    owners()
     write(root/'compute-choice.json',choice)
     assert require_choice(root/'compute-choice.json',target_pin,plan['binary']) == selected
     write(root/'qualification.json',dict(complete=True,selected=selected,compute_choice=pin(root/'compute-choice.json'),
