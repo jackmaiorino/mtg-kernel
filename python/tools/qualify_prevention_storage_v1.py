@@ -8,6 +8,17 @@ from public_training_storage_v1 import storage,dispatch,require_storage_choice,A
 from qualify_state_prevention_compute_v1 import place,audit,reports
 
 
+def idle_preflight(host, assignments):
+    for attempt in range(5):
+        try:
+            return preflight(host, assignments)
+        except ValueError as error:
+            if str(error) != "selected GPU is unavailable; preserve its current work" or attempt == 4:
+                raise
+            print(host, "GPU idle preflight retry", attempt+1, flush=True)
+            time.sleep(2)
+
+
 def run(root,pilot):
     root.mkdir()
     m=read(pilot/"manifest.json"); binary=m["training_binary"]; configs=m["training_configs"]
@@ -16,7 +27,7 @@ def run(root,pilot):
     assert all(not item["active"] for item in hardware.values())
     placements={}
     for host,devices in [("jack",[0,1]),("haleyspc",[0])]:
-        snapshot=preflight(host,[place(host,d,1) for d in devices])
+        snapshot=idle_preflight(host,[place(host,d,1) for d in devices])
         snapshot["hardware"]=hardware[host]
         path=root/f"{host}-inventory.json";write(path,snapshot)
         placements[host]=dict(checked_at=snapshot["at"],eligible=True,reason="Idle native/GPU resources under whole-PC assignment.",
@@ -64,7 +75,7 @@ def run(root,pilot):
     restart=root/"restart";restart.mkdir(); replay_comparisons=0
     for arm in ["control","structured"]:
         folder=restart/arm;folder.mkdir();p=place("jack",1,10)
-        write(folder/"preflight.json",preflight("jack",[p]))
+        write(folder/"preflight.json",idle_preflight("jack",[p]))
         request=dict(config=read(checked(configs[arm])),output_directory=str(folder/"outputs"),
             resume=first_reports[arm]["outputs"]["0000/checkpoint.json"],stop_after=3,collector_workers=10,execution_gpu_ordinal=1)
         write(folder/"request.json",request)
