@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import zipfile
 
-from public_training_dispatch_v2 import read, write, pin, checked, dispatch_qualification, _dispatch_group
+from public_training_dispatch_v2 import read, write, pin, checked, dispatch_qualification, dispatch_stack_qualification, _dispatch_group
 from compute_throughput_v2 import require_allocation
 from public_evaluation_dispatch_v1 import inventory
 
@@ -48,7 +48,7 @@ def archive_native(native, root):
     return result
 
 
-def dispatch(root, binary, configs, placements, store, updates, wall_seconds=2400, mode="parallel"):
+def dispatch(root, binary, configs, placements, store, updates, wall_seconds=2400, mode="parallel", stack=False):
     root.mkdir()
     snapshot = inventory("jack")
     assert not snapshot["active"]
@@ -65,7 +65,11 @@ def dispatch(root, binary, configs, placements, store, updates, wall_seconds=240
             updates=updates, wall_seconds=wall_seconds, mode=mode))
         try:
             if updates is not None:
-                group_pin = dispatch_qualification(native,binary,configs,placements,mode,updates=updates)
+                if stack:
+                    assert mode == "device_queues"
+                    group_pin = dispatch_stack_qualification(native,binary,configs,placements,updates=updates)
+                else:
+                    group_pin = dispatch_qualification(native,binary,configs,placements,mode,updates=updates)
             else:
                 group_pin = _dispatch_group(native,binary,configs,placements,mode,None,wall_seconds)
             break
@@ -89,12 +93,15 @@ def dispatch(root, binary, configs, placements, store, updates, wall_seconds=240
     return pin(root/"group-benchmark.json")
 
 
-def require_storage_choice(path,binary,configs):
+def require_storage_choice(path,binary,configs,stack=False):
     choice = read(path)
     jobs = {arm:dict(config_sha256=item["sha256"],updates=len(read(checked(item))["updates"])) for arm,item in configs.items()}
     # Existing guard verifies same full configs, native GPU identities, complete
     # learning outputs, actual concurrent timing, and the archive-inclusive minimum.
-    selected = require_allocation(path,binary["sha256"],jobs)
+    validator = require_allocation
+    if stack:
+        from compute_throughput_v3 import require_allocation as validator
+    selected = validator(path,binary["sha256"],jobs)
     assert choice["archive_scheme"] == ARCHIVE
     for item in choice["storage_dependencies"]: checked(item)
     measured = {}
@@ -126,3 +133,10 @@ def require_storage_choice(path,binary,configs):
 def dispatch_qualified(root,binary,configs,choice_path,wall_seconds):
     selected = require_storage_choice(choice_path,binary,configs)
     return dispatch(root,binary,configs,selected["placements"],selected["local_storage"],None,wall_seconds,selected["mode"])
+
+
+def dispatch_stack_qualified(root,binary,configs,choice_path,wall_seconds):
+    selected = require_storage_choice(choice_path,binary,configs,stack=True)
+    if selected["mode"] != "device_queues":
+        raise ValueError("stack allocation must use per-device queues")
+    return dispatch(root,binary,configs,selected["placements"],selected["local_storage"],None,wall_seconds,selected["mode"],stack=True)

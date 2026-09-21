@@ -50,6 +50,30 @@ def gpu_uuid(ordinal):
     return output.strip()
 
 
+def process_telemetry(child, ordinal):
+    """Read only the owned native process and its selected GPU."""
+    import ctypes
+    from ctypes import wintypes
+    handle=wintypes.HANDLE(int(child._handle))
+    times=[wintypes.FILETIME() for _ in range(4)]
+    if not ctypes.windll.kernel32.GetProcessTimes(handle,*[ctypes.byref(t) for t in times]):
+        raise OSError("cannot read owned native process CPU time")
+    ticks=lambda t: (t.dwHighDateTime << 32)+t.dwLowDateTime
+    class IO(ctypes.Structure):
+        _fields_=[(name,ctypes.c_ulonglong) for name in ['read_ops','write_ops','other_ops','read_bytes','write_bytes','other_bytes']]
+    io=IO()
+    if not ctypes.windll.kernel32.GetProcessIoCounters(handle,ctypes.byref(io)):
+        raise OSError("cannot read owned native process I/O")
+    class Memory(ctypes.Structure):
+        _fields_=[('cb',wintypes.DWORD),('faults',wintypes.DWORD)]+[(name,ctypes.c_size_t) for name in ['peak_rss','rss','peak_paged','paged','peak_nonpaged','nonpaged','pagefile','peak_pagefile']]
+    memory=Memory();memory.cb=ctypes.sizeof(memory)
+    if not ctypes.windll.psapi.GetProcessMemoryInfo(handle,ctypes.byref(memory),memory.cb):
+        raise OSError("cannot read owned native process memory")
+    gpu=subprocess.check_output(['nvidia-smi',f'--id={ordinal}','--query-gpu=uuid,utilization.gpu,memory.used,power.draw','--format=csv,noheader,nounits'],text=True).strip()
+    return dict(at_unix=time.time(),pid=child.pid,cpu_seconds=(ticks(times[2])+ticks(times[3]))/1e7,
+                rss_bytes=memory.rss,read_bytes=io.read_bytes,write_bytes=io.write_bytes,gpu=gpu)
+
+
 def worker(spec):
     placement = spec["placement"]
     if platform.node().upper() != HOSTNAMES[placement["host"]]:
@@ -88,7 +112,22 @@ def worker(spec):
             remaining = spec["wall_seconds"]-(time.monotonic()-started)
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(str(binary),spec["wall_seconds"])
-            code = child.wait(timeout=remaining)
+            if spec.get("telemetry",False):
+                with (folder/"telemetry.jsonl").open("x") as telemetry:
+                    while child.poll() is None:
+                        try:
+                            sample=process_telemetry(child,placement["gpu_ordinal"])
+                        except OSError:
+                            if child.poll() is not None: break
+                            raise
+                        telemetry.write(json.dumps(sample)+"\n");telemetry.flush()
+                        remaining=spec["wall_seconds"]-(time.monotonic()-started)
+                        if remaining <= 0: raise subprocess.TimeoutExpired(str(binary),spec["wall_seconds"])
+                        try:child.wait(timeout=min(5,remaining))
+                        except subprocess.TimeoutExpired:pass
+                code=child.wait()
+            else:
+                code = child.wait(timeout=remaining)
         except Exception as error:
             timed_out = isinstance(error, subprocess.TimeoutExpired)
             failure = str(error)
@@ -111,7 +150,15 @@ def worker(spec):
 
 def worker_group(path):
     group = read(path)
-    if group["mode"] == "parallel":
+    if group["mode"] == "device_queues":
+        queues = {}
+        for spec in group["jobs"].values():
+            queues.setdefault(spec["placement"]["gpu_uuid"], []).append(spec)
+        def drain(jobs):
+            for spec in jobs: worker(spec)
+        with ThreadPoolExecutor(max_workers=len(queues)) as pool:
+            list(pool.map(drain, queues.values()))
+    elif group["mode"] == "parallel":
         with ThreadPoolExecutor(max_workers=len(group["jobs"])) as pool:
             list(pool.map(worker,group["jobs"].values()))
     else:
@@ -142,7 +189,7 @@ def ssh_ps(script, timeout=60):
 def preflight(host, placements):
     script=r'''$ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
+$active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|stack_feature_training|stack_policy_replay|public_feature_evaluation|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
 [pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''
     if host == "haleyspc":
         result=json.loads(ssh_ps(script))
@@ -161,7 +208,7 @@ $active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer
 
 def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seconds):
     staging_started=time.monotonic()
-    if mode not in ["parallel","sequential"] or set(configs) != set(placements):
+    if mode not in ["parallel","sequential","device_queues"] or set(configs) != set(placements):
         raise ValueError("invalid dispatch group")
     if not 0 < wall_seconds <= 7200 or not re.fullmatch(r"[a-z0-9-]+",root.name):
         raise ValueError("invalid root name or wall cap")
@@ -196,7 +243,7 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
                            stop_after=stop if stop is not None else len(config["updates"]),
                            collector_workers=placement["workers"],execution_gpu_ordinal=placement["gpu_ordinal"])
             write(folder/"request.json",request)
-            group["jobs"][name]=dict(placement=placement,wall_seconds=wall_seconds,
+            group["jobs"][name]=dict(placement=placement,wall_seconds=wall_seconds,telemetry=mode=="device_queues",
                 binary=dict(path=native_binary,sha256=binary_pin["sha256"]),
                 request=dict(path=str(Path(native_folder)/"request.json"),sha256=pin(folder/"request.json")["sha256"]))
         write(local/"group.json",group)
@@ -271,7 +318,7 @@ try {{
 
     staging_seconds=time.monotonic()-staging_started
     started=time.monotonic()
-    if mode == "parallel":
+    if mode in ["parallel", "device_queues"]:
         with ThreadPoolExecutor(max_workers=len(staged)) as pool:
             recoveries=list(pool.map(run_host,staged))
     else:
@@ -310,6 +357,27 @@ def dispatch_qualification(root,binary,configs,placements,mode,updates=3):
     if games > 80:
         raise ValueError("qualification prefix exceeds 80 games")
     return _dispatch_group(root,binary,configs,placements,mode,updates,300)
+
+
+def dispatch_stack_qualification(root,binary,configs,placements,updates=3):
+    """Fixed whole-batch timing prefix, never a substitute for full-run authority."""
+    if updates not in [1,3] or not 1 <= len(configs) <= 3:
+        raise ValueError("stack timing requires one cheap or three complete initial updates")
+    values = [read(checked(item)) for item in configs.values()]
+    if any(c.get("schema") != "mtg-kernel-stack-training-config/v1" or len(c["updates"]) < updates for c in values):
+        raise ValueError("stack timing config or prefix differs")
+    if any(not 1 <= len(batch) <= 10 for c in values for batch in c["updates"][:updates]):
+        raise ValueError("stack timing batches exceed ten games")
+    return _dispatch_group(root,binary,configs,placements,"device_queues",updates,300)
+
+
+def dispatch_stack_qualified(root,binary,configs,choice_path,wall_seconds):
+    from compute_throughput_v3 import require_allocation
+    jobs={name:dict(config_sha256=item["sha256"],updates=len(read(checked(item))["updates"])) for name,item in configs.items()}
+    selected=require_allocation(choice_path,binary["sha256"],jobs)
+    if selected["mode"] != "device_queues":
+        raise ValueError("stack production requires qualified per-device queues")
+    return _dispatch_group(root,binary,configs,selected["placements"],selected["mode"],None,wall_seconds)
 
 
 def dispatch_qualified(root,binary,configs,choice_path,wall_seconds):
