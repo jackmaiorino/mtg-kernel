@@ -16,7 +16,7 @@ class ComputeLaunchTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.binary = self.put("trainer.exe", "test executable")
-        self.config = self.put("config.json", {"updates": [[{}, {}]] * 200})
+        self.config = self.put("config.json", {"updates": [[{}, {}]] * 200, "gpu_ordinal": 1})
         self.plan = {
             "schema": "public-training-compute-choice/v1", "planned_updates": 200,
             "inventory": {host: {"checked_at": datetime.now(timezone.utc).isoformat(),
@@ -36,7 +36,7 @@ class ComputeLaunchTests(unittest.TestCase):
         label = f"jack-{workers}"
         output = self.root/label/"outputs"
         request = self.put(f"{label}/request.json", {
-            "config": {"updates": [[{}, {}]] * 200}, "resume": None,
+            "config": {"updates": [[{}, {}]] * 200, "gpu_ordinal": 1}, "resume": None,
             "stop_after": 3, "collector_workers": workers, "output_directory": str(output)})
         execution = self.put(f"{label}/execution.json", {
             "binary": self.binary, "request": request, "exit_code": 0,
@@ -100,6 +100,26 @@ class ComputeLaunchTests(unittest.TestCase):
     def test_eligible_unmeasured_machine_prevents_local_fallback(self):
         self.plan["inventory"]["haleyspc"]["eligible"] = True
         with self.assertRaisesRegex(ValueError, "no throughput measurement"):
+            self.check()
+
+    def test_gpu_override_cannot_qualify_default_device_dispatch(self):
+        report = json.loads(Path(self.plan["candidates"][1]["benchmark"]["path"]).read_text())
+        execution = json.loads(Path(report["execution"]["path"]).read_text())
+        request = json.loads(Path(execution["request"]["path"]).read_text())
+        request["execution_gpu_ordinal"] = 0
+        execution["request"] = self.put("jack-4/request.json", request)
+        report["execution"] = self.put("jack-4/execution.json", execution)
+        self.plan["candidates"][1]["benchmark"] = self.put("jack-4/benchmark.json", report)
+        with self.assertRaisesRegex(ValueError, "device-aware"):
+            self.check()
+
+    def test_completion_gpu_must_match_actual_dispatch(self):
+        report = json.loads(Path(self.plan["candidates"][1]["benchmark"]["path"]).read_text())
+        completion = json.loads(Path(report["completion"]["path"]).read_text())
+        completion["execution_gpu_ordinal"] = 0
+        report["completion"] = self.put("jack-4/outputs/completion.json", completion)
+        self.plan["candidates"][1]["benchmark"] = self.put("jack-4/benchmark.json", report)
+        with self.assertRaisesRegex(ValueError, "completion GPU"):
             self.check()
 
 

@@ -79,9 +79,16 @@ def require_choice(path, binary_sha256, config_sha256, planned_updates):
         request = read(checked(execution["request"]))
         if request["config"] != config or request.get("resume") is not None:
             raise ValueError("benchmark must start from the pinned parent/config")
+        # This v1 dispatcher launches the configuration's default device.
+        # Never qualify timings from a GPU override and silently run another.
+        device = request.get("execution_gpu_ordinal")
+        if device is not None and device != config["gpu_ordinal"]:
+            raise ValueError("GPU override needs a device-aware production dispatcher")
         if request.get("collector_workers", 1) != workers or report["host"] != host:
             raise ValueError("benchmark worker or host binding differs")
         completion = read(checked(report["completion"]))
+        if completion.get("execution_gpu_ordinal", config["gpu_ordinal"]) != config["gpu_ordinal"]:
+            raise ValueError("completion GPU differs from production placement")
         output_root = Path(request["output_directory"]).resolve()
         if Path(report["completion"]["path"]).resolve() != output_root/"completion.json":
             raise ValueError("completion is not from the measured execution")
