@@ -26,7 +26,7 @@ fn position(actor:u8,hidden:bool,opponent_life:i32)->Result<(FastActorSessionV1,
     Ok((FastActorSessionV1::from_public_terminal_fixture_v1(state),blocker))
 }
 
-fn combat_witness(session:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1,index:u32)->Result<Value,String> {
+pub(super) fn combat_witness(session:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1,index:u32)->Result<Value,String> {
     let initial=session.game_state();let mut branch=session.clone();let mut current=root;let mut action=index;let mut line=Vec::new();
     for _ in 0..24 {
         line.push(json!({"actor":current.acting_player,"step":current.step,"index":action}));
