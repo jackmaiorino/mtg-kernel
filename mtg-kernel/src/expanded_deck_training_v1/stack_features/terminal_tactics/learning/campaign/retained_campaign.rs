@@ -2,8 +2,8 @@
 use super::*;
 use crate::native_policy_train_step_v1::retention_v1::{RetentionGroupV1, RetentionRowV1};
 
-const RETAINED_SCHEMA: &str = "terminal-retained-campaign/v1";
-const RETAINED_LOSS: &str = "terminal-ce-plus-parent-forward-kl-three-arm/v1";
+pub(super) const RETAINED_SCHEMA: &str = "terminal-retained-campaign/v1";
+pub(super) const RETAINED_LOSS: &str = "terminal-ce-plus-parent-forward-kl-three-arm/v1";
 
 
 #[derive(Deserialize)]
@@ -30,10 +30,10 @@ pub(super) struct Saved {
     pub(super) labels: PinnedFileV1,
     pub(super) design: PinnedFileV1,
     pub(super) checkpoint: Checkpoint,
-    trajectory: Option<PinnedFileV1>,
+    pub(super) trajectory: Option<PinnedFileV1>,
     #[serde(default,skip_serializing_if="Option::is_none")]
-    retention_dataset: Option<PinnedFileV1>,
-    selected_rows: Vec<Vec<usize>>,
+    pub(super) retention_dataset: Option<PinnedFileV1>,
+    pub(super) selected_rows: Vec<Vec<usize>>,
 }
 
 fn same<T: Serialize>(a: &T, b: &T) -> Result<bool, String> {
