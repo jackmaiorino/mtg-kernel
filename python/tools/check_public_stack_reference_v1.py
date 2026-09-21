@@ -40,7 +40,7 @@ def forward(model,weight,e,stack):
   index=torch.tensor([source] if target is None or target==source else [source,target])
   pooled=pooled.index_add(0,index,message.unsqueeze(0).expand(len(index),-1))
  # Retain a connected zero derivative for an empty stack, without phantom rows.
- if not stack['rows']:pooled=pooled+weight.sum()*0
+ if not stack['rows']:pooled=pooled+(weight*0).sum()
  nodes=model.node_update(torch.cat([objects,pooled],-1))
  groups=nodes.new_zeros((model.config.object_group_count,model.config.hidden_dim));groups.index_add_(0,e.object_groups,nodes)
  state=model.state_encoder(torch.cat([e.state,groups.reshape(-1)]))
@@ -68,6 +68,17 @@ for name in ['zero','nonzero']:
   outputs.append(out);deltas.append(float(delta.max()))
  for i in range(0,len(outputs),2):assert torch.equal(outputs[i],outputs[i+1]),'hidden permutation changed scores'
  reports.append(dict(variant=name,max_absolute_delta=max(deltas),samples=len(samples)))
+
+empty_boundary_checked=False
+for empty_e,empty_stack in samples:
+ if not empty_stack['rows']:
+  extreme=nn.Parameter(torch.full((64,440),torch.finfo(torch.float32).max))
+  empty_out=forward(base,extreme,empty_e,empty_stack)
+  assert torch.equal(flat(empty_out),flat(base(empty_e)))
+  (empty_out[0].sum()+empty_out[1]).backward()
+  assert extreme.grad is not None and torch.isfinite(extreme.grad).all() and not torch.count_nonzero(extreme.grad)
+  empty_boundary_checked=True
+  break
 
 # A double-precision finite difference checks one largest nonzero derivative of
 # the new projection. It is a math test, not a substituted terminal reward.
@@ -111,6 +122,6 @@ for left,right in zip(base.parameters(),resumed.parameters()):
  assert torch.equal(left,right)
  for key in ['step','exp_avg','exp_avg_sq']:assert torch.equal(optimizer.state[left][key],ropt.state[right][key])
 for key in ['step','exp_avg','exp_avg_sq']:assert torch.equal(optimizer.state[weight][key],ropt.state[rw][key])
-result=dict(status='REFERENCE-ENGINEERING-PASS',fixture_sha256=hashlib.sha256(a.fixture.read_bytes()).hexdigest(),script_sha256=hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),torch_version=torch.__version__,variants=reports,gradient_probe=dict(index=idx,analytic=analytic,numerical=numerical),old_adam_age=checkpoint['adam_step'],new_adam_age=0,optimizer_continuation_bit_exact=True,non_claim='CPU reference engineering only. No native device gradients, trainer/collector integration, rollout replay or strength measurement.')
+result=dict(status='REFERENCE-ENGINEERING-PASS',fixture_sha256=hashlib.sha256(a.fixture.read_bytes()).hexdigest(),script_sha256=hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),torch_version=torch.__version__,variants=reports,gradient_probe=dict(index=idx,analytic=analytic,numerical=numerical),old_adam_age=checkpoint['adam_step'],new_adam_age=0,optimizer_continuation_bit_exact=True,empty_stack_extreme_finite_weights=empty_boundary_checked,non_claim='CPU reference engineering only. No native device gradients, trainer/collector integration, rollout replay or strength measurement.')
 with a.output.open('x') as f:json.dump(result,f,indent=2)
 print(json.dumps(result,indent=2))

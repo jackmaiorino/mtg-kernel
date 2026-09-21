@@ -122,7 +122,8 @@ impl<B: Backend> StackBatch<B> {
     ) -> Tensor<B, 2> {
         let Some(t) = &self.tensors else {
             // Connected zero derivative, with no synthetic stack item.
-            return pooled + weight.sum().mul_scalar(0.0).unsqueeze::<2>();
+            // Zero before reduction: a sum of finite large weights can overflow.
+            return pooled + weight.mul_scalar(0.0).sum().unsqueeze::<2>();
         };
         let input = Tensor::cat(
             vec![

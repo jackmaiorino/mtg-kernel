@@ -299,6 +299,35 @@ fn stack_cuda_g115_grouped_update_and_fresh_process_resume() {
             .chain(&snapshot.1.first)
             .chain(&snapshot.1.second)
             .all(|v| *v == 0));
+        // The empty reduction must stay zero even when summing finite weights
+        // first would overflow. This is a numeric boundary probe, not a model.
+        let mut extreme = StackProjectionSnapshot::zero();
+        extreme.weight.fill(f32::MAX.to_bits());
+        let extreme = StackDeviceTrainState::import(&legacy, &extreme, &device).unwrap();
+        let mut accumulator = StackGradientAccumulator::default();
+        let output = extreme
+            .chunk_backward_gae(
+                &mut accumulator,
+                &batch,
+                &empty,
+                &counts,
+                &plan,
+                0.5,
+                first.len() as f32,
+                0.0,
+            )
+            .unwrap();
+        let expected = extreme.legacy.forward_outputs_v1(&batch).unwrap();
+        assert_eq!(output.logit_outputs, expected.0);
+        assert_eq!(output.value_outputs, expected.1);
+        assert!(accumulator
+            .stack
+            .unwrap()
+            .into_data()
+            .to_vec::<f32>()
+            .unwrap()
+            .iter()
+            .all(|v| *v == 0.0));
         // Guard per-decision boundaries even if total object count is unchanged.
         let mut bad_counts = counts.clone();
         bad_counts[0] += 1;
@@ -360,7 +389,7 @@ fn stack_cuda_g115_grouped_update_and_fresh_process_resume() {
             root.join("step1-chunked.json"),
             &snapshot::encode(&chunked.0, &chunked.1).unwrap(),
         );
-        write(root.join("control-probe.json"),&serde_json::to_vec(&json!({"empty_stack_gradient_zero":true,"zero_projection_after_control_update":true,"per_decision_boundary_rejection":true,"actual_empty_stack_fixtures":samples.iter().filter(|s|s["scenario"]=="empty").count()})).unwrap());
+        write(root.join("control-probe.json"),&serde_json::to_vec(&json!({"empty_stack_gradient_zero":true,"empty_stack_extreme_finite_weights":true,"zero_projection_after_control_update":true,"per_decision_boundary_rejection":true,"actual_empty_stack_fixtures":samples.iter().filter(|s|s["scenario"]=="empty").count()})).unwrap());
     }
     write(root.join(if resume {"resume-execution.json"}else{"start-execution.json"}),&serde_json::to_vec_pretty(&json!({"status":"STACK-CUDA-ENGINEERING-EXECUTION-PASS","gpu_ordinal":1,"manifest_sha256":format!("{:x}",Sha256::digest(&manifest_bytes)),"seconds":started.elapsed().as_secs_f64(),"non_claim":"Fixed synthetic GAE targets on actual actor fixtures. No reward-based training, collector integration or strength result."})).unwrap());
 }
