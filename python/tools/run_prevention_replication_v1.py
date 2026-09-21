@@ -3,6 +3,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
+import shutil
 import time
 
 from public_training_dispatch_v2 import read, write, pin, checked
@@ -12,6 +13,8 @@ from state_prevention_analysis_v1 import statistical_checks
 
 
 def run(root, compute):
+    if not __debug__:
+        raise RuntimeError("optimized Python disables dependency validation; run without -O")
     m = read(root/"manifest.json")
     if m["schema"] != "matched-state-prevention-replication/v1":
         raise ValueError("requires the independently seeded replication")
@@ -85,6 +88,19 @@ def run(root, compute):
         raise ValueError("archive verification failed")
     for shard in archived["shards"]:
         checked(shard["archive"])
+    # Portable canonical endpoints retain byte identity and their native mapping.
+    for arm, evidence in audited["arms"].items():
+        folder = root/"endpoints"/arm
+        folder.mkdir(parents=True)
+        for field in ["checkpoint", "optimizer"]:
+            source = evidence[field]
+            destination = folder/f"{field}.json"
+            shutil.copy2(checked(source), destination)
+            copied = pin(destination)
+            if copied["sha256"] != source["sha256"]:
+                raise ValueError("canonical endpoint copy differs")
+            evidence["native_"+field] = source
+            evidence[field] = copied
     audited.update(archive=group["archive"], local_storage=selected["local_storage"],
         wall_seconds_including_dispatch_and_audit=time.monotonic()-started)
     write(root/"training-audit.json", audited)
