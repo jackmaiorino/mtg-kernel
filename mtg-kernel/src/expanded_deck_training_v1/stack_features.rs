@@ -13,6 +13,7 @@ use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
 
 pub mod replay;
 pub mod sensitivity;
+pub mod terminal_tactics;
 
 #[cfg(test)]
 mod tests;
