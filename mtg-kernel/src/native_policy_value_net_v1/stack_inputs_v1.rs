@@ -73,9 +73,11 @@ impl StackInputWeightsV1 {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct NativeStackInputNetV1 {
     base: NativePolicyValueNetV1,
     weights: StackInputWeightsV1,
+    inputs_enabled: bool,
 }
 impl NativeStackInputNetV1 {
     pub(crate) fn new(
@@ -83,7 +85,15 @@ impl NativeStackInputNetV1 {
         weights: StackInputWeightsV1,
     ) -> Result<Self, NativePolicyValueErrorV1> {
         base.validate_parameters_v1()?;
-        Ok(Self { base, weights })
+        Ok(Self {
+            base,
+            weights,
+            inputs_enabled: true,
+        })
+    }
+    pub(crate) fn with_inputs_enabled(mut self, enabled: bool) -> Self {
+        self.inputs_enabled = enabled;
+        self
     }
     pub(crate) fn forward(
         &self,
@@ -101,7 +111,11 @@ impl NativeStackInputNetV1 {
             None,
             ForwardActivationModeV1::LibmTanh,
             None,
-            Some((&self.weights, &decision.stack)),
+            if self.inputs_enabled {
+                Some((&self.weights, &decision.stack))
+            } else {
+                None
+            },
         )
     }
 }
