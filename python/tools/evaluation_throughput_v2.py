@@ -1,8 +1,9 @@
 """Repeated native timings plus separately verified full-panel recovery cost.
 
 Forked integrity checks preserve v1 artifacts and their pinned interpretation.
-Recovery calibration is bound to the exact target plan and placement. It cannot
-be reused for a different output volume or sharding layout without qualification.
+Recovery calibration binds a completed reference workload and placement. A new
+target must use the same binary and fit that measured output-volume envelope;
+its native timings and deterministic replay are always qualified separately.
 """
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ import math
 import statistics
 import hashlib
 import json
+import zipfile
 from public_evaluation_dispatch_v1 import HOSTS, read, pin, checked
 
 
@@ -88,15 +90,22 @@ def require_choice(choice_path, plan_pin, binary):
         assert all(r["allocation"] == allocation for _, r, _ in runs)
         calibration = read(checked(choice["recovery_calibrations"][allocation_id]))
         assert calibration["schema"] == "full-panel-recovery-calibration/v1"
-        assert calibration["plan"] == plan_pin and calibration["binary"] == binary
+        reference_plan = read(checked(calibration["plan"]))
+        assert calibration["binary"] == binary == reference_plan["binary"]
         assert calibration["placements"] == {h:{k:v for k,v in a.items() if k not in ("workers", "job_weight")} for h,a in allocation.items()}
         assert calibration["allocation_weights"] == {h:a.get("job_weight",1) for h,a in allocation.items()}
-        assert calibration["matches"] == plan["expected_matches"]
-        assert calibration["jobs"] == plan["expected_jobs"]
+        assert calibration["matches"] == reference_plan["expected_matches"] >= plan["expected_matches"]
+        assert calibration["jobs"] == reference_plan["expected_jobs"] >= plan["expected_jobs"]
+        reference_game_cap = max(m["config"]["max_physical_games"]
+            for job in reference_plan["jobs"] for m in job["command"]["matches"])
+        for target_job in plan["jobs"]:
+            assert target_job["command"]["capture_decisions"] is False
+            assert all(m["config"]["max_physical_games"] <= reference_game_cap
+                for m in target_job["command"]["matches"])
         source = read(checked(calibration["source_dispatch"]))
         recovered = read(checked(calibration["source_recovery"]))
-        assert source["matches"] == plan["expected_matches"] and len(source["jobs"]) == plan["expected_jobs"]
-        assert {j["id"] for j in source["jobs"]} == {j["id"] for j in plan["jobs"]}
+        assert source["matches"] == reference_plan["expected_matches"] and len(source["jobs"]) == reference_plan["expected_jobs"]
+        assert {j["id"] for j in source["jobs"]} == {j["id"] for j in reference_plan["jobs"]}
         assert recovered["mismatches"] == 0 and recovered["files"] == calibration["files"]
         assert hashlib.sha256(json.dumps(recovered["hashes"],sort_keys=True).encode()).hexdigest() == calibration["source_fingerprint"]
         samples = calibration["samples"]
@@ -105,7 +114,7 @@ def require_choice(choice_path, plan_pin, binary):
         for sample in samples:
             receipt = read(checked(sample))
             assert receipt["complete"] and receipt["mismatches"] == 0
-            assert receipt["plan"] == plan_pin
+            assert receipt["plan"] == calibration["plan"]
             assert receipt["source_fingerprint"] == calibration["source_fingerprint"]
             assert receipt["verified_files"] == calibration["files"]
             assert receipt["uncompressed_bytes"] == calibration["uncompressed_bytes"]
@@ -113,6 +122,15 @@ def require_choice(choice_path, plan_pin, binary):
             assert math.isfinite(receipt["seconds"]) and receipt["seconds"] > 0
             assert sum(receipt["stage_seconds"].values()) <= receipt["seconds"] + .01
             checked(receipt["archive"])
+            with zipfile.ZipFile(receipt["archive"]["path"]) as archive:
+                reference_match_bytes = sum(i.file_size for i in archive.infolist() if "/outputs/match-" in i.filename)
+            # Current target samples, not old outcome data, set its volume
+            # estimate. This is a throughput estimate, not a worst-case bound
+            # on all possible future game lengths. Production must be monitored.
+            for _, report, scale in runs:
+                sampled_bytes = sum((Path(job["output_directory"])/f"match-{i:06}.json").stat().st_size
+                    for job in report["jobs"] for i in range(len(expected_jobs[job["id"]]["command"]["matches"])))
+                assert scale*sampled_bytes <= reference_match_bytes, "target output estimate exceeds measured recovery volume"
             recovery_times.append(receipt["seconds"])
         remote_setup = choice["remote_setup_seconds"] if "haleyspc" in allocation else 0
         assert math.isfinite(remote_setup) and remote_setup >= 0
@@ -143,4 +161,5 @@ def dispatch_qualified(root, label, choice_path, plan_pin, remote, group_wall_se
     fresh = {host:inventory(host) for host in ("jack", "haleyspc")}
     assert all(s["active"] or choice["inventory"][h]["eligible"] for h,s in fresh.items()), "availability expanded; qualify new eligible capacity"
     assert all(not fresh[h]["active"] for h in selected["allocation"]), "preserve active owners"
+    assert selected["projected_seconds"] <= plan["projection_cap_seconds"]
     return dispatch(root, label, plan["binary"], plan["jobs"], selected["allocation"], remote, group_wall_seconds)

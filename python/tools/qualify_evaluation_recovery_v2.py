@@ -75,18 +75,21 @@ def full_recovery(root, remote, source_native, source_hashes, plan_pin, index):
     return pin(canonical/'receipt.json'), result
 
 
-def qualify(root, reference):
-    plan_pin = pin(reference/'plan.json')
+def qualify(root, reference, target_plan=None):
+    reference_pin = pin(reference/'plan.json')
+    reference_plan = read(checked(reference_pin))
+    plan_pin = pin(target_plan or reference/'plan.json')
     plan = read(checked(plan_pin))
     assert plan['expected_jobs'] == 48 and plan['expected_matches'] == 3072
     assert len(plan['qualification_jobs']) == 48
     assert all(len(j['command']['matches']) == 1 for j in plan['qualification_jobs'])
     completion = read(reference/'completion.json')
-    assert completion['complete'] and completion['matches'] == plan['expected_matches']
+    assert completion['complete'] and completion['matches'] == reference_plan['expected_matches']
+    assert reference_plan['binary'] == plan['binary']
     result_pin = completion['dispatch']
     completed = read(checked(result_pin))
     assert set(completed['allocation']) == {'haleyspc'}
-    assert len(completed['jobs']) == plan['expected_jobs']
+    assert len(completed['jobs']) == reference_plan['expected_jobs']
     source_recovery_pin = completed['jobs'][0]['recovery']
     source_recovery = read(checked(source_recovery_pin))
     assert source_recovery['mismatches'] == 0
@@ -106,14 +109,14 @@ def qualify(root, reference):
                                   reason='Authenticated inventory HTTP403; no new paid allocation authorized.')
     disk = storage(snapshots['haleyspc'],'C')
     settings = dict(drive='C',disk_serial=disk['disk_serial'],disk_name=disk['disk_name'])
-    write(root/'design.json',dict(plan=plan_pin,source_recovery=source_recovery_pin,source_dispatch=result_pin,
+    write(root/'design.json',dict(plan=plan_pin,reference_plan=reference_pin,source_recovery=source_recovery_pin,source_dispatch=result_pin,
           question='Separate measured full-output recovery from repeated native throughput to avoid multiplying fixed recovery overhead by the match scale.',
           allocations=[1,8,16],repeats=2,qualification_cases=len(plan['qualification_jobs']),
           maximum_native_matches=2*3*sum(len(j['command']['matches']) for j in plan['qualification_jobs']),
           recovery_repeats=2,full_panel_launch=False,training=False,paid_compute=False,
           review='Known zero-read Fable HTTP429 through September22 07:00EDT; no retry or endorsement.',
           caveat='Execution scaling still includes native job startup and is conservative for larger batches; this slice corrects recovery accounting only.'))
-    old_remote = read(reference/'remote-staging.json')
+    old_remote = read(checked(plan_pin).parent/'remote-staging.json')
     assets = [item for name,item in old_remote['assets'].items() if name.startswith('inputs/')]
     remote = prepare_remote(root,assets)
     exporter = root/'recovery-export.py'
@@ -121,11 +124,11 @@ def qualify(root, reference):
     subprocess.run(['scp','-q',str(exporter),f"{REMOTE}:{remote['native_root']}/recovery-export.py"],check=True,timeout=60)
     samples=[]
     for i in range(2):
-        receipt,last = full_recovery(root,remote,source_recovery['native_directory'],source_recovery['hashes'],plan_pin,i)
+        receipt,last = full_recovery(root,remote,source_recovery['native_directory'],source_recovery['hashes'],reference_pin,i)
         samples.append(receipt)
-    calibration = dict(schema='full-panel-recovery-calibration/v1', plan=plan_pin,binary=plan['binary'],
-          placements={'haleyspc':settings},allocation_weights={'haleyspc':1},jobs=plan['expected_jobs'],
-          matches=plan['expected_matches'],files=last['verified_files'],uncompressed_bytes=last['uncompressed_bytes'],
+    calibration = dict(schema='full-panel-recovery-calibration/v1', plan=reference_pin,binary=plan['binary'],
+          placements={'haleyspc':settings},allocation_weights={'haleyspc':1},jobs=reference_plan['expected_jobs'],
+          matches=reference_plan['expected_matches'],files=last['verified_files'],uncompressed_bytes=last['uncompressed_bytes'],
           source_fingerprint=last['source_fingerprint'],source_recovery=source_recovery_pin,source_dispatch=result_pin,samples=samples)
     write(root/'recovery-calibration.json',calibration)
     candidates=[]
@@ -157,7 +160,8 @@ if __name__=='__main__':
     p=argparse.ArgumentParser()
     p.add_argument('--root',type=Path,required=True)
     p.add_argument('--reference',type=Path,required=True)
+    p.add_argument('--plan',type=Path,help='Prepared new target plan; its timings/replays are measured with reference recovery volume.')
     a=p.parse_args()
     if not __debug__:
         raise RuntimeError('Python validation must be enabled')
-    qualify(a.root,a.reference)
+    qualify(a.root,a.reference,a.plan)
