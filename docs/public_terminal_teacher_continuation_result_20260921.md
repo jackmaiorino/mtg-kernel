@@ -2,6 +2,8 @@
 
 The frozen comparison completed 32 full-batch updates for each of the correct-label and rotated-label arms, followed by one evaluation of unchanged g115 and both final endpoints on all 24 reserved positions. The correctly taught model selected a certified winning action in all 16 winning positions, but its mean probability on the creature-winning action was 0.7510, below the predeclared 0.8 requirement. The engineering feasibility result is FAIL. No checkpoint is promoted or substituted into the human preview.
 
+Subsequent training-only audit found that the raw-index rotated control assigns inconsistent actor-relative labels to all16 physical-seat pairs. This weakens teacher-versus-control interpretation; it does not change the frozen failed result. See `docs/public_terminal_teacher_training_fit_20260921.md` for the exact semantic mappings, training fit and proposed consistent control. Original measurements and labels remain untouched.
+
 ## Reserved evaluation
 
 | Endpoint | Face winning argmax | Face mean winning probability | Creature winning argmax | Creature mean winning probability |
