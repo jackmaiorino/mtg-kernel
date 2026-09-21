@@ -17,11 +17,14 @@ pub struct Command {
     pub lethal_distractor_controls: bool,
     #[serde(default)]
     pub forced_loss_controls: bool,
+    #[serde(default)]
+    pub teacher_dataset: bool,
 }
 
 mod combat;
 mod distractor;
 mod forced_loss;
+mod teacher_data;
 
 fn put(state:&mut GameState,owner:PlayerId,name:&str,zone:Zone)->ObjectId {
     let card_def=card_id_by_name(name).expect("declared fixture card");
@@ -55,7 +58,8 @@ fn fixture(card:&str,damage:i32,artifacts:usize,actor:u8,hidden:bool)->Result<Fa
 }
 
 pub fn run(command:Command)->Result<Value,String> {
-    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    if command.teacher_dataset {return teacher_data::run(command);}
     if command.forced_loss_controls {return forced_loss::run(command);}
     if command.lethal_distractor_controls {return distractor::run(command);}
     if command.combat_controls {return combat::run(command);}
