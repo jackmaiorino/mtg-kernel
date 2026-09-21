@@ -21,6 +21,7 @@ impl PublicDeviceTrainState {
         learning_rate: f32,
         value_coefficient: f32,
         inputs_enabled: bool,
+        object_inputs_enabled: bool,
         max_chunk_substeps: usize,
     ) -> Result<(), Box<dyn Error>> {
         use crate::native_flat_tensorizer_v4::*;
@@ -87,6 +88,8 @@ impl PublicDeviceTrainState {
                     let mut row = step.auxiliary.clone();
                     if !inputs_enabled {
                         row.state.fill(0.0);
+                    }
+                    if !inputs_enabled || !object_inputs_enabled {
                         for object in &mut row.objects {
                             object.fill(0.0);
                         }

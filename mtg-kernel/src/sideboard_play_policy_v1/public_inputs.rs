@@ -1,6 +1,8 @@
 //! Explicit public-feature policy adapter. No legacy loader constructs this.
 //! The inherited generation describes the base actor tensor, not model identity.
 use super::*;
+#[cfg(test)]
+mod state_only_tests;
 use crate::native_policy_value_net_v1::public_inputs_v1::{
     NativePublicInputNetV1, PublicInputWeightsV1,
 };

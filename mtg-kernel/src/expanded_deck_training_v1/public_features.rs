@@ -11,6 +11,22 @@ use crate::public_cost_features_v1::PublicFeatureRowsV1;
 use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
 pub mod replay_audit;
+#[cfg(test)]
+mod tests;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionMode {
+    #[default]
+    All,
+    StateOnly,
+}
+
+impl ProjectionMode {
+    fn is_all(&self) -> bool {
+        *self == Self::All
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +40,9 @@ pub struct Config {
     pub lambda: f32,
     pub gpu_ordinal: usize,
     pub max_chunk_substeps: usize,
+    /// Omitted default preserves every prior serialized configuration/hash.
+    #[serde(default, skip_serializing_if = "ProjectionMode::is_all")]
+    pub projection_mode: ProjectionMode,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +91,24 @@ fn weights(public: &ProjectionSnapshot) -> Result<PublicInputWeightsV1, String> 
     PublicInputWeightsV1::new(floats(&public.object), floats(&public.state)).map_err(err)
 }
 
+fn validate_projection_mode(config: &Config, public: &ProjectionSnapshot) -> Result<(), String> {
+    if !config.inputs_enabled || config.projection_mode == ProjectionMode::StateOnly {
+        ensure(
+            public.object.iter().chain(&public.object_first).chain(&public.object_second)
+                .all(|v| f32::from_bits(*v) == 0.0),
+            "disabled public cost projection acquired weights or moments",
+        )?;
+    }
+    if !config.inputs_enabled {
+        ensure(
+            public.state.iter().chain(&public.state_first).chain(&public.state_second)
+                .all(|v| f32::from_bits(*v) == 0.0),
+            "disabled public state projection acquired weights or moments",
+        )?;
+    }
+    Ok(())
+}
+
 /// CPU inference load only. Reading a CUDA-produced checkpoint creates no GPU
 /// device and cannot advance either optimizer.
 pub(crate) fn load_for_evaluation(
@@ -100,6 +137,7 @@ pub(crate) fn load_for_evaluation(
         sha256: checkpoint.optimizer_sha256.clone(),
     })?;
     let (legacy, public) = public_training::snapshot::decode(&saved).map_err(err)?;
+    validate_projection_mode(&config, &public)?;
     let (mut base, initial) = initialize(&config.source)?;
     ensure(
         legacy.adam_step == initial.adam_step_v1() + checkpoint.next_update as u64
@@ -116,12 +154,15 @@ pub(crate) fn load_for_evaluation(
         config.inputs_enabled,
     ))
     .map_err(err)?);
-    let identity = json!({"schema":"public-input-evaluation-model/v1",
+    let mut identity = json!({"schema":"public-input-evaluation-model/v1",
         "architecture":crate::native_policy_value_net_v1::public_inputs_v1::ARCHITECTURE,
         "config_pin":config_pin,"checkpoint_pin":checkpoint_pin,"config_sha256":config_hash,
         "optimizer_sha256":checkpoint.optimizer_sha256,"weights_sha256":weights_sha256,
         "actual_base_model":base_model,"inputs_enabled":config.inputs_enabled,
         "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step});
+    if config.projection_mode == ProjectionMode::StateOnly {
+        identity["projection_mode"] = json!("state_only");
+    }
     Ok((
         PublicInputPlayPolicyV1::new(base, weights(&public)?)?
             .with_inputs_enabled(config.inputs_enabled),
@@ -389,6 +430,7 @@ pub fn run(command: Command) -> Result<Value, String> {
         )
     };
     let last = command.stop_after.unwrap_or(config.updates.len());
+    validate_projection_mode(config, &public)?;
     ensure(
         first_update < last && last <= config.updates.len(),
         "invalid public start/stop iteration",
@@ -542,10 +584,12 @@ pub fn run(command: Command) -> Result<Value, String> {
                 config.learning_rate,
                 config.value_coefficient,
                 config.inputs_enabled,
+                config.projection_mode == ProjectionMode::All,
                 config.max_chunk_substeps,
             )
             .map_err(err)?;
         (legacy, public) = device.snapshot().map_err(err)?;
+        validate_projection_mode(config, &public)?;
         ensure(
             legacy.adam_step == initial_step + update as u64 + 1
                 && public.adam_step == update as u64 + 1,
