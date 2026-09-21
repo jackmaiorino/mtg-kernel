@@ -237,7 +237,7 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,publication_replay:bool) -> Re
     }
     ensure(original_hash == hex(&original.state_sha256_v1().map_err(err)?), "retained original mutated")?;
     let mut result = json!({"schema":schema,"complete":true,"initial_state":original_hash,"final_state":hex(&state.state_sha256_v1().map_err(err)?),"initial_adam":initial_adam,"final_adam":state.adam_step_v1(),"completed_updates":completed,"updates":updates,"selected_rows":selected,"arm":c.arm,"beta":beta,"teacher_positions":32,"retention_physical_groups":retained.len(),"retention_rows":retained.iter().map(Vec::len).sum::<usize>(),"evaluation_positions_read":0,"non_claim":"Frozen terminal imitation continuation; completed training is not playing-strength evidence."});
-    if diagnostic {
+    if diagnostic || budget {
         let mut fit=Vec::new();let mut sampler=WideCategoricalScratchV1::default();
         for (i,t) in teaching.iter().enumerate() {
             let s=policy.score_training_tensor_v4(t)?;
@@ -249,7 +249,7 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,publication_replay:bool) -> Re
                 "probabilities":masses.iter().map(|&m|m as f64/18446744073709551616.0).collect::<Vec<_>>()}));
         }
         result["training_fit"]=json!(fit);
-        result["non_claim"]=json!("Training-only semantic-control optimization diagnostic; no validation, candidate promotion or playing-strength claim.");
+        result["non_claim"]=json!(if diagnostic {"Training-only semantic-control optimization diagnostic; no validation, candidate promotion or playing-strength claim."} else {"Fixed-budget correct-label continuation; training fit is not validation or playing-strength evidence."});
     }
     if budget {
         result["start_update"]=json!(start_update);result["start_state"]=json!(start_state);
