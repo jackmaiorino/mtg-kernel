@@ -1,10 +1,11 @@
 //! Guarded bounded imitation continuation and final-only reserved evaluation.
 use super::*;
 mod training_diagnostic;
+mod natural_audit;
 
 #[derive(Deserialize)]
 #[serde(tag="mode",rename_all="snake_case",deny_unknown_fields)]
-pub enum Command { Train(Train), Evaluate(Evaluate), TrainingDiagnostic(Evaluate) }
+pub enum Command { Train(Train), Evaluate(Evaluate), TrainingDiagnostic(Evaluate), NaturalAudit(natural_audit::Command) }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,4 +158,4 @@ fn evaluate(c:Evaluate)->Result<Value,String> {
     fs::create_dir(&c.output_directory).map_err(err)?;publish_json(&c.output_directory,"result.json",&result)?;Ok(result)
 }
 
-pub fn run(command:Command)->Result<Value,String> {match command {Command::Train(c)=>train(c),Command::Evaluate(c)=>evaluate(c),Command::TrainingDiagnostic(c)=>training_diagnostic::run(c)}}
+pub fn run(command:Command)->Result<Value,String> {match command {Command::Train(c)=>train(c),Command::Evaluate(c)=>evaluate(c),Command::TrainingDiagnostic(c)=>training_diagnostic::run(c),Command::NaturalAudit(c)=>natural_audit::run(c)}}
