@@ -8,4 +8,20 @@ The versioned312-column contract explicitly represents kind, cast method includi
 
 Initial checks cover actual engine-created Ward stacks with duplicate Lightning Bolt sources and repeated Ward-source abilities, both seats, different hidden cards/library order and arena allocation; exact V4 tensors/legal references, zero-projection logits/value parity and deterministic nonzero forward; deliberately counterfactual public metadata to test full X/mode encoding and per-instance alignment; and real kicked/unkicked Goblin Bushwhacker casts with no targets. These are engineering checks, not tactical-quality or playing-strength evidence.
 
-Current scope is the extractor and scalar model path. Device forward/gradient parity, full optimizer transport, collection/replay integration, a trained-checkpoint replay and useful-compute qualification remain required before a learning comparison. In particular, the device implementation must preserve per-item nonlinearity before pooling, not sum feature vectors before encoding. No experiment gate or coefficient is selected by this document.
+Current scope is the extractor, scalar model path and independent CPU autograd reference. Native device forward/gradient parity, full native optimizer transport, collection/full-match replay integration and useful-compute qualification remain required before a learning comparison. In particular, the device implementation must preserve per-item nonlinearity before pooling, not sum feature vectors before encoding. No experiment gate or coefficient is selected by this document.
+
+## September 21 validation
+
+Native source `be3ff42b` passes all five selected tests in `E:/mtg-meta-recovery-20260921/public-stack-engineering-002/test.log`, including the real g115 checkpoint (`88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1`). Four new stack tests and one existing human Ward test pass. The initial root001 is preserved: its two failures were fixtures permitting forced passes to another actor or terminal; adding a legal instant and checking actor identity fixed those fixtures without bypassing production validation.
+
+| Check | Actual result |
+| --- | --- |
+| Zero projection, g115 native logits/value | Bit-identical to legacy on both seats and both hidden variants |
+| Nonzero projection | Changes scores; repeated forward and hidden pairs remain bit-identical |
+| Fresh native process | Entire g115 reference export byte-identical |
+| Existing native model regression | 8 tests pass |
+| Independent Torch reference, zero and nonzero | Maximum native/reference difference 0.00000190735, below declared 0.001 + 0.001 relative envelope |
+| Projection gradient finite difference | Analytic 0.048748247307827; numerical 0.04874824730966009 |
+| CPU Adam save/load continuation | Parameters and moments bit-identical; imported age32400 retained, new projection starts age0 |
+
+Reference code: `python/tools/check_public_stack_reference_v1.py`. Its result is `public-stack-engineering-002/versioned-python-reference.json`; native replay/regression receipt is `public-stack-replay-001/completion.json` under the same September21 evidence root. Native executable SHA256: `ecb72609c864f488d2c0454944e3f703ea6a384f116c8c9a841ad8baa3012664`. The reference uses a synthetic mathematical loss solely for gradient/optimizer checks; it is not a training reward or experiment. The derivative check is one strongest derivative on one fixture, not an exhaustive native-gradient check. No GPU path, complete match replay, trained successor, tactical gain or human-level result is established here. Fable review remains unavailable as stated above.
