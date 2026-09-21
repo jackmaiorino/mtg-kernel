@@ -103,13 +103,13 @@ pub(super) fn publication_replay(c: Train) -> Result<Value,String> {
     run_inner(c,true,true,true)
 }
 
-fn run_inner(c: Train,diagnostic:bool,budget:bool,replay:bool) -> Result<Value, String> {
+fn run_inner(c: Train,diagnostic:bool,budget:bool,publication_replay:bool) -> Result<Value, String> {
     ensure(matches!(c.checkpoint_interval,1|16) && (budget||c.checkpoint_interval==1)
-        && c.replay_reference.is_some()==replay,"checkpoint publication contract differs")?;
-    ensure(!replay || (c.resume.is_some() && c.end_update==49),"publication replay requires fixed47/48-to49 state")?;
+        && c.replay_reference.is_some()==publication_replay,"checkpoint publication contract differs")?;
+    ensure(!publication_replay || (c.resume.is_some() && c.end_update==49),"publication replay requires fixed47/48-to49 state")?;
     let reference:Option<Saved>=c.replay_reference.as_ref().map(|p|serde_json::from_slice(&read_pinned_bytes(p)?).map_err(err)).transpose()?;
     let valid_arm=if diagnostic {matches!(c.arm.as_str(),"semantic_unretained"|"semantic_retained")} else {matches!(c.arm.as_str(),"unretained"|"retained"|"semantic")};
-    let valid_end=if replay {c.end_update==49} else if budget {matches!(c.end_update,33|34|128)} else {(1..=2).contains(&c.end_update)||c.end_update==32};
+    let valid_end=if publication_replay {c.end_update==49} else if budget {matches!(c.end_update,33|34|128)} else {(1..=2).contains(&c.end_update)||c.end_update==32};
     ensure(matches!(c.workers,1|4) && valid_arm && valid_end && c.predecessor.is_some()==budget,"retained campaign bounds differ")?;
     ensure(budget || !diagnostic || c.arm!="semantic_retained" || c.end_update<=2,"reuse the completed retained semantic baseline")?;
     ensure(c.trajectory.is_none() && c.retention_dataset.is_some(),"retained campaign requires pinned full retention data")?;
@@ -117,7 +117,7 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,replay:bool) -> Result<Value, 
     let control=diagnostic || c.arm=="semantic";
     let schema=if budget {"terminal-semantic-budget-diagnostic/v1"} else if diagnostic {"terminal-semantic-retention-diagnostic/v1"} else {RETAINED_SCHEMA};
     let loss=if budget {"terminal-semantic-ce-fixed128-budget/v1"} else if diagnostic {"terminal-semantic-ce-retention-ablation/v1"} else {RETAINED_LOSS};
-    if replay {read_pinned_bytes(&c.design)?;} else {qualify(&c,diagnostic,budget)?;}
+    if publication_replay {read_pinned_bytes(&c.design)?;} else {qualify(&c,diagnostic,budget)?;}
     let labels:Value=serde_json::from_slice(&read_pinned_bytes(&c.labels)?).map_err(err)?;
     ensure(labels["schema"]=="terminal-semantic-teacher-labels/v1" && labels["training"]==serde_json::to_value(&c.dataset).map_err(err)? && labels["parent_source"]==serde_json::to_value(&c.source).map_err(err)?,"retained labels identity differs")?;
     let labels=labels["records"].as_array().ok_or("missing semantic labels")?;
@@ -177,7 +177,7 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,replay:bool) -> Result<Value, 
         ensure(hex(&snapshot.state_sha256_v1().map_err(err)?) == s.state_sha256, "retained resume state hash differs")?;
         state = NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &snapshot).map_err(err)?;
         completed = s.completed_updates;
-        ensure(!replay || matches!(completed,47|48),"publication replay rejects an unbounded prefix")?;
+        ensure(!publication_replay || matches!(completed,47|48),"publication replay rejects an unbounded prefix")?;
     }
     ensure(completed < c.end_update, "retained endpoint already reached")?;
     let mut policy = parent; policy.replace_training_parameters_v3(&state.snapshot_v1().map_err(err)?.parameters)?;
@@ -217,7 +217,7 @@ fn run_inner(c: Train,diagnostic:bool,budget:bool,replay:bool) -> Result<Value, 
         let publish=completed%c.checkpoint_interval==0 || completed==c.end_update;
         if publish {
         let saved = Saved { arm:c.arm.clone(),labels:c.labels.clone(),design:c.design.clone(),trajectory:c.trajectory.clone(), retention_dataset:c.retention_dataset.clone(), selected_rows:selected.clone(), predecessor:c.predecessor.clone(), checkpoint: Checkpoint { schema:schema.into(), loss_identity:loss.into(), source:c.source.clone(), dataset:c.dataset.clone(), target_permuted:control, backend:"cpu".into(), device_ordinal:0, completed_updates:completed, initial_adam, adam_step:snapshot.adam_step, scorer_bias_anchor_bits:snapshot.scorer_bias_anchor_bits, state_sha256:state_hash.clone(), parameters:snapshot.parameters.iter().map(ParameterBitsV1::from_native).collect(), first_moments:snapshot.first_moments.iter().map(ParameterBitsV1::from_native).collect(), second_moments:snapshot.second_moments.iter().map(ParameterBitsV1::from_native).collect() }};
-        if replay && completed==c.end_update {
+        if publication_replay && completed==c.end_update {
             ensure(same(&saved,reference.as_ref().unwrap())?,"publication replay differs from frozen reference")?;
         }
         publish_json(&c.output_directory,&format!("checkpoint-{completed:03}.json"),&saved)?;
