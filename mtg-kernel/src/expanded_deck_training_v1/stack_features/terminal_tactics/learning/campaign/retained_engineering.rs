@@ -12,7 +12,8 @@ const BETA: f32 = 0.5;
 pub struct Command {
     source: ExpandedModelSourceV1,
     dataset: PinnedFileV1,
-    trajectory: PinnedFileV1,
+    trajectory: Option<PinnedFileV1>,
+    retention_dataset: Option<PinnedFileV1>,
     output_directory: PathBuf,
     workers: usize,
     end_update: usize,
@@ -23,7 +24,9 @@ pub struct Command {
 #[serde(deny_unknown_fields)]
 struct Saved {
     checkpoint: Checkpoint,
-    trajectory: PinnedFileV1,
+    trajectory: Option<PinnedFileV1>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    retention_dataset: Option<PinnedFileV1>,
     selected_rows: Vec<Vec<usize>>,
 }
 
@@ -33,6 +36,7 @@ fn same<T: Serialize>(a: &T, b: &T) -> Result<bool, String> {
 
 pub(super) fn run(c: Command) -> Result<Value, String> {
     ensure(matches!(c.workers, 1 | 4) && (1..=2).contains(&c.end_update), "retained engineering requires 1/4 workers and at most two updates")?;
+    ensure(c.trajectory.is_some()!=c.retention_dataset.is_some(),"retained engineering needs exactly one retention input")?;
     let data: Value = serde_json::from_slice(&read_pinned_bytes(&c.dataset)?).map_err(err)?;
     ensure(data["schema"] == "public-terminal-teacher-data/v1" && data["source"] == serde_json::to_value(&c.source).map_err(err)?, "retained teacher identity differs")?;
     let rows = data["records"].as_array().ok_or("missing retained teacher rows")?;
@@ -55,7 +59,12 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
         ensure(parent.score_training_tensor_v4(&t)?.logits.len() == outcomes.len(), "retained teacher menu differs")?;
         teaching.push(t); targets.push(winner);
     }
-    let archive: Trajectory = serde_json::from_slice(&read_pinned_bytes(&c.trajectory)?).map_err(err)?;
+    let (retained,selected,exact,parent_score_replay_rows)=if let Some(pin)=&c.retention_dataset {
+        let loaded=super::retention_data::load(&c.source,pin,&c.dataset,&parent)?;
+        let count=loaded.groups.iter().map(Vec::len).sum::<usize>();
+        (loaded.groups,loaded.selected_rows,0usize,count)
+    } else {
+    let archive: Trajectory = serde_json::from_slice(&read_pinned_bytes(c.trajectory.as_ref().ok_or("missing retention archive")?)?).map_err(err)?;
     ensure(archive.schema == "mtg-kernel-public-stack-trajectory/v1" && archive.decisions.len() == archive.auxiliary.len() && archive.episode.learner_seat < 2 && same(archive.episode.opponent.as_ref().ok_or("retained archive lacks opponent")?, &c.source)?, "retained archive requires original parent opponent")?;
     // Select the first eight complete physical groups from each actor without
     // examining scores, selected actions or terminal outcomes. Preserve every
@@ -90,11 +99,14 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
         retained.push(capture);
     }
     ensure(exact > 0, "retained fixture lacks parent replay")?;
+    let count=retained.iter().map(Vec::len).sum::<usize>();
+    (retained,selected,exact,count)
+    };
     let mut state = original.clone(); let mut completed = 0;
     if let Some(pin) = &c.resume {
         let saved: Saved = serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
         let s = &saved.checkpoint;
-        ensure(s.schema == RETAINED_SCHEMA && s.loss_identity == RETAINED_LOSS && same(&s.source, &c.source)? && same(&s.dataset, &c.dataset)? && same(&saved.trajectory, &c.trajectory)? && saved.selected_rows == selected && !s.target_permuted && s.backend == "cpu" && s.device_ordinal == 0 && s.initial_adam == initial_adam && s.completed_updates == 1 && s.adam_step == initial_adam + 1, "retained resume contract differs")?;
+        ensure(s.schema == RETAINED_SCHEMA && s.loss_identity == RETAINED_LOSS && same(&s.source, &c.source)? && same(&s.dataset, &c.dataset)? && same(&saved.trajectory, &c.trajectory)? && same(&saved.retention_dataset,&c.retention_dataset)? && saved.selected_rows == selected && !s.target_permuted && s.backend == "cpu" && s.device_ordinal == 0 && s.initial_adam == initial_adam && s.completed_updates == 1 && s.adam_step == initial_adam + 1, "retained resume contract differs")?;
         let template = state.snapshot_v1().map_err(err)?;
         let snapshot = NativePolicyValueTrainSnapshotV1 { parameters: restore_parameters(&s.parameters, &template.parameters)?, first_moments: restore_parameters(&s.first_moments, &template.first_moments)?, second_moments: restore_parameters(&s.second_moments, &template.second_moments)?, adam_step: s.adam_step, scorer_bias_anchor_bits: s.scorer_bias_anchor_bits };
         ensure(hex(&snapshot.state_sha256_v1().map_err(err)?) == s.state_sha256, "retained resume state hash differs")?;
@@ -125,12 +137,15 @@ pub(super) fn run(c: Command) -> Result<Value, String> {
         completed += 1; let snapshot = state.snapshot_v1().map_err(err)?;
         ensure(snapshot.adam_step == initial_adam + completed as u64, "retained Adam age differs")?;
         policy.replace_training_parameters_v3(&snapshot.parameters)?;
-        let saved = Saved { trajectory:c.trajectory.clone(), selected_rows:selected.clone(), checkpoint: Checkpoint { schema:RETAINED_SCHEMA.into(), loss_identity:RETAINED_LOSS.into(), source:c.source.clone(), dataset:c.dataset.clone(), target_permuted:false, backend:"cpu".into(), device_ordinal:0, completed_updates:completed, initial_adam, adam_step:snapshot.adam_step, scorer_bias_anchor_bits:snapshot.scorer_bias_anchor_bits, state_sha256:hex(&snapshot.state_sha256_v1().map_err(err)?), parameters:snapshot.parameters.iter().map(ParameterBitsV1::from_native).collect(), first_moments:snapshot.first_moments.iter().map(ParameterBitsV1::from_native).collect(), second_moments:snapshot.second_moments.iter().map(ParameterBitsV1::from_native).collect() }};
+        let saved = Saved { trajectory:c.trajectory.clone(), retention_dataset:c.retention_dataset.clone(), selected_rows:selected.clone(), checkpoint: Checkpoint { schema:RETAINED_SCHEMA.into(), loss_identity:RETAINED_LOSS.into(), source:c.source.clone(), dataset:c.dataset.clone(), target_permuted:false, backend:"cpu".into(), device_ordinal:0, completed_updates:completed, initial_adam, adam_step:snapshot.adam_step, scorer_bias_anchor_bits:snapshot.scorer_bias_anchor_bits, state_sha256:hex(&snapshot.state_sha256_v1().map_err(err)?), parameters:snapshot.parameters.iter().map(ParameterBitsV1::from_native).collect(), first_moments:snapshot.first_moments.iter().map(ParameterBitsV1::from_native).collect(), second_moments:snapshot.second_moments.iter().map(ParameterBitsV1::from_native).collect() }};
         publish_json(&c.output_directory,&format!("checkpoint-{completed:03}.json"),&saved)?;
         updates.push(json!({"update":completed,"teacher_loss":result.teacher_loss,"retention_kl":result.retention_kl,"weighted_retention_loss":result.weighted_retention_loss,"loss":result.loss,"state_sha256":saved.checkpoint.state_sha256}));
     }
     ensure(original_hash == hex(&original.state_sha256_v1().map_err(err)?), "retained original mutated")?;
-    let result = json!({"schema":RETAINED_SCHEMA,"complete":true,"initial_state":original_hash,"final_state":hex(&state.state_sha256_v1().map_err(err)?),"initial_adam":initial_adam,"final_adam":state.adam_step_v1(),"completed_updates":completed,"updates":updates,"selected_rows":selected,"parent_behavior_rows":exact,"teacher_positions":32,"retention_physical_groups":16,"retention_rows":retained.iter().map(Vec::len).sum::<usize>(),"beta":BETA,"evaluation_positions_read":0,"non_claim":"Two-update CPU integration fixture, not weight selection, representative retention or playing-strength evidence."});
+    let mut result = json!({"schema":RETAINED_SCHEMA,"complete":true,"initial_state":original_hash,"final_state":hex(&state.state_sha256_v1().map_err(err)?),"initial_adam":initial_adam,"final_adam":state.adam_step_v1(),"completed_updates":completed,"updates":updates,"selected_rows":selected,"parent_behavior_rows":exact,"teacher_positions":32,"retention_physical_groups":retained.len(),"retention_rows":retained.iter().map(Vec::len).sum::<usize>(),"beta":BETA,"evaluation_positions_read":0,"non_claim":"Two-update CPU integration fixture, not weight selection, representative retention or playing-strength evidence."});
+    if let Some(pin)=&c.retention_dataset {
+        result["retention_dataset"]=json!(pin);result["parent_score_replay_rows"]=json!(parent_score_replay_rows);
+    }
     publish_json(&c.output_directory,"result.json",&result)?;
     publish_json(&c.output_directory,"timing.json",&json!({"seconds":started.elapsed().as_secs_f64(),"workers":c.workers}))?;
     Ok(result)
