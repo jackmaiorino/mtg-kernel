@@ -3,6 +3,7 @@ import argparse
 import os
 from pathlib import Path
 import time
+import public_training_storage_v1 as storage_dispatch
 
 from public_training_dispatch_v2 import read, write, pin, checked, preflight
 from public_evaluation_dispatch_v1 import inventory
@@ -45,13 +46,29 @@ def run(root, pilot, reuse=None):
     for item in [binary, m["runner"], m["design"], *configs.values()]:
         checked(item)
     prior = None
+    reuse_roots = []
     if reuse is not None:
-        prior = read(reuse / "manifest.json")
-        assert prior["pilot"] == pin(pilot / "manifest.json") and prior["binary"] == binary
-        assert prior["configs"] == configs and prior["prefix_updates"] == 3
-        for item in prior["dependencies"]:
-            checked(item)
+        cursor = reuse
+        while cursor is not None:
+            assert cursor not in reuse_roots, "cyclic recovery chain"
+            prior = read(cursor / "manifest.json")
+            assert prior["pilot"] == pin(pilot / "manifest.json") and prior["binary"] == binary
+            assert prior["configs"] == configs and prior["prefix_updates"] == 3
+            for item in prior["dependencies"]:
+                checked(item)
+            reuse_roots.append(cursor)
+            ancestor = prior.get("reused_completed_cases_from")
+            cursor = checked(ancestor).parent if ancestor else None
     root.mkdir()
+    inventory_count = 0
+    def recorded_inventory(host):
+        nonlocal inventory_count
+        snapshot = inventory(host)
+        write(root / f"storage-owner-inventory-{inventory_count:03}.json", snapshot)
+        inventory_count += 1
+        return snapshot
+    # Observe the exact storage guard input without relaxing its rejection.
+    storage_dispatch.inventory = recorded_inventory
     cuda = Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8")
     os.environ["CUDA_PATH"] = str(cuda)
     os.environ["PATH"] = str(cuda / "bin") + os.pathsep + os.environ["PATH"]
@@ -100,9 +117,11 @@ def run(root, pilot, reuse=None):
     comparisons = 0
     for label, store, placements, mode in cases:
         assert time.monotonic() - started < 1200, "qualification launch budget exhausted"
-        old_group = None if reuse is None else reuse / f"{reuse.name}-{label}/group-benchmark.json"
-        if old_group is not None and old_group.is_file():
-            previous_case = next(case for case in prior["cases"] if case["id"] == label)
+        old_group = next((source / f"{source.name}-{label}/group-benchmark.json" for source in reuse_roots
+                          if (source / f"{source.name}-{label}/group-benchmark.json").is_file()), None)
+        if old_group is not None:
+            source_manifest = read(old_group.parent.parent / "manifest.json")
+            previous_case = next(case for case in source_manifest["cases"] if case["id"] == label)
             assert previous_case["placements"] == placements and previous_case["mode"] == mode
             assert previous_case["storage"]["disk_serial"] == store["disk_serial"]
             group_pin = pin(old_group)
