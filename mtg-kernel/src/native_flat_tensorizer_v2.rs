@@ -753,6 +753,13 @@ fn canonical_extensions_v3(
     Ok(value)
 }
 
+/// Reuse the exact V4 node projection for ordered public stack messages.
+pub(crate) fn stack_node_map_v4(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+) -> Result<Vec<Option<usize>>, NativeFlatTensorErrorV2> {
+    Ok(build_object_projection_v4(view)?.raw_to_node)
+}
+
 /// Fresh-lineage (V4 contract) sibling of [`fill_native_flat_decision_tensors_v3`].
 /// Additive only: nothing above this point in the file is touched, and this
 /// function is never called from the V3 path. Reuses every shared V2
@@ -765,12 +772,6 @@ fn canonical_extensions_v3(
 /// `FlatObjectCoreV2`'s already-registered `(group, visible_ordinal)`, so
 /// this generation needs no new tensor-building machinery, only new typed
 /// glue for the widened `historical_public_sources` context.
-pub(crate) fn stack_node_map_v4(
-    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
-) -> Result<Vec<Option<usize>>, NativeFlatTensorErrorV2> {
-    Ok(build_object_projection_v4(view)?.raw_to_node)
-}
-
 pub(crate) fn fill_native_flat_decision_tensors_v4(
     view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
 ) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {

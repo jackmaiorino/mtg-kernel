@@ -182,6 +182,9 @@ mod tests {
         if hidden_variant { put(&mut state,opponent,"Gut Shot",Zone::Hand); }
         let target=put(&mut state,opponent,"Tolarian Terror",Zone::Battlefield);
         let spells=["Lightning Bolt","Lightning Bolt"].map(|name|put(&mut state,actor,name,Zone::Hand));
+        // Keep a real choice for this actor after both casts. The session skips
+        // forced passes, which would otherwise expose the opponent's own hand.
+        put(&mut state,actor,"Lightning Bolt",Zone::Hand);
         if !hidden_variant { put(&mut state,opponent,"Lotus Petal",Zone::Hand); }
         for owner in [actor,opponent] {
             for name in if hidden_variant { ["Mountain","Forest"] } else { ["Forest","Mountain"] } {
@@ -194,7 +197,10 @@ mod tests {
             engine::step(&mut state,Action::ChooseTarget(Target::Object(target))).unwrap();
             assert!(matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {..}));
         }
-        FastActorSessionV1::from_v3_fixture_state(state)
+        let session=FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(decision)=session.current_response() else { panic!("expected stack decision"); };
+        assert_eq!(decision.acting_player as usize,actor.index());
+        session
     }
 
     #[test]
@@ -268,6 +274,66 @@ mod tests {
         let mut bad=encoded.stack.clone();bad.rows[0].source_node=bad.object_count;assert!(bad.validate(bad.object_count).is_err());
         let mut bad=encoded.stack.clone();bad.rows[0].features[0]=f32::NAN;assert!(bad.validate(bad.object_count).is_err());
         let mut bad=encoded.stack.clone();bad.rows.remove(0);assert!(bad.validate(bad.object_count).is_err());
+        let mut bad=encoded.stack.clone();bad.rows[1].features[15]=1.0-bad.rows[1].features[15];assert!(bad.validate(bad.object_count).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires pinned g115 checkpoint and fresh MTG_STACK_EXPORT path"]
+    fn public_stack_g115_zero_parity_and_export_reference() {
+        use crate::native_policy_value_net_v1::{NativePolicyValueNetV1,NativePolicyValueModelConfigV1};
+        use crate::native_policy_value_net_v1::stack_inputs_v1::*;
+        use crate::public_stack_features_v1::*;
+        use sha2::{Digest,Sha256};
+        use serde_json::{json,Value};
+        let path=std::env::var("MTG_STACK_CHECKPOINT").unwrap();
+        let bytes=std::fs::read(&path).unwrap();
+        let sha=format!("{:x}",Sha256::digest(&bytes));
+        assert_eq!(sha,"88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1");
+        let source:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(source["feature_contract_digest"],crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4);
+        assert_eq!(source["feature_encoding_digest"],crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4);
+        assert_eq!(source["card_db_hash"],"064a7c989255ab3c");
+        let mut base=NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1()).unwrap();
+        let mut parameters=base.parameter_snapshot_v1();
+        let raw=source["parameters"].as_array().unwrap();assert_eq!(parameters.len(),raw.len());
+        for (p,r) in parameters.iter_mut().zip(raw) {
+            assert_eq!(r["name"],p.name);
+            assert_eq!(serde_json::from_value::<Vec<usize>>(r["shape"].clone()).unwrap(),p.shape);
+            p.values=serde_json::from_value::<Vec<u32>>(r["values"].clone()).unwrap().into_iter().map(f32::from_bits).collect();
+        }
+        base.replace_parameter_snapshot_v1(&parameters).unwrap();
+        let weights:Vec<f32>=(0..64*INPUT_WIDTH).map(|i|((i*17%23) as f32-11.0)*0.003).collect();
+        let zero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::zero()).unwrap();
+        let nonzero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::new(weights.clone()).unwrap()).unwrap();
+        let bits=|o:&crate::native_policy_value_net_v1::NativePolicyValueOutputV1|o.logits.iter().chain(std::iter::once(&o.value)).map(|v|v.to_bits()).collect::<Vec<_>>();
+        let mut samples=Vec::new();
+        for actor in [PlayerId::P0,PlayerId::P1] {
+            let mut previous=None;
+            for hidden in [false,true] {
+                let session=stack_fixture_v1(actor,hidden);
+                let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
+                let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
+                let legacy=base.forward_feature_transfer_v4(encoded.view()).unwrap();
+                let z=zero.forward(&encoded).unwrap();let n=nonzero.forward(&encoded).unwrap();
+                assert_eq!(bits(&legacy),bits(&z));assert_ne!(bits(&legacy),bits(&n));
+                assert_eq!(bits(&n),bits(&nonzero.forward(&encoded).unwrap()));
+                if let Some((old,output))=&previous { assert_eq!(&encoded,old);assert_eq!(&bits(&n),output); }
+                else { previous=Some((encoded.clone(),bits(&n))); }
+                let t=&encoded.legacy.common;
+                let mut native=serde_json::Map::new();
+                macro_rules! field { ($name:ident) => { native.insert(stringify!($name).into(),json!(t.$name)); }; }
+                field!(state);field!(object_features);field!(object_card_ids);field!(object_groups);field!(object_node_ids);
+                field!(edge_features);field!(edge_source_indices);field!(edge_target_indices);field!(action_features);
+                field!(action_ref_features);field!(action_ref_card_ids);field!(action_ref_action_indices);field!(action_ref_node_indices);
+                samples.push(json!({"actor":actor.index(),"hidden_variant":hidden,"native":native,"stack":encoded.stack,
+                    "zero":{"logits":z.logits,"value":z.value},"nonzero":{"logits":n.logits,"value":n.value}}));
+            }
+        }
+        let report=json!({"schema":"public-stack-g115-reference/v1","architecture":ARCHITECTURE,"checkpoint":path,"checkpoint_sha256":sha,
+            "weights":weights,"samples":samples,"zero_native_bit_exact":true,"hidden_pairs_bit_exact":true,
+            "non_claim":"Bounded engineering only; no training integration or strength evidence."});
+        let file=std::fs::OpenOptions::new().write(true).create_new(true).open(std::env::var("MTG_STACK_EXPORT").unwrap()).unwrap();
+        serde_json::to_writer_pretty(file,&report).unwrap();
     }
 
     #[test]
@@ -280,6 +346,7 @@ mod tests {
         for kicked in [false,true] {
             let mut state=ready_state();state.players[0].mana_pool[ManaColor::R.pool_index()]=5;
             let spell=put(&mut state,PlayerId::P0,"Goblin Bushwhacker",Zone::Hand);
+            put(&mut state,PlayerId::P0,"Lightning Bolt",Zone::Hand);
             engine::step(&mut state,Action::CastSpell(spell)).unwrap();
             assert!(matches!(engine::advance_until_decision(&mut state),Decision::ChooseKicker {..}));
             engine::step(&mut state,Action::ChooseKicker(kicked)).unwrap();

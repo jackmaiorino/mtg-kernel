@@ -57,6 +57,7 @@ impl StackFeatureRowsV1 {
         }
         let mut item = 0;
         let mut secondary = 0;
+        let mut baseline: Option<&StackMessageRowV1> = None;
         for row in &self.rows {
             if row.source_node >= object_count
                 || row.target_node.is_some_and(|n| n >= object_count)
@@ -69,8 +70,13 @@ impl StackFeatureRowsV1 {
             if f[1] == 1.0 {
                 item += 1;
                 secondary = 0;
+                baseline = Some(row);
             } else if f[1] == 0.0 && item > 0 {
                 secondary += 1;
+                let base = baseline.expect("a preceding baseline exists");
+                if row.source_node != base.source_node || f[6..305] != base.features[6..305] {
+                    return Err("target row differs from stack item payload".into());
+                }
             } else {
                 return Err("invalid stack baseline order".into());
             }
@@ -96,6 +102,7 @@ impl StackFeatureRowsV1 {
                 .any(|v| *v != 0.0 && *v != 1.0)
                 || (row.target_node.is_some() != (f[306] == 1.0))
                 || ((secondary == 0) != (f[305] == 1.0))
+                || (f[306] != 1.0 && f[311] != 1.0)
             {
                 return Err("invalid stack flags or target binding".into());
             }
