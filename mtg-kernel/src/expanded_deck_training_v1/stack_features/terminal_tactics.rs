@@ -2,6 +2,7 @@
 use super::*;
 use crate::rl::ActionSemanticV1;
 pub mod fixtures;
+pub mod learning;
 
 /// Shadow-only census. This does not select an action or expose a live session.
 /// Restrict witnesses to visible burn targets and a publicly empty opposing hand.
