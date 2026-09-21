@@ -1,6 +1,6 @@
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn main() {
-    match mtg_kernel::experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1() {
+    match mtg_kernel::run_public_entropy_gradient_probe_v1() {
         Ok(result) => println!("{result}"),
         Err(error) => {
             eprintln!("{error}");

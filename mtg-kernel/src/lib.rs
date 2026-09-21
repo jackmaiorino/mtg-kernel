@@ -65,6 +65,8 @@ pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
