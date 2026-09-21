@@ -42,7 +42,7 @@ def run(root,pilot):
     started=time.monotonic(); candidates=[]; projections={}; reference={}; exposure={}; comparisons=0
     first_reports=None
     for label,store,assignment in cases:
-        group_pin=dispatch(root/f"replication-storage-{label}-002",binary,configs,assignment,store,3)
+        group_pin=dispatch(root/f"{root.name}-{label}",binary,configs,assignment,store,3)
         group=read(checked(group_pin)); times=[]
         current=reports(group_pin)
         if first_reports is None:first_reports=current

@@ -56,15 +56,30 @@ def dispatch(root, binary, configs, placements, store, updates, wall_seconds=240
     assert current["disk_serial"] == store["disk_serial"] and current["disk_name"] == store["disk_name"]
     assert current["free_bytes"] > 60*1024**3, "preserve ample native-store headroom"
     write(root/"storage-before.json", snapshot)
-    native = Path(f"{store['drive']}:/mtg-training-working/{root.name}-native")
-    native.parent.mkdir(exist_ok=True)
-    write(root/"dispatch.json", dict(binary=binary, configs=configs, placements=placements,
-        native_root=str(native), local_storage=store, archive_scheme=ARCHIVE,
-        updates=updates, wall_seconds=wall_seconds))
-    if updates is not None:
-        group_pin = dispatch_qualification(native,binary,configs,placements,"parallel",updates=updates)
-    else:
-        group_pin = _dispatch_group(native,binary,configs,placements,"parallel",None,wall_seconds)
+    retries = []
+    for attempt in range(3):
+        native = Path(f"{store['drive']}:/mtg-training-working/{root.name}-native-{attempt}")
+        native.parent.mkdir(exist_ok=True)
+        write(root/f"dispatch-{attempt}.json", dict(binary=binary, configs=configs, placements=placements,
+            native_root=str(native), local_storage=store, archive_scheme=ARCHIVE,
+            updates=updates, wall_seconds=wall_seconds))
+        try:
+            if updates is not None:
+                group_pin = dispatch_qualification(native,binary,configs,placements,"parallel",updates=updates)
+            else:
+                group_pin = _dispatch_group(native,binary,configs,placements,"parallel",None,wall_seconds)
+            break
+        except ValueError as error:
+            # The dispatcher checks all hosts before creating any host job tree.
+            # Retry only this precise preflight failure, never a started job.
+            untouched = not any((native/host).exists() for host in ["jack", "haleyspc"])
+            if str(error) != "selected GPU is unavailable; preserve its current work" or not untouched:
+                raise
+            retries.append(dict(attempt=attempt, native_root=str(native), error=str(error), no_jobs_staged=True))
+            write(root/"preflight-retries.json", retries)
+            if attempt == 2:
+                raise
+            time.sleep(2)
     archived = archive_native(native,root)
     group = read(checked(group_pin))
     group.update(native_group=group_pin, archive=pin(root/"archive.json"), local_storage=store,
