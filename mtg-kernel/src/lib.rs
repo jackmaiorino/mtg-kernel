@@ -436,6 +436,7 @@ pub mod xmage_observed_inference_v1;
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
 pub mod public_cost_features_v1;
+pub(crate) mod public_stack_features_v1;
 
 /// Runs the opt-in production-parameter Burn/CUDA diagnostic. This surface is
 /// intentionally hidden from normal documentation and absent from normal

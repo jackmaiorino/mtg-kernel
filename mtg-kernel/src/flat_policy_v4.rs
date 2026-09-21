@@ -172,6 +172,128 @@ mod tests {
         }
     }
 
+    fn stack_fixture_v1(actor: PlayerId, hidden_variant: bool) -> FastActorSessionV1 {
+        use crate::engine::{self,Action,Decision};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put,ready_state};
+        use crate::state::{Target,Zone};
+        let opponent=if actor==PlayerId::P0 { PlayerId::P1 } else { PlayerId::P0 };
+        let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
+        if hidden_variant { put(&mut state,opponent,"Gut Shot",Zone::Hand); }
+        let target=put(&mut state,opponent,"Tolarian Terror",Zone::Battlefield);
+        let spells=["Lightning Bolt","Lightning Bolt"].map(|name|put(&mut state,actor,name,Zone::Hand));
+        if !hidden_variant { put(&mut state,opponent,"Lotus Petal",Zone::Hand); }
+        for owner in [actor,opponent] {
+            for name in if hidden_variant { ["Mountain","Forest"] } else { ["Forest","Mountain"] } {
+                put(&mut state,owner,name,Zone::Library);
+            }
+        }
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()]=8;
+        for spell in spells {
+            engine::step(&mut state,Action::CastSpell(spell)).unwrap();
+            engine::step(&mut state,Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {..}));
+        }
+        FastActorSessionV1::from_v3_fixture_state(state)
+    }
+
+    #[test]
+    fn public_stack_actual_v4_binding_zero_parity_and_hidden_invariance() {
+        use crate::public_stack_features_v1::*;
+        use crate::native_policy_value_net_v1::{NativePolicyValueNetV1,NativePolicyValueModelConfigV1,NativePolicyValueOutputV1};
+        use crate::native_policy_value_net_v1::stack_inputs_v1::*;
+        let base=NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1()).unwrap();
+        let zero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::zero()).unwrap();
+        let weights=(0..64*INPUT_WIDTH).map(|i|((i*17%23) as f32-11.0)*0.003).collect();
+        let nonzero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::new(weights).unwrap()).unwrap();
+        let bits=|out:&NativePolicyValueOutputV1|out.logits.iter().chain(std::iter::once(&out.value)).map(|v|v.to_bits()).collect::<Vec<_>>();
+        for actor in [PlayerId::P0,PlayerId::P1] {
+            let mut previous=None;
+            for hidden in [false,true] {
+                let session=stack_fixture_v1(actor,hidden);
+                let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
+                let view=owned.view(&decision);
+                let encoded=encode_stack_decision_v1(view).unwrap();
+                let mut legacy=NativeFlatDecisionTensorV4::default();NativeFlatTensorizerV4::default().fill(view,&mut legacy).unwrap();
+                assert_eq!(encoded.legacy,legacy,"no change to legacy tensors or legal action references");
+                let baselines=encoded.stack.rows.iter().filter(|r|r.features[1]==1.0).collect::<Vec<_>>();
+                assert_eq!(baselines.len(),4,"two spells and their two Ward abilities");
+                let spells=baselines.iter().filter(|r|r.features[8]==1.0).collect::<Vec<_>>();
+                assert_eq!(spells.len(),2);assert_ne!(spells[0].source_node,spells[1].source_node);
+                assert_eq!(encoded.legacy.common.object_card_ids[spells[0].source_node],encoded.legacy.common.object_card_ids[spells[1].source_node]);
+                let abilities=baselines.iter().filter(|r|r.features[10]==1.0).collect::<Vec<_>>();
+                assert_eq!(abilities.len(),2);assert_eq!(abilities[0].source_node,abilities[1].source_node);
+                assert_ne!(abilities[0].features[2],abilities[1].features[2],"same-source abilities retain distinct stack positions");
+                let legacy_output=base.forward_feature_transfer_v4(encoded.view()).unwrap();
+                assert_eq!(bits(&zero.forward(&encoded).unwrap()),bits(&legacy_output));
+                let changed=bits(&nonzero.forward(&encoded).unwrap());assert_ne!(changed,bits(&legacy_output),"stack messages must reach model outputs");
+                assert_eq!(changed,bits(&nonzero.forward(&encoded).unwrap()),"deterministic replay");
+                let json=serde_json::to_string(&encoded.stack).unwrap();
+                for forbidden in ["arena_id","zone_change_count","rng"] { assert!(!json.contains(forbidden)); }
+                let decoded:StackFeatureRowsV1=serde_json::from_str(&json).unwrap();assert_eq!(decoded,encoded.stack);
+                if let Some((old,old_output))=&previous { assert_eq!(&encoded,old);assert_eq!(&changed,old_output); }
+                else { previous=Some((encoded,changed)); }
+            }
+        }
+    }
+
+    #[test]
+    fn public_stack_duplicate_card_attributes_bind_by_instance_and_reject_bad_rows() {
+        use crate::flat_policy_v2::{FlatRelationPayloadV2,FlatRelationRoleV2};
+        use crate::public_stack_features_v1::*;
+        let session=stack_fixture_v1(PlayerId::P0,false);
+        let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
+        // Deliberate model-input fixtures: same-card spells with different public
+        // metadata. No assertion that Lightning Bolt itself supports these costs.
+        let spell_orders:Vec<_>=owned.relations.iter().filter_map(|r|match r.payload {
+            FlatRelationPayloadV2::Stack(p) if r.secondary_order==0 && p.stack_item_kind==0=>Some(r.primary_order),_=>None }).collect();
+        for r in &mut owned.relations {
+            if r.role!=FlatRelationRoleV2::StackTarget { continue; }
+            if let FlatRelationPayloadV2::Stack(p)=&mut r.payload {
+                if r.primary_order==spell_orders[0] {p.kicked=true;p.x_value=3;p.mode_chosen=1;p.cast_method=3;p.is_flashback=true;}
+                if r.primary_order==spell_orders[1] {p.kicked=false;p.x_value=65535;p.mode_chosen=255;p.cast_method=2;p.is_copy=true;}
+            }
+        }
+        let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
+        for (index,order) in spell_orders.iter().enumerate() {
+            let rows=encoded.stack.rows.iter().filter(|r|r.features[2]==*order as f32/32.0).collect::<Vec<_>>();
+            assert!(rows.len()>=2);assert!(rows.iter().all(|r|r.source_node==rows[0].source_node));
+            for r in rows {
+                assert_eq!(r.features[15],f32::from(index==0));
+                assert_eq!(r.features[25+if index==0 {1}else{255}],1.0);
+                assert_eq!(r.features[16+if index==0 {3}else{2}],1.0);
+                assert_eq!(r.features[289..305].iter().enumerate().map(|(b,v)|if *v==1.0 {1u16<<b}else{0}).sum::<u16>(),if index==0 {3}else{65535});
+            }
+        }
+        let mut bad=encoded.stack.clone();bad.rows[0].source_node=bad.object_count;assert!(bad.validate(bad.object_count).is_err());
+        let mut bad=encoded.stack.clone();bad.rows[0].features[0]=f32::NAN;assert!(bad.validate(bad.object_count).is_err());
+        let mut bad=encoded.stack.clone();bad.rows.remove(0);assert!(bad.validate(bad.object_count).is_err());
+    }
+
+    #[test]
+    fn public_stack_engine_cast_kicker_without_targets_is_present() {
+        use crate::engine::{self,Action,Decision};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put,ready_state};
+        use crate::state::Zone;
+        use crate::public_stack_features_v1::*;
+        for kicked in [false,true] {
+            let mut state=ready_state();state.players[0].mana_pool[ManaColor::R.pool_index()]=5;
+            let spell=put(&mut state,PlayerId::P0,"Goblin Bushwhacker",Zone::Hand);
+            engine::step(&mut state,Action::CastSpell(spell)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),Decision::ChooseKicker {..}));
+            engine::step(&mut state,Action::ChooseKicker(kicked)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {..}));
+            assert_eq!(state.stack.len(),1);assert_eq!(state.stack[0].kicked,kicked);
+            let session=FastActorSessionV1::from_v3_fixture_state(state);
+            let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
+            let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
+            assert_eq!(encoded.stack.stack_items,1);assert_eq!(encoded.stack.rows.len(),1);
+            assert_eq!(encoded.stack.rows[0].features[15],f32::from(kicked));
+            assert!(encoded.stack.rows[0].target_node.is_none());
+        }
+    }
+
     #[test]
     fn v4_structured_public_features_use_visible_nodes_and_explicit_colors() {
         use crate::event::install_color_damage_prevention;

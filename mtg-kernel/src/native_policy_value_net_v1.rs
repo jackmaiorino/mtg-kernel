@@ -11,6 +11,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 pub(crate) mod public_inputs_v1;
+pub(crate) mod stack_inputs_v1;
 
 /// Selects which `tanh` implementation the forward pass's activation
 /// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's
@@ -698,9 +699,21 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         counts: ValidatedCountsV1,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+        public: Option<(&public_inputs_v1::PublicInputWeightsV1, &crate::public_cost_features_v1::PublicFeatureRowsV1)>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_stack_and_public_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode, public, None)
+    }
+
+    fn forward_stack_and_public_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
         mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
         public: Option<(&public_inputs_v1::PublicInputWeightsV1, &crate::public_cost_features_v1::PublicFeatureRowsV1)>,
+        stack: Option<(&stack_inputs_v1::StackInputWeightsV1, &crate::public_stack_features_v1::StackFeatureRowsV1)>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
@@ -754,6 +767,9 @@ impl NativePolicyValueNetV1 {
             add_indexed_rows_v1(&mut edge_pooled, &edge_hidden, encoded.edge_target_indices);
         }
 
+        if let Some((weights, rows)) = stack {
+            weights.add_messages(rows, &object_base_hidden, &mut edge_pooled, activation_mode);
+        }
         let mut node_update_input = Vec::with_capacity(counts.object_count * NODE_UPDATE_INPUT_V1);
         for object in 0..counts.object_count {
             let begin = object * HIDDEN_DIM_V1;
