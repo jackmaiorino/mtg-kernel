@@ -71,6 +71,7 @@ use std::thread;
 
 mod weighted_v3;
 mod gae_v1;
+pub(crate) mod retention_v1;
 
 #[cfg(test)]
 thread_local! {
