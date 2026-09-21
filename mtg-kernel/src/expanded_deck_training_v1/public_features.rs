@@ -296,12 +296,15 @@ fn collect_parallel(
     state_hash: &str,
     enabled: bool,
     workers: usize,
+    fork_seconds: &mut f64,
 ) -> Result<Vec<Trajectory>, String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let next = AtomicUsize::new(0);
+    let fork_started = std::time::Instant::now();
     let policies = (0..workers.min(episodes.len()))
         .map(|_| policy.fork_for_collection())
         .collect::<Result<Vec<_>, _>>()?;
+    *fork_seconds = fork_started.elapsed().as_secs_f64();
     let mut results = std::thread::scope(|scope| -> Result<Vec<(usize, Trajectory)>, String> {
         let mut handles = Vec::new();
         for (worker, mut policy) in policies.into_iter().enumerate() {
@@ -472,13 +475,22 @@ pub fn run(command: Command) -> Result<Value, String> {
     let mut receipts = Vec::new();
     for update in first_update..last {
         let started = std::time::Instant::now();
+        // Observational host wall times only. CUDA work may finish at a later
+        // synchronization boundary, so these are not GPU kernel timings.
+        // This map never enters the config, trajectory, optimizer or checkpoint.
+        let mut stage_seconds = std::collections::BTreeMap::new();
         let directory = command.output_directory.join(format!("{update:04}"));
         fs::create_dir(&directory).map_err(err)?;
         let before_bytes = public_training::snapshot::encode(&legacy, &public).map_err(err)?;
         let before = sha(&before_bytes);
+        stage_seconds.insert("prepare_and_before_state", started.elapsed().as_secs_f64());
         let mut trajectories = Vec::new();
         let mut trajectory_hashes = Vec::new();
+        let mut fork_seconds = 0.0;
+        let mut rollout_seconds = 0.0;
+        let mut trajectory_publish_seconds = 0.0;
         if command.collector_workers > 1 {
+            let collection_started = std::time::Instant::now();
             trajectories = collect_parallel(
                 &policy,
                 &config.updates[update],
@@ -486,15 +498,20 @@ pub fn run(command: Command) -> Result<Value, String> {
                 &before,
                 config.inputs_enabled,
                 command.collector_workers,
+                &mut fork_seconds,
             )?;
+            rollout_seconds = collection_started.elapsed().as_secs_f64() - fork_seconds;
+            let publish_started = std::time::Instant::now();
             for (index, trajectory) in trajectories.iter().enumerate() {
                 trajectory_hashes.push(
                     publish_json(&directory, &format!("episode-{index:03}.json"), trajectory)?
                         .sha256,
                 );
             }
+            trajectory_publish_seconds = publish_started.elapsed().as_secs_f64();
         } else {
             for (index, episode) in config.updates[update].iter().enumerate() {
+                let collection_started = std::time::Instant::now();
                 eprintln!(
                     "public update {update}: collect {}/{} {}",
                     index + 1,
@@ -508,14 +525,21 @@ pub fn run(command: Command) -> Result<Value, String> {
                     &before,
                     config.inputs_enabled,
                 )?;
+                rollout_seconds += collection_started.elapsed().as_secs_f64();
+                let publish_started = std::time::Instant::now();
                 trajectory_hashes.push(
                     publish_json(&directory, &format!("episode-{index:03}.json"), &trajectory)?
                         .sha256,
                 );
                 trajectories.push(trajectory);
+                trajectory_publish_seconds += publish_started.elapsed().as_secs_f64();
             }
         }
         let collection_seconds = started.elapsed().as_secs_f64();
+        stage_seconds.insert("collector_forks", fork_seconds);
+        stage_seconds.insert("rollout_and_join", rollout_seconds);
+        stage_seconds.insert("trajectory_publication", trajectory_publish_seconds);
+        let replay_started = std::time::Instant::now();
         let mut records: Vec<
             Vec<(
                 &DecisionRecordV1,
@@ -599,6 +623,8 @@ pub fn run(command: Command) -> Result<Value, String> {
             .iter()
             .map(|substeps| PublicTrainingGroup { substeps })
             .collect();
+        stage_seconds.insert("replay_targets_and_grouping", replay_started.elapsed().as_secs_f64());
+        let update_started = std::time::Instant::now();
         device
             .update_groups(
                 &groups,
@@ -612,7 +638,11 @@ pub fn run(command: Command) -> Result<Value, String> {
                 config.max_chunk_substeps,
             )
             .map_err(err)?;
+        stage_seconds.insert("device_update_call", update_started.elapsed().as_secs_f64());
+        let snapshot_started = std::time::Instant::now();
         (legacy, public) = device.snapshot().map_err(err)?;
+        stage_seconds.insert("device_snapshot_call", snapshot_started.elapsed().as_secs_f64());
+        let install_started = std::time::Instant::now();
         validate_projection_mode(config, &public)?;
         ensure(
             legacy.adam_step == initial_step + update as u64 + 1
@@ -634,8 +664,14 @@ pub fn run(command: Command) -> Result<Value, String> {
             )?;
         }
         policy.install(&legacy.parameters, weights(&public)?)?;
+        stage_seconds.insert("validate_and_install", install_started.elapsed().as_secs_f64());
+        let encode_started = std::time::Instant::now();
         let optimizer = public_training::snapshot::encode(&legacy, &public).map_err(err)?;
+        stage_seconds.insert("optimizer_encoding", encode_started.elapsed().as_secs_f64());
+        let publish_started = std::time::Instant::now();
         let optimizer_hash = publish_bytes(&directory, "optimizer.json", &optimizer)?;
+        stage_seconds.insert("optimizer_publication", publish_started.elapsed().as_secs_f64());
+        let checkpoint_started = std::time::Instant::now();
         let checkpoint = Checkpoint {
             schema: "mtg-kernel-public-input-checkpoint/v1".into(),
             config_sha256: config_hash.clone(),
@@ -645,9 +681,11 @@ pub fn run(command: Command) -> Result<Value, String> {
             trajectory_sha256: trajectory_hashes,
         };
         publish_json(&directory, "checkpoint.json", &checkpoint)?;
+        stage_seconds.insert("checkpoint_publication", checkpoint_started.elapsed().as_secs_f64());
         let receipt = json!({"update":update,"execution_gpu_ordinal":execution_gpu_ordinal,"collector_workers":command.collector_workers,"episodes":trajectories.len(),"natural_games":trajectories.len(),"learner_groups":groups.len(),"learner_substeps":steps.iter().map(Vec::len).sum::<usize>(),
             "physical_decisions":trajectories.iter().map(|t|t.terminal.physical_decision_count).sum::<u64>(),"before_state_sha256":before,"after_state_sha256":optimizer_hash,
-            "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step,"advantage_statistics":statistics,"collection_seconds":collection_seconds,"seconds":started.elapsed().as_secs_f64()});
+            "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step,"advantage_statistics":statistics,"collection_seconds":collection_seconds,"seconds":started.elapsed().as_secs_f64(),
+            "stage_seconds":stage_seconds,"stage_timing_semantics":"host_wall/v1; CUDA calls may synchronize later; receipt publication excluded"});
         publish_json(&directory, "receipt.json", &receipt)?;
         receipts.push(receipt);
     }
