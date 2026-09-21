@@ -66,7 +66,7 @@ for name in ['zero','nonzero']:
   expected=torch.tensor(sample[name]['logits']+[sample[name]['value']]);delta=(out-expected).abs()
   assert torch.all(delta<=1e-3+1e-3*expected.abs()),(name,float(delta.max()))
   outputs.append(out);deltas.append(float(delta.max()))
- for i in [0,2]:assert torch.equal(outputs[i],outputs[i+1]),'hidden permutation changed scores'
+ for i in range(0,len(outputs),2):assert torch.equal(outputs[i],outputs[i+1]),'hidden permutation changed scores'
  reports.append(dict(variant=name,max_absolute_delta=max(deltas),samples=len(samples)))
 
 # A double-precision finite difference checks one largest nonzero derivative of

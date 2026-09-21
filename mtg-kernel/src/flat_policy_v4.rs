@@ -277,6 +277,29 @@ mod tests {
         let mut bad=encoded.stack.clone();bad.rows[1].features[15]=1.0-bad.rows[1].features[15];assert!(bad.validate(bad.object_count).is_err());
     }
 
+    fn stack_simple_fixture_v1(actor:PlayerId,hidden:bool,scenario:&str)->FastActorSessionV1 {
+        use crate::engine::{self,Action,Decision};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put,ready_state};
+        use crate::state::{Target,Zone};
+        let opponent=if actor==PlayerId::P0 {PlayerId::P1}else{PlayerId::P0};
+        let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
+        if hidden {put(&mut state,opponent,"Gut Shot",Zone::Hand);}
+        let source=put(&mut state,actor,if scenario=="kicked" {"Goblin Bushwhacker"}else{"Lightning Bolt"},Zone::Hand);
+        put(&mut state,actor,"Lightning Bolt",Zone::Hand);
+        if !hidden {put(&mut state,opponent,"Lotus Petal",Zone::Hand);}
+        for owner in [actor,opponent] {for name in if hidden {["Forest","Mountain"]}else{["Mountain","Forest"]} {put(&mut state,owner,name,Zone::Library);}}
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()]=8;
+        match scenario {
+            "player"=>{engine::step(&mut state,Action::CastSpell(source)).unwrap();engine::step(&mut state,Action::ChooseTarget(Target::Player(opponent))).unwrap();},
+            "kicked"=>{engine::step(&mut state,Action::CastSpell(source)).unwrap();assert!(matches!(engine::advance_until_decision(&mut state),Decision::ChooseKicker {..}));engine::step(&mut state,Action::ChooseKicker(true)).unwrap();},
+            "empty"=>{},_=>panic!("unknown scenario"),
+        }
+        let session=FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(decision)=session.current_response() else {panic!("fixture skipped decision");};
+        assert_eq!(decision.acting_player as usize,actor.index());session
+    }
+
     #[test]
     #[ignore = "requires pinned g115 checkpoint and fresh MTG_STACK_EXPORT path"]
     fn public_stack_g115_zero_parity_and_export_reference() {
@@ -308,14 +331,19 @@ mod tests {
         let bits=|o:&crate::native_policy_value_net_v1::NativePolicyValueOutputV1|o.logits.iter().chain(std::iter::once(&o.value)).map(|v|v.to_bits()).collect::<Vec<_>>();
         let mut samples=Vec::new();
         for actor in [PlayerId::P0,PlayerId::P1] {
+          for scenario in ["ward","player","kicked","empty"] {
             let mut previous=None;
             for hidden in [false,true] {
-                let session=stack_fixture_v1(actor,hidden);
+                let session=if scenario=="ward" {stack_fixture_v1(actor,hidden)}else{stack_simple_fixture_v1(actor,hidden,scenario)};
                 let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
                 let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
                 let legacy=base.forward_feature_transfer_v4(encoded.view()).unwrap();
                 let z=zero.forward(&encoded).unwrap();let n=nonzero.forward(&encoded).unwrap();
-                assert_eq!(bits(&legacy),bits(&z));assert_ne!(bits(&legacy),bits(&n));
+                assert_eq!(bits(&legacy),bits(&z));
+                if scenario=="empty" {assert!(encoded.stack.rows.is_empty());assert_eq!(bits(&legacy),bits(&n));}
+                else {assert_ne!(bits(&legacy),bits(&n));}
+                if scenario=="player" {assert!(encoded.stack.rows.iter().any(|r|r.features[308]==1.0&&r.target_node.is_none()));}
+                if scenario=="kicked" {assert_eq!(encoded.stack.rows.len(),1);assert_eq!(encoded.stack.rows[0].features[15],1.0);}
                 assert_eq!(bits(&n),bits(&nonzero.forward(&encoded).unwrap()));
                 if let Some((old,output))=&previous { assert_eq!(&encoded,old);assert_eq!(&bits(&n),output); }
                 else { previous=Some((encoded.clone(),bits(&n))); }
@@ -325,10 +353,11 @@ mod tests {
                 field!(state);field!(object_features);field!(object_card_ids);field!(object_groups);field!(object_node_ids);
                 field!(edge_features);field!(edge_source_indices);field!(edge_target_indices);field!(action_features);
                 field!(action_ref_features);field!(action_ref_card_ids);field!(action_ref_action_indices);field!(action_ref_node_indices);
-                samples.push(json!({"actor":actor.index(),"hidden_variant":hidden,"native":native,"stack":encoded.stack,
+                samples.push(json!({"actor":actor.index(),"scenario":scenario,"hidden_variant":hidden,"native":native,"stack":encoded.stack,
                     "zero":{"logits":z.logits,"value":z.value},"nonzero":{"logits":n.logits,"value":n.value}}));
             }
         }
+          }
         let report=json!({"schema":"public-stack-g115-reference/v1","architecture":ARCHITECTURE,"checkpoint":path,"checkpoint_sha256":sha,
             "weights":weights,"samples":samples,"zero_native_bit_exact":true,"hidden_pairs_bit_exact":true,
             "non_claim":"Bounded engineering only; no training integration or strength evidence."});

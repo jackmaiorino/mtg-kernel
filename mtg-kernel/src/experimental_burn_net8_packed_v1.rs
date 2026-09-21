@@ -9,6 +9,7 @@ pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
 mod training;
 pub(crate) use training::public_inputs as public_training;
+pub(crate) use training::stack_inputs as stack_training;
 pub use training::entropy::run_gradient_probe as run_public_entropy_gradient_probe_v1;
 #[cfg(test)]
 mod v3_adapter_tests;
@@ -225,6 +226,15 @@ impl<B: Backend> ProductionNet8<B> {
         batch: &DevicePackedBatch<B>,
         public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
     ) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core_with_stack_and_public::<D>(batch, public, None)
+    }
+
+    fn forward_core_with_stack_and_public<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+        public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
+        stack: Option<(&training::stack_inputs::StackBatch<B>, Tensor<B, 2>)>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
         let object_card = self
             .card_embedding
             .forward(batch.object_card_ids.clone().unsqueeze_dim::<2>(1))
@@ -279,6 +289,10 @@ impl<B: Backend> ProductionNet8<B> {
                     IndexingUpdateOp::Add,
                 )
                 .scatter(0, target_scatter, edge_hidden, IndexingUpdateOp::Add)
+        };
+        let edge_pooled = match stack {
+            Some((rows, weight)) => rows.add_messages(weight, &object_base, edge_pooled),
+            None => edge_pooled,
         };
         let object_hidden = self
             .node_update
