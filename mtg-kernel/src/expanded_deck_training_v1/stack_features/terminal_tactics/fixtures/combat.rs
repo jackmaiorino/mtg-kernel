@@ -69,7 +69,7 @@ pub(super) fn run(command:Command)->Result<Value,String> {
                 crate::rl::TargetRefV1::Object{object}=>if object.arena_id==blocker.0 {creature=Some(i)},
             }}}
             let creature=creature.ok_or("missing blocker target")?;let face=face.ok_or("missing face target")?;let fatal=fatal.ok_or("missing self target")?;
-            ensure(outcomes[creature]["classification"]=="win","removing lifelink blocker failed to certify lethal")?;
+            if outcomes[creature]["classification"]!="win" {return Err(format!("removing lifelink blocker failed to certify lethal: actor={actor} life={opponent_life} creature={creature} outcomes={outcomes:?} visible={visible:?}"));}
             ensure(outcomes[fatal]["classification"]=="loss","self lethal negative control failed")?;
             ensure((outcomes[face]["classification"]=="win")== (opponent_life==3),"face control differs from declared lethal contrast")?;
             let signature=json!({"visible":visible,"actions":actions,"tensor":tensor,"logits":bits(&scores.logits),"value_bits":scores.value.to_bits(),"outcomes":outcomes});
