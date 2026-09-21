@@ -12,6 +12,7 @@ use crate::public_stack_features_v1::{
 use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
 
 pub mod replay;
+pub mod sensitivity;
 
 #[cfg(test)]
 mod tests;
