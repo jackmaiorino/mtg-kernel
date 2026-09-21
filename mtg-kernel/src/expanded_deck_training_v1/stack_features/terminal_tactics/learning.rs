@@ -1,6 +1,7 @@
 //! Exactly one terminal-winner imitation update for engineering qualification.
 //! No episode rewards or ordinary GAE checkpoint identity are rewritten.
 use super::*;
+pub mod campaign;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

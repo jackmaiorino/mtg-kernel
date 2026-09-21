@@ -836,6 +836,18 @@ impl ExperimentalDeviceTrainStateV1 {
         value_coefficient: f32,
         normalization_group_count: f32,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
+        self.chunk_backward_coefficients_v1(accumulator,batch,plan,value_coefficient,normalization_group_count,false)
+    }
+
+    pub(crate) fn chunk_backward_coefficients_v1(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        plan: &DenseGroupLossPlanGaeV1,
+        value_coefficient: f32,
+        normalization_group_count: f32,
+        imitation: bool,
+    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
         let (logits, values) = if self.wide {
             self.model.forward_wide_v1(batch)
         } else {
@@ -843,12 +855,13 @@ impl ExperimentalDeviceTrainStateV1 {
         };
         let logit_outputs = logits.clone().inner();
         let value_outputs = values.clone().inner();
-        let loss = dense_group_loss_gae_v1(
+        let loss = dense_group_loss_coefficients_v1(
             logits,
             values,
             plan,
             value_coefficient,
             normalization_group_count,
+            imitation,
         )?;
         let raw_gradients = loss.backward();
         let mut gradients = GradientsParams::from_grads(raw_gradients, &self.model);
@@ -2243,9 +2256,20 @@ fn dense_group_loss_gae_v1(
     value_coefficient: f32,
     normalization_group_count: f32,
 ) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
+    dense_group_loss_coefficients_v1(logits,values,plan,value_coefficient,normalization_group_count,false)
+}
+
+fn dense_group_loss_coefficients_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanGaeV1,
+    value_coefficient: f32,
+    normalization_group_count: f32,
+    imitation: bool,
+) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
     if values.dims()[0] != plan.substeps
         || !value_coefficient.is_finite()
-        || value_coefficient <= 0.0
+        || (value_coefficient <= 0.0 && !(imitation && value_coefficient==0.0))
         || !normalization_group_count.is_finite()
         || normalization_group_count < plan.group_count as f32
     {

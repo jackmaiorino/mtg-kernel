@@ -1403,6 +1403,18 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         device_ordinal: usize,
     ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.validate_cuda_feature_transfer_coefficients_v4(groups,value_coefficient,learning_rate,device_ordinal,false)
+    }
+
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn validate_cuda_feature_transfer_coefficients_v4(
+        &self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+        imitation: bool,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
         // CUDA's driver device ordinal is signed 32-bit. Never allow a
         // narrowing cast to turn an explicit request into another device.
         if i32::try_from(device_ordinal).is_err() {
@@ -1413,7 +1425,7 @@ impl NativePolicyValueTrainStateV1 {
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
-        if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
+        if !value_coefficient.is_finite() || (value_coefficient <= 0.0 && !(imitation && value_coefficient==0.0)) {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {

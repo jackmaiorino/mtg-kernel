@@ -1391,6 +1391,7 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
     advantages: &[f32],
     value_coefficient: f32,
     learning_rate: f32,
+    imitation: bool,
 ) -> Result<
     (
         NativePolicyTrainStepResultV1,
@@ -1509,12 +1510,13 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
         .map_err(bridge_error_v1)?;
         let chunk_batch = DevicePackedBatch::upload_feature_transfer_v3(&device, &chunk_workspace);
         let chunk_outputs = device_state
-            .chunk_backward_gae_v1(
+            .chunk_backward_coefficients_v1(
                 &mut accumulator,
                 &chunk_batch,
                 &chunk_plan,
                 value_coefficient,
                 total_group_count,
+                imitation,
             )
             .map_err(bridge_error_v1)?;
         let chunk_substep_count = substep_end - substep_begin;
@@ -1752,6 +1754,7 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v3(
         advantages,
         value_coefficient,
         learning_rate,
+        false,
     )?;
     let candidate =
         NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
@@ -1793,6 +1796,7 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v4(
         advantages,
         value_coefficient,
         learning_rate,
+        false,
     )?;
     let candidate =
         NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
@@ -1804,6 +1808,20 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v4(
             })?;
     *state = candidate;
     Ok(result)
+}
+
+/// Separate supervised terminal-winner objective; ordinary GAE guards remain.
+pub(crate) fn train_step_cuda_terminal_imitation_v4(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    learning_rate: f32,
+    device_ordinal: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    state.validate_cuda_feature_transfer_coefficients_v4(groups,0.0,learning_rate,device_ordinal,true)?;
+    let (result,snapshot)=train_step_cuda_burn_dense_gae_inner_v1(state.snapshot_v1()?,device_ordinal,groups,
+        &vec![0.0;groups.len()],&vec![1.0;groups.len()],0.0,learning_rate,true)?;
+    let candidate=NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(),&snapshot)?;
+    *state=candidate;Ok(result)
 }
 
 /// Run one production training update on the CudaBurnDense backend.
