@@ -1,3 +1,7 @@
+# Latest: complete, NO-ADVANCE
+
+Training and the full 4,096-BO3 panel are complete. See public_stack_screen_result_20260921.md for final results, costs and limits. The notes below are chronological snapshots, not current process status.
+
 # Stack screen progress, September21
 
 The frozen design and analyzer were prepared in `E:/mtg-postboard-campaign-20260921/public-stack-screen-001/manifest.json` before training. Four-arm resampling checks verify deterministic draws, preservation of anti-correlated seat pairs, shared endpoint sampling and exact breadth-guard boundaries. The manifest pins the design, analyzer, configs, native binaries, disjoint evaluation seed inputs and512 eight-match endpoint jobs. No formal evaluation has run.
