@@ -12,6 +12,13 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             .map_err(|e|format!("V4 search leaf floating-point verification: {e:?}"))?;
         Ok(Self{policy})
     }
+    pub(crate) fn tensor_digest(&self, session:&FastActorSessionV1, count:u32)->Result<[u8;32],String> {
+        use sha2::{Digest,Sha256};
+        let t=self.tensor(session,count)?;
+        let bits=crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&NativeFlatDecisionTensorV3{common:t.common});
+        let bytes=serde_json::to_vec(&bits).map_err(|e|e.to_string())?;
+        let mut h=Sha256::new();h.update(b"mtg-kernel/v4-search-tensor-witness/v1\0");h.update(bytes);Ok(h.finalize().into())
+    }
     fn tensor(&self,session:&FastActorSessionV1,legal_count:u32)->Result<NativeFlatDecisionTensorV4,String> {
         let FastActorResponseV1::Decision(decision)=session.current_response() else {return Err("search leaf requires live decision".into());};
         require(decision.legal_action_count==legal_count,"search leaf legal count differs")?;
