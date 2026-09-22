@@ -9,6 +9,8 @@ pub struct Bo3BurnAuditOptionsV1 {
     pub decision_index: u64,
     #[serde(default)]
     pub response_tree: bool,
+    #[serde(default)]
+    pub hand_response_tree: bool,
 }
 impl Bo3BurnAuditOptionsV1 {
     pub fn from_json_v1(text: &str) -> Result<Self, String> {
@@ -16,6 +18,7 @@ impl Bo3BurnAuditOptionsV1 {
         crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
         let value: Self = serde_json::from_str(text).map_err(|e| e.to_string())?;
         ensure((1..=3).contains(&value.game_index), "burn game index outside BO3")?;
+        ensure(!(value.response_tree && value.hand_response_tree), "select only one burn tree")?;
         Ok(value)
     }
 }
@@ -32,6 +35,7 @@ pub fn collect_bo3_with_burn_audit_v1(
 ) -> Result<Bo3BurnAuditResultV1, String> {
     ensure(cfg!(feature = "experimental-burn-net8-packed-cuda-v1"), "burn diagnostic feature unavailable")?;
     ensure((1..=3).contains(&options.game_index), "burn game index outside BO3")?;
+    ensure(!(options.response_tree && options.hand_response_tree), "select only one burn tree")?;
     let mut sink = CombatAuditSink::new(Bo3CombatAuditOptionsV1 {
         actor: options.actor, depth: 16, nodes_per_action: 16,
         max_roots: 1, max_transitions: 512, max_json_bytes: 4 * 1024 * 1024,
@@ -60,7 +64,8 @@ impl CombatAuditSink {
         ensure(d.acting_player == options.actor, "burn selected actor differs")?;
         ensure(self.prepared_roots == 0, "duplicate burn root")?;
         ensure(policy.feature_generation_v1() == PlayPolicyGenerationV1::V4, "burn capture requires V4 scorer")?;
-        let audit = if options.response_tree { input.diagnostic_public_burn_tree_v1()? }
+        let audit = if options.hand_response_tree { input.diagnostic_public_hand_burn_tree_v1()? }
+            else if options.response_tree { input.diagnostic_public_burn_tree_v1()? }
             else { input.diagnostic_terminal_targets_v1()? };
         // A rejected root is retained as an abstention, never silently skipped.
         if audit["status"] == "audited" {
@@ -69,7 +74,7 @@ impl CombatAuditSink {
             let outcomes = audit["outcomes"].as_array().ok_or("burn outcomes missing")?;
             ensure(outcomes.len() == d.legal_action_count as usize, "burn action count differs")?;
             self.transitions = outcomes.iter().try_fold(0u64, |sum, o| {
-                if options.response_tree {
+                if options.response_tree || options.hand_response_tree {
                     let n=o["transitions"].as_u64().ok_or("burn tree transitions missing")?;
                     ensure(n<=8192,"burn tree per-action bound exceeded")?;
                     return Ok::<_,String>(sum+n);
@@ -78,7 +83,7 @@ impl CombatAuditSink {
                 ensure(line.len() <= 16, "burn branch exceeds oracle bound")?;
                 Ok::<_, String>(sum + line.len() as u64)
             })?;
-            ensure(self.transitions <= if options.response_tree {32*8192} else {512}, "burn total bound exceeded")?;
+            ensure(self.transitions <= if options.response_tree || options.hand_response_tree {32*8192} else {512}, "burn total bound exceeded")?;
         }
         let status = audit["status"].as_str().ok_or("burn status missing")?;
         *self.counts.entry(status.into()).or_default() += 1;

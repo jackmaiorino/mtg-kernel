@@ -40,6 +40,11 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_public_hand_burn_tree_v1(&self)->Result<serde_json::Value,String> {
+        crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_hand_burn_tree::audit(self.session,self.decision)
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     pub(crate) fn diagnostic_public_combat_v1(&self, depth: u32, nodes_per_action: u32) -> Result<serde_json::Value, String> {
         crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_combat::audit_public_combat_v1(
             self.session, self.decision, depth, nodes_per_action)

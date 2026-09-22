@@ -5,6 +5,7 @@ pub mod fixtures;
 pub mod learning;
 pub(crate) mod public_combat;
 pub(crate) mod public_burn_tree;
+pub(crate) mod public_hand_burn_tree;
 
 /// Shadow-only census. This does not select an action or expose a live session.
 /// Restrict witnesses to visible burn targets and a publicly empty opposing hand.
