@@ -75,14 +75,14 @@ fn run() -> Result<(), String> {
     let auditing = args.len() == 6
         && args[0] == "--request"
         && args[2] == "--output"
-        && (args[4] == "--combat-audit" || args[4] == "--burn-audit" || args[4] == "--continuation");
+        && (args[4] == "--combat-audit" || args[4] == "--burn-audit" || args[4] == "--continuation" || args[4] == "--evaluate-search");
     if !preparing
         && !hashing
         && !auditing
         && (args.len() != 4 || args[0] != "--request" || args[2] != "--output")
     {
         return Err(
-            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
+            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json | --burn-audit options.json | --continuation options.json | --evaluate-search options.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
         );
     }
     let output = PathBuf::from(&args[if preparing { 5 } else { 3 }]);
@@ -127,7 +127,23 @@ fn run() -> Result<(), String> {
         )
     } else {
         let request = Bo3CollectionRequestV1::from_json_v1(text)?;
-        if auditing && args[4] == "--continuation" {
+        if auditing && args[4] == "--evaluate-search" {
+            #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+            {
+                use mtg_kernel::phase1_bo3_collection_v1::{evaluate_bo3_v4,Bo3EvaluationOptionsV1};
+                let mut options=String::new();
+                std::fs::File::open(&args[5]).map_err(|e|e.to_string())?
+                    .take(4097).read_to_string(&mut options).map_err(|e|e.to_string())?;
+                if options.len()>4096 {return Err("evaluation options exceed 4 KiB".into());}
+                // This one-field typed struct rejects unknown/duplicate fields.
+                let options:Bo3EvaluationOptionsV1=serde_json::from_str(&options).map_err(|e|e.to_string())?;
+                let result=evaluate_bo3_v4(request.config,request.packages,options)?;
+                (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
+                    "V4 evaluation result; inspect ending and typed abort".into())
+            }
+            #[cfg(not(feature="experimental-burn-net8-packed-cuda-v1"))]
+            { return Err("search evaluation requires experimental-burn-net8-packed-cuda-v1".into()); }
+        } else if auditing && args[4] == "--continuation" {
             use mtg_kernel::phase1_bo3_collection_v1::{collect_bo3_with_continuation_v1, Bo3ContinuationOptionsV1};
             let mut options = String::new();
             std::fs::File::open(&args[5]).map_err(|e| e.to_string())?
