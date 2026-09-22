@@ -128,7 +128,7 @@ fn run() -> Result<(), String> {
                 .take(4097).read_to_string(&mut options).map_err(|e| e.to_string())?;
             let result = collect_bo3_with_burn_audit_v1(request.config, request.packages,
                 Bo3BurnAuditOptionsV1::from_json_v1(&options)?)?;
-            let summary = format!("burn audit complete={}", result["burn_audit"]["complete"]);
+            let summary = format!("burn audit complete={}", result.burn_audit["complete"]);
             (serde_json::to_vec(&result).map_err(|e| e.to_string())?, summary)
         } else if auditing {
             use mtg_kernel::phase1_bo3_collection_v1::{

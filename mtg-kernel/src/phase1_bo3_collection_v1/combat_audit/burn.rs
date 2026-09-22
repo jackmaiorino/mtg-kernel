@@ -13,17 +13,23 @@ impl Bo3BurnAuditOptionsV1 {
         ensure(text.len() <= 4096, "burn options exceed 4 KiB")?;
         crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
         let value: Self = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        ensure(value.game_index < 3, "burn game index outside BO3")?;
+        ensure((1..=3).contains(&value.game_index), "burn game index outside BO3")?;
         Ok(value)
     }
+}
+#[derive(Debug, Serialize)]
+pub struct Bo3BurnAuditResultV1 {
+    pub schema: &'static str,
+    pub collection: Bo3CollectionResultV1,
+    pub burn_audit: Value,
 }
 pub fn collect_bo3_with_burn_audit_v1(
     config: Bo3CollectionConfigV1,
     packages: [CompleteAgentPackageV1; 2],
     options: Bo3BurnAuditOptionsV1,
-) -> Result<Value, String> {
+) -> Result<Bo3BurnAuditResultV1, String> {
     ensure(cfg!(feature = "experimental-burn-net8-packed-cuda-v1"), "burn diagnostic feature unavailable")?;
-    ensure(options.game_index < 3, "burn game index outside BO3")?;
+    ensure((1..=3).contains(&options.game_index), "burn game index outside BO3")?;
     let mut sink = CombatAuditSink::new(Bo3CombatAuditOptionsV1 {
         actor: options.actor, depth: 16, nodes_per_action: 16,
         max_roots: 1, max_transitions: 512, max_json_bytes: 4 * 1024 * 1024,
@@ -35,7 +41,7 @@ pub fn collect_bo3_with_burn_audit_v1(
     audit["options"] = serde_json::to_value(options).map_err(|e| e.to_string())?;
     audit["complete"] = json!(complete && audit["committed_roots"] == 1 && audit["prepared_roots"] == 1);
     audit["non_claim"] = json!("Single selected public burn diagnostic; unresolved branches remain unknown. No training or strength estimate.");
-    Ok(json!({"schema":"mtg-kernel-bo3-burn-audit/v1", "collection":collection, "burn_audit":audit}))
+    Ok(Bo3BurnAuditResultV1 { schema: "mtg-kernel-bo3-burn-audit/v1", collection, burn_audit: audit })
 }
 impl CombatAuditSink {
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
