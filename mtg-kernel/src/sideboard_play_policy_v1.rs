@@ -945,6 +945,17 @@ impl FrozenPlayPolicyV1 {
         })
     }
 
+    /// Private continuation with unchanged physical-seat RNG positions.
+    /// The caller must bind this fork to a confirmed engine step; this does
+    /// not reconstruct an engine state or authorize a continuation workload.
+    pub(crate) fn fork_for_continuation_v1(&self) -> Result<Self, String> {
+        require(self.sampling_initialized, "continuation requires initialized sampling")?;
+        let mut fork = self.fork_for_collection_v3()?;
+        fork.seat_rng = self.seat_rng;
+        fork.sampling_initialized = true;
+        Ok(fork)
+    }
+
     /// Active runtime capability, separate from the historical import receipt.
     /// Narrow decisions still execute the frozen sampler verbatim. Both wide
     /// generations (V3's `successor` and V4's `fresh_successor`) share the
@@ -1692,6 +1703,33 @@ mod tests {
         assert_eq!(second.actual_model_identity_v1(), expected_identity);
         original.successor = None;
         assert!(original.fork_for_collection_v3().is_err());
+    }
+
+    #[test]
+    fn continuation_fork_preserves_advanced_rng_without_sharing_it() {
+        for mut original in [FrozenPlayPolicyV1::training_fixture_v3(), FrozenPlayPolicyV1::training_fixture_v4()] {
+        assert!(original.fork_for_continuation_v1().is_err());
+        original.reset_sampling_v1([73, 911]);
+        for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1, PlayerSeatV1::P1] {
+            original.sample_scores(&[0.0; 64], seat, 64).unwrap();
+        }
+        let original_rng = original.seat_rng;
+        let mut fork = original.fork_for_continuation_v1().unwrap();
+        assert_eq!(fork.actual_model_identity_v1(), original.actual_model_identity_v1());
+        assert_eq!(fork.identity_v1(), original.identity_v1());
+        assert_ne!(fork.embeddings.as_ptr(), original.embeddings.as_ptr());
+        for (seat, width) in [(PlayerSeatV1::P1, 257), (PlayerSeatV1::P0, 3), (PlayerSeatV1::P1, 64)] {
+            let logits = vec![0.0; width];
+            let sampled = fork.sample_scores(&logits, seat, width as u32).unwrap();
+            assert_eq!(sampled, original.sample_scores(&logits, seat, width as u32).unwrap());
+            assert_eq!(fork.seat_rng, original.seat_rng);
+        }
+        assert_ne!(original.seat_rng, original_rng);
+        let preserved = original.seat_rng;
+        fork.reset_sampling_v1([123, 456]);
+        assert_eq!(original.seat_rng, preserved);
+        assert_ne!(fork.seat_rng, preserved);
+        }
     }
 
     #[test]
