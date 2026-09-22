@@ -214,6 +214,28 @@ pub enum AgentSearchPolicyV1 {
     KernelNativeDescriptorV1 {
         authority: KernelNativeSearchAuthorityV1,
     },
+    V4InformationSetV1 {
+        descriptor: V4InformationSetSearchDescriptorV1,
+    },
+}
+
+pub const V4_INFORMATION_SET_SEARCH_SCHEMA_V1:&str="mtg-kernel-v4-information-set-search/v1";
+pub const V4_INFORMATION_SET_SEARCH_ALGORITHM_V1:&str="v4-depth-keyed-mean-backup/v1";
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum V4SearchRootAllocationV1 {Puct,RoundRobin}
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum V4SearchInteriorBonusV1 {PriorWeighted,PriorFree}
+/// Descriptive identity only. This never grants seed, compute or launch authority.
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct V4InformationSetSearchDescriptorV1 {
+    pub schema:String,pub algorithm:String,
+    pub root_allocation:V4SearchRootAllocationV1,pub interior_bonus:V4SearchInteriorBonusV1,
+    pub simulations:u32,pub transitions:u32,pub depth:u16,pub experiment_seed:u64,
+    pub weights_sha256:String,pub model_parameter_sha256:String,pub embedding_table_sha256:String,
+    pub feature_contract_digest:String,pub feature_encoding_digest:String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,6 +432,17 @@ impl CompleteAgentPackageV1 {
                     && authority.transition_budget == authority.tier.transition_budget(),
                 "search descriptor runtime/budget differs",
             )?;
+        }
+        if let AgentSearchPolicyV1::V4InformationSetV1 { descriptor:d } = &self.search {
+            require(d.schema==V4_INFORMATION_SET_SEARCH_SCHEMA_V1 && d.algorithm==V4_INFORMATION_SET_SEARCH_ALGORITHM_V1,
+                "unknown V4 information-set search contract")?;
+            require((1..=1024).contains(&d.simulations) && (d.simulations..=16384).contains(&d.transitions) && (1..=32).contains(&d.depth),
+                "V4 information-set search limits exceed supported metadata bounds")?;
+            require(d.weights_sha256==model.weights_sha256 && d.model_parameter_sha256==model.model_parameter_sha256
+                && d.embedding_table_sha256==model.embedding_table_sha256
+                && d.feature_contract_digest==runtime.feature_contract_digest && d.feature_encoding_digest==runtime.feature_encoding_digest,
+                "V4 information-set search descriptor differs from installed model/features")?;
+            crate::sideboard_play_policy_v1::fresh_successor_identity_valid_v1(&d.feature_contract_digest,&d.feature_encoding_digest)?;
         }
         Ok(())
     }

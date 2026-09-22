@@ -302,6 +302,39 @@ fn package_roundtrip_has_exact_identity() {
 }
 
 #[test]
+fn v4_search_package_descriptor_is_strict_and_does_not_enable_execution() {
+    use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4,FEATURE_ENCODING_DIGEST_V4};
+    let mut p=package();
+    p.runtime.feature_contract_digest=FEATURE_CONTRACT_DIGEST_V4.into();
+    p.runtime.feature_encoding_digest=FEATURE_ENCODING_DIGEST_V4.into();
+    p.gameplay.identity.model.feature_contract_digest=FEATURE_CONTRACT_DIGEST_V4.into();
+    p.gameplay.identity.model.feature_encoding_digest=FEATURE_ENCODING_DIGEST_V4.into();
+    p.gameplay.source.feature_transfer.expected_feature_contract_digest=FEATURE_CONTRACT_DIGEST_V4.into();
+    p.gameplay.source.feature_transfer.expected_feature_encoding_digest=FEATURE_ENCODING_DIGEST_V4.into();
+    let d=V4InformationSetSearchDescriptorV1{schema:V4_INFORMATION_SET_SEARCH_SCHEMA_V1.into(),algorithm:V4_INFORMATION_SET_SEARCH_ALGORITHM_V1.into(),
+        root_allocation:V4SearchRootAllocationV1::RoundRobin,interior_bonus:V4SearchInteriorBonusV1::PriorFree,
+        simulations:128,transitions:1024,depth:8,experiment_seed:20260922,
+        weights_sha256:p.gameplay.identity.model.weights_sha256.clone(),model_parameter_sha256:p.gameplay.identity.model.model_parameter_sha256.clone(),embedding_table_sha256:p.gameplay.identity.model.embedding_table_sha256.clone(),
+        feature_contract_digest:FEATURE_CONTRACT_DIGEST_V4.into(),feature_encoding_digest:FEATURE_ENCODING_DIGEST_V4.into()};
+    p.search=AgentSearchPolicyV1::V4InformationSetV1{descriptor:d.clone()};
+    p.validate_metadata_v1().unwrap();
+    let wire=serde_json::to_value(&p).unwrap();
+    assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap(),p);
+    assert_eq!(p.load_supported_components_v1().err().unwrap(),"learned opening/play-draw or search execution is not implemented by this interface");
+    for field in ["algorithm","simulations","weights_sha256","experiment_seed"] {
+        let mut bad=wire.clone();bad["search"]["descriptor"].as_object_mut().unwrap().remove(field);
+        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err());
+    }
+    for (field,value) in [("extra",serde_json::json!(true)),("algorithm",serde_json::json!("unknown")),("root_allocation",serde_json::json!("unknown")),("interior_bonus",serde_json::json!("unknown")),("simulations",serde_json::json!(0)),("simulations",serde_json::json!(1025)),("transitions",serde_json::json!(127)),("transitions",serde_json::json!(16385)),("depth",serde_json::json!(0)),("depth",serde_json::json!(33)),("weights_sha256",serde_json::json!(digest('f'))),("model_parameter_sha256",serde_json::json!(digest('f'))),("embedding_table_sha256",serde_json::json!(digest('f'))),("feature_contract_digest",serde_json::json!(digest('5')))] {
+        let mut bad=wire.clone();bad["search"]["descriptor"][field]=value;
+        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),"{field}");
+    }
+    let mut old=package();old.search=AgentSearchPolicyV1::V4InformationSetV1{descriptor:V4InformationSetSearchDescriptorV1{feature_contract_digest:digest('5'),feature_encoding_digest:digest('6'),..d}};
+    assert!(old.validate_metadata_v1().is_err());
+    assert_eq!(serde_json::to_string(&AgentSearchPolicyV1::Disabled).unwrap(),"{\"kind\":\"disabled\"}");
+}
+
+#[test]
 fn imported_package_cannot_claim_fresh_inference_schema() {
     let mut value = package();
     value.gameplay.identity.schema = "mtg-kernel-expanded-deck-inference/v2".into();
