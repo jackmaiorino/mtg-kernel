@@ -36,6 +36,12 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         crate::sideboard_play_policy_v1::search_leaf_v4::diagnostic_report(policy,self.session,scores)
     }
 
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_v4_search_core_v1(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1)->Result<serde_json::Value,String> {
+        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {return Err("core diagnostic decision binding differs".into());}
+        crate::sideboard_play_policy_v1::search_leaf_v4::core_diagnostic_report(policy,self.session)
+    }
+
     /// Coordinator-only continuation capture. Clone the full engine session
     /// with its hidden state, environment RNG, counters and inherited caps.
     /// The returned copy has consumed exactly the selected root action. It

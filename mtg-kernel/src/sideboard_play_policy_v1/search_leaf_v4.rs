@@ -270,3 +270,30 @@ mod tests {
         assert_eq!(first,second);
     }
 }
+
+/// Report-only fixed work on a consumed archive root. No action override.
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn core_diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1)->Result<serde_json::Value,String> {
+    use crate::model_guided_search_core_v4::{Limits,search_inner};
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(d)=session.current_response() else {return Err("core diagnostic requires live root".into())};
+    require(d.legal_action_count<=64,"fixed diagnostic supports at most64rootactions")?;
+    let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
+    let capture=|t:&NativeFlatDecisionTensorV4|crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&NativeFlatDecisionTensorV3{common:t.common.clone()});
+    let retained=capture(policy.last_scored_training_tensor_v4()?);
+    let e=V4SearchLeafEvaluatorV1::new(policy)?;
+    let limits=Limits{simulations:64,transitions:512,depth:8,seed:20260922};
+    let mut witness=|s:&FastActorSessionV1,n|e.tensor_digest(s,n);
+    let first=search_inner(session,limits,&e,Some(&mut witness));
+    let second=search_inner(session,limits,&e,Some(&mut witness));
+    require(first==second,"core diagnostic repeat differs")?;
+    require(before==session.diagnostic_state_hash(),"core diagnostic mutated original")?;
+    require(rng==policy.seat_rng && retained==capture(policy.last_scored_training_tensor_v4()?),"core diagnostic mutated policy scratch")?;
+    let result=match first {
+        Ok(o)=>json!({"status":"available","outcome":o}),
+        Err(err)=>json!({"status":"unavailable","error":format!("{err:?}")}),
+    };
+    Ok(json!({"schema":"v4-search-core-diagnostic/v1","result":result,"limits":{"simulations":64,"transitions":512,"depth":8,"seed":20260922},
+        "tensor_witness":true,"repeat_exact":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Consumed-root correctness only; no action override or strength estimate."}))
+}
