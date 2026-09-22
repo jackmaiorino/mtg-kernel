@@ -104,7 +104,31 @@ pub(super) fn run(command:Command)->Result<Value,String> {
         let pair:Vec<_>=records.iter().filter(|r|r["actor"]==actor && r["reverse"]==false).collect();
         ensure(pair.len()==2 && pair[0]["signature"]["actions"]==pair[1]["signature"]["actions"],"counterfactual root menus differ")?;
     }
-    let result=json!({"schema":"hand-policy-control/v1","positions":8,"distinct_actor_relative_hands":2,"source":command.source,"model":policy.actual_model_identity_v1(),"records":records,"non_claim":"Synthetic diagnostic only. Removal survives this combat, not a certified match win; no natural prevalence, unique optimal action, training replication, or promotion claim."});
+    let mut channels=Vec::new();
+    if command.hand_channel_controls {
+        for actor in 0..2 {
+            let pair:Vec<_>=records.iter().filter(|r|r["actor"]==actor && r["reverse"]==false).collect();
+            let original=&pair[0]["signature"]["tensor"];let changed=&pair[1]["signature"]["tensor"];
+            let mut stripped=original.clone();stripped["object_card_ids"]=changed["object_card_ids"].clone();stripped["state"]=changed["state"].clone();
+            ensure(&stripped==changed,"unexpected third tensor channel changed")?;
+            ensure(original["state"].as_array().ok_or("missing state")?[..123]==changed["state"].as_array().ok_or("missing state")?[..123],"non-digest state changed")?;
+            for hand in 0..2 {for digest in 0..2 {
+                let mut mixed=original.clone();
+                mixed["object_card_ids"]=pair[hand]["signature"]["tensor"]["object_card_ids"].clone();
+                mixed["state"]=pair[digest]["signature"]["tensor"]["state"].clone();
+                let encoded:TensorBitsV1=serde_json::from_value(mixed).map_err(err)?;
+                let score=policy.score_training_tensor_v4(&NativeFlatDecisionTensorV4{common:encoded.tensor()})?;
+                if hand==digest {
+                    ensure(json!(bits(&score.logits))==pair[hand]["signature"]["logits"] && json!(score.value.to_bits())==pair[hand]["signature"]["value_bits"],"diagonal tensor scorer differs from original engine score")?;
+                }
+                let face=pair[0]["face_index"].as_u64().ok_or("face index")? as usize;
+                let removal=pair[0]["removal_index"].as_u64().ok_or("removal index")? as usize;
+                channels.push(json!({"actor":actor,"hand_bolt":hand==1,"digest_bolt":digest==1,"artificial":hand!=digest,"logits":score.logits,"value":score.value,"probabilities":probability(&score.logits),"face_index":face,"removal_index":removal,"face_minus_removal":score.logits[face] as f64-score.logits[removal] as f64}));
+            }}
+        }
+    }
+    let mut result=json!({"schema":"hand-policy-control/v1","positions":8,"distinct_actor_relative_hands":2,"source":command.source,"model":policy.actual_model_identity_v1(),"records":records,"non_claim":"Synthetic diagnostic only. Removal survives this combat, not a certified match win; no natural prevalence, unique optimal action, training replication, or promotion claim."});
+    if command.hand_channel_controls {result["channel_controls"]=json!(channels);result["channel_non_claim"]=json!("Off-diagonal tensors are artificial. Frozen local channel effects do not identify a training repair or natural strength effect.");}
     fs::create_dir(&command.output_directory).map_err(err)?;
     publish_json(&command.output_directory,"result.json",&result)?;Ok(result)
 }
