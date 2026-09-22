@@ -7,7 +7,7 @@ mod effect_refs;
 #[cfg(test)]
 mod sampler_tests;
 
-#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+#[derive(Debug,Clone,Copy,PartialEq,Eq,serde::Serialize)]
 pub(crate) enum V4SearchStateErrorV1 {
     UnsupportedActionContract,
     NoLiveDecision,
