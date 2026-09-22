@@ -95,6 +95,11 @@ pub(crate) fn audit(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecis
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::{self,Action,Decision};
+    use crate::ids::PlayerId;
+    use crate::mana::ManaColor;
+    use crate::state::{GameState,Step,Zone};
+    use super::super::public_combat::tests::put;
     fn win()->Tree { Tree{lower:1,upper:1,reason:"test",branches:Vec::new()} }
     #[test]
     fn burn_tree_unknown_opponent_branch_prevents_win_but_own_win_is_sufficient() {
@@ -102,5 +107,55 @@ mod tests {
         assert_eq!((opponent.lower,opponent.upper),(-1,1));
         let own=aggregate(vec![(0,win()),(1,unknown("unsupported_action"))],true);
         assert_eq!((own.lower,own.upper),(1,1));
+    }
+
+    fn position(actor:u8,land:&str,hand:bool,reverse:bool)->FastActorSessionV1 {
+        let own=PlayerId(actor);let other=PlayerId(1-actor);
+        let mut state=GameState::new_from_libraries(&[],&[],crate::rl::card_name,77101);
+        state.step=Step::Main1;state.active_player=own;state.priority_player=own;
+        state.players[other.index()].life=2;
+        let bolt=put(&mut state,own,"Lightning Bolt",Zone::Hand);
+        put(&mut state,other,land,Zone::Battlefield);
+        if hand {put(&mut state,other,"Mountain",Zone::Hand);}
+        for player in [own,other] {
+            for name in ["Island","Forest","Mountain","Swamp"] {put(&mut state,player,name,Zone::Library);}
+            if reverse {state.players[player.index()].library.reverse();}
+        }
+        state.players[own.index()].mana_pool[ManaColor::R.pool_index()]=1;
+        engine::step(&mut state,Action::CastSpell(bolt)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),Decision::ChooseTargets{..}));
+        FastActorSessionV1::from_public_terminal_fixture_v1(state)
+    }
+    #[test]
+    fn burn_tree_engine_positive_negative_and_information_controls() {
+        for actor in 0..2 {
+            for reverse in [false,true] {
+                for land in ["Island","Mountain"] {
+                    let session=position(actor,land,false,reverse);
+                    let FastActorResponseV1::Decision(root)=session.current_response() else {panic!("root missing")};
+                    let (_,actions)=PairedBo1PolicyInputV1::new(&session,root).diagnostic_visible_v4().unwrap();
+                    let face=actions.iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Player{player},..} if *player!=root.acting_player)).unwrap();
+                    let result=audit(&session,root).unwrap();
+                    let tree=&result["outcomes"][face]["tree"];
+                    assert_eq!(tree[0],if land=="Island" {1} else {-1});
+                    assert_eq!(tree[1],1);
+                    assert_eq!(session.current_response(),FastActorResponseV1::Decision(root));
+                    let mut branch=session.clone();branch.step(root.episode_id,root.step,face as u32).unwrap();
+                    let initial=session.game_state();
+                    let mut remaining=0;
+                    let exhausted=explore(&branch,initial,root.acting_player,32,&mut remaining).unwrap();
+                    assert_eq!((exhausted.lower,exhausted.upper),(-1,1));
+                    let mut remaining=8192;
+                    let shallow=explore(&branch,initial,root.acting_player,0,&mut remaining).unwrap();
+                    assert_eq!((shallow.lower,shallow.upper),(-1,1));
+                    let mut mismatched=initial.clone();mismatched.players[0].draws_this_turn+=1;
+                    let boundary=explore(&branch,&mismatched,root.acting_player,32,&mut remaining).unwrap();
+                    assert_eq!(boundary.reason,"information_boundary");
+                }
+                let session=position(actor,"Island",true,reverse);
+                let FastActorResponseV1::Decision(root)=session.current_response() else {panic!("root missing")};
+                assert_eq!(audit(&session,root).unwrap()["status"],"opponent_hand_nonempty");
+            }
+        }
     }
 }
