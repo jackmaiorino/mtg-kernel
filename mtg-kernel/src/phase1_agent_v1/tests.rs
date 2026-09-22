@@ -1214,3 +1214,40 @@ fn imported_gameplay_identity_rejects_learned_play_draw_even_on_a_genuine_v4_run
         Err(error) => assert!(error.contains("imported (frozen) gameplay identity")),
     }
 }
+
+#[test]
+fn v4_evaluation_estimate_package_preserves_archived_mean_and_disabled_contracts() {
+    let p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/mean_search_pre_estimate.json")).unwrap();
+    assert_eq!(p.package_sha256_v1().unwrap(),"711194558896099e8f9c3cc2d0cb8d104f18ad6dbafa863491d2d66601d4e8b3");
+    assert_eq!(serde_json::to_string(&p).unwrap(),include_str!("fixtures/mean_search_pre_estimate.json"));
+    let disabled=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/disabled_search_pre_v4.json")).unwrap();
+    assert_eq!(disabled.package_sha256_v1().unwrap(),"aacccb855aea8bcd784dc601fb3b4c9c3a33e41c5179ea09c8ccc2b00773d429");
+    let AgentSearchPolicyV1::V4InformationSetV1{mut descriptor}=p.search.clone() else {panic!("archived mean route")};
+    descriptor.schema=V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1.into();descriptor.algorithm=V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1.into();
+    let mut e=p.clone();e.search=AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor:V4InformationSetEstimateDescriptorV1(descriptor)};
+    e.validate_metadata_v1().unwrap();
+    assert_ne!(e.package_sha256_v1().unwrap(),p.package_sha256_v1().unwrap());
+    let wire=serde_json::to_string(&e).unwrap();assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire).unwrap(),e);
+    assert_eq!(e.load_supported_components_v1().err().unwrap(),"learned opening/play-draw or search execution is not implemented by this interface");
+    // Invalid runtime files must still fail in the evaluation loader before play.
+    let mut unavailable=e.clone();unavailable.runtime.executable.path="no-such-estimate-executable.exe".into();
+    assert!(unavailable.load_evaluation_components_v1().is_err());
+}
+
+#[test]
+fn v4_evaluation_estimate_package_rejects_cross_labels_and_unsupported_settings() {
+    let p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/mean_search_pre_estimate.json")).unwrap();
+    let mut wire=serde_json::to_value(&p).unwrap();wire["search"]["kind"]=serde_json::json!("v4_information_set_estimate_v1");
+    assert!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).is_err());
+    wire["search"]["descriptor"]["schema"]=serde_json::json!(V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1);
+    wire["search"]["descriptor"]["algorithm"]=serde_json::json!(V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1);
+    CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap();
+    for (field,value) in [("schema",serde_json::json!(V4_INFORMATION_SET_SEARCH_SCHEMA_V1)),("algorithm",serde_json::json!(V4_INFORMATION_SET_SEARCH_ALGORITHM_V1)),
+        ("root_allocation",serde_json::json!("puct")),("interior_bonus",serde_json::json!("prior_weighted")),("tie_rule",serde_json::json!("mean")),
+        ("simulations",serde_json::json!(0)),("transitions",serde_json::json!(0)),("depth",serde_json::json!(33)),("weights_sha256",serde_json::json!("f".repeat(64)))] {
+        let mut bad=wire.clone();bad["search"]["descriptor"][field]=value;
+        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),"{field}");
+    }
+    wire["search"]["kind"]=serde_json::json!("v4_information_set_v1");
+    assert!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).is_err());
+}

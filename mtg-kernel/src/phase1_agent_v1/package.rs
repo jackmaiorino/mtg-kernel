@@ -218,10 +218,20 @@ pub enum AgentSearchPolicyV1 {
     V4InformationSetV1 {
         descriptor: V4InformationSetSearchDescriptorV1,
     },
+    /// Report search with the existing lowest-index E argmax as played action.
+    V4InformationSetEstimateV1 {
+        descriptor: V4InformationSetEstimateDescriptorV1,
+    },
 }
 
 pub const V4_INFORMATION_SET_SEARCH_SCHEMA_V1:&str="mtg-kernel-v4-information-set-search/v1";
 pub const V4_INFORMATION_SET_SEARCH_ALGORITHM_V1:&str="v4-depth-keyed-mean-backup/v1";
+pub const V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1:&str="mtg-kernel-v4-information-set-estimate-search/v1";
+pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1:&str="v4-depth-keyed-estimate-final/v1";
+/// Reuses the strict field shape, but has distinct schema/algorithm and route.
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(transparent)]
+pub struct V4InformationSetEstimateDescriptorV1(pub V4InformationSetSearchDescriptorV1);
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(rename_all="snake_case")]
 pub enum V4SearchRootAllocationV1 {Puct,RoundRobin}
@@ -434,8 +444,18 @@ impl CompleteAgentPackageV1 {
                 "search descriptor runtime/budget differs",
             )?;
         }
-        if let AgentSearchPolicyV1::V4InformationSetV1 { descriptor:d } = &self.search {
-            require(d.schema==V4_INFORMATION_SET_SEARCH_SCHEMA_V1 && d.algorithm==V4_INFORMATION_SET_SEARCH_ALGORITHM_V1,
+        let v4_descriptor=match &self.search {
+            AgentSearchPolicyV1::V4InformationSetV1{descriptor:d}=>Some((d,V4_INFORMATION_SET_SEARCH_SCHEMA_V1,V4_INFORMATION_SET_SEARCH_ALGORITHM_V1)),
+            AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor}=>{
+                let d=&descriptor.0;
+                require(d.root_allocation==V4SearchRootAllocationV1::RoundRobin && d.interior_bonus==V4SearchInteriorBonusV1::PriorFree,
+                    "V4 estimate route requires RoundRobin and PriorFree")?;
+                Some((d,V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1,V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1))
+            },
+            _=>None,
+        };
+        if let Some((d,schema,algorithm))=v4_descriptor {
+            require(d.schema==schema && d.algorithm==algorithm,
                 "unknown V4 information-set search contract")?;
             require((1..=1024).contains(&d.simulations) && (d.simulations..=16384).contains(&d.transitions) && (1..=32).contains(&d.depth),
                 "V4 information-set search limits exceed supported metadata bounds")?;
@@ -499,12 +519,12 @@ impl CompleteAgentPackageV1 {
         self.validate_metadata_v1()?;
         require(matches!(self.opening,AgentOpeningPolicyV1::Existing{protocol:Bo3OpeningProtocolV1::KeepSevenV2})
             && matches!(self.play_draw,AgentPlayDrawPolicyV1::Fixed{..})
-            && matches!(self.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}),
+            && matches!(self.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}),
             "V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search")?;
         require(self.gameplay_sampler_identity==WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
             "evaluation behavior records require the wide categorical sampler")?;
         let loaded=self.load_bound_components_v1(false)?;
-        if matches!(self.search,AgentSearchPolicyV1::V4InformationSetV1{..}) {
+        if matches!(self.search,AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}) {
             require(loaded.current_runtime.generation_v1()==RuntimeContractGenerationV1::V4
                 && loaded.gameplay.feature_generation_v1()==PlayPolicyGenerationV1::V4,
                 "V4 search requires the actual V4 runtime and loaded policy")?;
