@@ -1,6 +1,6 @@
 # Whole-match V4 readiness diagnostic
 
-2026-09-22. Frame and parameters frozen before outputs. The authorized first timing pair is complete; qualification awaits the source-revision review. Motivation: v4_activation_result_20260922.md shows all four consumed continuations won, including E's distinct Hand action, but gives no broad completion or strength evidence.
+2026-09-22. Frame and parameters frozen before outputs. The authorized first timing pair is complete; source-revision review permits qualification, now running. Motivation: v4_activation_result_20260922.md shows all four consumed continuations won, including E's distinct Hand action, but gives no broad completion or strength evidence.
 
 Question: can the unchanged g115 E controller, S128/T1024/depth8/seed20260922, play complete native BO3 matches from their initial state against ordinary g115 across the eight deck archetypes and both candidate seats, and what is the measured completed-work cost? This is availability/implementation diagnosis, not a candidate promotion or whole-match nonregression gate. No parameter/tie/model change is proposed from the two fixture outcomes.
 
