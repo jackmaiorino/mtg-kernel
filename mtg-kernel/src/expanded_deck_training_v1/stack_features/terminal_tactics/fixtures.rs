@@ -27,6 +27,8 @@ pub struct Command {
     pub hand_counterfactual_controls: bool,
     #[serde(default)]
     pub hand_channel_controls: bool,
+    #[serde(default)]
+    pub natural_hand_channels: Option<PinnedFileV1>,
 }
 
 mod combat;
@@ -35,6 +37,7 @@ mod forced_loss;
 mod teacher_data;
 mod retention_validation;
 mod hand_policy;
+mod natural_hand;
 #[cfg(test)]
 mod hand_counterfactual;
 
@@ -70,7 +73,8 @@ fn fixture(card:&str,damage:i32,artifacts:usize,actor:u8,hidden:bool)->Result<Fa
 }
 
 pub fn run(command:Command)->Result<Value,String> {
-    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset,command.retention_validation,command.equal_budget_validation,command.hand_counterfactual_controls,command.hand_channel_controls].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset,command.retention_validation,command.equal_budget_validation,command.hand_counterfactual_controls,command.hand_channel_controls,command.natural_hand_channels.is_some()].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    if command.natural_hand_channels.is_some() {return natural_hand::run(command);}
     if command.hand_counterfactual_controls || command.hand_channel_controls {return hand_policy::run(command);}
     if command.retention_validation || command.equal_budget_validation {return retention_validation::run(command);}
     if command.teacher_dataset {return teacher_data::run(command);}
