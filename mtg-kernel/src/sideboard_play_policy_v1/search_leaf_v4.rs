@@ -49,6 +49,10 @@ impl ModelGuidedSearchLeafEvaluatorV1 for V4SearchLeafEvaluatorV1<'_> {
 pub(crate) fn diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
     scores:&FrozenPlayDecisionScoresV1)->Result<serde_json::Value,String> {
     use serde_json::json;
+    // An observer must not repair the collector's arithmetic environment.
+    // Search-owned threads may normalize in the constructor; this hook may not.
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+        .map_err(|e|format!("leaf diagnostic requires already pinned floating-point state: {e:?}"))?;
     let FastActorResponseV1::Decision(d)=session.current_response() else {return Err("diagnostic requires live root".into())};
     let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
     let retained=policy.last_scored_training_tensor_v4()?.clone();
@@ -87,6 +91,21 @@ pub(crate) fn diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSes
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(all(target_arch="x86_64",feature="experimental-burn-net8-packed-cuda-v1"))]
+    fn v4_search_leaf_diagnostic_rejects_dirty_thread_without_repair() {
+        std::thread::spawn(|| {
+            use crate::deterministic_math_v1::*;
+            let s=public_session(crate::ids::PlayerId::P0,20);
+            let mut policy=FrozenPlayPolicyV1::training_fixture_v4();
+            let scores=policy.score_fast_session_v1(&s).unwrap();
+            let original=read_mxcsr_v1();let dirty=original | (1<<15);
+            write_mxcsr_v1(dirty);
+            let result=diagnostic_report(&policy,&s,&scores);
+            let after=read_mxcsr_v1();write_mxcsr_v1(original);
+            assert!(result.is_err());assert_eq!(after,dirty);
+        }).join().unwrap();
+    }
     fn public_session(actor:crate::ids::PlayerId,life:i32)->FastActorSessionV1 {
         use crate::policy_observation_v6::tests::{put,ready_state};
         use crate::state::Zone;
