@@ -158,4 +158,26 @@ mod tests {
             for owner in [PlayerId::P0,PlayerId::P1] {assert_eq!(multiset(&s,owner),multiset(&c,owner));}
         }
     }
+    #[test]
+    fn v4_search_clone_hidden_source_step_probe() {
+        let (mut state,hunter,_,_)=crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(&mut state,hunter,PlayerId::P0);
+        for name in ["Forest","Island","Mountain"] {put(&mut state,PlayerId::P0,name,Zone::Library);}
+        let original=FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(d)=original.current_response() else {panic!("fixture")};
+        let definition=original.state.objects.get(hunter).card_def;
+        let mut witness=None;
+        for seed in 1..=32 {
+            let sample=original.kernel_search_redeterminized_clone_v4(seed).unwrap();
+            if sample.state.objects.get(hunter).card_def!=definition {witness=Some((seed,sample));break;}
+        }
+        let (seed,mut changed)=witness.expect("bounded seeds must produce a relabeled source witness");
+        assert_eq!(tensor_and_output(&original),tensor_and_output(&changed));
+        let mut direct=original.clone();
+        let normal=direct.step(d.episode_id,d.step,0);
+        let sampled=changed.step(d.episode_id,d.step,0);
+        println!("V4_HIDDEN_SOURCE_STEP_PROBE seed={seed} original={normal:?} sampled={sampled:?}");
+        assert!(normal.is_ok(),"original fixture must support this legal step");
+        assert!(sampled.is_err(),"review whether stepping remains unsafe if this witness stops failing");
+    }
 }
