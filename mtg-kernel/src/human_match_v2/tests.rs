@@ -33,12 +33,22 @@ fn fixture(
     Bo3CollectionConfigV1,
     [CompleteAgentPackageV1; 2],
 ) {
+    fixture_generation(human, fitted, false)
+}
+
+fn fixture_generation(human: usize, fitted: bool, v4: bool) -> (
+    HumanMatchServiceV2,
+    Bo3CollectionConfigV1,
+    [CompleteAgentPackageV1; 2],
+) {
     let directory = directory();
     let mut cfg = crate::phase1_bo3_collection_v1::tests::config("human-v2-fixed-engine-fixture");
     // Two distinct basic identities allow real legal sideboard exchanges.
     cfg.registrations[0].sideboard = cfg.registrations[1].mainboard[..15].to_vec();
     cfg.registrations[1].sideboard = cfg.registrations[0].mainboard[..15].to_vec();
-    let (policies, mut packages) = crate::phase1_bo3_collection_v1::tests::fixtures([
+    let fixtures = if v4 { crate::phase1_bo3_collection_v1::tests::fixtures_v4 }
+        else { crate::phase1_bo3_collection_v1::tests::fixtures };
+    let (policies, mut packages) = fixtures([
         PlayDrawChoiceV1::Draw,
         PlayDrawChoiceV1::Play,
     ]);
@@ -177,10 +187,51 @@ fn journal(service: &HumanMatchServiceV2) -> Vec<Value> {
 }
 
 #[test]
+fn human_v4_service_selects_live_binding_from_policy_and_accepts_shared_source_target() {
+    use crate::state::Target;
+    for target_label in ["Writhing Chrysalis", "Counterspell"] {
+        let (mut service, _, _) = fixture_generation(0, false, true);
+        assert_eq!(service.policy.feature_generation_v1(), PlayPolicyGenerationV1::V4);
+        begin(&mut service);
+        let (state, chrysalis, counterspell) = crate::rl_session::pyroblast_target_fixture_v1();
+        service.session = Some(FastActorSessionV1::from_v3_fixture_state(state));
+        service.summary = Some(FastGameSummaryAccumulatorV1::new_v1(service.session.as_ref().unwrap()).unwrap());
+        service.opening = None;
+        let view = current(&mut service);
+        assert_eq!(view["phase"], "decision");
+        let choice = view["decision"]["actions"].as_array().unwrap().iter()
+            .find(|a| a["label"].as_str().unwrap().contains(target_label)).unwrap();
+        let command = HumanMatchCommandV1::Action {
+            request_id: "v4-stack-target".into(),
+            prompt_seq: view["decision"]["prompt_seq"].as_u64().unwrap(),
+            action_index: choice["action_index"].as_u64().unwrap() as u32,
+        };
+        let first = send(&mut service, command.clone());
+        let session = service.session.as_ref().unwrap();
+        let target = if target_label == "Counterspell" { counterspell } else { chrysalis };
+        assert_eq!(session.game_state().stack.last().unwrap().targets, vec![Target::Object(target)]);
+        let after = session.privileged_core_environment_hash();
+        assert_eq!(send(&mut service, command), first);
+        assert_eq!(service.session.as_ref().unwrap().privileged_core_environment_hash(), after);
+    }
+}
+
+#[test]
 fn human_v2_both_seats_match_automated_package_gameplay_opening_and_fitted_sideboard() {
+    check_human_gameplay_parity(false);
+}
+
+#[test]
+fn human_v4_complete_bo3_both_seats_match_automated_package_gameplay_and_sideboard() {
+    check_human_gameplay_parity(true);
+}
+
+fn check_human_gameplay_parity(v4: bool) {
     for human in 0..2 {
-        let (mut service, cfg, packages) = fixture(human, human == 1);
-        let (mut policies, _) = crate::phase1_bo3_collection_v1::tests::fixtures([
+        let (mut service, cfg, packages) = fixture_generation(human, human == 1, v4);
+        let fixtures = if v4 { crate::phase1_bo3_collection_v1::tests::fixtures_v4 }
+            else { crate::phase1_bo3_collection_v1::tests::fixtures };
+        let (mut policies, _) = fixtures([
             PlayDrawChoiceV1::Draw,
             PlayDrawChoiceV1::Play,
         ]);

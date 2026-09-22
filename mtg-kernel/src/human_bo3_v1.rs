@@ -1,4 +1,4 @@
-//! Fixed-seat, bound human decisions for the V3 session.
+//! Fixed-seat, bound human decisions with explicit V3 or V4 validation.
 //!
 //! This is an in-process adapter, not a BO3 runner or a human evaluation.
 //! Only `HumanDecisionV1`, `HumanActionRequestV1`, `HumanActionReceiptV1`, and
@@ -72,6 +72,7 @@ struct BoundHumanDecisionV1 {
 /// contract requires. Callers cannot choose a new observer in a request.
 pub struct HumanDecisionProjectorV1 {
     human_seat: PlayerSeatV1,
+    use_v4_binding: bool,
     next_prompt_seq: u64,
     pending: Option<BoundHumanDecisionV1>,
     accepted: Option<HumanActionReceiptV1>,
@@ -107,10 +108,17 @@ impl HumanDecisionProjectorV1 {
     pub fn new(human_seat: PlayerSeatV1) -> Self {
         Self {
             human_seat,
+            use_v4_binding: false,
             next_prompt_seq: 1,
             pending: None,
             accepted: None,
         }
+    }
+
+    /// Explicit opt-in for runtimes whose playing policy uses V4 references.
+    /// Legacy constructors continue validating the original V3 cache.
+    pub(crate) fn new_v4(human_seat: PlayerSeatV1) -> Self {
+        Self { use_v4_binding: true, ..Self::new(human_seat) }
     }
 
     /// Read-only with respect to game state and RNG. Reprinting the same
@@ -123,9 +131,11 @@ impl HumanDecisionProjectorV1 {
         if expected.acting_player != self.human_seat {
             return Err(HumanDecisionErrorV1::NotHumanTurn);
         }
-        let (observation, actions, binding) = session
-            .human_current_decision_input_v1(expected, self.human_seat)
-            .map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
+        let (observation, actions, binding) = if self.use_v4_binding {
+            session.human_current_decision_input_v4(expected, self.human_seat)
+        } else {
+            session.human_current_decision_input_v1(expected, self.human_seat)
+        }.map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
         if let Some(pending) = &self.pending {
             if pending.expected == expected && pending.binding == binding {
                 return Ok(pending.visible.clone());
@@ -151,7 +161,7 @@ impl HumanDecisionProjectorV1 {
         Ok(visible)
     }
 
-    /// Accept exactly one listed action at the private current V3 binding.
+    /// Accept exactly one listed action at the private current binding.
     /// An immediate identical retry returns its receipt without applying it
     /// twice. Receipts contain no next-actor observation or terminal detail.
     /// A future transport driver must journal accepted commands durably; this
@@ -180,11 +190,22 @@ impl HumanDecisionProjectorV1 {
         if request.action_index as usize >= pending.visible.actions.len() {
             return Err(HumanDecisionErrorV1::InvalidAction);
         }
-        session
-            .flat_policy_validate_cached_binding_v3(pending.expected, pending.binding)
-            .map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
         let engine_index = pending.engine_action_indexes[request.action_index as usize];
-        let result = session.consume_current_flat_action_slice_v3(pending.binding, engine_index);
+        let result = if self.use_v4_binding {
+            // V4 has no V3 cache. Revalidate the exact expected decision, origin,
+            // legal menu and commitment before applying its private engine index.
+            let (_, _, current_binding) = session
+                .human_current_decision_input_v4(pending.expected, self.human_seat)
+                .map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
+            if current_binding != pending.binding {
+                return Err(HumanDecisionErrorV1::StaleDecision);
+            }
+            session.step(pending.expected.episode_id, pending.expected.step, engine_index)
+        } else {
+            session.flat_policy_validate_cached_binding_v3(pending.expected, pending.binding)
+                .map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
+            session.consume_current_flat_action_slice_v3(pending.binding, engine_index)
+        };
         self.pending = None;
         result.map_err(|_| HumanDecisionErrorV1::ExecutionFailed)?;
         let receipt = HumanActionReceiptV1 {

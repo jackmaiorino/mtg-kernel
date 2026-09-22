@@ -21,7 +21,7 @@ use crate::ids::PlayerId;
 use crate::learned_bo3_v1::project_sideboard_input_v1;
 use crate::learned_sideboard_v1::{FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1};
 use crate::paired_bo1_harness_v1::{
-    PairedBo1PolicyInputV1, PairedBo1PolicyV1, paired_policy_seeds_v1,
+    PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1, paired_policy_seeds_v1,
 };
 use crate::phase1_agent_v1::{
     AgentPlayDrawPolicyV1, AgentSideboardPolicyV1, CompleteAgentPackageV1,
@@ -232,6 +232,11 @@ impl HumanMatchServiceV2 {
             .open(&config.journal_path)
             .map_err(|e| format!("Fresh human V2 journal required: {e}"))?;
         let human = PlayerId(config.human_seat);
+        let projector = if policy.feature_generation_v1() == PlayPolicyGenerationV1::V4 {
+            HumanDecisionProjectorV1::new_v4(human.into())
+        } else {
+            HumanDecisionProjectorV1::new(human.into())
+        };
         let seeds = SplitMix64::seed(config.seed);
         let mut result = Self {
             config,
@@ -245,7 +250,7 @@ impl HumanMatchServiceV2 {
             session: None,
             opening: None,
             opening_revision: 0,
-            projector: HumanDecisionProjectorV1::new(human.into()),
+            projector,
             seeds,
             game_index: 1,
             sideboard_ready: true,

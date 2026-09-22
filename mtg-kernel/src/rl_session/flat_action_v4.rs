@@ -626,20 +626,36 @@ impl FastActorSessionV1 {
         &self,
         expected: FastActorDecisionV1,
     ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<ActionSemanticV1>), FlatActionDecisionSliceErrorV1> {
+        let (observation, actions, _) =
+            self.human_current_decision_input_v4(expected, expected.acting_player)?;
+        Ok((observation, actions))
+    }
+
+    /// Fixed-seat live human input validated by the cache-free V4 encoder.
+    /// The returned binding is private and must be rederived before submission.
+    pub(crate) fn human_current_decision_input_v4(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<ActionSemanticV1>, FlatActionDecisionBindingV3), FlatActionDecisionSliceErrorV1> {
         let current = self.current.as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
+        if PlayerSeatV1::from(current.actor) != human_seat {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
         let count = current.candidates.len();
         let max_refs = count.checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
             .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?.max(256);
         let mut actions = vec![FlatActionCoreV1::default(); count];
         let mut refs = vec![FlatActionRefV2::default(); max_refs];
         let mut objects = vec![FlatActionObjectV2::default(); max_refs];
-        self.encode_current_flat_action_slice_v4(expected, &mut FlatActionDecisionSliceBuffersV2 {
+        let slice = self.encode_current_flat_action_slice_v4(expected, &mut FlatActionDecisionSliceBuffersV2 {
             actions: &mut actions, refs: &mut refs, objects: &mut objects,
         })?;
         Ok((self.flat_policy_observation_v4(expected)?,
-            current.candidates.iter().map(|candidate| candidate.semantic.clone()).collect()))
+            current.candidates.iter().map(|candidate| candidate.semantic.clone()).collect(),
+            slice.binding))
     }
 
     /// V4 sibling of `encode_current_flat_action_slice_v3`. Cache-free: it

@@ -11,6 +11,103 @@ fn decision(session: &FastActorSessionV1) -> FastActorDecisionV1 {
     }
 }
 
+#[test]
+fn human_v4_shared_source_stack_projects_submits_and_replays_each_target() {
+    use crate::state::Target;
+    let (state, chrysalis, counterspell) = crate::rl_session::pyroblast_target_fixture_v1();
+    for (engine_index, target, label) in [
+        (0, chrysalis, "Writhing Chrysalis"),
+        (1, counterspell, "Counterspell"),
+    ] {
+        let mut replay = None;
+        for _ in 0..2 {
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state.clone());
+            let expected = decision(&session);
+            assert_eq!(HumanDecisionProjectorV1::new(expected.acting_player)
+                .project_current(&session, expected), Err(HumanDecisionErrorV1::StaleDecision));
+            let mut adapter = HumanDecisionProjectorV1::new_v4(expected.acting_player);
+            let before = session.privileged_core_environment_hash();
+            let visible = adapter.project_current(&session, expected).unwrap();
+            assert_eq!(visible, adapter.project_current(&session, expected).unwrap());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            assert_eq!(visible.actions.len(), 2);
+            assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
+            let choice = visible.actions.iter().find(|a| a.label.contains(label)).unwrap();
+            let request = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: choice.action_index };
+            let mut direct = session.clone();
+            // Independent fixture oracle: engine targets are Chrysalis then
+            // Counterspell, regardless of the human menu's public sorting.
+            direct.step(expected.episode_id, expected.step, engine_index).unwrap();
+            let receipt = adapter.submit(&mut session, request.clone()).unwrap();
+            assert_eq!(session.game_state().stack.last().unwrap().targets, vec![Target::Object(target)]);
+            let after = session.privileged_core_environment_hash();
+            assert_eq!(after, direct.privileged_core_environment_hash());
+            assert_eq!(adapter.submit(&mut session, request.clone()).unwrap(), receipt);
+            assert_eq!(adapter.submit(&mut session, HumanActionRequestV1 {
+                action_index: 1 - request.action_index, ..request
+            }), Err(HumanDecisionErrorV1::ConflictingRetry));
+            assert_eq!(session.privileged_core_environment_hash(), after);
+            let output = (serde_json::to_vec(&visible).unwrap(), serde_json::to_vec(&receipt).unwrap(), after);
+            if let Some(previous) = &replay { assert_eq!(&output, previous); }
+            replay = Some(output);
+        }
+    }
+}
+
+#[test]
+fn human_v4_hidden_state_and_renumbering_preserve_prompt_and_legacy_choices() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut prompts = Vec::new();
+        for permuted in [false, true] {
+            let mut session = FastActorSessionV1::from_v3_fixture_state(basic_state(actor, permuted, true));
+            let mut legacy = session.clone();
+            let mut v4 = HumanDecisionProjectorV1::new_v4(actor.into());
+            let mut v3 = HumanDecisionProjectorV1::new(actor.into());
+            let visible = v4.project_current(&session, decision(&session)).unwrap();
+            assert_eq!(visible, v3.project_current(&legacy, decision(&legacy)).unwrap());
+            assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
+            let land = visible.actions.iter().find(|a| a.label.starts_with("Play Mountain")).unwrap();
+            let command = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: land.action_index };
+            assert_eq!(v4.submit(&mut session, command.clone()).unwrap(), v3.submit(&mut legacy, command).unwrap());
+            assert_eq!(session.privileged_core_environment_hash(), legacy.privileged_core_environment_hash());
+            prompts.push(visible);
+        }
+        assert_eq!(prompts[0], prompts[1]);
+    }
+}
+
+#[test]
+fn human_v4_rejects_invalid_stale_forged_and_wrong_seat_without_mutation() {
+    let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
+    let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+    let expected = decision(&session);
+    let before = session.privileged_core_environment_hash();
+    let mut wrong_seat = HumanDecisionProjectorV1::new_v4(PlayerSeatV1::P1);
+    assert_eq!(wrong_seat.project_current(&session, expected), Err(HumanDecisionErrorV1::NotHumanTurn));
+    let mut forged = expected;
+    forged.acting_player = PlayerSeatV1::P1;
+    assert_eq!(wrong_seat.project_current(&session, forged), Err(HumanDecisionErrorV1::StaleDecision));
+    let mut adapter = HumanDecisionProjectorV1::new_v4(expected.acting_player);
+    let visible = adapter.project_current(&session, expected).unwrap();
+    let command = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: 0 };
+    assert_eq!(adapter.submit(&mut session, HumanActionRequestV1 {
+        action_index: u32::MAX, ..command.clone()
+    }), Err(HumanDecisionErrorV1::InvalidAction));
+    assert_eq!(adapter.submit(&mut session, HumanActionRequestV1 {
+        prompt_seq: visible.prompt_seq + 1, ..command.clone()
+    }), Err(HumanDecisionErrorV1::StaleDecision));
+    let original = adapter.pending.as_ref().unwrap().binding;
+    let other = FastActorSessionV1::from_v3_fixture_state(basic_state(PlayerId::P0, false, false));
+    adapter.pending.as_mut().unwrap().binding = other.human_current_decision_input_v4(decision(&other), PlayerSeatV1::P0).unwrap().2;
+    assert_eq!(adapter.submit(&mut session, command.clone()), Err(HumanDecisionErrorV1::StaleDecision));
+    assert_eq!(session.privileged_core_environment_hash(), before);
+    adapter.pending.as_mut().unwrap().binding = original;
+    session.step(expected.episode_id, expected.step, 0).unwrap();
+    let advanced = session.privileged_core_environment_hash();
+    assert_eq!(adapter.submit(&mut session, command), Err(HumanDecisionErrorV1::StaleDecision));
+    assert_eq!(session.privileged_core_environment_hash(), advanced);
+}
+
 fn basic_state(actor: PlayerId, permuted: bool, duplicate_land: bool) -> GameState {
     let mut state = ready_state();
     state.active_player = actor;
