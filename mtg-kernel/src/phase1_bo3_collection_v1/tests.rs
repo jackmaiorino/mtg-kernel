@@ -608,6 +608,7 @@ fn actual_engine_error_does_not_commit_pending_selection_or_infer_commit_from_co
         };
         let mut recorder = RecordingPolicy {
             capture: None,
+            combat: None,
             policies: &mut policies,
             hashes: &hashes,
             game: &mut game,
@@ -667,7 +668,7 @@ fn bo3_v4_recorder_preserves_real_stack_target_scoring_and_replay() {
         let hashes = packages.each_ref().map(|p| p.package_sha256_v1().unwrap());
         let mut game = Bo3TrainingGameV1 { game_index: 1, start: None, decisions: Vec::new(), terminal: None };
         let mut budget = RecordBudget { count: 0, bytes: 0, max_count: 1000, max_bytes: MAX_RECORD_BYTES };
-        let mut recorder = RecordingPolicy { capture: None, policies: &mut policies, hashes: &hashes,
+        let mut recorder = RecordingPolicy { capture: None, combat: None, policies: &mut policies, hashes: &hashes,
             game: &mut game, budget: &mut budget, pending: None, recording_cap: false, rejected_selections: 0 };
         recorder.reset_for_game_v1(seeds).unwrap();
         assert_eq!(recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap(), selected);

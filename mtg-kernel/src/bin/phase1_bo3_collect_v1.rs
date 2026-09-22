@@ -71,9 +71,16 @@ fn run() -> Result<(), String> {
         && args[0] == "--prepare-source"
         && args[2] == "--toolchain"
         && args[4] == "--output";
-    if !preparing && (args.len() != 4 || args[0] != "--request" || args[2] != "--output") {
+    let auditing = args.len() == 6
+        && args[0] == "--request"
+        && args[2] == "--output"
+        && args[4] == "--combat-audit";
+    if !preparing
+        && !auditing
+        && (args.len() != 4 || args[0] != "--request" || args[2] != "--output")
+    {
         return Err(
-            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
+            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
         );
     }
     let output = PathBuf::from(&args[if preparing { 5 } else { 3 }]);
@@ -114,15 +121,40 @@ fn run() -> Result<(), String> {
         )
     } else {
         let request = Bo3CollectionRequestV1::from_json_v1(text)?;
-        let result = collect_bo3_trajectory_v1(request.config, request.packages)?;
-        let summary = format!(
-            "{} {:?}",
-            result.collected.trajectory_sha256, result.collected.trajectory.ending
-        );
-        (
-            serde_json::to_vec(&result).map_err(|e| e.to_string())?,
-            summary,
-        )
+        if auditing {
+            use mtg_kernel::phase1_bo3_collection_v1::{
+                collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1,
+            };
+            let mut options = String::new();
+            std::fs::File::open(&args[5])
+                .map_err(|e| e.to_string())?
+                .take(4097)
+                .read_to_string(&mut options)
+                .map_err(|e| e.to_string())?;
+            let options = Bo3CombatAuditOptionsV1::from_json_v1(&options)?;
+            let result =
+                collect_bo3_with_combat_audit_v1(request.config, request.packages, options)?;
+            let summary = format!(
+                "{} {:?}; combat audit complete={}",
+                result.collection.collected.trajectory_sha256,
+                result.collection.collected.trajectory.ending,
+                result.combat_audit["complete"]
+            );
+            (
+                serde_json::to_vec(&result).map_err(|e| e.to_string())?,
+                summary,
+            )
+        } else {
+            let result = collect_bo3_trajectory_v1(request.config, request.packages)?;
+            let summary = format!(
+                "{} {:?}",
+                result.collected.trajectory_sha256, result.collected.trajectory.ending
+            );
+            (
+                serde_json::to_vec(&result).map_err(|e| e.to_string())?,
+                summary,
+            )
+        }
     };
     let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(|e| e.to_string())?;
     publish_new_file_v1(&parent, &stage_name, final_name, &bytes, expected)

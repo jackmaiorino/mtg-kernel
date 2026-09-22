@@ -31,6 +31,8 @@ struct Tree {
     reason: &'static str,
     actor: Option<crate::rl::PlayerSeatV1>,
     branches: Vec<(u32, Tree)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal: Option<Value>,
 }
 impl Tree {
     fn unknown(reason: &'static str) -> Self {
@@ -39,6 +41,7 @@ impl Tree {
             reason,
             actor: None,
             branches: Vec::new(),
+            terminal: None,
         }
     }
 }
@@ -90,6 +93,7 @@ fn explore(
                 reason: "natural_terminal",
                 actor: None,
                 branches: Vec::new(),
+                terminal: Some(json!(t)),
             });
         }
         FastActorResponseV1::Decision(d) => d,
@@ -151,6 +155,7 @@ fn explore(
         },
         actor: Some(decision.acting_player),
         branches,
+        terminal: None,
     })
 }
 
@@ -216,7 +221,7 @@ pub(crate) fn audit_public_combat_v1(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::engine::{self, Decision};
@@ -250,7 +255,7 @@ mod tests {
         id
     }
 
-    fn position(
+    pub(crate) fn position(
         actor: u8,
         blocker: bool,
         hidden_variant: bool,
