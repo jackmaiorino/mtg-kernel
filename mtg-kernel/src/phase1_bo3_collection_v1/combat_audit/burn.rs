@@ -7,6 +7,8 @@ pub struct Bo3BurnAuditOptionsV1 {
     pub actor: PlayerSeatV1,
     pub game_index: u8,
     pub decision_index: u64,
+    #[serde(default)]
+    pub response_tree: bool,
 }
 impl Bo3BurnAuditOptionsV1 {
     pub fn from_json_v1(text: &str) -> Result<Self, String> {
@@ -58,7 +60,8 @@ impl CombatAuditSink {
         ensure(d.acting_player == options.actor, "burn selected actor differs")?;
         ensure(self.prepared_roots == 0, "duplicate burn root")?;
         ensure(policy.feature_generation_v1() == PlayPolicyGenerationV1::V4, "burn capture requires V4 scorer")?;
-        let audit = input.diagnostic_terminal_targets_v1()?;
+        let audit = if options.response_tree { input.diagnostic_public_burn_tree_v1()? }
+            else { input.diagnostic_terminal_targets_v1()? };
         // A rejected root is retained as an abstention, never silently skipped.
         if audit["status"] == "audited" {
             let visible = serde_json::to_value(&record.visible).map_err(|e| e.to_string())?;
@@ -66,11 +69,16 @@ impl CombatAuditSink {
             let outcomes = audit["outcomes"].as_array().ok_or("burn outcomes missing")?;
             ensure(outcomes.len() == d.legal_action_count as usize, "burn action count differs")?;
             self.transitions = outcomes.iter().try_fold(0u64, |sum, o| {
+                if options.response_tree {
+                    let n=o["transitions"].as_u64().ok_or("burn tree transitions missing")?;
+                    ensure(n<=8192,"burn tree per-action bound exceeded")?;
+                    return Ok::<_,String>(sum+n);
+                }
                 let line = o["line"].as_array().ok_or("burn line missing")?;
                 ensure(line.len() <= 16, "burn branch exceeds oracle bound")?;
                 Ok::<_, String>(sum + line.len() as u64)
             })?;
-            ensure(self.transitions <= 512, "burn total bound exceeded")?;
+            ensure(self.transitions <= if options.response_tree {32*8192} else {512}, "burn total bound exceeded")?;
         }
         let status = audit["status"].as_str().ok_or("burn status missing")?;
         *self.counts.entry(status.into()).or_default() += 1;
