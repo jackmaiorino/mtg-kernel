@@ -38,6 +38,23 @@ out = dict(complete=True, promotion_gate=False, new_training_runs=0,
     object_card_ids=[x['object_card_ids'], y['object_card_ids']],
     value_difference=bolt['value']-land['value'],
     non_claim='Synthetic familiar-card continuation only. No natural prevalence, isolated embedding cause, unique optimal-action proof, training-seed inference or whole-match gain.')
+if 'channel_controls' in result:
+    controls=result['channel_controls']
+    assert len(controls)==8
+    effects=[]
+    for actor in (0,1):
+        cells={(r['hand_bolt'],r['digest_bolt']):r for r in controls if r['actor']==actor}
+        assert len(cells)==4
+        by_metric={}
+        for metric in ('face_minus_removal','value'):
+            v00=cells[False,False][metric];v01=cells[False,True][metric]
+            v10=cells[True,False][metric];v11=cells[True,True][metric]
+            by_metric[metric]=dict(baseline=v00,hand_only=v10-v00,digest_only=v01-v00,
+                interaction=v11-v10-v01+v00,total=v11-v00)
+        effects.append(dict(actor=actor,metrics=by_metric))
+    assert effects[0]['metrics']==effects[1]['metrics']
+    out['channel_effects']=effects
+    out['channel_controls']=controls
 with (a.root / 'analysis.json').open('x', encoding='utf8') as f:
     json.dump(out, f, indent=2)
 print(json.dumps(dict(rows=summary, changed_tensor_fields=out['changed_tensor_fields'],
