@@ -1,6 +1,8 @@
 //! Additive V4 hidden-state clone. No playing route or legacy guard changes.
 use super::*;
 use crate::state::GameState;
+mod key_step;
+mod sampler;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub(crate) enum V4SearchStateErrorV1 {
@@ -9,6 +11,8 @@ pub(crate) enum V4SearchStateErrorV1 {
     DecisionLocalLibrary,
     InvalidVisibleBinding,
     HiddenStateContract,
+    StepFailed,
+    HaltedSimulation,
 }
 use V4SearchStateErrorV1 as Error;
 
@@ -57,7 +61,7 @@ impl FastActorSessionV1 {
         let before=boundary(self,d)?;
         let actor=self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
         let mut copy=self.clone();
-        crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_v1(&mut copy.state,actor,seed).map_err(|_|Error::HiddenStateContract)?;
+        sampler::redeterminize(&mut copy.state,actor,seed)?;
         after_sample(&mut copy.state,actor);
         let mut current=copy.current.take().ok_or(Error::NoLiveDecision)?;
         current.candidates=core_policy_action_candidates_v5(&current.origin_decision,&copy.state).map_err(|_|Error::HiddenStateContract)?;
@@ -81,7 +85,7 @@ mod tests {
     use crate::policy_observation_v6::tests::{put,ready_state};
     use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
     use crate::model_guided_search_core_v1::{ModelGuidedSearchLeafEvaluatorV1,ModelGuidedSearchLeafSiteV1};
-    fn state(actor:PlayerId)->GameState {
+    pub(super) fn state(actor:PlayerId)->GameState {
         let mut s=ready_state();s.active_player=actor;s.priority_player=actor;
         put(&mut s,actor,"Lightning Bolt",Zone::Hand);
         s.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()]=3;
@@ -166,18 +170,17 @@ mod tests {
         let original=FastActorSessionV1::from_v3_fixture_state(state);
         let FastActorResponseV1::Decision(d)=original.current_response() else {panic!("fixture")};
         let definition=original.state.objects.get(hunter).card_def;
-        let mut witness=None;
-        for seed in 1..=32 {
-            let sample=original.kernel_search_redeterminized_clone_v4(seed).unwrap();
-            if sample.state.objects.get(hunter).card_def!=definition {witness=Some((seed,sample));break;}
-        }
-        let (seed,mut changed)=witness.expect("bounded seeds must produce a relabeled source witness");
-        assert_eq!(tensor_and_output(&original),tensor_and_output(&changed));
+        let mut moved=false;
+        let position=original.state.players[0].library.iter().position(|id|*id==hunter).unwrap();
         let mut direct=original.clone();
-        let normal=direct.step(d.episode_id,d.step,0);
-        let sampled=changed.step(d.episode_id,d.step,0);
-        println!("V4_HIDDEN_SOURCE_STEP_PROBE seed={seed} original={normal:?} sampled={sampled:?}");
-        assert!(normal.is_ok(),"original fixture must support this legal step");
-        assert!(sampled.is_err(),"review whether stepping remains unsafe if this witness stops failing");
+        let normal=direct.step(d.episode_id,d.step,0).unwrap();
+        for seed in 1..=32 {
+            let mut sample=original.kernel_search_redeterminized_clone_v4(seed).unwrap();
+            assert_eq!(sample.state.objects.get(hunter).card_def,definition);
+            moved|=sample.state.players[0].library.iter().position(|id|*id==hunter).unwrap()!=position;
+            assert_eq!(tensor_and_output(&original),tensor_and_output(&sample));
+            assert_eq!(sample.step(d.episode_id,d.step,0).unwrap(),normal);
+        }
+        assert!(moved,"historical identity must not pin unknown library position");
     }
 }

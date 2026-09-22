@@ -9,3 +9,5 @@ Source review `v4-key-step-source-review-001` accepted implementation, requested
 Expanded controls002 completed: 17 passed, 1 failed, 0.09s tests, 273.053s invocation, all four source hashes verified. Failure was the Natural-terminal assertion in a changed Hunter fixture: unlike the original witness, the test added cards to P1's library. Restored P0-only library additions for that fixture. This failed engineering check is retained, not a formal gate or discarded replication.
 
 The next check includes the separate whole-object sampler repair, root clone integration and historical-source stepping regression. It is recorded as v4-sampler-controls-001, not a rerun of a strength gate. Key/consume acceptance remains pending these expanded checks.
+
+Expanded controls completed in v4-sampler-controls-001:20/20pass,0.77stest/276.971sinvocation,5sourcehashesverified. Includes corrected Natural-terminal fixture and reviewer-requested bothseat/hidden-trigger coverage. Sampler source review still active. No core or playing acceptance.
