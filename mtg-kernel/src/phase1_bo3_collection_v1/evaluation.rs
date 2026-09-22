@@ -1,6 +1,8 @@
 //! Evaluation-only V4 search route. These results are never training trajectories.
 use super::*;
 use crate::model_guided_search_core_v4 as search;
+mod report;
+pub use report::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,Bo3ReportRootV1,Bo3ReportResultV1};
 
 pub const BO3_EVALUATION_RESULT_SCHEMA_V1: &str = "mtg-kernel-bo3-search-evaluation/v1";
 
@@ -128,10 +130,13 @@ struct EvaluationBudget {
     max_count: u64,
     max_bytes: u64,
     max_retained: u8,
+    native_record_bytes: bool,
 }
 impl EvaluationBudget {
     fn check(&self, record: &EvaluationDecision) -> Result<u64, EvaluationStop> {
-        let size = serde_json::to_vec(record).map_err(|e| e.to_string())?.len() as u64;
+        let size = if self.native_record_bytes {
+            serde_json::to_vec(record.record())
+        } else { serde_json::to_vec(record) }.map_err(|e| e.to_string())?.len() as u64;
         if self.count >= self.max_count || self.bytes.saturating_add(size) > self.max_bytes {
             return Err(EvaluationStop { reason: IncompleteMatchReasonV1::DecisionCap,
                 actor: Some(record.record().actor), step: None, cause: AbortCause::RecordCap });
@@ -200,6 +205,11 @@ fn validate_evaluation(config:&Bo3CollectionConfigV1, packages:[&CompleteAgentPa
 fn evaluate_loaded(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
     policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1)
     ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
+    evaluate_loaded_with_report(config,packages,policies,heads,options,None)
+}
+fn evaluate_loaded_with_report(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
+    policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1,
+    mut report:Option<&mut report::ReportSink>) ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
     validate_evaluation(config,packages,options)?;
     crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1().map_err(|e|format!("{e:?}"))?;
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|format!("{e:?}"))?;
@@ -256,7 +266,7 @@ fn evaluate_loaded(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackage
     let mut timings=Vec::new();
     let mut seed_stream = SplitMix64::seed(config.seed);
     let mut budget = EvaluationBudget {
-        retained:0, max_retained:options.max_retained_search_outcomes,
+        retained:0, max_retained:options.max_retained_search_outcomes,native_record_bytes:report.is_some(),
         count: 0,
         bytes: 0,
         max_count: config.max_decision_records,
@@ -283,7 +293,7 @@ fn evaluate_loaded(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackage
         }
         let mut game=EvaluationGame{game_index,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
         let played=play_evaluation_game(config,packages,&evaluated.behavior_packages_by_seat,policies,heads,&mut match_session,
-            &registered,&mut current,&summaries,&tags,&mut seed_stream,chooser,&mut game,&mut budget,&mut timings);
+            &registered,&mut current,&summaries,&tags,&mut seed_stream,chooser,&mut game,&mut budget,&mut timings,report.as_deref_mut());
         evaluated.games.push(game);
         match played {
             Ok(summary)=>{
@@ -321,6 +331,7 @@ fn play_evaluation_game(
     game: &mut EvaluationGame,
     budget: &mut EvaluationBudget,
     timings: &mut Vec<SearchTiming>,
+    report: Option<&mut report::ReportSink>,
 ) -> Result<GameSummaryV1, EvaluationStop> {
     let wins = [PlayerId::P0, PlayerId::P1].map(|p| match_session.match_state().wins(p).unwrap());
     if game.game_index > 1 {
@@ -421,7 +432,7 @@ fn play_evaluation_game(
     opening.keep()?;
     budget.append_checked(game, record, size);
     let mut episode = opening.into_session()?;
-    let mut recorder=EvaluationPolicy {policies,packages,hashes,game,budget,timings,pending:None,
+    let mut recorder=EvaluationPolicy {policies,packages,hashes,game,budget,timings,report,pending:None,
         failure:None,attempted:None};
     recorder
         .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
@@ -481,6 +492,7 @@ struct EvaluationPending {
     step:u64,
     record:EvaluationDecision,
     size:u64,
+    report_row:Option<usize>,
 }
 struct EvaluationPolicy<'a> {
     policies:&'a mut [FrozenPlayPolicyV1;2],
@@ -489,6 +501,7 @@ struct EvaluationPolicy<'a> {
     game:&'a mut EvaluationGame,
     budget:&'a mut EvaluationBudget,
     timings:&'a mut Vec<SearchTiming>,
+    report:Option<&'a mut report::ReportSink>,
     pending:Option<EvaluationPending>,
     failure:Option<EvaluationStop>,
     attempted:Option<(PlayerSeatV1,u64)>,
@@ -499,6 +512,7 @@ impl EvaluationPolicy<'_> {
             ensure(pending.step.checked_add(1)==Some(next_step),"evaluation callback did not confirm previous gameplay step")?;
         } else {ensure(next_step==0,"evaluation callback skipped an unrecorded gameplay step")?;}
         if let Some(pending)=self.pending.take() {
+            if let (Some(sink),Some(row))=(self.report.as_deref_mut(),pending.report_row) {sink.commit(row);}
             self.budget.append_checked(self.game,pending.record,pending.size);
         }
         Ok(())
@@ -530,7 +544,9 @@ impl EvaluationPolicy<'_> {
             },
         };
         if result.is_err() {
-            self.game.discarded_pending_selections=u64::from(self.pending.take().is_some())+u64::from(self.attempted.take().is_some());
+            let pending=self.pending.take();
+            if let (Some(sink),Some(row))=(self.report.as_deref_mut(),pending.as_ref().and_then(|p|p.report_row)) {sink.discard(row);}
+            self.game.discarded_pending_selections=u64::from(pending.is_some())+u64::from(self.attempted.take().is_some());
         }
         result
     }
@@ -538,11 +554,15 @@ impl EvaluationPolicy<'_> {
         let decision=input.decision();let i=seat(decision.acting_player);
         self.commit_pending(decision.step)?;
         self.attempted=Some((decision.acting_player,decision.step));
+        let mut report_row=None;
         let (selected,record)=match &self.packages[i].search {
             AgentSearchPolicyV1::Disabled=>{
                 let (selected,scores)=self.policies[i].select_paired_with_scores_v1(input).map_err(|e|e.to_string())?;
                 let behavior=BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits,selected)?;
                 let record=input.capture_bo3_gameplay_v4(self.budget.count,self.hashes[i].clone(),behavior)?;
+                if let Some(sink)=self.report.as_deref_mut() {
+                    report_row=sink.observe(self.game.game_index,&record,input,&self.policies[i]);
+                }
                 (selected,EvaluationDecision::Ordinary{record})
             },
             AgentSearchPolicyV1::V4InformationSetV1{descriptor}=>{
@@ -566,8 +586,11 @@ impl EvaluationPolicy<'_> {
             },
             _=>return Err("unsupported evaluation search descriptor".to_owned().into()),
         };
-        let size=self.budget.check(&record)?;
-        self.pending=Some(EvaluationPending{step:decision.step,record,size});
+        let size=match self.budget.check(&record) {
+            Ok(size)=>size,
+            Err(error)=>{if let (Some(sink),Some(row))=(self.report.as_deref_mut(),report_row) {sink.discard(row);} return Err(error);}
+        };
+        self.pending=Some(EvaluationPending{step:decision.step,record,size,report_row});
         self.attempted=None;
         Ok(selected)
     }
@@ -677,10 +700,10 @@ mod tests {
         for p in &mut packages {search_package(p,4);}
         let hashes=[packages[0].package_sha256_v1().unwrap(),packages[1].package_sha256_v1().unwrap()];
         let mut game=EvaluationGame{game_index:1,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
-        let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:1};
+        let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:1,native_record_bytes:false};
         let mut timings=Vec::new();
         let mut recorder=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,
-            timings:&mut timings,pending:None,failure:None,attempted:None};
+            timings:&mut timings,report:None,pending:None,failure:None,attempted:None};
         let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture")};
         let action=recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,d)).unwrap();
         assert!(recorder.game.decisions.is_empty());

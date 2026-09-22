@@ -72,6 +72,8 @@ fn run() -> Result<(), String> {
         && args[0] == "--prepare-source"
         && args[2] == "--toolchain"
         && args[4] == "--output";
+    let reporting = args.len() == 8 && args[0] == "--request" && args[2] == "--output"
+        && args[4] == "--report-search" && args[6] == "--archive";
     let auditing = args.len() == 6
         && args[0] == "--request"
         && args[2] == "--output"
@@ -79,10 +81,11 @@ fn run() -> Result<(), String> {
     if !preparing
         && !hashing
         && !auditing
+        && !reporting
         && (args.len() != 4 || args[0] != "--request" || args[2] != "--output")
     {
         return Err(
-            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json | --burn-audit options.json | --continuation options.json | --evaluate-search options.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
+            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json | --burn-audit options.json | --continuation options.json | --evaluate-search options.json | --report-search options.json --archive archive.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
         );
     }
     let output = PathBuf::from(&args[if preparing { 5 } else { 3 }]);
@@ -127,7 +130,30 @@ fn run() -> Result<(), String> {
         )
     } else {
         let request = Bo3CollectionRequestV1::from_json_v1(text)?;
-        if auditing && args[4] == "--evaluate-search" {
+        if reporting {
+            #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+            {
+                use mtg_kernel::phase1_bo3_collection_v1::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1};
+                fn bounded(path:&std::ffi::OsStr,limit:u64)->Result<Vec<u8>,String> {
+                    let mut bytes=Vec::new();
+                    std::fs::File::open(path).map_err(|e|e.to_string())?.take(limit+1)
+                        .read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+                    if bytes.len() as u64>limit {return Err(format!("Report input exceeds {limit} bytes"));}
+                    Ok(bytes)
+                }
+                // Strict parsing rejects duplicate keys even inside nested maps.
+                // Archive is data only; current packages still bind this executable.
+                let options_bytes=bounded(&args[5],32768)?;
+                let options=Bo3ReportOptionsV1::from_json_v1(std::str::from_utf8(&options_bytes).map_err(|e|e.to_string())?)?;
+                let archive_bytes=bounded(&args[7],64*1024*1024)?;
+                let archive=Bo3ReportArchiveV1::from_json_v1(std::str::from_utf8(&archive_bytes).map_err(|e|e.to_string())?)?;
+                let result=report_bo3_v4(request.config,request.packages,options,archive)?;
+                (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
+                    "V4 Report observation; inspect usable_job and every assigned row".into())
+            }
+            #[cfg(not(feature="experimental-burn-net8-packed-cuda-v1"))]
+            { return Err("Report search requires experimental-burn-net8-packed-cuda-v1".into()); }
+        } else if auditing && args[4] == "--evaluate-search" {
             #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
             {
                 use mtg_kernel::phase1_bo3_collection_v1::{evaluate_bo3_v4,Bo3EvaluationOptionsV1};
