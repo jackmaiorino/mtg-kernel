@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 
 mod combat_audit;
 mod continuation;
-pub use continuation::{collect_bo3_with_continuation_v1, Bo3ContinuationOptionsV1, Bo3ContinuationResultV1};
+pub use continuation::{collect_bo3_with_continuation_v1, continuation_record_sha256_v1, Bo3ContinuationOptionsV1, Bo3ContinuationResultV1};
 pub use combat_audit::{collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1, Bo3CombatAuditResultV1};
 pub use combat_audit::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
 

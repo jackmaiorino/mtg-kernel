@@ -4,6 +4,17 @@ use super::*;
 use crate::rl_session::FastActorSessionV1;
 use serde_json::{json, Value};
 
+/// Hash the typed record with the identical serializer used at capture.
+pub fn continuation_record_sha256_v1(text: &str) -> Result<String, String> {
+    ensure(text.len() <= MAX_BO3_COLLECTION_REQUEST_BYTES_V1, "record exceeds 4 MiB")?;
+    crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
+    let record: Bo3DecisionRecordV1 = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    record_sha256(&record)
+}
+fn record_sha256(record: &Bo3DecisionRecordV1) -> Result<String, String> {
+    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(record).map_err(|e| e.to_string())?)))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bo3ContinuationOptionsV1 {
@@ -32,6 +43,11 @@ impl Bo3ContinuationOptionsV1 {
         ensure(self.record_sha256.len() == 64 && self.record_sha256.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)), "invalid root record hash")?;
         ensure((1..=200).contains(&self.policy_seeds.len()), "continuation batch outside bounds")?;
+        if self.policy_seeds.len() > 1 {
+            ensure(self.policy_seeds.iter().all(Option::is_some), "multi-row continuation requires fresh seeds")?;
+            let unique: BTreeSet<_> = self.policy_seeds.iter().copied().collect();
+            ensure(unique.len() == self.policy_seeds.len(), "duplicate continuation seed pair")?;
+        }
         ensure(!self.retain_records || self.policy_seeds.len() == 1,
             "full records are restricted to single-continuation engineering checks")
     }
@@ -42,6 +58,7 @@ pub(super) struct ContinuationCapture {
     policies: [FrozenPlayPolicyV1; 2],
     record: Bo3DecisionRecordV1,
     headroom_before: [u64; 2],
+    state_hash_before: u64,
 }
 pub(super) struct ContinuationSink {
     options: Bo3ContinuationOptionsV1,
@@ -56,14 +73,14 @@ impl ContinuationSink {
         ensure(self.committed.is_none(), "duplicate continuation root")?;
         ensure(input.decision().acting_player == o.actor, "continuation actor differs")?;
         ensure(record.behavior.selected_index_v1() == o.selected_index as usize, "continuation action differs")?;
-        ensure(format!("{:x}", Sha256::digest(serde_json::to_vec(record).map_err(|e| e.to_string())?))
-            == o.record_sha256, "continuation archived record differs")?;
+        ensure(record_sha256(record)? == o.record_sha256, "continuation archived record differs")?;
         // Called AFTER sampling the selected root action. Both copies retain
         // current positions; the original policies and session are untouched.
         let forks = [policies[0].fork_for_continuation_v1()?, policies[1].fork_for_continuation_v1()?];
         let headroom_before = input.diagnostic_continuation_headroom_v1();
+        let state_hash_before = input.diagnostic_continuation_state_hash_v1();
         let session = input.diagnostic_continuation_after_action_v1(o.selected_index)?;
-        Ok(Some(ContinuationCapture { session, policies: forks, record: record.clone(), headroom_before }))
+        Ok(Some(ContinuationCapture { session, policies: forks, record: record.clone(), headroom_before, state_hash_before }))
     }
     pub(super) fn commit(&mut self, capture: ContinuationCapture) -> Result<(), String> {
         ensure(self.committed.is_none(), "continuation root already committed")?;
@@ -91,6 +108,7 @@ pub fn collect_bo3_with_continuation_v1(config: Bo3CollectionConfigV1,
     let mut root = Value::Null;
     if let Some(capture) = sink.committed {
         root = json!({"record":capture.record,"headroom_before":capture.headroom_before,
+            "state_hash_before":capture.state_hash_before,"state_hash_after":capture.session.diagnostic_state_hash(),
             "headroom_after":capture.session.diagnostic_remaining_headroom_v1()});
         let hashes = collection.packages.each_ref().map(|p| p.package_sha256_v1()).into_iter()
             .collect::<Result<Vec<_>, _>>()?;
@@ -101,7 +119,7 @@ pub fn collect_bo3_with_continuation_v1(config: Bo3CollectionConfigV1,
     let complete = !rows.is_empty() && rows.iter().all(|r| r["natural"] == true);
     Ok(Bo3ContinuationResultV1 { schema: "mtg-kernel-bo3-continuation/v1", collection,
         continuation: json!({"options":options,"root":root,"rows":rows,"complete":complete,
-            "non_claim":"Conditional incumbent continuation risk at a fixed hidden state, not first-action causal regret, population prevalence or strength."}) })
+            "non_claim":"Conditional incumbent continuation risk at a fixed hidden state and randomness stream, not first-action causal regret, population prevalence or strength."}) })
 }
 
 fn run_one(capture: &ContinuationCapture, seeds: Option<[u64; 2]>, hashes: &[String],
@@ -201,6 +219,14 @@ mod tests {
             decision_index: root.decision_index, actor: root.actor,
             selected_index: root.behavior.selected_index_v1() as u32,
             record_sha256: "0".repeat(64), policy_seeds: vec![None], retain_records: true };
+        let text = serde_json::to_string_pretty(root).unwrap();
+        assert_eq!(continuation_record_sha256_v1(&text).unwrap(), record_sha256(root).unwrap());
+        for seeds in [vec![None, Some([1, 2])], vec![Some([1, 2]), Some([1, 2])]] {
+            let mut invalid = options.clone();
+            invalid.policy_seeds = seeds;
+            invalid.retain_records = false;
+            assert!(invalid.validate().is_err());
+        }
         let mut sink = ContinuationSink { options, committed: None };
         let observed = collect_loaded_with_continuation(&cfg, packages.each_ref(), &mut policies,
             [None, None], None, None, Some(&mut sink)).unwrap();

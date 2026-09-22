@@ -67,6 +67,7 @@ fn prepare_package(
 
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let hashing = args.len() == 4 && args[0] == "--hash-record" && args[2] == "--output";
     let preparing = args.len() == 6
         && args[0] == "--prepare-source"
         && args[2] == "--toolchain"
@@ -76,6 +77,7 @@ fn run() -> Result<(), String> {
         && args[2] == "--output"
         && (args[4] == "--combat-audit" || args[4] == "--burn-audit" || args[4] == "--continuation");
     if !preparing
+        && !hashing
         && !auditing
         && (args.len() != 4 || args[0] != "--request" || args[2] != "--output")
     {
@@ -109,7 +111,11 @@ fn run() -> Result<(), String> {
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
-    let (bytes, summary) = if preparing {
+    let (bytes, summary) = if hashing {
+        let hash = mtg_kernel::phase1_bo3_collection_v1::continuation_record_sha256_v1(text)?;
+        (serde_json::to_vec(&serde_json::json!({"record_sha256":hash})).map_err(|e| e.to_string())?,
+            "typed continuation record hash; no games".into())
+    } else if preparing {
         if bytes.len() > MAX_BO3_COLLECTION_REQUEST_BYTES_V1 {
             return Err("package source exceeds 4 MiB".into());
         }
