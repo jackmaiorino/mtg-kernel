@@ -33,13 +33,16 @@ pub(crate) struct NodeReport {
 #[derive(Debug,Clone,Copy,PartialEq,Serialize)]
 #[serde(rename_all="snake_case")]
 pub(crate) enum RootAllocation {Puct,RoundRobin}
+#[derive(Debug,Clone,Copy,PartialEq,Serialize)]
+#[serde(rename_all="snake_case")]
+pub(crate) enum InteriorBonus {PriorWeighted,PriorFree}
 #[derive(Debug,Clone,PartialEq,Serialize)]
 pub(crate) struct TraceChoice {pub node:usize,pub action:usize,pub mode:&'static str,pub scores:Vec<Option<i64>>}
 #[derive(Debug,Clone,PartialEq,Serialize)]
 pub(crate) struct TraceSimulation {pub ordinal:u32,pub choices:Vec<TraceChoice>,pub value:i32}
 #[derive(Debug,Clone,PartialEq,Serialize)]
 pub(crate) struct Outcome {
-    pub allocation:RootAllocation,pub trace:Vec<TraceSimulation>,pub selected:u32,pub selected_by_mean:u32,pub tree:Vec<NodeReport>,pub simulations:u32,pub transitions:u32,pub nodes:usize,
+    pub allocation:RootAllocation,pub interior_bonus:InteriorBonus,pub trace:Vec<TraceSimulation>,pub selected:u32,pub selected_by_mean:u32,pub tree:Vec<NodeReport>,pub simulations:u32,pub transitions:u32,pub nodes:usize,
     pub headroom:[u64;2],pub root_visits:Vec<u32>,pub root_value_sums:Vec<i64>,pub census:Census,pub root_priors:Vec<u32>,pub root_work:Vec<RootWork>,
 }
 struct Node {key:[u8;32],actor:PlayerId,visits:u32,prior:Vec<u32>,actions:Vec<SearchActionStatV1>,witness:Option<[u8;32]>}
@@ -73,16 +76,17 @@ fn node(k:[u8;32],actor:PlayerId,f:&Forward,witness:Option<[u8;32]>)->Result<Nod
     let actions=prior.iter().map(|_|SearchActionStatV1{visits:0,value_sum:0,child_nodes:Vec::new()}).collect();
     Ok(Node{key:k,actor,visits:0,prior,actions,witness})
 }
-fn score(n:&Node,root:PlayerId,i:usize)->Result<i64> {
+fn score(n:&Node,root:PlayerId,i:usize,policy:InteriorBonus)->Result<i64> {
     let a=&n.actions[i];
-    let bonus=i64::try_from(puct_bonus_v1(integer_ucb_bonus_v1(n.visits,a.visits),n.prior[i]).map_err(|_|Error::CorruptTree)?).map_err(|_|Error::CorruptTree)?;
+    let raw=integer_ucb_bonus_v1(n.visits,a.visits);
+    let bonus=i64::try_from(match policy {InteriorBonus::PriorWeighted=>puct_bonus_v1(raw,n.prior[i]).map_err(|_|Error::CorruptTree)?,InteriorBonus::PriorFree=>raw}).map_err(|_|Error::CorruptTree)?;
     Ok(if n.actor==root{a.mean()+bonus}else{a.mean()-bonus})
 }
-fn choose(n:&Node,root:PlayerId)->Result<usize> {
+fn choose(n:&Node,root:PlayerId,policy:InteriorBonus)->Result<usize> {
     for i in prior_expansion_order_v1(&n.prior) {if n.actions[i].visits==0{return Ok(i);}}
     let maximizing=n.actor==root;let mut best=None;
     for (i,_) in n.actions.iter().enumerate() {
-        let score=score(n,root,i)?;
+        let score=score(n,root,i,policy)?;
         if best.is_none_or(|(_,old)|if maximizing{score>old}else{score<old}){best=Some((i,score));}
     }
     best.map(|(i,_)|i).ok_or(Error::CorruptTree)
@@ -98,7 +102,10 @@ pub(crate) fn search<E:Evaluator>(session:&FastActorSessionV1,limits:Limits,eval
 pub(crate) fn search_inner<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,w:Witness<'_>)->Result<Outcome> {
     search_with_allocation(session,l,e,RootAllocation::Puct,w)
 }
-pub(crate) fn search_with_allocation<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,mut w:Witness<'_>)->Result<Outcome> {
+pub(crate) fn search_with_allocation<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,w:Witness<'_>)->Result<Outcome> {
+    search_with_policies(session,l,e,allocation,InteriorBonus::PriorWeighted,w)
+}
+pub(crate) fn search_with_policies<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,interior_bonus:InteriorBonus,mut w:Witness<'_>)->Result<Outcome> {
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|x|Error::Evaluator(format!("{x:?}")))?;
     let d=live(session)?;let count=d.legal_action_count;
     if count==0||l.depth==0||l.simulations<count||l.transitions<count{return Err(Error::InvalidBudget);}
@@ -123,9 +130,10 @@ pub(crate) fn search_with_allocation<E:Evaluator>(session:&FastActorSessionV1,l:
                 ||tree[at].actions.len()!=current.legal_action_count as usize
                 ||tree[at].witness!=witness(&mut w,&sample,current.legal_action_count)? {return Err(Error::CorruptTree);}
             let round_robin=at==0 && allocation==RootAllocation::RoundRobin;
-            let action=if coverage {coverage_order[simulations as usize]}else if round_robin {coverage_order[(simulations%count) as usize]}else{choose(&tree[at],root)?};
-            let mode=if coverage{"coverage"}else if round_robin{"round_robin"}else if tree[at].actions[action].visits==0{"unvisited"}else{"puct"};
-            let scores=tree[at].actions.iter().enumerate().map(|(i,a)|if a.visits==0{Ok(None)}else{score(&tree[at],root,i).map(Some)}).collect::<Result<Vec<_>>>()?;
+            let bonus_policy=if at==0{InteriorBonus::PriorWeighted}else{interior_bonus};
+            let action=if coverage {coverage_order[simulations as usize]}else if round_robin {coverage_order[(simulations%count) as usize]}else{choose(&tree[at],root,bonus_policy)?};
+            let mode=if coverage{"coverage"}else if round_robin{"round_robin"}else if tree[at].actions[action].visits==0{"unvisited"}else if bonus_policy==InteriorBonus::PriorFree{"prior_free"}else{"puct"};
+            let scores=tree[at].actions.iter().enumerate().map(|(i,a)|if a.visits==0{Ok(None)}else{score(&tree[at],root,i,bonus_policy).map(Some)}).collect::<Result<Vec<_>>>()?;
             choices.push(TraceChoice{node:at,action,mode,scores});
             let token=sample.kernel_search_action_token_v4(current).map_err(|x|Error::State(format!("{x:?}")))?;
             let response=sample.kernel_search_consume_v4(current,token,action as u32).map_err(|x|Error::State(format!("{x:?}")))?;
@@ -175,7 +183,7 @@ pub(crate) fn search_with_allocation<E:Evaluator>(session:&FastActorSessionV1,l:
     let report=tree.iter().map(|n|NodeReport{key:n.key,actor:n.actor.index() as u8,visits:n.visits,priors:n.prior.clone(),
         edge_visits:n.actions.iter().map(|a|a.visits).collect(),edge_value_sums:n.actions.iter().map(|a|a.value_sum).collect(),
         children:n.actions.iter().map(|a|a.child_nodes.clone()).collect()}).collect();
-    Ok(Outcome{allocation,trace,selected:select_final_root_action_v1(&tree[0].actions).map_err(|_|Error::CorruptTree)?,
+    Ok(Outcome{allocation,interior_bonus,trace,selected:select_final_root_action_v1(&tree[0].actions).map_err(|_|Error::CorruptTree)?,
         selected_by_mean,tree:report,simulations,transitions,nodes:tree.len(),headroom,
         root_visits:tree[0].actions.iter().map(|a|a.visits).collect(),root_value_sums:tree[0].actions.iter().map(|a|a.value_sum).collect(),census,root_priors:tree[0].prior.clone(),root_work})
 }
@@ -287,24 +295,46 @@ mod tests {
     }
 
     #[test]
+    fn v4_search_prior_free_bonus_changes_both_seat_selection_without_prior_order_change() {
+        for actor in [PlayerId::P0,PlayerId::P1] {
+            for root in [actor,actor.opponent()] {
+                let sign=if root==actor{1}else{-1};
+                let n=Node{key:[0;32],actor,visits:7,prior:vec![75,999925],witness:None,
+                    actions:vec![SearchActionStatV1{visits:1,value_sum:sign * -3318,child_nodes:vec![]},SearchActionStatV1{visits:1,value_sum:sign * -3768,child_nodes:vec![]}]};
+                assert_eq!(choose(&n,root,InteriorBonus::PriorWeighted).unwrap(),1);
+                assert_eq!(choose(&n,root,InteriorBonus::PriorFree).unwrap(),0);
+                assert_eq!(score(&n,root,0,InteriorBonus::PriorFree).unwrap(),sign * -490);
+                assert_eq!(score(&n,root,1,InteriorBonus::PriorFree).unwrap(),sign * -940);
+                let mut unvisited=n;for a in &mut unvisited.actions {a.visits=0;a.value_sum=0;}
+                assert_eq!(choose(&unvisited,root,InteriorBonus::PriorFree).unwrap(),1);
+            }
+        }
+    }
+
+    #[test]
     fn v4_search_core_round_robin_only_forces_root_and_traces_choices() {
         for actor in [PlayerId::P0,PlayerId::P1] {
+          for interior_bonus in [InteriorBonus::PriorWeighted,InteriorBonus::PriorFree] {
             let s=session(actor);let n=live(&s).unwrap().legal_action_count;
+            let original=s.diagnostic_state_hash();
             let p=FrozenPlayPolicyV1::training_fixture_v4();let e=V4SearchLeafEvaluatorV1::new(&p).unwrap();
             let l=Limits{simulations:16*n,transitions:128*n,depth:8,seed:29};
-            let a=search_with_allocation(&s,l,&e,RootAllocation::RoundRobin,None).unwrap();
+            let a=search_with_policies(&s,l,&e,RootAllocation::RoundRobin,interior_bonus,None).unwrap();
             assert!(a.root_visits.iter().all(|x|*x==16));assert_eq!(a.selected,a.selected_by_mean);
             assert_eq!(a.trace.len(),a.simulations as usize);
             assert_eq!(a.trace.iter().map(|x|x.choices.len() as u32).sum::<u32>(),a.transitions);
             for simulation in &a.trace {for choice in &simulation.choices {
                 assert!(choice.node<a.nodes);assert!(choice.action<a.tree[choice.node].priors.len());
                 assert!(choice.node==0 || (choice.mode!="round_robin" && choice.mode!="coverage"));
-                if choice.mode=="puct" {
+                if choice.mode=="puct" || choice.mode=="prior_free" {
+                    assert_eq!(choice.mode,if interior_bonus==InteriorBonus::PriorFree{"prior_free"}else{"puct"});
                     let selected=choice.scores[choice.action].unwrap();let maximizing=a.tree[choice.node].actor==actor.index() as u8;
                     assert!(choice.scores.iter().all(|v|if maximizing{selected>=v.unwrap()}else{selected<=v.unwrap()}));
                 }
             }}
-            assert_eq!(a,search_with_allocation(&s,l,&e,RootAllocation::RoundRobin,None).unwrap());
+            assert_eq!(a,search_with_policies(&s,l,&e,RootAllocation::RoundRobin,interior_bonus,None).unwrap());
+            assert_eq!(original,s.diagnostic_state_hash());
+          }
         }
     }
 
