@@ -46,6 +46,7 @@
 //! raw, unconditional `card_ref` this function reads as input.
 
 use super::*;
+mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 
