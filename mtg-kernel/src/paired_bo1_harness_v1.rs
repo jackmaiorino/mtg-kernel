@@ -51,6 +51,18 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         self.session.diagnostic_state_hash()
     }
 
+    /// Report-only certificate check, called by the recorder after sampling.
+    /// Neither actions, extracted strategies nor session clones escape here.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_public_certificate_execution_v1(&self,hand:bool)->Result<serde_json::Value,String> {
+        use crate::expanded_deck_training_v1::stack_features::terminal_tactics::{certificate_execution,public_burn_tree,public_hand_burn_tree};
+        let audit=if hand {public_hand_burn_tree::audit_execution} else {public_burn_tree::audit_execution};
+        let mut report=certificate_execution::invariance_report(self.session,self.decision,audit)?;
+        let mut value=report["audit"].take();
+        value["execution_invariance"]=report["byte_identical_variants"].take();
+        Ok(value)
+    }
+
     /// Opt-in evaluation recorder only. The playing policy is not changed by
     /// these bounded counterfactuals and receives no cloned hidden game state.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]

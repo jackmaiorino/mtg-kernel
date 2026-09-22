@@ -104,7 +104,7 @@ pub(super) fn mutated_menu_rejected(s:&FastActorSessionV1,root:crate::rl_session
 
 /// Three separate invisible perturbations must preserve the entire audit bytes.
 /// The result is a report, never a reusable strategy or a live recommendation.
-pub(super) fn invariance_report(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1,
+pub(crate) fn invariance_report(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1,
     audit:fn(&FastActorSessionV1,crate::rl_session::FastActorDecisionV1)->Result<Value,String>)->Result<Value,String> {
     let baseline=audit(s,root)?;let bytes=serde_json::to_vec(&baseline).map_err(err)?;
     let binding=Binding::capture(s,root)?;let visible=serde_json::to_vec(&binding).map_err(err)?;

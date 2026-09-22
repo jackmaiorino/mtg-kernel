@@ -11,6 +11,8 @@ pub struct Bo3BurnAuditOptionsV1 {
     pub response_tree: bool,
     #[serde(default)]
     pub hand_response_tree: bool,
+    #[serde(default)]
+    pub execute_certificate: bool,
 }
 impl Bo3BurnAuditOptionsV1 {
     pub fn from_json_v1(text: &str) -> Result<Self, String> {
@@ -19,6 +21,7 @@ impl Bo3BurnAuditOptionsV1 {
         let value: Self = serde_json::from_str(text).map_err(|e| e.to_string())?;
         ensure((1..=3).contains(&value.game_index), "burn game index outside BO3")?;
         ensure(!(value.response_tree && value.hand_response_tree), "select only one burn tree")?;
+        ensure(!value.execute_certificate || value.response_tree || value.hand_response_tree,"certificate execution requires tree diagnostic")?;
         Ok(value)
     }
 }
@@ -36,6 +39,7 @@ pub fn collect_bo3_with_burn_audit_v1(
     ensure(cfg!(feature = "experimental-burn-net8-packed-cuda-v1"), "burn diagnostic feature unavailable")?;
     ensure((1..=3).contains(&options.game_index), "burn game index outside BO3")?;
     ensure(!(options.response_tree && options.hand_response_tree), "select only one burn tree")?;
+    ensure(!options.execute_certificate || options.response_tree || options.hand_response_tree,"certificate execution requires tree diagnostic")?;
     let mut sink = CombatAuditSink::new(Bo3CombatAuditOptionsV1 {
         actor: options.actor, depth: 16, nodes_per_action: 16,
         max_roots: 1, max_transitions: 512, max_json_bytes: 4 * 1024 * 1024,
@@ -64,7 +68,8 @@ impl CombatAuditSink {
         ensure(d.acting_player == options.actor, "burn selected actor differs")?;
         ensure(self.prepared_roots == 0, "duplicate burn root")?;
         ensure(policy.feature_generation_v1() == PlayPolicyGenerationV1::V4, "burn capture requires V4 scorer")?;
-        let audit = if options.hand_response_tree { input.diagnostic_public_hand_burn_tree_v1()? }
+        let audit = if options.execute_certificate { input.diagnostic_public_certificate_execution_v1(options.hand_response_tree)? }
+            else if options.hand_response_tree { input.diagnostic_public_hand_burn_tree_v1()? }
             else if options.response_tree { input.diagnostic_public_burn_tree_v1()? }
             else { input.diagnostic_terminal_targets_v1()? };
         // A rejected root is retained as an abstention, never silently skipped.
