@@ -23,6 +23,8 @@ pub struct Command {
     pub retention_validation: bool,
     #[serde(default)]
     pub equal_budget_validation: bool,
+    #[serde(default)]
+    pub hand_counterfactual_controls: bool,
 }
 
 mod combat;
@@ -30,6 +32,7 @@ mod distractor;
 mod forced_loss;
 mod teacher_data;
 mod retention_validation;
+mod hand_policy;
 #[cfg(test)]
 mod hand_counterfactual;
 
@@ -65,7 +68,8 @@ fn fixture(card:&str,damage:i32,artifacts:usize,actor:u8,hidden:bool)->Result<Fa
 }
 
 pub fn run(command:Command)->Result<Value,String> {
-    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset,command.retention_validation,command.equal_budget_validation].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    ensure([command.combat_controls,command.lethal_distractor_controls,command.forced_loss_controls,command.teacher_dataset,command.retention_validation,command.equal_budget_validation,command.hand_counterfactual_controls].iter().filter(|&&enabled|enabled).count()<=1,"choose one fixture family")?;
+    if command.hand_counterfactual_controls {return hand_policy::run(command);}
     if command.retention_validation || command.equal_budget_validation {return retention_validation::run(command);}
     if command.teacher_dataset {return teacher_data::run(command);}
     if command.forced_loss_controls {return forced_loss::run(command);}
