@@ -30,6 +30,8 @@ mod distractor;
 mod forced_loss;
 mod teacher_data;
 mod retention_validation;
+#[cfg(test)]
+mod hand_counterfactual;
 
 fn put(state:&mut GameState,owner:PlayerId,name:&str,zone:Zone)->ObjectId {
     let card_def=card_id_by_name(name).expect("declared fixture card");
