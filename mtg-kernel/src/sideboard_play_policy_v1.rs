@@ -956,6 +956,14 @@ impl FrozenPlayPolicyV1 {
         Ok(fork)
     }
 
+    /// The same continuation fork with only its private sampler streams
+    /// reseeded. In particular, do not reset caches through reset_for_game.
+    pub(crate) fn fork_for_seeded_continuation_v1(&self, seeds: [u64; 2]) -> Result<Self, String> {
+        let mut fork = self.fork_for_continuation_v1()?;
+        fork.seat_rng = seeds.map(SplitMix64::seed);
+        Ok(fork)
+    }
+
     /// Active runtime capability, separate from the historical import receipt.
     /// Narrow decisions still execute the frozen sampler verbatim. Both wide
     /// generations (V3's `successor` and V4's `fresh_successor`) share the
@@ -1726,9 +1734,18 @@ mod tests {
         }
         assert_ne!(original.seat_rng, original_rng);
         let preserved = original.seat_rng;
-        fork.reset_sampling_v1([123, 456]);
+        let mut seeded = original.fork_for_seeded_continuation_v1([123, 456]).unwrap();
         assert_eq!(original.seat_rng, preserved);
-        assert_ne!(fork.seat_rng, preserved);
+        assert_eq!(seeded.seat_rng, [123, 456].map(SplitMix64::seed));
+        assert_ne!(seeded.seat_rng, preserved);
+        assert!(seeded.sampling_initialized);
+        assert_eq!(seeded.actual_model_identity_v1(), original.actual_model_identity_v1());
+        let mut repeated = original.fork_for_seeded_continuation_v1([123, 456]).unwrap();
+        for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1, PlayerSeatV1::P1] {
+            assert_eq!(seeded.sample_scores(&[0.0; 64], seat, 64).unwrap(),
+                repeated.sample_scores(&[0.0; 64], seat, 64).unwrap());
+        }
+        assert_eq!(original.seat_rng, preserved);
         }
     }
 

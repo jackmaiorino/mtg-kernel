@@ -4212,6 +4212,13 @@ pub struct FastActorSessionV1 {
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
 
 impl FastActorSessionV1 {
+    /// Inherited limits for coordinator continuation diagnostics. Neither
+    /// constructing a fork nor querying these values changes the counters.
+    pub(crate) fn diagnostic_remaining_headroom_v1(&self) -> [u64; 2] {
+        [self.max_physical_decisions.saturating_sub(self.physical_decision_count),
+         self.max_policy_steps.saturating_sub(self.policy_step_count)]
+    }
+
     /// Summary hook over the exact currently offered actions. Returns only
     /// card identities already known to the acting player in their own hand.
     pub(crate) fn current_offered_hand_cast_ids_v1(&self) -> Vec<u16> {

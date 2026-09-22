@@ -27,6 +27,22 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         self.decision
     }
 
+    /// Coordinator-only continuation capture. Clone the full engine session
+    /// with its hidden state, environment RNG, counters and inherited caps.
+    /// The returned copy has consumed exactly the selected root action. It
+    /// must not be admitted until the original recorder confirms that step.
+    pub(crate) fn diagnostic_continuation_after_action_v1(
+        &self, selected: u32,
+    ) -> Result<FastActorSessionV1, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
+            return Err("continuation capture differs from the scoring decision binding".into());
+        }
+        let mut continuation = self.session.clone();
+        continuation.step(self.decision.episode_id, self.decision.step, selected)
+            .map_err(|error| format!("continuation root action: {error}"))?;
+        Ok(continuation)
+    }
+
     /// Opt-in evaluation recorder only. The playing policy is not changed by
     /// these bounded counterfactuals and receives no cloned hidden game state.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -159,6 +175,40 @@ pub enum PlayPolicyGenerationV1 {
     V2,
     V3,
     V4,
+}
+
+#[cfg(all(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+mod continuation_capture_tests {
+    use super::*;
+    use crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_combat::tests::position;
+
+    #[test]
+    fn continuation_fork_engine_consumes_only_the_bound_root_action() {
+        for actor in 0..2 {
+            let session = position(actor, false, false, false);
+            let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected root decision");
+            };
+            let hash = session.diagnostic_state_hash();
+            let headroom = session.diagnostic_remaining_headroom_v1();
+            let input = PairedBo1PolicyInputV1::new(&session, decision);
+            let fork = input.diagnostic_continuation_after_action_v1(0).unwrap();
+            assert_eq!(session.current_response(), FastActorResponseV1::Decision(decision));
+            assert_eq!(session.diagnostic_state_hash(), hash);
+            assert_eq!(session.diagnostic_remaining_headroom_v1(), headroom);
+            assert_eq!(fork.policy_step_count(), session.policy_step_count() + 1);
+            assert_eq!(fork.diagnostic_remaining_headroom_v1()[1], headroom[1] - 1);
+            let mut expected = session.clone();
+            expected.step(decision.episode_id, decision.step, 0).unwrap();
+            assert_eq!(fork.current_response(), expected.current_response());
+            assert_eq!(fork.diagnostic_state_hash(), expected.diagnostic_state_hash());
+            assert!(input.diagnostic_continuation_after_action_v1(decision.legal_action_count).is_err());
+            let mut stale = decision;
+            stale.step += 1;
+            assert!(PairedBo1PolicyInputV1::new(&session, stale)
+                .diagnostic_continuation_after_action_v1(0).is_err());
+        }
+    }
 }
 
 /// A frozen play policy with explicitly reset per-seat sampling streams.
