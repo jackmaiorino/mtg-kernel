@@ -30,6 +30,7 @@ use std::collections::BTreeSet;
 
 mod combat_audit;
 pub use combat_audit::{collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1, Bo3CombatAuditResultV1};
+pub use combat_audit::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
 
 pub const BO3_COLLECTION_CONFIG_SCHEMA_V1: &str = "mtg-kernel-bo3-collection-config/v1";
 pub const BO3_COLLECTION_RESULT_SCHEMA_V1: &str = "mtg-kernel-bo3-collection-result/v1";

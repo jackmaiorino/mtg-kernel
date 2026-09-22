@@ -2,6 +2,8 @@
 use super::*;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+mod burn;
+pub use burn::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -226,6 +228,7 @@ pub fn collect_bo3_with_combat_audit_v1(
 }
 
 pub(super) struct CombatAuditSink {
+    burn: Option<Bo3BurnAuditOptionsV1>,
     options: Bo3CombatAuditOptionsV1,
     counts: BTreeMap<String, u64>,
     roots: Vec<Value>,
@@ -238,6 +241,7 @@ impl CombatAuditSink {
     pub(super) fn new(options: Bo3CombatAuditOptionsV1) -> Result<Self, String> {
         options.validate()?;
         Ok(Self {
+            burn: None,
             options,
             counts: BTreeMap::new(),
             roots: Vec::new(),
@@ -280,6 +284,9 @@ impl CombatAuditSink {
         policy: &FrozenPlayPolicyV1,
         scores: &crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1,
     ) -> Result<Option<Value>, String> {
+        if self.burn.is_some() {
+            return self.prepare_burn(input, record, game_index, policy, scores);
+        }
         let d = input.decision();
         if d.acting_player != self.options.actor {
             return Ok(None);
