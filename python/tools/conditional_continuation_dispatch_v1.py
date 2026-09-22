@@ -79,10 +79,14 @@ def seed_pair(name, decision, index, formal):
         f'{domain}|20260922|{name}|{decision}|{index}|{seat}'.encode('ascii')).digest()[:8], 'little')
         for seat in (0, 1)]
 
+def derivation_strings(name, decision, index, formal):
+    domain = 'conditional-continuation-v1' if formal else 'conditional-continuation-engineering-v1'
+    return [f'{domain}|20260922|{name}|{decision}|{index}|{seat}' for seat in (0, 1)]
+
 
 def prepare_jobs(directory, formal, inputs):
     jobs = []
-    per_job = 25 if formal else 2
+    per_job = 25
     for cell in (25, 45):
         request = inputs[str(cell)]['request']
         checked(request)
@@ -95,7 +99,9 @@ def prepare_jobs(directory, formal, inputs):
                 seed_pair(options['match_id'], options['decision_index'], group*per_job+i, formal)
                 for i in range(per_job)])
             write(folder/'options.json', opts)
-            jobs.append(dict(id=name, request=request, options=pin(folder/'options.json'), n=per_job))
+            jobs.append(dict(id=name, request=request, options=pin(folder/'options.json'), n=per_job,
+                derivation_strings=[derivation_strings(options['match_id'], options['decision_index'],
+                    group*per_job+i, formal) for i in range(per_job)]))
     return jobs
 
 
@@ -158,13 +164,15 @@ def main():
         jobs = prepare_jobs(root/'qualification-inputs', False, inputs)
         manifest = dict(source=pin(__file__), build=pin(BUILD/'completion.json'), binary=binary,
             engineering=pin(REPLAY/'completion.json'), analysis=pin(REPO/'python/tools/analyze_conditional_continuations_v1.py'),
-            owners=pin(B/'bo3-recorder-owners.py'), inputs=inputs, jobs=jobs,
+            owners=pin(B/'bo3-recorder-owners.py'),
+            eligibility=pin(Path(sys.modules['trample_owner_inventory_v1'].__file__)),
+            inputs=inputs, jobs=jobs,
             formal_n=400, domain='conditional-continuation-v1', gpu_ordinal=None,
+            batch_shape='Both qualification and formal: 16 batches of 25 continuations, same fixed root replay per batch; different seed domains.',
             allocation='jack CPU BelowNormal; remote eligibility rechecked before formal work')
         write(root/'manifest.json', manifest)
         reports = []
-        for workers in (1, 2, 4, 8, 16):
-            require(workers <= os.cpu_count(), 'worker count exceeds hardware')
+        for workers in [n for n in (1, 2, 4, 8, 16) if n <= (os.cpu_count() or 1)]:
             report = run_group(root/f'workers-{workers}', jobs, workers, binary)
             require(all(read(checked(j['output']))['continuation']['complete'] for j in report['jobs']),
                     'qualification includes incomplete continuations; diagnose before measurement')
@@ -177,13 +185,13 @@ def main():
         write(root/'choice.json', dict(manifest=pin(root/'manifest.json'), workers=best['workers'],
             report=pin(root/f"workers-{best['workers']}"/'report.json'),
             compared=[pin(root/f"workers-{r['workers']}"/'report.json') for r in reports],
-            exact_outputs_equal=True, qualification_seeds_per_root=16))
+            exact_outputs_equal=True, qualification_seeds_per_root=200))
         print(json.dumps({'qualified':True,'workers':best['workers'],
                           'seconds':{r['workers']:r['seconds'] for r in reports}}))
     else:
         choice = read(root/'choice.json')
         manifest = read(checked(choice['manifest']))
-        for key in ('source','build','binary','engineering','analysis','owners'):
+        for key in ('source','build','binary','engineering','analysis','owners','eligibility'):
             checked(manifest[key])
         require(manifest['source'] == pin(__file__), 'launcher changed since qualification')
         reports = [read(checked(p)) for p in choice['compared']]

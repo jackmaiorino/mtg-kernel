@@ -90,9 +90,10 @@ def analyze(refs):
         require(set(grouped[name]) == set(expected), 'formal seed set is not the declared 200')
         summaries[name] = summarize([grouped[name][s] for s in expected])
     complete = all(s['analysis_complete'] for s in summaries.values())
-    advance = complete and any(s['rejects_one_percent_null'] for s in summaries.values())
+    advance = any(s['rejects_one_percent_null'] is True for s in summaries.values())
     return dict(schema='conditional-continuation-analysis/v1', complete=complete,
         outcome='ADVANCE' if advance else 'NO-ADVANCE',
+        analysis_status='COMPLETE' if complete else 'INCOMPLETE',
         interpretation='Return to reviewed proposal development only' if advance else
             ('Incomplete primary analysis; retain every row' if not complete else 'No root rejected the one-percent null'),
         roots=summaries, inputs=refs,
