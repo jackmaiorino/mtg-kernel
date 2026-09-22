@@ -13,6 +13,8 @@ pub struct Bo3BurnAuditOptionsV1 {
     pub hand_response_tree: bool,
     #[serde(default)]
     pub execute_certificate: bool,
+    #[serde(default)]
+    pub search_leaf_diagnostic: bool,
 }
 impl Bo3BurnAuditOptionsV1 {
     pub fn from_json_v1(text: &str) -> Result<Self, String> {
@@ -95,10 +97,13 @@ impl CombatAuditSink {
         let tensor = crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3 {
             common: policy.last_scored_training_tensor_v4()?.common.clone(),
         };
-        let row = json!({"game_index":game_index, "record":record,
+        let mut row = json!({"game_index":game_index, "record":record,
             "tensor_bits":crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&tensor),
             "logits_bits":scores.logits.iter().map(|x|x.to_bits()).collect::<Vec<_>>(),
             "value_bits":scores.value.to_bits(),"audit":audit});
+        if options.search_leaf_diagnostic {
+            row["search_leaf"]=input.diagnostic_v4_search_leaf_v1(policy,scores)?;
+        }
         self.bytes = serde_json::to_vec(&row).map_err(|e| e.to_string())?.len() as u64;
         ensure(self.bytes <= 4 * 1024 * 1024, "burn root exceeds byte bound")?;
         self.prepared_roots = 1;
