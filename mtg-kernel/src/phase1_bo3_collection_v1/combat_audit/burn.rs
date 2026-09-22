@@ -21,6 +21,8 @@ pub struct Bo3BurnAuditOptionsV1 {
     pub certificate_prior_probe: Option<bool>,
     #[serde(default)]
     pub allocation_diagnostic: bool,
+    #[serde(default)]
+    pub backup_diagnostic: bool,
 }
 impl Bo3BurnAuditOptionsV1 {
     pub fn from_json_v1(text: &str) -> Result<Self, String> {
@@ -113,6 +115,7 @@ impl CombatAuditSink {
         if options.search_core_diagnostic { row["search_core"]=input.diagnostic_v4_search_core_v1(policy)?; }
         if let Some(hand)=options.certificate_prior_probe {row["certificate_priors"]=input.diagnostic_certificate_priors_v4(policy,hand)?;}
         if options.allocation_diagnostic {row["allocation"]=input.diagnostic_allocation_v4(policy)?;}
+        if options.backup_diagnostic {row["backup"]=input.diagnostic_backup_v4(policy)?;}
         self.bytes = serde_json::to_vec(&row).map_err(|e| e.to_string())?.len() as u64;
         ensure(self.bytes <= 4 * 1024 * 1024, "burn root exceeds byte bound")?;
         self.prepared_roots = 1;
