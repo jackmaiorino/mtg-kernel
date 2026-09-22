@@ -106,14 +106,19 @@ pub(super) fn mutated_menu_rejected(s:&FastActorSessionV1,root:crate::rl_session
 /// The result is a report, never a reusable strategy or a live recommendation.
 pub(crate) fn invariance_report(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1,
     audit:fn(&FastActorSessionV1,crate::rl_session::FastActorDecisionV1)->Result<Value,String>)->Result<Value,String> {
-    let baseline=audit(s,root)?;let bytes=serde_json::to_vec(&baseline).map_err(err)?;
+    let started=std::time::Instant::now();
+    let baseline=audit(s,root)?;
+    eprintln!("certificate_audit_timing root_step={} variant=baseline seconds={:.9}",root.step,started.elapsed().as_secs_f64());
+    let bytes=serde_json::to_vec(&baseline).map_err(err)?;
     let binding=Binding::capture(s,root)?;let visible=serde_json::to_vec(&binding).map_err(err)?;
     let before=s.diagnostic_state_hash();let mut variants=Vec::new();
     for (name,library,rng) in [("own_library",Some(seat(root.acting_player) as usize),false),
         ("opponent_library",Some(1-seat(root.acting_player) as usize),false),("randomness",None,true)] {
         let changed=s.diagnostic_certificate_perturbed_clone_v1(library,rng)?;
         ensure(visible==serde_json::to_vec(&Binding::capture(&changed,root)?).map_err(err)?,"certificate perturbation was actor-visible")?;
-        ensure(bytes==serde_json::to_vec(&audit(&changed,root)?).map_err(err)?,"certificate hidden-state invariance failed")?;
+        let started=std::time::Instant::now();let variant=audit(&changed,root)?;
+        eprintln!("certificate_audit_timing root_step={} variant={} seconds={:.9}",root.step,name,started.elapsed().as_secs_f64());
+        ensure(bytes==serde_json::to_vec(&variant).map_err(err)?,"certificate hidden-state invariance failed")?;
         variants.push(name);
     }
     ensure(before==s.diagnostic_state_hash(),"invariance diagnostic mutated source")?;
