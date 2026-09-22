@@ -297,3 +297,59 @@ pub(crate) fn core_diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastAct
     Ok(json!({"schema":"v4-search-core-diagnostic/v1","result":result,"limits":{"simulations":64,"transitions":512,"depth":8,"seed":20260922},
         "tensor_witness":true,"repeat_exact":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Consumed-root correctness only; no action override or strength estimate."}))
 }
+
+/// Follow one already-certified strategy path; opponent responses are passes.
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn certificate_prior_report(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,hand:bool)->Result<serde_json::Value,String> {
+    use crate::expanded_deck_training_v1::stack_features::terminal_tactics::{public_burn_tree,public_hand_burn_tree};
+    use crate::model_guided_search_prior_quantization_v1::{quantize_prior_v1,prior_expansion_order_v1};
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(root)=session.current_response() else{return Err("certificate probe root not live".into())};
+    let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
+    let capture=|t:&NativeFlatDecisionTensorV4|crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&NativeFlatDecisionTensorV3{common:t.common.clone()});
+    let retained=capture(policy.last_scored_training_tensor_v4()?);
+    let audit=if hand{public_hand_burn_tree::audit(session,root)?}else{public_burn_tree::audit(session,root)?};
+    let winning=audit["outcomes"].as_array().ok_or("certificate probe audit unavailable")?.iter()
+        .find(|x|x["tree"][0].as_i64()==Some(1)).ok_or("certificate probe has no winning action")?;
+    let root_action=winning["index"].as_u64().ok_or("root index missing")? as u32;
+    let mut tree=&winning["tree"];let mut sample=session.clone();let e=V4SearchLeafEvaluatorV1::new(policy)?;
+    let mut rows=Vec::new();let mut terminal=false;
+    for depth in 0..=32u32 {
+        let d=match sample.current_response() {
+            FastActorResponseV1::Terminal(t)=>{
+                require(tree[2].as_u64()==Some(2) && tree[0].as_i64()==Some(1)
+                    && t.terminal_classification==crate::rl::TerminalClassificationV1::Natural && t.winner==Some(root.acting_player),"certificate path did not reach natural root win")?;
+                terminal=true;break;
+            },
+            FastActorResponseV1::Decision(d)=>d,
+        };
+        require(depth<32,"certificate path exceeds declared depth")?;
+        let (_,actions)=crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&sample,d).diagnostic_visible_v4()?;
+        let (action,next)=if depth==0 {(root_action,tree)}else{
+            let branches=tree[3].as_array().ok_or("certificate branches missing")?;
+            require(branches.len()==actions.len() && branches.iter().enumerate().all(|(i,x)|x[0].as_u64()==Some(i as u64)),"certificate menu shape differs")?;
+            let own=d.acting_player==root.acting_player;
+            require(tree[2].as_u64()==Some(if own{7}else{8}),"certificate actor reason differs")?;
+            let chosen=if own {branches.iter().find(|x|x[1][0].as_i64()==Some(1))}
+                else {branches.iter().find(|x|x[0].as_u64().is_some_and(|i|matches!(actions.get(i as usize),Some(crate::rl::ActionSemanticV1::Pass{..}))))};
+            let chosen=chosen.ok_or("certificate own winning branch or opponent pass missing")?;
+            (chosen[0].as_u64().ok_or("certificate action missing")? as u32,&chosen[1])
+        };
+        require((action as usize)<actions.len(),"certificate index outside current menu")?;
+        let key=sample.kernel_search_visible_key_v4(32-depth).map_err(|e|format!("{e:?}"))?;
+        let f=e.evaluate_leaf_v1(&sample,key,d.legal_action_count,ModelGuidedSearchLeafSiteV1::NewlyExpandedNode).map_err(|e|format!("{e:?}"))?;
+        let priors=quantize_prior_v1(&f.legal_action_weights).map_err(|e|format!("{e:?}"))?;
+        let rank=prior_expansion_order_v1(&priors).iter().position(|i|*i==action as usize).ok_or("prior rank missing")?;
+        rows.push(json!({"depth":depth,"actor":d.acting_player,"own":d.acting_player==root.acting_player,
+            "selected":action,"selected_action":actions[action as usize],"prior_rank_zero_based":rank,
+            "priors":priors,"raw_value":f.v_raw,"tensor_sha256":e.tensor_digest(&sample,d.legal_action_count)?.iter().map(|b|format!("{b:02x}")).collect::<String>()}));
+        let token=sample.kernel_search_action_token_v4(d).map_err(|e|format!("{e:?}"))?;
+        sample.kernel_search_consume_v4(d,token,action).map_err(|e|format!("{e:?}"))?;
+        tree=next;
+    }
+    require(terminal,"certificate path missing terminal")?;
+    require(before==session.diagnostic_state_hash() && rng==policy.seat_rng && retained==capture(policy.last_scored_training_tensor_v4()?),"certificate probe changed original or policy")?;
+    Ok(json!({"schema":"v4-certificate-prior-path/v1","root_action":root_action,"decision_depth":rows.len(),"rows":rows,
+        "natural_root_win":true,"original_unchanged":true,"policy_unchanged":true,"scope":"One certified path with opponent passes; not worst-case depth or strength."}))
+}

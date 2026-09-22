@@ -19,10 +19,16 @@ pub(crate) struct Census {
     pub natural:u32,pub natural_wins:u32,pub natural_losses:u32,pub natural_draws:u32,pub expanded:u32,pub depth:u32,pub budget:u32,pub coverage:u32,
     pub clip_low:u64,pub clip_high:u64,pub raw_min:Option<f32>,pub raw_max:Option<f32>,pub forwards:u64,
 }
+#[derive(Debug,Default,Clone,PartialEq,Serialize)]
+pub(crate) struct RootWork {
+    pub natural_wins:u32,pub natural_losses:u32,pub natural_draws:u32,
+    pub expanded:u32,pub depth:u32,pub budget:u32,pub coverage:u32,
+    pub transitions:u32,pub forwards:u64,
+}
 #[derive(Debug,Clone,PartialEq,Serialize)]
 pub(crate) struct Outcome {
     pub selected:u32,pub simulations:u32,pub transitions:u32,pub nodes:usize,
-    pub headroom:[u64;2],pub root_visits:Vec<u32>,pub root_value_sums:Vec<i64>,pub census:Census,
+    pub headroom:[u64;2],pub root_visits:Vec<u32>,pub root_value_sums:Vec<i64>,pub census:Census,pub root_priors:Vec<u32>,pub root_work:Vec<RootWork>,
 }
 struct Node {key:[u8;32],actor:PlayerId,visits:u32,prior:Vec<u32>,actions:Vec<SearchActionStatV1>,witness:Option<[u8;32]>}
 type Witness<'a> = Option<&'a mut dyn FnMut(&FastActorSessionV1,u32)->std::result::Result<[u8;32],String>>;
@@ -83,10 +89,12 @@ pub(crate) fn search_inner<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&
     let mut census=Census::default();let f=forward(e,session,root_key,d,Site::RootPrior,&mut census)?;
     let mut tree=vec![node(root_key,root,&f,witness(&mut w,session,count)?)?];
     let coverage_order=prior_expansion_order_v1(&tree[0].prior);
+    let mut root_work=vec![RootWork::default();count as usize];
     let mut simulations=0;let mut transitions=0;
     while simulations<l.simulations && transitions<l.transitions {
         let mut sample=session.kernel_search_redeterminized_clone_v4(seed(root_key,l.seed,simulations))
             .map_err(|x|Error::State(format!("{x:?}")))?;
+        let census_before=census.clone();let transitions_before=transitions;
         let coverage=simulations<count;let mut remaining=l.depth;let mut at=0usize;
         let mut path=vec![0usize];let mut edges=Vec::new();let result;
         loop {
@@ -123,6 +131,13 @@ pub(crate) fn search_inner<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&
                 census.expanded+=1;result=value(&f,actor,root)?;break;
             }
         }
+        let rw=&mut root_work[edges[0].1];
+        rw.natural_wins+=census.natural_wins-census_before.natural_wins;
+        rw.natural_losses+=census.natural_losses-census_before.natural_losses;
+        rw.natural_draws+=census.natural_draws-census_before.natural_draws;
+        rw.expanded+=census.expanded-census_before.expanded;rw.depth+=census.depth-census_before.depth;
+        rw.budget+=census.budget-census_before.budget;rw.coverage+=census.coverage-census_before.coverage;
+        rw.transitions+=transitions-transitions_before;rw.forwards+=census.forwards-census_before.forwards;
         for i in path {tree[i].visits+=1;}
         for (i,a) in edges {tree[i].actions[a].visits+=1;tree[i].actions[a].value_sum+=i64::from(result);}
         simulations+=1;
@@ -133,7 +148,7 @@ pub(crate) fn search_inner<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|x|Error::Evaluator(format!("{x:?}")))?;
     Ok(Outcome{selected:select_final_root_action_v1(&tree[0].actions).map_err(|_|Error::CorruptTree)?,
         simulations,transitions,nodes:tree.len(),headroom,
-        root_visits:tree[0].actions.iter().map(|a|a.visits).collect(),root_value_sums:tree[0].actions.iter().map(|a|a.value_sum).collect(),census})
+        root_visits:tree[0].actions.iter().map(|a|a.visits).collect(),root_value_sums:tree[0].actions.iter().map(|a|a.value_sum).collect(),census,root_priors:tree[0].prior.clone(),root_work})
 }
 
 #[cfg(test)]
@@ -165,6 +180,13 @@ mod tests {
             assert_eq!(a.simulations,32);assert!(a.transitions<=128);
             assert!(a.root_visits.iter().all(|x|*x>0));assert!(a.selected<(a.root_visits.len() as u32));
             assert!(a.nodes>1);assert!(a.census.expanded>0);
+            assert_eq!(a.root_priors.iter().sum::<u32>(),1_000_000);
+            assert_eq!(a.root_work.iter().map(|x|x.transitions).sum::<u32>(),a.transitions);
+            assert_eq!(a.root_work.iter().map(|x|x.forwards).sum::<u64>()+1,a.census.forwards);
+            for (rw,visits) in a.root_work.iter().zip(&a.root_visits) {
+                assert_eq!(rw.natural_wins+rw.natural_losses+rw.natural_draws+rw.expanded+rw.depth+rw.budget+rw.coverage,*visits);
+            }
+
         }
     }
     #[test]
