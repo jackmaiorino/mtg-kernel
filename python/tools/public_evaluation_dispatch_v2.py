@@ -3,6 +3,15 @@
 Native worker, recovery format and integrity checks are unchanged. Only fixed
 host assignment adds an optional integer job_weight. Never pool split matches.
 """
+
+
+def _require(condition, message=None):
+    """Launch integrity checks must survive Python optimization."""
+    if not condition:
+        if message is None:
+            raise AssertionError()
+        raise AssertionError(message())
+
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import json
@@ -17,13 +26,13 @@ from public_evaluation_dispatch_v1 import (
 
 
 def dispatch(root, label, binary, jobs, allocation, remote, group_wall_seconds=900):
-    assert re.fullmatch(r"[a-z0-9-]+", label)
+    _require((re.fullmatch(r"[a-z0-9-]+", label)))
     destination = root/label
     destination.mkdir()
     started = time.monotonic()
     staged = {}
     hosts = sorted(allocation)
-    assert set(hosts) <= set(HOSTS) and hosts
+    _require((set(hosts) <= set(HOSTS) and hosts))
     # Fixed weighted round robin changes placement only, never case content.
     cycle = []
     for host in hosts:
@@ -38,14 +47,14 @@ def dispatch(root, label, binary, jobs, allocation, remote, group_wall_seconds=9
         raise ValueError("allocation has a host without work")
     for host, settings in allocation.items():
         current = inventory(host)
-        assert not current["active"], "preserve competing native work"
+        _require((not current["active"]), lambda: ("preserve competing native work"))
         write(destination/f"{host}-inventory.json", current)
         drive = settings["drive"]
         partition = next(p for p in current["partitions"] if p["DriveLetter"] == drive)
         disk = next(d for d in current["disks"] if d["Number"] == partition["DiskNumber"])
-        assert disk["SerialNumber"] == settings["disk_serial"] and disk["FriendlyName"] == settings["disk_name"]
+        _require((disk["SerialNumber"] == settings["disk_serial"] and disk["FriendlyName"] == settings["disk_name"]))
         volume = next(v for v in current["volumes"] if v["DriveLetter"] == drive)
-        assert volume["SizeRemaining"] > 10*1024**3
+        _require((volume["SizeRemaining"] > 10*1024**3))
         canonical = destination/host
         canonical.mkdir()
         native = Path(f"{drive}:/mtg-state-prevention-eval/{root.name}/{label}") if host == "jack" else Path(remote["native_root"])/label
@@ -60,7 +69,7 @@ def dispatch(root, label, binary, jobs, allocation, remote, group_wall_seconds=9
             group_wall_seconds=group_wall_seconds, job_wall_seconds=300, jobs=[])
         for item in assigned[host]:
             identifier = item["id"]
-            assert re.fullmatch(r"[a-zA-Z0-9-]+", identifier)
+            _require((re.fullmatch(r"[a-zA-Z0-9-]+", identifier)))
             folder = canonical/"jobs"/identifier
             folder.mkdir(parents=True)
             native_folder = native/"jobs"/identifier
@@ -117,35 +126,35 @@ try {{
         if host == "jack":
             shutil.copytree(native, recovered)
             native_hashes = {p.relative_to(native).as_posix():pin(p)["sha256"] for p in native.rglob("*") if p.is_file()}
-            assert all(pin(recovered/name)["sha256"] == digest for name,digest in native_hashes.items())
+            _require((all(pin(recovered/name)["sha256"] == digest for name,digest in native_hashes.items())))
             write(canonical/"recovery.json", dict(files=len(native_hashes), mismatches=0, native_directory=str(native), hashes=native_hashes))
         else:
             exported = json.loads(ssh(f"& python '{remote['native_root']}/worker.py' --export '{native.as_posix()}'", timeout=180))
             subprocess.run(["scp", "-q", f"{REMOTE}:{native.as_posix()}/results.zip", str(canonical/"results.zip")], check=True, timeout=180)
-            assert pin(canonical/"results.zip")["sha256"] == exported["sha256"]
+            _require((pin(canonical/"results.zip")["sha256"] == exported["sha256"]))
             recovered.mkdir()
             with zipfile.ZipFile(canonical/"results.zip") as archive:
-                assert all((recovered/name).resolve().is_relative_to(recovered.resolve()) for name in archive.namelist())
+                _require((all((recovered/name).resolve().is_relative_to(recovered.resolve()) for name in archive.namelist())))
                 archive.extractall(recovered)
             native_hashes = read(recovered/"export-manifest.json")
-            assert all(pin(recovered/name)["sha256"] == digest for name,digest in native_hashes.items())
+            _require((all(pin(recovered/name)["sha256"] == digest for name,digest in native_hashes.items())))
             write(canonical/"recovery.json", dict(files=len(native_hashes), mismatches=0, native_directory=str(native), export=exported, hashes=native_hashes))
         for item in assigned[host]:
             folder = recovered/"jobs"/item["id"]
             request = read(folder/"request.json")
-            assert pin(folder/"request.json")["sha256"] == pin(canonical/"jobs"/item["id"]/"request.json")["sha256"]
+            _require((pin(folder/"request.json")["sha256"] == pin(canonical/"jobs"/item["id"]/"request.json")["sha256"]))
             completion = read(folder/"outputs/completion.json")
-            assert completion["matches"] == len(item["command"]["matches"]) == len(completion["match_sha256"])
+            _require((completion["matches"] == len(item["command"]["matches"]) == len(completion["match_sha256"])))
             games = decisions = 0
             for index, digest in enumerate(completion["match_sha256"]):
                 path = folder/f"outputs/match-{index:06}.json"
-                assert pin(path)["sha256"] == digest
+                _require((pin(path)["sha256"] == digest))
                 match = read(path)
-                assert match["match"] == request["matches"][index] and not match["decisions"]
+                _require((match["match"] == request["matches"][index] and not match["decisions"]))
                 games += len(match["games"])
                 decisions += match["decision_count"]
                 fingerprints[f"{item['id']}/{index}"] = digest
-            assert games == completion["natural_games"] and decisions == completion["decisions"]
+            _require((games == completion["natural_games"] and decisions == completion["decisions"]))
             output_jobs.append(dict(id=item["id"], arm=item["arm"], label=item["label"],
                 request=pin(canonical/"jobs"/item["id"]/"request.json"), execution=pin(folder/"execution.json"),
                 output_directory=str(folder/"outputs"), host=host, recovery=pin(canonical/"recovery.json")))
