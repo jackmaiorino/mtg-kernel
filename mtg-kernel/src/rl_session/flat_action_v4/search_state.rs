@@ -14,6 +14,9 @@ pub(crate) enum V4SearchStateErrorV1 {
     DecisionLocalLibrary,
     InvalidVisibleBinding,
     HiddenStateContract,
+    SampleCandidateRebuildFailed,
+    SampleBoundaryEncodingFailed,
+    SampleBoundaryChanged,
     StepFailed,
     HaltedSimulation,
 }
@@ -67,7 +70,7 @@ impl FastActorSessionV1 {
         sampler::redeterminize(&mut copy.state,actor,seed)?;
         after_sample(&mut copy.state,actor);
         let mut current=copy.current.take().ok_or(Error::NoLiveDecision)?;
-        current.candidates=core_policy_action_candidates_v5(&current.origin_decision,&copy.state).map_err(|_|Error::HiddenStateContract)?;
+        current.candidates=core_policy_action_candidates_v5(&current.origin_decision,&copy.state).map_err(|_|Error::SampleCandidateRebuildFailed)?;
         current.flat_action_cache=None;current.flat_action_cache_error=None;
         current.flat_action_cache_v2=None;current.flat_action_cache_error_v2=None;
         // V3 normalization owns the live candidate ordering. Its cache may
@@ -76,8 +79,8 @@ impl FastActorSessionV1 {
         flat_install_action_cache_build_result_v2(&mut current,cache);
         copy.flat_action_cache_spare=None;copy.flat_action_cache_spare_v2=None;
         copy.current=Some(current);
-        let after=boundary(&copy,d).map_err(|_|Error::HiddenStateContract)?;
-        if before!=after {return Err(Error::HiddenStateContract);}
+        let after=boundary(&copy,d).map_err(|_|Error::SampleBoundaryEncodingFailed)?;
+        if before!=after {return Err(Error::SampleBoundaryChanged);}
         Ok(copy)
     }
 }
@@ -140,7 +143,7 @@ mod tests {
         let library=FastActorSessionV1::from_v3_fixture_state(crate::policy_observation_v6::tests::forest_search_state(false,"Lightning Bolt"));
         assert!(matches!(library.kernel_search_redeterminized_clone_v4(1),Err(Error::DecisionLocalLibrary)));
         let s=FastActorSessionV1::from_v3_fixture_state(state(PlayerId::P0));
-        assert!(matches!(s.search_clone_v4_inner(8172,|state,actor|state.players[actor.index()].life-=1),Err(Error::HiddenStateContract)));
+        assert!(matches!(s.search_clone_v4_inner(8172,|state,actor|state.players[actor.index()].life-=1),Err(Error::SampleBoundaryChanged)));
     }
     #[test]
     fn v4_search_clone_rejects_legacy_contract_and_terminal() {

@@ -47,6 +47,7 @@
 
 use super::*;
 mod search_state;
+pub(crate) use search_state::V4SearchStateErrorV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 

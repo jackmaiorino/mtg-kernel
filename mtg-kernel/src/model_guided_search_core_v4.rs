@@ -4,7 +4,7 @@ use crate::kernel_native_search_opponent_v1::{SearchActionStatV1,integer_ucb_bon
 use crate::model_guided_search_core_v1::{ModelGuidedSearchLeafEvaluatorV1 as Evaluator,ModelGuidedSearchLeafForwardV1 as Forward,ModelGuidedSearchLeafSiteV1 as Site};
 use crate::model_guided_search_prior_quantization_v1::{quantize_prior_v1,prior_expansion_order_v1,puct_bonus_v1};
 use crate::model_guided_search_value_quantization_v1::{quantize_value_v1,ModelGuidedSearchValueHeadDomainV1};
-use crate::rl_session::{FastActorSessionV1,FastActorResponseV1,FastActorDecisionV1};
+use crate::rl_session::{FastActorSessionV1,FastActorResponseV1,FastActorDecisionV1,V4SearchStateErrorV1};
 use crate::rl::TerminalClassificationV1;
 use serde::Serialize;
 use sha2::{Digest,Sha256};
@@ -12,7 +12,9 @@ use sha2::{Digest,Sha256};
 #[derive(Debug,Clone,Copy)]
 pub(crate) struct Limits {pub simulations:u32,pub transitions:u32,pub depth:u16,pub seed:u64}
 #[derive(Debug,Clone,PartialEq,Eq)]
-pub(crate) enum Error {NoDecision,InvalidBudget,InsufficientHeadroom,State(String),Evaluator(String),NonNaturalTerminal,CorruptTree}
+pub(crate) enum Error {NoDecision,InvalidBudget,InsufficientHeadroom,State{stage:StateStage,source:V4SearchStateErrorV1},Evaluator(String),NonNaturalTerminal,CorruptTree}
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub(crate) enum StateStage {Key,Redeterminize,Token,Consume}
 type Result<T> = std::result::Result<T,Error>;
 #[derive(Debug,Default,Clone,PartialEq,Serialize)]
 pub(crate) struct Census {
@@ -52,7 +54,7 @@ fn live(s:&FastActorSessionV1)->Result<FastActorDecisionV1> {
     match s.current_response(){FastActorResponseV1::Decision(d)=>Ok(d),_=>Err(Error::NoDecision)}
 }
 fn key(s:&FastActorSessionV1,depth:u16)->Result<[u8;32]> {
-    s.kernel_search_visible_key_v4(u32::from(depth)).map_err(|e|Error::State(format!("{e:?}")))
+    s.kernel_search_visible_key_v4(u32::from(depth)).map_err(|source|Error::State{stage:StateStage::Key,source})
 }
 fn seed(root:[u8;32],experiment:u64,ordinal:u32)->u64 {
     let mut h=Sha256::new();h.update(b"mtg-kernel/v4-info-set-simulation/v1\0");h.update(root);
@@ -120,7 +122,7 @@ pub(crate) fn search_with_policies<E:Evaluator>(session:&FastActorSessionV1,l:Li
     let mut simulations=0;let mut transitions=0;
     while simulations<l.simulations && transitions<l.transitions {
         let mut sample=session.kernel_search_redeterminized_clone_v4(seed(root_key,l.seed,simulations))
-            .map_err(|x|Error::State(format!("{x:?}")))?;
+            .map_err(|source|Error::State{stage:StateStage::Redeterminize,source})?;
         let census_before=census.clone();let transitions_before=transitions;
         let coverage=simulations<count;let mut remaining=l.depth;let mut at=0usize;
         let mut choices=Vec::new();let mut path=vec![0usize];let mut edges=Vec::new();let result;
@@ -135,8 +137,8 @@ pub(crate) fn search_with_policies<E:Evaluator>(session:&FastActorSessionV1,l:Li
             let mode=if coverage{"coverage"}else if round_robin{"round_robin"}else if tree[at].actions[action].visits==0{"unvisited"}else if bonus_policy==InteriorBonus::PriorFree{"prior_free"}else{"puct"};
             let scores=tree[at].actions.iter().enumerate().map(|(i,a)|if a.visits==0{Ok(None)}else{score(&tree[at],root,i,bonus_policy).map(Some)}).collect::<Result<Vec<_>>>()?;
             choices.push(TraceChoice{node:at,action,mode,scores});
-            let token=sample.kernel_search_action_token_v4(current).map_err(|x|Error::State(format!("{x:?}")))?;
-            let response=sample.kernel_search_consume_v4(current,token,action as u32).map_err(|x|Error::State(format!("{x:?}")))?;
+            let token=sample.kernel_search_action_token_v4(current).map_err(|source|Error::State{stage:StateStage::Token,source})?;
+            let response=sample.kernel_search_consume_v4(current,token,action as u32).map_err(|source|Error::State{stage:StateStage::Consume,source})?;
             transitions+=1;remaining-=1;edges.push((at,action));
             let next=match response {
                 FastActorResponseV1::Terminal(t)=>{
@@ -271,7 +273,7 @@ mod tests {
         let id=put(&mut state,PlayerId::P0,"Forest",crate::state::Zone::Library);
         state.engine.initiative_source=Some(crate::state::AbilitySourceContractV4::capture(&state,id));
         let s=FastActorSessionV1::from_v3_fixture_state(state);let before=s.diagnostic_state_hash();
-        assert!(matches!(search(&s,Limits{simulations:32,transitions:128,depth:4,seed:0},&e),Err(Error::State(_))));
+        assert!(matches!(search(&s,Limits{simulations:32,transitions:128,depth:4,seed:0},&e),Err(Error::State{stage:StateStage::Redeterminize,source:V4SearchStateErrorV1::HiddenStateContract})));
         assert_eq!(before,s.diagnostic_state_hash());
     }
     #[test]
