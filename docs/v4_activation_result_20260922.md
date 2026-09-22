@@ -4,12 +4,12 @@
 
 ## Outcomes
 
-| Consumed position | Controller | Played root | Certified root | Natural outcome | Committed search decisions | Game policy steps |
-|---|---|---:|---:|---|---:|---:|
-| Burn, game1/index242/P1 | Mean | 0 | 0 | P1 win | 1 | 241 |
-| Burn, game1/index242/P1 | E | 0 | 0 | P1 win | 1 | 241 |
-| Hand, game2/index113/P1 | Mean | 3 | 0 | P1 win | 16 | 94 |
-| Hand, game2/index113/P1 | E | 0 | 0 | P1 win | 3 | 68 |
+| Consumed position | Controller | Played root | Certified root | Natural outcome | Committed search decisions | Switch step | Remaining policy steps | Game policy steps |
+|---|---|---:|---:|---|---:|---:|---:|---:|
+| Burn, game1/index242/P1 | Mean | 0 | 0 | P1 win | 1 | 239 | 2 | 241 |
+| Burn, game1/index242/P1 | E | 0 | 0 | P1 win | 1 | 239 | 2 | 241 |
+| Hand, game2/index113/P1 | Mean | 3 | 0 | P1 win | 16 | 65 | 29 | 94 |
+| Hand, game2/index113/P1 | E | 0 | 0 | P1 win | 3 | 65 | 3 | 68 |
 
 g115 checkpoint SHA88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1; S128/T1024/depth8/seed20260922, RoundRobin/PriorFree; designated P1 switches at the exact root, ordinary opponent unchanged. Existing mean final selection is max visits then mean. E uses the unchanged lowest-index tie rule. No budget/cap/tie tuning. Both original archived target games also won for P1, in248/141policy steps; mean's Hand root miss was not an eventual game loss.
 
@@ -27,4 +27,10 @@ Literature posted before actual activation: collab/lit/20260922-v4-activation.md
 
 Next decision: accept the bounded closed-loop route as implemented and prepare a separately reviewed, representative whole-match availability and power design. Do not choose budgets, checkpoint, tie rule or candidate promotion from these two fixtures. Search-altered state coverage, incomplete-match handling, whole-match comparison, monitor/seed authority and useful-throughput qualification remain outstanding. No CP7-derived selection, human interface or league authorization.
 
-Result cross-examination is running in B/v4-activation-result-review-001, reusing the recorded activation review session. No subsequent measurement or direction change has been launched while that review is pending.
+Result cross-examination B/v4-activation-result-review-001 COMPLETEexit0/is_errorfalse, actual reads and targeted raw-output field inspection, same session6daefb5f-e241-443b-9f8f-6c00972208c4. Proceed for implemented fixture behavior, no gate/promotion/tuning. Accepted its requested switch/remaining-step disclosure above: these positions are terminal-adjacent and give little evidence about broad controller quality. Earlier-game and byte-cap integration observations are closed by actual results.
+
+Reasoned disagreements: the review called E=10000 at the last Hand root a forced win. Rejected that inference: this heuristic estimator over sampled successors is not a proof procedure, even at10000. The independent certificate at the original root and actual natural terminal are different evidence. Negative empirical means followed by a played win likewise do not establish calibration error or uniquely identify pessimistic hidden-state samples; backup, finite search and state distribution remain alternatives. Retain these as hypotheses, not measured causal explanations.
+
+Accepted next question: early/full-game completion, abort taxonomy and actual cost before a strength gate. Fresh non-consumed seeds, suggested by the reviewer, are deferred to the monitor's seed-authority requirement; a consumed diagnostic frame can answer implementation readiness without consuming a holdout or making a strength claim. Draft v4_wholematch_readiness_design_20260922.md remains unlaunched/unfrozen. Pilot paired-match variance cannot replace the user's required between-training-run dispersion analysis for lineage claims; both estimands must be explicit in a future design.
+
+Reviewer-suggested secondary analysis used only the existing96-root frozen census, with Rust-style signed integer division:47roots have every empirical mean<0;55have selectedE>0;6have both, in4matches (2descriptive tactical menus). B/v4-report-census-summary-001/posthoc-negative-mean-positive-E.json pins the source and lists all6. This posthoc sign count adds no model executions and demonstrates neither calibration, proof, prevalence nor policy quality. It is not a new selection filter.
