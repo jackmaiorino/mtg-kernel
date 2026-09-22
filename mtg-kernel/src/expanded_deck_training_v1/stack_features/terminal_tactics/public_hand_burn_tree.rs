@@ -36,7 +36,7 @@ fn aggregate(branches: Vec<(u32, Tree)>, own: bool) -> Tree {
     Tree { lower, upper, reason: if own { "own_choice" } else { "opponent_choice" }, branches, binding: None }
 }
 fn explore(s: &FastActorSessionV1, initial: &crate::state::GameState,
-    actor: crate::rl::PlayerSeatV1, depth: u32, remaining: &mut u32) -> Result<Tree, String> {
+    actor: crate::rl::PlayerSeatV1, depth: u32, remaining: &mut u32, capture_binding: bool) -> Result<Tree, String> {
     if !unchanged_information(initial, s.game_state())
         || !s.game_state().players[1-seat(actor) as usize].hand.is_empty() {
         return Ok(unknown("information_boundary"));
@@ -69,12 +69,12 @@ fn explore(s: &FastActorSessionV1, initial: &crate::state::GameState,
             else {
                 *remaining-=1;let mut child=s.clone();
                 child.step(d.episode_id,d.step,i as u32).map_err(err)?;
-                explore(&child,initial,actor,depth-1,remaining)?
+                explore(&child,initial,actor,depth-1,remaining,capture_binding)?
             };
         branches.push((i as u32,child));
     }
     let mut tree=aggregate(branches,d.acting_player==actor);
-    tree.binding=Some(certificate_execution::Binding::capture(s,d)?);
+    if capture_binding && tree.lower==1 {tree.binding=Some(certificate_execution::Binding::capture(s,d)?);}
     Ok(tree)
 }
 impl certificate_execution::Proof for Tree {
@@ -104,7 +104,7 @@ fn audit_inner(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1
     for i in 0..root.legal_action_count {
         let mut child=s.clone();child.step(root.episode_id,root.step,i).map_err(err)?;
         let mut remaining=NODES-1;
-        let tree=explore(&child,initial,root.acting_player,DEPTH-1,&mut remaining)?;
+        let tree=explore(&child,initial,root.acting_player,DEPTH-1,&mut remaining,execute)?;
         outcomes.push(json!({"index":i,"transitions":NODES-remaining,"tree":tree}));
         trees.push((i,tree));
     }
