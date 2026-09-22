@@ -4,12 +4,27 @@ use super::*;
 const DEPTH: u32 = 32;
 const NODES: u32 = 8192;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct Tree {
     lower: i8,
     upper: i8,
     reason: &'static str,
     branches: Vec<(u32, Tree)>,
+}
+// Lossless compact wire form keeps every branch under the recorder byte cap.
+// [lower, upper, reason_code, [[action_index, child], ...]]
+impl Serialize for Tree {
+    fn serialize<S: serde::Serializer>(&self, serializer:S)->Result<S::Ok,S::Error> {
+        use serde::ser::SerializeTuple;
+        let code=match self.reason {
+            "information_boundary"=>0u8,"non_natural"=>1,"natural_terminal"=>2,
+            "depth_limit"=>3,"menu_limit"=>4,"unsupported_action"=>5,"node_limit"=>6,
+            "own_choice"=>7,"opponent_choice"=>8,"test"=>9,_=>return Err(serde::ser::Error::custom("unknown burn tree reason")),
+        };
+        let mut tuple=serializer.serialize_tuple(4)?;
+        tuple.serialize_element(&self.lower)?;tuple.serialize_element(&self.upper)?;
+        tuple.serialize_element(&code)?;tuple.serialize_element(&self.branches)?;tuple.end()
+    }
 }
 fn unknown(reason: &'static str) -> Tree {
     Tree { lower: -1, upper: 1, reason, branches: Vec::new() }
@@ -72,6 +87,8 @@ pub(crate) fn audit(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecis
     ensure(s.current_response()==FastActorResponseV1::Decision(root),"burn tree mutated root")?;
     Ok(json!({"status":"audited","schema":"public-bolt-island-response-tree/v1","visible":visible,"actions":actions,
         "depth":DEPTH,"nodes_per_action":NODES,"outcomes":outcomes,
+        "tree_encoding":"[lower,upper,reason_code,[[action_index,child],...]]",
+        "reason_codes":["information_boundary","non_natural","natural_terminal","depth_limit","menu_limit","unsupported_action","node_limit","own_choice","opponent_choice","test"],
         "non_claim":"Shadow-only bound under public responses; unsupported and budget-limited branches stay unknown. No certified training dataset or playing-strength claim."}))
 }
 
