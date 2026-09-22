@@ -74,7 +74,7 @@ fn run() -> Result<(), String> {
     let auditing = args.len() == 6
         && args[0] == "--request"
         && args[2] == "--output"
-        && (args[4] == "--combat-audit" || args[4] == "--burn-audit");
+        && (args[4] == "--combat-audit" || args[4] == "--burn-audit" || args[4] == "--continuation");
     if !preparing
         && !auditing
         && (args.len() != 4 || args[0] != "--request" || args[2] != "--output")
@@ -121,7 +121,16 @@ fn run() -> Result<(), String> {
         )
     } else {
         let request = Bo3CollectionRequestV1::from_json_v1(text)?;
-        if auditing && args[4] == "--burn-audit" {
+        if auditing && args[4] == "--continuation" {
+            use mtg_kernel::phase1_bo3_collection_v1::{collect_bo3_with_continuation_v1, Bo3ContinuationOptionsV1};
+            let mut options = String::new();
+            std::fs::File::open(&args[5]).map_err(|e| e.to_string())?
+                .take(32769).read_to_string(&mut options).map_err(|e| e.to_string())?;
+            let result = collect_bo3_with_continuation_v1(request.config, request.packages,
+                Bo3ContinuationOptionsV1::from_json_v1(&options)?)?;
+            let summary = format!("continuation complete={}", result.continuation["complete"]);
+            (serde_json::to_vec(&result).map_err(|e| e.to_string())?, summary)
+        } else if auditing && args[4] == "--burn-audit" {
             use mtg_kernel::phase1_bo3_collection_v1::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
             let mut options = String::new();
             std::fs::File::open(&args[5]).map_err(|e| e.to_string())?

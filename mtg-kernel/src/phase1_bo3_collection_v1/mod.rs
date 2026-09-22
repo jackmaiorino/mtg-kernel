@@ -29,6 +29,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 mod combat_audit;
+mod continuation;
+pub use continuation::{collect_bo3_with_continuation_v1, Bo3ContinuationOptionsV1, Bo3ContinuationResultV1};
 pub use combat_audit::{collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1, Bo3CombatAuditResultV1};
 pub use combat_audit::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
 
@@ -143,7 +145,18 @@ fn collect_public_inner(
     capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
     combat: Option<&mut combat_audit::CombatAuditSink>,
 ) -> Result<Bo3CollectionResultV1, String> {
+    collect_public_observed(config, packages, capture, combat, None)
+}
+fn collect_public_observed(
+    config: Bo3CollectionConfigV1,
+    packages: [CompleteAgentPackageV1; 2],
+    capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
+    combat: Option<&mut combat_audit::CombatAuditSink>,
+    continuation: Option<&mut continuation::ContinuationSink>,
+) -> Result<Bo3CollectionResultV1, String> {
     ensure(capture.is_none() || combat.is_none(), "combat audit cannot produce a learning capture")?;
+    ensure(continuation.is_none() || (capture.is_none() && combat.is_none()),
+        "continuation cannot accompany learning or combat capture")?;
     validate_configuration(&config, packages.each_ref())?;
     let [p0, p1] = packages
         .each_ref()
@@ -152,13 +165,14 @@ fn collect_public_inner(
     let p1 = p1?;
     let mut policies = [p0.gameplay, p1.gameplay];
     let heads = [p0.sideboard, p1.sideboard];
-    let collected = collect_loaded_observed(
+    let collected = collect_loaded_with_continuation(
         &config,
         packages.each_ref(),
         &mut policies,
         heads.each_ref().map(Option::as_ref),
         capture,
         combat,
+        continuation,
     )?;
     Ok(Bo3CollectionResultV1 {
         schema: BO3_COLLECTION_RESULT_SCHEMA_V1.into(),
@@ -352,10 +366,23 @@ fn collect_loaded_observed(
     packages: [&CompleteAgentPackageV1; 2],
     policies: &mut [FrozenPlayPolicyV1; 2],
     heads: [Option<&LearnedSideboardModelV1>; 2],
+    capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
+    combat: Option<&mut combat_audit::CombatAuditSink>,
+) -> Result<Bo3CollectedMatchV1, String> {
+    collect_loaded_with_continuation(config, packages, policies, heads, capture, combat, None)
+}
+fn collect_loaded_with_continuation(
+    config: &Bo3CollectionConfigV1,
+    packages: [&CompleteAgentPackageV1; 2],
+    policies: &mut [FrozenPlayPolicyV1; 2],
+    heads: [Option<&LearnedSideboardModelV1>; 2],
     mut capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
     mut combat: Option<&mut combat_audit::CombatAuditSink>,
+    mut continuation: Option<&mut continuation::ContinuationSink>,
 ) -> Result<Bo3CollectedMatchV1, String> {
     validate_configuration(config, packages)?;
+    ensure(continuation.is_none() || policies.iter().all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
+        "continuation requires actual V4 gameplay policies")?;
     ensure(combat.is_none() || policies.iter().all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
         "combat audit requires both actual V4 gameplay policies")?;
     // Strict whole-generation equality between the two seats, not just the
@@ -478,6 +505,7 @@ fn collect_loaded_observed(
             &mut diagnostic,
             capture.as_deref_mut(),
             combat.as_deref_mut(),
+            continuation.as_deref_mut(),
         );
         trajectory.games.push(game);
         match played {
@@ -538,6 +566,7 @@ fn play_game(
     diagnostic: &mut Bo3CollectionGameDiagnosticsV1,
     capture: Option<&mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
     combat: Option<&mut combat_audit::CombatAuditSink>,
+    continuation: Option<&mut continuation::ContinuationSink>,
 ) -> Result<GameSummaryV1, Stop> {
     let wins = [PlayerId::P0, PlayerId::P1].map(|p| match_session.match_state().wins(p).unwrap());
     if game.game_index > 1 {
@@ -648,6 +677,7 @@ fn play_game(
         rejected_selections: 0,
         capture,
         combat,
+        continuation,
     };
     recorder
         .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
@@ -697,6 +727,7 @@ struct Pending {
     json_size: u64,
     native: Option<crate::phase1_bo3_learning_v1::PendingNativeCapture>,
     combat: Option<serde_json::Value>,
+    continuation: Option<continuation::ContinuationCapture>,
 }
 struct RecordingPolicy<'a> {
     policies: &'a mut [FrozenPlayPolicyV1; 2],
@@ -708,6 +739,7 @@ struct RecordingPolicy<'a> {
     rejected_selections: u64,
     capture: Option<&'a mut crate::phase1_bo3_learning_v1::CaptureBuffer>,
     combat: Option<&'a mut combat_audit::CombatAuditSink>,
+    continuation: Option<&'a mut continuation::ContinuationSink>,
 }
 impl RecordingPolicy<'_> {
     fn finish_game(
@@ -775,6 +807,9 @@ impl RecordingPolicy<'_> {
             )?;
         }
         if let Some(pending) = self.pending.take() {
+            if let Some(continuation) = pending.continuation {
+                self.continuation.as_deref_mut().ok_or("continuation sink missing")?.commit(continuation)?;
+            }
             self.budget
                 .append_checked(self.game, pending.record, pending.json_size);
             if let Some(combat) = pending.combat {
@@ -879,12 +914,16 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
             sink.prepare(&input, &record, self.game.game_index,
                 &self.policies[seat(decision.acting_player)], &scores).map_err(recording_error)?
         } else { None };
+        let continuation = if let Some(sink) = self.continuation.as_deref() {
+            sink.prepare(&input, &record, self.game.game_index, self.policies).map_err(recording_error)?
+        } else { None };
         self.pending = Some(Pending {
             step: decision.step,
             record,
             json_size: size,
             native,
             combat,
+            continuation,
         });
         self.rejected_selections -= 1;
         Ok(selected)

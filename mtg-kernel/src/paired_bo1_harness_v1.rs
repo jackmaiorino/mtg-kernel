@@ -43,6 +43,10 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         Ok(continuation)
     }
 
+    pub(crate) fn diagnostic_continuation_headroom_v1(&self) -> [u64; 2] {
+        self.session.diagnostic_remaining_headroom_v1()
+    }
+
     /// Opt-in evaluation recorder only. The playing policy is not changed by
     /// these bounded counterfactuals and receives no cloned hidden game state.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
