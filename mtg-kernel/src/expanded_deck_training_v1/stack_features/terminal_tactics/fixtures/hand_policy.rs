@@ -28,9 +28,11 @@ fn line(session:&FastActorSessionV1,index:u32)->Result<Value,String> {
     let FastActorResponseV1::Decision(root)=branch.current_response() else {return Err("missing root".into());};
     for step in 0..32 {
         let after=branch.game_state();
-        ensure(initial.turn==after.turn && initial.library_knowledge==after.library_knowledge
+        if !(initial.turn==after.turn && initial.library_knowledge==after.library_knowledge
             && (0..2).all(|i|initial.players[i].library==after.players[i].library
-                && initial.players[i].draws_this_turn==after.players[i].draws_this_turn),"hand witness crossed information boundary")?;
+                && initial.players[i].draws_this_turn==after.players[i].draws_this_turn)) {
+            return Err(format!("hand witness crossed information boundary: root_index={index} step={step} initial_turn={} after_turn={} after_phase={:?} knowledge_same={} library_same={} draws_same={} path={path:?}",initial.turn,after.turn,after.step,initial.library_knowledge==after.library_knowledge,(0..2).all(|i|initial.players[i].library==after.players[i].library),(0..2).all(|i|initial.players[i].draws_this_turn==after.players[i].draws_this_turn)));
+        }
         ensure(after.players[1-seat(root.acting_player) as usize].hand.is_empty(),"opponent gained hidden response")?;
         let d=match branch.current_response() {
             FastActorResponseV1::Terminal(t)=>{
