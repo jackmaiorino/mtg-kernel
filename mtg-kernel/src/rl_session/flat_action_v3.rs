@@ -989,6 +989,13 @@ pub(crate) fn shuffle_trigger_source_into_library_v1(
         assert_eq!(object.zone, Zone::Battlefield);
         object.zone = Zone::Library;
         object.zone_change_count += 1;
+        object.v4.reset_for_zone_change(object.card_def, Zone::Library, state.turn);
+        object.controller = object.owner;
+        object.tapped = false;
+        object.summoning_sick = false;
+        object.damage = 0;
+        object.counters = Default::default();
+        object.plotted_turn = None;
     }
     state.players[owner.index()].library.push(hunter);
     assert!(state.library_knowledge[owner.index()][owner.index()]

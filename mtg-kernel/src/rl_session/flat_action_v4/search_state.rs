@@ -3,6 +3,9 @@ use super::*;
 use crate::state::GameState;
 mod key_step;
 mod sampler;
+mod effect_refs;
+#[cfg(test)]
+mod sampler_tests;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub(crate) enum V4SearchStateErrorV1 {

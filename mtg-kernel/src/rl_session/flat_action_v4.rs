@@ -953,6 +953,13 @@ pub(crate) fn hidden_order_triggers_state_v1(count: usize) -> (crate::state::Gam
             assert_eq!(live.zone, Zone::Battlefield);
             live.zone = Zone::Library;
             live.zone_change_count += 1;
+            live.v4.reset_for_zone_change(live.card_def, Zone::Library, state.turn);
+            live.controller = live.owner;
+            live.tapped = false;
+            live.summoning_sick = false;
+            live.damage = 0;
+            live.counters = Default::default();
+            live.plotted_turn = None;
         }
         state.players[PlayerId::P0.index()].library.push(object);
         assert!(state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]

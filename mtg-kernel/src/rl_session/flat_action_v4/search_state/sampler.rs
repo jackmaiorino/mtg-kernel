@@ -3,6 +3,7 @@ use super::*;
 use crate::state::{AbilitySourceContractV4, SplitMix64, StackItem};
 
 fn conflicts(state: &GameState, pool: &[ObjectId]) -> bool {
+    if super::effect_refs::conflicts(state, pool) { return true; }
     let same = |id: ObjectId, generation: u32| {
         pool.contains(&id) && state.objects.get(id).zone_change_count == generation
     };
@@ -11,14 +12,16 @@ fn conflicts(state: &GameState, pool: &[ObjectId]) -> bool {
             || c.attached_to.is_some_and(|x| same(x.object, x.zone_change_count))
     };
     let stack = |s: &StackItem| {
-        s.v4.ability_source_contract.as_ref().is_some_and(&ability)
+        s.inline_effect.as_ref().is_some_and(|op|super::effect_refs::op_conflicts(state,pool,op))
+            || s.v4.ability_source_contract.as_ref().is_some_and(&ability)
             || s.v4.granted_by.as_ref().is_some_and(&ability)
             || s.v4.hidden_ability_source.is_some_and(|x| same(x.object, x.zone_change_count))
             || s.v4.madness_source_contract.is_some_and(|x| same(x.source, x.zone_change_count))
             || s.v4.source_contract.as_ref().is_some_and(|x| same(x.source, x.zone_change_count))
     };
     let e = &state.engine;
-    if e.pending_triggers.iter().any(|t| t.source_contract.as_ref().is_some_and(&ability)
+    if e.pending_triggers.iter().any(|t| super::effect_refs::op_conflicts(state,pool,&t.effect)
+        || t.source_contract.as_ref().is_some_and(&ability)
         || t.granted_by.as_ref().is_some_and(&ability))
         || state.stack.iter().any(&stack)
         || e.pending_effect.as_ref().is_some_and(|p| stack(&p.resolving_item))
@@ -82,17 +85,18 @@ pub(super) fn redeterminize(state: &mut GameState, actor: PlayerId, seed: u64) -
         for &(zone, _, id) in &slots {
             let obj = state.objects.get(id);
             if obj.owner != owner || obj.zone != zone || obj.spell_copy_origin.is_some()
-                || !obj.attachments.is_empty() || obj.v4.attached_to.is_some() { return Err(Error::HiddenStateContract); }
+                || !obj.attachments.is_empty() || obj.v4.attached_to.is_some()
+                || obj.controller != owner || obj.tapped || obj.summoning_sick || obj.damage != 0
+                || obj.counters != crate::state::Counters::default() || obj.plotted_turn.is_some()
+                || obj.v4.is_token || obj.v4 != crate::state::ObjectStateV4::from_card_def(obj.card_def)
+            { return Err(Error::HiddenStateContract); }
         }
         for i in (1..pool.len()).rev() { let j = draw(&mut rng, (i + 1) as u64); pool.swap(i, j); }
-        // Non-root knowledge follows slots under this explicit sampling convention.
+        // Only library knowledge needs rebinding: own-hand knowledge is implicit,
+        // and the other observer's knowledge of actor's hand is never pooled.
         let observer = actor.opponent();
-        for k in &mut state.hand_knowledge[observer.index()][owner.index()] {
-            if let Some(position) = slots.iter().position(|&(zone, _, old)| zone == Zone::Hand
-                && old == k.object && state.objects.get(old).zone_change_count == k.zone_change_count) {
-                k.object = pool[position];
-                k.zone_change_count = state.objects.get(k.object).zone_change_count;
-            }
+        if !state.hand_knowledge[observer.index()][observer.index()].is_empty() {
+            return Err(Error::HiddenStateContract);
         }
         for ((zone, i, old), new) in slots.iter().copied().zip(pool.iter().copied()) {
             let old_generation = state.objects.get(old).zone_change_count;
@@ -125,9 +129,9 @@ mod tests {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = super::super::tests::state(actor);
             let other = actor.opponent();
-            let hand = state.players[other.index()].hand.clone();
-            for id in &hand { state.reveal_hand_card(other, other, *id).unwrap(); }
+            assert!(state.hand_knowledge[other.index()][other.index()].is_empty());
             state.reveal_library_top(other, other, 2);
+            state.reveal_library_top(other, actor, 2);
             let original = state.clone();
             let mut repeat = state.clone();
             redeterminize(&mut state, actor, 8172).unwrap();
@@ -140,13 +144,13 @@ mod tests {
                     assert_eq!(serde_json::to_vec(&before).unwrap(), serde_json::to_vec(after).unwrap());
                 }
             }
-            for (i, k) in state.hand_knowledge[other.index()][other.index()].iter().enumerate() {
-                assert_eq!(k.object, state.players[other.index()].hand[i]);
+            assert!(state.hand_knowledge[other.index()][other.index()].is_empty());
+            for owner in [actor, other] {
+            assert_eq!(state.library_knowledge[other.index()][owner.index()].len(), 2);
+            for k in &state.library_knowledge[other.index()][owner.index()] {
+                assert_eq!(k.object, state.players[owner.index()].library[k.position as usize]);
                 assert_eq!(k.zone_change_count, state.objects.get(k.object).zone_change_count);
             }
-            for k in &state.library_knowledge[other.index()][other.index()] {
-                assert_eq!(k.object, state.players[other.index()].library[k.position as usize]);
-                assert_eq!(k.zone_change_count, state.objects.get(k.object).zone_change_count);
             }
             // Canonical pool makes a fixed object set independent of its unknown slot arrangement.
             let mut reordered = original.clone();
@@ -163,5 +167,17 @@ mod tests {
         let original = serde_json::to_vec(&state).unwrap();
         assert_eq!(redeterminize(&mut state, PlayerId::P0, 1), Err(Error::HiddenStateContract));
         assert_eq!(original, serde_json::to_vec(&state).unwrap());
+    }
+    #[test]
+    fn v4_search_sampler_rejects_hidden_residue_without_normalizing() {
+        let mut state = super::super::tests::state(PlayerId::P0);
+        let id = state.players[0].library[0];
+        state.objects.get_mut(id).v4.entered_battlefield_turn = Some(state.turn);
+        let before = state.objects.get(id).clone();
+        assert_eq!(redeterminize(&mut state, PlayerId::P0, 1), Err(Error::HiddenStateContract));
+        assert_eq!(&before, state.objects.get(id));
+        let obj = state.objects.get_mut(id);
+        obj.v4.reset_for_zone_change(obj.card_def, Zone::Library, state.turn);
+        assert!(redeterminize(&mut state, PlayerId::P0, 1).is_ok());
     }
 }

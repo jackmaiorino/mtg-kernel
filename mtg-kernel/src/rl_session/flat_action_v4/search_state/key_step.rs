@@ -167,4 +167,45 @@ mod tests {
         assert!(s.kernel_search_visible_key_v4(2).is_ok());
         assert!(s.kernel_search_action_token_v4(decision(&s)).is_ok());
     }
+    #[test]
+    fn v4_search_consume_multiple_live_nodes_match_direct_steps() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut s = FastActorSessionV1::from_v3_fixture_state(super::super::tests::state(actor));
+            let mut direct = s.clone();
+            let mut consumed = 0;
+            for _ in 0..16 {
+                let FastActorResponseV1::Decision(d) = s.current_response() else { break; };
+                let token = s.kernel_search_action_token_v4(d).unwrap();
+                let response = s.kernel_search_consume_v4(d, token, 0).unwrap();
+                assert_eq!(response, direct.step(d.episode_id, d.step, 0).unwrap());
+                assert_eq!(s.diagnostic_state_hash(), direct.diagnostic_state_hash());
+                consumed += 1;
+            }
+            assert!(consumed >= 2, "must exercise a freshly captured successor token");
+        }
+    }
+    #[test]
+    fn v4_search_consume_reports_failed_sample_instead_of_value() {
+        let (mut state, hunter, _, _) = crate::rl_session::avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        crate::rl_session::shuffle_trigger_source_into_library_v1(&mut state, hunter, PlayerId::P0);
+        for name in ["Forest", "Island", "Mountain"] {
+            crate::policy_observation_v6::tests::put(&mut state, PlayerId::P0, name, Zone::Library);
+        }
+        let s = FastActorSessionV1::from_v3_fixture_state(state);
+        let definition = s.state.objects.get(hunter).card_def;
+        let mut witnessed = false;
+        for seed in 1..=32 {
+            // Reproduce the archived old-sampler defect only as fault injection.
+            let mut sample = s.search_clone_v4_inner(8172, |state, actor| {
+                crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_v1(state, actor, seed).unwrap();
+            }).unwrap();
+            if sample.state.objects.get(hunter).card_def == definition { continue; }
+            let d = decision(&sample); let token = sample.kernel_search_action_token_v4(d).unwrap();
+            assert_eq!(sample.kernel_search_consume_v4(d, token, 0), Err(Error::StepFailed));
+            assert!(matches!(sample.current_response(), FastActorResponseV1::Terminal(t)
+                if t.terminal_classification == TerminalClassificationV1::Halted));
+            witnessed = true; break;
+        }
+        assert!(witnessed);
+    }
 }
