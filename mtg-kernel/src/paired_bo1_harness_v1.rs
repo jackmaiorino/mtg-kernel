@@ -60,6 +60,18 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         crate::sideboard_play_policy_v1::search_leaf_v4::backup_diagnostic_report(policy,self.session)
     }
 
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn evaluation_search_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits:crate::model_guided_search_core_v4::Limits,allocation:crate::model_guided_search_core_v4::RootAllocation,
+        interior:crate::model_guided_search_core_v4::InteriorBonus)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+        use crate::model_guided_search_core_v4::{Error,search_with_policies};
+        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+            return Err(Error::InvalidAdapterBinding);
+        }
+        let evaluator=crate::sideboard_play_policy_v1::search_leaf_v4::V4SearchLeafEvaluatorV1::new(policy).map_err(Error::Evaluator)?;
+        search_with_policies(self.session,limits,&evaluator,allocation,interior,None)
+    }
+
     /// Coordinator-only continuation capture. Clone the full engine session
     /// with its hidden state, environment RNG, counters and inherited caps.
     /// The returned copy has consumed exactly the selected root action. It

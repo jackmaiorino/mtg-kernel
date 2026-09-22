@@ -99,6 +99,34 @@ pub(crate) fn diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSes
 mod tests {
     use super::*;
     #[test]
+    #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+    fn v4_search_bound_evaluation_matches_core_without_mutating_live_state() {
+        use crate::model_guided_search_core_v4::{Error,Limits,RootAllocation,InteriorBonus,search_with_policies};
+        use crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1;
+        for actor in [crate::ids::PlayerId::P0,crate::ids::PlayerId::P1] {
+            let session=public_session(actor,20);
+            let FastActorResponseV1::Decision(decision)=session.current_response() else {panic!("fixture missing")};
+            let mut policy=FrozenPlayPolicyV1::training_fixture_v4();
+            policy.reset_sampling_v1([11,22]);
+            let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
+            let capture=|p:&FrozenPlayPolicyV1|crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
+                &NativeFlatDecisionTensorV3{common:p.last_scored_training_tensor_v4().unwrap().common.clone()});
+            let retained=capture(&policy);
+            let limits=Limits{simulations:32,transitions:128,depth:4,seed:29};
+            let evaluator=V4SearchLeafEvaluatorV1::new(&policy).unwrap();
+            let expected=search_with_policies(&session,limits,&evaluator,RootAllocation::RoundRobin,InteriorBonus::PriorFree,None).unwrap();
+            let actual=PairedBo1PolicyInputV1::new(&session,decision)
+                .evaluation_search_v4(&policy,limits,RootAllocation::RoundRobin,InteriorBonus::PriorFree).unwrap();
+            assert_eq!(actual,expected);
+            let mut stale=decision;stale.step+=1;
+            assert_eq!(PairedBo1PolicyInputV1::new(&session,stale)
+                .evaluation_search_v4(&policy,limits,RootAllocation::RoundRobin,InteriorBonus::PriorFree),Err(Error::InvalidAdapterBinding));
+            assert_eq!(session.diagnostic_state_hash(),before);
+            assert_eq!(policy.seat_rng,rng);
+            assert_eq!(capture(&policy),retained);
+        }
+    }
+    #[test]
     #[cfg(all(target_arch="x86_64",feature="experimental-burn-net8-packed-cuda-v1"))]
     fn v4_search_leaf_diagnostic_rejects_dirty_thread_without_repair() {
         std::thread::spawn(|| {

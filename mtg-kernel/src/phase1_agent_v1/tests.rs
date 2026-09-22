@@ -302,6 +302,25 @@ fn package_roundtrip_has_exact_identity() {
 }
 
 #[test]
+fn v4_search_old_disabled_package_keeps_its_archived_hash() {
+    // Captured from the completed pre-descriptor 3da0d046 replay. Its trajectory
+    // records this exact package digest independently of the current decoder.
+    let p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/disabled_search_pre_v4.json")).unwrap();
+    assert!(matches!(p.search,AgentSearchPolicyV1::Disabled));
+    assert_eq!(p.package_sha256_v1().unwrap(),"aacccb855aea8bcd784dc601fb3b4c9c3a33e41c5179ea09c8ccc2b00773d429");
+}
+
+#[test]
+fn v4_search_evaluation_loader_preserves_binding_failure_and_rejects_other_modes() {
+    let p=package();
+    assert_eq!(p.load_supported_components_v1().err().unwrap(),p.load_evaluation_components_v1().err().unwrap());
+    let p=learned_opening_package();
+    assert_eq!(p.load_evaluation_components_v1().err().unwrap(),"V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search");
+    let mut p=package();p.gameplay_sampler_identity=crate::fast_sampler::FAST_CATEGORICAL_SAMPLER_VERSION.into();
+    assert_eq!(p.load_evaluation_components_v1().err().unwrap(),"evaluation behavior records require the wide categorical sampler");
+}
+
+#[test]
 fn v4_search_package_descriptor_is_strict_and_does_not_enable_execution() {
     use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4,FEATURE_ENCODING_DIGEST_V4};
     let mut p=package();

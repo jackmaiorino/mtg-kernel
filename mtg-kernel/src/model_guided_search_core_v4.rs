@@ -15,7 +15,7 @@ use estimate::Sample;
 #[derive(Debug,Clone,Copy)]
 pub(crate) struct Limits {pub simulations:u32,pub transitions:u32,pub depth:u16,pub seed:u64}
 #[derive(Debug,Clone,PartialEq,Eq)]
-pub(crate) enum Error {NoDecision,InvalidBudget,InsufficientHeadroom,State{stage:StateStage,source:V4SearchStateErrorV1},Evaluator(String),NonNaturalTerminal,CorruptTree}
+pub(crate) enum Error {NoDecision,InvalidAdapterBinding,InvalidBudget,InsufficientHeadroom,State{stage:StateStage,source:V4SearchStateErrorV1},Evaluator(String),NonNaturalTerminal,CorruptTree}
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub(crate) enum StateStage {Key,Redeterminize,Token,Consume}
 type Result<T> = std::result::Result<T,Error>;

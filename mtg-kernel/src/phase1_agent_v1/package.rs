@@ -10,6 +10,7 @@ use crate::learned_sideboard_v1::{
     FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1, SideboardPlayIdentityV1,
 };
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+use crate::paired_bo1_harness_v1::{PairedBo1PolicyV1,PlayPolicyGenerationV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -489,8 +490,31 @@ impl CompleteAgentPackageV1 {
                 && matches!(self.search, AgentSearchPolicyV1::Disabled),
             "learned opening/play-draw or search execution is not implemented by this interface",
         )?;
+        self.load_bound_components_v1(learned_opening || learned_play_draw)
+    }
+
+    /// Explicit evaluation-only loader. Existing native collection/learning
+    /// callers retain their own Disabled-only gate and never call this method.
+    pub(crate) fn load_evaluation_components_v1(&self)->Result<VerifiedAgentComponentsV1,String> {
+        self.validate_metadata_v1()?;
+        require(matches!(self.opening,AgentOpeningPolicyV1::Existing{protocol:Bo3OpeningProtocolV1::KeepSevenV2})
+            && matches!(self.play_draw,AgentPlayDrawPolicyV1::Fixed{..})
+            && matches!(self.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}),
+            "V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search")?;
+        require(self.gameplay_sampler_identity==WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
+            "evaluation behavior records require the wide categorical sampler")?;
+        let loaded=self.load_bound_components_v1(false)?;
+        if matches!(self.search,AgentSearchPolicyV1::V4InformationSetV1{..}) {
+            require(loaded.current_runtime.generation_v1()==RuntimeContractGenerationV1::V4
+                && loaded.gameplay.feature_generation_v1()==PlayPolicyGenerationV1::V4,
+                "V4 search requires the actual V4 runtime and loaded policy")?;
+        }
+        Ok(loaded)
+    }
+
+    fn load_bound_components_v1(&self,requires_learned_runtime:bool)->Result<VerifiedAgentComponentsV1,String> {
         let current_runtime = self.runtime.verify_current_runtime_v1()?;
-        if learned_opening || learned_play_draw {
+        if requires_learned_runtime {
             require(
                 current_runtime.generation_v1() == RuntimeContractGenerationV1::V4,
                 "learned opening/play-draw requires the fresh-lineage (V4) runtime contract",
