@@ -319,6 +319,13 @@ mod tests {
             let off=search_with_backup(&s,limits,&e,RootAllocation::RoundRobin,InteriorBonus::PriorFree,BackupMode::Off,None).unwrap();
             let mut report=search_with_backup(&s,limits,&e,RootAllocation::RoundRobin,InteriorBonus::PriorFree,BackupMode::Report,None).unwrap();
             let estimate=report.estimator.take().unwrap();assert_eq!(report,off);
+            assert!(report.census.natural_wins>0 && report.census.natural_losses>0,"Report must exercise both live terminal signs: {report:?}");
+            let terminal_count:u32=estimate.nodes.iter().flat_map(|n|&n.edges).map(|e|e.terminal_count).sum();
+            let terminal_sum:i64=estimate.nodes.iter().flat_map(|n|&n.edges).map(|e|e.terminal_sum).sum();
+            assert_eq!(terminal_count,report.census.natural);
+            assert_eq!(terminal_sum,10000*(i64::from(report.census.natural_wins)-i64::from(report.census.natural_losses)));
+            assert!(estimate.nodes.iter().flat_map(|n|&n.edges).any(|e|e.terminal_count>0 && e.terminal_sum<0),"Live natural loss must reach an estimator terminal edge");
+            println!("live-terminal actor={actor:?} wins={} losses={} draws={} estimator_terminal_count={terminal_count} estimator_terminal_sum={terminal_sum}",report.census.natural_wins,report.census.natural_losses,report.census.natural_draws);
             assert!(!serde_json::to_value(&off).unwrap().as_object().unwrap().contains_key("estimator"));
             let blend=search_with_backup(&s,limits,&e,RootAllocation::RoundRobin,InteriorBonus::PriorFree,BackupMode::Blend,None).unwrap();
             for (label,out,est) in [("report",&report,&estimate),("blend",&blend,blend.estimator.as_ref().unwrap())] {
