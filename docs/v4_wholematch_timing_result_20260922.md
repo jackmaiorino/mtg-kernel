@@ -1,0 +1,18 @@
+# V4 first full-match timing result
+
+2026-09-22. NO-ADVANCE for lineage or M1. This is a completed operational probe, not a strength gate. The unchanged g115 E controller lost the first frozen consumed match that ordinary g115 won. No parameter, seed, frame or tie-rule change follows from it.
+
+| Arm, candidate Affinity P0 vs Wildfire P1 | Match winner | Natural games | Search decisions | Native seconds |
+| --- | --- | --- | --- | --- |
+| Ordinary g115 baseline | P0 | 2 | 0 | 1.736842 |
+| g115 E, S128/T1024/depth8 | P1 | 2 | 192 | 62.466859 |
+
+Both arms completed naturally with no abort. Baseline exactly matches the consumed archive. E searched from the first gameplay decision, game1/index3/P0, and used60.421169seconds of recorded search time. Pair phase79.860070seconds, total including admission92.060944seconds. Sampled peak child RSS76,009,472bytes baseline and65,724,416bytes E. Committed records136/536; record bytes3,085,363/21,057,642. No full trees retained, no fallback.
+
+Evidence base B=E:/mtg-meta-recovery-20260921. Complete original receipt B/v4-wholematch-timing-001/completion.json; pair first-pair/cell07-r0-s0-g115. Baseline semantic SHA76a04cfeca1bdf8bf57c6a05f6c2a89b850e1d5ae10668c22ae4e4df2483bbb0; E SHA7fa0d9f79c4aaf8533c122484d6bb92d18859751f6afba61f1ea4756ca5dec0e. These strict full-payload hashes exclude only timings. Native binary source ddd24baf, SHA b8bc325fbfc5c5e4b92f3c7c0dd2d11e5839bc17cbaed37faa56adc289c155fa. g115 checkpoint88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1, experiment seed20260922. Actual toolchain and input/output pins are in the build/input/receipt chain. GPU ordinal none; local BelowNormal CPU process.
+
+n=1 consumed match,0 training replicas, one checkpoint. No population effect or nonregression is identifiable against between-training-run SD0.76pp, sensitivity1.39pp. The adverse match is preserved but does not alone establish a strength regression or exhaust this research line. Qualification repeats are deterministic engineering checks, never additional samples. Full frozen16-match readiness remains descriptive and cannot promote a model. M1 remains unmet; g115 remains the reference.
+
+Literature collab/lit/20260922-v4-wholematch-readiness.md was committed ed99f07 before this probe. Frame002 SHA4bedb3ee776138049bb295df328fdffab3d79af98075187f1746f14176eb5814 and input manifest SHA f7755437f9f0a06de237e0720d63d52d738094027f90b66e331e006a9bd5cc26 were fixed first. No fresh formal seed panel, CP7 selection, paid compute or human/league play.
+
+Independent Claude session4be9adb1-2ed1-4bd1-a640-9a6fcd5cff62: design-review-001 and source-review-001 both complete, exit0/is_errorfalse with actual reads. Design allowed the fixed timing pair after explicit zero-tree option and baseline comparator controls. Source review also permits this pair and requires four fixes before qualification: natural E completion for timing ceiling, accurate interruption/read-error categories, cleanup that preserves receipts, and real E-output validation. All accepted and implemented; real completed full-match output directly satisfies the fourth request, instead of adapting activation's different envelope. Low-severity deck-seat assertion accepted. Revision-review-002 is pending and must be disposed before qualification. Narrow original-timing reuse after launcher-only fixes is described in the design and included in that review; no throughput qualification is yet claimed.
