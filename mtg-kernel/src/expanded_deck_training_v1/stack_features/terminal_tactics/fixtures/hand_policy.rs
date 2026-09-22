@@ -55,6 +55,30 @@ fn line(session:&FastActorSessionV1,index:u32)->Result<Value,String> {
     Err("hand witness depth exceeded".into())
 }
 
+fn removal_survival(session:&FastActorSessionV1,attacker:ObjectId)->Result<Value,String> {
+    let initial=session.game_state();let mut state=initial.clone();let mut path=Vec::new();
+    let Decision::ChooseTargets{legal_targets,..}=engine::advance_until_decision(&mut state) else{return Err("reference removal root differs".into());};
+    let target=crate::state::Target::Object(attacker);
+    ensure(legal_targets.contains(&target),"removal target not engine-legal")?;
+    engine::step(&mut state,Action::ChooseTarget(target)).map_err(err)?;
+    for _ in 0..32 {
+        let decision=engine::advance_until_decision(&mut state);
+        ensure(initial.turn==state.turn && initial.library_knowledge==state.library_knowledge
+            && (0..2).all(|i|initial.players[i].library==state.players[i].library
+                && initial.players[i].draws_this_turn==state.players[i].draws_this_turn),"reference removal crossed information boundary")?;
+        ensure(state.players.iter().all(|p|p.life>0),"removal did not survive")?;
+        if state.step==Step::Main2 {
+            return Ok(json!({"outcome":"combat_survived","life":[state.players[0].life,state.players[1].life],"path":path,"witness":"engine explicit priority; stop before future draw"}));
+        }
+        let Decision::CastSpellOrPass{player,castable_spells,mana_abilities,land_drops,activatable_abilities,plot_actions}=decision else{return Err(format!("unexpected reference removal choice: {decision:?}"));};
+        ensure(mana_abilities.is_empty() && land_drops.is_empty() && activatable_abilities.is_empty() && plot_actions.is_empty(),"unmodeled reference removal action")?;
+        ensure(castable_spells.iter().all(|id|state.objects.get(*id).name=="Lightning Bolt" && player!=state.active_player),"opponent has a discretionary response")?;
+        path.push(json!({"phase":format!("{:?}",state.step),"player":player,"action":"pass","castable_spells":castable_spells}));
+        engine::step(&mut state,Action::Pass).map_err(err)?;
+    }
+    Err("reference removal depth exceeded".into())
+}
+
 pub(super) fn run(command:Command)->Result<Value,String> {
     let (mut policy,_)=initialize(&command.source)?;let mut records=Vec::new();
     for actor in 0..2 {for bolt in [false,true] {
@@ -65,7 +89,7 @@ pub(super) fn run(command:Command)->Result<Value,String> {
             let (visible,actions)=PairedBo1PolicyInputV1::new(&s,d).diagnostic_visible_v4()?;
             let face=actions.iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Player{player},..} if *player!=d.acting_player)).ok_or("missing face")?;
             let removal=actions.iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..} if object.arena_id==attacker.0)).ok_or("missing removal")?;
-            let face_line=line(&s,face as u32)?;let removal_line=line(&s,removal as u32)?;
+            let face_line=line(&s,face as u32)?;let removal_line=removal_survival(&s,attacker)?;
             ensure(face_line["outcome"]==if bolt{"win"}else{"loss"},"face witness differed")?;
             ensure(removal_line["outcome"]=="combat_survived","removal survival differed")?;
             let scores=policy.score_fast_session_v1(&s)?;
