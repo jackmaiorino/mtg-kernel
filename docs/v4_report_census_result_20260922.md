@@ -1,0 +1,27 @@
+# V4 Report census result
+
+2026-09-22. The frozen descriptive census completed. No strength gate or lineage promotion; M1 remains unmet. g115 is unchanged. Availability is established on these96sampled decisions, not on all legal states or search-altered trajectories. n=0 new training runs; no identifiable whole-match effect against SD .76pp or sensitivity1.39pp is claimed.
+
+Literature note collab/lit/20260922-v4-report-census.md preceded search. Frozen frame SHA256e3e57ed686d1510395c2d356c2d1c16be738f6b4846aecdf70d9a532ccc73fb4:8matches,18games,96decisions,48per physical actor. Six hash-selected multi-action rows per actor per match, one match per candidate-deck stratum, no outcome or search filter. Keep candidate-seat imbalance7/8P1, Burn in4matches, and within-match dependence. No binomial intervals, population extrapolation or root substitution.
+
+All96assigned roots were Available with committed receipts. All8ordinary trajectories exactly matched their archives. Missing/rejected/oversize/discarded/untrusted counts all0. Every result used S128/T1024/depth8/seed20260922, RoundRobin/PriorFree/Report with fresh tensor witnesses. Total12,288simulations and26,957transitions; zero accounting discrepancies or transition-budget cutoffs. Four first serial qualification observations were reused, followed by the remaining four jobs; parallel repeats are not extra observations or independent training replicas.
+
+| Descriptive menu class | Assigned and available | E differs from max-mean | E differs from Hamilton modal | Max-mean differs from modal |
+|---|---:|---:|---:|---:|
+| All |96|36|59|43|
+| Tactical-menu class |23|6|11|10|
+| Other menus |73|30|48|33|
+
+Tactical-menu means the nine previously defined action kinds, not certified tactical importance or correctness. Ordinary sampled action was nonmodal8/96, including2/23tactical rows. E differs from the actual sampled choice55/96, which mixes estimator disagreement with baseline sampling. Modal ties were retained; none occurred in the frame. E-versus-mean disagreements occur in all8matches (3to7per12rows),18per physical actor. On54equal-visit roots E differs from mean15times; the remaining21differences occur on42unequal-visit roots. Core-final maximizes visits before mean, so its disagreements must remain allocation-labelled.
+
+Natural simulation terminals:160 of12,288rollouts, all root-actor wins, at only3roots across2matches (cell06/index389:50; cell17/index307:83; cell17/index489:27). No simulated natural loss or draw. These are correlated search rollouts, not match wins or proof certificates. Most decisions are driven by cutoff/neural estimates. The all-win terminal asymmetry and sparse support warrant interpretation before selecting a playing controller.
+
+Leaf forwards12,224; raw value range[-1.1672118,1.112506], clipped low563times/high450times under the declared[-1,1]engineering domain. Clipping does not reject a numerically valid search or establish calibration. Posthoc descriptive alternative-explanation check:26roots have any clipping;14of36E-vs-mean disagreements occur there. E-argmax ties occur at4roots, explaining at most3of36disagreements; selected E equals9000at2roots and exceeds9000at3. These posthoc predicates are explicitly supplementary, not a changed gate or budget.
+
+Useful-compute qualification B/v4-report-qualification-002 matched the same4jobs with1/2/4workers:44.8504/29.1593/17.2035seconds, exact portable semantics across all placements. Four workers were fastest observed,2.607x measured serial batch throughput. Includes owner checks, model/archive load, replay/search, serialization/storage and validation/hash. Ordered one-batch comparison has cache/order uncertainty; no per-search speedup or universal scaling claim. Remaining four jobs took11.5131seconds using four workers. Resource reserve held, sampled free RAM>=86GiB during qualification; GPU telemetry had no probe errors. Controller post-validation peak memory is not captured by the in-native-loop RSS samples. No wave spanned two60second idle windows.
+
+Fresh inventories before qualification and remaining run: Jack eligible; Haley SSH timeout, RunPod read-only403. No paid allocation or credential changes. Qualification001 stopped during preflight before native work because a path-string slash comparison rejected a file with correct SHA256; corrected to content verification at the exact referenced path, matching existing owner helper, and preserved the failed preflight. No measurement was discarded or repeated for outcome. Supported launch path B/v4_report_dispatch.py run requires the pinned complete current choice and rechecks source/input/hardware/equality/fastest allocation; raw binary is not that guard.
+
+Receipts: B/v4-report-census-001/completion.json; B/v4-report-census-summary-001/summary.json and summary.md; posthoc-tie-clip-check.json. Independent source/launcher review completed before dispatch, with GPU-probe robustness correction accepted. Result cross-examination is pending before any next-direction decision. No E-playing descriptor, tactical closed-loop success, strength improvement, whole-match nonregression, CP7, human or league claim follows from this census.
+
+B=E:/mtg-meta-recovery-20260921. Actual binary sourceaea0e489, SHA256f8e1bc3bfc9757215aa805cf71f82641a242128c663a989ef48ed920885825b3. All native jobs terminal; no new launch is needed to interpret these outputs.
