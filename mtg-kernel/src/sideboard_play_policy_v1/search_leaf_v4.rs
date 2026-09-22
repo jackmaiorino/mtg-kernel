@@ -353,3 +353,29 @@ pub(crate) fn certificate_prior_report(policy:&FrozenPlayPolicyV1,session:&FastA
     Ok(json!({"schema":"v4-certificate-prior-path/v1","root_action":root_action,"decision_depth":rows.len(),"rows":rows,
         "natural_root_win":true,"original_unchanged":true,"policy_unchanged":true,"scope":"One certified path with opponent passes; not worst-case depth or strength."}))
 }
+
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn allocation_diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1)->Result<serde_json::Value,String> {
+    use crate::model_guided_search_core_v4::{Limits,RootAllocation,search_with_allocation};
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(d)=session.current_response() else{return Err("allocation probe root not live".into())};
+    require([4,8].contains(&d.legal_action_count),"allocation diagnostic requires the declared4/8actionroots")?;
+    let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
+    let capture=|t:&NativeFlatDecisionTensorV4|crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&NativeFlatDecisionTensorV3{common:t.common.clone()});
+    let retained=capture(policy.last_scored_training_tensor_v4()?);
+    let e=V4SearchLeafEvaluatorV1::new(policy)?;let mut witness=|s:&FastActorSessionV1,n|e.tensor_digest(s,n);
+    let simulations=16*d.legal_action_count;let transitions=8*simulations;
+    let limits=Limits{simulations,transitions,depth:8,seed:20260922};
+    let mut arms=Vec::new();
+    for allocation in [RootAllocation::Puct,RootAllocation::RoundRobin] {
+        let first=search_with_allocation(session,limits,&e,allocation,Some(&mut witness));
+        let repeat=search_with_allocation(session,limits,&e,allocation,Some(&mut witness));
+        require(first==repeat,"allocation diagnostic repeat differs")?;
+        arms.push(match first {Ok(outcome)=>json!({"allocation":allocation,"status":"available","outcome":outcome}),
+            Err(e)=>json!({"allocation":allocation,"status":"unavailable","error":format!("{e:?}")})});
+    }
+    require(before==session.diagnostic_state_hash() && rng==policy.seat_rng && retained==capture(policy.last_scored_training_tensor_v4()?),"allocation diagnostic mutated original or policy")?;
+    Ok(json!({"schema":"v4-root-allocation-diagnostic/v1","limits":{"simulations":simulations,"transitions":transitions,"depth":8,"seed":20260922},
+        "arms":arms,"repeat_exact":true,"tensor_witness":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Two consumed roots only; no playing override or strength estimate."}))
+}
