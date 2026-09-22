@@ -4219,6 +4219,22 @@ impl FastActorSessionV1 {
          self.max_policy_steps.saturating_sub(self.policy_step_count)]
     }
 
+    /// Feature-gated offline invariance perturbation; no live session mutation.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_certificate_perturbed_clone_v1(&self,library:Option<usize>,rng:bool)->Result<Self,String> {
+        if library.is_some()==rng {return Err("choose exactly one certificate perturbation".into());}
+        let mut copy=self.clone();
+        if let Some(owner)=library {
+            if owner>1 || (0..2).any(|observer|!self.state.library_knowledge[observer][owner].is_empty()) {
+                return Err("certificate permutation requires unobserved library".into());
+            }
+            if self.state.players[owner].library.len()<2 {return Err("certificate permutation requires two cards".into());}
+            copy.state.players[owner].library.reverse();
+        } else {copy.state=copy.state.diagnostic_certificate_rng_clone_v1();}
+        if copy.diagnostic_state_hash()==self.diagnostic_state_hash() {return Err("certificate perturbation changed no state".into());}
+        Ok(copy)
+    }
+
     /// Summary hook over the exact currently offered actions. Returns only
     /// card identities already known to the acting player in their own hand.
     pub(crate) fn current_offered_hand_cast_ids_v1(&self) -> Vec<u16> {

@@ -2073,6 +2073,24 @@ impl GameState {
     /// advances only through the library-shuffle transaction. Same-module
     /// tests that genuinely need to perturb the RNG mutate the private enum
     /// directly.
+    /// Offline certificate-invariance diagnostic. Returns a private copy only.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_certificate_rng_clone_v1(&self) -> Self {
+        let mut copy=self.clone();
+        match &mut copy.randomness {
+            GameRandomnessState::Legacy(rng) => {rng.next_u64();}
+            GameRandomnessState::EnvironmentV2(v2) => {
+                use crate::environment_randomization_v2::{GameEnvironmentRandomizationV2,PhysicalOwnerV2};
+                let mut changed=GameEnvironmentRandomizationV2::new(v2.pair_environment_seed() ^ 0x5a5a_a5a5_1248_8421);
+                for owner in [PhysicalOwnerV2::P0,PhysicalOwnerV2::P1] {
+                    changed.set_live_shuffle_ordinal(owner,v2.next_live_shuffle_ordinal(owner));
+                }
+                *v2=changed;
+            }
+        }
+        copy
+    }
+
     pub fn legacy_rng(&self) -> Option<&SplitMix64> {
         match &self.randomness {
             GameRandomnessState::Legacy(rng) => Some(rng),

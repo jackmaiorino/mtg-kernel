@@ -10,6 +10,7 @@ struct Tree {
     upper: i8,
     reason: &'static str,
     branches: Vec<(u32, Tree)>,
+    binding: Option<certificate_execution::Binding>,
 }
 // Lossless compact wire form keeps every branch under the recorder byte cap.
 // [lower, upper, reason_code, [[action_index, child], ...]]
@@ -27,12 +28,12 @@ impl Serialize for Tree {
     }
 }
 fn unknown(reason: &'static str) -> Tree {
-    Tree { lower: -1, upper: 1, reason, branches: Vec::new() }
+    Tree { lower: -1, upper: 1, reason, branches: Vec::new(), binding: None }
 }
 fn aggregate(branches: Vec<(u32, Tree)>, own: bool) -> Tree {
     let lower = if own { branches.iter().map(|x| x.1.lower).max() } else { branches.iter().map(|x| x.1.lower).min() }.unwrap();
     let upper = if own { branches.iter().map(|x| x.1.upper).max() } else { branches.iter().map(|x| x.1.upper).min() }.unwrap();
-    Tree { lower, upper, reason: if own { "own_choice" } else { "opponent_choice" }, branches }
+    Tree { lower, upper, reason: if own { "own_choice" } else { "opponent_choice" }, branches, binding: None }
 }
 fn explore(s: &FastActorSessionV1, initial: &crate::state::GameState,
     actor: crate::rl::PlayerSeatV1, depth: u32, remaining: &mut u32) -> Result<Tree, String> {
@@ -44,7 +45,7 @@ fn explore(s: &FastActorSessionV1, initial: &crate::state::GameState,
         FastActorResponseV1::Terminal(t) => {
             if t.terminal_classification != TerminalClassificationV1::Natural { return Ok(unknown("non_natural")); }
             let value = if t.winner == Some(actor) { 1 } else if t.winner.is_some() { -1 } else { 0 };
-            return Ok(Tree { lower: value, upper: value, reason: "natural_terminal", branches: Vec::new() });
+            return Ok(Tree { lower: value, upper: value, reason: "natural_terminal", branches: Vec::new(), binding: None });
         }
         FastActorResponseV1::Decision(d) => d,
     };
@@ -65,9 +66,24 @@ fn explore(s: &FastActorSessionV1, initial: &crate::state::GameState,
             };
         branches.push((i as u32,child));
     }
-    Ok(aggregate(branches,d.acting_player==actor))
+    let mut tree=aggregate(branches,d.acting_player==actor);
+    tree.binding=Some(certificate_execution::Binding::capture(s,d)?);
+    Ok(tree)
+}
+impl certificate_execution::Proof for Tree {
+    fn lower(&self)->i8 {self.lower}
+    fn reason(&self)->&str {self.reason}
+    fn branches(&self)->&[(u32,Self)] {&self.branches}
+    fn binding(&self)->Option<&certificate_execution::Binding> {self.binding.as_ref()}
 }
 pub(crate) fn audit(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1)->Result<Value,String> {
+    audit_inner(s,root,false)
+}
+/// Report only; no strategy or action can escape this offline diagnostic.
+pub(crate) fn audit_execution(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1)->Result<Value,String> {
+    audit_inner(s,root,true)
+}
+fn audit_inner(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecisionV1,execute:bool)->Result<Value,String> {
     ensure(s.current_response()==FastActorResponseV1::Decision(root),"burn tree root binding differs")?;
     if !(2..=32).contains(&root.legal_action_count) {return Ok(json!({"status":"menu_outside_bounds"}));}
     let (visible,actions)=PairedBo1PolicyInputV1::new(s,root).diagnostic_visible_v4()?;
@@ -77,19 +93,22 @@ pub(crate) fn audit(s:&FastActorSessionV1,root:crate::rl_session::FastActorDecis
     }
     let initial=s.game_state();
     if !initial.players[1-seat(root.acting_player) as usize].hand.is_empty() {return Ok(json!({"status":"opponent_hand_nonempty"}));}
-    let mut outcomes=Vec::new();
+    let mut outcomes=Vec::new();let mut trees=Vec::new();
     for i in 0..root.legal_action_count {
         let mut child=s.clone();child.step(root.episode_id,root.step,i).map_err(err)?;
         let mut remaining=NODES-1;
         let tree=explore(&child,initial,root.acting_player,DEPTH-1,&mut remaining)?;
         outcomes.push(json!({"index":i,"transitions":NODES-remaining,"tree":tree}));
+        trees.push((i,tree));
     }
     ensure(s.current_response()==FastActorResponseV1::Decision(root),"burn tree mutated root")?;
-    Ok(json!({"status":"audited","schema":"public-bolt-island-response-tree/v1","visible":visible,"actions":actions,
+    let mut result=json!({"status":"audited","schema":"public-bolt-island-response-tree/v1","visible":visible,"actions":actions,
         "depth":DEPTH,"nodes_per_action":NODES,"outcomes":outcomes,
         "tree_encoding":"[lower,upper,reason_code,[[action_index,child],...]]",
         "reason_codes":["information_boundary","non_natural","natural_terminal","depth_limit","menu_limit","unsupported_action","node_limit","own_choice","opponent_choice","test"],
-        "non_claim":"Shadow-only bound under public responses; unsupported and budget-limited branches stay unknown. No certified training dataset or playing-strength claim."}))
+        "non_claim":"Shadow-only bound under public responses; unsupported and budget-limited branches stay unknown. No certified training dataset or playing-strength claim."});
+    if execute {result["execution"]=certificate_execution::report(s,root,&trees)?;}
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -100,7 +119,7 @@ mod tests {
     use crate::mana::ManaColor;
     use crate::state::{GameState,Step,Zone};
     use super::super::public_combat::tests::put;
-    fn win()->Tree { Tree{lower:1,upper:1,reason:"test",branches:Vec::new()} }
+    fn win()->Tree { Tree{lower:1,upper:1,reason:"test",branches:Vec::new(),binding:None} }
     #[test]
     fn burn_tree_unknown_opponent_branch_prevents_win_but_own_win_is_sufficient() {
         let opponent=aggregate(vec![(0,win()),(1,unknown("unsupported_action"))],false);
@@ -136,6 +155,12 @@ mod tests {
                     let (_,actions)=PairedBo1PolicyInputV1::new(&session,root).diagnostic_visible_v4().unwrap();
                     let face=actions.iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Player{player},..} if *player!=root.acting_player)).unwrap();
                     let result=audit(&session,root).unwrap();
+                let executed=audit_execution(&session,root).unwrap();
+                assert_eq!(executed,audit_execution(&session,root).unwrap());
+                assert!(certificate_execution::mutated_menu_rejected(&session,root));
+                assert_eq!(executed["execution"]["original_unchanged"],true);
+                let invariant=certificate_execution::invariance_report(&session,root,audit_execution).unwrap();
+                assert_eq!(invariant["byte_identical_variants"].as_array().unwrap().len(),3);
                     let tree=&result["outcomes"][face]["tree"];
                     assert_eq!(tree[0],if land=="Island" {1} else {-1});
                     assert_eq!(tree[1],1);
