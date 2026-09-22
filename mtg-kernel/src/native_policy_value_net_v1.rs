@@ -685,6 +685,16 @@ impl NativePolicyValueNetV1 {
         self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
     }
 
+    /// Explicit V4 search-only forward; existing V4 inference remains LibmTanh.
+    pub(crate) fn forward_search_feature_transfer_v4(
+        &self, encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        #[cfg(target_arch = "x86_64")]
+        deterministic_math_v1::assert_pinned_mxcsr_state_v1();
+        let counts=encoded.validate(self.feature_transfer_config_v4())?;
+        self.forward_validated_rows_v1(encoded,counts,None,ForwardActivationModeV1::KernelDeterministicTanh)
+    }
+
     fn forward_validated_rows_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,

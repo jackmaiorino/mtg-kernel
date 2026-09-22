@@ -59,6 +59,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod origin;
+pub(crate) mod search_leaf_v4;
 pub(crate) mod public_inputs;
 pub(crate) mod stack_inputs;
 pub use origin::{
