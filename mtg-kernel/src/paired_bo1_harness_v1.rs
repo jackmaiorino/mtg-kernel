@@ -72,6 +72,17 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         search_with_policies(self.session,limits,&evaluator,allocation,interior,None)
     }
 
+    /// Report-only observation. Never consumes a live action or policy RNG.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn report_search_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+        use crate::model_guided_search_core_v4::Error;
+        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+            return Err(Error::InvalidAdapterBinding);
+        }
+        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation(policy,self.session,limits)
+    }
+
     /// Coordinator-only continuation capture. Clone the full engine session
     /// with its hidden state, environment RNG, counters and inherited caps.
     /// The returned copy has consumed exactly the selected root action. It

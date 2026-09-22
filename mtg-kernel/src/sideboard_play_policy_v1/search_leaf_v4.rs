@@ -95,6 +95,27 @@ pub(crate) fn diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSes
         "argmax_agreement":argmax(&raw.logits)==argmax(&ordinary.logits),"value_domain":[-1,1],
         "invariant_variants":variants,"original_unchanged":true,"policy_unchanged":true}))
 }
+/// A Report-only observation of an already scored ordinary decision.
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn report_search_observation(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
+    limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+    use crate::model_guided_search_core_v4::{Error,RootAllocation,InteriorBonus,BackupMode,search_with_backup};
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|Error::ObserverEnvironment(format!("{e:?}")))?;
+    let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
+    let capture=||policy.last_scored_training_tensor_v4().map(|t|
+        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&NativeFlatDecisionTensorV3{common:t.common.clone()})).map_err(Error::Evaluator);
+    let retained=capture()?;
+    let evaluator=V4SearchLeafEvaluatorV1::new(policy).map_err(Error::Evaluator)?;
+    let mut witness=|s:&FastActorSessionV1,n|evaluator.tensor_digest(s,n);
+    let result=search_with_backup(session,limits,&evaluator,RootAllocation::RoundRobin,InteriorBonus::PriorFree,BackupMode::Report,Some(&mut witness));
+    // Check failures too. An invalid simulation is not permission to mutate
+    // the ordinary policy or to return a partially trusted observation.
+    let session_changed=before!=session.diagnostic_state_hash();
+    let policy_rng_changed=rng!=policy.seat_rng;let tensor_changed=retained!=capture()?;
+    if session_changed||policy_rng_changed||tensor_changed {return Err(Error::ObserverInvariant{session_changed,policy_rng_changed,tensor_changed});}
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +146,49 @@ mod tests {
             assert_eq!(policy.seat_rng,rng);
             assert_eq!(capture(&policy),retained);
         }
+    }
+
+    #[test]
+    #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+    fn v4_search_bound_report_matches_off_and_preserves_scored_policy() {
+        use crate::model_guided_search_core_v4::{Error,Limits,RootAllocation,InteriorBonus};
+        use crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1;
+        for actor in [crate::ids::PlayerId::P0,crate::ids::PlayerId::P1] {
+            let session=public_session(actor,20);
+            let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture missing")};
+            let mut policy=FrozenPlayPolicyV1::training_fixture_v4();policy.reset_sampling_v1([11,22]);
+            let input=PairedBo1PolicyInputV1::new(&session,d);
+            let _=policy.select_paired_with_scores_v1(&input).unwrap();
+            let capture=|p:&FrozenPlayPolicyV1|crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
+                &NativeFlatDecisionTensorV3{common:p.last_scored_training_tensor_v4().unwrap().common.clone()});
+            let before=session.diagnostic_state_hash();let rng=policy.seat_rng;let retained=capture(&policy);
+            let limits=Limits{simulations:32,transitions:128,depth:4,seed:29};
+            let off=input.evaluation_search_v4(&policy,limits,RootAllocation::RoundRobin,InteriorBonus::PriorFree).unwrap();
+            assert_eq!(input.report_search_v4(&policy,Limits{simulations:1,transitions:8,..limits}),Err(Error::InvalidBudget));
+            assert_eq!(session.diagnostic_state_hash(),before);assert_eq!(policy.seat_rng,rng);assert_eq!(capture(&policy),retained);
+            let mut report=input.report_search_v4(&policy,limits).unwrap();
+            assert!(report.estimator.take().is_some());assert_eq!(report,off);
+            let mut stale=d;stale.step+=1;
+            assert_eq!(PairedBo1PolicyInputV1::new(&session,stale).report_search_v4(&policy,limits),Err(Error::InvalidAdapterBinding));
+            assert_eq!(session.diagnostic_state_hash(),before);assert_eq!(policy.seat_rng,rng);assert_eq!(capture(&policy),retained);
+        }
+    }
+
+    #[test]
+    #[cfg(all(target_arch="x86_64",feature="experimental-burn-net8-packed-cuda-v1"))]
+    fn v4_search_bound_report_rejects_dirty_float_state_without_repair() {
+        std::thread::spawn(|| {
+            use crate::deterministic_math_v1::*;
+            use crate::model_guided_search_core_v4::{Error,Limits};
+            let session=public_session(crate::ids::PlayerId::P0,20);
+            let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture missing")};
+            let policy=FrozenPlayPolicyV1::training_fixture_v4();
+            let original=read_mxcsr_v1();let dirty=original|(1<<15);write_mxcsr_v1(dirty);
+            let result=crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session,d)
+                .report_search_v4(&policy,Limits{simulations:32,transitions:128,depth:4,seed:29});
+            let after=read_mxcsr_v1();write_mxcsr_v1(original);
+            assert!(matches!(result,Err(Error::ObserverEnvironment(_))));assert_eq!(after,dirty);
+        }).join().unwrap();
     }
     #[test]
     #[cfg(all(target_arch="x86_64",feature="experimental-burn-net8-packed-cuda-v1"))]
