@@ -652,6 +652,11 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(test)]
+    pub(crate) fn fixture_policy_headroom_v4(&mut self, remaining:u64) {
+        self.max_policy_steps=self.policy_step_count.checked_add(remaining).unwrap();
+    }
+
+    #[cfg(test)]
     pub(crate) fn from_v3_fixture_state(state: GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;

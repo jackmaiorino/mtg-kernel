@@ -16,7 +16,7 @@ pub(crate) enum Error {NoDecision,InvalidBudget,InsufficientHeadroom,State(Strin
 type Result<T> = std::result::Result<T,Error>;
 #[derive(Debug,Default,Clone,PartialEq,Serialize)]
 pub(crate) struct Census {
-    pub natural:u32,pub expanded:u32,pub depth:u32,pub budget:u32,pub coverage:u32,
+    pub natural:u32,pub natural_wins:u32,pub natural_losses:u32,pub natural_draws:u32,pub expanded:u32,pub depth:u32,pub budget:u32,pub coverage:u32,
     pub clip_low:u64,pub clip_high:u64,pub raw_min:Option<f32>,pub raw_max:Option<f32>,pub forwards:u64,
 }
 #[derive(Debug,Clone,PartialEq,Serialize)]
@@ -101,7 +101,9 @@ pub(crate) fn search_inner<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&
             let next=match response {
                 FastActorResponseV1::Terminal(t)=>{
                     if t.terminal_classification!=TerminalClassificationV1::Natural{return Err(Error::NonNaturalTerminal);}
-                    census.natural+=1;result=natural_terminal_value_v1(t.terminal_outcome,root).map_err(|_|Error::NonNaturalTerminal)?;break;
+                    census.natural+=1;result=natural_terminal_value_v1(t.terminal_outcome,root).map_err(|_|Error::NonNaturalTerminal)?;
+                    if result>0 {census.natural_wins+=1;} else if result<0 {census.natural_losses+=1;} else {census.natural_draws+=1;}
+                    break;
                 },
                 FastActorResponseV1::Decision(next)=>next,
             };
@@ -128,6 +130,7 @@ pub(crate) fn search_inner<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&
     if tree[0].actions.iter().any(|a|a.visits==0)
         ||tree[0].visits!=simulations||tree[0].actions.iter().map(|a|a.visits).sum::<u32>()!=simulations
         ||census.natural+census.expanded+census.depth+census.budget+census.coverage!=simulations{return Err(Error::CorruptTree);}
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|x|Error::Evaluator(format!("{x:?}")))?;
     Ok(Outcome{selected:select_final_root_action_v1(&tree[0].actions).map_err(|_|Error::CorruptTree)?,
         simulations,transitions,nodes:tree.len(),headroom,
         root_visits:tree[0].actions.iter().map(|a|a.visits).collect(),root_value_sums:tree[0].actions.iter().map(|a|a.value_sum).collect(),census})
@@ -194,4 +197,42 @@ mod tests {
         let mut calls=0;let mut w=|_:&FastActorSessionV1,_|{calls+=1;Ok([calls;32])};
         assert_eq!(search_inner(&s,Limits{simulations:32,transitions:128,depth:4,seed:0},&e,Some(&mut w)),Err(Error::CorruptTree));
     }
+    #[test]
+    fn v4_search_core_truncation_and_sampler_rejection_preserve_original() {
+        let mut s=session(PlayerId::P0);s.fixture_policy_headroom_v4(1);
+        let p=FrozenPlayPolicyV1::training_fixture_v4();let e=V4SearchLeafEvaluatorV1::new(&p).unwrap();
+        let n=live(&s).unwrap().legal_action_count;let before=s.diagnostic_state_hash();
+        assert!(s.diagnostic_remaining_headroom_v1().iter().all(|x|*x>=1));
+        assert_eq!(search(&s,Limits{simulations:n,transitions:n,depth:1,seed:0},&e),Err(Error::NonNaturalTerminal));
+        assert_eq!(before,s.diagnostic_state_hash());
+        use crate::policy_observation_v6::tests::{put,ready_state};
+        let mut state=ready_state();
+        put(&mut state,PlayerId::P0,"Lightning Bolt",crate::state::Zone::Hand);
+        state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()]=3;
+        let id=put(&mut state,PlayerId::P0,"Forest",crate::state::Zone::Library);
+        state.engine.initiative_source=Some(crate::state::AbilitySourceContractV4::capture(&state,id));
+        let s=FastActorSessionV1::from_v3_fixture_state(state);let before=s.diagnostic_state_hash();
+        assert!(matches!(search(&s,Limits{simulations:32,transitions:128,depth:4,seed:0},&e),Err(Error::State(_))));
+        assert_eq!(before,s.diagnostic_state_hash());
+    }
+    #[test]
+    fn v4_search_core_natural_terminal_sign_both_seats() {
+        use crate::policy_observation_v6::tests::{put,ready_state};
+        use crate::state::Zone;
+        for actor in [PlayerId::P0,PlayerId::P1] {
+            let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
+            for owner in [actor,actor.opponent()] {
+                state.players[owner.index()].life=3;
+                put(&mut state,owner,"Lightning Bolt",Zone::Hand);
+                state.players[owner.index()].mana_pool[crate::mana::ManaColor::R.pool_index()]=3;
+                for name in ["Forest","Mountain","Island"] {put(&mut state,owner,name,Zone::Library);}
+            }
+            let s=FastActorSessionV1::from_v3_fixture_state(state);
+            let p=FrozenPlayPolicyV1::training_fixture_v4();let e=V4SearchLeafEvaluatorV1::new(&p).unwrap();
+            let o=search(&s,Limits{simulations:128,transitions:1024,depth:8,seed:29},&e).unwrap();
+            assert!(o.census.natural_wins>0 && o.census.natural_losses>0,"{o:?}");
+            assert_eq!(o.census.natural,o.census.natural_wins+o.census.natural_losses+o.census.natural_draws);
+        }
+    }
+
 }
