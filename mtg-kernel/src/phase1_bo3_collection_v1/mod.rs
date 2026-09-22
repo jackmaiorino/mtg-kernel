@@ -33,7 +33,7 @@ mod continuation;
 #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
 mod evaluation;
 #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
-pub use evaluation::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,Bo3ReportRootV1,Bo3ReportResultV1,evaluate_bo3_v4,Bo3EvaluationOptionsV1,Bo3EvaluationResultV1,BO3_EVALUATION_RESULT_SCHEMA_V1};
+pub use evaluation::{activate_bo3_v4,Bo3ActivationOptionsV1,Bo3ActivationResultV1,report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,Bo3ReportRootV1,Bo3ReportResultV1,evaluate_bo3_v4,Bo3EvaluationOptionsV1,Bo3EvaluationResultV1,BO3_EVALUATION_RESULT_SCHEMA_V1};
 pub use continuation::{collect_bo3_with_continuation_v1, continuation_record_sha256_v1, Bo3ContinuationOptionsV1, Bo3ContinuationResultV1};
 pub use combat_audit::{collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1, Bo3CombatAuditResultV1};
 pub use combat_audit::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};

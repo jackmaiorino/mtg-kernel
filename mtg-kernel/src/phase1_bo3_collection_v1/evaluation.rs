@@ -2,6 +2,8 @@
 use super::*;
 use crate::model_guided_search_core_v4 as search;
 mod report;
+mod activation;
+pub use activation::{activate_bo3_v4,Bo3ActivationOptionsV1,Bo3ActivationResultV1};
 pub use report::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,Bo3ReportRootV1,Bo3ReportResultV1};
 
 pub const BO3_EVALUATION_RESULT_SCHEMA_V1: &str = "mtg-kernel-bo3-search-evaluation/v1";
@@ -104,6 +106,7 @@ struct EstimateSearchDiagnostics {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum AbortCause {
+    Activation { message: String },
     Search { error: search::Error },
     RecordCap,
     PhysicalGameCap,
@@ -231,7 +234,14 @@ fn evaluate_loaded(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackage
 }
 fn evaluate_loaded_with_report(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
     policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1,
-    mut report:Option<&mut report::ReportSink>) ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
+    report:Option<&mut report::ReportSink>) ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
+    evaluate_loaded_scoped(config,packages,policies,heads,options,report,None)
+}
+fn evaluate_loaded_scoped(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
+    policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1,
+    mut report:Option<&mut report::ReportSink>,mut activation:Option<&mut activation::ActivationSink>)
+    ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
+    ensure(report.is_none() || activation.is_none(),"Report and activation cannot be combined")?;
     validate_evaluation(config,packages,options)?;
     crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1().map_err(|e|format!("{e:?}"))?;
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|format!("{e:?}"))?;
@@ -314,14 +324,19 @@ fn evaluate_loaded_with_report(config:&Bo3CollectionConfigV1,packages:[&Complete
             evaluated.abort=Some(Abort{game_index,actor:None,step:None,cause:AbortCause::PhysicalGameCap});break;
         }
         let mut game=EvaluationGame{game_index,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
-        let played=play_evaluation_game(config,packages,&evaluated.behavior_packages_by_seat,policies,heads,&mut match_session,
-            &registered,&mut current,&summaries,&tags,&mut seed_stream,chooser,&mut game,&mut budget,&mut timings,report.as_deref_mut());
+        let mut played=play_evaluation_game(config,packages,&evaluated.behavior_packages_by_seat,policies,heads,&mut match_session,
+            &registered,&mut current,&summaries,&tags,&mut seed_stream,chooser,&mut game,&mut budget,&mut timings,report.as_deref_mut(),activation.as_deref_mut());
+        if let Some(sink)=activation.as_deref_mut() {
+            if let Err(stop)=sink.after_game(&game,played.is_ok()) {played=Err(stop);}
+        }
         evaluated.games.push(game);
         match played {
             Ok(summary)=>{
                 let outcome=summary.winner.map_or(GameOutcomeV1::Draw,|winner|GameOutcomeV1::Win{winner});
                 let mut other=summary.clone();other.checkpoint_weights_hash=packages[1].gameplay.identity.model.weights_sha256.clone();
                 summaries[0].push(summary);summaries[1].push(other);
+                // Activation is a single-game fixture scope, not a completed BO3 match.
+                if activation.as_ref().is_some_and(|s|s.target_game()==game_index) {break;}
                 if let Err(error)=match_session.record_game_result_v1(outcome) {
                     evaluated.ending=Bo3TrajectoryEndingV1::Incomplete{reason:IncompleteMatchReasonV1::EngineError};
                     evaluated.abort=Some(Abort{game_index,actor:None,step:None,cause:AbortCause::Engine{message:error.to_string()}});break;
@@ -354,6 +369,7 @@ fn play_evaluation_game(
     budget: &mut EvaluationBudget,
     timings: &mut Vec<SearchTiming>,
     report: Option<&mut report::ReportSink>,
+    activation: Option<&mut activation::ActivationSink>,
 ) -> Result<GameSummaryV1, EvaluationStop> {
     let wins = [PlayerId::P0, PlayerId::P1].map(|p| match_session.match_state().wins(p).unwrap());
     if game.game_index > 1 {
@@ -454,7 +470,7 @@ fn play_evaluation_game(
     opening.keep()?;
     budget.append_checked(game, record, size);
     let mut episode = opening.into_session()?;
-    let mut recorder=EvaluationPolicy {policies,packages,hashes,game,budget,timings,report,pending:None,
+    let mut recorder=EvaluationPolicy {policies,packages,hashes,game,budget,timings,report,activation,pending:None,
         failure:None,attempted:None};
     recorder
         .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
@@ -524,6 +540,7 @@ struct EvaluationPolicy<'a> {
     budget:&'a mut EvaluationBudget,
     timings:&'a mut Vec<SearchTiming>,
     report:Option<&'a mut report::ReportSink>,
+    activation:Option<&'a mut activation::ActivationSink>,
     pending:Option<EvaluationPending>,
     failure:Option<EvaluationStop>,
     attempted:Option<(PlayerSeatV1,u64)>,
@@ -577,11 +594,15 @@ impl EvaluationPolicy<'_> {
         self.commit_pending(decision.step)?;
         self.attempted=Some((decision.acting_player,decision.step));
         let mut report_row=None;
-        let (selected,record)=match &self.packages[i].search {
+        if let Some(sink)=self.activation.as_deref_mut() {sink.before_decision(self.game,self.budget.count,input)?;}
+        let switched=self.activation.as_ref().filter(|s|s.uses_search(self.game.game_index,decision.acting_player));
+        let route=switched.map_or(&self.packages[i].search,|s|&s.search);
+        let behavior_hash=switched.map_or(&self.hashes[i],|s|&s.search_hash);
+        let (selected,record)=match route {
             AgentSearchPolicyV1::Disabled=>{
                 let (selected,scores)=self.policies[i].select_paired_with_scores_v1(input).map_err(|e|e.to_string())?;
                 let behavior=BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits,selected)?;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,self.hashes[i].clone(),behavior)?;
+                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),behavior)?;
                 if let Some(sink)=self.report.as_deref_mut() {
                     report_row=sink.observe(self.game.game_index,&record,input,&self.policies[i]);
                 }
@@ -598,7 +619,7 @@ impl EvaluationPolicy<'_> {
                 let outcome=result.map_err(|error|EvaluationStop{reason:IncompleteMatchReasonV1::EngineError,
                     actor:Some(decision.acting_player),step:Some(decision.step),cause:AbortCause::Search{error}})?;
                 let selected=outcome.selected;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,self.hashes[i].clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
+                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
                 let diagnostics=SearchDiagnostics{descriptor:descriptor.clone(),selected_by_mean:outcome.selected_by_mean,
                     simulations:outcome.simulations,transitions:outcome.transitions,nodes:outcome.nodes,headroom:outcome.headroom,
                     root_visits:outcome.root_visits.clone(),root_value_sums:outcome.root_value_sums.clone(),root_priors:outcome.root_priors.clone(),
@@ -620,7 +641,7 @@ impl EvaluationPolicy<'_> {
                 let root=estimate.nodes.first().ok_or_else(||abort(search::Error::CorruptTree))?;
                 // The versioned E rule preserves the estimator's lowest-index tie.
                 let selected=estimate.selected_by_estimate;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,self.hashes[i].clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
+                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
                 let diagnostics=EstimateSearchDiagnostics{descriptor:descriptor.clone(),selected_by_core:outcome.selected,
                     selected_by_estimate:selected,root_estimates:root.edges.iter().map(|e|e.value).collect(),selected_by_mean:outcome.selected_by_mean,
                     simulations:outcome.simulations,transitions:outcome.transitions,nodes:outcome.nodes,headroom:outcome.headroom,
@@ -660,7 +681,7 @@ mod tests {
     use super::*;
     use crate::phase1_bo3_collection_v1::tests as fixtures;
 
-    fn search_package(p:&mut CompleteAgentPackageV1,depth:u16) {
+    pub(super) fn search_package(p:&mut CompleteAgentPackageV1,depth:u16) {
         let m=&p.gameplay.identity.model;
         p.search=AgentSearchPolicyV1::V4InformationSetV1{descriptor:V4InformationSetSearchDescriptorV1{
             schema:V4_INFORMATION_SET_SEARCH_SCHEMA_V1.into(),algorithm:V4_INFORMATION_SET_SEARCH_ALGORITHM_V1.into(),
@@ -748,7 +769,7 @@ mod tests {
         let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:1,native_record_bytes:false};
         let mut timings=Vec::new();
         let mut recorder=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,
-            timings:&mut timings,report:None,pending:None,failure:None,attempted:None};
+            timings:&mut timings,report:None,activation:None,pending:None,failure:None,attempted:None};
         let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture")};
         let action=recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,d)).unwrap();
         assert!(recorder.game.decisions.is_empty());
@@ -807,7 +828,7 @@ mod tests {
             let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:0,native_record_bytes:false};
             let mut timings=Vec::new();
             let mut recorder=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,
-                timings:&mut timings,report:None,pending:None,failure:None,attempted:None};
+                timings:&mut timings,report:None,activation:None,pending:None,failure:None,attempted:None};
             let action=recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,d)).unwrap();
             assert_eq!(action,expected_estimate.selected_by_estimate);assert_eq!(before,session.diagnostic_state_hash());
             assert!(recorder.game.decisions.is_empty());

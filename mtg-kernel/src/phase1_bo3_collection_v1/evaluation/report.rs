@@ -314,7 +314,7 @@ mod tests {
         let mut budget=EvaluationBudget{count:record.decision_index,bytes:0,retained:0,max_count:10000,max_bytes:MAX_RECORD_BYTES,max_retained:0,native_record_bytes:true};
         let mut timings=Vec::new();
         let mut policy=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,timings:&mut timings,
-            report:Some(&mut sink),pending:Some(EvaluationPending{step:0,record:EvaluationDecision::Ordinary{record},size:1,report_row:Some(0)}),failure:None,attempted:None};
+            report:Some(&mut sink),activation:None,pending:Some(EvaluationPending{step:0,record:EvaluationDecision::Ordinary{record},size:1,report_row:Some(0)}),failure:None,attempted:None};
         assert!(policy.finish_game(Err("engine receipt failed".into()),None).is_err());
         assert_eq!(policy.game.discarded_pending_selections,1);assert!(policy.game.decisions.is_empty());
         assert_eq!(sink.summary.rows[0].receipt,Receipt::Discarded);

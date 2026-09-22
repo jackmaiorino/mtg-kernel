@@ -73,7 +73,7 @@ fn run() -> Result<(), String> {
         && args[2] == "--toolchain"
         && args[4] == "--output";
     let reporting = args.len() == 8 && args[0] == "--request" && args[2] == "--output"
-        && args[4] == "--report-search" && args[6] == "--archive";
+        && (args[4] == "--report-search" || args[4] == "--activate-search") && args[6] == "--archive";
     let auditing = args.len() == 6
         && args[0] == "--request"
         && args[2] == "--output"
@@ -85,7 +85,7 @@ fn run() -> Result<(), String> {
         && (args.len() != 4 || args[0] != "--request" || args[2] != "--output")
     {
         return Err(
-            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json | --burn-audit options.json | --continuation options.json | --evaluate-search options.json | --report-search options.json --archive archive.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
+            "usage: phase1_bo3_collect_v1 --request request.json --output new-result.json [--combat-audit options.json | --burn-audit options.json | --continuation options.json | --evaluate-search options.json | --report-search options.json --archive archive.json | --activate-search options.json --archive archive.json]; or --prepare-source source.json --toolchain rust-toolchain.toml --output new-package.json".into(),
         );
     }
     let output = PathBuf::from(&args[if preparing { 5 } else { 3 }]);
@@ -133,7 +133,7 @@ fn run() -> Result<(), String> {
         if reporting {
             #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
             {
-                use mtg_kernel::phase1_bo3_collection_v1::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1};
+                use mtg_kernel::phase1_bo3_collection_v1::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,activate_bo3_v4,Bo3ActivationOptionsV1};
                 fn bounded(path:&std::ffi::OsStr,limit:u64)->Result<Vec<u8>,String> {
                     let mut bytes=Vec::new();
                     std::fs::File::open(path).map_err(|e|e.to_string())?.take(limit+1)
@@ -144,12 +144,20 @@ fn run() -> Result<(), String> {
                 // Strict parsing rejects duplicate keys even inside nested maps.
                 // Archive is data only; current packages still bind this executable.
                 let options_bytes=bounded(&args[5],32768)?;
-                let options=Bo3ReportOptionsV1::from_json_v1(std::str::from_utf8(&options_bytes).map_err(|e|e.to_string())?)?;
+                let options_text=std::str::from_utf8(&options_bytes).map_err(|e|e.to_string())?;
                 let archive_bytes=bounded(&args[7],64*1024*1024)?;
                 let archive=Bo3ReportArchiveV1::from_json_v1(std::str::from_utf8(&archive_bytes).map_err(|e|e.to_string())?)?;
-                let result=report_bo3_v4(request.config,request.packages,options,archive)?;
-                (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
-                    "V4 Report observation; inspect usable_job and every assigned row".into())
+                if args[4]=="--activate-search" {
+                    let options=Bo3ActivationOptionsV1::from_json_v1(options_text)?;
+                    let result=activate_bo3_v4(request.config,request.packages,options,archive)?;
+                    (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
+                        "V4 single-game activation fixture; inspect scope_complete and abort, not a whole-match result".into())
+                } else {
+                    let options=Bo3ReportOptionsV1::from_json_v1(options_text)?;
+                    let result=report_bo3_v4(request.config,request.packages,options,archive)?;
+                    (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
+                        "V4 Report observation; inspect usable_job and every assigned row".into())
+                }
             }
             #[cfg(not(feature="experimental-burn-net8-packed-cuda-v1"))]
             { return Err("Report search requires experimental-burn-net8-packed-cuda-v1".into()); }
