@@ -1,6 +1,7 @@
 //! Guarded bounded imitation continuation and final-only reserved evaluation.
 use super::*;
 mod training_diagnostic;
+mod carryover_probe;
 mod natural_audit;
 mod retained_engineering;
 mod retention_data;
@@ -18,7 +19,7 @@ pub(crate) fn load_teacher_inference(
 
 #[derive(Deserialize)]
 #[serde(tag="mode",rename_all="snake_case",deny_unknown_fields)]
-pub enum Command { Train(Train), Evaluate(Evaluate), TrainingDiagnostic(Evaluate), NaturalAudit(natural_audit::Command), RetainedEngineering(retained_engineering::Command), RetentionDataCheck(retention_data::Command), RetainedTrain(retained_campaign::Train), RetainedEvaluate(retained_evaluation::Fixtures), RetainedNatural(retained_evaluation::Natural), SemanticDiagnostic(retained_campaign::Train), SemanticBudgetDiagnostic(retained_campaign::Train), SemanticPublicationReplay(retained_campaign::Train), EqualBudgetTrain(retained_campaign::Train), TeacherInferenceCheck(retained_evaluation::TeacherInferenceCheck) }
+pub enum Command { CarryoverProbe(carryover_probe::Command), Train(Train), Evaluate(Evaluate), TrainingDiagnostic(Evaluate), NaturalAudit(natural_audit::Command), RetainedEngineering(retained_engineering::Command), RetentionDataCheck(retention_data::Command), RetainedTrain(retained_campaign::Train), RetainedEvaluate(retained_evaluation::Fixtures), RetainedNatural(retained_evaluation::Natural), SemanticDiagnostic(retained_campaign::Train), SemanticBudgetDiagnostic(retained_campaign::Train), SemanticPublicationReplay(retained_campaign::Train), EqualBudgetTrain(retained_campaign::Train), TeacherInferenceCheck(retained_evaluation::TeacherInferenceCheck) }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,4 +172,4 @@ fn evaluate(c:Evaluate)->Result<Value,String> {
     fs::create_dir(&c.output_directory).map_err(err)?;publish_json(&c.output_directory,"result.json",&result)?;Ok(result)
 }
 
-pub fn run(command:Command)->Result<Value,String> {match command {Command::Train(c)=>train(c),Command::Evaluate(c)=>evaluate(c),Command::TrainingDiagnostic(c)=>training_diagnostic::run(c),Command::NaturalAudit(c)=>natural_audit::run(c),Command::RetainedEngineering(c)=>retained_engineering::run(c),Command::RetentionDataCheck(c)=>retention_data::run(c),Command::RetainedTrain(c)=>retained_campaign::run(c),Command::RetainedEvaluate(c)=>retained_evaluation::fixtures(c),Command::RetainedNatural(c)=>retained_evaluation::natural(c),Command::SemanticDiagnostic(c)=>retained_campaign::diagnostic(c),Command::SemanticBudgetDiagnostic(c)=>retained_campaign::budget_diagnostic(c),Command::SemanticPublicationReplay(c)=>retained_campaign::publication_replay(c),Command::EqualBudgetTrain(c)=>retained_campaign::equal_budget(c),Command::TeacherInferenceCheck(c)=>retained_evaluation::teacher_inference_check(c)}}
+pub fn run(command:Command)->Result<Value,String> {match command {Command::CarryoverProbe(c)=>carryover_probe::run(c),Command::Train(c)=>train(c),Command::Evaluate(c)=>evaluate(c),Command::TrainingDiagnostic(c)=>training_diagnostic::run(c),Command::NaturalAudit(c)=>natural_audit::run(c),Command::RetainedEngineering(c)=>retained_engineering::run(c),Command::RetentionDataCheck(c)=>retention_data::run(c),Command::RetainedTrain(c)=>retained_campaign::run(c),Command::RetainedEvaluate(c)=>retained_evaluation::fixtures(c),Command::RetainedNatural(c)=>retained_evaluation::natural(c),Command::SemanticDiagnostic(c)=>retained_campaign::diagnostic(c),Command::SemanticBudgetDiagnostic(c)=>retained_campaign::budget_diagnostic(c),Command::SemanticPublicationReplay(c)=>retained_campaign::publication_replay(c),Command::EqualBudgetTrain(c)=>retained_campaign::equal_budget(c),Command::TeacherInferenceCheck(c)=>retained_evaluation::teacher_inference_check(c)}}
