@@ -56,6 +56,7 @@ TICKET_SCHEMA = "mtg-kernel-multirun-launch-ticket/v1"
 INVENTORY_SCHEMA = "mtg-kernel-multirun-inventory/v1"
 
 HOSTS = ("jack", "haleyspc", "runpod")
+HALEYSPC_ADDRESS = "haley@100.71.75.65"
 INVENTORY_MAX_AGE_SECONDS = 24 * 3600
 MINIMUM_QUALIFICATION_UPDATES = 3
 # A candidate that fails to beat the best measured aggregate throughput by this
@@ -128,10 +129,13 @@ class RunSpec:
     id: str
     seed: int
     arm: str | None = None
+    # Resumed segment: run root holding the parent Store at the resume generation.
+    parent: Path | None = None
 
 
 # Machine-local fields: they locate files and never enter the workload identity.
-MACHINE_FIELDS = ("executable", "data_root", "remote_mirror_root", "remote_runtime_libraries", "remote_cuda_root")
+MACHINE_FIELDS = ("executable", "data_root", "remote_mirror_root", "remote_runtime_libraries", "remote_cuda_root",
+                  "parents")
 
 
 @dataclass
@@ -145,9 +149,57 @@ class Workload:
 
     @property
     def sha256(self) -> str:
-        """Identity of the scientific workload: everything but machine paths."""
+        """Identity of the scientific workload: everything but machine paths.
+
+        A resumed segment's parent Stores enter by content (their outputs
+        through the resume generation), never by path; refresh-chain manifests
+        named in knobs enter by content too.
+        """
         identity = {key: value for key, value in self.raw.items() if key not in MACHINE_FIELDS}
+        if self.resume_generation is not None:
+            identity["parent_digests"] = {run.id: sha256_bytes(canonical(self.adapter.output_digests(
+                run.parent, through_generation=self.resume_generation))) for run in self.runs}
+        manifests = {}
+        for knobs in [self.raw.get("knobs", {})] + [a.get("knobs", {}) for a in (self.raw.get("arms") or {}).values()]:
+            for name, value in knobs.items():
+                if name.endswith("_REFRESH_CHAIN"):
+                    for item in filter(None, value.split(";")):
+                        manifests[item] = sha256_file(Path(item)) if Path(item).is_file() else None
+        if manifests:
+            identity["refresh_chain_sha256"] = manifests
         return sha256_bytes(canonical(identity))
+
+    @property
+    def resume_generation(self) -> int | None:
+        segment = self.raw.get("segment")
+        return segment["resume_generation"] if segment else None
+
+    @property
+    def start_generation(self) -> int:
+        return self.resume_generation or 0
+
+    @property
+    def target_generation(self) -> int:
+        """Generation every run must reach: the segment stop, or the record length."""
+        segment = self.raw.get("segment")
+        return segment["stop_generation"] if segment else self.planned_updates
+
+    @property
+    def span(self) -> int:
+        """Updates each run trains in this workload."""
+        return self.target_generation - self.start_generation
+
+    @property
+    def launch_stop(self) -> int | None:
+        """Stop generation a full (non-prefix) execution passes to the process."""
+        return self.target_generation if self.raw.get("segment") else None
+
+    def arms(self) -> list[str | None]:
+        seen: list[str | None] = []
+        for run in self.runs:
+            if run.arm not in seen:
+                seen.append(run.arm)
+        return seen
 
     def data_tree_sha256(self) -> str | None:
         """Digest of every file under ``data_root`` (runtime inputs the executable reads by path)."""
@@ -204,8 +256,23 @@ def load_workload(path: Path) -> Workload:
         raise LaunchRefused("workload has no runs")
     if len({run.id for run in runs}) != len(runs) or len({run.seed for run in runs}) != len(runs):
         raise LaunchRefused("run ids and seeds must be distinct")
+    segment = raw.get("segment")
+    if segment is not None:
+        if not isinstance(segment, dict) or set(segment) != {"resume_generation", "stop_generation"} or not all(
+                type(segment[key]) is int for key in segment) or not \
+                0 < segment["resume_generation"] < segment["stop_generation"] <= planned:
+            raise LaunchRefused("segment needs integer 0 < resume_generation < stop_generation <= planned_updates")
+        parents = raw.get("parents")
+        if not isinstance(parents, dict) or set(parents) != {run.id for run in runs}:
+            raise LaunchRefused("a resumed segment names a parent run root for every run")
+        runs = [RunSpec(run.id, run.seed, run.arm, Path(parents[run.id])) for run in runs]
+    elif raw.get("parents") is not None:
+        raise LaunchRefused("parents are only meaningful for a resumed segment")
+    workload = Workload(raw, adapter, executable, pinned, planned, runs)
     adapter.validate(raw)
-    return Workload(raw, adapter, executable, pinned, planned, runs)
+    if segment is not None:
+        adapter.validate_segment(workload)
+    return workload
 
 
 def read_log(path: Path) -> str:
@@ -221,6 +288,8 @@ class Adapter:
 
     name = ""
     episodes_per_update = 0
+    # File-name regex whose first group is a generation (remote watchdog).
+    generation_name_regex = r"^$"
 
     def validate(self, raw: dict) -> None:
         raise NotImplementedError
@@ -247,9 +316,18 @@ class Adapter:
         """A generation-less output a longer run writes identically (kept in prefix audits)."""
         return False
 
-    def validate_prefix(self, updates: int, planned_updates: int) -> None:
-        if not MINIMUM_QUALIFICATION_UPDATES <= updates <= planned_updates:
-            raise LaunchRefused("qualification needs at least three updates and no more than the planned length")
+    def validate_prefix(self, updates: int, span: int) -> None:
+        """``updates`` past the start generation, within the ``span`` each run trains."""
+        if not MINIMUM_QUALIFICATION_UPDATES <= updates <= span:
+            raise LaunchRefused("qualification needs at least three updates and no more than the run's span")
+
+    def validate_segment(self, workload: "Workload") -> None:
+        """Each parent must hold exactly the resume generation as its latest output."""
+        for run in workload.runs:
+            latest = max(self.completed_generations(run.parent), default=0)
+            if latest != workload.resume_generation:
+                raise LaunchRefused(f"parent of {run.id} ends at generation {latest}, "
+                                    f"not the resume generation {workload.resume_generation}")
 
     def log_succeeded(self, log_text: str) -> bool:
         """Whether a zero exit status really means the workload ran."""
@@ -282,8 +360,8 @@ class Adapter:
             digests[relative] = sha256_file(path)
         return digests
 
-    def completed_generations(self, run_root: Path) -> dict[int, float]:
-        """Generation -> first publication time (mtime) observed on disk."""
+    def completed_generations(self, run_root: Path, after: int = 0) -> dict[int, float]:
+        """Generation -> first publication time (mtime) observed on disk, for generations past ``after``."""
         root = self.output_root(run_root)
         seen: dict[int, float] = {}
         if not root.is_dir():
@@ -291,7 +369,7 @@ class Adapter:
         for path in root.rglob("*"):
             if path.is_file():
                 generation = self.generation_of(path.relative_to(root).as_posix())
-                if generation is not None and generation > 0:
+                if generation is not None and generation > after:
                     stamp = path.stat().st_mtime
                     seen[generation] = min(stamp, seen.get(generation, stamp))
         return seen
@@ -318,6 +396,12 @@ class NativeSciencePilotAdapterV1(Adapter):
         "MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2", "MULTIRUN_RECORD_ONLY", "MULTIRUN_WIDE",
         "MULTIRUN_LADDER", "MULTIRUN_LADDER_POOL_DIR", "MULTIRUN_LADDER_INIT_STORE",
         "MULTIRUN_LADDER_INIT_GEN", "MULTIRUN_POLICY_ANCHOR_BETA",
+        # Population and response-exploiter runtimes (the harness validates
+        # their combinations and resolves slots through Store authority).
+        "MULTIRUN_POPULATION_AUTHORITY", "MULTIRUN_POPULATION_RUNTIME", "MULTIRUN_POPULATION_REFRESH_CHAIN",
+        "MULTIRUN_POPULATION_SLOT_ROOTS", "MULTIRUN_RESPONSE_EXPLOITER_RUNTIME",
+        "MULTIRUN_RESPONSE_EXPLOITER_DENOVO", "MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN",
+        "MULTIRUN_RESPONSE_EXPLOITER_SLOT_ROOTS",
     }
     # The fixture's record publishes a checkpoint every four updates, and the
     # harness honours a stop generation only at a checkpoint boundary (any
@@ -350,10 +434,15 @@ class NativeSciencePilotAdapterV1(Adapter):
         })
         if stop_after is not None:
             env["MULTIRUN_STOP_AFTER_GENERATION"] = str(stop_after)
+        if workload.resume_generation is not None:
+            env["MULTIRUN_EXPECT_RESUME_GENERATION"] = str(workload.resume_generation)
         return env
 
     def output_root(self, run_root: Path) -> Path:
         return Path(run_root) / "parent" / "run-0"
+
+    # Store file names a remote watchdog matches to find the latest generation.
+    generation_name_regex = r"^(?:update|segment)-0*(\d+)\."
 
     def generation_of(self, relative: str) -> int | None:
         match = self.generation_pattern.search(relative)
@@ -365,11 +454,19 @@ class NativeSciencePilotAdapterV1(Adapter):
     def static(self, relative: str) -> bool:
         return relative == "store/run.json"
 
-    def validate_prefix(self, updates: int, planned_updates: int) -> None:
-        super().validate_prefix(updates, planned_updates)
+    def validate_prefix(self, updates: int, span: int) -> None:
+        super().validate_prefix(updates, span)
         if updates % self.checkpoint_interval or updates < 2 * self.checkpoint_interval:
             raise LaunchRefused(f"the pilot stops only at checkpoint boundaries: qualify a multiple of "
                                 f"{self.checkpoint_interval} updates, at least {2 * self.checkpoint_interval}")
+
+    def validate_segment(self, workload: "Workload") -> None:
+        segment = workload.raw["segment"]
+        if segment["resume_generation"] % self.checkpoint_interval or (
+                segment["stop_generation"] % self.checkpoint_interval
+                and segment["stop_generation"] != workload.planned_updates):
+            raise LaunchRefused("the pilot resumes and stops only at checkpoint boundaries")
+        super().validate_segment(workload)
 
     def log_succeeded(self, log_text: str) -> bool:
         return "test result: ok. 1 passed" in log_text
@@ -409,7 +506,8 @@ class CommandTemplateAdapterV1(Adapter):
             "arm": run.arm or "",
             "output_dir": str(Path(run_root) / workload.raw["template"]["output_dir"]),
             "planned_updates": str(workload.planned_updates), "device": str(device),
-            "stop_after": str(stop_after if stop_after is not None else workload.planned_updates),
+            "stop_after": str(stop_after if stop_after is not None else workload.target_generation),
+            "resume": str(workload.start_generation),
         }
 
     def argv(self, workload, executable, run, run_root, device, stop_after):
@@ -428,6 +526,7 @@ class CommandTemplateAdapterV1(Adapter):
         bound.episodes_per_update = template["episodes_per_update"]
         bound._output_dir = template["output_dir"]
         bound._generation = re.compile(template["generation_regex"])
+        bound.generation_name_regex = template["generation_regex"]
         bound._exclude = [re.compile(pattern) for pattern in template.get("exclude_regex", [])]
         return bound
 
@@ -526,6 +625,10 @@ class LocalExecutor:
         run_root = Path(run_root).resolve()
         run_root.mkdir(parents=True, exist_ok=False)
         adapter = self.workload.adapter
+        if run.parent is not None:
+            # A resumed segment starts from a private copy of its parent Store.
+            shutil.copytree(adapter.output_root(run.parent), adapter.output_root(run_root))
+        start = self.workload.start_generation
         argv = adapter.argv(self.workload, str(self.workload.executable), run, str(run_root), device, stop_after)
         env = {key: value for key, value in os.environ.items()
                if not key.startswith("MULTIRUN_") and key not in ("MTG_KERNEL_PILOT_CUDA_ORDINAL", "CUDA_VISIBLE_DEVICES")}
@@ -542,7 +645,8 @@ class LocalExecutor:
                 time.sleep(1.0)
                 # Watchdog: a process that passes its stop generation would
                 # silently train the whole record.
-                if stop_after is not None and max(adapter.completed_generations(run_root), default=0) > stop_after:
+                if stop_after is not None and max(adapter.completed_generations(run_root, start),
+                                                  default=0) > stop_after:
                     process.kill()
                     process.wait()
                     overran = True
@@ -553,7 +657,7 @@ class LocalExecutor:
         elif code == 0 and not adapter.log_succeeded(read_log(log_path)):
             code = self.RAN_NOTHING
         return RunResult(run.id, self.host, device, code, started, finished,
-                         adapter.completed_generations(run_root), str(log_path))
+                         adapter.completed_generations(run_root, start), str(log_path))
 
 
 class SshPowerShellExecutor:
@@ -673,6 +777,13 @@ class SshPowerShellExecutor:
         ticket = env.get("MULTIRUN_LAUNCH_TICKET")
         began = time.monotonic()
         self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.physical(run_root)}' > $null", 120)
+        output_root = adapter.output_root(run_root)
+        if run.parent is not None:
+            parent = adapter.output_root(run.parent)
+            if parent.name != output_root.name:
+                raise RuntimeError("parent and run output roots must share a directory name")
+            self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.physical(output_root.parent)}' > $null", 120)
+            self.scp(str(parent), f"{self.address}:{self.physical(output_root.parent)}")
         if ticket:
             paths.append(ticket)
             self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.physical(Path(ticket).parent)}' > $null", 120)
@@ -695,8 +806,24 @@ class SshPowerShellExecutor:
             f"Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue\n{assignments}\n"
             f"Set-Location '{self.local(run_root)}'\n"
             f"$started = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0\n"
-            f"& cmd.exe /c '{command}'\n"
-            f"$code = $LASTEXITCODE\n"
+            f"$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', '\"{command}\"' -NoNewWindow -PassThru\n"
+            f"$null = $p.Handle\n"
+            f"$overran = $false\n"
+            # Watchdog, as locally: a process past its stop generation would
+            # silently train the whole record.
+            f"while (-not $p.HasExited) {{\n"
+            f"  Start-Sleep -Seconds 2\n"
+            f"  if ({-1 if stop_after is None else stop_after} -ge 0) {{\n"
+            f"    $max = 0\n"
+            f"    Get-ChildItem -LiteralPath '{self.local(output_root)}' -Recurse -File -ErrorAction SilentlyContinue |"
+            f" ForEach-Object {{ if ($_.Name -match '{adapter.generation_name_regex}') {{"
+            f" $g = [int64]$Matches[1]; if ($g -gt $max) {{ $max = $g }} }} }}\n"
+            f"    if ($max -gt {-1 if stop_after is None else stop_after}) {{"
+            f" & taskkill.exe /PID $p.Id /T /F > $null; $overran = $true; break }}\n"
+            f"  }}\n"
+            f"}}\n"
+            f"$p.WaitForExit()\n"
+            f"$code = if ($overran) {{ {LocalExecutor.OVERRAN} }} else {{ $p.ExitCode }}\n"
             f"$finished = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0\n"
             f"Set-Location '{self.mirror_root}'\n"
             f"& tar.exe -cf '{self.physical(run_root)}.tar' -C '{self.physical(run_root)}' .\n"
@@ -726,7 +853,8 @@ class SshPowerShellExecutor:
             code = LocalExecutor.RAN_NOTHING
         # Remote clock throughout (mtimes survive the tar); the pull counts as tail.
         return RunResult(run.id, self.host, device, code, float(receipt["started"]),
-                         float(receipt["finished"]) + pulled, adapter.completed_generations(run_root),
+                         float(receipt["finished"]) + pulled,
+                         adapter.completed_generations(run_root, self.workload.start_generation),
                          str(run_root / "process.log"))
 
 
@@ -958,13 +1086,14 @@ def probe_ssh(address: str, runner=subprocess.run) -> dict:
             if detail.get("gpus") else "reachable but no CUDA device", "detail": detail}
 
 
-# RunPod pods are Linux. The repository documents Windows and Linux training
-# bytes as different by design (docs/audits/windows_golden_drift_rootcause_20260921.md,
-# Portability), so a pod cannot reproduce a Windows serial golden.
+# RunPod pods are Linux. The repository pins different training bytes per
+# target: native_trainer_v1.rs keeps separate x86_64-pc-windows-msvc and
+# x86_64-unknown-linux-gnu BurnPairNumericalWitnessV1 values whose
+# train_state_sha256 differ, so a pod cannot reproduce a Windows serial golden.
 RUNPOD_PLATFORM_REASON = ("account reachable, but RunPod pods are Linux and this Windows-built workload's "
-                          "outputs are not byte-reproducible across platforms (Windows/Linux training bytes "
-                          "differ by design); qualifying it needs a Linux build with Linux goldens and a lease "
-                          "guard, which this launcher does not implement")
+                          "training bytes differ across targets (per-target train_state_sha256 witnesses in "
+                          "mtg-kernel/src/native_trainer_v1.rs); qualifying it needs a Linux build with Linux "
+                          "goldens and a lease guard, which this launcher does not implement")
 
 
 def probe_runpod(runner=subprocess.run) -> dict:
@@ -998,8 +1127,9 @@ def take_inventory(haleys_address: str) -> dict:
 # Qualification
 
 
-def leg_statistics(results: list[RunResult], wall: float, stop_after: int, episodes_per_update: int) -> dict:
-    """Completed work and the per-run timing model used for projection."""
+def leg_statistics(results: list[RunResult], wall: float, stop_after: int, episodes_per_update: int,
+                   start: int = 0) -> dict:
+    """Completed work and the per-run timing model used for projection (updates counted past ``start``)."""
     startup, steady, tail = [], [], []
     for result in results:
         # Generations publish at checkpoint boundaries, so timings are per
@@ -1010,10 +1140,10 @@ def leg_statistics(results: list[RunResult], wall: float, stop_after: int, episo
         per_update = [(t1 - t0) / (g1 - g0) for (g0, t0), (g1, t1) in zip(points, points[1:])]
         run_steady = sum(per_update) / len(per_update)
         steady.extend(per_update)
-        startup.append(max(0.0, points[0][1] - result.started - points[0][0] * run_steady))
+        startup.append(max(0.0, points[0][1] - result.started - (points[0][0] - start) * run_steady))
         tail.append(result.finished - points[-1][1])
-    completed = sum(max((g for g in result.generations if g <= stop_after), default=0) for result in results
-                    if result.exit_code == 0)
+    completed = sum(max((g for g in result.generations if g <= stop_after), default=start) - start
+                    for result in results if result.exit_code == 0)
     episodes = completed * episodes_per_update
     mean = lambda values: sum(values) / len(values) if values else None  # noqa: E731
     return {"wall_seconds": wall, "completed_updates": completed, "episodes": episodes,
@@ -1111,6 +1241,49 @@ def grow_allocation(slots: list[Slot], per_process: Callable[[int], float], marg
     return sorted(grown, key=lambda s: (s.host != "jack", s.host, s.device))
 
 
+def sentinel_entries(workload: Workload, slots: list[Slot]) -> list[tuple[str, RunSpec, Slot]]:
+    """Full-length sentinel placements: every arm on every slot, every lane busy.
+
+    Each slot gets max(capacity, arm count) entries cycling through the arms,
+    each entry the arm's first run, so the sentinel leg runs at the selected
+    width (the memory pressure the launch will see) and covers every
+    placement-by-arm pair.
+    """
+    arms = workload.arms()
+    first = {arm: next(run for run in workload.runs if run.arm == arm) for arm in arms}
+    entries = []
+    for slot in slots:
+        for lane in range(max(slot.capacity, len(arms))):
+            run = first[arms[lane % len(arms)]]
+            entries.append((f"{run.id}--{slot.host}-{slot.device}-{lane}", run, slot))
+    return entries
+
+
+def execute_pinned(entries: list[tuple[str, RunSpec, Slot]], root: Path, stop_after: int | None,
+                   executors: dict[str, object], extra_env: Callable[[str, RunSpec], dict] | None = None
+                   ) -> tuple[dict[str, RunResult], float]:
+    """Run labelled entries on their own slots, at most ``capacity`` at once per slot."""
+    gates = {slot: threading.Semaphore(slot.capacity) for _, _, slot in entries}
+    results: dict[str, RunResult] = {}
+    began = time.time()
+
+    def worker(label: str, run: RunSpec, slot: Slot) -> None:
+        with gates[slot]:
+            try:
+                result = executors[slot.host].run(run, root / label, slot.device, stop_after,
+                                                   extra_env(label, run) if extra_env else None)
+            except Exception as error:  # recorded, never retried silently
+                result = RunResult(run.id, slot.host, slot.device, None, time.time(), time.time(), {}, repr(error))
+        results[label] = result
+
+    threads = [threading.Thread(target=worker, args=entry, daemon=True) for entry in entries]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results, time.time() - began
+
+
 def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualification_updates: int,
             inventory: dict, executors: dict[str, object], overheads: dict[str, dict] | None = None,
             stop_on_saturation: bool = True, per_process_mib: float | None = None,
@@ -1123,7 +1296,9 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     device with the most spare memory, until nothing fits or throughput stops
     improving.
     """
-    workload.adapter.validate_prefix(qualification_updates, workload.planned_updates)
+    workload.adapter.validate_prefix(qualification_updates, workload.span)
+    start = workload.start_generation
+    prefix_stop = start + qualification_updates
     if root.exists():
         raise LaunchRefused(f"qualification root already exists: {root}")
     if auto_devices:
@@ -1157,8 +1332,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         monitor = Monitor(leg_root / "monitor.jsonl", lambda: waiting["count"])
         monitor.start()
         results, wall = execute_allocation(
-            workload, slots, leg_root, qualification_updates, executors,
-            extra_env=qualification_tickets(workload, leg_root, allocation_text(slots), qualification_updates),
+            workload, slots, leg_root, prefix_stop, executors,
+            extra_env=qualification_tickets(workload, leg_root, allocation_text(slots), prefix_stop),
             on_event=on_event)
         usage = monitor.stop()
         for slot in slots:
@@ -1180,7 +1355,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     golden_results, golden_wall, golden_usage = leg("serial-golden", golden_slots)
     goldens = {}
     for result in golden_results:
-        if result.exit_code != 0 or max(result.generations, default=0) != qualification_updates:
+        if result.exit_code != 0 or max(result.generations, default=start) != prefix_stop:
             raise LaunchRefused(f"serial golden for {result.run_id} did not complete "
                                 f"(exit {result.exit_code}); see {result.log}")
         goldens[result.run_id] = workload.adapter.output_digests(root / "serial-golden" / result.run_id)
@@ -1188,9 +1363,9 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     repeat_root = root / "serial-repeat"
     repeat_root.mkdir()
     repeat = executors[golden_slots[0].host].run(
-        workload.runs[0], repeat_root / workload.runs[0].id, golden_slots[0].device, qualification_updates,
+        workload.runs[0], repeat_root / workload.runs[0].id, golden_slots[0].device, prefix_stop,
         qualification_tickets(workload, repeat_root, allocation_text(golden_slots),
-                              qualification_updates)(workload.runs[0]))
+                              prefix_stop)(workload.runs[0]))
     repeat_digests = workload.adapter.output_digests(repeat_root / workload.runs[0].id)
     if repeat.exit_code != 0 or repeat_digests != goldens[workload.runs[0].id]:
         differing = sorted(k for k in set(repeat_digests) | set(goldens[workload.runs[0].id])
@@ -1200,7 +1375,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     records = []
 
     def record(slots, results, wall, usage, status_override=None, reasons=(), leg_root=None):
-        statistics = leg_statistics(results, wall, qualification_updates, workload.adapter.episodes_per_update)
+        statistics = leg_statistics(results, wall, prefix_stop, workload.adapter.episodes_per_update, start)
         leg_root = leg_root or root / label_of(slots)
         per_run = compare_to_goldens(workload, results, leg_root, goldens) if results else {}
         reasons = list(reasons)
@@ -1210,10 +1385,10 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
                        for host in {slot.host for slot in slots}
                        for key in ("setup_seconds", "transfer_seconds", "recovery_seconds"))
         status = status_override or ("qualified" if not reasons else "disqualified")
-        host_statistics = {host: leg_statistics([r for r in results if r.host == host], wall, qualification_updates,
-                                                workload.adapter.episodes_per_update)
+        host_statistics = {host: leg_statistics([r for r in results if r.host == host], wall, prefix_stop,
+                                                workload.adapter.episodes_per_update, start)
                            for host in {slot.host for slot in slots}}
-        projected = project_seconds(host_statistics, slots, len(workload.runs), workload.planned_updates,
+        projected = project_seconds(host_statistics, slots, len(workload.runs), workload.span,
                                     overhead) if status == "qualified" else None
         entry = {"id": label_of(slots), "allocation": allocation_text(slots), "concurrency": concurrency(slots),
                  "hosts": sorted({slot.host for slot in slots}), "status": status, "reasons": reasons,
@@ -1256,8 +1431,73 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             if grown is not None:
                 pending.append(grown)
 
-    qualified = [entry for entry in records if entry["status"] == "qualified" and entry["projected_seconds"]]
-    selected = min(qualified, key=lambda entry: entry["projected_seconds"])
+    # Full-length sentinel (verdict M1): the fastest qualified allocation must
+    # also reproduce full-length serial runs byte for byte on every placement
+    # and arm, at its own width; otherwise it is disqualified and the next
+    # fastest is tried.
+    target = workload.target_generation
+    serial_root = root / "sentinel-serial"
+    serial_full: dict[str, dict[str, str]] = {}
+    golden_slot = golden_slots[0]
+
+    def sentinel_ticket(directory: Path, allocation: str):
+        def env(label: str, run: RunSpec) -> dict:
+            ticket = issue_ticket(directory / f"{label}.ticket.json", workload, run, allocation, "sentinel",
+                                  stop_after=workload.launch_stop)
+            return {"MULTIRUN_LAUNCH_TICKET": str(ticket)}
+        return env
+
+    def run_sentinel(candidate: dict) -> dict:
+        slots = parse_allocation(candidate["allocation"])
+        entries = sentinel_entries(workload, slots)
+        for run in {run.id: run for _, run, _ in entries}.values():
+            if run.id in serial_full:
+                continue
+            serial_root.mkdir(exist_ok=True)
+            result = executors[golden_slot.host].run(
+                run, serial_root / run.id, golden_slot.device, workload.launch_stop,
+                sentinel_ticket(serial_root, allocation_text([golden_slot]))(run.id, run))
+            if result.exit_code != 0 or max(result.generations, default=start) != target:
+                raise LaunchRefused(f"full-length serial sentinel for {run.id} did not complete "
+                                    f"(exit {result.exit_code}); see {result.log}")
+            serial_full[run.id] = workload.adapter.output_digests(serial_root / run.id)
+        sentinel_root = root / f"sentinel-{candidate['id']}"
+        sentinel_root.mkdir()
+        results, wall = execute_pinned(entries, sentinel_root, workload.launch_stop, executors,
+                                       sentinel_ticket(sentinel_root, candidate["allocation"]))
+        rows = []
+        for label, run, slot in entries:
+            result = results[label]
+            digests = workload.adapter.output_digests(sentinel_root / label)
+            reference = serial_full[run.id]
+            rows.append({"label": label, "run_id": run.id, "arm": run.arm, "host": slot.host, "device": slot.device,
+                         "exit_code": result.exit_code,
+                         "completed_generation": max(result.generations, default=start),
+                         "output_count": len(digests), "digest_set_sha256": sha256_bytes(canonical(digests)),
+                         "byte_identical": result.exit_code == 0 and bool(digests) and digests == reference,
+                         "differing_outputs": sorted(k for k in set(digests) | set(reference)
+                                                     if digests.get(k) != reference.get(k))[:20]})
+        passed = all(row["byte_identical"] and row["completed_generation"] == target for row in rows)
+        return {"allocation": candidate["allocation"], "candidate": candidate["id"], "root": str(sentinel_root),
+                "wall_seconds": wall, "passed": passed, "entries": rows}
+
+    attempts = []
+    while True:
+        qualified = [entry for entry in records if entry["status"] == "qualified" and entry["projected_seconds"]]
+        if not qualified:
+            raise LaunchRefused("no allocation passed both the prefix qualification and the full-length sentinel")
+        selected = min(qualified, key=lambda entry: entry["projected_seconds"])
+        attempt = run_sentinel(selected)
+        attempts.append(attempt)
+        if attempt["passed"]:
+            break
+        selected["status"] = "disqualified"
+        selected["reasons"].append("full-length sentinel differs from the serial reference or did not finish")
+        selected["projected_seconds"] = None
+    sentinel = dict(attempts[-1], serial={
+        run_id: {"root": str(serial_root / run_id), "output_count": len(digests),
+                 "digest_set_sha256": sha256_bytes(canonical(digests))}
+        for run_id, digests in serial_full.items()})
     choice = {
         "schema": CHOICE_SCHEMA,
         "created_at": iso(utc_now()),
@@ -1268,17 +1508,22 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "data_tree_sha256": workload.data_tree_sha256(),
         "launcher_sha256": sha256_file(Path(__file__)),
         "planned_updates": workload.planned_updates,
+        "start_generation": start,
+        "target_generation": target,
         "qualification_updates": qualification_updates,
         "run_ids": [run.id for run in workload.runs],
         "gpu_footprint_mib": {str(device): mib for device, mib in sorted(footprint.items())},
         "remote_staging": staging,
         "inventory": inventory,
         "golden": {"allocation": allocation_text(golden_slots), "root": str(root / "serial-golden"),
-                   "serial_repeat_identical": True,
+                   "serial_repeat": {"run_id": workload.runs[0].id, "root": str(repeat_root),
+                                     "digest_set_sha256": sha256_bytes(canonical(repeat_digests))},
                    "runs": {run_id: {"digests": digests, "digest_set_sha256": sha256_bytes(canonical(digests))}
                             for run_id, digests in goldens.items()}},
         "candidates": records,
         "selected": selected["id"],
+        "sentinel": sentinel,
+        "sentinel_failures": [{k: a[k] for k in ("candidate", "allocation", "root")} for a in attempts[:-1]],
         "selection_rule": "minimum projected completion seconds among byte-identical, fully completed "
                           "allocations; projection simulates the scheduler with each host's measured "
                           "startup + planned_updates * steady_update + tail per run, plus staging overhead",
@@ -1310,18 +1555,22 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
         raise LaunchRefused("unsupported compute-choice schema")
     if choice.get("executable_sha256") != workload.executable_sha256:
         raise LaunchRefused("requalify: the training executable changed")
+    if choice.get("launcher_sha256") != sha256_file(Path(__file__)):
+        raise LaunchRefused("requalify: the launcher changed since this receipt was written")
     if choice.get("data_tree_sha256") != workload.data_tree_sha256():
         raise LaunchRefused("requalify: the runtime data the executable reads changed")
     if choice.get("workload_sha256") != workload.sha256 or choice.get("adapter") != workload.adapter.name:
         raise LaunchRefused("requalify: the workload (knobs, runs, length or adapter) changed")
     if choice.get("run_ids") != [run.id for run in workload.runs]:
         raise LaunchRefused("the receipt covers a different run set")
-    if choice.get("planned_updates") != workload.planned_updates:
-        raise LaunchRefused("the receipt covers a different run length")
+    if choice.get("planned_updates") != workload.planned_updates or \
+            choice.get("start_generation") != workload.start_generation or \
+            choice.get("target_generation") != workload.target_generation:
+        raise LaunchRefused("the receipt covers a different run length or segment")
     updates = choice.get("qualification_updates")
     if type(updates) is not int:
         raise LaunchRefused("qualification prefix is missing")
-    workload.adapter.validate_prefix(updates, workload.planned_updates)
+    workload.adapter.validate_prefix(updates, workload.span)
 
     hosts = choice.get("inventory", {}).get("hosts", {})
     if set(hosts) != set(HOSTS):
@@ -1334,11 +1583,16 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
             raise LaunchRefused(f"inventory must record availability and a reason: {host}")
 
     golden = choice.get("golden", {})
-    if golden.get("serial_repeat_identical") is not True:
-        raise LaunchRefused("serial outputs were never shown to be reproducible")
     golden_runs = golden.get("runs", {})
     if set(golden_runs) != {run.id for run in workload.runs}:
         raise LaunchRefused("every run needs a serial golden")
+    repeat = golden.get("serial_repeat") or {}
+    if repeat.get("run_id") not in golden_runs or \
+            repeat.get("digest_set_sha256") != golden_runs[repeat["run_id"]].get("digest_set_sha256"):
+        raise LaunchRefused("serial outputs were never shown to be reproducible (repeat digests differ or missing)")
+    if verify_golden_files and sha256_bytes(canonical(workload.adapter.output_digests(
+            Path(repeat["root"]) / repeat["run_id"]))) != repeat["digest_set_sha256"]:
+        raise LaunchRefused("serial repeat outputs on disk no longer match the receipt")
     for run_id, entry in golden_runs.items():
         digests = entry.get("digests", {})
         if not digests or sha256_bytes(canonical(digests)) != entry.get("digest_set_sha256"):
@@ -1383,7 +1637,71 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
     selected = next((c for c in qualified if c["id"] == choice.get("selected")), None)
     if selected is None or selected["projected_seconds"] > fastest["projected_seconds"]:
         raise LaunchRefused("the selected allocation is slower than a qualified alternative")
+    require_sentinel(choice.get("sentinel") or {}, selected, workload, verify_golden_files)
     return selected
+
+
+def require_sentinel(sentinel: dict, selected: dict, workload: Workload, verify_files: bool) -> None:
+    """Verdict M1: full-length identity on every placement and arm of the selected allocation."""
+    if sentinel.get("allocation") != selected["allocation"] or sentinel.get("passed") is not True:
+        raise LaunchRefused("no passing full-length sentinel for the selected allocation")
+    serial = sentinel.get("serial", {})
+    target = workload.target_generation
+    for run_id, reference in serial.items():
+        if verify_files and sha256_bytes(canonical(workload.adapter.output_digests(
+                Path(reference["root"])))) != reference.get("digest_set_sha256"):
+            raise LaunchRefused(f"full-length serial sentinel outputs on disk no longer match: {run_id}")
+    covered = set()
+    for row in sentinel.get("entries", []):
+        reference = serial.get(row.get("run_id"))
+        if reference is None or row.get("digest_set_sha256") != reference.get("digest_set_sha256") or \
+                row.get("byte_identical") is not True or row.get("exit_code") != 0 or \
+                row.get("completed_generation") != target:
+            raise LaunchRefused(f"full-length sentinel entry {row.get('label')} is not identical to its serial run")
+        covered.add((row["host"], row["device"], row.get("arm")))
+    needed = {(slot.host, slot.device, arm) for slot in parse_allocation(selected["allocation"])
+              for arm in workload.arms()}
+    if not needed <= covered:
+        raise LaunchRefused(f"full-length sentinel misses placements x arms: {sorted(map(str, needed - covered))}")
+
+
+def recorded_gpus(detail: dict) -> dict[int, tuple[str, str]]:
+    """GPU index -> (name, uuid) from an inventory record (local dicts or remote CSV lines)."""
+    found = {}
+    for gpu in detail.get("gpus") or []:
+        if isinstance(gpu, dict):
+            found[int(gpu["index"])] = (gpu.get("name", ""), gpu.get("uuid", ""))
+        else:
+            parts = [part.strip() for part in str(gpu).split(",")]
+            if len(parts) >= 3 and parts[0].isdigit():
+                found[int(parts[0])] = (parts[1], parts[2])
+    return found
+
+
+def check_gpu_identity(choice: dict, slots: list[Slot], current: Callable[[str], dict[int, tuple[str, str]]]) -> None:
+    """Verdict M4: every device the allocation uses is the device the receipt measured."""
+    hosts = choice["inventory"]["hosts"]
+    footprint = {int(device): mib for device, mib in choice.get("gpu_footprint_mib", {}).items()}
+    live: dict[str, dict] = {}
+    for slot in slots:
+        recorded = recorded_gpus(hosts.get(slot.host, {}).get("detail", {}))
+        if slot.device not in recorded:
+            if recorded or (slot.host == "jack" and footprint.get(slot.device, 0) > 0) or slot.host != "jack":
+                raise LaunchRefused(f"the receipt records no GPU {slot.device} on {slot.host}")
+            continue  # a workload that measured no GPU use on a GPU-less inventory
+        if slot.host not in live:
+            live[slot.host] = current(slot.host)
+        if live[slot.host].get(slot.device) != recorded[slot.device]:
+            raise LaunchRefused(f"GPU {slot.device} on {slot.host} is not the device the receipt measured "
+                                f"({live[slot.host].get(slot.device)} vs {recorded[slot.device]})")
+
+
+def live_gpus(haleys_address: str) -> Callable[[str], dict[int, tuple[str, str]]]:
+    def current(host: str) -> dict[int, tuple[str, str]]:
+        if host == "jack":
+            return recorded_gpus({"gpus": gpu_inventory()})
+        return recorded_gpus(probe_ssh(haleys_address)["detail"])
+    return current
 
 
 def issue_ticket(path: Path, workload: Workload, run: RunSpec, allocation: str, kind: str,
@@ -1396,7 +1714,9 @@ def issue_ticket(path: Path, workload: Workload, run: RunSpec, allocation: str, 
     write_json(path, {"schema": TICKET_SCHEMA, "kind": kind, "executable_sha256": workload.executable_sha256,
                       "compute_choice_sha256": choice_sha256, "workload_sha256": workload.sha256,
                       "run_id": run.id, "seed": run.seed, "planned_updates": workload.planned_updates,
-                      "stop_after_generation": stop_after, "allocation": allocation, "issued_at": iso(utc_now())})
+                      "stop_after_generation": stop_after,
+                      "expected_resume_generation": workload.resume_generation,
+                      "allocation": allocation, "issued_at": iso(utc_now())})
     return path
 
 
@@ -1410,13 +1730,15 @@ def qualification_tickets(workload: Workload, leg_root: Path, allocation: str,
 
 
 def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[str, object],
-           now: datetime | None = None, verify_golden_files: bool = True) -> dict:
+           now: datetime | None = None, verify_golden_files: bool = True,
+           gpus: Callable[[str], dict[int, tuple[str, str]]] | None = None) -> dict:
     selected = require_choice(choice_path, workload, now, verify_golden_files)
     choice = read_json(choice_path)
     choice_sha256 = sha256_file(choice_path)
     slots = parse_allocation(selected["allocation"])
     if root.exists():
         raise LaunchRefused(f"launch root already exists: {root}")
+    check_gpu_identity(choice, slots, gpus or live_gpus(HALEYSPC_ADDRESS))
     # Current reservations win: refuse rather than squeeze in beside other GPU work.
     footprint = {int(device): mib for device, mib in choice.get("gpu_footprint_mib", {}).items()}
     crowded = device_fits(slots, lambda device: footprint.get(device, max(footprint.values(), default=0.0)))
@@ -1448,7 +1770,7 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     for run in workload.runs:
         manifest["runs"][run.id] = {"seed": run.seed, "status": "queued"}
         issue_ticket(runs_root / f"{run.id}.ticket.json", workload, run, selected["allocation"], "launch",
-                     choice_sha256=choice_sha256)
+                     choice_sha256=choice_sha256, stop_after=workload.launch_stop)
     save()
     waiting = {"count": len(workload.runs)}
 
@@ -1464,12 +1786,13 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     monitor = Monitor(root / "monitor.jsonl", lambda: waiting["count"])
     monitor.start()
     results, wall = execute_allocation(
-        workload, slots, runs_root, None, executors,
+        workload, slots, runs_root, workload.launch_stop, executors,
         extra_env=lambda run: {"MULTIRUN_LAUNCH_TICKET": str(runs_root / f"{run.id}.ticket.json")},
         on_event=on_event)
     usage = monitor.stop()
     golden_runs = choice["golden"]["runs"]
-    prefix = choice["qualification_updates"]
+    prefix = workload.start_generation + choice["qualification_updates"]
+    start, target = workload.start_generation, workload.target_generation
     for result in results:
         run_root = runs_root / result.run_id
         final = workload.adapter.output_digests(run_root)
@@ -1478,21 +1801,28 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
                          if workload.adapter.static(k)
                          or ((g := workload.adapter.generation_of(k)) is not None and g <= prefix)}
         entry = manifest["runs"][result.run_id]
+        completed = max(result.generations, default=start)
+        prefix_identical = bool(golden_prefix) and shared == golden_prefix
+        # Verdict M2: a run is complete only if it finished AND its prefix
+        # still matches its serial golden; otherwise the experiment fails.
+        failure = ("exit" if result.exit_code != 0 else "incomplete" if completed != target
+                   else "prefix-differs-from-serial-golden" if not prefix_identical else None)
         entry.update({
             "run_root": str(run_root), "exit_code": result.exit_code,
-            "completed_generation": max(result.generations, default=0),
-            "status": "complete" if result.exit_code == 0 and max(result.generations, default=0)
-            == workload.planned_updates else "failed",
+            "completed_generation": completed,
+            "status": "complete" if failure is None else "failed", "failure": failure,
             "wall_seconds": result.finished - result.started,
             "output_digest_set_sha256": sha256_bytes(canonical(final)),
             "golden_prefix_generation": prefix,
-            "golden_prefix_identical": bool(golden_prefix) and shared == golden_prefix,
+            "golden_prefix_identical": prefix_identical,
+            "differing_prefix_outputs": sorted(k for k in set(shared) | set(golden_prefix)
+                                               if shared.get(k) != golden_prefix.get(k))[:20],
             "log": result.log,
         })
         write_json(run_root / "run-manifest.json", {"schema": RUN_MANIFEST_SCHEMA, "run_id": result.run_id,
                                                      **entry, "experiment_manifest": str(manifest_path),
                                                      "compute_choice_sha256": choice_sha256})
-    episodes = sum(e.get("completed_generation", 0) for e in manifest["runs"].values()) \
+    episodes = sum(e.get("completed_generation", start) - start for e in manifest["runs"].values()) \
         * workload.adapter.episodes_per_update
     manifest.update(status="complete" if all(e["status"] == "complete" for e in manifest["runs"].values())
                     else "failed", wall_seconds=wall, episodes=episodes,
@@ -1526,13 +1856,14 @@ def verify(workload: Workload, choice_path: Path, launch_root: Path, run_ids: li
         if run_id not in runs or entry.get("status") != "complete":
             raise LaunchRefused(f"{run_id} is not a completed run of this launch")
         ticket = issue_ticket(root / f"{run_id}.ticket.json", workload, runs[run_id], f"1@jack:{device}",
-                              "launch", choice_sha256=choice_sha256)
-        result = executor.run(runs[run_id], root / run_id, device, None, {"MULTIRUN_LAUNCH_TICKET": str(ticket)})
+                              "launch", choice_sha256=choice_sha256, stop_after=workload.launch_stop)
+        result = executor.run(runs[run_id], root / run_id, device, workload.launch_stop,
+                              {"MULTIRUN_LAUNCH_TICKET": str(ticket)})
         serial = workload.adapter.output_digests(root / run_id)
         concurrent = workload.adapter.output_digests(Path(entry["run_root"]))
         records[run_id] = {
             "exit_code": result.exit_code, "wall_seconds": result.finished - result.started,
-            "serial_completed_generation": max(result.generations, default=0),
+            "serial_completed_generation": max(result.generations, default=workload.start_generation),
             "output_count": len(serial), "serial_digest_set_sha256": sha256_bytes(canonical(serial)),
             "concurrent_digest_set_sha256": sha256_bytes(canonical(concurrent)),
             "byte_identical": result.exit_code == 0 and bool(serial) and serial == concurrent,
@@ -1629,7 +1960,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({run: entry["byte_identical"] for run, entry in record["runs"].items()}))
             return 0 if all(entry["byte_identical"] for entry in record["runs"].values()) else 1
         manifest = launch(workload, arguments.choice, arguments.root,
-                          build_executors(workload, arguments.haleyspc))
+                          build_executors(workload, arguments.haleyspc), gpus=live_gpus(arguments.haleyspc))
         print(json.dumps({"status": manifest["status"], "manifest": str(arguments.root / "experiment-manifest.json")}))
         return 0 if manifest["status"] == "complete" else 1
     except LaunchRefused as refusal:

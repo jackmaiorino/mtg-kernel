@@ -7,12 +7,17 @@
 //! goldens, fresh placement inventory) and then hands each process a ticket
 //! through `MULTIRUN_LAUNCH_TICKET`. The harness cannot re-validate the
 //! receipt, but it refuses a substantial run whose ticket is missing or
-//! names another executable, seed, length, stop point or run count, so a raw
-//! invocation cannot silently stand in for a qualified launch. Small
-//! correctness and timing checks (at most
-//! `PILOT_UNGUARDED_TOTAL_UPDATES_V1` planned updates across all runs of
-//! the process) stay ticket-free. Like the Python check, this is a launch
-//! check, not a security boundary against a deliberately forged ticket.
+//! names another executable, seed, record length, resume point, stop point or
+//! run count, so a raw invocation cannot silently stand in for a qualified
+//! launch. Small correctness and timing checks stay ticket-free: at most
+//! `PILOT_UNGUARDED_TOTAL_UPDATES_V1` planned updates summed across all runs
+//! of the process (run count times record length, whatever the stop point).
+//! Like the Python check, this is a launch check, not a security boundary
+//! against a deliberately forged ticket.
+//!
+//! The harness test that calls this gate is ignored, CUDA-gated and
+//! Windows-gated, so CI never executes the hook itself; CI runs this
+//! module's unit tests, and the hook is exercised by local launches only.
 
 use std::path::Path;
 
@@ -20,10 +25,11 @@ use serde::Deserialize;
 
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
 
-/// Planned updates (run count times record length) a process may train
-/// without a ticket: 64 updates of 64 episodes, a few minutes of compute.
+/// Planned updates, summed across the process's runs (run count times record
+/// length), a process may train without a ticket: 64 updates of 64 episodes,
+/// a few minutes of compute.
 pub(crate) const PILOT_UNGUARDED_TOTAL_UPDATES_V1: u64 = 64;
-/// Longest prefix a qualification ticket may license.
+/// Longest prefix (updates past the resume point) a qualification ticket may license.
 pub(crate) const QUALIFICATION_PREFIX_LIMIT_V1: u64 = 32;
 pub(crate) const LAUNCH_TICKET_SCHEMA_V1: &str = "mtg-kernel-multirun-launch-ticket/v1";
 
@@ -39,6 +45,8 @@ struct LaunchTicketV1 {
     seed: u64,
     planned_updates: u64,
     stop_after_generation: Option<u64>,
+    #[serde(default)]
+    expected_resume_generation: Option<u64>,
     allocation: String,
     issued_at: String,
 }
@@ -103,8 +111,8 @@ pub(crate) fn require_pilot_launch_ticket_v1(
     if launch.updates != ticket.planned_updates {
         return refuse("the ticket was issued for another run length");
     }
-    if launch.expected_resume_generation.is_some() {
-        return refuse("resumed segments are not a qualified launch shape yet");
+    if launch.expected_resume_generation != ticket.expected_resume_generation {
+        return refuse("the ticket was issued for another resume generation");
     }
     if launch.stop_after_generation != ticket.stop_after_generation {
         return refuse("the ticket was issued for another stop generation");
@@ -115,15 +123,24 @@ pub(crate) fn require_pilot_launch_ticket_v1(
             if !is_lower_hex_64(evidence) {
                 return refuse("a launch ticket must bind its compute-choice receipt");
             }
-            if ticket.stop_after_generation.is_some() {
-                return refuse("a launch ticket runs the whole planned length");
+        }
+        // Full-length serial and concurrent reference runs the qualification
+        // compares byte for byte before any receipt exists (the standing
+        // sentinel the launch guard then requires). Bound like any ticket.
+        "sentinel" => {
+            if ticket.compute_choice_sha256.is_some() {
+                return refuse("a sentinel ticket precedes any receipt");
             }
         }
         "qualification" => {
             if ticket.compute_choice_sha256.is_some() {
                 return refuse("a qualification ticket precedes any receipt");
             }
-            match ticket.stop_after_generation {
+            let resume = ticket.expected_resume_generation.unwrap_or(0);
+            match ticket
+                .stop_after_generation
+                .and_then(|stop| stop.checked_sub(resume))
+            {
                 Some(prefix) if (1..=QUALIFICATION_PREFIX_LIMIT_V1).contains(&prefix) => {}
                 _ => return refuse("a qualification ticket must stop within the prefix limit"),
             }
@@ -245,6 +262,32 @@ mod tests {
             require_pilot_launch_ticket_v1(&stopped, None, &fixture.executable),
             "not set",
         );
+        // The limit is on the planned updates summed across the process's runs.
+        let at_limit = PilotLaunchV1 {
+            updates: PILOT_UNGUARDED_TOTAL_UPDATES_V1,
+            ..launch()
+        };
+        assert_eq!(
+            require_pilot_launch_ticket_v1(&at_limit, None, &fixture.executable),
+            Ok(())
+        );
+        let past_limit = PilotLaunchV1 {
+            updates: PILOT_UNGUARDED_TOTAL_UPDATES_V1 + 1,
+            ..launch()
+        };
+        refused(
+            require_pilot_launch_ticket_v1(&past_limit, None, &fixture.executable),
+            "65 planned updates",
+        );
+        let summed = PilotLaunchV1 {
+            run_count: 5,
+            updates: 13,
+            ..launch()
+        };
+        refused(
+            require_pilot_launch_ticket_v1(&summed, None, &fixture.executable),
+            "65 planned updates",
+        );
     }
 
     #[test]
@@ -304,7 +347,7 @@ mod tests {
         };
         refused(
             require_pilot_launch_ticket_v1(&resumed, Some(&ticket), &fixture.executable),
-            "resumed segments",
+            "another resume generation",
         );
         refused(
             require_pilot_launch_ticket_v1(
@@ -313,6 +356,74 @@ mod tests {
                 &fixture.executable,
             ),
             "unreadable",
+        );
+    }
+
+    #[test]
+    fn resumed_segments_need_a_ticket_bound_to_their_resume_and_stop() {
+        let fixture = Fixture::new("resume");
+        let segment = PilotLaunchV1 {
+            expected_resume_generation: Some(128),
+            stop_after_generation: Some(256),
+            updates: 2_048,
+            ..launch()
+        };
+        refused(
+            require_pilot_launch_ticket_v1(&segment, None, &fixture.executable),
+            "not set",
+        );
+        let ticket = fixture.ticket(|t| {
+            t["planned_updates"] = 2_048.into();
+            t["expected_resume_generation"] = 128.into();
+            t["stop_after_generation"] = 256.into();
+        });
+        assert_eq!(
+            require_pilot_launch_ticket_v1(&segment, Some(&ticket), &fixture.executable),
+            Ok(())
+        );
+        let other_resume = PilotLaunchV1 {
+            expected_resume_generation: Some(0),
+            ..segment
+        };
+        refused(
+            require_pilot_launch_ticket_v1(&other_resume, Some(&ticket), &fixture.executable),
+            "another resume generation",
+        );
+        // A qualification prefix counts from the resume point.
+        let qualification = fixture.ticket(|t| {
+            t["kind"] = "qualification".into();
+            t["compute_choice_sha256"] = serde_json::Value::Null;
+            t["planned_updates"] = 2_048.into();
+            t["expected_resume_generation"] = 128.into();
+            t["stop_after_generation"] = 140.into();
+        });
+        let prefix = PilotLaunchV1 {
+            expected_resume_generation: Some(128),
+            stop_after_generation: Some(140),
+            updates: 2_048,
+            ..launch()
+        };
+        assert_eq!(
+            require_pilot_launch_ticket_v1(&prefix, Some(&qualification), &fixture.executable),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn sentinel_tickets_run_full_length_before_any_receipt() {
+        let fixture = Fixture::new("sentinel");
+        let sentinel = fixture.ticket(|t| {
+            t["kind"] = "sentinel".into();
+            t["compute_choice_sha256"] = serde_json::Value::Null;
+        });
+        assert_eq!(
+            require_pilot_launch_ticket_v1(&launch(), Some(&sentinel), &fixture.executable),
+            Ok(())
+        );
+        let bound = fixture.ticket(|t| t["kind"] = "sentinel".into());
+        refused(
+            require_pilot_launch_ticket_v1(&launch(), Some(&bound), &fixture.executable),
+            "precedes any receipt",
         );
     }
 

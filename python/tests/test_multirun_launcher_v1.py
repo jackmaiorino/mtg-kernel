@@ -501,7 +501,8 @@ class SshRunTests(unittest.TestCase):
                              f"$env:MULTIRUN_LAUNCH_TICKET='{ticket}'",
                              "Remove-Item Env:CUDA_VISIBLE_DEVICES",
                              f"subst {letter}: 'C:\\mtg-node\\multirun-mirror\\{letter}'",
-                             "process.log 2>&1", "& cmd.exe /c"):
+                             "process.log 2>&1", "Start-Process -FilePath 'cmd.exe'",
+                             "taskkill.exe /PID $p.Id /T /F", "if ($max -gt 8)"):
                 self.assertIn(fragment, run_script)
             self.assertTrue(any("Remove-Item -Recurse -Force" in script for script in scripts), "remote cleanup")
             digests = workload.adapter.output_digests(base / "runs" / "r0")
@@ -510,6 +511,174 @@ class SshRunTests(unittest.TestCase):
                                                "store/checkpoints/update-00000008.state.f32le", "store/run.json"])
             with self.assertRaises(RuntimeError):
                 executor.physical("relative/path")
+
+
+class VerdictTests(unittest.TestCase):
+    """Fable review 2026-09-23, PR #107: M1 to M5."""
+
+    def qualify(self, directory: Path, candidates, **workload_options):
+        workload = launcher.load_workload(fake_workload(directory, **workload_options))
+        choice = launcher.qualify(workload, directory / "q", [alloc(text) for text in candidates], 3, inventory(),
+                                  {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                  stop_on_saturation=False)
+        return workload, choice, directory / "q" / "compute-choice.json"
+
+    def mutated(self, path: Path, mutate) -> Path:
+        choice = launcher.read_json(path)
+        mutate(choice)
+        target = path.with_name("mutated-" + path.name)
+        launcher.write_json(target, choice)
+        return target
+
+    def test_m1_sentinel_covers_every_placement_and_arm_at_full_length(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            raw = json.loads(fake_workload(base, runs=1).read_text())
+            raw["arms"] = {"control": {"knobs": {}}, "treatment": {"knobs": {"FAKE_ARM": "1"}}}
+            raw["runs"] = [{"id": f"{arm}-s{i}", "seed": 10 * (arm == "treatment") + i, "arm": arm}
+                           for arm in ("control", "treatment") for i in range(2)]
+            (base / "workload.json").write_text(json.dumps(raw))
+            workload = launcher.load_workload(base / "workload.json")
+            choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("1@0+1@1")], 3, inventory(),
+                                      {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                      stop_on_saturation=False)
+            sentinel = choice["sentinel"]
+            self.assertTrue(sentinel["passed"])
+            self.assertEqual(sentinel["allocation"], "1@jack:0+1@jack:1")
+            self.assertEqual({(row["device"], row["arm"]) for row in sentinel["entries"]},
+                             {(0, "control"), (0, "treatment"), (1, "control"), (1, "treatment")})
+            self.assertTrue(all(row["completed_generation"] == 6 for row in sentinel["entries"]))
+            self.assertEqual(set(sentinel["serial"]), {"control-s0", "treatment-s0"})
+            path = base / "q" / "compute-choice.json"
+            launcher.require_choice(path, workload)
+            for mutate, fragment in [
+                (lambda c: c.pop("sentinel"), "no passing full-length sentinel"),
+                (lambda c: c["sentinel"].update(passed=False), "no passing full-length sentinel"),
+                (lambda c: c["sentinel"]["entries"].pop(), "misses placements x arms"),
+                (lambda c: c["sentinel"]["entries"][0].update(byte_identical=False), "not identical"),
+                (lambda c: c["sentinel"]["entries"][0].update(completed_generation=3), "not identical"),
+            ]:
+                with self.assertRaises(launcher.LaunchRefused) as caught:
+                    launcher.require_choice(self.mutated(path, mutate), workload)
+                self.assertIn(fragment, str(caught.exception))
+            reference = Path(sentinel["serial"]["control-s0"]["root"]) / "out" / "update-00000006.state.bin"
+            reference.write_bytes(reference.read_bytes() + b"x")
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.require_choice(path, workload)
+            self.assertIn("sentinel outputs on disk no longer match", str(caught.exception))
+
+    def test_m1_late_divergence_fails_the_sentinel_and_the_next_fastest_is_selected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2,
+                                                  extra_env={"FAKE_TRAINER_LATE_CONTENTION": "4"})
+            parallel = next(c for c in choice["candidates"] if c["concurrency"] == 2)
+            self.assertEqual(parallel["status"], "disqualified")
+            self.assertIn("full-length sentinel", " ".join(parallel["reasons"]))
+            self.assertEqual([f["allocation"] for f in choice["sentinel_failures"]], ["2@jack:0"])
+            self.assertEqual(launcher.require_choice(path, workload)["concurrency"], 1)
+
+    def test_m2_prefix_audit_mismatch_fails_the_run_and_the_experiment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2,
+                                                  extra_env={"FAKE_TRAINER_DIFFER_WHEN_FULL": "1"})
+            manifest = launcher.launch(workload, path, Path(directory) / "launch",
+                                       {"jack": launcher.LocalExecutor(workload)})
+            self.assertEqual(manifest["status"], "failed")
+            for entry in manifest["runs"].values():
+                self.assertEqual((entry["status"], entry["failure"]), ("failed", "prefix-differs-from-serial-golden"))
+                self.assertTrue(entry["differing_prefix_outputs"])
+            code = launcher.main(["launch", "--workload", str(Path(directory) / "workload.json"), "--choice",
+                                  str(path), "--root", str(Path(directory) / "launch-cli")])
+            self.assertEqual(code, 1)
+
+    def test_m3_serial_repeat_digests_are_stored_and_checked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2)
+            repeat = choice["golden"]["serial_repeat"]
+            self.assertEqual(repeat["digest_set_sha256"], choice["golden"]["runs"][repeat["run_id"]]["digest_set_sha256"])
+            self.assertNotIn("serial_repeat_identical", choice["golden"])
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.require_choice(self.mutated(path, lambda c: c["golden"]["serial_repeat"].update(
+                    digest_set_sha256="0" * 64)), workload)
+            self.assertIn("never shown to be reproducible", str(caught.exception))
+            stored = Path(repeat["root"]) / repeat["run_id"] / "out" / "update-00000002.state.bin"
+            stored.write_bytes(b"changed")
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.require_choice(path, workload)
+            self.assertIn("serial repeat outputs on disk", str(caught.exception))
+
+    def test_m4_launcher_and_gpu_identity_are_checked_at_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=1)
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.require_choice(self.mutated(path, lambda c: c.update(launcher_sha256="0" * 64)), workload)
+            self.assertIn("launcher changed", str(caught.exception))
+        recorded = inventory()
+        recorded["hosts"]["jack"]["detail"] = {"gpus": [{"index": 0, "name": "RTX A", "uuid": "GPU-1"}]}
+        recorded["hosts"]["haleyspc"]["detail"] = {"gpus": ["0, RTX B, GPU-9, 8188, 900"]}
+        choice = {"inventory": recorded, "gpu_footprint_mib": {"0": 2900.0}}
+        same = {"jack": {0: ("RTX A", "GPU-1")}, "haleyspc": {0: ("RTX B", "GPU-9")}}
+        launcher.check_gpu_identity(choice, alloc("2@0+1@haleyspc:0"), same.__getitem__)
+        for host, swapped in (("jack", {0: ("RTX A", "GPU-2")}), ("haleyspc", {0: ("RTX C", "GPU-9")})):
+            current = dict(same, **{host: swapped})
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.check_gpu_identity(choice, alloc("2@0+1@haleyspc:0"), current.__getitem__)
+            self.assertIn("not the device the receipt measured", str(caught.exception))
+        with self.assertRaises(launcher.LaunchRefused):
+            launcher.check_gpu_identity(choice, alloc("1@1"), same.__getitem__)
+
+    def test_m5_resumed_segment_matches_an_uninterrupted_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            straight = launcher.load_workload(fake_workload(base, runs=2, planned=9))
+            parents, uninterrupted = {}, {}
+            for run in straight.runs:
+                parents[run.id] = base / "parents" / run.id
+                launcher.LocalExecutor(straight).run(run, parents[run.id], 0, 3)
+                launcher.LocalExecutor(straight).run(run, base / "straight" / run.id, 0, None)
+                uninterrupted[run.id] = straight.adapter.output_digests(base / "straight" / run.id)
+            raw = json.loads((base / "workload.json").read_text())
+            raw["template"]["argv"] += ["--resume", "{resume}"]
+            raw["segment"] = {"resume_generation": 3, "stop_generation": 9}
+            raw["parents"] = {run_id: str(path) for run_id, path in parents.items()}
+            segment_path = base / "segment.json"
+            segment_path.write_text(json.dumps(raw))
+            workload = launcher.load_workload(segment_path)
+            self.assertEqual((workload.start_generation, workload.target_generation, workload.span), (3, 9, 6))
+            choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
+                                      {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                      stop_on_saturation=False)
+            ticket = launcher.read_json(base / "q" / "serial-golden" / "run-0.ticket.json")
+            self.assertEqual((ticket["expected_resume_generation"], ticket["stop_after_generation"]), (3, 6))
+            self.assertTrue(all(c["episodes"] == 2 * 3 * 64 for c in choice["candidates"]))
+            manifest = launcher.launch(workload, base / "q" / "compute-choice.json", base / "launch",
+                                       {"jack": launcher.LocalExecutor(workload)})
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(manifest["episodes"], 2 * 6 * 64)
+            for run in workload.runs:
+                self.assertEqual(manifest["runs"][run.id]["completed_generation"], 9)
+                self.assertEqual(workload.adapter.output_digests(base / "launch" / "runs" / run.id),
+                                 uninterrupted[run.id])
+            # The parent enters the identity by content: a changed parent needs requalification.
+            parent_file = parents["run-1"] / "out" / "update-00000002.state.bin"
+            parent_file.write_bytes(b"other parent")
+            with self.assertRaises(launcher.LaunchRefused):
+                launcher.require_choice(base / "q" / "compute-choice.json", launcher.load_workload(segment_path))
+
+    def test_m5_segments_and_knobs_are_validated(self) -> None:
+        adapter = launcher.NativeSciencePilotAdapterV1()
+        adapter.validate({"knobs": {"MULTIRUN_POPULATION_RUNTIME": "1", "MULTIRUN_RESPONSE_EXPLOITER_DENOVO": "1"}})
+        with tempfile.TemporaryDirectory() as directory:
+            raw = json.loads(fake_workload(Path(directory), runs=1, planned=9).read_text())
+            for segment, parents in [({"resume_generation": 9, "stop_generation": 9}, {"run-0": directory}),
+                                     ({"resume_generation": 3, "stop_generation": 9}, {}),
+                                     (None, {"run-0": directory})]:
+                case = dict(raw, parents=parents)
+                if segment is not None:
+                    case["segment"] = segment
+                (Path(directory) / "bad.json").write_text(json.dumps(case))
+                with self.assertRaises(launcher.LaunchRefused):
+                    launcher.load_workload(Path(directory) / "bad.json")
 
 
 def _decode(command: list[str]) -> str:
