@@ -11,6 +11,7 @@ from pathlib import Path
 from g115_d3_payload_v1 import checked, read, require, sha, write
 from g115_d3_native_results_v1 import analyze
 from g115_d3_launch_v1 import SOURCE, PANEL_SHA
+from g115_d3_baseline_parity_v1 import compare as compare_baseline
 
 
 def collect(manifest, recovery):
@@ -76,12 +77,23 @@ def collect(manifest, recovery):
     require(len(jobs) == 2048 and len({j['id'] for j in jobs}) == 2048, 'Collection changed the panel')
     execution = dict(schema='g115-d3-collected-execution/v1', source_commit=manifest['source_commit'],
                      models=models, jobs=jobs, shard_completions=receipts, formal_verdict=None)
-    native = analyze(panel, execution)
+    require(sha(Path(__file__).with_name('g115_d3_baseline_parity_v1.py')) ==
+            manifest['documents']['baseline_parity']['sha256'], 'Baseline parity code changed')
+    reference = read(checked(manifest['documents']['baseline_archive']))
+    require(reference['panel_sha256'] == PANEL_SHA, 'Baseline archive belongs to another panel')
+    parity = compare_baseline(panel, execution, reference, manifest['baseline_parity']['v3_envelopes'])
+    native = analyze(panel, execution, validity_failures=[*errors, *parity['failures']])
     for row in native['rows']:
         if execution_hashes.get(row['id']) != row['sha256']:
             errors.append(dict(id=row['id'], error='Recovered store does not match its shard execution receipt'))
+    if errors:
+        # Integrity failures discovered after reading stores also withhold all
+        # aggregate statistics. Individual raw records remain for diagnosis.
+        native['complete'] = False
+        for key in ('statistics', 'totals', 'search_census', 'search_raw_range', 'search_latency_ms'):
+            native.pop(key, None)
     return dict(schema='g115-d3-collected-results/v1', complete=not errors and native['complete'],
-                formal_verdict=None, collection_errors=errors, native=native), execution
+                formal_verdict=None, collection_errors=errors, baseline_parity=parity, native=native), execution
 
 
 def main():

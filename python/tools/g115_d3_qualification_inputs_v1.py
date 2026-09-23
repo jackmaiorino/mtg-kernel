@@ -2,7 +2,8 @@
 import argparse,copy,json
 from pathlib import Path
 from g115_d3_payload_v1 import prepare,sha,read,require,write
-COMMIT='e258daf3ab807cd6d8616a1431a21ea5ee22ac0b'
+from g115_d3_qualify_v1 import minimum_reserve
+COMMIT='cd41885e0ac05586d89bd4b2b7fb1284248689ef'
 def main():
     p=argparse.ArgumentParser();p.add_argument('--archive-plan',type=Path,required=True);p.add_argument('--panel',type=Path,required=True);p.add_argument('--accepted-wrapper',type=Path,required=True);p.add_argument('--root',type=Path,required=True);p.add_argument('--host',choices=['jack','haleyspc','runpod'],required=True);p.add_argument('--runtime',type=Path,required=True);p.add_argument('--destination',required=True);p.add_argument('--workers',type=int,nargs='+',required=True);p.add_argument('--lease-name');p.add_argument('--inventory',type=Path,required=True);a=p.parse_args()
     panel=read(a.panel);archive=read(a.archive_plan);accepted=read(a.accepted_wrapper);runtime=read(a.runtime)
@@ -24,7 +25,7 @@ def main():
     spec=dict(schema='g115-d3-throughput-qualification/v1',formal_measurement=False,source_commit=COMMIT,host=a.host,
         jobs=selected,worker_counts=a.workers,runtime_files=runtime['runtime_files'],command_prefix=runtime['command_prefix'],
         formal_panel_seeds=[v for row in panel['seeds'] for v in row],job_timeout_seconds=1800,group_timeout_seconds=9000,
-        reserve_bytes=(1 if a.host=='runpod' else 32)*2**30,
+        reserve_bytes=minimum_reserve(a.host),
         guard_directory='/run/phase1/'+a.lease_name if a.lease_name else None,lease_name=a.lease_name,inventory=read(a.inventory),
         provenance={k:dict(path=str(v),sha256=sha(v)) for k,v in [('archive_plan',a.archive_plan),('panel',a.panel),('accepted_wrapper',a.accepted_wrapper),('runtime',a.runtime)]})
     require(a.host!='runpod' or a.lease_name,'Paid qualification requires exact lease name')

@@ -6,6 +6,11 @@ RunPod execution requires the existing resident lease guard throughout.
 """
 import argparse,concurrent.futures,copy,hashlib,json,os,pathlib,shutil,signal,subprocess,threading,time
 P=pathlib.Path
+
+def minimum_reserve(host):
+    # Jack's explicit 32 GiB reservation is workstation-specific. HaleysPC
+    # has 32 GiB total; leave 8 GiB for its OS/user, and stop on pressure.
+    return {'jack':32,'haleyspc':8,'runpod':1}[host]*2**30
 def require(ok,message):
     if not ok:raise ValueError(message)
 def read(path):return json.loads(P(path).read_bytes())
@@ -46,7 +51,7 @@ def free_memory():
 def validate(spec):
     require(spec['schema']=='g115-d3-throughput-qualification/v1','Wrong workload kind')
     require(spec['formal_measurement'] is False,'Qualification cannot launch formal measurement')
-    require(spec['source_commit']=='e258daf3ab807cd6d8616a1431a21ea5ee22ac0b','Wrong native source')
+    require(spec['source_commit']=='cd41885e0ac05586d89bd4b2b7fb1284248689ef','Wrong native source')
     require(spec['host'] in ('jack','haleyspc','runpod'),'Unknown host')
     inventory=spec['inventory'];require(set(inventory)=={'jack','haleyspc','runpod'},'Three-host inventory required')
     require(inventory[spec['host']]['complete'] and 0<=time.time()-inventory['jack']['checked_unix']<=1800,'Fresh placement inventory required')
@@ -54,7 +59,7 @@ def validate(spec):
     jobs=spec['jobs'];require(len(jobs)==64 and len({j['id'] for j in jobs})==64,'Expected fixed64-case engineering cohort')
     require(sum(j['arm']=='search' for j in jobs)==32 and sum(j['arm']=='baseline' for j in jobs)==32,'Both execution paths required')
     require(0<spec['job_timeout_seconds']<=1800 and 0<spec['group_timeout_seconds']<=9000,'Bounded qualification required')
-    require(spec['reserve_bytes']>=(32 if spec['host']!='runpod' else 1)*2**30,'Memory reserve too small')
+    require(spec['reserve_bytes']>=minimum_reserve(spec['host']),'Memory reserve too small')
     forbidden=set(spec['formal_panel_seeds']);require(len(forbidden)==512,'Shared-panel exclusion missing')
     for job in jobs:
         command=job['command'];require(len(command['matches'])==1,'Whole BO3 jobs required')

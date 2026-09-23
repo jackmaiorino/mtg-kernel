@@ -11,6 +11,18 @@ def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def require(condition,message):
     if not condition:raise ValueError(message)
 
+def failure_context(expected, actual):
+    """Retain the original typed failure and root binding without guessing fields."""
+    folder=Path(actual['output_directory'])
+    records=[]
+    for path in [folder/'failure.json', *sorted(folder.glob('search-failure-*.json'))]:
+        if path.exists():
+            try:records.append(dict(path=str(path),sha256=sha(path),record=read(path)))
+            except (OSError,ValueError) as error:records.append(dict(path=str(path),read_error=str(error)))
+    return dict(match_input=expected.get('base_command',{}).get('matches'),
+                output_directory=str(folder),native_failure_records=records,
+                diagnostic_note='Root and failing step are retained verbatim when supplied by the native record; absent fields are unknown.')
+
 def read_match(expected,actual,source_commit,models):
     request=actual['request'];require(sha(request['path'])==request['sha256'],'request hash differs')
     command=read(request['path']);folder=Path(actual['output_directory'])
@@ -63,14 +75,14 @@ def read_match(expected,actual,source_commit,models):
         search_raw_min=min(minima,default=None),search_raw_max=max(maxima,default=None),
         _timings_ns=[t['elapsed_ns'] for t in timings])
 
-def analyze(panel,execution):
+def analyze(panel,execution,validity_failures=()):
     import numpy as np
     from g115_d3_analysis_v1 import analyze_pair
     expected={j['id']:j for j in panel['jobs']}
     require(len(expected)==len(panel['jobs'])==2048,'expected panel is not complete')
     actual={j['id']:j for j in execution['jobs']}
     require(len(actual)==len(execution['jobs']) and set(actual)==set(expected),'execution omitted, duplicated or added jobs')
-    rows=[];failures=[];timings=[];arrays={a:np.full((64,8,2),-1,dtype=int) for a in ('baseline','search')}
+    rows=[];failures=list(validity_failures);timings=[];arrays={a:np.full((64,8,2),-1,dtype=int) for a in ('baseline','search')}
     for identifier,job in expected.items():
         try:
             result=read_match(job,actual[identifier],execution['source_commit'],execution['models'])
@@ -79,7 +91,7 @@ def analyze(panel,execution):
             arrays[job['arm']][coordinate]=result['win'];timings.extend(result.pop('_timings_ns'))
             rows.append(dict(id=identifier,arm=job['arm'],**result))
         except (OSError,ValueError,KeyError,TypeError,IndexError) as error:
-            failures.append(dict(id=identifier,error=str(error)))
+            failures.append(dict(id=identifier,error=str(error),context=failure_context(job,actual[identifier])))
     result=dict(schema='g115-d3-native-analysis/v1',complete=not failures,formal_verdict=None,
         completed_jobs=len(rows),failed_or_missing_jobs=failures,rows=rows)
     if failures:return result

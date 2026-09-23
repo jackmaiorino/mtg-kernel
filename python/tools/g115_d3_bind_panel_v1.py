@@ -2,7 +2,7 @@
 import argparse,copy,hashlib,json
 from pathlib import Path
 from g115_d3_payload_v1 import prepare,read,require,sha,write
-COMMIT='e258daf3ab807cd6d8616a1431a21ea5ee22ac0b'
+COMMIT='cd41885e0ac05586d89bd4b2b7fb1284248689ef'
 def bind(panel,accepted,proof,root,destination):
     require(panel['schema']=='g115-d3-panel-preparation/v1' and len(panel['jobs'])==2048,'Complete shared panel required')
     require(accepted['source']==COMMIT,'Accepted wrapper source differs')

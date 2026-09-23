@@ -18,11 +18,11 @@ import subprocess
 import threading
 import time
 
-from g115_d3_qualify_v1 import checked, free_memory, read, require, sample, sha, write
+from g115_d3_qualify_v1 import checked, free_memory, read, require, sample, sha, write, minimum_reserve
 from g115_d3_native_results_v1 import read_match
 
-SOURCE = 'e258daf3ab807cd6d8616a1431a21ea5ee22ac0b'
-REVIEW_SUBMITTED = 1790135328  # 2026-09-23 03:48:48 UTC
+SOURCE = 'cd41885e0ac05586d89bd4b2b7fb1284248689ef'
+REVIEW_SUBMITTED = 1790143440  # 2026-09-23 06:04:00 UTC, corrected by Fable381
 DEADLINE = 1791259200  # 2026-10-06 00:00:00 America/New_York
 SEARCH = dict(schema='mtg-kernel-v4-information-set-estimate-search/v3',
               algorithm='v4-depth-keyed-estimate-library-independent-chance/v3',
@@ -65,12 +65,14 @@ def validate_plan(manifest, host, now=None):
     # Documents are the human-readable source of authority. Their reviewed
     # hashes are carried in the disposition, not replaced by a boolean flag.
     docs = manifest['documents']
-    for name in ('preregistration', 'literature', 'power', 'analysis', 'power_core', 'reader'):
+    for name in ('preregistration', 'literature', 'power', 'analysis', 'power_core', 'reader',
+                 'baseline_parity', 'baseline_archive'):
         checked(docs[name])
     here = Path(__file__).parent
     for name, filename in [('analysis', 'g115_d3_analysis_v1.py'),
                            ('power_core', 'g115_d3_power_core.py'),
-                           ('reader', 'g115_d3_native_results_v1.py')]:
+                           ('reader', 'g115_d3_native_results_v1.py'),
+                           ('baseline_parity', 'g115_d3_baseline_parity_v1.py')]:
         require(sha(here / filename) == docs[name]['sha256'], 'Frozen analysis code changed')
     review = manifest['design_disposition']
     require(review is not None, 'Design disposition pending; no formal dispatch')
@@ -96,6 +98,13 @@ def validate_plan(manifest, host, now=None):
             'Preparation is not a formal launch manifest')
     require(manifest['panel']['sha256'] == PANEL_SHA, 'Shared panel changed')
     panel = load(manifest['panel'])
+    archive = load(docs['baseline_archive'])
+    baseline_ids = {j['id'] for j in panel['jobs'] if j['arm'] == 'baseline'}
+    require(archive['panel_sha256'] == PANEL_SHA and len(archive['jobs']) == 1024 and
+            {j['id'] for j in archive['jobs']} == baseline_ids, 'Baseline parity reference incomplete')
+    envelopes = manifest['baseline_parity']['v3_envelopes']
+    require(bool(envelopes) and all(len(h) == 64 and all(c in '0123456789abcdef' for c in h)
+                                 for h in envelopes), 'Declare V3 build provenance before launch')
     bound = load(manifest['bindings'][host])
     require(bound['source_commit'] == SOURCE and bound['schema'] == 'g115-d3-bound-panel/v1',
             'Wrong formal binding')
@@ -205,7 +214,7 @@ def validate_plan(manifest, host, now=None):
     selected = allocations[host]
     require(any(r['path'] == selected['command_prefix'][-1] for r in selected['runtime_files']),
             'Native executable unpinned')
-    require(selected['reserve_bytes'] >= (1 if host == 'runpod' else 32) * 2**30, 'Memory reserve too small')
+    require(selected['reserve_bytes'] >= minimum_reserve(host), 'Memory reserve too small')
     require(0 < selected['job_timeout_seconds'] <= 1800, 'Whole-match time bound required')
     require(0 < selected['shard_timeout_seconds'] <= 8 * 3600, 'Shard time bound required')
     require(host != 'runpod' or selected['guard_directory'] and selected['lease_name'], 'Paid lease missing')

@@ -19,7 +19,7 @@ from g115_d3_launch_v1 import validate_plan
 from g115_d3_payload_v1 import checked, read, require, sha
 from g115_d3_cloud_host_v1 import CGROUP_FILES, profile, require_compatible
 
-COMMON = '/workspace/g115-d3-e258daf3'
+COMMON = '/workspace/g115-d3-cd41885e'
 
 
 def logical(value):
