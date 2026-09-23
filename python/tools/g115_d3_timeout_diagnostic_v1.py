@@ -1,6 +1,7 @@
 """Guarded diagnosis of one retained timeout; never admits formal measurement."""
 import argparse, concurrent.futures, copy, hashlib, json, os, pathlib, subprocess, sys, threading, time
 import psutil
+from g115_active_compute_v1 import controllers
 P=pathlib.Path
 SOURCE='fe409f455276c0025372d7a5abf92df4191d7293'
 BINARY='4c575904b197e54701ccda9399b6223ef000890dab1f3eb78068340ca37d118f'
@@ -27,7 +28,9 @@ def validate(spec,inventory):
     require(set(inventory)=={'jack','haleyspc','runpod'} and inventory['runpod']['complete'] and inventory['runpod']['http_status']==200,'Corrected-UA three-host inventory required')
     for host in ('jack','haleyspc'):
         require(0<=time.time()-inventory[host]['checked_unix']<=600,'Stale fleet inventory')
+        if inventory[host]['complete']:require(isinstance(inventory[host]['data'].get('competing_controllers'),list),'Coordinator census missing')
     require(inventory[spec['host']]['complete'] and not inventory[spec['host']]['data']['competing_native'],'Selected host occupied')
+    require(inventory[spec['host']]['data'].get('competing_controllers')==[],'Live coordinator window occupied or census missing')
     accepted=read(checked(spec['acceptance']))
     require(accepted['complete'] and accepted['source']==SOURCE and accepted['native_stores_verified']==4 and accepted['exact_logging_pairs']==2 and accepted['progress_events_verified']==478 and accepted['frozen_formal_semantic_equal'],'Logging acceptance missing')
     jobs={j['id']:j for j in panel['jobs']}
@@ -40,8 +43,9 @@ def validate(spec,inventory):
         require(hashlib.sha256(json.dumps(descriptor,sort_keys=True,separators=(',',':')).encode()).hexdigest()==SEARCH,'Changed search budget or model')
         require(command['sources'][seat]['source']['checkpoint']['sha256']=='88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1','Wrong incumbent')
     return jobs
-def owners(reserve):
+def owners(reserve,host):
     require(psutil.virtual_memory().available>=reserve,'Memory reserve unavailable')
+    require(not any(host in row['hosts'] for row in controllers()),'Active multirun coordinator window')
     for proc in psutil.process_iter(['name']):
         name=(proc.info['name'] or '').lower()
         require(not(name.startswith('mtg_kernel') or name in ('public_feature_evaluation_v1.exe','cargo.exe','rustc.exe','trainer.exe')),'Competing native/build work')
@@ -62,11 +66,11 @@ def main():
     from g115_d3_native_results_v1 import read_match
     from g115_d3_baseline_parity_v1 import normalized_pair
     reserve=(32 if spec['host']=='jack' else 8)*2**30
-    owners(reserve);require(psutil.disk_usage(args.root.anchor).free>=16*2**30,'Disk reserve unavailable')
+    owners(reserve,spec['host']);require(psutil.disk_usage(args.root.anchor).free>=16*2**30,'Disk reserve unavailable')
     if args.choice:
         choice=read(args.choice);require(choice['schema']=='g115-single-timeout-placement/v1' and choice['target']==TARGET and choice['workers']==1,'One sequential timeout case only')
         require(choice['host']==spec['host'] and choice['inventory']==pin(args.inventory),'Placement inventory mismatch')
-        eligible=[h for h in ('jack','haleyspc') if inventory[h]['complete'] and not inventory[h]['data']['competing_native']]
+        eligible=[h for h in ('jack','haleyspc') if inventory[h]['complete'] and not inventory[h]['data']['competing_native'] and inventory[h]['data']['competing_controllers']==[]]
         require(set(choice['qualifications'])==set(eligible),'Every currently clear Windows host must be qualified')
         candidates={}
         for host,ref in choice['qualifications'].items():
@@ -75,7 +79,7 @@ def main():
             candidates[host]=q['phases'][0]['seconds']+choice['remaining_transfer_seconds'][host]
         require(spec['host']==min(candidates,key=candidates.get),'Not fastest qualified single-match placement')
         require(choice['runpod_disposition']=='No qualified compatible logging runtime; retained uninstrumented cloud serial benchmark is slower than Jack; no paid acceleration established','Cloud disposition required')
-    args.root.mkdir();write(args.root/'manifest.json',dict(spec=pin(args.spec),inventory=pin(args.inventory),choice=pin(args.choice) if args.choice else None,formal_measurement=False,source=SOURCE,workers=1 if args.choice else [1,2],per_job_bound_seconds=1800 if args.choice else 300,reserve_bytes=reserve,gpu_ordinal=None,scope='One retained timeout, unchanged bound; or fixed consumed correctness/timing controls. No outcomes aggregated.'))
+    args.root.mkdir();write(args.root/'manifest.json',dict(spec=pin(args.spec),inventory=pin(args.inventory),choice=pin(args.choice) if args.choice else None,launcher=pin(__file__),controller_census=pin(P(__file__).with_name('g115_active_compute_v1.py')),formal_measurement=False,source=SOURCE,workers=1 if args.choice else [1,2],per_job_bound_seconds=1800 if args.choice else 300,reserve_bytes=reserve,gpu_ordinal=None,scope='One retained timeout, unchanged bound; or fixed consumed correctness/timing controls. No outcomes aggregated.'))
     descriptor=read(checked(spec['v3_source']));envelope=read(checked(descriptor['transfer_envelope']))
     envelope['receipt']['destination_build_git_head']=SOURCE;write(args.root/'envelope.json',envelope)
     descriptor['transfer_envelope']=pin(args.root/'envelope.json');write(args.root/'v3-source.json',descriptor)
@@ -112,16 +116,19 @@ def main():
             if child is not None and child.poll() is None:child.kill();child.wait()
             row.update(seconds=time.monotonic()-start,cpu_seconds_sampled=cpu,peak_rss_bytes_sampled=peak,last_progress=last_progress(folder));write(folder/'receipt.json',row)
         return row
-    phases=[]
+    phases=[];phase_error=None
     for workers in ([1] if args.choice else [1,2]):
-        owners(reserve);folder=args.root/('workers-'+str(workers));folder.mkdir();start=time.monotonic()
+        try:owners(reserve,spec['host'])
+        except (ValueError,OSError) as error:
+            phase_error=dict(error_type=type(error).__name__,error=str(error),before_workers=workers);break
+        folder=args.root/('workers-'+str(workers));folder.mkdir();start=time.monotonic()
         selected=[TARGET] if args.choice else CONTROLS
         with concurrent.futures.ThreadPoolExecutor(workers) as pool:rows=list(pool.map(lambda identifier:execute(identifier,folder/identifier,1800 if args.choice else 300),selected))
         phase=dict(workers=workers,seconds=time.monotonic()-start,rows=rows);write(folder/'completion.json',phase);phases.append(phase)
         if not all(row['complete'] for row in rows):break
-    complete=all(row['complete'] for phase in phases for row in phase['rows'])
+    complete=phase_error is None and len(phases)==(1 if args.choice else 2) and all(row['complete'] for phase in phases for row in phase['rows'])
     exact=None if args.choice else len(phases)==2 and [r.get('sha256') for r in phases[0]['rows']]==[r.get('sha256') for r in phases[1]['rows']]
-    result=dict(schema='g115-timeout-diagnostic-result/v1',complete=complete and (args.choice is not None or exact),host=spec['host'],source=SOURCE,binary_sha256=BINARY,controls=CONTROLS,serial_parallel_exact=exact,phases=phases,formal_measurement=False,formal_verdict=None,strength_statistics=None)
+    result=dict(schema='g115-timeout-diagnostic-result/v1',complete=complete and (args.choice is not None or exact),host=spec['host'],source=SOURCE,binary_sha256=BINARY,controls=CONTROLS,serial_parallel_exact=exact,phases=phases,phase_error=phase_error,formal_measurement=False,formal_verdict=None,strength_statistics=None)
     write(args.root/'completion.json',result);print(json.dumps({k:v for k,v in result.items() if k!='phases'}),flush=True)
     return 0 if result['complete'] else 1
 if __name__=='__main__':raise SystemExit(main())
