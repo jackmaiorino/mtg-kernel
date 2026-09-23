@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 
 from g115_d3_payload_v1 import checked, read, require, sha, write
-from g115_d3_launch_v1 import cluster_allocation, validate_plan
+from g115_d3_launch_v1 import cluster_allocation, projected_shard_seconds, validate_plan
 from g115_d3_qualify_v1 import minimum_reserve
 
 
@@ -64,10 +64,16 @@ def finalize(base, evidence, inventory, lease):
     choices = []
     for size in range(1, len(qualified) + 1):
         for hosts in itertools.combinations(sorted(qualified), size):
-            _, seconds = cluster_allocation(hosts, rates, overhead)
+            owners, seconds = cluster_allocation(hosts, rates, overhead)
+            native_seconds = projected_shard_seconds(hosts, owners, rates)
+            over_bound = [h for h in hosts if native_seconds[h] > qualified[h]['shard_timeout_seconds']]
             choices.append(dict(id='+'.join(hosts), hosts=list(hosts), projected_seconds=seconds,
-                                eligible=True, ineligibility_reason=''))
-    selected = min(choices, key=lambda c: (c['projected_seconds'], c['id']))
+                                projected_native_seconds=native_seconds, eligible=not over_bound,
+                                ineligibility_reason='Projected native work exceeds shard bound: '+','.join(over_bound)
+                                if over_bound else ''))
+    feasible = [choice for choice in choices if choice['eligible']]
+    require(feasible, 'No qualified allocation fits its declared shard bounds')
+    selected = min(feasible, key=lambda c: (c['projected_seconds'], c['id']))
     owners, _ = cluster_allocation(selected['hosts'], rates, overhead)
     panel = read(checked(base['panel']))
     result['placement'] = dict(inventory=inventory, qualified_hosts=qualified,

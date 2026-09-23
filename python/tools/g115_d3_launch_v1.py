@@ -52,6 +52,11 @@ def cluster_allocation(hosts, rates, overhead):
     return owners, seconds
 
 
+def projected_shard_seconds(hosts, owners, rates):
+    """Native work excludes the separately measured staging/recovery overhead."""
+    return {host: 4 * owners.count(host) / rates[host] for host in hosts}
+
+
 def validate_plan(manifest, host, now=None):
     """Check authority, complete inputs and placement before allocating a host.
 
@@ -200,8 +205,11 @@ def validate_plan(manifest, host, now=None):
     require({tuple(c['hosts']) for c in choices} == combinations and len(choices) == len(combinations),
             'Compare every qualified host combination')
     for choice in choices:
-        _, seconds = cluster_allocation(choice['hosts'], rates, overhead)
+        choice_owners, seconds = cluster_allocation(choice['hosts'], rates, overhead)
         require(abs(choice['projected_seconds'] - seconds) < 1e-6, 'Projection differs from measured rates')
+        native_seconds = projected_shard_seconds(choice['hosts'], choice_owners, rates)
+        require(not choice['eligible'] or all(native_seconds[name] <= qualified[name]['shard_timeout_seconds']
+                for name in choice['hosts']), 'Projected allocation exceeds a shard time bound')
         require(choice['eligible'] or choice['ineligibility_reason'].strip(), 'Explain excluded allocation')
     chosen = [c for c in choices if c['id'] == placement['selected']]
     require(len(chosen) == 1 and chosen[0]['hosts'] == sorted(allocations), 'Allocation choice absent')
