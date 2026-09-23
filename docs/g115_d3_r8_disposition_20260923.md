@@ -24,3 +24,19 @@ The existing review poll is paused through the app after actual verdict receipt.
 Engineering limitations: no positive attempt003 launch validation or final fleet placement yet. Kimi's assigned R8 verification is pending. E1's eight-test source attribution remains due before the corrected result verdict. Jack's PC has a new competing trainer in inventory012; no formal dispatch or competitor mutation. D3 still has no playing-strength result.
 
 19:10 EDT update: E1 is now executed, documented in `docs/g115_d3_golden_attribution_20260923.md`. All eight tests fail under reversal; five pass and three are absent at merge base. The blanket pre-existing claim is withdrawn; the exact intervening causes remain unresolved. Offline attempt003 preparation now has 2,048 bindings per host and verified Windows/Linux support packages; all three guarded launch checks refuse the absent design disposition. Follow-ups c4126c7f/02ed5154 align manifest bounds and transport with R8 and require each newly qualified host's measured cost to fit the frozen allowance. Haley's full parallel qualification recovery is still running; no final allocation. A pure lease calculation with retained inputs fits eight hours at a tighter $0.96/hour ceiling within the unchanged guard ($9.8616 including its safety factor and reserves); it is not a fresh quote, carry-in audit or allocation. Live admission remains mandatory.
+
+## Qualification recovery complete, 19:24 EDT
+
+Haley recovery004 completed through `python/tools/g115_d3_qualify_v1.py`. The guard revalidated the original exact serial phase, then reran the entire interrupted eight-worker phase. Original002's publication failure and003's competing-work refusal remain recorded. All 128 recovered native stores match the same frozen serial cohort exactly, including source, request and completion checks. The final idle worker slots reflected one remaining active match with no unstarted jobs, not eligible work withheld from execution.
+
+| Qualified host | Serial seconds | Fastest measured workers | Parallel seconds |
+| --- | ---: | ---: | ---: |
+| Jack | 5,119.382 | 24 | 677.743 |
+| RunPod, retained qualified profile | 6,657.399 | 32 | 750.320 |
+| Haley | 7,657.734 | 8 | 1,765.094 |
+
+These are identical 64-match engineering cohorts, not playing-strength results or a claim of current availability. Haley's weighted time per search decision is 0.991979 seconds; its maximum match mean is 1.521994 seconds. This is below the frozen 1.554509-second cost anchor, leaving the derived 9,028.587-second minimum below the unchanged 10,800-second match bound. No bound was enlarged after this measurement.
+
+Evidence root: `D:/g115-d3-qualification-20260923/haley-preparation-004`. Recovered completion SHA0559440d1218c7fd0407dcd728539a40546fdc3500cb6350a54c157291a52749; `full-verification.json` SHA21f01e0490c75eb5e689d62cc815f41848f5a4a82568541b05e8472caa26d568; `r8-cost-verification.json` records all 32 search-condition costs without outcomes. Recovery archive SHAd742551cd7924d2d3cacac0b82d8b577eb943027c77b07751309e1f688bc13bf. Controller session36802 exited0; no owned qualification worker or paid allocation remains.
+
+Attempt003 remains prepared but unlaunched. Kimi's assigned R8 verification is still pending; KIMI #030 concerns PR #107 only. After the actual D3 verification, require fresh three-host inventory, qualified placement including startup/transfer/recovery, frozen final manifest and positive guarded checks. Any cloud use also needs fresh accounting, a compatible observed profile and the lease guard. The review-poll automation remains paused. D3 remains invalid with no strength verdict; D4 is unselected.
