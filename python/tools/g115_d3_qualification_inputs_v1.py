@@ -24,7 +24,7 @@ def main():
                 selected.append(dict(id=identifier+'-'+arm,arm=arm,candidate_seat=seat,command=command))
     spec=dict(schema='g115-d3-throughput-qualification/v1',formal_measurement=False,source_commit=COMMIT,host=a.host,
         jobs=selected,worker_counts=a.workers,runtime_files=runtime['runtime_files'],command_prefix=runtime['command_prefix'],
-        formal_panel_seeds=[v for row in panel['seeds'] for v in row],job_timeout_seconds=1800,group_timeout_seconds=9000,
+        formal_panel_seeds=[v for row in panel['seeds'] for v in row],job_timeout_seconds=1800,group_timeout_seconds=14400 if a.host=='haleyspc' else 9000,
         reserve_bytes=minimum_reserve(a.host),
         guard_directory='/run/phase1/'+a.lease_name if a.lease_name else None,lease_name=a.lease_name,inventory=read(a.inventory),
         provenance={k:dict(path=str(v),sha256=sha(v)) for k,v in [('archive_plan',a.archive_plan),('panel',a.panel),('accepted_wrapper',a.accepted_wrapper),('runtime',a.runtime)]})
