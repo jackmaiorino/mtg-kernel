@@ -64,6 +64,8 @@ MINIMUM_QUALIFICATION_UPDATES = 3
 # improves). Two such candidates in a row end the sweep.
 USEFUL_GAIN_FRACTION = 0.05
 IDLE_WINDOW_SECONDS = 60.0
+# Free GPU memory every fit decision leaves on a device, in MiB.
+FIT_MARGIN_MIB = 512
 IDLE_CPU_PERCENT = 60.0
 
 
@@ -1252,7 +1254,7 @@ def settled_gpu_inventory(timeout: float = 60.0, interval: float = 2.0,
     return readings[-1]
 
 
-def device_fits(slots: list[Slot], per_process_mib: Callable[[str, int], float], margin_mib: int = 512,
+def device_fits(slots: list[Slot], per_process_mib: Callable[[str, int], float], margin_mib: int = FIT_MARGIN_MIB,
                 inventories: Callable[[str], list[dict]] | None = None) -> list[str]:
     """Reasons an allocation cannot fit on its hosts' GPUs right now (empty if it fits).
 
@@ -1282,7 +1284,7 @@ def device_fits(slots: list[Slot], per_process_mib: Callable[[str, int], float],
     return reasons
 
 
-def grow_allocation(slots: list[Slot], per_process: Callable[[int], float], margin_mib: int = 512,
+def grow_allocation(slots: list[Slot], per_process: Callable[[int], float], margin_mib: int = FIT_MARGIN_MIB,
                     devices: list[dict] | None = None) -> list[Slot] | None:
     """The allocation plus one local process on the device with the most spare room, or None if none fits."""
     devices = gpu_inventory() if devices is None else devices
@@ -1549,8 +1551,22 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             serial_full[run.id] = workload.adapter.output_digests(serial_root / run.id)
         sentinel_root = root / f"sentinel-{candidate['id']}"
         sentinel_root.mkdir()
+        hosts_used = {slot.host for slot in slots}
+        totals = {f"{host}:{gpu['index']}": gpu["memory_total_mib"] for host in hosts_used for gpu in inventories(host)}
+        monitor = Monitor(sentinel_root / "monitor.jsonl", lambda: 0,
+                          remote={h: r for h, r in remote_readers().items() if h in hosts_used})
+        monitor.start()
         results, wall = execute_pinned(entries, sentinel_root, workload.launch_stop, executors,
                                        sentinel_ticket(sentinel_root, candidate["allocation"]))
+        usage = monitor.stop()
+        # Device residency grows with depth, so a width that fit at the prefix
+        # can crowd a device at full length (an oversubscribed device spills to
+        # shared memory and slows every run on it): the full-length peak must
+        # stay outside the fit margin too.
+        peaks = usage["gpu_peak_memory_mib"]
+        crowded = sorted(f"{key}: full-length peak {peaks[key]} MiB of {totals[key]} MiB"
+                         for key in {f"{slot.host}:{slot.device}" for slot in slots}
+                         if key in peaks and key in totals and peaks[key] > totals[key] - FIT_MARGIN_MIB)
         rows = []
         for label, run, slot in entries:
             result = results[label]
@@ -1563,9 +1579,10 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
                          "byte_identical": result.exit_code == 0 and bool(digests) and digests == reference,
                          "differing_outputs": sorted(k for k in set(digests) | set(reference)
                                                      if digests.get(k) != reference.get(k))[:20]})
-        passed = all(row["byte_identical"] and row["completed_generation"] == target for row in rows)
+        passed = all(row["byte_identical"] and row["completed_generation"] == target for row in rows)             and not crowded
         return {"allocation": candidate["allocation"], "candidate": candidate["id"], "root": str(sentinel_root),
-                "wall_seconds": wall, "passed": passed, "entries": rows}
+                "wall_seconds": wall, "passed": passed, "memory_crowded": crowded,
+                "gpu_peak_memory_mib": peaks, "gpu_total_memory_mib": totals, "entries": rows}
 
     attempts = []
     while True:
@@ -1578,7 +1595,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         if attempt["passed"]:
             break
         selected["status"] = "disqualified"
-        selected["reasons"].append("full-length sentinel differs from the serial reference or did not finish")
+        selected["reasons"].append("full-length sentinel differs from the serial reference, did not finish, "
+                                   "or crowded a GPU: " + "; ".join(attempt["memory_crowded"]))
         selected["projected_seconds"] = None
     sentinel = dict(attempts[-1], serial={
         run_id: {"root": str(serial_root / run_id), "output_count": len(digests),
@@ -1609,7 +1627,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "candidates": records,
         "selected": selected["id"],
         "sentinel": sentinel,
-        "sentinel_failures": [{k: a[k] for k in ("candidate", "allocation", "root")} for a in attempts[:-1]],
+        "sentinel_failures": [{k: a[k] for k in ("candidate", "allocation", "root", "memory_crowded")}
+                              for a in attempts[:-1]],
         "selection_rule": "minimum projected completion seconds among byte-identical, fully completed "
                           "allocations; projection simulates the scheduler with each host's measured "
                           "startup + planned_updates * steady_update + tail per run, plus staging overhead",
@@ -1734,6 +1753,8 @@ def require_sentinel(sentinel: dict, selected: dict, workload: Workload, verify_
     """Verdict M1: full-length identity on every placement and arm of the selected allocation."""
     if sentinel.get("allocation") != selected["allocation"] or sentinel.get("passed") is not True:
         raise LaunchRefused("no passing full-length sentinel for the selected allocation")
+    if sentinel.get("memory_crowded") != []:
+        raise LaunchRefused("the full-length sentinel crowded a GPU or recorded no memory check")
     serial = sentinel.get("serial", {})
     target = workload.target_generation
     for run_id, reference in serial.items():

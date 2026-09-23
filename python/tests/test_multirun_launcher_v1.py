@@ -608,6 +608,9 @@ class VerdictTests(unittest.TestCase):
                 (lambda c: c["sentinel"]["entries"].pop(), "misses placements x arms"),
                 (lambda c: c["sentinel"]["entries"][0].update(byte_identical=False), "not identical"),
                 (lambda c: c["sentinel"]["entries"][0].update(completed_generation=3), "not identical"),
+                (lambda c: c["sentinel"].update(memory_crowded=["haleyspc:0: full-length peak 7867 MiB of 8188 MiB"]),
+                 "crowded a GPU"),
+                (lambda c: c["sentinel"].pop("memory_crowded"), "crowded a GPU"),
             ]:
                 with self.assertRaises(launcher.LaunchRefused) as caught:
                     launcher.require_choice(self.mutated(path, mutate), workload)
