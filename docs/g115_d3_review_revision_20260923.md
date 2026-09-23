@@ -1,5 +1,7 @@
 # D3 review revision, September 23, 2026
 
+Later E1 correction: `docs/g115_d3_golden_attribution_20260923.md` reports eight failures under trample reversal, five passes and three absent tests at the specified merge base. The historical pre-existing characterization below is not established and is withdrawn. Original suite results remain preserved.
+
 Fable's verdict in collab/FABLE-REVIEW-20260923.md (348b5d0) countersigns the design and permits launch after R1-R7 are committed and engineering prerequisites pass. This revision preserves the original shared panel, algorithm, model, search budget, gate and power calculation. No formal match has run.
 
 | Review point | Disposition |
