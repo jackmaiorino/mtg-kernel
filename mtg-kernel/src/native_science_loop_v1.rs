@@ -1447,6 +1447,25 @@ mod windows_science_loop_tests {
         let expected_resume_generation =
             parse_optional_generation_knob_v1("MULTIRUN_EXPECT_RESUME_GENERATION")
                 .expect("MULTIRUN_EXPECT_RESUME_GENERATION must be a u64");
+        // COMPUTE-POLICY item 5: a substantial run must come from the
+        // qualified launcher, which hands this process a matching ticket.
+        // Checked before any Store, device or thread is touched.
+        if let Err(reason) = crate::multirun_launch_ticket_v1::require_pilot_launch_ticket_v1(
+            &crate::multirun_launch_ticket_v1::PilotLaunchV1 {
+                run_count: run_count as u64,
+                updates,
+                base_seed,
+                seed_offset,
+                stop_after_generation,
+                expected_resume_generation,
+            },
+            std::env::var_os("MULTIRUN_LAUNCH_TICKET")
+                .as_deref()
+                .map(std::path::Path::new),
+            &std::env::current_exe().expect("the harness can locate its own executable"),
+        ) {
+            panic!("{reason}");
+        }
         let ladder_pool: Option<crate::native_training_store_run_v2::OpponentLadderPoolContractV1> =
             if ladder_enabled {
                 let pool_dir = std::env::var("MULTIRUN_LADDER_POOL_DIR")

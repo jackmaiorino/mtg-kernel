@@ -361,6 +361,11 @@ pub mod native_cycle4_m3_audit_v1;
 // reason as the module above: `src/bin/cycle4_routing_v1.rs` calls it.
 pub mod native_cycle4_routing_v1;
 pub mod native_science_loop_v1;
+// Launch-ticket gate the `multirun_pilot_v1` harness applies before a
+// substantial run (COMPUTE-POLICY item 5); tickets come from
+// python/tools/multirun_launcher_v1.py. Test-only like its one caller.
+#[cfg(test)]
+mod multirun_launch_ticket_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
 // no-op, and latest-checkpoint executor reconstruction.
