@@ -1,0 +1,20 @@
+{
+  "completed_generation": 128,
+  "compute_choice_sha256": "cb1475026904509ccddd89a7e4d125a21ec553b2f7618e6daee09755a4b8f1b1",
+  "device": 1,
+  "exit_code": 0,
+  "experiment_manifest": "D:\\multirun-qualified-v1-work\\q1\\launch\\experiment-manifest.json",
+  "finished_at": "2026-09-23T05:32:26.013395+00:00",
+  "golden_prefix_generation": 12,
+  "golden_prefix_identical": true,
+  "host": "jack",
+  "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s3\\process.log",
+  "output_digest_set_sha256": "e39bcc5701ffffe34c4d34986eb1d795f0e9709b90f9daf22d83505d6a2d076e",
+  "run_id": "envrand-s3",
+  "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s3",
+  "schema": "mtg-kernel-multirun-run-manifest/v1",
+  "seed": 5200004,
+  "started_at": "2026-09-23T05:20:28.691303+00:00",
+  "status": "complete",
+  "wall_seconds": 717.2793774604797
+}

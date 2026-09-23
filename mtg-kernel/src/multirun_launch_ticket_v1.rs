@@ -144,6 +144,9 @@ fn is_lower_hex_64(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// One edit to the default ticket JSON.
+    type TicketEdit = Box<dyn Fn(&mut serde_json::Value)>;
+
     struct Fixture {
         directory: std::path::PathBuf,
         executable: std::path::PathBuf,
@@ -257,7 +260,7 @@ mod tests {
     #[test]
     fn a_ticket_for_anything_else_is_refused() {
         let fixture = Fixture::new("mismatch");
-        let cases: Vec<(Box<dyn Fn(&mut serde_json::Value)>, &str)> = vec![
+        let cases: Vec<(TicketEdit, &str)> = vec![
             (
                 Box::new(|t| t["executable_sha256"] = "0".repeat(64).into()),
                 "another executable",

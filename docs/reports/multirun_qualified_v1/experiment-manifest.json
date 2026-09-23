@@ -1,0 +1,232 @@
+{
+  "allocation": "2@jack:0+2@jack:1",
+  "allocation_evidence": {
+    "concurrency": 4,
+    "episodes_per_second": 18.57029385102255,
+    "id": "alloc-2atjackd0_2atjackd1",
+    "projected_seconds": 2325.1614852249622,
+    "startup_seconds": 26.022153809666634,
+    "steady_update_seconds": 8.71054406836629,
+    "tail_seconds": 21.608948051929474
+  },
+  "alternatives": [
+    {
+      "episodes_per_second": 6.995432873495489,
+      "id": "alloc-1atjackd0",
+      "projected_seconds": 6402.86244058609,
+      "reasons": [],
+      "status": "qualified"
+    },
+    {
+      "episodes_per_second": 12.563206647180168,
+      "id": "alloc-1atjackd0_1atjackd1",
+      "projected_seconds": 3396.887703061104,
+      "reasons": [],
+      "status": "qualified"
+    },
+    {
+      "episodes_per_second": 16.312423969211647,
+      "id": "alloc-2atjackd0_1atjackd1",
+      "projected_seconds": 2804.467945307493,
+      "reasons": [],
+      "status": "qualified"
+    },
+    {
+      "episodes_per_second": 18.57029385102255,
+      "id": "alloc-2atjackd0_2atjackd1",
+      "projected_seconds": 2325.1614852249622,
+      "reasons": [],
+      "status": "qualified"
+    }
+  ],
+  "compute_choice": "qualification\\compute-choice.json",
+  "compute_choice_sha256": "cb1475026904509ccddd89a7e4d125a21ec553b2f7618e6daee09755a4b8f1b1",
+  "created_at": "2026-09-23T05:08:00.330335+00:00",
+  "data_tree_sha256": "bf51eeb0332891a4544467aaa059d3126d7731b60a92942f7059f1e8132b246b",
+  "episodes": 65536,
+  "episodes_per_second": 44.7149694831739,
+  "executable": "D:\\multirun-qualified-v1-work\\exe\\mtg_kernel-ffbc5f976dc668e8.exe",
+  "executable_sha256": "ffbc5f976dc668e8d82daf92eaf9bf52f2078964d03dfe7e473fade3532f6235",
+  "finished_at": "2026-09-23T05:32:34.426370+00:00",
+  "inventory_checked_at": {
+    "haleyspc": "2026-09-23T04:31:00.271810+00:00",
+    "jack": "2026-09-23T04:31:00.271810+00:00",
+    "runpod": "2026-09-23T04:31:00.271810+00:00"
+  },
+  "launcher_sha256": "c58b9453eecf259b9051649cbf9d626e6138e7398d6aa4bc8d34b0b5d1c9b0ed",
+  "planned_updates": 128,
+  "runs": {
+    "base-s0": {
+      "completed_generation": 128,
+      "device": 0,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:19:32.662486+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s0\\process.log",
+      "output_digest_set_sha256": "a9b248a4144ffd79123c4209896c01712fd24b98716eab1345da336c20d0cfe8",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s0",
+      "seed": 5100001,
+      "started_at": "2026-09-23T05:08:00.375527+00:00",
+      "status": "complete",
+      "wall_seconds": 692.2523572444916
+    },
+    "base-s1": {
+      "completed_generation": 128,
+      "device": 1,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:20:28.687126+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s1\\process.log",
+      "output_digest_set_sha256": "fae16181b4baf0d59302ffbe8c74963d2856a66c26196d7a9955b886870c125d",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s1",
+      "seed": 5100002,
+      "started_at": "2026-09-23T05:08:00.375778+00:00",
+      "status": "complete",
+      "wall_seconds": 748.2494332790375
+    },
+    "base-s2": {
+      "completed_generation": 128,
+      "device": 1,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:30:11.791331+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s2\\process.log",
+      "output_digest_set_sha256": "308febbe7f5411c83ae92bb84ce42a8d35c55fd5cc5ebd5a4a2127a5f5bde486",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s2",
+      "seed": 5100003,
+      "started_at": "2026-09-23T05:19:16.656525+00:00",
+      "status": "complete",
+      "wall_seconds": 655.0960586071014
+    },
+    "base-s3": {
+      "completed_generation": 128,
+      "device": 0,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:32:02.977178+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s3\\process.log",
+      "output_digest_set_sha256": "9a22ef27a8c7fec81504f0558c6fc9311085bb89de71beeb293d80df9d55fce9",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s3",
+      "seed": 5100004,
+      "started_at": "2026-09-23T05:20:05.721925+00:00",
+      "status": "complete",
+      "wall_seconds": 717.2001106739044
+    },
+    "envrand-s0": {
+      "completed_generation": 128,
+      "device": 0,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:20:05.714675+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s0\\process.log",
+      "output_digest_set_sha256": "4cab16373afb12fd17905d5ef1193fb75e591cf583dbb4274f0c108071cc8ff1",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s0",
+      "seed": 5200001,
+      "started_at": "2026-09-23T05:08:00.375642+00:00",
+      "status": "complete",
+      "wall_seconds": 725.2763307094574
+    },
+    "envrand-s1": {
+      "completed_generation": 128,
+      "device": 1,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:19:16.656193+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s1\\process.log",
+      "output_digest_set_sha256": "e1b2a056ffce5720823676d29c9c2aa92844a5af757b4ecba7c3459af3943221",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s1",
+      "seed": 5200002,
+      "started_at": "2026-09-23T05:08:00.375873+00:00",
+      "status": "complete",
+      "wall_seconds": 676.2409074306488
+    },
+    "envrand-s2": {
+      "completed_generation": 128,
+      "device": 0,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:30:51.843237+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s2\\process.log",
+      "output_digest_set_sha256": "2b408763a01a08a72beeb676866216187aebbdf7aa8844e1baf752b4df5a2d08",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s2",
+      "seed": 5200003,
+      "started_at": "2026-09-23T05:19:32.662915+00:00",
+      "status": "complete",
+      "wall_seconds": 679.1426434516907
+    },
+    "envrand-s3": {
+      "completed_generation": 128,
+      "device": 1,
+      "exit_code": 0,
+      "finished_at": "2026-09-23T05:32:26.013395+00:00",
+      "golden_prefix_generation": 12,
+      "golden_prefix_identical": true,
+      "host": "jack",
+      "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s3\\process.log",
+      "output_digest_set_sha256": "e39bcc5701ffffe34c4d34986eb1d795f0e9709b90f9daf22d83505d6a2d076e",
+      "run_root": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s3",
+      "seed": 5200004,
+      "started_at": "2026-09-23T05:20:28.691303+00:00",
+      "status": "complete",
+      "wall_seconds": 717.2793774604797
+    }
+  },
+  "schema": "mtg-kernel-multirun-experiment-manifest/v1",
+  "status": "complete",
+  "usage": {
+    "cpu_mean_percent": 36.46700212034963,
+    "gpu_peak_memory_mib": {
+      "0": 9355,
+      "1": 5526
+    },
+    "idle_capacity_events": [
+      {
+        "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+        "mean_cpu_percent": 41.3,
+        "window_start": 1790140085.3912535
+      },
+      {
+        "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+        "mean_cpu_percent": 38.8,
+        "window_start": 1790140205.3912535
+      },
+      {
+        "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+        "mean_cpu_percent": 36.0,
+        "window_start": 1790140325.3912535
+      },
+      {
+        "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+        "mean_cpu_percent": 34.0,
+        "window_start": 1790140445.3912535
+      },
+      {
+        "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+        "mean_cpu_percent": 38.4,
+        "window_start": 1790140565.3912535
+      },
+      {
+        "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+        "mean_cpu_percent": 29.5,
+        "window_start": 1790140685.3912535
+      }
+    ],
+    "samples": 287
+  },
+  "wall_seconds": 1465.6389293670654,
+  "workload_sha256": "0daaf3d26f90dab57f57454ed398d0155dd6453ac15e34f4d81cbdcf34f46635"
+}

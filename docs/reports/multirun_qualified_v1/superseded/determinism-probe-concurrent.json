@@ -1,0 +1,68 @@
+{
+ "d0-dev0-concurrent": {
+  "exit": 0,
+  "wall": 112.2416341304779,
+  "gens": {
+   "4": 64.5990047454834,
+   "8": 93.60517024993896
+  },
+  "digests": {
+   "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "store/checkpoints/update-00000000.checkpoint.json": "13e4b38a2cb0aaf9f77d20f4a5c2161ad21e52299514e2c82d26e132b559ffea",
+   "store/checkpoints/update-00000000.sidecar.json": "833db1d77b7a033ab94c67a75684fba6b21a5c4d4a311b66cb9da3a9818703de",
+   "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+   "store/checkpoints/update-00000004.checkpoint.json": "9ac7188306b8bdcfade62f61118eee44a4640eac2b9f55b3bb9b5c5d4470ca23",
+   "store/checkpoints/update-00000004.sidecar.json": "a8a2aaab4ba0c293428b6b9e6d744e67a1da0246391a10ec5218abfaff21a474",
+   "store/checkpoints/update-00000004.state.f32le": "01253cf58a0372bcb9c53c483fee2e389704e786dad43c58cede5a74429db912",
+   "store/checkpoints/update-00000008.checkpoint.json": "dad8bb72a88cfd03240d413954c2f9ef57068186d8f939307d860f466328088a",
+   "store/checkpoints/update-00000008.sidecar.json": "49447dc5094edc9ac1cecedcc275bd7b9ac7959d1aeb57dd2faf16360a8b18e6",
+   "store/checkpoints/update-00000008.state.f32le": "97e6b8ab8bdd1ec26fc1548ad9723588406f4e928f4b140f43c40f1a5957a9f7",
+   "store/heads/update-00000000.head.json": "5c50fd3fb61dbf67f0e0997fa54c18a8f43ae4402f3bb0b4eeff590931b046d5",
+   "store/heads/update-00000004.head.json": "19645fb5511e775d9788f7e93015bfb9fa2c2f69a2cd9e2276e4fdf8121858a0",
+   "store/heads/update-00000008.head.json": "2f8eb014b08d0953a8b1202d3f32df5dad3ab8cd60472b2ba938b14b67a575c3",
+   "store/latest.json": "02f4c9146761d44ca26eb41ad7930f65a5ab4431aa1eeb6169e7130f65ac3313",
+   "store/refs/update-00000000.ref.json": "5ed0acc725fe3756c7f8eed4b846e8210d728f6d926e6b9ef2e7fec30678615e",
+   "store/refs/update-00000004.ref.json": "d2afa018224a8a7f715c80367cdcf00c85fd202888db0d42d1f600b26409b7b6",
+   "store/refs/update-00000008.ref.json": "04b85131c60250a92399c50f441b066f83390630daabfcecf66c00e0436a2b98",
+   "store/run.json": "77da33dbd448408f52686502bd084d46f6b00815870043e8b7e356e997f192c2",
+   "store/segments/segment-00000000.json": "a91b55484e8248b6a9582e8f053931d54b186a9e96e138008f2158656ca860a4",
+   "store/segments/segment-00000004.continuation-00000000.json": "fea7132b8aa2779b8ea0a0ecc46973aa5bcb1c70436b18c13cd78967e54e6854",
+   "store/segments/segment-00000004.json": "0398c7328f5d15d27b9dc12fa2426c1dafd60fb2b9a9351c37ce5ef8c432100b",
+   "store/segments/segment-00000008.continuation-00000000.json": "350936a985014647356f4a3e98f9eabd8efdb598d7fe0b1a99c848a2d1ccf712",
+   "store/segments/segment-00000008.json": "6df203b93cdc1f76e862ea8c76cbd55ce8bf6d015e0c19f100ab3ba6aa919b49"
+  }
+ },
+ "d1-dev0-concurrent": {
+  "exit": 0,
+  "wall": 112.24455189704895,
+  "gens": {
+   "4": 64.69646430015564,
+   "8": 93.6994731426239
+  },
+  "digests": {
+   "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "store/checkpoints/update-00000000.checkpoint.json": "13e4b38a2cb0aaf9f77d20f4a5c2161ad21e52299514e2c82d26e132b559ffea",
+   "store/checkpoints/update-00000000.sidecar.json": "833db1d77b7a033ab94c67a75684fba6b21a5c4d4a311b66cb9da3a9818703de",
+   "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+   "store/checkpoints/update-00000004.checkpoint.json": "9ac7188306b8bdcfade62f61118eee44a4640eac2b9f55b3bb9b5c5d4470ca23",
+   "store/checkpoints/update-00000004.sidecar.json": "a8a2aaab4ba0c293428b6b9e6d744e67a1da0246391a10ec5218abfaff21a474",
+   "store/checkpoints/update-00000004.state.f32le": "01253cf58a0372bcb9c53c483fee2e389704e786dad43c58cede5a74429db912",
+   "store/checkpoints/update-00000008.checkpoint.json": "dad8bb72a88cfd03240d413954c2f9ef57068186d8f939307d860f466328088a",
+   "store/checkpoints/update-00000008.sidecar.json": "49447dc5094edc9ac1cecedcc275bd7b9ac7959d1aeb57dd2faf16360a8b18e6",
+   "store/checkpoints/update-00000008.state.f32le": "97e6b8ab8bdd1ec26fc1548ad9723588406f4e928f4b140f43c40f1a5957a9f7",
+   "store/heads/update-00000000.head.json": "5c50fd3fb61dbf67f0e0997fa54c18a8f43ae4402f3bb0b4eeff590931b046d5",
+   "store/heads/update-00000004.head.json": "19645fb5511e775d9788f7e93015bfb9fa2c2f69a2cd9e2276e4fdf8121858a0",
+   "store/heads/update-00000008.head.json": "2f8eb014b08d0953a8b1202d3f32df5dad3ab8cd60472b2ba938b14b67a575c3",
+   "store/latest.json": "02f4c9146761d44ca26eb41ad7930f65a5ab4431aa1eeb6169e7130f65ac3313",
+   "store/refs/update-00000000.ref.json": "5ed0acc725fe3756c7f8eed4b846e8210d728f6d926e6b9ef2e7fec30678615e",
+   "store/refs/update-00000004.ref.json": "d2afa018224a8a7f715c80367cdcf00c85fd202888db0d42d1f600b26409b7b6",
+   "store/refs/update-00000008.ref.json": "04b85131c60250a92399c50f441b066f83390630daabfcecf66c00e0436a2b98",
+   "store/run.json": "77da33dbd448408f52686502bd084d46f6b00815870043e8b7e356e997f192c2",
+   "store/segments/segment-00000000.json": "a91b55484e8248b6a9582e8f053931d54b186a9e96e138008f2158656ca860a4",
+   "store/segments/segment-00000004.continuation-00000000.json": "fea7132b8aa2779b8ea0a0ecc46973aa5bcb1c70436b18c13cd78967e54e6854",
+   "store/segments/segment-00000004.json": "0398c7328f5d15d27b9dc12fa2426c1dafd60fb2b9a9351c37ce5ef8c432100b",
+   "store/segments/segment-00000008.continuation-00000000.json": "350936a985014647356f4a3e98f9eabd8efdb598d7fe0b1a99c848a2d1ccf712",
+   "store/segments/segment-00000008.json": "6df203b93cdc1f76e862ea8c76cbd55ce8bf6d015e0c19f100ab3ba6aa919b49"
+  }
+ }
+}
