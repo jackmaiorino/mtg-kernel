@@ -10,12 +10,17 @@ from pathlib import Path
 
 from g115_d3_payload_v1 import checked, read, require, sha, write
 from g115_d3_native_results_v1 import analyze
+from g115_d3_launch_v1 import SOURCE, PANEL_SHA
 
 
 def collect(manifest, recovery):
     require(manifest['schema'] == 'g115-d3-formal-launch/v1', 'Wrong experiment manifest')
     placement = manifest['placement']
     require(placement is not None, 'No frozen fleet assignment to collect')
+    require(manifest['source_commit'] == SOURCE and manifest['panel']['sha256'] == PANEL_SHA,
+            'Collection differs from the fixed D3 source or shared panel')
+    require(manifest['formal_measurement'] is True and manifest.get('preparation_only') is not True,
+            'Preparation is not a formal execution manifest')
     require(sha(Path(__file__)) == manifest['documents']['collector']['sha256'],
             'Collector differs from the prelaunch analysis pin')
     panel = read(checked(manifest['panel']))
