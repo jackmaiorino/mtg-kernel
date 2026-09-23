@@ -69,6 +69,19 @@ fn boundary(s:&FastActorSessionV1,d:FastActorDecisionV1,mode:V4SearchSampleMode)
     Ok(Boundary{visible,scoring,slice,actions,refs,objects})
 }
 
+// Keep the origin-to-live-choice check separate so a stale stored origin can
+// be tested against the same guard used by production redeterminization.
+fn validate_library_origin_candidates_v4(state:&GameState,candidates:&[CorePolicyActionCandidateV1])->Result<(),Error> {
+    let Some(crate::effect::PendingEffectChoice::SelectTargets{legal,..})=state.engine.pending_effect.as_ref().and_then(|p|p.choice.as_ref()) else {return Err(Error::LibraryChoiceOriginFailed);};
+    let expected:Vec<_>=legal.iter().map(|c|c.target).collect();
+    let actual:Vec<_>=candidates.iter().filter_map(|c|match &c.semantic {
+        ActionSemanticV1::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}=>Some(crate::state::Target::Object(ObjectId(object.arena_id))),
+        _=>None,
+    }).collect();
+    if actual!=expected {return Err(Error::LibraryChoiceOriginFailed);}
+    Ok(())
+}
+
 impl FastActorSessionV1 {
     pub(crate) fn kernel_search_redeterminized_clone_v4(&self,seed:u64)->Result<Self,Error> {
         self.search_clone_v4_inner(seed,|_,_|{})
@@ -129,13 +142,7 @@ impl FastActorSessionV1 {
         }
         current.candidates=core_policy_action_candidates_v5(&current.origin_decision,&copy.state).map_err(|_|Error::SampleCandidateRebuildFailed)?;
         if plan.is_some() {
-            let Some(crate::effect::PendingEffectChoice::SelectTargets{legal,..})=copy.state.engine.pending_effect.as_ref().and_then(|p|p.choice.as_ref()) else {return Err(Error::LibraryChoiceOriginFailed);};
-            let expected:Vec<_>=legal.iter().map(|c|c.target).collect();
-            let actual:Vec<_>=current.candidates.iter().filter_map(|c|match &c.semantic {
-                ActionSemanticV1::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}=>Some(crate::state::Target::Object(ObjectId(object.arena_id))),
-                _=>None,
-            }).collect();
-            if actual!=expected {return Err(Error::LibraryChoiceOriginFailed);}
+            validate_library_origin_candidates_v4(&copy.state,&current.candidates)?;
         }
         current.flat_action_cache=None;current.flat_action_cache_error=None;
         current.flat_action_cache_v2=None;current.flat_action_cache_error_v2=None;

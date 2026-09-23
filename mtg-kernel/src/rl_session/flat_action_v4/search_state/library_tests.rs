@@ -177,3 +177,35 @@ fn v4_library_v2_documents_retained_known_card_shuffle_foresight() {
         assert!(sample.state.known_library_cards(PlayerId::P0,PlayerId::P0).is_empty());
     }
 }
+
+#[test]
+fn v4_library_stale_stored_origin_fails_live_choice_guard() {
+    for actor in [PlayerId::P0,PlayerId::P1] {for form in 0..3 {
+        let names=if form==1 {vec!["Squadron Hawk","Squadron Hawk","Squadron Hawk","Forest"]}else{vec!["Forest","Snow-Covered Forest","Forest","Lightning Bolt"]};
+        let session=FastActorSessionV1::from_v3_fixture_state(fixture(actor,form,&names,false,false,false));
+        let stored_origin=session.current.as_ref().unwrap().origin_decision.clone();
+        let before=session.state.clone();
+        let mut rejected=false;
+        for seed in 1..=32 {
+            let mut sampled=session.state.clone();
+            let plan=crate::effect::library_choice_search_v2::plan(&sampled,actor).unwrap().unwrap();
+            sampler::redeterminize_with_library_plan(&mut sampled,actor,seed,Some(&plan)).unwrap();
+            plan.rebuild(&mut sampled).unwrap();
+            let pending=sampled.engine.pending_effect.as_ref().unwrap();
+            let live=crate::engine::pending_effect_targets_decision_v2(pending).unwrap();
+            let live_origin=PolicyDecisionV5::Surface(crate::surface_v2::SurfaceDecision::Decision(live));
+            let fresh=core_policy_action_candidates_v5(&live_origin,&sampled).unwrap();
+            assert_eq!(validate_library_origin_candidates_v4(&sampled,&fresh),Ok(()));
+            // Simulate the C2 regression: rebuilding rows from the old stored
+            // decision instead of regenerating it from the sampled live choice.
+            let stale=core_policy_action_candidates_v5(&stored_origin,&sampled).unwrap();
+            if stale!=fresh {
+                assert_eq!(validate_library_origin_candidates_v4(&sampled,&stale),Err(Error::LibraryChoiceOriginFailed));
+                rejected=true;
+                break;
+            }
+        }
+        assert!(rejected,"fixture must actually expose a stale origin, actor={actor:?} form={form}");
+        assert_eq!(session.state,before);
+    }}
+}
