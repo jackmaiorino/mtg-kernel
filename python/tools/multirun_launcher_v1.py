@@ -147,6 +147,16 @@ class Workload:
         identity = {key: value for key, value in self.raw.items() if key not in MACHINE_FIELDS}
         return sha256_bytes(canonical(identity))
 
+    def data_tree_sha256(self) -> str | None:
+        """Digest of every file under ``data_root`` (runtime inputs the executable reads by path)."""
+        if not self.raw.get("data_root"):
+            return None
+        root = Path(self.raw["data_root"])
+        if not root.is_dir():
+            raise LaunchRefused(f"data_root is not a directory: {root}")
+        return sha256_bytes(canonical({path.relative_to(root).as_posix(): sha256_file(path)
+                                       for path in sorted(root.rglob("*")) if path.is_file()}))
+
     def knobs(self, run: RunSpec) -> dict[str, str]:
         """Knobs every run shares, overlaid with the run's arm knobs."""
         knobs = dict(self.raw.get("knobs", {}))
@@ -1075,6 +1085,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "workload_sha256": workload.sha256,
         "workload": {k: v for k, v in workload.raw.items() if k not in MACHINE_FIELDS},
         "executable_sha256": workload.executable_sha256,
+        "data_tree_sha256": workload.data_tree_sha256(),
+        "launcher_sha256": sha256_file(Path(__file__)),
         "planned_updates": workload.planned_updates,
         "qualification_updates": qualification_updates,
         "run_ids": [run.id for run in workload.runs],
@@ -1116,6 +1128,8 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
         raise LaunchRefused("unsupported compute-choice schema")
     if choice.get("executable_sha256") != workload.executable_sha256:
         raise LaunchRefused("requalify: the training executable changed")
+    if choice.get("data_tree_sha256") != workload.data_tree_sha256():
+        raise LaunchRefused("requalify: the runtime data the executable reads changed")
     if choice.get("workload_sha256") != workload.sha256 or choice.get("adapter") != workload.adapter.name:
         raise LaunchRefused("requalify: the workload (knobs, runs, length or adapter) changed")
     if choice.get("run_ids") != [run.id for run in workload.runs]:
@@ -1227,6 +1241,7 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     manifest = {
         "schema": MANIFEST_SCHEMA, "created_at": iso(utc_now()), "workload_sha256": workload.sha256,
         "executable": str(workload.executable), "executable_sha256": workload.executable_sha256,
+        "data_tree_sha256": workload.data_tree_sha256(), "launcher_sha256": sha256_file(Path(__file__)),
         "planned_updates": workload.planned_updates, "compute_choice": str(choice_path),
         "compute_choice_sha256": choice_sha256, "allocation": selected["allocation"],
         "allocation_evidence": {key: selected[key] for key in

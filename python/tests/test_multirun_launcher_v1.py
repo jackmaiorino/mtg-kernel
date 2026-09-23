@@ -235,6 +235,26 @@ class DeterminismGateTests(unittest.TestCase):
             path = Path(directory) / "q" / "compute-choice.json"
             self.assertEqual(launcher.require_choice(path, workload)["concurrency"], 1)
 
+    def test_changed_runtime_data_requires_requalification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            data = base / "data"
+            data.mkdir()
+            (data / "snapshot.bin").write_bytes(b"weights v1")
+            raw = json.loads(fake_workload(base, runs=1).read_text())
+            raw["data_root"] = str(data)
+            (base / "workload.json").write_text(json.dumps(raw))
+            workload = launcher.load_workload(base / "workload.json")
+            choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
+                                      {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
+            self.assertEqual(choice["data_tree_sha256"], workload.data_tree_sha256())
+            self.assertEqual(choice["launcher_sha256"], launcher.sha256_file(LAUNCHER_PATH))
+            launcher.require_choice(base / "q" / "compute-choice.json", workload)
+            (data / "snapshot.bin").write_bytes(b"weights v2")
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.require_choice(base / "q" / "compute-choice.json", workload)
+            self.assertIn("runtime data", str(caught.exception))
+
     def test_failed_serial_golden_stops_qualification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workload = launcher.load_workload(fake_workload(Path(directory), runs=1, extra_argv=["--fail"]))
