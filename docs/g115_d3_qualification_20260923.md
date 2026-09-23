@@ -1,5 +1,38 @@
 # D3 qualification, September 23
 
+**Complete, 04:37 EDT.** Both full scaling grids passed. Every recovered cloud store was independently rehashed and matched the local serial reference: 256 cloud stores plus the earlier 256 local stores, covering the same 64 distinct matches in each phase. Each phase has 150 natural games and 30,447 decisions. Repetitions establish engineering parity, not independent strength evidence. No formal shared-panel match has launched.
+
+| Workers | Local seconds | Cloud seconds |
+| ---: | ---: | ---: |
+| 1 | 4310.398 | 4234.596 |
+| 8 | 954.291 | 975.729 |
+| 16 | 720.932 | 675.472 |
+| 24 | 629.300 | Not measured |
+| 32 | Not measured | 526.088 |
+
+Measured fastest: local 24 workers, 6.850x serial; cloud 32 workers, 8.049x serial. Cloud hardware was EPYC9655, 32 logical / 16 physical cores, 64 GB cgroup limit, fuse-backed workspace. The formal cloud controller rejects a materially incompatible replacement before native dispatch. The earlier EPYC9654 allocation is not interchangeable evidence.
+
+Cloud qualification completed in 6411.974 seconds; full controller turnaround was 6504.053 seconds. Measured setup, transfer, observation, recovery and release overhead totals 92.079 seconds, including 20.765 seconds recovering the 11,085,706-byte archive. Pod r8l0yfu513o8w7 was released at 04:36:05 EDT, confirmed independently by both guards. Fresh browser-User-Agent inventory returned HTTP200 with zero Pods. All owned qualification workers are finished, and volume m90klwkv15 is retained. The last conservative guard forecast was $3.2834 for this lease and remained below its $10 increment / $200 total caps; this is accounting, not a billing statement.
+
+Receipts: E:/mtg-g115-lineage-20260923/d3-cloud-qualification-004-verified.json and d3-local-qualification-002-verified.json. Full cloud root: D:/g115-d3-cloud-control/d3-cloud-qualification-004. Qualification completion SHA256 7e5446b465c8222b85df3860872396c608b8dc4662b991f85161f52b78956fee; recovered archive SHA256 90a4b033442ad585ff4656b929bf3016cfd28b765b5bff69bd21edd0b732b561. Native source remains e258daf3ab807cd6d8616a1431a21ea5ee22ac0b.
+
+Outcome-independent allocation projection for all 2,048 formal jobs, preserving four-job seed clusters:
+
+| Allocation | Jobs local / cloud | Projected hours | Cloud compute cost |
+| --- | ---: | ---: | ---: |
+| Local only | 2048 / 0 | 5.594 | $0 |
+| Cloud only | 0 / 2048 | 4.702 | $4.51 |
+| Local plus cloud | 936 / 1112 | 2.565 | $2.46 |
+
+The combined allocation is fastest under the measured rates and overhead. Evidence: E:/mtg-g115-lineage-20260923/d3-allocation-projection-001.json, using the supported launcher's existing cluster_allocation function. Costs exclude storage and uncertainty margins. The 64-case cohort is representative timing, not an upper bound on the formal panel. A future lease must explicitly cover its chosen shard timeout, staging and recovery, within existing caps. Larger formal payload transfer/recovery can exceed this engineering measurement. Different future hardware requires requalification and a new projection including that cost and delay. No Pod is being retained during the review wait.
+
+Fresh three-host inventory: D:/g115-d3-qualification-20260923/host-inventory-005.json. Jack's PC is eligible with about85.45 GiB free RAM; preserve the 32 GiB user reserve. HaleysPC SSH remains unreachable at 100.71.75.65. RunPod is available through the corrected User-Agent, with zero current Pods. Refresh inventory and competing reservations immediately before dispatch; this snapshot is not standing availability.
+
+The supported formal paths are g115_d3_launch_v1.py and g115_d3_cloud_v1.py. Plan validation precedes paid allocation, and actual worker validation requires review disposition, complete qualification, compatible runtime/hardware and current lease/resource checks. The absent design verdict is still rejected. Positive formal dispatch remains untested. Final manifest/support packaging still needs the actual design disposition, refreshed placement/lease, collector pin and current seven worker modules. No new infrastructure or qualification campaign is needed merely to occupy the review wait.
+
+Historical progression below preserves failed attempts and superseded intermediate states. It is not current launch authority.
+
+
 Status at04:17 EDT: local qualification complete; cloud qualification still running. No formal shared-panel match has launched. No playing-strength verdict is available.
 
 Completed local measurements; each row covers the same64 matches and all stores match the serial reference exactly:
