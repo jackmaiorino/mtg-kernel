@@ -11,6 +11,28 @@ def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def require(condition,message):
     if not condition:raise ValueError(message)
 
+def unique_failures(failures):
+    """One row per job; retain every distinct reason and diagnostic context."""
+    merged={}; other=[]
+    for failure in failures:
+        if 'id' not in failure:
+            if failure not in other:other.append(failure)
+            continue
+        row=merged.setdefault(failure['id'],dict(id=failure['id'],reasons=[]))
+        detail={k:v for k,v in failure.items() if k!='id'}
+        if detail not in row['reasons']:row['reasons'].append(detail)
+    return [*other,*merged.values()]
+
+def withhold_outcomes(result):
+    """Invalid attempts publish execution/parity data, never outcome rows."""
+    result['complete']=False
+    for key in ('statistics','totals','search_census','search_raw_range','search_latency_ms'):
+        result.pop(key,None)
+    allowed={'id','arm','sha256','games','decisions','search_decisions',
+             'search_simulations','search_transitions','search_elapsed_ns'}
+    result['rows']=[{k:v for k,v in row.items() if k in allowed} for row in result['rows']]
+    return result
+
 def failure_context(expected, actual):
     """Retain the original typed failure and root binding without guessing fields."""
     folder=Path(actual['output_directory'])
@@ -92,9 +114,10 @@ def analyze(panel,execution,validity_failures=()):
             rows.append(dict(id=identifier,arm=job['arm'],**result))
         except (OSError,ValueError,KeyError,TypeError,IndexError) as error:
             failures.append(dict(id=identifier,error=str(error),context=failure_context(job,actual[identifier])))
+    failures=unique_failures(failures)
     result=dict(schema='g115-d3-native-analysis/v1',complete=not failures,formal_verdict=None,
         completed_jobs=len(rows),failed_or_missing_jobs=failures,rows=rows)
-    if failures:return result
+    if failures:return withhold_outcomes(result)
     require(all((a>=0).all() for a in arrays.values()),'incomplete pairing')
     result['statistics']=analyze_pair(arrays['baseline'],arrays['search'],panel['pairs'])
     result['totals']={arm:{field:sum(r[field] for r in rows if r['arm']==arm) for field in

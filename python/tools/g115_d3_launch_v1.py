@@ -34,6 +34,15 @@ SEARCH = dict(schema='mtg-kernel-v4-information-set-estimate-search/v3',
               model_parameter_sha256='614326d2ec55c94583b1b050451f770ce9404e03bc21b9fb5fb6cb4f7d32263f',
               weights_sha256='e2ca2f2b5dd750a59e24c71a4bac325ed7449d97b5892a79a80132e45d538333')
 PANEL_SHA = 'eaca43dc397894d7a8726401ca32d3240e862a0ae82274900330d9b5ab4a9dcc'
+R8_BOUNDS_SHA = 'be894d349b2a6319db62cc0c408589a166653c715488afcfea633194c7f35d76'
+
+
+def require_r8_allocation(host, allocation, projected_seconds):
+    require(allocation['job_timeout_seconds']==10800, 'R8 fixed whole-match bound differs')
+    require(allocation['shard_timeout_seconds']==(25200 if host=='runpod' else 36000),
+            'R8 fixed shard bound differs')
+    require(projected_seconds+10800+1800<=allocation['shard_timeout_seconds'],
+            'R8 shard must cover projection, full tail and margin')
 
 
 def load(ref):
@@ -71,13 +80,15 @@ def validate_plan(manifest, host, now=None):
     # hashes are carried in the disposition, not replaced by a boolean flag.
     docs = manifest['documents']
     for name in ('preregistration', 'literature', 'power', 'analysis', 'power_core', 'reader',
-                 'baseline_parity', 'baseline_archive'):
+                 'baseline_parity', 'baseline_archive', 'launcher', 'collector', 'execution_bounds'):
         checked(docs[name])
     here = Path(__file__).parent
     for name, filename in [('analysis', 'g115_d3_analysis_v1.py'),
                            ('power_core', 'g115_d3_power_core.py'),
                            ('reader', 'g115_d3_native_results_v1.py'),
-                           ('baseline_parity', 'g115_d3_baseline_parity_v1.py')]:
+                           ('baseline_parity', 'g115_d3_baseline_parity_v1.py'),
+                           ('launcher', 'g115_d3_launch_v1.py'),
+                           ('collector', 'g115_d3_collect_v1.py')]:
         require(sha(here / filename) == docs[name]['sha256'], 'Frozen analysis code changed')
     review = manifest['design_disposition']
     require(review is not None, 'Design disposition pending; no formal dispatch')
@@ -101,12 +112,28 @@ def validate_plan(manifest, host, now=None):
                 'Standing-authority reason must be recorded in pre-registration')
     require(manifest['formal_measurement'] is True and manifest.get('preparation_only') is not True,
             'Preparation is not a formal launch manifest')
+    require(docs['execution_bounds']['sha256']==R8_BOUNDS_SHA,'R8 bound derivation differs')
+    kimi=review['r8_kimi_verification']
+    require(kimi['excerpt'].strip() and kimi['excerpt'] in checked(kimi['record']).read_text(encoding='utf-8'),
+            'R8 Kimi verification absent')
+    replay=load(review['r8_replay'])
+    require(replay['classification']=='progressing' and replay['original_bound_seconds']==1800 and
+            replay['source']=='fe409f455276c0025372d7a5abf92df4191d7293' and
+            replay['maximum_completed_decision_gap_seconds']<600 and replay['completed_decisions']>0,
+            'R8 timeout replay is not verified progressing')
     require(manifest['panel']['sha256'] == PANEL_SHA, 'Shared panel changed')
     panel = load(manifest['panel'])
     archive = load(docs['baseline_archive'])
     baseline_ids = {j['id'] for j in panel['jobs'] if j['arm'] == 'baseline'}
     require(archive['panel_sha256'] == PANEL_SHA and len(archive['jobs']) == 1024 and
             {j['id'] for j in archive['jobs']} == baseline_ids, 'Baseline parity reference incomplete')
+    from g115_d3_baseline_parity_v1 import precheck_index
+    precheck_index(panel,archive,load(manifest['baseline_parity']['precheck']))
+    prior=load(manifest['baseline_parity']['prior_attempt'])
+    require(len(prior['stores'])==812 and len({r['id'] for r in prior['stores']})==812 and
+            prior['invalid_attempt_sha256']=='50f562871c589ad59e64d439b1fbc90659ad3de5a19a3b22442a17e55256eee8',
+            'Retained attempt002 overlap index incomplete')
+    for row in prior['stores']:checked(row['store'])
     envelopes = manifest['baseline_parity']['v3_envelopes']
     require(bool(envelopes) and all(len(h) == 64 and all(c in '0123456789abcdef' for c in h)
                                  for h in envelopes), 'Declare V3 build provenance before launch')
@@ -210,7 +237,7 @@ def validate_plan(manifest, host, now=None):
         choice_owners, seconds = cluster_allocation(choice['hosts'], rates, overhead)
         require(abs(choice['projected_seconds'] - seconds) < 1e-6, 'Projection differs from measured rates')
         native_seconds = projected_shard_seconds(choice['hosts'], choice_owners, rates)
-        require(not choice['eligible'] or all(native_seconds[name] <= qualified[name]['shard_timeout_seconds']
+        require(not choice['eligible'] or all(native_seconds[name]+10800+1800 <= qualified[name]['shard_timeout_seconds']
                 for name in choice['hosts']), 'Projected allocation exceeds a shard time bound')
         require(choice['eligible'] or choice['ineligibility_reason'].strip(), 'Explain excluded allocation')
     chosen = [c for c in choices if c['id'] == placement['selected']]
@@ -225,8 +252,7 @@ def validate_plan(manifest, host, now=None):
     require(any(r['path'] == selected['command_prefix'][-1] for r in selected['runtime_files']),
             'Native executable unpinned')
     require(selected['reserve_bytes'] >= minimum_reserve(host), 'Memory reserve too small')
-    require(0 < selected['job_timeout_seconds'] <= 1800, 'Whole-match time bound required')
-    require(0 < selected['shard_timeout_seconds'] <= 8 * 3600, 'Shard time bound required')
+    require_r8_allocation(host,selected,projected_shard_seconds(chosen[0]['hosts'],owners,rates)[host])
     require(host != 'runpod' or selected['guard_directory'] and selected['lease_name'], 'Paid lease missing')
     return panel, bound, selected, [identifier for identifier in expected if assignments[identifier] == host]
 

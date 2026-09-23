@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import patch
 
 from g115_d3_baseline_parity_v1 import normalized_pair
-from g115_d3_native_results_v1 import analyze, failure_context
+from g115_d3_native_results_v1 import analyze, failure_context, unique_failures
+from g115_d3_collect_v1 import execution_counts
+from g115_d3_launch_v1 import require_r8_allocation
 
 
 class BaselineParityTests(unittest.TestCase):
@@ -66,7 +68,33 @@ class BaselineParityTests(unittest.TestCase):
         self.assertEqual(result['completed_jobs'], 2048)
         self.assertFalse(result['complete'])
         self.assertNotIn('statistics', result)
+        self.assertTrue(all('win' not in row and 'search_census' not in row for row in result['rows']))
         statistics.assert_not_called()
+
+    def test_missing_baseline_is_one_job_with_both_diagnostics(self):
+        failures=unique_failures([dict(id='b',error='Missing parity store'),
+                                 dict(id='b',error='Missing native completion',context={'seed':4})])
+        self.assertEqual(len(failures),1)
+        self.assertEqual(len(failures[0]['reasons']),2)
+        self.assertEqual(failures[0]['reasons'][1]['context'],{'seed':4})
+
+    def test_execution_counts_distinguish_unknown_from_unstarted(self):
+        receipt=dict(not_started=['u'],rows=[dict(id='c',complete=True),
+            dict(id='t',complete=False,error='Whole-match time bound reached'),
+            dict(id='i',complete=False,error='Shard interrupted')])
+        self.assertEqual(execution_counts([receipt],['c','t','i','u','missing']),
+            dict(completed=1,timeout=1,interrupted=1,unstarted=1,other_failure=0,unknown=1))
+        receipt['not_started'].append('t')
+        with self.assertRaisesRegex(ValueError,'Duplicate execution category'):
+            execution_counts([receipt],['c','t','i','u'])
+
+    def test_r8_bound_rejects_old_timeout_and_infeasible_tail(self):
+        allocation=dict(job_timeout_seconds=10800,shard_timeout_seconds=36000)
+        require_r8_allocation('jack',allocation,22000)
+        with self.assertRaises(ValueError):require_r8_allocation('jack',allocation,24000)
+        with self.assertRaises(ValueError):require_r8_allocation('jack',dict(allocation,job_timeout_seconds=1800),22000)
+        require_r8_allocation('runpod',dict(allocation,shard_timeout_seconds=25200),12000)
+        with self.assertRaises(ValueError):require_r8_allocation('runpod',dict(allocation,shard_timeout_seconds=25200),13000)
 
 
 if __name__ == '__main__':
