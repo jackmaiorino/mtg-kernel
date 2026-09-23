@@ -24,7 +24,8 @@ enforces `C:/Users/Jack/COMPUTE-POLICY.md` items 2 to 5 at the launch point:
    per-run duration plus staging overhead). It then runs the **full-length
    sentinel** on the fastest qualified allocation: each arm's first run alone
    at full length, and every placement x arm at full length and full width;
-   any byte difference disqualifies that allocation and the next fastest is
+   any byte difference, or any device (local or remote) peaking inside the
+   512 MiB fit margin, disqualifies that allocation and the next fastest is
    tried. Candidates are explicit (`--allocation`) or adaptive
    (`--auto 0,1`). The receipt binds the executable, the runtime `data/` tree,
    the launcher's own hash, the workload (knobs, arms, seeds, length, segment,
@@ -81,7 +82,39 @@ multiples of 4 and at least 8, and a watchdog (local and remote) kills a
 process that passes its stop generation. The harness exits 0 when its filter
 matches nothing, so a run counts only when its log shows the test passed.
 
-RECEIPTS_ROUND2
+## Qualification receipts
+
+Committed under `docs/reports/multirun_qualified_v1/` (each round has a
+README). Round 2 is the evidence for this revision; round 1 is the pre-verdict
+record.
+
+Round 2 (launcher `136443d3`): 10 runs, 2 arms x 5 seeds x 128 updates, on
+Jack's PC and HaleysPC.
+
+| Allocation | Episodes/s | Byte-identical to serial golden |
+| --- | --- | --- |
+| 1@gpu0 (serial) | 11.04 | golden + stored repeat |
+| 2@gpu0 + 2@gpu1 | 30.65 | 10/10 |
+| 2@gpu0 + 2@gpu1 + 2@HaleysPC (selected) | 40.12 | 10/10 |
+| 2@gpu0 + 2@gpu1 + 3@HaleysPC | 42.56 | 10/10 |
+
+The full-length sentinel on the selected allocation matched on all 6
+placement x arm entries (233 outputs each) with every device's peak memory
+outside the margin. The guarded launch finished all 10 runs in 14.5 min (94.3
+episodes/s) with every prefix audit identical, against about 42.3 min for the
+same runs serially (measured serial full length about 254 s per run): 2.9x. A
+resumed segment (generation 12 to 28, both arms) reproduced the uninterrupted
+runs' outputs byte for byte. Measured serial time is the reference: the
+prefix-based projection is conservative for every allocation but most for the
+serial one (77 min projected, 42 min measured), so it overstates the speedup
+(3.8x projected, 2.9x measured) while its ranking of the parallel candidates
+held.
+
+Superseded round-2 passes are kept: one at `cc3036db` selected 3 processes on
+HaleysPC from the prefix, and at full length that 8 GB card crowded (7,867 of
+8,188 MiB, 100 percent), its runs took about 2,800 s against about 350 s
+locally, and the experiment took 46.9 min. The remote memory-fit rule and the
+sentinel's full-length memory check came from that run.
 
 ## Binding constraint and next lever
 
@@ -148,7 +181,9 @@ point, and publishes generation-named outputs.
   nvrtc/cudart DLLs and the CUDA headers (nvrtc kernel JIT reads
   `$CUDA_PATH/include`) with hash checks, runs through `cmd` redirection (so
   the log is not UTF-16), applies the same overrun watchdog and log check as
-  local runs, returns outputs as tar and deletes the remote copy.
+  local runs, returns outputs as tar and deletes the remote copy. Its GPU is
+  sampled over SSH during every leg and launch, its per-process footprint is
+  measured like a local device's, and the same fit rule applies.
 - RunPod: the account is queried read-only. Pods are Linux, and the
   repository pins different training bytes per target (the per-target
   `train_state_sha256` witnesses in `mtg-kernel/src/native_trainer_v1.rs`), so
@@ -165,6 +200,6 @@ point, and publishes generation-named outputs.
 | M4 launcher hash and GPU identity checked | `require_choice`, `check_gpu_identity`; `test_m4_*` |
 | M5 blast radius listed; knobs admitted; resume-aware tickets and segments | table above; `test_m5_*`; ticket tests `resumed_segments_*`; blocked rows in FOR-JACK |
 | M6 ticket wording, 65 boundary test, CI note | this doc; `small_checks_need_no_ticket_and_substantial_runs_do` |
-| M7 HaleysPC receipts, watchdog and log check | round-2 receipts; SSH executor |
+| M7 one countersign target; HaleysPC receipts, watchdog and log check | all round-2 receipts from launcher `136443d3`; SSH executor |
 | M8 committed RunPod evidence | launcher reason text and placement notes |
-| M9 refusal log committed | `docs/reports/multirun_qualified_v1/round2/raw-harness-refusal.txt` |
+| M9 refusal log committed | `docs/reports/multirun_qualified_v1/round2/raw-harness-refusal.txt` (round 1's log is `round1/raw-harness-refusal.txt`) |

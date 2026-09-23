@@ -1,0 +1,28 @@
+{
+  "schema": "mtg-kernel-multirun-resume-equivalence/v1",
+  "segment": {
+    "resume_generation": 12,
+    "stop_generation": 28
+  },
+  "resumed_launch_manifest": "D:/multirun-qualified-v1-work/q6-segment/launch/experiment-manifest.json",
+  "uninterrupted_launch_manifest": "D:/multirun-qualified-v1-work/q6/launch/experiment-manifest.json",
+  "compared": "every Store output of generations <= 28 plus run.json",
+  "runs": {
+    "base-s0": {
+      "manifest_status": "complete",
+      "completed_generation": 28,
+      "outputs_through_28": 56,
+      "outputs_past_resume": 28,
+      "identical_to_uninterrupted_run": true,
+      "differing": []
+    },
+    "envrand-s0": {
+      "manifest_status": "complete",
+      "completed_generation": 28,
+      "outputs_through_28": 56,
+      "outputs_past_resume": 28,
+      "identical_to_uninterrupted_run": true,
+      "differing": []
+    }
+  }
+}
