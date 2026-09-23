@@ -20,6 +20,8 @@ assert SPEC is not None and SPEC.loader is not None
 launcher = importlib.util.module_from_spec(SPEC)
 sys.modules["multirun_launcher_v1"] = launcher
 SPEC.loader.exec_module(launcher)
+# Hermetic: the tests never read this machine's GPUs (CI runners have none).
+launcher.gpu_inventory = lambda runner=None: []
 
 
 def fake_workload(directory: Path, runs: int = 3, planned: int = 6, extra_env: dict | None = None,
@@ -304,7 +306,10 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(launcher.device_fits(alloc("3@0+2@1"), footprint.get, devices=devices), [])
         reasons = launcher.device_fits(alloc("4@0+3@1"), footprint.get, devices=devices)
         self.assertEqual([reason.split(":")[0] for reason in reasons], ["device 0", "device 1"])
-        self.assertEqual(launcher.device_fits(alloc("1@2"), footprint.get, devices=devices), ["device 2 not present"])
+        self.assertEqual(launcher.device_fits(alloc("1@2"), lambda _: 100.0, devices=devices),
+                         ["device 2 not present"])
+        # A workload that measured no device memory needs no device (and CI runners have none).
+        self.assertEqual(launcher.device_fits(alloc("2@0+1@1"), lambda _: 0.0, devices=[]), [])
 
     def test_auto_growth_adds_one_process_where_memory_has_most_room(self) -> None:
         devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2974},

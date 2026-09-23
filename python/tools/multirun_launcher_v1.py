@@ -963,11 +963,13 @@ def device_fits(slots: list[Slot], per_process_mib: Callable[[int], float], marg
     for slot in slots:
         if slot.host != "jack":
             continue
+        need = slot.capacity * (per_process_mib(slot.device) or 0.0)
+        if need <= 0:
+            continue  # no measured device memory use: nothing to reserve
         gpu = devices.get(slot.device)
         if gpu is None:
             reasons.append(f"device {slot.device} not present")
             continue
-        need = slot.capacity * per_process_mib(slot.device)
         room = gpu["memory_total_mib"] - gpu["memory_used_mib"] - margin_mib
         if need > room:
             reasons.append(f"device {slot.device}: {slot.capacity} processes need ~{need:.0f} MiB, "
