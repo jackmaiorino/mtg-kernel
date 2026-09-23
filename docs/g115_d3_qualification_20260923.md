@@ -1,5 +1,9 @@
 # D3 qualification, September 23
 
+Current launch-source status, 10:38 EDT: `cd41885e` has completed its local serial reference in **5,119.382 seconds**. All 64 stores were independently rehashed and validated through the native reader: 150 natural games, 30,447 decisions, the frozen g115/V3 identities, exact requests and source commit, natural endings and search records. Every store has the same semantics as reviewed `e258daf3` after only the declared V3 envelope build-provenance normalization. Receipt: `E:/mtg-g115-lineage-20260923/d3-reviewed-local-serial-003-verified.json`; phase completion SHA-256 `61fa37a556d5e5cea9979fac682fc2cbd7e8c7195eed123572c6fe7129c91d46`.
+
+The local 8/16/24-worker comparisons and the cloud and Haley grids remain active. No current-source fleet qualification or fastest-allocation claim is complete. Current timings include the actual host load; Kimi #029 reports concurrent workload contention and has made its retry skip D3-controller windows. A fresh resource inventory is still required before formal dispatch. The old completed grid below is preserved as historical evidence and is not relabeled as the current build or current cloud hardware. No formal D3 match has launched.
+
 **Complete, 04:37 EDT.** Both full scaling grids passed. Every recovered cloud store was independently rehashed and matched the local serial reference: 256 cloud stores plus the earlier 256 local stores, covering the same 64 distinct matches in each phase. Each phase has 150 natural games and 30,447 decisions. Repetitions establish engineering parity, not independent strength evidence. No formal shared-panel match has launched.
 
 | Workers | Local seconds | Cloud seconds |
