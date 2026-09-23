@@ -246,11 +246,22 @@ def validate(manifest, host, now=None):
     return result
 
 
+def prepare_output_parent(bound):
+    # The native evaluator exclusively creates each match directory, but its
+    # parent must already exist. The coordinator owns that fresh parent.
+    parents = {Path(job['native_output_directory']).parent for job in bound['jobs']}
+    require(len(parents) == 1, 'All native outputs must share one fresh parent')
+    parent = parents.pop()
+    parent.mkdir()  # Never reuse a failed, partial, empty or completed attempt.
+    return parent
+
+
 def launch(manifest, host, root):
     panel, bound, allocation, identifiers = validate(manifest, host)
     root = Path(root)
     root.mkdir()  # A completed, failed or partial shard is never overwritten.
     write(root / 'manifest.json', manifest)
+    prepare_output_parent(bound)
     jobs = {j['id']: j for j in bound['jobs']}
     expected = {j['id']: j for j in panel['jobs']}
     guard = Path(allocation['guard_directory']) if host == 'runpod' else None
