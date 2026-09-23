@@ -138,6 +138,17 @@ class QualificationTests(QualifiedFixture):
         self.assertEqual(on_disk["allocation"], launcher.require_choice(self.choice_path, self.workload)["allocation"])
         with self.assertRaises(launcher.LaunchRefused):
             launcher.launch(self.workload, self.choice_path, root, {"jack": launcher.LocalExecutor(self.workload)})
+        # A full-length serial rerun of a launched run reproduces every output byte.
+        record = launcher.verify(self.workload, self.choice_path, root, ["run-1"], self.base / "verify",
+                                 launcher.LocalExecutor(self.workload))
+        self.assertTrue(record["runs"]["run-1"]["byte_identical"])
+        self.assertEqual(record["runs"]["run-1"]["serial_completed_generation"], 6)
+        ticket = launcher.read_json(self.base / "verify" / "run-1.ticket.json")
+        self.assertEqual((ticket["kind"], ticket["compute_choice_sha256"]),
+                         ("launch", launcher.sha256_file(self.choice_path)))
+        with self.assertRaises(launcher.LaunchRefused):
+            launcher.verify(self.workload, self.choice_path, root, ["run-9"], self.base / "verify-2",
+                            launcher.LocalExecutor(self.workload))
 
 
 class LaunchRefusalTests(QualifiedFixture):
@@ -285,6 +296,15 @@ class UnitTests(unittest.TestCase):
         statistics = {"startup_seconds": 10.0, "steady_update_seconds": 2.0, "tail_seconds": 5.0}
         self.assertEqual(launcher.project_seconds(statistics, 8, 4, 100, 30.0), 30.0 + 2 * (10 + 200 + 5))
         self.assertEqual(launcher.project_seconds(statistics, 5, 4, 100, 0.0), 2 * 215)
+
+    def test_gpu_fit_uses_each_device_footprint(self) -> None:
+        devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2939},
+                   {"index": 1, "memory_total_mib": 6144, "memory_used_mib": 9}]
+        footprint = {0: 2853.0, 1: 2599.0}
+        self.assertEqual(launcher.device_fits(alloc("3@0+2@1"), footprint.get, devices=devices), [])
+        reasons = launcher.device_fits(alloc("4@0+3@1"), footprint.get, devices=devices)
+        self.assertEqual([reason.split(":")[0] for reason in reasons], ["device 0", "device 1"])
+        self.assertEqual(launcher.device_fits(alloc("1@2"), footprint.get, devices=devices), ["device 2 not present"])
 
     def test_idle_capacity_needs_two_consecutive_idle_windows_with_waiting_runs(self) -> None:
         def samples(pattern):

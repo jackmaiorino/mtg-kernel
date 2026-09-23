@@ -782,7 +782,8 @@ def idle_capacity_events(samples: list[dict], window_seconds: float = IDLE_WINDO
                            "mean_cpu_percent": round(sum(busy) / len(busy), 1),
                            "diagnosis": "runs waited for a slot while the CPU was below "
                                         f"{cpu_threshold:.0f} percent busy for two consecutive windows: "
-                                        "the allocation caps concurrency below available capacity"})
+                                        "the allocation width, not CPU, limits throughput (check "
+                                        "GPU memory headroom and per-slot capacity)"})
             streak = 0
     return events
 
@@ -954,10 +955,11 @@ def compare_to_goldens(workload: Workload, results: list[RunResult], root: Path,
     return per_run
 
 
-def device_fits(slots: list[Slot], per_process_mib: float, margin_mib: int = 512) -> list[str]:
+def device_fits(slots: list[Slot], per_process_mib: Callable[[int], float], margin_mib: int = 512,
+                devices: list[dict] | None = None) -> list[str]:
     """Reasons an allocation cannot fit on the local GPUs right now (empty if it fits)."""
     reasons = []
-    devices = {gpu["index"]: gpu for gpu in gpu_inventory()}
+    devices = {gpu["index"]: gpu for gpu in (gpu_inventory() if devices is None else devices)}
     for slot in slots:
         if slot.host != "jack":
             continue
@@ -965,7 +967,7 @@ def device_fits(slots: list[Slot], per_process_mib: float, margin_mib: int = 512
         if gpu is None:
             reasons.append(f"device {slot.device} not present")
             continue
-        need = slot.capacity * per_process_mib
+        need = slot.capacity * per_process_mib(slot.device)
         room = gpu["memory_total_mib"] - gpu["memory_used_mib"] - margin_mib
         if need > room:
             reasons.append(f"device {slot.device}: {slot.capacity} processes need ~{need:.0f} MiB, "
@@ -986,9 +988,14 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         raise LaunchRefused("qualification needs the serial allocation and at least one parallel allocation")
     overheads = overheads or {}
 
+    # Per-device GPU memory one process adds, learned from each measured leg
+    # (the CUDA runtime's pool pages scale with the device's total memory).
+    footprint: dict[int, float] = {}
+
     def leg(label: str, slots: list[Slot]) -> tuple[list[RunResult], float, dict]:
         leg_root = root / label
         leg_root.mkdir()
+        baseline = {gpu["index"]: gpu["memory_used_mib"] for gpu in gpu_inventory()}
         waiting = {"count": len(workload.runs)}
 
         def on_event(kind, _payload):
@@ -1002,11 +1009,22 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             extra_env=qualification_tickets(workload, leg_root, allocation_text(slots), qualification_updates),
             on_event=on_event)
         usage = monitor.stop()
+        for slot in slots:
+            peak = usage["gpu_peak_memory_mib"].get(str(slot.device))
+            if slot.host == "jack" and peak is not None and slot.device in baseline:
+                estimate = max(0.0, peak - baseline[slot.device]) / slot.capacity
+                footprint[slot.device] = max(footprint.get(slot.device, 0.0), estimate)
+        usage["baseline_memory_mib"] = {str(k): v for k, v in baseline.items()}
         return results, wall, usage
+
+    def per_process(device: int) -> float:
+        if per_process_mib is not None:
+            return per_process_mib
+        # An unmeasured device is assumed as large as the largest measured one.
+        return footprint.get(device, max(footprint.values(), default=0.0))
 
     # The serial leg is the golden: each run alone on the first serial slot.
     golden_slots = serial[0]
-    baseline_mib = {str(gpu["index"]): gpu["memory_used_mib"] for gpu in gpu_inventory()}
     golden_results, golden_wall, golden_usage = leg("serial-golden", golden_slots)
     goldens = {}
     for result in golden_results:
@@ -1027,11 +1045,6 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
                            if repeat_digests.get(k) != goldens[workload.runs[0].id].get(k))
         raise LaunchRefused(f"serial repeat is not byte-identical; nondeterministic outputs: {differing[:20]}")
 
-    if per_process_mib is None:
-        # One process alone on the golden device: its peak above the pre-leg baseline.
-        device = str(golden_slots[0].device)
-        peak = golden_usage["gpu_peak_memory_mib"].get(device)
-        per_process_mib = max(0.0, peak - baseline_mib.get(device, peak)) if peak is not None else 0.0
     records = []
 
     def record(slots, results, wall, usage, status_override=None, reasons=(), leg_root=None):
@@ -1060,7 +1073,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     for slots in candidates:
         if slots == golden_slots:
             continue
-        fit = device_fits(slots, per_process_mib) if per_process_mib > 0 else []
+        fit = device_fits(slots, per_process) if any(per_process(s.device) > 0 for s in slots) else []
         missing = [slot.host for slot in slots if not inventory["hosts"].get(slot.host, {}).get("eligible")]
         if missing or fit:
             record(slots, [], 0.0, {}, "capacity-skipped",
@@ -1090,6 +1103,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "planned_updates": workload.planned_updates,
         "qualification_updates": qualification_updates,
         "run_ids": [run.id for run in workload.runs],
+        "gpu_footprint_mib": {str(device): mib for device, mib in sorted(footprint.items())},
         "inventory": inventory,
         "golden": {"allocation": allocation_text(golden_slots), "root": str(root / "serial-golden"),
                    "serial_repeat_identical": True,
@@ -1235,6 +1249,11 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     slots = parse_allocation(selected["allocation"])
     if root.exists():
         raise LaunchRefused(f"launch root already exists: {root}")
+    # Current reservations win: refuse rather than squeeze in beside other GPU work.
+    footprint = {int(device): mib for device, mib in choice.get("gpu_footprint_mib", {}).items()}
+    crowded = device_fits(slots, lambda device: footprint.get(device, max(footprint.values(), default=0.0)))
+    if crowded:
+        raise LaunchRefused("not enough free GPU memory for the qualified allocation right now: " + "; ".join(crowded))
     runs_root = root / "runs"
     runs_root.mkdir(parents=True)
     manifest_path = root / "experiment-manifest.json"
@@ -1315,6 +1334,51 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     return manifest
 
 
+def verify(workload: Workload, choice_path: Path, launch_root: Path, run_ids: list[str], root: Path,
+           executor: LocalExecutor, device: int = 0) -> dict:
+    """Rerun launched runs one at a time at full length and compare every output byte.
+
+    The qualification proves concurrency preserves the golden prefix; this
+    extends the check to the whole record for chosen runs. Each rerun is a
+    guarded launch of the same run (the receipt must still validate), so it
+    carries a launch ticket bound to the same receipt.
+    """
+    require_choice(choice_path, workload)
+    choice_sha256 = sha256_file(choice_path)
+    manifest = read_json(launch_root / "experiment-manifest.json")
+    if manifest.get("compute_choice_sha256") != choice_sha256 or manifest.get("workload_sha256") != workload.sha256:
+        raise LaunchRefused("the launch manifest was produced from another receipt or workload")
+    if root.exists():
+        raise LaunchRefused(f"verification root already exists: {root}")
+    root.mkdir(parents=True)
+    runs = {run.id: run for run in workload.runs}
+    records = {}
+    for run_id in run_ids:
+        entry = manifest["runs"].get(run_id, {})
+        if run_id not in runs or entry.get("status") != "complete":
+            raise LaunchRefused(f"{run_id} is not a completed run of this launch")
+        ticket = issue_ticket(root / f"{run_id}.ticket.json", workload, runs[run_id], f"1@jack:{device}",
+                              "launch", choice_sha256=choice_sha256)
+        result = executor.run(runs[run_id], root / run_id, device, None, {"MULTIRUN_LAUNCH_TICKET": str(ticket)})
+        serial = workload.adapter.output_digests(root / run_id)
+        concurrent = workload.adapter.output_digests(Path(entry["run_root"]))
+        records[run_id] = {
+            "exit_code": result.exit_code, "wall_seconds": result.finished - result.started,
+            "serial_completed_generation": max(result.generations, default=0),
+            "output_count": len(serial), "serial_digest_set_sha256": sha256_bytes(canonical(serial)),
+            "concurrent_digest_set_sha256": sha256_bytes(canonical(concurrent)),
+            "byte_identical": result.exit_code == 0 and bool(serial) and serial == concurrent,
+            "differing_outputs": sorted(k for k in set(serial) | set(concurrent)
+                                        if serial.get(k) != concurrent.get(k))[:20],
+        }
+    record = {"schema": "mtg-kernel-multirun-full-length-verification/v1", "created_at": iso(utc_now()),
+              "compute_choice_sha256": choice_sha256, "launch_manifest": str(launch_root / "experiment-manifest.json"),
+              "launch_manifest_sha256": sha256_file(launch_root / "experiment-manifest.json"),
+              "device": device, "runs": records}
+    write_json(root / "verification.json", record)
+    return record
+
+
 # --------------------------------------------------------------------------
 # CLI
 
@@ -1350,6 +1414,13 @@ def main(argv: list[str] | None = None) -> int:
     check = commands.add_parser("check", help="validate a receipt against a workload without launching")
     check.add_argument("--workload", type=Path, required=True)
     check.add_argument("--choice", type=Path, required=True)
+    verify_parser = commands.add_parser("verify", help="rerun launched runs serially at full length and compare")
+    verify_parser.add_argument("--workload", type=Path, required=True)
+    verify_parser.add_argument("--choice", type=Path, required=True)
+    verify_parser.add_argument("--launch-root", type=Path, required=True)
+    verify_parser.add_argument("--run", action="append", required=True)
+    verify_parser.add_argument("--root", type=Path, required=True)
+    verify_parser.add_argument("--device", type=int, default=0)
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "inventory":
@@ -1370,6 +1441,11 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "check":
             print(json.dumps(require_choice(arguments.choice, workload)["id"]))
             return 0
+        if arguments.command == "verify":
+            record = verify(workload, arguments.choice, arguments.launch_root, arguments.run, arguments.root,
+                            LocalExecutor(workload), arguments.device)
+            print(json.dumps({run: entry["byte_identical"] for run, entry in record["runs"].items()}))
+            return 0 if all(entry["byte_identical"] for entry in record["runs"].values()) else 1
         manifest = launch(workload, arguments.choice, arguments.root,
                           build_executors(workload, arguments.haleyspc))
         print(json.dumps({"status": manifest["status"], "manifest": str(arguments.root / "experiment-manifest.json")}))
