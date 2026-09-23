@@ -90,7 +90,21 @@ impl FastActorSessionV1 {
         } else {None};
         let original_candidates=&self.current.as_ref().ok_or(Error::NoLiveDecision)?.candidates;
         let mut copy=self.clone();
-        sampler::redeterminize_with_library_plan(&mut copy.state,actor,seed,plan.as_ref())?;
+        if let Err(error) = sampler::redeterminize_with_library_plan(&mut copy.state,actor,seed,plan.as_ref()) {
+            // Opt-in local correctness diagnostics only. Never overwrite a prior
+            // root, expose this private state in a policy input, or resume play.
+            if let Some(path) = std::env::var_os("MTG_V4_SEARCH_FAILURE_STATE") {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
+                    let record = serde_json::json!({"schema":"v4-search-failure-state/v1",
+                        "actor":actor,"seed":seed,"error":error,"state":self.state});
+                    if let Ok(bytes) = serde_json::to_vec(&record) {
+                        let _ = file.write_all(&bytes).and_then(|_|file.sync_all());
+                    }
+                }
+            }
+            return Err(error);
+        }
         if mode==V4SearchSampleMode::FutureChanceV3 {
             // `seed` already derives from visible root, experiment and
             // simulation ordinal. Separate future chance from hidden-pool RNG.
