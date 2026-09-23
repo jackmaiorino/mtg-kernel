@@ -1,16 +1,19 @@
 # D3 qualification, September 23
 
-Status: incomplete engineering qualification. No formal shared-panel match has launched. No playing-strength verdict is available.
+Status at04:17 EDT: local qualification complete; cloud qualification still running. No formal shared-panel match has launched. No playing-strength verdict is available.
 
-Completed local measurements as of04:07 EDT; each row covers the same64 matches and all stores match the serial reference exactly:
+Completed local measurements; each row covers the same64 matches and all stores match the serial reference exactly:
 
 | Workers | Seconds | Speedup versus serial |
 | ---: | ---: | ---: |
 | 1 | 4310.398 | 1.000x |
 | 8 | 954.291 | 4.517x |
 | 16 | 720.932 | 5.979x |
+| 24 | 629.300 | 6.850x |
 
-The16-worker stores were independently rehashed in E:/mtg-g115-lineage-20260923/d3-local-workers16-002-check.json. Local24-worker qualification is active; RunPod8-worker qualification is active, with16/32 still to follow. No final allocation is selected.
+All256 local native stores were independently rehashed and their completion counts checked in E:/mtg-g115-lineage-20260923/d3-local-qualification-002-verified.json. Each phase contains150 natural games and30,447 decisions. The complete process exited0 after6614.964 seconds;24 workers was fastest on this measured cohort. Aggregate D:/g115-d3-qualification-20260923/local-002/completion.json SHA2569fbdb792e6ba4fe5ab3942344dd7c3414af6d18d6872c595ba7c4ff5d0f5cca0. No native workers remain from this local qualification.
+
+RunPod8 workers completed975.729 seconds,4.33993x its4234.596-second serial reference. All64 native stores were independently rehashed remotely and match the full serial/local map; receipts D:/g115-d3-cloud-control/d3-cloud-qualification-004/workers8-phase-verified.json and workers8-check.json. Cloud16-worker qualification is active,32 workers follows, then recovery and release. No final fleet allocation is selected. All repetitions are engineering measurements, not independent strength samples.
 
 Current checkpoint, September23 03:38 EDT: repaired native e258daf3 completed the full64-case local serial pass in4310.398 seconds (0.0148478 BO3/s). All64 completed store hashes were independently verified, covering150 natural games and30,447 decisions. Evidence: D:/g115-d3-qualification-20260923/local-002/workers-1/completion.json and E:/mtg-g115-lineage-20260923/d3-local-serial-002-check.json. The eight-worker pass is active;16/24-worker phases follow. RunPod004 remains in its serial phase under the existing lease. No whole-host qualification or fastest allocation is established until the complete comparisons pass. Historical failure and preparation notes below remain preserved. The formal launcher preparation now exists at1b4a8297, but positive formal dispatch is still untested and the design verdict remains pending.
 
