@@ -210,7 +210,16 @@ pub(super) fn op_conflicts(state:&GameState,pool:&[ObjectId],op:&EffectOp)->bool
 pub(super) fn conflicts(state:&GameState,pool:&[ObjectId],plan:Option<&crate::effect::library_choice_search_v2::Plan>)->bool {
     let s=Scan{state,pool};
     if let Some(p)=&state.engine.pending_effect {
-        if s.fs(&p.frames)||p.choice.as_ref().is_some_and(|c|!plan.is_some_and(|p|p.matches(c)) && s.choice(c))
+        if s.fs(&p.frames)||p.choice.as_ref().is_some_and(|c| {
+            if !plan.is_some_and(|p|p.matches(c)) { return s.choice(c); }
+            // Throne exempts only its private full-library snapshot. Public
+            // reveal, source and selected/legal references still cannot move.
+            if let PendingEffectChoice::SelectTargets { purpose: EffectTargetSelectionPurpose::UndercityThroneCreature { binding, revealed_prefix, candidates, .. }, selected, legal, .. } = c {
+                s.a(&binding.source)||s.bs(revealed_prefix)||s.bs(candidates)
+                    ||selected.iter().chain(legal).any(|c| c.expected_object.as_ref().is_some_and(|b|s.b(b))
+                        ||matches!(c.target,crate::state::Target::Object(id) if s.raw(id)))
+            } else { false }
+        })
             ||p.ctx.discarded.iter().any(|id|s.raw(*id))
             ||p.ctx.targets.iter().any(|t|matches!(t,crate::state::Target::Object(id) if s.raw(*id)))
             ||p.ctx.hidden_ability_source.is_some_and(|x|s.same(x.object,x.zone_change_count))

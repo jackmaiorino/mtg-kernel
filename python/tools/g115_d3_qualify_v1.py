@@ -33,7 +33,15 @@ def free_memory():
         import psutil
         return psutil.virtual_memory().available
     values={k:v.strip() for k,v in (line.split(':',1) for line in P('/proc/meminfo').read_text().splitlines())}
-    return int(values['MemAvailable'].split()[0])*1024
+    available=int(values['MemAvailable'].split()[0])*1024
+    for limit_path,current_path in (
+        ('/sys/fs/cgroup/memory.max','/sys/fs/cgroup/memory.current'),
+        ('/sys/fs/cgroup/memory/memory.limit_in_bytes','/sys/fs/cgroup/memory/memory.usage_in_bytes')):
+        try:
+            limit=P(limit_path).read_text().strip()
+            if limit!='max':available=min(available,max(0,int(limit)-int(P(current_path).read_text())))
+        except FileNotFoundError:pass
+    return available
 
 def validate(spec):
     require(spec['schema']=='g115-d3-throughput-qualification/v1','Wrong workload kind')
@@ -43,8 +51,8 @@ def validate(spec):
     inventory=spec['inventory'];require(set(inventory)=={'jack','haleyspc','runpod'},'Three-host inventory required')
     require(inventory[spec['host']]['complete'] and 0<=time.time()-inventory['jack']['checked_unix']<=1800,'Fresh placement inventory required')
     counts=spec['worker_counts'];require(counts[0]==1 and counts==sorted(set(counts)) and len(counts)>=2 and max(counts)<=32,'Serial and increasing parallel comparison required')
-    jobs=spec['jobs'];require(len(jobs)==32 and len({j['id'] for j in jobs})==32,'Expected fixed32-case engineering cohort')
-    require(sum(j['arm']=='search' for j in jobs)==16 and sum(j['arm']=='baseline' for j in jobs)==16,'Both execution paths required')
+    jobs=spec['jobs'];require(len(jobs)==64 and len({j['id'] for j in jobs})==64,'Expected fixed64-case engineering cohort')
+    require(sum(j['arm']=='search' for j in jobs)==32 and sum(j['arm']=='baseline' for j in jobs)==32,'Both execution paths required')
     require(0<spec['job_timeout_seconds']<=1800 and 0<spec['group_timeout_seconds']<=7200,'Bounded qualification required')
     require(spec['reserve_bytes']>=(32 if spec['host']!='runpod' else 1)*2**30,'Memory reserve too small')
     forbidden=set(spec['formal_panel_seeds']);require(len(forbidden)==512,'Shared-panel exclusion missing')
@@ -144,6 +152,13 @@ def qualify(spec,root):
         stop.set()
         with lock:
             for stats in active.values():terminate(stats['child'])
+        # A queued future can reject after another job fails. Preserve the
+        # completed job receipts even when gathering that future raises.
+        for phase in phases:
+            if not phase['rows']:
+                folder=root/('workers-'+str(phase['workers']))
+                phase['rows']=[read(folder/j['id']/'execution.json') for j in spec['jobs'] if (folder/j['id']/'execution.json').exists()]
+                phase['not_started']=[j['id'] for j in spec['jobs'] if not (folder/j['id']/'execution.json').exists()]
         result['seconds']=time.monotonic()-started;write(root/'completion.json',result)
         if guard:write(guard/'progress.json',dict(pod_id=pod,epoch=time.time(),last_productive_epoch=last_productive,last_activity_epoch=time.time(),native_alive=False,queued_work=False,finished=True))
     return result

@@ -9,9 +9,11 @@ def main():
     require(accepted['source']==COMMIT,'Unaccepted wrapper source')
     a.root.mkdir();payload=prepare(panel,a.root/'payload',a.destination.rstrip('/')+'/payload',COMMIT)
     selected=[]
-    for i in range(8):
+    # Two opponents per deck supply 32 search jobs, so a 32-worker host can
+    # actually exercise its capacity. The original cohort is a strict subset.
+    for i,offset in ((i,offset) for offset in (1,2) for i in range(8)):
         for seat in (0,1):
-            identifier=f'pair-{i}-{(i+1)%8}-p{seat}'
+            identifier=f'pair-{i}-{(i+offset)%8}-p{seat}'
             found=[j for j in archive['jobs'] if j['id']==identifier];require(len(found)==1,'Consumed cohort absent')
             old=found[0];require(old['seat']==seat,'Candidate seat mismatch')
             for arm in ('baseline','search'):

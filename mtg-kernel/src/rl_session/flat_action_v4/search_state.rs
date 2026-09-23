@@ -10,6 +10,8 @@ mod sampler_tests;
 mod library_tests;
 #[cfg(test)]
 mod chance_tests;
+#[cfg(test)]
+mod throne_tests;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,serde::Serialize)]
 pub(crate) enum V4SearchStateErrorV1 {
@@ -85,7 +87,9 @@ impl FastActorSessionV1 {
         let FastActorResponseV1::Decision(d)=self.current_response() else {return Err(Error::NoLiveDecision);};
         let before=boundary(self,d,mode)?;
         let actor=self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
-        let plan=if mode!=V4SearchSampleMode::Legacy {
+        let plan=if mode==V4SearchSampleMode::FutureChanceV3 {
+            crate::effect::library_choice_search_v2::plan_future_v3(&self.state,actor).map_err(|_|Error::LibraryChoicePlanFailed)?
+        } else if mode!=V4SearchSampleMode::Legacy {
             crate::effect::library_choice_search_v2::plan(&self.state,actor).map_err(|_|Error::LibraryChoicePlanFailed)?
         } else {None};
         let original_candidates=&self.current.as_ref().ok_or(Error::NoLiveDecision)?.candidates;
