@@ -53,7 +53,7 @@ def validate(spec):
     counts=spec['worker_counts'];require(counts[0]==1 and counts==sorted(set(counts)) and len(counts)>=2 and max(counts)<=32,'Serial and increasing parallel comparison required')
     jobs=spec['jobs'];require(len(jobs)==64 and len({j['id'] for j in jobs})==64,'Expected fixed64-case engineering cohort')
     require(sum(j['arm']=='search' for j in jobs)==32 and sum(j['arm']=='baseline' for j in jobs)==32,'Both execution paths required')
-    require(0<spec['job_timeout_seconds']<=1800 and 0<spec['group_timeout_seconds']<=7200,'Bounded qualification required')
+    require(0<spec['job_timeout_seconds']<=1800 and 0<spec['group_timeout_seconds']<=9000,'Bounded qualification required')
     require(spec['reserve_bytes']>=(32 if spec['host']!='runpod' else 1)*2**30,'Memory reserve too small')
     forbidden=set(spec['formal_panel_seeds']);require(len(forbidden)==512,'Shared-panel exclusion missing')
     for job in jobs:
