@@ -366,9 +366,13 @@ def launch(manifest, host, root):
                                     last_activity_epoch=activity, native_alive=bool(active), queued_work=True,
                                     finished=False, workers=allocation['workers'], active=len(active),
                                     cpu_seconds=cpu, rss_bytes=rss, io_bytes=io, completed=sum(f.done() for f in futures))
-                write(root / 'progress.json', progress)
-                if guard:
-                    write(guard / 'progress.json', progress)
+                try:
+                    write(root / 'progress.json', progress)
+                    if guard:
+                        write(guard / 'progress.json', progress)
+                except Exception:
+                    stop.set()
+                    raise
                 time.sleep(1)
             rows = [future.result() for future in futures]
         require(all(row['complete'] for row in rows), 'Incomplete shard retained')

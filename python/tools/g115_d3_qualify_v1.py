@@ -244,8 +244,12 @@ def qualify(spec,root,resume=None):
                                 stats.update(cpu=now['cpu'],rss=max(stats['rss'],now['rss']),io=now['io'])
                             cpu+=stats['cpu'];rss+=stats['rss'];io+=stats['io']
                         progress=dict(epoch=time.time(),last_productive_epoch=last_productive,last_activity_epoch=last_activity,native_alive=bool(active),queued_work=bool(active) and any(not f.done() for f in futures),finished=False,workers=workers,active=len(active),cpu_seconds=cpu,rss_bytes=rss,io_bytes=io,completed=sum(f.done() for f in futures),pod_id=pod)
-                    write(root/'progress.json',progress)
-                    if guard:write(guard/'progress.json',progress)
+                    try:
+                        write(root/'progress.json',progress)
+                        if guard:write(guard/'progress.json',progress)
+                    except Exception:
+                        stop.set()
+                        raise
                     time.sleep(1)
                 phase['rows']=[f.result() for f in futures]
             require(all(r['complete'] for r in phase['rows']),'Incomplete cohort retained')
