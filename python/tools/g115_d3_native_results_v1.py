@@ -5,8 +5,6 @@ does not grant launch authority or turn a statistical pass into a verdict.
 """
 import argparse,hashlib,json
 from pathlib import Path
-import numpy as np
-from g115_d3_analysis_v1 import analyze_pair
 
 def read(p):return json.loads(Path(p).read_bytes())
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -66,6 +64,8 @@ def read_match(expected,actual,source_commit,models):
         _timings_ns=[t['elapsed_ns'] for t in timings])
 
 def analyze(panel,execution):
+    import numpy as np
+    from g115_d3_analysis_v1 import analyze_pair
     expected={j['id']:j for j in panel['jobs']}
     require(len(expected)==len(panel['jobs'])==2048,'expected panel is not complete')
     actual={j['id']:j for j in execution['jobs']}
