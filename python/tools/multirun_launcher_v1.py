@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import heapq
 import ctypes
 import hashlib
 import json
@@ -40,6 +41,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -129,7 +131,7 @@ class RunSpec:
 
 
 # Machine-local fields: they locate files and never enter the workload identity.
-MACHINE_FIELDS = ("executable", "data_root")
+MACHINE_FIELDS = ("executable", "data_root", "remote_mirror_root", "remote_runtime_libraries", "remote_cuda_root")
 
 
 @dataclass
@@ -204,6 +206,14 @@ def load_workload(path: Path) -> Workload:
         raise LaunchRefused("run ids and seeds must be distinct")
     adapter.validate(raw)
     return Workload(raw, adapter, executable, pinned, planned, runs)
+
+
+def read_log(path: Path) -> str:
+    """A process log as text, whether the writer used UTF-8 or UTF-16."""
+    data = Path(path).read_bytes() if Path(path).is_file() else b""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in data[:200]:
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8", errors="replace")
 
 
 class Adapter:
@@ -540,7 +550,7 @@ class LocalExecutor:
         code = process.returncode
         if overran:
             code = self.OVERRAN
-        elif code == 0 and not adapter.log_succeeded(log_path.read_text(encoding="utf-8", errors="replace")):
+        elif code == 0 and not adapter.log_succeeded(read_log(log_path)):
             code = self.RAN_NOTHING
         return RunResult(run.id, self.host, device, code, started, finished,
                          adapter.completed_generations(run_root), str(log_path))
@@ -549,20 +559,30 @@ class LocalExecutor:
 class SshPowerShellExecutor:
     """Runs one process per run on a Windows host over Tailscale SSH.
 
-    The executable is compiled with absolute data paths, so the remote side
-    mirrors the executable and the repository ``data`` directory at the same
-    absolute paths. Outputs are archived remotely and copied back into the
-    local run root, where they are compared exactly like local outputs.
+    The executable bakes absolute data paths at compile time, and the remote
+    host may lack the local drive letters. Every local path P = X:/rest is
+    therefore staged at <mirror_root>/X/rest on the remote, and each run's
+    PowerShell session maps X: onto <mirror_root>/X with ``subst`` before
+    starting the process, so the process sees exactly the local paths. The
+    NVIDIA runtime libraries the binary loads dynamically (nvrtc, cuBLAS) are
+    staged next to the executable when the host has no CUDA toolkit. Outputs
+    come back as an uncompressed tar and are compared exactly like local
+    outputs; the remote copy is then deleted.
     """
 
-    def __init__(self, workload: Workload, host: str, address: str, data_root: Path,
+    def __init__(self, workload: Workload, host: str, address: str, data_root: Path, mirror_root: str,
+                 runtime_libraries: Iterable[Path] = (), cuda_root: Path | None = None,
                  runner: Callable[..., subprocess.CompletedProcess] = subprocess.run):
         self.workload = workload
         self.host = host
         self.address = address
-        self.data_root = data_root
+        self.data_root = Path(data_root)
+        self.mirror_root = mirror_root.rstrip("/\\").replace("\\", "/")
+        self.runtime_libraries = [Path(path) for path in runtime_libraries]
+        self.cuda_root = Path(cuda_root) if cuda_root else None
         self.runner = runner
-        self.staged = False
+        self.staged: dict | None = None
+        self.stage_lock = threading.Lock()
         self.transfer_seconds = 0.0
 
     def ssh(self, script: str, timeout: float) -> str:
@@ -575,64 +595,139 @@ class SshPowerShellExecutor:
             raise RuntimeError(f"{self.host}: {result.stderr.strip()[:400]}")
         return result.stdout
 
-    def scp(self, source: str, target: str, timeout: float = 600) -> None:
+    def scp(self, source: str, target: str, timeout: float = 3600) -> None:
         result = self.runner(["scp", "-q", "-r", source, target], capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
             raise RuntimeError(f"{self.host}: scp failed: {result.stderr.strip()[:400]}")
 
     @staticmethod
-    def remote(path: Path | str) -> str:
-        return Path(path).as_posix()
+    def local(path: Path | str) -> str:
+        text = str(path).replace("\\", "/")
+        if not re.match(r"^[A-Za-z]:/", text) or " " in text:
+            raise RuntimeError(f"remote placement needs absolute drive paths without spaces: {text}")
+        return text
 
-    def stage(self) -> None:
-        if self.staged:
-            return
-        began = time.monotonic()
-        executable = self.workload.executable
-        for directory in {executable.parent, self.data_root.parent}:
-            self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.remote(directory)}' | Out-Null", 60)
-        self.scp(str(executable), f"{self.address}:{self.remote(executable)}")
-        remote_hash = self.ssh(f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{self.remote(executable)}').Hash", 120)
-        if remote_hash.strip().lower() != self.workload.executable_sha256:
-            raise RuntimeError(f"{self.host}: staged executable hash differs")
-        self.scp(str(self.data_root), f"{self.address}:{self.remote(self.data_root.parent)}")
-        self.transfer_seconds += time.monotonic() - began
-        self.staged = True
+    def physical(self, path: Path | str) -> str:
+        """Where a local absolute path lives on the remote disk."""
+        text = self.local(path)
+        return f"{self.mirror_root}/{text[0].upper()}/{text[3:]}"
+
+    def mirror_path(self, letter: str) -> str:
+        return f"{self.mirror_root}/{letter}".replace("/", "\\")
+
+    def letters(self, *paths: Path | str) -> list[str]:
+        return sorted({self.local(path)[0].upper() for path in paths})
+
+    def remote_hash(self, path: Path | str) -> str:
+        return self.ssh(f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{self.physical(path)}').Hash", 300) \
+            .strip().lower()
+
+    def stage(self) -> dict:
+        """Copy the executable, runtime libraries and data once per host; verify hashes."""
+        with self.stage_lock:
+            if self.staged is not None:
+                return self.staged
+            began = time.monotonic()
+            executable = self.workload.executable
+            directories = {self.physical(executable.parent), self.physical(self.data_root.parent)}
+            self.ssh("\n".join(f"New-Item -ItemType Directory -Force -Path '{d}' > $null" for d in sorted(directories)),
+                     120)
+            self.scp(str(executable), f"{self.address}:{self.physical(executable)}")
+            if self.remote_hash(executable) != self.workload.executable_sha256:
+                raise RuntimeError(f"{self.host}: staged executable hash differs")
+            libraries = {}
+            for library in self.runtime_libraries:
+                target = f"{self.physical(executable.parent)}/{library.name}"
+                self.scp(str(library), f"{self.address}:{target}")
+                digest = sha256_file(library)
+                remote = self.ssh(f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{target}').Hash", 300)
+                if remote.strip().lower() != digest:
+                    raise RuntimeError(f"{self.host}: staged runtime library hash differs: {library.name}")
+                libraries[library.name] = digest
+            self.scp(str(self.data_root), f"{self.address}:{self.physical(self.data_root.parent)}")
+            if self.cuda_root is not None:
+                # Kernel JIT (nvrtc) includes <cuda_runtime.h> from $CUDA_PATH/include.
+                self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.physical(self.cuda_root)}' > $null", 120)
+                self.scp(str(self.cuda_root / "include"), f"{self.address}:{self.physical(self.cuda_root)}")
+            seconds = time.monotonic() - began
+            self.transfer_seconds += seconds
+            self.staged = {"host": self.host, "mirror_root": self.mirror_root,
+                           "executable_sha256": self.workload.executable_sha256,
+                           "runtime_libraries_sha256": libraries, "stage_seconds": seconds}
+            return self.staged
 
     def run(self, run: RunSpec, run_root: Path, device: int, stop_after: int | None,
             extra_env: dict[str, str] | None = None) -> RunResult:
         self.stage()
+        run_root = Path(run_root).resolve()
         run_root.mkdir(parents=True, exist_ok=False)
         adapter = self.workload.adapter
-        remote_root = self.remote(run_root)
-        argv = adapter.argv(self.workload, self.remote(self.workload.executable), run, remote_root, device, stop_after)
-        env = adapter.environment(self.workload, run, remote_root, device, stop_after)
+        executable = self.local(self.workload.executable)
+        argv = adapter.argv(self.workload, executable, run, self.local(run_root), device, stop_after)
+        env = adapter.environment(self.workload, run, self.local(run_root), device, stop_after)
         env.update(extra_env or {})
-        assignments = "\n".join(f"$env:{key}='{value}'" for key, value in sorted(env.items()))
-        quoted = " ".join("'" + part.replace("'", "''") + "'" for part in argv[1:])
-        script = (
-            f"Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue\n{assignments}\n"
-            f"New-Item -ItemType Directory -Force -Path '{remote_root}' | Out-Null\n"
-            f"Set-Location '{remote_root}'\n"
-            f"& '{argv[0]}' {quoted} *> '{remote_root}/process.log'\n"
-            f"$code=$LASTEXITCODE\n"
-            f"Compress-Archive -Force -Path '{remote_root}/*' -DestinationPath '{remote_root}.zip'\n"
-            f"Write-Output $code"
-        )
-        write_json(run_root / "invocation.json", {"host": self.host, "argv": argv, "env": env})
-        started = time.time()
-        output = self.ssh(script, timeout=7 * 24 * 3600)
-        finished = time.time()
+        paths = [self.workload.executable, self.data_root, run_root]
+        if self.cuda_root is not None:
+            paths.append(self.cuda_root)
+            env["CUDA_PATH"] = self.local(self.cuda_root)
+        ticket = env.get("MULTIRUN_LAUNCH_TICKET")
         began = time.monotonic()
-        archive = run_root.with_name(run_root.name + ".zip")
-        self.scp(f"{self.address}:{remote_root}.zip", str(archive))
-        shutil.unpack_archive(str(archive), str(run_root))
-        archive.unlink()
+        self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.physical(run_root)}' > $null", 120)
+        if ticket:
+            paths.append(ticket)
+            self.ssh(f"New-Item -ItemType Directory -Force -Path '{self.physical(Path(ticket).parent)}' > $null", 120)
+            self.scp(ticket, f"{self.address}:{self.physical(ticket)}")
         self.transfer_seconds += time.monotonic() - began
-        code = int(output.strip().splitlines()[-1])
-        # Remote mtimes survive the archive; they time the remote updates.
-        return RunResult(run.id, self.host, device, code, started, finished,
-                         adapter.completed_generations(run_root), str(run_root / "process.log"))
+        # Map each drive letter onto the mirror (per SSH logon session), reusing
+        # an existing mapping to the same mirror and refusing a real drive.
+        mappings = "\n".join(
+            f"$m = (subst | Select-String -SimpleMatch '{letter}:\\: => {self.mirror_path(letter)}')\n"
+            f"if (-not $m) {{ if (Test-Path '{letter}:\\') {{ throw 'drive {letter}: exists on {self.host}' }};"
+            f" subst {letter}: '{self.mirror_path(letter)}' }}"
+            for letter in self.letters(*paths))
+        assignments = "\n".join(f"$env:{key}='{value}'" for key, value in sorted(env.items()))
+        log = f"{self.local(run_root)}/process.log"
+        # cmd.exe redirection keeps the log in the process's own encoding
+        # (Windows PowerShell 5.1 '*>' would write UTF-16).
+        command = " ".join([argv[0].replace("/", "\\")] + argv[1:]) + f" > {log.replace('/', chr(92))} 2>&1"
+        script = (
+            f"{mappings}\n"
+            f"Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue\n{assignments}\n"
+            f"Set-Location '{self.local(run_root)}'\n"
+            f"$started = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0\n"
+            f"& cmd.exe /c '{command}'\n"
+            f"$code = $LASTEXITCODE\n"
+            f"$finished = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0\n"
+            f"Set-Location '{self.mirror_root}'\n"
+            f"& tar.exe -cf '{self.physical(run_root)}.tar' -C '{self.physical(run_root)}' .\n"
+            f"if ($LASTEXITCODE -ne 0) {{ throw 'tar failed' }}\n"
+            f"[pscustomobject]@{{code=$code; started=$started; finished=$finished}} | ConvertTo-Json -Compress"
+        )
+        write_json(run_root / "invocation.json",
+                   {"host": self.host, "argv": argv, "env": env, "mirror_root": self.mirror_root})
+        output = self.ssh(script, timeout=7 * 24 * 3600)
+        receipt = json.loads(output.strip().splitlines()[-1])
+        began = time.monotonic()
+        archive = run_root.with_name(run_root.name + ".tar")
+        self.scp(f"{self.address}:{self.physical(run_root)}.tar", str(archive))
+        with tarfile.open(archive) as bundle:
+            if hasattr(tarfile, "data_filter"):
+                bundle.extractall(run_root, filter="data")
+            else:  # Python < 3.11.4
+                bundle.extractall(run_root)
+        archive.unlink()
+        self.ssh(f"Remove-Item -Recurse -Force -LiteralPath '{self.physical(run_root)}', "
+                 f"'{self.physical(run_root)}.tar'", 600)
+        pulled = time.monotonic() - began
+        self.transfer_seconds += pulled
+        code = int(receipt["code"])
+        log_text = read_log(run_root / "process.log")
+        if code == 0 and not adapter.log_succeeded(log_text):
+            code = LocalExecutor.RAN_NOTHING
+        # Remote clock throughout (mtimes survive the tar); the pull counts as tail.
+        return RunResult(run.id, self.host, device, code, float(receipt["started"]),
+                         float(receipt["finished"]) + pulled, adapter.completed_generations(run_root),
+                         str(run_root / "process.log"))
 
 
 def execute_allocation(workload: Workload, slots: list[Slot], root: Path, stop_after: int | None,
@@ -926,15 +1021,31 @@ def leg_statistics(results: list[RunResult], wall: float, stop_after: int, episo
             "startup_seconds": mean(startup), "steady_update_seconds": mean(steady), "tail_seconds": mean(tail)}
 
 
-def project_seconds(statistics: dict, run_count: int, slots_concurrency: int, planned_updates: int,
+def project_seconds(host_statistics: dict[str, dict], slots: list[Slot], run_count: int, planned_updates: int,
                     overhead_seconds: float) -> float | None:
-    """Completion time for ``run_count`` runs of ``planned_updates`` in waves of the allocation's width."""
-    parts = [statistics.get(key) for key in ("startup_seconds", "steady_update_seconds", "tail_seconds")]
-    if any(part is None for part in parts):
-        return None
-    startup, steady, tail = parts
-    waves = math.ceil(run_count / slots_concurrency)
-    return overhead_seconds + waves * (startup + planned_updates * steady + tail)
+    """Completion time of the whole experiment on ``slots``.
+
+    Simulates the launcher's scheduler: each run takes the first free
+    process lane, and a run on host h lasts startup + planned x steady + tail
+    as measured for h in the leg. Returns None if a host was not measured.
+    """
+    lanes = []
+    for slot in slots:
+        statistics = host_statistics.get(slot.host, {})
+        parts = [statistics.get(key) for key in ("startup_seconds", "steady_update_seconds", "tail_seconds")]
+        if any(part is None for part in parts):
+            return None
+        startup, steady, tail = parts
+        lanes.extend([startup + planned_updates * steady + tail] * slot.capacity)
+    free = [(0.0, index) for index in range(len(lanes))]
+    heapq.heapify(free)
+    finish = 0.0
+    for _ in range(run_count):
+        at, lane = heapq.heappop(free)
+        done = at + lanes[lane]
+        finish = max(finish, done)
+        heapq.heappush(free, (done, lane))
+    return overhead_seconds + finish
 
 
 def compare_to_goldens(workload: Workload, results: list[RunResult], root: Path,
@@ -1026,7 +1137,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     serial = [candidate for candidate in candidates if concurrency(candidate) == 1]
     if not serial or not any(concurrency(candidate) > 1 for candidate in candidates):
         raise LaunchRefused("qualification needs the serial allocation and at least one parallel allocation")
-    overheads = overheads or {}
+    overheads = dict(overheads or {})
+    staging: dict[str, dict] = {}
 
     # Per-device GPU memory one process adds, learned from each measured leg
     # (the CUDA runtime's pool pages scale with the device's total memory).
@@ -1094,15 +1206,20 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         reasons = list(reasons)
         if results and not all(entry["byte_identical"] and entry["exit_code"] == 0 for entry in per_run.values()):
             reasons.append("a concurrent run differs from its serial golden or failed")
-        overhead = sum(overheads.get(slot.host, {}).get(key, 0.0)
-                       for slot in {Slot(s.host, 0, 1) for s in slots}
+        overhead = sum(overheads.get(host, {}).get(key, 0.0)
+                       for host in {slot.host for slot in slots}
                        for key in ("setup_seconds", "transfer_seconds", "recovery_seconds"))
         status = status_override or ("qualified" if not reasons else "disqualified")
-        projected = project_seconds(statistics, len(workload.runs), concurrency(slots), workload.planned_updates,
+        host_statistics = {host: leg_statistics([r for r in results if r.host == host], wall, qualification_updates,
+                                                workload.adapter.episodes_per_update)
+                           for host in {slot.host for slot in slots}}
+        projected = project_seconds(host_statistics, slots, len(workload.runs), workload.planned_updates,
                                     overhead) if status == "qualified" else None
         entry = {"id": label_of(slots), "allocation": allocation_text(slots), "concurrency": concurrency(slots),
                  "hosts": sorted({slot.host for slot in slots}), "status": status, "reasons": reasons,
                  "overhead_seconds": overhead, "projected_seconds": projected, "usage": usage,
+                 "host_statistics": {h: {k: v for k, v in st.items() if k.endswith("_seconds")}
+                                     for h, st in host_statistics.items()},
                  "per_run": per_run, **statistics}
         records.append(entry)
         return entry
@@ -1120,6 +1237,12 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
                    [f"host not eligible: {host}" for host in sorted(set(missing))] + fit)
             continue
         results, wall, usage = leg(label_of(slots), slots)
+        for host in {slot.host for slot in slots}:
+            staged = getattr(executors.get(host), "staged", None)
+            if staged:
+                # A launch stages again in its own process: count it once per launch.
+                overheads.setdefault(host, {})["setup_seconds"] = staged["stage_seconds"]
+                staging[host] = staged
         entry = record(slots, results, wall, usage)
         throughput = entry["episodes_per_second"] or 0.0
         if entry["status"] == "qualified" and throughput > best * (1 + USEFUL_GAIN_FRACTION):
@@ -1148,6 +1271,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "qualification_updates": qualification_updates,
         "run_ids": [run.id for run in workload.runs],
         "gpu_footprint_mib": {str(device): mib for device, mib in sorted(footprint.items())},
+        "remote_staging": staging,
         "inventory": inventory,
         "golden": {"allocation": allocation_text(golden_slots), "root": str(root / "serial-golden"),
                    "serial_repeat_identical": True,
@@ -1156,8 +1280,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "candidates": records,
         "selected": selected["id"],
         "selection_rule": "minimum projected completion seconds among byte-identical, fully completed "
-                          "allocations; projection = overhead + ceil(runs/concurrency) * "
-                          "(startup + planned_updates * steady_update + tail)",
+                          "allocations; projection simulates the scheduler with each host's measured "
+                          "startup + planned_updates * steady_update + tail per run, plus staging overhead",
     }
     write_json(root / "compute-choice.json", choice)
     return choice
@@ -1428,10 +1552,21 @@ def verify(workload: Workload, choice_path: Path, launch_root: Path, run_ids: li
 
 
 def build_executors(workload: Workload, haleys_address: str) -> dict[str, object]:
+    """Local executor, plus HaleysPC when the workload names the files a remote run needs.
+
+    ``data_root`` is the repository data directory the executable reads by
+    path; ``remote_mirror_root`` is where the remote host keeps the mirrored
+    drives; ``remote_runtime_libraries`` are NVIDIA runtime DLLs to stage
+    next to the executable and ``remote_cuda_root`` a directory whose
+    ``include`` holds the CUDA headers the kernel JIT needs (all
+    machine-local, outside the workload identity).
+    """
     executors: dict[str, object] = {"jack": LocalExecutor(workload)}
-    data_root = Path(workload.raw.get("data_root", "")) if workload.raw.get("data_root") else None
-    if data_root is not None:
-        executors["haleyspc"] = SshPowerShellExecutor(workload, "haleyspc", haleys_address, data_root)
+    raw = workload.raw
+    if raw.get("data_root") and raw.get("remote_mirror_root"):
+        executors["haleyspc"] = SshPowerShellExecutor(
+            workload, "haleyspc", haleys_address, Path(raw["data_root"]), raw["remote_mirror_root"],
+            [Path(path) for path in raw.get("remote_runtime_libraries", [])], raw.get("remote_cuda_root"))
     return executors
 
 

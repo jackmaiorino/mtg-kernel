@@ -5,6 +5,7 @@ from datetime import timedelta
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -294,10 +295,17 @@ class UnitTests(unittest.TestCase):
             with self.assertRaises(launcher.LaunchRefused):
                 launcher.parse_allocation(bad)
 
-    def test_projection_uses_waves(self) -> None:
-        statistics = {"startup_seconds": 10.0, "steady_update_seconds": 2.0, "tail_seconds": 5.0}
-        self.assertEqual(launcher.project_seconds(statistics, 8, 4, 100, 30.0), 30.0 + 2 * (10 + 200 + 5))
-        self.assertEqual(launcher.project_seconds(statistics, 5, 4, 100, 0.0), 2 * 215)
+    def test_projection_simulates_the_scheduler_per_host(self) -> None:
+        local = {"startup_seconds": 10.0, "steady_update_seconds": 2.0, "tail_seconds": 5.0}   # 215 s per run
+        remote = {"startup_seconds": 20.0, "steady_update_seconds": 3.0, "tail_seconds": 30.0}  # 350 s per run
+        stats = {"jack": local, "haleyspc": remote}
+        self.assertEqual(launcher.project_seconds(stats, alloc("4@0"), 8, 100, 30.0), 30.0 + 2 * 215)
+        self.assertEqual(launcher.project_seconds(stats, alloc("4@0"), 5, 100, 0.0), 2 * 215)
+        # 10 runs on 4 local + 3 remote lanes: 7 start; the 3 left take the first local lanes to free.
+        self.assertEqual(launcher.project_seconds(stats, alloc("4@0+3@haleyspc:0"), 10, 100, 0.0), 430.0)
+        # A slower remote lane bounds the finish once it holds a run.
+        self.assertEqual(launcher.project_seconds(stats, alloc("4@0+1@haleyspc:0"), 5, 100, 0.0), 350.0)
+        self.assertIsNone(launcher.project_seconds({"jack": local}, alloc("1@haleyspc:0"), 1, 100, 0.0))
 
     def test_gpu_fit_uses_each_device_footprint(self) -> None:
         devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2939},
@@ -404,6 +412,7 @@ class UnitTests(unittest.TestCase):
                 with self.assertRaises(launcher.LaunchRefused):
                     launcher.load_workload(path)
 
+    @unittest.skipUnless(sys.platform == "win32", "remote placement drives Windows hosts")
     def test_ssh_executor_refuses_a_staged_executable_with_another_hash(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workload = launcher.load_workload(fake_workload(Path(directory), runs=1))
@@ -415,38 +424,43 @@ class UnitTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, stdout, "")
 
             executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", Path(directory),
-                                                      runner=runner)
+                                                      "C:/mtg-node/multirun-mirror", runner=runner)
             with self.assertRaises(RuntimeError) as caught:
                 executor.stage()
             self.assertIn("staged executable hash differs", str(caught.exception))
             self.assertTrue(any(command[0] == "scp" for command in calls))
 
 
+@unittest.skipUnless(sys.platform == "win32", "remote placement drives Windows hosts from a Windows controller")
 class SshRunTests(unittest.TestCase):
-    def test_remote_run_stages_once_runs_with_owned_env_and_returns_comparable_outputs(self) -> None:
-        import shutil as shell
+    def test_remote_run_mirrors_drives_runs_with_owned_env_and_returns_comparable_outputs(self) -> None:
+        import tarfile
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             executable = base / "trainer.exe"
             executable.write_bytes(b"remote trainer")
             data_root = base / "repo" / "data"
             data_root.mkdir(parents=True)
+            library = base / "nvrtc64_120_0.dll"
+            library.write_bytes(b"runtime library")
             raw = {"schema": launcher.WORKLOAD_SCHEMA, "adapter": "native-science-loop-pilot-v1",
                    "executable": str(executable), "executable_sha256": launcher.sha256_file(executable),
                    "planned_updates": 128, "knobs": {}, "runs": [{"id": "r0", "seed": 77}]}
             (base / "w.json").write_text(json.dumps(raw))
             workload = launcher.load_workload(base / "w.json")
-            remote_archive = base / "remote.zip"
-            scripts = []
+            remote_archive = base / "remote.tar"
+            scripts, copies = [], []
 
             def runner(command, **_):
                 if command[0] == "ssh":
                     script = _decode(command)
                     scripts.append(script)
                     if "Get-FileHash" in script:
-                        return subprocess.CompletedProcess(command, 0, workload.executable_sha256 + "\r\n", "")
-                    if "Compress-Archive" in script:
-                        # The remote side trains to generation 8 and archives its run root.
+                        target = "nvrtc" if "nvrtc64" in script else "exe"
+                        digest = launcher.sha256_file(library if target == "nvrtc" else executable)
+                        return subprocess.CompletedProcess(command, 0, digest.upper() + "\r\n", "")
+                    if "tar.exe -cf" in script:
+                        # The remote process trains to generation 8; its run root comes back as a tar.
                         staging = base / "remote-run"
                         store = staging / "parent" / "run-0" / "store"
                         (store / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -455,30 +469,47 @@ class SshRunTests(unittest.TestCase):
                             (store / "checkpoints" / f"update-{generation:08}.state.f32le").write_bytes(
                                 bytes([generation]))
                         (staging / "process.log").write_text("test result: ok. 1 passed")
-                        shell.make_archive(str(remote_archive.with_suffix("")), "zip", staging)
-                        return subprocess.CompletedProcess(command, 0, "noise\r\n0\r\n", "")
+                        with tarfile.open(remote_archive, "w") as bundle:
+                            bundle.add(staging, arcname=".")
+                        return subprocess.CompletedProcess(
+                            command, 0, 'noise\r\n{"code":0,"started":1000.0,"finished":1100.0}\r\n', "")
                     return subprocess.CompletedProcess(command, 0, "", "")
-                if command[0] == "scp" and command[-2].endswith(".zip"):
-                    shell.copyfile(remote_archive, command[-1])
+                if command[0] == "scp":
+                    copies.append(command[-2:])
+                    if command[-2].endswith(".tar"):
+                        shutil.copyfile(remote_archive, command[-1])
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", data_root, runner=runner)
+            executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", data_root,
+                                                      "C:/mtg-node/multirun-mirror", [library], runner=runner)
+            ticket = base / "tickets" / "r0.ticket.json"
             result = executor.run(workload.runs[0], base / "runs" / "r0", 0, 8,
-                                  {"MULTIRUN_LAUNCH_TICKET": "D:/t/r0.ticket.json"})
+                                  {"MULTIRUN_LAUNCH_TICKET": str(ticket)})
             executor.run(launcher.RunSpec("r1", 78), base / "runs" / "r1", 1, 8)
-            self.assertEqual(sum("Get-FileHash" in script for script in scripts), 1, "stage once per host")
+            self.assertEqual(sum("Get-FileHash" in script for script in scripts), 2, "stage once: exe + library")
+            self.assertEqual(executor.staged["runtime_libraries_sha256"], {library.name: launcher.sha256_file(library)})
             self.assertEqual((result.exit_code, result.host, sorted(result.generations)), (0, "haleyspc", [4, 8]))
-            run_script = next(script for script in scripts if "Compress-Archive" in script)
-            for assignment in ("$env:MULTIRUN_BASE_SEED='77'", "$env:MULTIRUN_RUNS='1'",
-                               "$env:MULTIRUN_STOP_AFTER_GENERATION='8'",
-                               "$env:MULTIRUN_LAUNCH_TICKET='D:/t/r0.ticket.json'",
-                               "Remove-Item Env:CUDA_VISIBLE_DEVICES"):
-                self.assertIn(assignment, run_script)
+            self.assertEqual(result.started, 1000.0)
+            self.assertGreaterEqual(result.finished, 1100.0)
+            letter = str(base)[0].upper()
+            mirrored = executor.physical(ticket)
+            self.assertTrue(mirrored.startswith(f"C:/mtg-node/multirun-mirror/{letter}/"))
+            self.assertIn([str(ticket), f"haley@example:{mirrored}"], copies)
+            run_script = next(script for script in scripts if "tar.exe -cf" in script)
+            for fragment in ("$env:MULTIRUN_BASE_SEED='77'", "$env:MULTIRUN_RUNS='1'",
+                             "$env:MULTIRUN_STOP_AFTER_GENERATION='8'",
+                             f"$env:MULTIRUN_LAUNCH_TICKET='{ticket}'",
+                             "Remove-Item Env:CUDA_VISIBLE_DEVICES",
+                             f"subst {letter}: 'C:\\mtg-node\\multirun-mirror\\{letter}'",
+                             "process.log 2>&1", "& cmd.exe /c"):
+                self.assertIn(fragment, run_script)
+            self.assertTrue(any("Remove-Item -Recurse -Force" in script for script in scripts), "remote cleanup")
             digests = workload.adapter.output_digests(base / "runs" / "r0")
             self.assertEqual(sorted(digests), ["store/checkpoints/update-00000000.state.f32le",
                                                "store/checkpoints/update-00000004.state.f32le",
                                                "store/checkpoints/update-00000008.state.f32le", "store/run.json"])
-            self.assertGreater(executor.transfer_seconds, 0.0)
+            with self.assertRaises(RuntimeError):
+                executor.physical("relative/path")
 
 
 def _decode(command: list[str]) -> str:
