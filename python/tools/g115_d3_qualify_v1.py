@@ -20,7 +20,16 @@ def checked(ref):
 def write(path,value):
     path=P(path);temp=path.with_suffix(path.suffix+'.partial')
     with temp.open('w') as f:json.dump(value,f,indent=2,allow_nan=False);f.flush();os.fsync(f.fileno())
-    os.replace(temp,path)
+    # Windows readers can briefly deny replacement. Keep the old complete
+    # record visible and retry only this atomic rename, never native work.
+    for attempt in range(21):
+        try:
+            os.replace(temp,path)
+            return
+        except PermissionError as error:
+            if os.name!='nt' or getattr(error,'winerror',None) not in (5,32,33) or attempt==20:
+                raise
+            time.sleep(.05)
 def sample(pid):
     try:
         if os.name=='nt':
@@ -77,17 +86,22 @@ def resume_prefix(spec,reference,observe_hardware=None):
     The interrupted phase is never reused. Its original attempt stays failed,
     and every match of that phase runs again under the new lease and bound.
     """
-    require(spec['host']=='runpod','Phase recovery is cloud-only')
+    require(spec['host'] in ('runpod','haleyspc'),'Unsupported phase recovery host')
     previous_path=checked(reference['completion']);previous=read(previous_path)
     old_spec=read(checked(reference['spec']));old_root=previous_path.parent
     require(checked(reference['spec']).resolve()==(old_root/'spec.json').resolve(),
             'Recovered specification must belong to the prior attempt')
+    timeout=(spec['host']=='runpod' and previous.get('error_type')=='ValueError' and
+             previous.get('error')=='Qualification time bound reached')
+    progress_denied=(spec['host']=='haleyspc' and previous.get('error_type')=='PermissionError' and
+                     previous.get('error','').startswith('[WinError 5] Access is denied:') and
+                     "progress.json.partial' -> '" in previous.get('error','') and
+                     previous.get('error','').endswith("progress.json'"))
     require(previous.get('complete') is False and
             previous.get('schema')=='g115-d3-throughput-result/v1' and
             previous.get('host')==spec['host'] and previous.get('formal_measurement') is False and
-            previous.get('error_type')=='ValueError' and
-            previous.get('error')=='Qualification time bound reached',
-            'Only a terminal qualification time bound can recover phases')
+            (timeout or progress_denied),
+            'Only a terminal environmental qualification interruption can recover phases')
     require(not list(old_root.glob('workers-*/*/outputs/failure.json')) and
             not list(old_root.glob('workers-*/*/outputs/search-failure-*.json')),
             'Native failure records require a separate disposition')
@@ -95,14 +109,16 @@ def resume_prefix(spec,reference,observe_hardware=None):
     require({k:v for k,v in old_spec.items() if k not in changing}==
             {k:v for k,v in spec.items() if k not in changing},
             'Recovered qualification workload or runtime changed')
-    require(spec['lease_name']!=old_spec['lease_name'] and
-            spec['guard_directory']!=old_spec['guard_directory'],
-            'Recovery requires a new guarded lease')
-    from g115_d3_cloud_host_v1 import observe,profile,require_compatible
-    hardware=reference['hardware_receipts']
-    qualified=profile(read(checked(hardware['host'])),read(checked(hardware['cgroups'])))
-    actual=profile(*(observe_hardware or observe)())
-    require_compatible(actual,qualified)
+    hardware=None;actual=None
+    if spec['host']=='runpod':
+        require(spec['lease_name']!=old_spec['lease_name'] and
+                spec['guard_directory']!=old_spec['guard_directory'],
+                'Recovery requires a new guarded lease')
+        from g115_d3_cloud_host_v1 import observe,profile,require_compatible
+        hardware=reference['hardware_receipts']
+        qualified=profile(read(checked(hardware['host'])),read(checked(hardware['cgroups'])))
+        actual=profile(*(observe_hardware or observe)())
+        require_compatible(actual,qualified)
     phases=[];serial=None;jobs={j['id']:j for j in spec['jobs']}
     for index,phase in enumerate(previous['phases']):
         require(phase['workers']==spec['worker_counts'][index],'Prior phase order changed')
@@ -111,6 +127,9 @@ def resume_prefix(spec,reference,observe_hardware=None):
             require(index==len(previous['phases'])-1,'Non-prefix timing phases')
             require(all(r.get('complete') or r.get('error')=='Qualification interrupted'
                         for r in phase['rows']), 'Native failure cannot recover as a time interruption')
+            if progress_denied:
+                require(len(phase['rows'])==64 and all(r.get('complete') for r in phase['rows']),
+                        'Progress-file recovery requires all native jobs to have completed')
             break
         require(read(folder/'completion.json')==phase,'Prior phase receipt changed')
         require(len(phase['rows'])==64 and {r['id'] for r in phase['rows']}==set(jobs),
