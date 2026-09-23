@@ -975,12 +975,50 @@ def device_fits(slots: list[Slot], per_process_mib: Callable[[int], float], marg
     return reasons
 
 
+def grow_allocation(slots: list[Slot], per_process: Callable[[int], float], margin_mib: int = 512,
+                    devices: list[dict] | None = None) -> list[Slot] | None:
+    """The allocation plus one local process on the device with the most spare room, or None if none fits."""
+    devices = gpu_inventory() if devices is None else devices
+    capacity = {slot.device: slot.capacity for slot in slots if slot.host == "jack"}
+    best = None
+    for gpu in devices:
+        need = per_process(gpu["index"])
+        if need <= 0:
+            continue
+        room = gpu["memory_total_mib"] - gpu["memory_used_mib"] - margin_mib
+        spare = room - need * (capacity.get(gpu["index"], 0) + 1)
+        if spare >= 0 and (best is None or spare > best[0]):
+            best = (spare, gpu["index"])
+    if best is None:
+        return None
+    device = best[1]
+    grown = [Slot(s.host, s.device, s.capacity + (s.host == "jack" and s.device == device)) for s in slots]
+    if device not in capacity:
+        grown.append(Slot("jack", device, 1))
+    return sorted(grown, key=lambda s: (s.host != "jack", s.host, s.device))
+
+
 def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualification_updates: int,
             inventory: dict, executors: dict[str, object], overheads: dict[str, dict] | None = None,
-            stop_on_saturation: bool = True, per_process_mib: float | None = None) -> dict:
+            stop_on_saturation: bool = True, per_process_mib: float | None = None,
+            auto_devices: list[int] | None = None) -> dict:
+    """Serial goldens, then candidate allocations in increasing concurrency.
+
+    With ``auto_devices`` the candidates are generated instead: serial on the
+    first device, one process on every listed device (which measures each
+    device's memory footprint), then one more process at a time on the
+    device with the most spare memory, until nothing fits or throughput stops
+    improving.
+    """
     workload.adapter.validate_prefix(qualification_updates, workload.planned_updates)
     if root.exists():
         raise LaunchRefused(f"qualification root already exists: {root}")
+    if auto_devices:
+        if candidates or len(auto_devices) != len(set(auto_devices)):
+            raise LaunchRefused("give either explicit allocations or distinct auto devices")
+        candidates = [[Slot("jack", auto_devices[0], 1)]]
+        candidates.append([Slot("jack", device, 1) for device in auto_devices] if len(auto_devices) > 1
+                          else [Slot("jack", auto_devices[0], 2)])
     root.mkdir(parents=True)
     candidates = sorted(candidates, key=concurrency)
     serial = [candidate for candidate in candidates if concurrency(candidate) == 1]
@@ -1070,9 +1108,9 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     record(golden_slots, golden_results, golden_wall, golden_usage, leg_root=root / "serial-golden")
     best = records[0]["episodes_per_second"] or 0.0
     not_useful = 0
-    for slots in candidates:
-        if slots == golden_slots:
-            continue
+    pending = [slots for slots in candidates if slots != golden_slots]
+    while pending:
+        slots = pending.pop(0)
         fit = device_fits(slots, per_process) if any(per_process(s.device) > 0 for s in slots) else []
         missing = [slot.host for slot in slots if not inventory["hosts"].get(slot.host, {}).get("eligible")]
         if missing or fit:
@@ -1088,6 +1126,10 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             not_useful += 1
             if stop_on_saturation and not_useful >= 2:
                 break
+        if auto_devices and entry["status"] == "qualified" and not pending:
+            grown = grow_allocation(slots, per_process)
+            if grown is not None:
+                pending.append(grown)
 
     qualified = [entry for entry in records if entry["status"] == "qualified" and entry["projected_seconds"]]
     selected = min(qualified, key=lambda entry: entry["projected_seconds"])
@@ -1402,8 +1444,10 @@ def main(argv: list[str] | None = None) -> int:
     qualify_parser.add_argument("--inventory", type=Path, required=True)
     qualify_parser.add_argument("--root", type=Path, required=True)
     qualify_parser.add_argument("--updates", type=int, default=4)
-    qualify_parser.add_argument("--allocation", action="append", required=True,
+    qualify_parser.add_argument("--allocation", action="append", default=[],
                                 help="e.g. 1@0 (serial), 1@0+1@1, 3@0+1@1, 2@0+2@haleyspc:0")
+    qualify_parser.add_argument("--auto", help="local devices to sweep adaptively, e.g. 0,1 (instead of "
+                                               "--allocation)")
     qualify_parser.add_argument("--haleyspc", default="haley@100.71.75.65")
     qualify_parser.add_argument("--no-early-stop", action="store_true")
     launch_parser = commands.add_parser("launch", help="run the experiment on the qualified allocation")
@@ -1431,9 +1475,10 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "qualify":
             inventory_record = read_json(arguments.inventory)
             executors = build_executors(workload, arguments.haleyspc)
+            auto = [int(device) for device in arguments.auto.split(",")] if arguments.auto else None
             choice = qualify(workload, arguments.root, [parse_allocation(text) for text in arguments.allocation],
                              arguments.updates, inventory_record, executors,
-                             stop_on_saturation=not arguments.no_early_stop)
+                             stop_on_saturation=not arguments.no_early_stop, auto_devices=auto)
             print(json.dumps({"selected": choice["selected"], "candidates": [
                 {k: c[k] for k in ("id", "status", "episodes_per_second", "projected_seconds")}
                 for c in choice["candidates"]]}, indent=2))

@@ -306,6 +306,37 @@ class UnitTests(unittest.TestCase):
         self.assertEqual([reason.split(":")[0] for reason in reasons], ["device 0", "device 1"])
         self.assertEqual(launcher.device_fits(alloc("1@2"), footprint.get, devices=devices), ["device 2 not present"])
 
+    def test_auto_growth_adds_one_process_where_memory_has_most_room(self) -> None:
+        devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2974},
+                   {"index": 1, "memory_total_mib": 6144, "memory_used_mib": 9}]
+        footprint = {0: 2947.0, 1: 2599.0}
+        steps = [alloc("1@0+1@1")]
+        while True:
+            grown = launcher.grow_allocation(steps[-1], footprint.get, devices=devices)
+            if grown is None:
+                break
+            steps.append(grown)
+        self.assertEqual([launcher.allocation_text(step) for step in steps],
+                         ["1@jack:0+1@jack:1", "2@jack:0+1@jack:1", "2@jack:0+2@jack:1"])
+        self.assertEqual(launcher.allocation_text(launcher.grow_allocation(alloc("1@0"), footprint.get,
+                                                                            devices=devices)),
+                         "1@jack:0+1@jack:1")
+
+    def test_auto_sweep_grows_until_nothing_fits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload = launcher.load_workload(fake_workload(Path(directory), runs=3))
+            fake_devices = [{"index": 0, "memory_total_mib": 4000, "memory_used_mib": 0}]
+            original = launcher.gpu_inventory
+            launcher.gpu_inventory = lambda runner=None: fake_devices
+            try:
+                choice = launcher.qualify(workload, Path(directory) / "q", [], 3, inventory(),
+                                          {"jack": launcher.LocalExecutor(workload)}, per_process_mib=1000.0,
+                                          auto_devices=[0], stop_on_saturation=False)
+            finally:
+                launcher.gpu_inventory = original
+            self.assertEqual([c["allocation"] for c in choice["candidates"]],
+                             ["1@jack:0", "2@jack:0", "3@jack:0"])
+
     def test_idle_capacity_needs_two_consecutive_idle_windows_with_waiting_runs(self) -> None:
         def samples(pattern):
             return [{"t": 5.0 * i, "cpu_percent": cpu, "waiting_runs": waiting}
