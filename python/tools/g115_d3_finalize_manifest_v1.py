@@ -42,8 +42,8 @@ def finalize(base, evidence, inventory, lease):
         allocation = dict(qualification_spec=item['qualification_spec'],
             qualification_result=item['qualification_result'], toolchain_receipt=item['toolchain_receipt'],
             workers=phase['workers'], command_prefix=spec['command_prefix'], runtime_files=spec['runtime_files'],
-            reserve_bytes=minimum_reserve(host), job_timeout_seconds=1800,
-            shard_timeout_seconds=14400 if host == 'runpod' else 28800,
+            reserve_bytes=minimum_reserve(host), job_timeout_seconds=10800,
+            shard_timeout_seconds=25200 if host == 'runpod' else 36000,
             startup_transfer_recovery_seconds=overhead,
             guard_directory='/run/phase1/' + lease['name'] if host == 'runpod' else None,
             lease_name=lease['name'] if host == 'runpod' else None)
@@ -66,10 +66,10 @@ def finalize(base, evidence, inventory, lease):
         for hosts in itertools.combinations(sorted(qualified), size):
             owners, seconds = cluster_allocation(hosts, rates, overhead)
             native_seconds = projected_shard_seconds(hosts, owners, rates)
-            over_bound = [h for h in hosts if native_seconds[h] > qualified[h]['shard_timeout_seconds']]
+            over_bound = [h for h in hosts if native_seconds[h]+10800+1800 > qualified[h]['shard_timeout_seconds']]
             choices.append(dict(id='+'.join(hosts), hosts=list(hosts), projected_seconds=seconds,
                                 projected_native_seconds=native_seconds, eligible=not over_bound,
-                                ineligibility_reason='Projected native work exceeds shard bound: '+','.join(over_bound)
+                                ineligibility_reason='Projected native work plus full tail and margin exceeds R8 shard bound: '+','.join(over_bound)
                                 if over_bound else ''))
     feasible = [choice for choice in choices if choice['eligible']]
     require(feasible, 'No qualified allocation fits its declared shard bounds')
@@ -84,7 +84,7 @@ def finalize(base, evidence, inventory, lease):
     result['design_disposition']['unresolved_launch_blockers'] = []
     result.update(formal_measurement=True, preparation_only=False)
     if 'runpod' in selected['hosts']:
-        require(time.time() + 14400 + lease['recovery_seconds'] + 600 < lease['deadline_epoch'],
+        require(time.time() + qualified['runpod']['shard_timeout_seconds'] + lease['recovery_seconds'] + 600 < lease['deadline_epoch'],
                 'Formal cloud lease cannot fit the declared bound')
     for host in selected['hosts']:
         validate_plan(result, host)
