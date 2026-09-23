@@ -82,7 +82,7 @@ class Provider:
         require(method in ('GET', 'DELETE'), 'guard method rejected')
         req = urllib.request.Request('https://rest.runpod.io/v1/pods/' + self.pod_id,
             method=method, headers={'Authorization': 'Bearer ' + self.key,
-                                   'User-Agent': 'phase1-pod-guard/1'})
+                                   'User-Agent': 'Mozilla/5.0 g115-lease-guard/1'})
         try:
             with urllib.request.urlopen(req, timeout=15) as response:
                 body = response.read()
@@ -101,7 +101,7 @@ class Provider:
         body=json.dumps({'query':'query Phase1GuardFunds { myself { clientBalance currentSpendPerHr underBalance } }'}).encode()
         req=urllib.request.Request('https://api.runpod.io/graphql',data=body,method='POST',
             headers={'Authorization':'Bearer '+self.key,'Content-Type':'application/json',
-                     'User-Agent':'phase1-pod-guard/1'})
+                     'User-Agent':'Mozilla/5.0 g115-lease-guard/1'})
         try:
             with urllib.request.urlopen(req,timeout=15) as response:
                 value=json.load(response)

@@ -36,7 +36,7 @@ from runtime_observation import IMAGE_REFERENCE
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
 
 PODS_URL = 'https://rest.runpod.io/v1/pods'
-USER_AGENT = 'phase1-lease-execute/1'
+USER_AGENT = 'Mozilla/5.0 g115-lease-execute/1'
 CREATED_SCHEMA = 'phase1-cloud-pod-created/v1'
 FAILURE_SCHEMA = 'phase1-cloud-pod-create-failure/v1'
 # A pinned reference is "<repo>@sha256:<64 hex>"; a mutable tag (e.g. the
