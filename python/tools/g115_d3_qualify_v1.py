@@ -71,12 +71,93 @@ def validate(spec):
     for ref in spec['runtime_files']:checked(ref)
     require(any(str(checked(r))==spec['command_prefix'][-1] for r in spec['runtime_files']),'Native executable unpinned')
 
-def qualify(spec,root):
-    validate(spec);root=P(root);root.mkdir();write(root/'spec.json',spec)
+def resume_prefix(spec,reference,observe_hardware=None):
+    """Reuse only entire verified timing phases after an environmental timeout.
+
+    The interrupted phase is never reused. Its original attempt stays failed,
+    and every match of that phase runs again under the new lease and bound.
+    """
+    require(spec['host']=='runpod','Phase recovery is cloud-only')
+    previous_path=checked(reference['completion']);previous=read(previous_path)
+    old_spec=read(checked(reference['spec']));old_root=previous_path.parent
+    require(checked(reference['spec']).resolve()==(old_root/'spec.json').resolve(),
+            'Recovered specification must belong to the prior attempt')
+    require(previous.get('complete') is False and
+            previous.get('schema')=='g115-d3-throughput-result/v1' and
+            previous.get('host')==spec['host'] and previous.get('formal_measurement') is False and
+            previous.get('error_type')=='ValueError' and
+            previous.get('error')=='Qualification time bound reached',
+            'Only a terminal qualification time bound can recover phases')
+    require(not list(old_root.glob('workers-*/*/outputs/failure.json')) and
+            not list(old_root.glob('workers-*/*/outputs/search-failure-*.json')),
+            'Native failure records require a separate disposition')
+    changing={'inventory','lease_name','guard_directory'}
+    require({k:v for k,v in old_spec.items() if k not in changing}==
+            {k:v for k,v in spec.items() if k not in changing},
+            'Recovered qualification workload or runtime changed')
+    require(spec['lease_name']!=old_spec['lease_name'] and
+            spec['guard_directory']!=old_spec['guard_directory'],
+            'Recovery requires a new guarded lease')
+    from g115_d3_cloud_host_v1 import observe,profile,require_compatible
+    hardware=reference['hardware_receipts']
+    qualified=profile(read(checked(hardware['host'])),read(checked(hardware['cgroups'])))
+    actual=profile(*(observe_hardware or observe)())
+    require_compatible(actual,qualified)
+    phases=[];serial=None;jobs={j['id']:j for j in spec['jobs']}
+    for index,phase in enumerate(previous['phases']):
+        require(phase['workers']==spec['worker_counts'][index],'Prior phase order changed')
+        folder=old_root/('workers-'+str(phase['workers']))
+        if not (folder/'completion.json').exists():
+            require(index==len(previous['phases'])-1,'Non-prefix timing phases')
+            require(all(r.get('complete') or r.get('error')=='Qualification interrupted'
+                        for r in phase['rows']), 'Native failure cannot recover as a time interruption')
+            break
+        require(read(folder/'completion.json')==phase,'Prior phase receipt changed')
+        require(len(phase['rows'])==64 and {r['id'] for r in phase['rows']}==set(jobs),
+                'Prior cohort incomplete')
+        hashes={}
+        for row in phase['rows']:
+            require(P(row['id']).name==row['id'],'Invalid match identifier')
+            match_root=folder/row['id'];out=match_root/'outputs'
+            request=read(match_root/'request.json');start=read(out/'start.json')
+            expected=copy.deepcopy(jobs[row['id']]['command'])
+            expected['output_directory']=request['output_directory']
+            require(request==expected and start['command']==request and
+                    start['git_head']==spec['source_commit'],'Prior native input/source changed')
+            completion=read(out/'completion.json');digest=sha(out/'match-000000.json')
+            require(row['complete'] and row['exit_code']==0 and row['sha256']==digest and
+                    completion['matches']==1 and completion['match_sha256']==[digest] and
+                    completion['natural_games']==row['games'] and completion['decisions']==row['decisions'],
+                    'Prior raw store or native completion changed')
+            hashes[row['id']]=digest
+        if serial is None:serial=hashes
+        require(hashes==serial and phase['seconds']>0 and
+                abs(phase['matches_per_second']-64/phase['seconds'])<1e-12,
+                'Prior phase parity or timing invalid')
+        require(not any(p.is_symlink() for p in folder.rglob('*')),'Unexpected qualification symlink')
+        phases.append(copy.deepcopy(phase))
+    require(phases and len(phases)<len(spec['worker_counts']),'Require completed prefix and unfinished work')
+    receipt=dict(previous_completion=reference['completion'],previous_spec=reference['spec'],
+                 previous_error=previous['error'],hardware_receipts=hardware,actual_hardware=actual,
+                 reused_workers=[p['workers'] for p in phases],
+                 rerun_workers=spec['worker_counts'][len(phases):],
+                 previous_attempt_complete=False,interrupted_phase_reused=False)
+    return phases,serial,old_root,receipt
+
+def qualify(spec,root,resume=None):
+    validate(spec)
+    recovered=resume_prefix(spec,resume) if resume is not None else None
+    root=P(root);root.mkdir();write(root/'spec.json',spec)
+    if recovered:
+        for phase in recovered[0]:
+            name='workers-'+str(phase['workers'])
+            shutil.copytree(recovered[2]/name,root/name)
+        write(root/'resumed-phases.json',recovered[3])
     if os.environ.get('RUNPOD_POD_ID'):require(spec['host']=='runpod','Provider cannot bypass lease guard')
     guard=P(spec['guard_directory']) if spec['host']=='runpod' else None
     pod=os.environ.get('RUNPOD_POD_ID');lock=threading.Lock();active={};stop=threading.Event()
-    started=time.monotonic();last_activity=last_productive=time.time();rows=[];phases=[];first_hashes=None
+    started=time.monotonic();last_activity=last_productive=time.time();rows=[]
+    phases=recovered[0] if recovered else [];first_hashes=recovered[1] if recovered else None
     def admission():
         require(free_memory()>=spec['reserve_bytes'],'Preserve memory reserve')
         require(shutil.disk_usage(root).free>=(1 if guard else 16)*2**30,'Preserve disk reserve')
@@ -126,8 +207,9 @@ def qualify(spec,root):
                 write(folder/'execution.json',row)
         return row
     result=dict(schema='g115-d3-throughput-result/v1',complete=False,host=spec['host'],phases=phases,formal_measurement=False)
+    if recovered:result['phase_recovery']=recovered[3]
     try:
-        for workers in spec['worker_counts']:
+        for workers in spec['worker_counts'][len(phases):]:
             admission();folder=root/('workers-'+str(workers));folder.mkdir();begin=time.monotonic();phase=dict(workers=workers,rows=[]);phases.append(phase)
             with concurrent.futures.ThreadPoolExecutor(workers) as pool:
                 futures=[pool.submit(run,j,folder/j['id']) for j in spec['jobs']]
@@ -172,6 +254,8 @@ def qualify(spec,root):
     return result
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--spec',type=P,required=True);p.add_argument('--root',type=P,required=True);a=p.parse_args()
-    result=qualify(read(a.spec),a.root);print(json.dumps({k:v for k,v in result.items() if k!='phases'}));raise SystemExit(0 if result['complete'] else 1)
+    p=argparse.ArgumentParser();p.add_argument('--spec',type=P,required=True);p.add_argument('--root',type=P,required=True)
+    p.add_argument('--resume',type=P);a=p.parse_args()
+    result=qualify(read(a.spec),a.root,read(a.resume) if a.resume else None)
+    print(json.dumps({k:v for k,v in result.items() if k!='phases'}));raise SystemExit(0 if result['complete'] else 1)
 if __name__=='__main__':main()
