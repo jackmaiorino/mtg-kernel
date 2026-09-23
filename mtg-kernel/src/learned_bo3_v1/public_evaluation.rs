@@ -20,10 +20,17 @@ use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+mod search_v3;
+use search_v3::SearchPlayV3;
+use crate::phase1_agent_v1::V4InformationSetSearchDescriptorV1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelSource {
+    InformationSetSearchV3 {
+        source: ExpandedModelSourceV1,
+        descriptor: V4InformationSetSearchDescriptorV1,
+    },
     StackWarmStart { source: ExpandedModelSourceV1, input_mode: StackInputModeV1 },
     StackCheckpoint { config: PinnedFileV1, checkpoint: PinnedFileV1 },
     Legacy {
@@ -68,6 +75,7 @@ pub struct Command {
 }
 
 enum Play {
+    Search(Box<SearchPlayV3>),
     Legacy {
         policy: FrozenPlayPolicyV1,
         forced: bool,
@@ -82,6 +90,7 @@ enum Play {
 impl Play {
     fn base(&mut self) -> &mut dyn PairedBo1PolicyV1 {
         match self {
+            Self::Search(policy) => policy.as_mut(),
             Self::Legacy { policy, .. } => policy,
             Self::Public(policy) => policy,
             Self::Stack(policy) => policy,
@@ -99,6 +108,15 @@ impl Play {
             _ => 0,
         }
     }
+    fn begin_match(&mut self) {
+        if let Self::Search(policy) = self { policy.begin_match(); }
+    }
+    fn search_records(&self) -> Option<Value> {
+        if let Self::Search(policy) = self { Some(policy.records()) } else { None }
+    }
+    fn search_timings(&self) -> Option<Value> {
+        if let Self::Search(policy) = self { Some(json!(policy.timings)) } else { None }
+    }
 }
 
 impl PairedBo1PolicyV1 for Play {
@@ -107,6 +125,7 @@ impl PairedBo1PolicyV1 for Play {
     }
     fn feature_generation_v1(&self) -> PlayPolicyGenerationV1 {
         match self {
+            Self::Search(policy) => policy.feature_generation_v1(),
             Self::Legacy { policy, .. } => policy.feature_generation_v1(),
             Self::Public(policy) => policy.feature_generation_v1(),
             Self::Stack(policy) => policy.feature_generation_v1(),
@@ -155,6 +174,14 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 fn load(source: &ModelSource) -> Result<(Play, Value), String> {
     match source {
+        ModelSource::InformationSetSearchV3 { source, descriptor } => {
+            let (policy, identity) = load_expanded_inference_v1(source)?;
+            let wrapper = SearchPlayV3::new(policy, descriptor.clone())?;
+            let receipt = json!({"schema":"v4-information-set-evaluation-model/v3",
+                "weights_sha256":identity.model.weights_sha256,"identity":identity,
+                "search":descriptor,"training":false});
+            Ok((Play::Search(Box::new(wrapper)), receipt))
+        }
         ModelSource::Legacy {
             source,
             v3_forced_actions,
@@ -449,6 +476,8 @@ pub fn run(command: Command) -> Result<Value, String> {
         for (index, (item, (registered, targets))) in
             command.matches.iter().zip(prepared).enumerate()
         {
+            p0.begin_match();
+            p1.begin_match();
             let registrations = registered
                 .each_ref()
                 .map(LearnedBo3RegistrationRecordV1::from_registered_v1);
@@ -495,7 +524,24 @@ pub fn run(command: Command) -> Result<Value, String> {
                 &tags,
                 &mut trace,
                 [&mut s0, &mut s1],
-            )?;
+            );
+            let played = match played {
+                Ok(played) => played,
+                Err(message) => {
+                    drop(trace);
+                    drop(router);
+                    let records = [p0.search_records(), p1.search_records()];
+                    if records.iter().any(Option::is_some) {
+                        save(&command.output_directory, &format!("search-failure-{index:06}.json"),
+                            &json!({"schema":"v4-information-set-evaluation-failure/v3",
+                                "match_index":index,"match":item,"models":identities,
+                                "error":message,"search":records}))?;
+                        save(&command.output_directory, &format!("search-timing-{index:06}.json"),
+                            &json!([p0.search_timings(), p1.search_timings()]))?;
+                    }
+                    return Err(message);
+                }
+            };
             games += played.games.len();
             decisions += trace.decisions;
             let mut result = json!({"schema":"public-input-evaluation-match/v1","match":item,"models":identities,
@@ -508,6 +554,13 @@ pub fn run(command: Command) -> Result<Value, String> {
             }
             drop(trace);
             drop(router);
+            let records = [p0.search_records(), p1.search_records()];
+            if records.iter().any(Option::is_some) {
+                result["information_set_search_v3"] = json!(records);
+                // Wall-clock data is deliberately outside the semantic store hash.
+                save(&command.output_directory, &format!("search-timing-{index:06}.json"),
+                    &json!([p0.search_timings(), p1.search_timings()]))?;
+            }
             result["v3_forced_actions"] =
                 json!([p0.forced_count() - before[0], p1.forced_count() - before[1]]);
             result["v3_spell_target_repairs"] = json!([
