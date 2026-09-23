@@ -2,6 +2,16 @@
 
 Status: incomplete engineering qualification. No formal shared-panel match has launched. No playing-strength verdict is available.
 
+Completed local measurements as of04:07 EDT; each row covers the same64 matches and all stores match the serial reference exactly:
+
+| Workers | Seconds | Speedup versus serial |
+| ---: | ---: | ---: |
+| 1 | 4310.398 | 1.000x |
+| 8 | 954.291 | 4.517x |
+| 16 | 720.932 | 5.979x |
+
+The16-worker stores were independently rehashed in E:/mtg-g115-lineage-20260923/d3-local-workers16-002-check.json. Local24-worker qualification is active; RunPod8-worker qualification is active, with16/32 still to follow. No final allocation is selected.
+
 Current checkpoint, September23 03:38 EDT: repaired native e258daf3 completed the full64-case local serial pass in4310.398 seconds (0.0148478 BO3/s). All64 completed store hashes were independently verified, covering150 natural games and30,447 decisions. Evidence: D:/g115-d3-qualification-20260923/local-002/workers-1/completion.json and E:/mtg-g115-lineage-20260923/d3-local-serial-002-check.json. The eight-worker pass is active;16/24-worker phases follow. RunPod004 remains in its serial phase under the existing lease. No whole-host qualification or fastest allocation is established until the complete comparisons pass. Historical failure and preparation notes below remain preserved. The formal launcher preparation now exists at1b4a8297, but positive formal dispatch is still untested and the design verdict remains pending.
 
 Update03:54 EDT: the complete eight-worker pass took954.291 seconds, a4.51686x completed-work speedup over the4310.398-second serial reference. All64 output hashes were independently recomputed and match the serial stores exactly. Receipt E:/mtg-g115-lineage-20260923/d3-local-workers8-002-check.json. The measured time includes the slow final match; no case or delay was dropped. Local16-worker qualification is active, with24 workers still to follow; no final worker count or fleet allocation is selected. RunPod has61/64 serial matches completed. Refreshed inventory D:/g115-d3-qualification-20260923/host-inventory-004.json still finds HaleysPC SSH unreachable, Jack eligible and RunPod HTTP200 with browser User-Agent, showing only the existing guarded004 Pod. No new allocation or formal measurement.
