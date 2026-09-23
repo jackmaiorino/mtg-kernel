@@ -87,6 +87,8 @@ def validate(manifest, host, now=None):
         require(now > REVIEW_SUBMITTED + 72 * 3600, 'Design wait has not exceeded72 hours')
         require(review['reason'].strip() and review['reason'] in checked(docs['preregistration']).read_text(encoding='utf-8'),
                 'Standing-authority reason must be recorded in pre-registration')
+    require(manifest['formal_measurement'] is True and manifest.get('preparation_only') is not True,
+            'Preparation is not a formal launch manifest')
     require(manifest['panel']['sha256'] == PANEL_SHA, 'Shared panel changed')
     panel = load(manifest['panel'])
     bound = load(manifest['bindings'][host])
