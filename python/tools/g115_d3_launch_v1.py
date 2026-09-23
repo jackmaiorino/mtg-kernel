@@ -52,7 +52,12 @@ def cluster_allocation(hosts, rates, overhead):
     return owners, seconds
 
 
-def validate(manifest, host, now=None):
+def validate_plan(manifest, host, now=None):
+    """Check authority, complete inputs and placement before allocating a host.
+
+    Destination files are checked separately on that host by validate().
+    launch() never uses this planning-only entry point.
+    """
     now = time.time() if now is None else now
     require(now < DEADLINE, 'Goal deadline reached')
     require(manifest['schema'] == 'g115-d3-formal-launch/v1', 'Wrong experiment')
@@ -106,8 +111,6 @@ def validate(manifest, host, now=None):
     # generation adapter, capture option or frozen search budget.
     payload = load(manifest['payloads'][host])
     require(payload['source_commit'] == SOURCE, 'Payload source differs')
-    for leaf in payload['leaf_outputs']:
-        checked(leaf)
     require({ref['sha256'] for ref in payload['originals']} ==
             {ref['sha256'] for ref in payload['leaf_outputs']}, 'Leaf artifacts changed')
     for identifier, job in expected.items():
@@ -200,8 +203,6 @@ def validate(manifest, host, now=None):
     require(all(assignments[j['id']] == owners[j['cell']*8+j['replica']] for j in expected.values()),
             'Assignments differ from qualified outcome-independent allocation')
     selected = allocations[host]
-    for ref in selected['runtime_files']:
-        checked(ref)
     require(any(r['path'] == selected['command_prefix'][-1] for r in selected['runtime_files']),
             'Native executable unpinned')
     require(selected['reserve_bytes'] >= (1 if host == 'runpod' else 32) * 2**30, 'Memory reserve too small')
@@ -209,6 +210,21 @@ def validate(manifest, host, now=None):
     require(0 < selected['shard_timeout_seconds'] <= 8 * 3600, 'Shard time bound required')
     require(host != 'runpod' or selected['guard_directory'] and selected['lease_name'], 'Paid lease missing')
     return panel, bound, selected, [identifier for identifier in expected if assignments[identifier] == host]
+
+
+def validate(manifest, host, now=None):
+    result = validate_plan(manifest, host, now)
+    payload = load(manifest['payloads'][host])
+    for ref in payload['leaf_outputs']:
+        checked(ref)
+    for ref in result[2]['runtime_files']:
+        checked(ref)
+    if host == 'runpod':
+        from g115_d3_cloud_host_v1 import observe, profile, require_compatible
+        hardware = result[2]['hardware_receipts']
+        qualified = profile(load(hardware['host']), load(hardware['cgroups']))
+        require_compatible(profile(*observe()), qualified)
+    return result
 
 
 def launch(manifest, host, root):

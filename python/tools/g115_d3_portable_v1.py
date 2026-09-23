@@ -94,9 +94,12 @@ def portable_support(manifest, host, portable, output, destination):
             for allocation in placement[section].values():
                 for key in ('qualification_spec', 'qualification_result', 'toolchain_receipt'):
                     allocation[key] = evidence(allocation[key])
+                if 'hardware_receipts' in allocation:
+                    allocation['hardware_receipts'] = {k: evidence(v) for k, v in allocation['hardware_receipts'].items()}
     tools = Path(__file__).parent
     names = ('g115_d3_launch_v1.py', 'g115_d3_qualify_v1.py', 'g115_d3_native_results_v1.py',
-             'g115_d3_analysis_v1.py', 'g115_d3_power_core.py')
+             'g115_d3_analysis_v1.py', 'g115_d3_power_core.py', 'g115_d3_cloud_host_v1.py',
+             'g115_d3_payload_v1.py')
     pins = {}
     for name in names:
         shutil.copyfile(tools / name, output / 'tools' / name)
