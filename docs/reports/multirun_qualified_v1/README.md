@@ -15,7 +15,10 @@ Bulk Stores stay under `D:/multirun-qualified-v1-work/q1` (not committed).
   at the PR head therefore has another hash and requalifies before use, as
   the guard requires.
 - Launcher: SHA-256 `c58b9453...b0ed` (commit `826c5c02`), stamped in both the
-  receipt and the manifest. Runtime data tree: `bf51eeb0...246b`.
+  receipt and the manifest. One later launcher change (`31302454`, found by
+  CI) only stops the launch memory check from requiring a GPU for a slot with
+  no measured GPU footprint; it does not touch the path these receipts used.
+  Runtime data tree: `bf51eeb0...246b`.
 - Workload (`workload.json`, identity `0daaf3d2...6635`): the
   `multirun_pilot_v1` science loop, 128-update records, 2 arms (`base`,
   `envrand` with environment randomization v2) x 4 seeds, topology 2x32,
