@@ -8,6 +8,8 @@ mod effect_refs;
 mod sampler_tests;
 #[cfg(test)]
 mod library_tests;
+#[cfg(test)]
+mod chance_tests;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,serde::Serialize)]
 pub(crate) enum V4SearchStateErrorV1 {
@@ -28,7 +30,7 @@ pub(crate) enum V4SearchStateErrorV1 {
 use V4SearchStateErrorV1 as Error;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
-pub(crate) enum V4SearchSampleMode { Legacy, LibraryChoiceV2 }
+pub(crate) enum V4SearchSampleMode { Legacy, LibraryChoiceV2, FutureChanceV3 }
 
 #[derive(Debug,PartialEq,Eq)]
 struct Boundary {
@@ -83,12 +85,22 @@ impl FastActorSessionV1 {
         let FastActorResponseV1::Decision(d)=self.current_response() else {return Err(Error::NoLiveDecision);};
         let before=boundary(self,d,mode)?;
         let actor=self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
-        let plan=if mode==V4SearchSampleMode::LibraryChoiceV2 {
+        let plan=if mode!=V4SearchSampleMode::Legacy {
             crate::effect::library_choice_search_v2::plan(&self.state,actor).map_err(|_|Error::LibraryChoicePlanFailed)?
         } else {None};
         let original_candidates=&self.current.as_ref().ok_or(Error::NoLiveDecision)?.candidates;
         let mut copy=self.clone();
         sampler::redeterminize_with_library_plan(&mut copy.state,actor,seed,plan.as_ref())?;
+        if mode==V4SearchSampleMode::FutureChanceV3 {
+            // `seed` already derives from visible root, experiment and
+            // simulation ordinal. Separate future chance from hidden-pool RNG.
+            let mut hash=Sha256::new();
+            hash.update(b"mtg-kernel/v4-search-future-chance/v3\0");
+            hash.update(seed.to_le_bytes());
+            let bytes=hash.finalize();
+            let future=u64::from_le_bytes(bytes[..8].try_into().expect("eight digest bytes"));
+            copy.state.resample_future_randomness_for_search_v3(future);
+        }
         after_sample(&mut copy.state,actor);
         let mut current=copy.current.take().ok_or(Error::NoLiveDecision)?;
         if let Some(plan)=&plan {

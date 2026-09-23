@@ -72,6 +72,15 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         search_with_policies(self.session,limits,&evaluator,allocation,interior,None)
     }
 
+    #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn report_search_future_v3(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+            return Err(crate::model_guided_search_core_v4::Error::InvalidAdapterBinding);
+        }
+        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation_future_v3(policy,self.session,limits)
+    }
+
     /// Report-only observation. Never consumes a live action or policy RNG.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     pub(crate) fn report_search_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,

@@ -3,7 +3,7 @@ use crate::engine::{self,Action,Decision};
 use crate::policy_observation_v6::tests::{put,ready_state};
 use crate::effect::{PendingEffectChoice,EffectTargetSelectionPurpose};
 
-fn fixture(actor:PlayerId, form:u8, names:&[&str], reverse:bool, known:bool, partial:bool)->GameState {
+pub(super) fn fixture(actor:PlayerId, form:u8, names:&[&str], reverse:bool, known:bool, partial:bool)->GameState {
     let mut s=ready_state();s.active_player=actor;s.priority_player=actor;
     let source=put(&mut s,actor,match form {0=>"Generous Ent",1=>"Squadron Hawk",_=>"Twisted Landscape"},if form==2{Zone::Battlefield}else{Zone::Hand});
     for name in names {put(&mut s,actor,name,Zone::Library);}

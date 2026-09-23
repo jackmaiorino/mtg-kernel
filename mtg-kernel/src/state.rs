@@ -2091,6 +2091,24 @@ impl GameState {
         copy
     }
 
+    /// D3 search only: install an independent future stream on an already
+    /// disposable clone. The sole production caller is the additive V3 search
+    /// sampler. Never derive `seed` from this state's real random stream.
+    /// Preserve mode and past physical-owner shuffle counters.
+    pub(crate) fn resample_future_randomness_for_search_v3(&mut self, seed: u64) {
+        match &mut self.randomness {
+            GameRandomnessState::Legacy(rng) => *rng=SplitMix64::seed(seed),
+            GameRandomnessState::EnvironmentV2(v2) => {
+                use crate::environment_randomization_v2::{GameEnvironmentRandomizationV2,PhysicalOwnerV2};
+                let mut replacement=GameEnvironmentRandomizationV2::new(seed);
+                for owner in [PhysicalOwnerV2::P0,PhysicalOwnerV2::P1] {
+                    replacement.set_live_shuffle_ordinal(owner,v2.next_live_shuffle_ordinal(owner));
+                }
+                *v2=replacement;
+            }
+        }
+    }
+
     pub fn legacy_rng(&self) -> Option<&SplitMix64> {
         match &self.randomness {
             GameRandomnessState::Legacy(rng) => Some(rng),

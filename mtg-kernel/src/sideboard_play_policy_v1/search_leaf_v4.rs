@@ -107,6 +107,11 @@ pub(crate) fn report_search_observation_library_v2(policy:&FrozenPlayPolicyV1,se
     report_search_observation_mode(policy,session,limits,crate::rl_session::V4SearchSampleMode::LibraryChoiceV2)
 }
 #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn report_search_observation_future_v3(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
+    limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+    report_search_observation_mode(policy,session,limits,crate::rl_session::V4SearchSampleMode::FutureChanceV3)
+}
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
 fn report_search_observation_mode(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
     limits:crate::model_guided_search_core_v4::Limits,mode:crate::rl_session::V4SearchSampleMode)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
     use crate::model_guided_search_core_v4::{Error,RootAllocation,InteriorBonus,BackupMode,search_with_sample_mode};
