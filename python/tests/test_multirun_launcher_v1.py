@@ -713,11 +713,59 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(manifest["runs"][run.id]["completed_generation"], 9)
                 self.assertEqual(workload.adapter.output_digests(base / "launch" / "runs" / run.id),
                                  uninterrupted[run.id])
+            # Verdict N3: the launcher itself writes the resume-equivalence record.
+            uninterrupted = base / "uninterrupted"
+            for run in workload.runs:
+                shutil.copytree(base / "straight" / run.id, uninterrupted / "runs" / run.id)
+            launcher.write_json(uninterrupted / "experiment-manifest.json",
+                                {"runs": {run.id: {"status": "complete"} for run in workload.runs}})
+            record = launcher.resume_equivalence(workload, base / "launch", uninterrupted, 9)
+            self.assertEqual(record["schema"], "mtg-kernel-multirun-resume-equivalence/v2")
+            for row in record["runs"].values():
+                self.assertEqual((row["identical"], row["outputs_trained_after_resume"]), (True, 6))
+            straight_file = uninterrupted / "runs" / "run-0" / "out" / "update-00000008.state.bin"
+            straight_file.write_bytes(b"diverged")
+            self.assertFalse(launcher.resume_equivalence(workload, base / "launch", uninterrupted, 9)
+                             ["runs"]["run-0"]["identical"])
             # The parent enters the identity by content: a changed parent needs requalification.
             parent_file = parents["run-1"] / "out" / "update-00000002.state.bin"
             parent_file.write_bytes(b"other parent")
             with self.assertRaises(launcher.LaunchRefused):
                 launcher.require_choice(base / "q" / "compute-choice.json", launcher.load_workload(segment_path))
+
+    def test_n1_every_used_gpu_needs_a_full_length_reading_outside_the_margin(self) -> None:
+        # Real peak values from the Monitor, not a mutated flag.
+        reading = {"used": 11_900}
+        original = launcher.gpu_inventory
+        launcher.gpu_inventory = lambda runner=None: [{"index": 0, "memory_total_mib": 12_282,
+                                                       "memory_used_mib": reading["used"], "utilization_percent": 99}]
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                monitor = launcher.Monitor(Path(directory) / "m.jsonl", lambda: 0, interval=0.01)
+                monitor.start()
+                import time as clock
+                clock.sleep(0.1)
+                peaks = monitor.stop()["gpu_peak_memory_mib"]
+        finally:
+            launcher.gpu_inventory = original
+        self.assertEqual(peaks, {"jack:0": 11_900})
+        totals, footprint = {"jack:0": 12_282, "jack:1": 6_144}, {"jack:0": 2_950.0, "jack:1": 2_600.0}
+        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), peaks, totals, footprint),
+                         ["jack:0: full-length peak 11900 MiB of 12282 MiB"])
+        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), {"jack:0": 9_000}, totals, footprint), [])
+        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0+1@1"), {"jack:0": 9_000}, totals, footprint),
+                         ["jack:1: no full-length memory reading"])
+        # A workload that never used a GPU needs no reading.
+        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), {}, {}, {}), [])
+
+    def test_n1_the_guard_refuses_a_receipt_missing_a_used_gpu_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2)
+            launcher.require_choice(path, workload)
+            with self.assertRaises(launcher.LaunchRefused) as caught:
+                launcher.require_choice(self.mutated(path, lambda c: c.update(gpu_footprint_mib={"jack:0": 2950.0})),
+                                        workload)
+            self.assertIn("no full-length memory reading", str(caught.exception))
 
     def test_m5_segments_and_knobs_are_validated(self) -> None:
         adapter = launcher.NativeSciencePilotAdapterV1()

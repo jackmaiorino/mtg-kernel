@@ -1,11 +1,13 @@
 # Multirun qualification receipts, round 2 (2026-09-23, after the Fable verdict)
 
-Non-evidence engineering receipts. Every file here was produced by the
-launcher at commit `136443d3` (its SHA-256 is stamped in the receipts and the
+Non-evidence engineering receipts. Every qualification, sentinel and launch
+file here was produced by the launcher at commit `136443d3` (its SHA-256 is stamped in the receipts and the
 guard refuses any other launcher) and the executable `mtg_kernel` lib-test
 binary `62bf66b1...5504`, built from this branch's Rust sources (resume-aware
 and sentinel tickets). Bulk Stores stay under
-`D:/multirun-qualified-v1-work/q6` and `q6-segment` (not committed).
+`D:/multirun-qualified-v1-work/q6` and `q6-segment` (not committed). The comparison
+`segment/resume-equivalence.json` and the refusal sidecars were written
+afterwards by the N1 to N3 revision's tooling (read-only over those files).
 
 ## Workload and hosts
 
@@ -40,9 +42,10 @@ of 12,282; GPU 1 5,526 of 6,144).
 
 All 10 runs complete at generation 128 in **868 s (14.5 min), 94.3
 episodes/s**; every prefix audit identical; launch-time GPU identity (name and
-UUID, local and remote) matched the receipt. Measured serial full length is
-about 254 s per run (`serial-walls.json`), so the 10 runs take about 42.3 min
-serially: **2.9x**. Local runs took 322 to 464 s and HaleysPC runs about
+UUID, local and remote) matched the receipt. The serial comparison is
+derived, not measured end to end: the sentinel's two full-length serial runs
+took 270 s and 238 s (`serial-walls.json`, from file timestamps), so 10 runs
+serially come to an estimated 42.3 min: **about 2.9x**. Local runs took 322 to 464 s and HaleysPC runs about
 645 s: a 5-run arm fits in one wave at about 2.5x one serial run, and a
 4-run arm fits locally in one wave at about 1.3 to 1.8x.
 
@@ -50,7 +53,8 @@ serially: **2.9x**. Local runs took 322 to 464 s and HaleysPC runs about
 
 Two runs resumed from their generation-12 serial goldens and trained to
 generation 28 through the launcher (qualification, sentinel and launch all at
-the segment). `resume-equivalence.json`: all 56 Store outputs through
+the segment). `resume-equivalence.json`, written by the launcher's
+`equivalence` command: all 56 Store outputs through
 generation 28 are byte-identical to the uninterrupted launched runs, 28 of
 them trained after the resume point.
 
@@ -68,7 +72,8 @@ them trained after the resume point.
 
 ## Other receipts
 
-- `raw-harness-refusal.txt`: a raw 65-update harness run is refused in under a
+- `raw-harness-refusal.txt` with `raw-harness-refusal.json` (executable hash,
+  command, environment): a raw 65-update harness run is refused in under a
   second with no Store created (the 64/65 boundary).
 - `monitor/`: 5-second CPU, local GPU and (every 15 s) HaleysPC GPU samples.
 - `throughput.png`: the qualification table as a chart.

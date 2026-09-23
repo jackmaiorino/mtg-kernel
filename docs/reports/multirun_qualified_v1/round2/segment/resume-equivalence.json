@@ -1,28 +1,31 @@
 {
-  "schema": "mtg-kernel-multirun-resume-equivalence/v1",
+  "compared": "every output of generations up to through_generation, plus static outputs",
+  "created_at": "2026-09-23T22:02:10.572698+00:00",
+  "launcher_sha256": "7af5720fa17e5a50fb2ab54be7e70d2cc48936fbc8ad2ebaf67a25e9de62e046",
+  "resumed_launch_manifest_sha256": "461ed396c7330ac6b1aafaf533ba5a55b98ffe6506472ed79b6210b0dc018d2f",
+  "runs": {
+    "base-s0": {
+      "differing_outputs": [],
+      "identical": true,
+      "outputs_compared": 56,
+      "outputs_trained_after_resume": 28,
+      "resumed_status": "complete",
+      "uninterrupted_status": "complete"
+    },
+    "envrand-s0": {
+      "differing_outputs": [],
+      "identical": true,
+      "outputs_compared": 56,
+      "outputs_trained_after_resume": 28,
+      "resumed_status": "complete",
+      "uninterrupted_status": "complete"
+    }
+  },
+  "schema": "mtg-kernel-multirun-resume-equivalence/v2",
   "segment": {
     "resume_generation": 12,
     "stop_generation": 28
   },
-  "resumed_launch_manifest": "D:/multirun-qualified-v1-work/q6-segment/launch/experiment-manifest.json",
-  "uninterrupted_launch_manifest": "D:/multirun-qualified-v1-work/q6/launch/experiment-manifest.json",
-  "compared": "every Store output of generations <= 28 plus run.json",
-  "runs": {
-    "base-s0": {
-      "manifest_status": "complete",
-      "completed_generation": 28,
-      "outputs_through_28": 56,
-      "outputs_past_resume": 28,
-      "identical_to_uninterrupted_run": true,
-      "differing": []
-    },
-    "envrand-s0": {
-      "manifest_status": "complete",
-      "completed_generation": 28,
-      "outputs_through_28": 56,
-      "outputs_past_resume": 28,
-      "identical_to_uninterrupted_run": true,
-      "differing": []
-    }
-  }
+  "through_generation": 28,
+  "uninterrupted_launch_manifest_sha256": "cb17290946ba169ef8901e3650ca3d59350478390e3d36d3cb94f78c3a56bf1a"
 }

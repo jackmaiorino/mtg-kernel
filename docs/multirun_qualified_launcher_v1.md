@@ -2,7 +2,8 @@
 
 Status: branch `opus/multirun-qualified-v1`, PR #107. Fable review
 2026-09-23 (`collab/FABLE-REVIEW-20260923.md`) countersigned the mechanism
-and required M1 to M9; this revision applies them (map at the end).
+and required M1 to M9; the delta review countersigned them and required N1 to N3,
+which this revision also applies (map at the end).
 
 ## What it does
 
@@ -55,7 +56,7 @@ Each process receives `MULTIRUN_LAUNCH_TICKET`. `multirun_pilot_v1` checks it
 before touching any Store, device or thread
 (`mtg-kernel/src/multirun_launch_ticket_v1.rs`). The limit is on planned
 updates **summed across the process's runs** (run count x record length,
-whatever the stop point): at most 64 runs ticket-free as a small correctness or
+whatever the stop point): at most 64 updates run ticket-free as a small correctness or
 timing check; 65 or more needs a ticket, so a long record stopped early cannot
 escape it. Every ticket binds the executable hash, seed, record length,
 resume generation and stop generation, and one run per process. Kinds:
@@ -101,13 +102,15 @@ Jack's PC and HaleysPC.
 The full-length sentinel on the selected allocation matched on all 6
 placement x arm entries (233 outputs each) with every device's peak memory
 outside the margin. The guarded launch finished all 10 runs in 14.5 min (94.3
-episodes/s) with every prefix audit identical, against about 42.3 min for the
-same runs serially (measured serial full length about 254 s per run): 2.9x. A
+episodes/s) with every prefix audit identical, against an estimated 42.3 min
+for the same runs serially: 2.9x. The serial figure is derived, not measured
+end to end: the sentinel's two full-length serial runs took 270 s and 238 s
+(file timestamps), and their mean is multiplied by 10. A
 resumed segment (generation 12 to 28, both arms) reproduced the uninterrupted
 runs' outputs byte for byte. Measured serial time is the reference: the
 prefix-based projection is conservative for every allocation but most for the
-serial one (77 min projected, 42 min measured), so it overstates the speedup
-(3.8x projected, 2.9x measured) while its ranking of the parallel candidates
+serial one (77 min projected, about 42 min derived), so it overstates the speedup
+(3.8x projected, about 2.9x derived) while its ranking of the parallel candidates
 held.
 
 Superseded round-2 passes are kept: one at `cc3036db` selected 3 processes on
@@ -126,7 +129,7 @@ the largest sub-slice pool reserves a whole page. Capping it per process, as a
 narrow vendored patch like the existing `burn-cubecl` one, is the next lever;
 it must pass this same byte-identity gate and is not part of this PR.
 
-## Launch paths: guarded, migrated and blocked
+## Launch paths: guarded, migratable and retired
 
 Guarded (refuse missing or incompatible evidence before spawning):
 `multirun_launcher_v1.py launch`; and `multirun_pilot_v1` itself above 64
@@ -142,18 +145,18 @@ through the launcher:
 | `macro_selfplay_envrand_v2_rung_v1` (`Invoke-MacroTrainingRun`) | `formal.ps1:45` (512 updates, 3 seeds) | fresh run, ladder and envrand knobs | launchable now: one workload, 3 runs, knobs `MULTIRUN_LADDER`, `MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2`; wrapper not rewritten |
 | `regularized_continuation_retest_v1` (`Invoke-NativePilot`) | `full-horizon-training.ps1:246` (512, anchor beta, waves) | fresh or resumed, anchor beta | launchable now: knobs plus `segment`/`parents` for resumed waves; wrapper not rewritten |
 | `scaled_selfplay_population_v1` (`Invoke-ScaledNativePilot`) | `correct-throughput-screen.ps1:34`, `preflight-screen.ps1:58,61,131`, `run-replay.ps1:58` | successor or retest segments (stop and resume) | launchable now as segments; wrappers not rewritten |
-| same family | `run-initial-population-interval.ps1:39`, `run-population-interval.ps1:43` | population runtime | **blocked**: the harness asserts `stop == resume + 128` for this runtime (`native_science_loop_v1.rs:1644`), so no prefix qualification is possible without changing campaign validation |
-| same family | `run-response-exploiter-build.ps1:186,191,203`, `run-response-exploiter-retry.ps1:315,320,332`, `run-response-exploiter-screen.ps1:174,187,192` | response-exploiter runtime | **blocked**: the harness permits only a stop at 4 or none for this runtime (`native_science_loop_v1.rs:1658`) |
-| `response_exploiter_v2_campaign_v1` | `run-response-exploiter-v2-build.ps1:135,140,151,164`, `-preflight.ps1:101,116,122`, `-retry-build.ps1:152` | response-exploiter runtime | **blocked** (same assertion) |
-| `response_exploiter_denovo_screen_v1` | `run-denovo-screen-build.ps1:70`, `run-denovo-512-screen-build.ps1:79` | response-exploiter runtime | **blocked** (same assertion) |
-| `exploiter_probe_v3` (`launch_probe.py:1735`) | arm runs (3 runs x 512 per process) | multi-run process | migrate as one run per process (seed = base + offset + ordinal); byte equivalence with the in-process form is expected, not yet verified |
+| same family | `run-initial-population-interval.ps1:39`, `run-population-interval.ps1:43` | population runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)**: the harness asserts `stop == resume + 128` for this runtime (`native_science_loop_v1.rs:1644`), so it cannot be prefix-qualified; the gate refuses it from new builds |
+| same family | `run-response-exploiter-build.ps1:186,191,203`, `run-response-exploiter-retry.ps1:315,320,332`, `run-response-exploiter-screen.ps1:174,187,192` | response-exploiter runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)**: the harness permits only a stop at 4 or none for this runtime (`native_science_loop_v1.rs:1658`) |
+| `response_exploiter_v2_campaign_v1` | `run-response-exploiter-v2-build.ps1:135,140,151,164`, `-preflight.ps1:101,116,122`, `-retry-build.ps1:152` | response-exploiter runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)** (same assertion) |
+| `response_exploiter_denovo_screen_v1` | `run-denovo-screen-build.ps1:70`, `run-denovo-512-screen-build.ps1:79` | response-exploiter runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)** (same assertion) |
+| `exploiter_probe_v3` (`launch_probe.py:1735`) | arm runs (3 runs x 512 per process) | multi-run process | migrate as one run per process (seed = base + offset + ordinal); byte equivalence with the in-process form is expected, not verified; it must be verified before that probe's first launch through the gate |
 
 `run-native.ps1:23` in the population family forwards arguments for every lane
-above and follows their status. The blocked rows need a ruling before this
-gate ships on main: either Jack retires those finished campaign families, or a
-follow-up lets those runtimes stop early for qualification only (a change to
-campaign validation, reviewed separately). The question is posted in
-`collab/FOR-JACK.md`.
+above and follows their status. Jack ruled on 2026-09-23 (CLAUDE #382,
+`collab/FOR-JACK.md`) to retire the population-v2 and response-exploiter
+runtimes: the gate refuses them from new builds, no change is funded to let
+them stop early for qualification, and frozen measurements from those lanes
+keep their existing executables and receipts.
 
 Unguarded, need migration before substantial use (no ticket check at all):
 `src/bin/cycle4_arm_v1.rs` via `run-cycle4-arm.ps1` (training); the other
@@ -203,3 +206,6 @@ point, and publishes generation-named outputs.
 | M7 one countersign target; HaleysPC receipts, watchdog and log check | all round-2 receipts from launcher `136443d3`; SSH executor |
 | M8 committed RunPod evidence | launcher reason text and placement notes |
 | M9 refusal log committed | `docs/reports/multirun_qualified_v1/round2/raw-harness-refusal.txt` (round 1's log is `round1/raw-harness-refusal.txt`) |
+| N1 every used GPU needs a full-length reading | `sentinel_memory_problems` in qualification and the guard; tests `test_n1_*` drive it from real Monitor peaks |
+| N2 doc and receipt wording | this doc and `round2/README.md` |
+| N3 comparison committed; executable hash in refusal receipts | `equivalence` command writes `round2/segment/resume-equivalence.json`; `round*/raw-harness-refusal.json` |

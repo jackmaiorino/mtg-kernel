@@ -1564,9 +1564,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         # shared memory and slows every run on it): the full-length peak must
         # stay outside the fit margin too.
         peaks = usage["gpu_peak_memory_mib"]
-        crowded = sorted(f"{key}: full-length peak {peaks[key]} MiB of {totals[key]} MiB"
-                         for key in {f"{slot.host}:{slot.device}" for slot in slots}
-                         if key in peaks and key in totals and peaks[key] > totals[key] - FIT_MARGIN_MIB)
+        crowded = sentinel_memory_problems(slots, peaks, totals,
+                                           {f"{host}:{device}": mib for (host, device), mib in footprint.items()})
         rows = []
         for label, run, slot in entries:
             result = results[label]
@@ -1745,16 +1744,40 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
     selected = next((c for c in qualified if c["id"] == choice.get("selected")), None)
     if selected is None or selected["projected_seconds"] > fastest["projected_seconds"]:
         raise LaunchRefused("the selected allocation is slower than a qualified alternative")
-    require_sentinel(choice.get("sentinel") or {}, selected, workload, verify_golden_files)
+    require_sentinel(choice.get("sentinel") or {}, selected, workload, verify_golden_files,
+                     choice.get("gpu_footprint_mib") or {})
     return selected
 
 
-def require_sentinel(sentinel: dict, selected: dict, workload: Workload, verify_files: bool) -> None:
+def sentinel_memory_problems(slots: list[Slot], peaks: dict, totals: dict, footprint: dict) -> list[str]:
+    """Verdict N1: every GPU the allocation uses needs a full-length reading outside the fit margin.
+
+    A device counts as used when qualification measured a nonzero per-process
+    footprint on it (a workload that never touches a GPU needs no reading).
+    A used device with no peak or no total reading is a problem, never a pass.
+    """
+    problems = []
+    for key in sorted({f"{slot.host}:{slot.device}" for slot in slots}):
+        if footprint.get(key, 0) <= 0:
+            continue
+        if key not in peaks or key not in totals:
+            problems.append(f"{key}: no full-length memory reading")
+        elif peaks[key] > totals[key] - FIT_MARGIN_MIB:
+            problems.append(f"{key}: full-length peak {peaks[key]} MiB of {totals[key]} MiB")
+    return problems
+
+
+def require_sentinel(sentinel: dict, selected: dict, workload: Workload, verify_files: bool,
+                     footprint: dict | None = None) -> None:
     """Verdict M1: full-length identity on every placement and arm of the selected allocation."""
     if sentinel.get("allocation") != selected["allocation"] or sentinel.get("passed") is not True:
         raise LaunchRefused("no passing full-length sentinel for the selected allocation")
-    if sentinel.get("memory_crowded") != []:
-        raise LaunchRefused("the full-length sentinel crowded a GPU or recorded no memory check")
+    problems = sentinel_memory_problems(parse_allocation(selected["allocation"]),
+                                        sentinel.get("gpu_peak_memory_mib") or {},
+                                        sentinel.get("gpu_total_memory_mib") or {}, footprint or {})
+    if sentinel.get("memory_crowded") != [] or problems:
+        raise LaunchRefused("the full-length sentinel crowded a GPU or lacks a memory reading: "
+                            + "; ".join(problems or sentinel.get("memory_crowded") or ["no memory check"]))
     serial = sentinel.get("serial", {})
     target = workload.target_generation
     for run_id, reference in serial.items():
@@ -1999,6 +2022,41 @@ def verify(workload: Workload, choice_path: Path, launch_root: Path, run_ids: li
     return record
 
 
+def resume_equivalence(workload: Workload, resumed_launch: Path, uninterrupted_launch: Path,
+                       through_generation: int) -> dict:
+    """Compare a resumed segment's launched runs with uninterrupted runs of the same seeds.
+
+    Every output of generations up to ``through_generation`` (plus static
+    outputs) must match byte for byte; the outputs trained after the resume
+    point are counted so the comparison cannot pass on copied parents alone.
+    """
+    if workload.resume_generation is None or not workload.start_generation < through_generation:
+        raise LaunchRefused("resume equivalence needs a segment workload and a generation past its resume point")
+    manifests = {name: read_json(root / "experiment-manifest.json")
+                 for name, root in (("resumed", resumed_launch), ("uninterrupted", uninterrupted_launch))}
+    rows = {}
+    for run in workload.runs:
+        resumed = workload.adapter.output_digests(resumed_launch / "runs" / run.id, through_generation)
+        straight = workload.adapter.output_digests(uninterrupted_launch / "runs" / run.id, through_generation)
+        trained = [k for k in resumed if (g := workload.adapter.generation_of(k)) is not None
+                   and g > workload.start_generation]
+        rows[run.id] = {
+            "resumed_status": manifests["resumed"]["runs"].get(run.id, {}).get("status"),
+            "uninterrupted_status": manifests["uninterrupted"]["runs"].get(run.id, {}).get("status"),
+            "outputs_compared": len(resumed), "outputs_trained_after_resume": len(trained),
+            "identical": bool(trained) and resumed == straight,
+            "differing_outputs": sorted(k for k in set(resumed) | set(straight)
+                                        if resumed.get(k) != straight.get(k))[:20],
+        }
+    return {"schema": "mtg-kernel-multirun-resume-equivalence/v2", "created_at": iso(utc_now()),
+            "segment": workload.raw["segment"], "through_generation": through_generation,
+            "launcher_sha256": sha256_file(Path(__file__)),
+            "resumed_launch_manifest_sha256": sha256_file(resumed_launch / "experiment-manifest.json"),
+            "uninterrupted_launch_manifest_sha256": sha256_file(uninterrupted_launch / "experiment-manifest.json"),
+            "compared": "every output of generations up to through_generation, plus static outputs",
+            "runs": rows}
+
+
 # --------------------------------------------------------------------------
 # CLI
 
@@ -2054,6 +2112,12 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser.add_argument("--run", action="append", required=True)
     verify_parser.add_argument("--root", type=Path, required=True)
     verify_parser.add_argument("--device", type=int, default=0)
+    equivalence = commands.add_parser("equivalence", help="compare a resumed segment with uninterrupted runs")
+    equivalence.add_argument("--workload", type=Path, required=True)
+    equivalence.add_argument("--resumed-launch", type=Path, required=True)
+    equivalence.add_argument("--uninterrupted-launch", type=Path, required=True)
+    equivalence.add_argument("--through", type=int, required=True)
+    equivalence.add_argument("--out", type=Path, required=True)
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "inventory":
@@ -2075,6 +2139,12 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "check":
             print(json.dumps(require_choice(arguments.choice, workload)["id"]))
             return 0
+        if arguments.command == "equivalence":
+            record = resume_equivalence(workload, arguments.resumed_launch, arguments.uninterrupted_launch,
+                                        arguments.through)
+            write_json(arguments.out, record)
+            print(json.dumps({run: row["identical"] for run, row in record["runs"].items()}))
+            return 0 if all(row["identical"] for row in record["runs"].values()) else 1
         if arguments.command == "verify":
             record = verify(workload, arguments.choice, arguments.launch_root, arguments.run, arguments.root,
                             LocalExecutor(workload), arguments.device)
