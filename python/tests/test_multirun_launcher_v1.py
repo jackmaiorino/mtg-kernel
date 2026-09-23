@@ -201,6 +201,13 @@ class LaunchRefusalTests(QualifiedFixture):
         path = self.mutated_choice(lambda c: c["inventory"]["hosts"]["haleyspc"].update(eligible=True))
         self.assertRefused(path, "no throughput measurement: haleyspc")
 
+    def test_a_listed_slot_where_no_run_executed_does_not_count_as_measured(self) -> None:
+        def listed_only(choice):
+            choice["inventory"]["hosts"]["haleyspc"].update(eligible=True)
+            for candidate in choice["candidates"]:
+                candidate["hosts"] = sorted(set(candidate["hosts"]) | {"haleyspc"})
+        self.assertRefused(self.mutated_choice(listed_only), "no throughput measurement: haleyspc")
+
     def test_incomplete_benchmark(self) -> None:
         def incomplete(choice):
             selected = next(c for c in choice["candidates"] if c["id"] == choice["selected"])
@@ -255,7 +262,7 @@ class DeterminismGateTests(unittest.TestCase):
             data = base / "data"
             data.mkdir()
             (data / "snapshot.bin").write_bytes(b"weights v1")
-            raw = json.loads(fake_workload(base, runs=1).read_text())
+            raw = json.loads(fake_workload(base, runs=2).read_text())
             raw["data_root"] = str(data)
             (base / "workload.json").write_text(json.dumps(raw))
             workload = launcher.load_workload(base / "workload.json")
@@ -276,9 +283,25 @@ class DeterminismGateTests(unittest.TestCase):
                 launcher.qualify(workload, Path(directory) / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
                                  {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
 
+    def test_an_allocation_wider_than_the_run_count_is_not_measured(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workload = launcher.load_workload(fake_workload(Path(directory), runs=2))
+            choice = launcher.qualify(workload, Path(directory) / "q", [alloc("1@0"), alloc("2@0"), alloc("3@0")],
+                                      3, inventory(), {"jack": launcher.LocalExecutor(workload)},
+                                      per_process_mib=0.0, stop_on_saturation=False)
+            wide = next(c for c in choice["candidates"] if c["concurrency"] == 3)
+            # A single run is inherently sequential here: serial-only evidence suffices.
+            single = launcher.load_workload(fake_workload(Path(directory) / "one", runs=1))                 if (Path(directory) / "one").mkdir() is None else None
+            launcher.qualify(single, Path(directory) / "q1", [alloc("1@0"), alloc("2@0")], 3, inventory(),
+                             {"jack": launcher.LocalExecutor(single)}, per_process_mib=0.0)
+            launcher.require_choice(Path(directory) / "q1" / "compute-choice.json", single)
+            self.assertEqual(wide["status"], "capacity-skipped")
+            self.assertIn("unmeasured", " ".join(wide["reasons"]))
+            launcher.require_choice(Path(directory) / "q" / "compute-choice.json", workload)
+
     def test_qualification_needs_serial_and_parallel(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            workload = launcher.load_workload(fake_workload(Path(directory), runs=1))
+            workload = launcher.load_workload(fake_workload(Path(directory), runs=2))
             for candidates in ([alloc("1@0")], [alloc("2@0")]):
                 with self.assertRaises(launcher.LaunchRefused):
                     launcher.qualify(workload, Path(directory) / f"q{len(candidates[0])}{candidates[0][0].capacity}",

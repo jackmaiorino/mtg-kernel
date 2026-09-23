@@ -1329,7 +1329,9 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     root.mkdir(parents=True)
     candidates = sorted(candidates, key=concurrency)
     serial = [candidate for candidate in candidates if concurrency(candidate) == 1]
-    if not serial or not any(concurrency(candidate) > 1 for candidate in candidates):
+    # One run is inherently sequential for a launcher that parallelizes across
+    # runs (COMPUTE-POLICY item 4); every other workload must measure both.
+    if not serial or (len(workload.runs) > 1 and not any(concurrency(candidate) > 1 for candidate in candidates)):
         raise LaunchRefused("qualification needs the serial allocation and at least one parallel allocation")
     overheads = dict(overheads or {})
     staging: dict[str, dict] = {}
@@ -1409,6 +1411,10 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
                            for host in {slot.host for slot in slots}}
         projected = project_seconds(host_statistics, slots, len(workload.runs), workload.span,
                                     overhead) if status == "qualified" else None
+        if status == "qualified" and projected is None:
+            # Some host ran too little to time; never rank what was not measured.
+            status = "unrankable"
+            reasons.append("no timing for every host in the allocation")
         entry = {"id": label_of(slots), "allocation": allocation_text(slots), "concurrency": concurrency(slots),
                  "hosts": sorted({slot.host for slot in slots}), "status": status, "reasons": reasons,
                  "overhead_seconds": overhead, "projected_seconds": projected, "usage": usage,
@@ -1426,9 +1432,10 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         slots = pending.pop(0)
         fit = device_fits(slots, per_process, devices=settled_gpu_inventory())             if any(per_process(s.device) > 0 for s in slots) else []
         missing = [slot.host for slot in slots if not inventory["hosts"].get(slot.host, {}).get("eligible")]
-        if missing or fit:
+        wider = [f"{concurrency(slots)} lanes for {len(workload.runs)} runs would leave a slot unmeasured"]             if concurrency(slots) > len(workload.runs) else []
+        if missing or fit or wider:
             record(slots, [], 0.0, {}, "capacity-skipped",
-                   [f"host not eligible: {host}" for host in sorted(set(missing))] + fit)
+                   [f"host not eligible: {host}" for host in sorted(set(missing))] + fit + wider)
             continue
         results, wall, usage = leg(label_of(slots), slots)
         for host in {slot.host for slot in slots}:
@@ -1623,7 +1630,8 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
 
     candidates = choice.get("candidates", [])
     measured = [c for c in candidates if c.get("status") in ("qualified", "disqualified")]
-    if not any(c.get("concurrency") == 1 for c in measured) or not any(c.get("concurrency", 0) > 1 for c in measured):
+    if not any(c.get("concurrency") == 1 for c in measured) or (
+            len(workload.runs) > 1 and not any(c.get("concurrency", 0) > 1 for c in measured)):
         raise LaunchRefused("a serial timing alone is insufficient; qualify parallel collection")
     qualified = []
     for candidate in candidates:
@@ -1650,7 +1658,9 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
     if not qualified:
         raise LaunchRefused("no allocation qualified")
     for host, status in hosts.items():
-        if status["eligible"] and not any(host in c.get("hosts", []) for c in measured):
+        # Measured means a run actually executed there, not merely a listed slot.
+        if status["eligible"] and not any(entry.get("host") == host for c in measured
+                                          for entry in c.get("per_run", {}).values()):
             raise LaunchRefused(f"eligible placement has no throughput measurement: {host}")
     fastest = min(qualified, key=lambda c: c["projected_seconds"])
     selected = next((c for c in qualified if c["id"] == choice.get("selected")), None)
