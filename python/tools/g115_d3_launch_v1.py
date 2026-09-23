@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 
-from g115_d3_qualify_v1 import checked, free_memory, read, require, sample, sha, write, minimum_reserve
+from g115_d3_qualify_v1 import checked, free_memory, read, require, sample, sha, write, minimum_reserve, require_no_competing_work
 from g115_d3_native_results_v1 import read_match
 
 SOURCE = 'cd41885e0ac05586d89bd4b2b7fb1284248689ef'
@@ -157,6 +157,8 @@ def validate_plan(manifest, host, now=None):
     require(0 <= now - inventory['jack']['checked_unix'] <= 1800, 'Refresh placement inventory')
     require(inventory[host]['complete'], 'Selected host unavailable')
     allocations = placement['hosts']
+    for selected_host in allocations:
+        require_no_competing_work(inventory,selected_host)
     assignments = placement['assignments']
     require(set(assignments) == set(expected) and set(assignments.values()) == set(allocations),
             'Fleet must assign all jobs exactly once')

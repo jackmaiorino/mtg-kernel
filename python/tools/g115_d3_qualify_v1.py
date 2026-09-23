@@ -11,6 +11,11 @@ def minimum_reserve(host):
     # Jack's explicit 32 GiB reservation is workstation-specific. HaleysPC
     # has 32 GiB total; leave 8 GiB for its OS/user, and stop on pressure.
     return {'jack':32,'haleyspc':8,'runpod':1}[host]*2**30
+
+def require_no_competing_work(inventory,host):
+    if host in ('jack','haleyspc'):
+        require(inventory[host]['data'].get('competing_native') == [],
+                'Fresh native-competition census must be present and empty: '+host)
 def require(ok,message):
     if not ok:raise ValueError(message)
 def read(path):return json.loads(P(path).read_bytes())
@@ -64,6 +69,7 @@ def validate(spec):
     require(spec['host'] in ('jack','haleyspc','runpod'),'Unknown host')
     inventory=spec['inventory'];require(set(inventory)=={'jack','haleyspc','runpod'},'Three-host inventory required')
     require(inventory[spec['host']]['complete'] and 0<=time.time()-inventory['jack']['checked_unix']<=1800,'Fresh placement inventory required')
+    require_no_competing_work(inventory,spec['host'])
     counts=spec['worker_counts'];require(counts[0]==1 and counts==sorted(set(counts)) and len(counts)>=2 and max(counts)<=32,'Serial and increasing parallel comparison required')
     jobs=spec['jobs'];require(len(jobs)==64 and len({j['id'] for j in jobs})==64,'Expected fixed64-case engineering cohort')
     require(sum(j['arm']=='search' for j in jobs)==32 and sum(j['arm']=='baseline' for j in jobs)==32,'Both execution paths required')
