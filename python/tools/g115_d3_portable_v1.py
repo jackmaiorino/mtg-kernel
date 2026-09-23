@@ -2,10 +2,20 @@
 import argparse
 import copy
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 
 from g115_d3_payload_v1 import checked, read, require, sha, write
+
+
+def remote_path(value):
+    windows = PureWindowsPath(value)
+    destination = windows if windows.drive else PurePosixPath(value)
+    require(destination.is_absolute() and '..' not in destination.parts,
+            'Absolute remote destination required')
+    if windows.drive:
+        require(len(windows.drive) == 2 and windows.drive[1] == ':', 'Drive path required')
+    return destination
 
 
 def portable_binding(binding, output):
@@ -13,8 +23,7 @@ def portable_binding(binding, output):
     binding = Path(binding)
     output = Path(output)
     source = read(binding / 'execution.json')
-    destination = PurePosixPath(source['destination'])
-    require(destination.is_absolute() and '..' not in destination.parts, 'Absolute remote destination required')
+    destination = remote_path(source['destination'])
     require(source['launchable'] is False and len(source['jobs']) == 2048, 'Complete unlaunched binding required')
     output.mkdir()
     (output / 'requests').mkdir()
@@ -22,8 +31,8 @@ def portable_binding(binding, output):
     result = copy.deepcopy(source)
     for job in result['jobs']:
         request = checked(job['request'])
-        expected_request = str(destination / 'requests' / (job['id'] + '.json'))
-        expected_output = str(destination / 'outputs' / job['id'])
+        expected_request = (destination / 'requests' / (job['id'] + '.json')).as_posix()
+        expected_output = (destination / 'outputs' / job['id']).as_posix()
         require(job['native_request'] == expected_request and job['native_output_directory'] == expected_output,
                 'Unexpected native destination')
         command = read(request)
@@ -40,13 +49,13 @@ def portable_binding(binding, output):
             files.append(dict(path=path.relative_to(output).as_posix(), sha256=sha(path), bytes=path.stat().st_size))
     receipt = dict(schema='g115-d3-portable-binding/v1', launchable=False, source_commit=source['source_commit'],
                    source_execution=dict(path=str(binding / 'execution.json'), sha256=sha(binding / 'execution.json')),
-                   destination=str(destination), files=files, jobs=2048,
+                   destination=destination.as_posix(), files=files, jobs=2048,
                    changes='Runner request/output references only; all native request and payload bytes preserved.')
     write(output / 'transport.json', receipt)
     return receipt
 
 
-def portable_support(manifest, host, portable, output, destination):
+def portable_support(manifest, host, portable, output, destination, python_executable=None):
     """Copy evidence by digest without changing its contents or dispositions.
 
     This accepts incomplete preparation, but leaves it incomplete. The actual
@@ -54,8 +63,9 @@ def portable_support(manifest, host, portable, output, destination):
     """
     output = Path(output)
     portable = Path(portable)
-    destination = PurePosixPath(destination)
-    require(destination.is_absolute() and '..' not in destination.parts, 'Absolute support destination required')
+    destination = remote_path(destination)
+    require(not isinstance(destination, PureWindowsPath) or python_executable,
+            'Name the qualified Python environment for a Windows destination')
     output.mkdir()
     (output / 'evidence').mkdir()
     (output / 'tools').mkdir()
@@ -70,7 +80,7 @@ def portable_support(manifest, host, portable, output, destination):
             shutil.copyfile(original, target)
         require(sha(target) == ref['sha256'], 'Evidence bytes changed')
         copied[name] = dict(original=str(original), sha256=ref['sha256'])
-        return dict(path=str(destination / 'evidence' / name), sha256=ref['sha256'])
+        return dict(path=(destination / 'evidence' / name).as_posix(), sha256=ref['sha256'])
 
     result['documents'] = {k: evidence(v) for k, v in result['documents'].items()}
     result['panel'] = evidence(result['panel'])
@@ -82,11 +92,11 @@ def portable_support(manifest, host, portable, output, destination):
     transport = read(portable / 'transport.json')
     for item in transport['files']:
         require(sha(portable / item['path']) == item['sha256'], 'Portable binding changed')
-    remote = PurePosixPath(transport['destination'])
+    remote = remote_path(transport['destination'])
     execution = portable / 'execution.remote.json'
     payload = portable / 'payload/sources.json'
-    result['bindings'] = {host: dict(path=str(remote / execution.name), sha256=sha(execution))}
-    result['payloads'] = {host: dict(path=str(remote / 'payload/sources.json'), sha256=sha(payload))}
+    result['bindings'] = {host: dict(path=(remote / execution.name).as_posix(), sha256=sha(execution))}
+    result['payloads'] = {host: dict(path=(remote / 'payload/sources.json').as_posix(), sha256=sha(payload))}
     placement = result['placement']
     if placement is not None:
         placement['inventory'] = evidence(placement['inventory'])
@@ -108,9 +118,9 @@ def portable_support(manifest, host, portable, output, destination):
         require(pins[name] == manifest['documents'][key]['sha256'], 'Frozen analysis source differs')
     write(output / 'manifest.remote.json', result)
     receipt = dict(schema='g115-d3-portable-support/v1', prepared=True, launched=False,
-                   formal_ready=False, host=host, destination=str(destination), evidence=copied, tools=pins,
-                   command=['python3', str(destination / 'tools/g115_d3_launch_v1.py'),
-                            '--manifest', str(destination / 'manifest.remote.json'), '--host', host, '--check-only'],
+                   formal_ready=False, host=host, destination=destination.as_posix(), evidence=copied, tools=pins,
+                   command=[python_executable or 'python3', (destination / 'tools/g115_d3_launch_v1.py').as_posix(),
+                            '--manifest', (destination / 'manifest.remote.json').as_posix(), '--host', host, '--check-only'],
                    manifest_sha256=sha(output / 'manifest.remote.json'))
     write(output / 'transport.json', receipt)
     return receipt
@@ -128,12 +138,14 @@ def main():
     support.add_argument('--portable-binding', type=Path, required=True)
     support.add_argument('--output', type=Path, required=True)
     support.add_argument('--destination', required=True)
+    support.add_argument('--python-executable')
     args = parser.parse_args()
     if args.mode == 'binding':
         receipt = portable_binding(args.binding, args.output)
         print(json.dumps(dict(jobs=receipt['jobs'], files=len(receipt['files']), launched=False)))
     else:
-        receipt = portable_support(read(args.manifest), args.host, args.portable_binding, args.output, args.destination)
+        receipt = portable_support(read(args.manifest), args.host, args.portable_binding, args.output, args.destination,
+                                   args.python_executable)
         print(json.dumps(dict(evidence_files=len(receipt['evidence']), launched=False, formal_ready=False)))
 
 
