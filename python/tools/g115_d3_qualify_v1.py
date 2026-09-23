@@ -46,7 +46,7 @@ def free_memory():
 def validate(spec):
     require(spec['schema']=='g115-d3-throughput-qualification/v1','Wrong workload kind')
     require(spec['formal_measurement'] is False,'Qualification cannot launch formal measurement')
-    require(spec['source_commit']=='6604306cd67ccfb7e558b49b6504e033885fb0a8','Wrong native source')
+    require(spec['source_commit']=='e258daf3ab807cd6d8616a1431a21ea5ee22ac0b','Wrong native source')
     require(spec['host'] in ('jack','haleyspc','runpod'),'Unknown host')
     inventory=spec['inventory'];require(set(inventory)=={'jack','haleyspc','runpod'},'Three-host inventory required')
     require(inventory[spec['host']]['complete'] and 0<=time.time()-inventory['jack']['checked_unix']<=1800,'Fresh placement inventory required')

@@ -2,7 +2,7 @@
 import argparse,copy,json
 from pathlib import Path
 from g115_d3_payload_v1 import prepare,sha,read,require,write
-COMMIT='6604306cd67ccfb7e558b49b6504e033885fb0a8'
+COMMIT='e258daf3ab807cd6d8616a1431a21ea5ee22ac0b'
 def main():
     p=argparse.ArgumentParser();p.add_argument('--archive-plan',type=Path,required=True);p.add_argument('--panel',type=Path,required=True);p.add_argument('--accepted-wrapper',type=Path,required=True);p.add_argument('--root',type=Path,required=True);p.add_argument('--host',choices=['jack','haleyspc','runpod'],required=True);p.add_argument('--runtime',type=Path,required=True);p.add_argument('--destination',required=True);p.add_argument('--workers',type=int,nargs='+',required=True);p.add_argument('--lease-name');p.add_argument('--inventory',type=Path,required=True);a=p.parse_args()
     panel=read(a.panel);archive=read(a.archive_plan);accepted=read(a.accepted_wrapper);runtime=read(a.runtime)
