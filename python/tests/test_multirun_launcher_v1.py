@@ -350,6 +350,18 @@ class UnitTests(unittest.TestCase):
             self.assertEqual([c["allocation"] for c in choice["candidates"]],
                              ["1@jack:0", "2@jack:0", "3@jack:0"])
 
+    def test_fit_decisions_wait_for_released_memory_to_settle(self) -> None:
+        readings = iter([[5700], [4100], [2900], [2900], [2900], [2900]])
+        original = launcher.gpu_inventory
+        launcher.gpu_inventory = lambda runner=None: [{"index": 0, "memory_total_mib": 12282,
+                                                       "memory_used_mib": next(readings)[0]}]
+        try:
+            settled = launcher.settled_gpu_inventory(interval=0.0)
+        finally:
+            launcher.gpu_inventory = original
+        self.assertEqual(settled[0]["memory_used_mib"], 2900)
+        self.assertEqual(launcher.settled_gpu_inventory(interval=0.0), [])
+
     def test_idle_capacity_needs_two_consecutive_idle_windows_with_waiting_runs(self) -> None:
         def samples(pattern):
             return [{"t": 5.0 * i, "cpu_percent": cpu, "waiting_runs": waiting}

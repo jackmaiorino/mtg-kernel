@@ -1196,6 +1196,25 @@ def compare_to_goldens(workload: Workload, results: list[RunResult], root: Path,
     return per_run
 
 
+def settled_gpu_inventory(timeout: float = 60.0, interval: float = 2.0) -> list[dict]:
+    """GPU readings once memory use has stopped changing.
+
+    A process that just exited can hold its device memory for several seconds
+    in nvidia-smi's view; deciding what fits from such a reading would reject
+    allocations that do fit. Waits until three consecutive readings agree per
+    device (or the timeout passes) and returns the last reading.
+    """
+    readings = [gpu_inventory()]
+    deadline = time.monotonic() + timeout
+    while readings[-1] and time.monotonic() < deadline:
+        time.sleep(interval)
+        readings.append(gpu_inventory())
+        used = [[gpu["memory_used_mib"] for gpu in reading] for reading in readings[-3:]]
+        if len(used) == 3 and used[0] == used[1] == used[2]:
+            break
+    return readings[-1]
+
+
 def device_fits(slots: list[Slot], per_process_mib: Callable[[int], float], margin_mib: int = 512,
                 devices: list[dict] | None = None) -> list[str]:
     """Reasons an allocation cannot fit on the local GPUs right now (empty if it fits)."""
@@ -1405,7 +1424,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     pending = [slots for slots in candidates if slots != golden_slots]
     while pending:
         slots = pending.pop(0)
-        fit = device_fits(slots, per_process) if any(per_process(s.device) > 0 for s in slots) else []
+        fit = device_fits(slots, per_process, devices=settled_gpu_inventory())             if any(per_process(s.device) > 0 for s in slots) else []
         missing = [slot.host for slot in slots if not inventory["hosts"].get(slot.host, {}).get("eligible")]
         if missing or fit:
             record(slots, [], 0.0, {}, "capacity-skipped",
@@ -1427,7 +1446,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             if stop_on_saturation and not_useful >= 2:
                 break
         if auto_devices and entry["status"] == "qualified" and not pending:
-            grown = grow_allocation(slots, per_process)
+            grown = grow_allocation(slots, per_process, devices=settled_gpu_inventory())
             if grown is not None:
                 pending.append(grown)
 
@@ -1741,7 +1760,8 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     check_gpu_identity(choice, slots, gpus or live_gpus(HALEYSPC_ADDRESS))
     # Current reservations win: refuse rather than squeeze in beside other GPU work.
     footprint = {int(device): mib for device, mib in choice.get("gpu_footprint_mib", {}).items()}
-    crowded = device_fits(slots, lambda device: footprint.get(device, max(footprint.values(), default=0.0)))
+    crowded = device_fits(slots, lambda device: footprint.get(device, max(footprint.values(), default=0.0)),
+                          devices=settled_gpu_inventory())
     if crowded:
         raise LaunchRefused("not enough free GPU memory for the qualified allocation right now: " + "; ".join(crowded))
     runs_root = root / "runs"

@@ -1,162 +1,170 @@
 # Qualified concurrent launcher for independent training runs (v1)
 
-Status: implemented on branch `opus/multirun-qualified-v1`. Design review
-requested in `collab/FABLE-QUEUE.md`.
+Status: branch `opus/multirun-qualified-v1`, PR #107. Fable review
+2026-09-23 (`collab/FABLE-REVIEW-20260923.md`) countersigned the mechanism
+and required M1 to M9; this revision applies them (map at the end).
 
 ## What it does
 
 An experiment is a fixed set of independent runs: one seed and one Store per
-run, optionally grouped into arms with per-arm knobs. `python/tools/multirun_launcher_v1.py`
-runs them concurrently, one process per run, across placement slots
-(`<capacity>@<host>:<device>`, for example `2@0+1@1`), and enforces
-`C:/Users/Jack/COMPUTE-POLICY.md` items 2 to 5 at the launch point:
+run, optionally grouped into arms with per-arm knobs, optionally a resumed
+segment of existing Stores. `python/tools/multirun_launcher_v1.py` runs them
+concurrently, one process per run, across placement slots
+(`<capacity>@<host>:<device>`, for example `2@0+2@1+2@haleyspc:0`), and
+enforces `C:/Users/Jack/COMPUTE-POLICY.md` items 2 to 5 at the launch point:
 
 1. `inventory` records Jack's PC, HaleysPC (SSH over Tailscale) and RunPod
-   (read-only account query) with a timestamp, eligibility and reason.
-2. `qualify` runs every run of the experiment for a short prefix, first one at
-   a time (the serial goldens, plus a serial repeat of the first run), then
-   under each candidate allocation in increasing concurrency. It records
-   completed-work throughput, CPU and GPU use, and the projected completion
-   time of the full experiment, checks every concurrent run byte-for-byte
-   against its serial golden, and writes a compute-choice receipt naming the
-   fastest qualified allocation. Candidates are explicit (`--allocation`) or
-   adaptive (`--auto 0,1`, below); allocations that cannot fit in free GPU
-   memory are recorded as capacity-skipped. The receipt also binds the
-   executable hash, a digest of the runtime `data/` tree the executable reads
-   by path, and the launcher's own hash.
-3. `launch` spawns nothing unless the receipt matches this exact executable
-   (SHA-256), workload (knobs, arms, seeds, length) and run set; the inventory
-   is under 24 hours old and covers all three hosts; serial and parallel
-   collection were both measured; every eligible host was measured; the golden
-   outputs on disk still hash to the receipt; and the selected allocation is
-   the fastest qualified one. It then runs the experiment, writes one entry
-   per run in `experiment-manifest.json` plus a `run-manifest.json` in each run
-   root, samples CPU and GPU every 5 seconds (flagging two consecutive
+   (read-only account query) with a timestamp, eligibility, reason and GPU
+   identities.
+2. `qualify` runs every run for a short prefix, first one at a time (the
+   serial goldens, plus a serial repeat whose digests are stored), then under
+   each candidate allocation in increasing concurrency, comparing every
+   concurrent run byte for byte with its serial golden and projecting the
+   completion time (a simulation of the scheduler with each host's measured
+   per-run duration plus staging overhead). It then runs the **full-length
+   sentinel** on the fastest qualified allocation: each arm's first run alone
+   at full length, and every placement x arm at full length and full width;
+   any byte difference disqualifies that allocation and the next fastest is
+   tried. Candidates are explicit (`--allocation`) or adaptive
+   (`--auto 0,1`). The receipt binds the executable, the runtime `data/` tree,
+   the launcher's own hash, the workload (knobs, arms, seeds, length, segment,
+   parent Stores by content) and the inventory.
+3. `launch` spawns nothing unless the receipt matches this exact executable,
+   data, launcher and workload; the inventory is under 24 hours old and covers
+   all three hosts; serial and parallel collection were both measured; every
+   eligible host was measured; the goldens, serial repeat and sentinel outputs
+   on disk still hash to the receipt; the sentinel passed on every placement
+   and arm of the selected allocation; the selected allocation is the fastest
+   qualified one; each GPU it uses is the device the receipt measured (name
+   and UUID, local and remote); and enough GPU memory is free now. It writes
+   one entry per run in `experiment-manifest.json` plus a `run-manifest.json`
+   per run, samples CPU and GPU every 5 seconds (flagging two consecutive
    60-second windows with runs waiting and the CPU under 60 percent busy), and
-   audits each finished run's first qualification-prefix generations against
-   its serial golden.
-4. `verify` reruns chosen launched runs alone at full length (under launch
-   tickets bound to the same receipt) and compares every output byte.
+   audits each run's qualification prefix against its serial golden. A run is
+   complete only if it exited cleanly, reached its target generation and
+   passed that audit; otherwise the run and the experiment fail and the
+   command exits non-zero.
+4. `verify` reruns chosen launched runs alone at full length and compares
+   every output byte (optional extra evidence; the sentinel is the enforced
+   check).
 
-Each process also receives a ticket (`MULTIRUN_LAUNCH_TICKET`) binding the
-executable hash, seed, planned length, stop point and, for a launch, the
-receipt hash. `multirun_pilot_v1` checks it before touching any Store, device
-or thread (`mtg-kernel/src/multirun_launch_ticket_v1.rs`): a raw invocation
-planning more than 64 updates in one process is refused. Runs of at most 64
-planned updates stay ticket-free as small correctness and timing checks. A
-long record stopped early still counts its full record length, so a campaign
-cannot be split into short stops to avoid the check. Neither check is a
-security boundary against a deliberately forged receipt or ticket.
+## The ticket gate inside the harness
+
+Each process receives `MULTIRUN_LAUNCH_TICKET`. `multirun_pilot_v1` checks it
+before touching any Store, device or thread
+(`mtg-kernel/src/multirun_launch_ticket_v1.rs`). The limit is on planned
+updates **summed across the process's runs** (run count x record length,
+whatever the stop point): at most 64 runs ticket-free as a small correctness or
+timing check; 65 or more needs a ticket, so a long record stopped early cannot
+escape it. Every ticket binds the executable hash, seed, record length,
+resume generation and stop generation, and one run per process. Kinds:
+`qualification` (no receipt yet; stop within 32 updates past the resume
+point), `sentinel` (no receipt yet; the full-length reference runs), `launch`
+(binds the receipt hash). Neither this nor the Python check is a security
+boundary against a deliberately forged receipt or ticket.
+
+CI note: the harness test that calls the gate is ignored, CUDA-gated and
+Windows-gated, so CI never executes the hook. CI runs the gate's unit tests
+(including the 64/65 boundary); the hook itself is exercised only by local
+launches, and the refusal receipt below is that local evidence.
 
 ## Semantics preserved
 
 Concurrency is between processes only. Each run keeps its own seed, Store,
-weights, batch order and optimizer state; no forward call, batch or update is
-shared between runs. Qualification uses the production record (same planned
-length) stopped at a checkpoint boundary, so a serial golden is a true prefix
-of the production run, and the post-launch audit compares the same bytes.
+weights, batch order and optimizer state; nothing is shared between runs.
+Qualification uses the production record stopped at a checkpoint boundary, so
+a serial golden is a true prefix of the production run. A resumed segment
+starts every execution from a private copy of its parent Store. The harness
+honours `MULTIRUN_STOP_AFTER_GENERATION` only at checkpoint boundaries (every 4
+updates; any other value silently trains the whole record), so prefixes are
+multiples of 4 and at least 8, and a watchdog (local and remote) kills a
+process that passes its stop generation. The harness exits 0 when its filter
+matches nothing, so a run counts only when its log shows the test passed.
 
-Measured on this host (probe before qualification, seed 424242, 8-update
-prefix, 23 Store outputs): a serial repeat on GPU 0, the same run on GPU 1
-(RTX 3050 versus RTX 4070 SUPER) and two concurrent copies on GPU 0 were all
-byte-identical to the first serial run, including `run.json`, `latest.json`
-and the lock file. No output needs exclusion.
-
-Two harness facts the launcher now enforces:
-- the harness honours `MULTIRUN_STOP_AFTER_GENERATION` only at a checkpoint
-  boundary (every 4 updates); any other value silently trains the whole
-  record. Qualification prefixes must be a multiple of 4 and at least 8, and
-  a watchdog kills any process that passes its stop generation;
-- the harness exits 0 when its test filter matches nothing, so a run only
-  counts as complete when its log shows the test passed.
-
-## Qualification receipts
-
-Committed under `docs/reports/multirun_qualified_v1/` (see its README).
-Workload: 2 arms x 4 seeds, 128-update records, qualified on a 12-update
-prefix with `qualify --auto 0,1`.
-
-| Allocation | Episodes/s | Projected, 8 runs | Byte-identical |
-| --- | --- | --- | --- |
-| 1@gpu0 (serial) | 7.00 | 107 min | golden + repeat |
-| 1@gpu0 + 1@gpu1 | 12.56 | 57 min | 8/8 |
-| 2@gpu0 + 1@gpu1 | 16.31 | 47 min | 8/8 |
-| 2@gpu0 + 2@gpu1 (selected) | 18.57 | 39 min | 8/8 |
-
-The guarded launch on 2+2 completed all 8 runs in 24.4 min (44.7
-episodes/s) with every prefix audit identical. Two runs (one per arm) rerun
-alone at full length matched the concurrent runs on all 233 Store outputs;
-serial full length is about 530 s per run, so the experiment took 2.9x less
-wall time than serial. One 4-run arm fits in a single wave (about 1.4x one
-serial run); two arms take about 2.8x one serial run.
+RECEIPTS_ROUND2
 
 ## Binding constraint and next lever
 
-GPU memory, not CPU, caps concurrency on this host: each process holds about
-2.95 GB on the 12 GB card and 2.6 GB on the 6 GB card while the CPU averaged
-37 percent at the selected width, and the launch monitor flagged the idle CPU
-capacity. The footprint comes from the CUDA runtime's memory pools: cubecl-cuda
-0.10 sets `max_page_size = total_memory / 4`, and any allocation above the
-largest sub-slice pool reserves a whole page (3 GB or 1.5 GB). Capping that
-page size per process, as a narrow vendored patch like the existing
-`burn-cubecl` one, would likely double or triple the width before the CPU
-saturates. That is a bounded follow-up, not part of this PR: it changes the
-build graph of every CUDA path and needs its own review, a byte-identity
-requalification and the CUDA golden tests.
+GPU memory, not CPU, caps local concurrency: each process holds about 2.95 GB
+on the 12 GB card and 2.6 GB on the 6 GB card while the CPU averaged 37
+percent at the round-1 selected width. cubecl-cuda 0.10 sets
+`max_page_size = total_memory / 4` (`runtime.rs:103`), and an allocation above
+the largest sub-slice pool reserves a whole page. Capping it per process, as a
+narrow vendored patch like the existing `burn-cubecl` one, is the next lever;
+it must pass this same byte-identity gate and is not part of this PR.
 
-Adaptive sweep rule: serial on the first device, one process on every listed
-device (measuring each device's footprint), then one more process on the
-device with the most spare memory until nothing fits or two steps in a row add
-less than 5 percent throughput. The launch refuses if other work currently
-occupies the memory the allocation needs. Device ordinals assume CUDA and
-`nvidia-smi` enumerate GPUs in the same order, which held here (each
-ordinal's memory rose on the matching index).
+## Launch paths: guarded, migrated and blocked
 
-## Launch paths: guarded and needing migration
+Guarded (refuse missing or incompatible evidence before spawning):
+`multirun_launcher_v1.py launch`; and `multirun_pilot_v1` itself above 64
+summed planned updates (ticket).
 
-Guarded (refuse missing or incompatible throughput evidence before spawning):
+Legacy callers of `multirun_pilot_v1` on main: 39 launch statements in 20 files
+across 6 campaign families. Every one planning at most 64 updates keeps
+working. Those above 64 are refused on a rebuild from this branch until they go
+through the launcher:
 
-| Path | Guard |
-| --- | --- |
-| `python/tools/multirun_launcher_v1.py launch` | receipt validation (`require_choice`) plus per-run tickets |
-| `multirun_pilot_v1` run raw with more than 64 planned updates per process | ticket check inside the harness |
+| Family (helper) | Refused statements | Shape | Status |
+| --- | --- | --- | --- |
+| `macro_selfplay_envrand_v2_rung_v1` (`Invoke-MacroTrainingRun`) | `formal.ps1:45` (512 updates, 3 seeds) | fresh run, ladder and envrand knobs | launchable now: one workload, 3 runs, knobs `MULTIRUN_LADDER`, `MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2`; wrapper not rewritten |
+| `regularized_continuation_retest_v1` (`Invoke-NativePilot`) | `full-horizon-training.ps1:246` (512, anchor beta, waves) | fresh or resumed, anchor beta | launchable now: knobs plus `segment`/`parents` for resumed waves; wrapper not rewritten |
+| `scaled_selfplay_population_v1` (`Invoke-ScaledNativePilot`) | `correct-throughput-screen.ps1:34`, `preflight-screen.ps1:58,61,131`, `run-replay.ps1:58` | successor or retest segments (stop and resume) | launchable now as segments; wrappers not rewritten |
+| same family | `run-initial-population-interval.ps1:39`, `run-population-interval.ps1:43` | population runtime | **blocked**: the harness asserts `stop == resume + 128` for this runtime (`native_science_loop_v1.rs:1644`), so no prefix qualification is possible without changing campaign validation |
+| same family | `run-response-exploiter-build.ps1:186,191,203`, `run-response-exploiter-retry.ps1:315,320,332`, `run-response-exploiter-screen.ps1:174,187,192` | response-exploiter runtime | **blocked**: the harness permits only a stop at 4 or none for this runtime (`native_science_loop_v1.rs:1658`) |
+| `response_exploiter_v2_campaign_v1` | `run-response-exploiter-v2-build.ps1:135,140,151,164`, `-preflight.ps1:101,116,122`, `-retry-build.ps1:152` | response-exploiter runtime | **blocked** (same assertion) |
+| `response_exploiter_denovo_screen_v1` | `run-denovo-screen-build.ps1:70`, `run-denovo-512-screen-build.ps1:79` | response-exploiter runtime | **blocked** (same assertion) |
+| `exploiter_probe_v3` (`launch_probe.py:1735`) | arm runs (3 runs x 512 per process) | multi-run process | migrate as one run per process (seed = base + offset + ordinal); byte equivalence with the in-process form is expected, not yet verified |
 
-Partially guarded (pre-policy, campaign-specific):
+`run-native.ps1:23` in the population family forwards arguments for every lane
+above and follows their status. The blocked rows need a ruling before this
+gate ships on main: either Jack retires those finished campaign families, or a
+follow-up lets those runtimes stop early for qualification only (a change to
+campaign validation, reviewed separately). The question is posted in
+`collab/FOR-JACK.md`.
 
-| Path | State |
-| --- | --- |
-| `scripts/experiments/regularized_continuation_retest_v1/full-horizon-training.ps1` | pins one campaign throughput manifest by SHA-256; not the policy's serial versus parallel comparison. Its pilot-harness runs above 64 updates now also need a ticket when rebuilt from this branch. |
-| `scripts/experiments/scaled_selfplay_population_v1/run-population-interval.ps1`, `run-initial-population-interval.ps1` | same pattern; population and resume knobs are not yet launcher knobs |
-
-Unguarded, need migration before substantial use:
-
-| Path | Kind |
-| --- | --- |
-| `src/bin/cycle4_arm_v1.rs` via `scripts/experiments/population_v2_cycle4_v1/run-cycle4-arm.ps1` | training (per-arm pinned seeds) |
-| ignored harness tests `learning_smoke_k64_uniform_delta_v1`, `learning_smoke_k64_failure_diagnostic_v1`, `pathfinding_run_k64_deep_v1`, `qualification_measurement_k64_depth256_v1`, `timing_probe_gpu_k_scaling_throughput` | training |
-| ignored harness tests `s1_mirror_saturation_eval_v1`, `ladder_saturation_eval_v1`, `ladder_head_to_head_eval_v1`, `response_exploiter_mixture_eval_v1`, `pathfinding_saturation_eval_v1` | evaluation |
-| `scripts/experiments/population_v2_cycle4_v1/run_payoff_panel_v1.py`, `run_m2_common_root_panel_v1.py`, `run-m1-cp7-panel*.sh`, other `scripts/experiments/**` wrappers | evaluation or training wrappers |
-| `src/bin/checkpoint_shadow_stdio_v1.rs`, `tts_s1_corpus_v1.rs`, `tts_s1_replay_v1.rs` | evaluation |
-| `examples/experimental_burn_net8_*`, `examples/native_trainer_true_k512_loss_capture_v1.rs` | training probes |
-| `python/mtg_kernel_rl` CLI (`mtg-kernel-rl train`, `evaluate`) | Python trainer and evaluator |
-
-Off main, not covered by this PR: Codex's public trainer launcher
-(`python/tools/public_feature_pilot_v1.py` with its own
-`compute_throughput_v1.require_choice`, branches `codex/public-*`), scripts
-under `E:/mtg-meta-recovery-20260921`, and the runner scripts in the
-IdeaProjects root. The generic `command-template-v1` adapter is the migration
-route for any trainer that takes a seed, an output directory and a stop
+Unguarded, need migration before substantial use (no ticket check at all):
+`src/bin/cycle4_arm_v1.rs` via `run-cycle4-arm.ps1` (training); the other
+ignored harness tests (`learning_smoke_k64_uniform_delta_v1`,
+`learning_smoke_k64_failure_diagnostic_v1`, `pathfinding_run_k64_deep_v1`,
+`qualification_measurement_k64_depth256_v1`,
+`timing_probe_gpu_k_scaling_throughput` train;
+`s1_mirror_saturation_eval_v1`, `ladder_saturation_eval_v1`,
+`ladder_head_to_head_eval_v1`, `response_exploiter_mixture_eval_v1`,
+`pathfinding_saturation_eval_v1` evaluate); the evaluation wrappers under
+`scripts/experiments/population_v2_cycle4_v1/`; `checkpoint_shadow_stdio_v1`,
+`tts_s1_corpus_v1`, `tts_s1_replay_v1`; the training examples; the
+`python/mtg_kernel_rl` CLI. Off main and not covered: Codex's public trainer
+launcher (its own `compute_throughput_v1.require_choice`), scripts under
+`E:/mtg-meta-recovery-20260921`, and the IdeaProjects root runners. The
+`command-template-v1` adapter is the migration route for any trainer that
+takes a seed, an output directory, a stop point and optionally a resume
 point, and publishes generation-named outputs.
 
 ## Placement notes
 
-- HaleysPC: `SshPowerShellExecutor` stages the executable (hash-checked on the
-  remote) and the repository `data/` directory at the same absolute paths,
-  because the test executable bakes its data paths at compile time, then
-  archives each run's outputs back for the same byte comparison. The host was
-  offline (Tailscale last seen 23 hours earlier, SSH timeout) throughout this
-  lane, so this path is unit-tested only and unqualified.
-- RunPod: the inventory queries the account read-only. Pods are Linux, and
-  this repository documents Windows and Linux training bytes as different by
-  design, so a pod cannot reproduce a Windows serial golden. Qualifying RunPod
-  needs a Linux build with Linux goldens and a lease guard.
+- HaleysPC has only a C: drive and no CUDA toolkit. `SshPowerShellExecutor`
+  mirrors every local drive path under `C:/mtg-node/multirun-mirror/<letter>`
+  and maps the drive per session with `subst`, stages the executable, the
+  nvrtc/cudart DLLs and the CUDA headers (nvrtc kernel JIT reads
+  `$CUDA_PATH/include`) with hash checks, runs through `cmd` redirection (so
+  the log is not UTF-16), applies the same overrun watchdog and log check as
+  local runs, returns outputs as tar and deletes the remote copy.
+- RunPod: the account is queried read-only. Pods are Linux, and the
+  repository pins different training bytes per target (the per-target
+  `train_state_sha256` witnesses in `mtg-kernel/src/native_trainer_v1.rs`), so
+  a pod cannot reproduce a Windows serial golden. Qualifying RunPod needs a
+  Linux build with Linux goldens and a lease guard.
+
+## Verdict map (FABLE-REVIEW-20260923, PR #107)
+
+| Item | Where |
+| --- | --- |
+| M1 full-length sentinel per placement and arm, enforced | `qualify` sentinel stage, `require_sentinel`; tests `test_m1_*` |
+| M2 prefix-audit mismatch fails run and experiment | `launch`; `test_m2_*` |
+| M3 serial repeat digests stored and compared | `golden.serial_repeat`; `test_m3_*` |
+| M4 launcher hash and GPU identity checked | `require_choice`, `check_gpu_identity`; `test_m4_*` |
+| M5 blast radius listed; knobs admitted; resume-aware tickets and segments | table above; `test_m5_*`; ticket tests `resumed_segments_*`; blocked rows in FOR-JACK |
+| M6 ticket wording, 65 boundary test, CI note | this doc; `small_checks_need_no_ticket_and_substantial_runs_do` |
+| M7 HaleysPC receipts, watchdog and log check | round-2 receipts; SSH executor |
+| M8 committed RunPod evidence | launcher reason text and placement notes |
+| M9 refusal log committed | `docs/reports/multirun_qualified_v1/round2/raw-harness-refusal.txt` |
