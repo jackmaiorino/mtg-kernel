@@ -113,6 +113,7 @@ def validate_plan(manifest, host, now=None):
     require(manifest['formal_measurement'] is True and manifest.get('preparation_only') is not True,
             'Preparation is not a formal launch manifest')
     require(docs['execution_bounds']['sha256']==R8_BOUNDS_SHA,'R8 bound derivation differs')
+    r8_bounds=load(docs['execution_bounds'])
     kimi=review['r8_kimi_verification']
     require(kimi['excerpt'].strip() and kimi['excerpt'] in checked(kimi['record']).read_text(encoding='utf-8'),
             'R8 Kimi verification absent')
@@ -127,13 +128,24 @@ def validate_plan(manifest, host, now=None):
     baseline_ids = {j['id'] for j in panel['jobs'] if j['arm'] == 'baseline'}
     require(archive['panel_sha256'] == PANEL_SHA and len(archive['jobs']) == 1024 and
             {j['id'] for j in archive['jobs']} == baseline_ids, 'Baseline parity reference incomplete')
-    from g115_d3_baseline_parity_v1 import precheck_index
-    precheck_index(panel,archive,load(manifest['baseline_parity']['precheck']))
+    # The locally re-derived, reviewed proof is frozen byte-for-byte. Remote
+    # workers need its receipt, not another copy of thousands of old stores.
+    # The local collector rechecks every underlying native store before stats.
+    require(manifest['baseline_parity']['precheck']['sha256']==
+            '36f7a22886c5f615f31a6b5034b18e41f970040842a2710e7d3c57f9b0797405',
+            'R8 verified full baseline precheck differs')
+    precheck=load(manifest['baseline_parity']['precheck'])
+    require(precheck['complete'] and precheck['source']==SOURCE and
+            len(precheck['current']['rows'])==1024 and
+            {r['id'] for r in precheck['current']['rows']}==baseline_ids,
+            'R8 baseline precheck is incomplete')
+    require(manifest['baseline_parity']['prior_attempt']['sha256']==
+            'e1c9c5dc753e65d7054ca2065aec2e5f200ebc954e03389cef3fe97179a324fd',
+            'R8 frozen attempt002 overlap index differs')
     prior=load(manifest['baseline_parity']['prior_attempt'])
     require(len(prior['stores'])==812 and len({r['id'] for r in prior['stores']})==812 and
             prior['invalid_attempt_sha256']=='50f562871c589ad59e64d439b1fbc90659ad3de5a19a3b22442a17e55256eee8',
             'Retained attempt002 overlap index incomplete')
-    for row in prior['stores']:checked(row['store'])
     envelopes = manifest['baseline_parity']['v3_envelopes']
     require(bool(envelopes) and all(len(h) == 64 and all(c in '0123456789abcdef' for c in h)
                                  for h in envelopes), 'Declare V3 build provenance before launch')
@@ -217,6 +229,10 @@ def validate_plan(manifest, host, now=None):
                     'Qualification rate differs from completed work/time')
         fastest = max(phases, key=lambda p: p['matches_per_second'])
         require(allocation['workers'] == fastest['workers'], 'Use fastest qualified worker count')
+        search_counts={r['id']:r['search_decisions'] for r in r8_bounds['hosts']['jack']['rows']}
+        measured_cost=max(r['seconds']/search_counts[r['id']] for r in fastest['rows'] if r['arm']=='search')
+        require(1.5*r8_bounds['archive_max_decisions']*max(r8_bounds['cost_anchor_seconds'],measured_cost)<=10800,
+                'New host timing exceeds the frozen R8 match allowance')
         rates[name] = fastest['matches_per_second']
         overhead[name] = allocation['startup_transfer_recovery_seconds']
         require(overhead[name] >= 0 and inventory[name]['complete'], 'Ineligible qualified host')

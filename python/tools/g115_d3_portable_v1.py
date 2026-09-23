@@ -89,6 +89,13 @@ def portable_support(manifest, host, portable, output, destination, python_execu
         for key in ('record', 'verdict'):
             if key in disposition:
                 disposition[key] = evidence(disposition[key])
+        if disposition.get('r8_replay') is not None:
+            disposition['r8_replay'] = evidence(disposition['r8_replay'])
+        if disposition.get('r8_kimi_verification') is not None:
+            disposition['r8_kimi_verification']['record'] = evidence(disposition['r8_kimi_verification']['record'])
+    for key in ('precheck', 'prior_attempt'):
+        if key in result.get('baseline_parity', {}):
+            result['baseline_parity'][key] = evidence(result['baseline_parity'][key])
     transport = read(portable / 'transport.json')
     for item in transport['files']:
         require(sha(portable / item['path']) == item['sha256'], 'Portable binding changed')
@@ -109,12 +116,13 @@ def portable_support(manifest, host, portable, output, destination, python_execu
     tools = Path(__file__).parent
     names = ('g115_d3_launch_v1.py', 'g115_d3_qualify_v1.py', 'g115_d3_native_results_v1.py',
              'g115_d3_analysis_v1.py', 'g115_d3_power_core.py', 'g115_d3_cloud_host_v1.py',
-             'g115_d3_payload_v1.py', 'g115_d3_baseline_parity_v1.py')
+             'g115_d3_payload_v1.py', 'g115_d3_baseline_parity_v1.py', 'g115_d3_collect_v1.py')
     pins = {}
     for name in names:
         shutil.copyfile(tools / name, output / 'tools' / name)
         pins[name] = sha(output / 'tools' / name)
-    for key, name in (('analysis', names[3]), ('power_core', names[4]), ('reader', names[2])):
+    for key, name in (('analysis', names[3]), ('power_core', names[4]), ('reader', names[2]),
+                      ('launcher', names[0]), ('baseline_parity', names[7]), ('collector', names[8])):
         require(pins[name] == manifest['documents'][key]['sha256'], 'Frozen analysis source differs')
     write(output / 'manifest.remote.json', result)
     receipt = dict(schema='g115-d3-portable-support/v1', prepared=True, launched=False,
