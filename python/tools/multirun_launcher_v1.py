@@ -722,6 +722,14 @@ class SshPowerShellExecutor:
     def letters(self, *paths: Path | str) -> list[str]:
         return sorted({self.local(path)[0].upper() for path in paths})
 
+    def gpus(self) -> list[dict]:
+        """This host's GPU readings (same shape as the local gpu_inventory)."""
+        result = self.runner(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", self.address] + GPU_QUERY,
+                             capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise RuntimeError(f"{self.host}: nvidia-smi failed: {result.stderr.strip()[:200]}")
+        return parse_gpu_csv(result.stdout)
+
     def remote_hash(self, path: Path | str) -> str:
         return self.ssh(f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{self.physical(path)}').Hash", 300) \
             .strip().lower()
@@ -911,18 +919,28 @@ def execute_allocation(workload: Workload, slots: list[Slot], root: Path, stop_a
 # Machine observation
 
 
-def gpu_inventory(runner=subprocess.run) -> list[dict]:
-    try:
-        result = runner(["nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.used,utilization.gpu",
-                         "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return []
+GPU_QUERY = ["nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.used,utilization.gpu",
+             "--format=csv,noheader,nounits"]
+
+
+def parse_gpu_csv(text: str) -> list[dict]:
     devices = []
-    for line in result.stdout.strip().splitlines():
-        index, name, uuid, total, used, utilization = [part.strip() for part in line.split(",")]
+    for line in text.strip().splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) != 6 or not parts[0].isdigit():
+            continue
+        index, name, uuid, total, used, utilization = parts
         devices.append({"index": int(index), "name": name, "uuid": uuid, "memory_total_mib": int(total),
                         "memory_used_mib": int(used), "utilization_percent": int(utilization)})
     return devices
+
+
+def gpu_inventory(runner=subprocess.run) -> list[dict]:
+    try:
+        result = runner(GPU_QUERY, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return parse_gpu_csv(result.stdout)
 
 
 class CpuSampler:
@@ -1014,21 +1032,34 @@ def idle_capacity_events(samples: list[dict], window_seconds: float = IDLE_WINDO
 class Monitor(threading.Thread):
     """Samples CPU and GPU use during a leg or launch (policy item 6)."""
 
-    def __init__(self, path: Path, waiting: Callable[[], int], interval: float = 5.0):
+    def __init__(self, path: Path, waiting: Callable[[], int], interval: float = 5.0,
+                 remote: dict[str, Callable[[], list[dict]]] | None = None):
         super().__init__(daemon=True)
         self.path = path
         self.waiting = waiting
         self.interval = interval
+        self.remote = remote or {}
         self.stop_event = threading.Event()
         self.samples: list[dict] = []
 
     def run(self) -> None:
         cpu = CpuSampler()
+        tick = 0
         with self.path.open("a", encoding="utf-8") as log:
             while not self.stop_event.wait(self.interval):
                 sample = {"t": time.time(), "cpu_percent": cpu.sample(), "waiting_runs": self.waiting(),
                           "gpus": [{k: d[k] for k in ("index", "memory_used_mib", "utilization_percent")}
                                    for d in gpu_inventory()]}
+                tick += 1
+                if self.remote and tick % 3 == 1:  # an SSH round trip per host: sample every third tick
+                    sample["remote_gpus"] = {}
+                    for host, read in self.remote.items():
+                        try:
+                            sample["remote_gpus"][host] = [
+                                {k: d[k] for k in ("index", "memory_used_mib", "utilization_percent")}
+                                for d in read()]
+                        except Exception as error:  # a missed sample is recorded, not fatal
+                            sample["remote_gpus"][host] = repr(error)
                 self.samples.append(sample)
                 log.write(json.dumps(sample) + "\n")
                 log.flush()
@@ -1040,8 +1071,12 @@ class Monitor(threading.Thread):
         peaks: dict[str, int] = {}
         for sample in self.samples:
             for gpu in sample["gpus"]:
-                key = str(gpu["index"])
+                key = f"jack:{gpu['index']}"
                 peaks[key] = max(peaks.get(key, 0), gpu["memory_used_mib"])
+            for host, gpus in (sample.get("remote_gpus") or {}).items():
+                for gpu in gpus if isinstance(gpus, list) else []:
+                    key = f"{host}:{gpu['index']}"
+                    peaks[key] = max(peaks.get(key, 0), gpu["memory_used_mib"])
         return {"samples": len(self.samples), "cpu_mean_percent": sum(cpu) / len(cpu) if cpu else None,
                 "gpu_peak_memory_mib": peaks, "idle_capacity_events": idle_capacity_events(self.samples)}
 
@@ -1196,7 +1231,8 @@ def compare_to_goldens(workload: Workload, results: list[RunResult], root: Path,
     return per_run
 
 
-def settled_gpu_inventory(timeout: float = 60.0, interval: float = 2.0) -> list[dict]:
+def settled_gpu_inventory(timeout: float = 60.0, interval: float = 2.0,
+                          read: Callable[[], list[dict]] | None = None) -> list[dict]:
     """GPU readings once memory use has stopped changing.
 
     A process that just exited can hold its device memory for several seconds
@@ -1204,35 +1240,44 @@ def settled_gpu_inventory(timeout: float = 60.0, interval: float = 2.0) -> list[
     allocations that do fit. Waits until three consecutive readings agree per
     device (or the timeout passes) and returns the last reading.
     """
-    readings = [gpu_inventory()]
+    read = read or gpu_inventory
+    readings = [read()]
     deadline = time.monotonic() + timeout
     while readings[-1] and time.monotonic() < deadline:
         time.sleep(interval)
-        readings.append(gpu_inventory())
+        readings.append(read())
         used = [[gpu["memory_used_mib"] for gpu in reading] for reading in readings[-3:]]
         if len(used) == 3 and used[0] == used[1] == used[2]:
             break
     return readings[-1]
 
 
-def device_fits(slots: list[Slot], per_process_mib: Callable[[int], float], margin_mib: int = 512,
-                devices: list[dict] | None = None) -> list[str]:
-    """Reasons an allocation cannot fit on the local GPUs right now (empty if it fits)."""
+def device_fits(slots: list[Slot], per_process_mib: Callable[[str, int], float], margin_mib: int = 512,
+                inventories: Callable[[str], list[dict]] | None = None) -> list[str]:
+    """Reasons an allocation cannot fit on its hosts' GPUs right now (empty if it fits).
+
+    Local and remote slots follow the same rule: capacity x the measured
+    per-process footprint of that host's device must fit in its free memory
+    minus the margin. A remote device that oversubscribes spills into shared
+    memory and slows every run on it.
+    """
+    inventories = inventories or (lambda host: settled_gpu_inventory() if host == "jack" else [])
     reasons = []
-    devices = {gpu["index"]: gpu for gpu in (gpu_inventory() if devices is None else devices)}
+    cache: dict[str, dict[int, dict]] = {}
     for slot in slots:
-        if slot.host != "jack":
-            continue
-        need = slot.capacity * (per_process_mib(slot.device) or 0.0)
+        need = slot.capacity * (per_process_mib(slot.host, slot.device) or 0.0)
         if need <= 0:
             continue  # no measured device memory use: nothing to reserve
-        gpu = devices.get(slot.device)
+        if slot.host not in cache:
+            cache[slot.host] = {gpu["index"]: gpu for gpu in inventories(slot.host)}
+        gpu = cache[slot.host].get(slot.device)
+        name = f"{slot.host}:{slot.device}"
         if gpu is None:
-            reasons.append(f"device {slot.device} not present")
+            reasons.append(f"device {name} not present")
             continue
         room = gpu["memory_total_mib"] - gpu["memory_used_mib"] - margin_mib
         if need > room:
-            reasons.append(f"device {slot.device}: {slot.capacity} processes need ~{need:.0f} MiB, "
+            reasons.append(f"device {name}: {slot.capacity} processes need ~{need:.0f} MiB, "
                            f"{room:.0f} MiB free after margin")
     return reasons
 
@@ -1338,19 +1383,31 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
 
     # Per-device GPU memory one process adds, learned from each measured leg
     # (the CUDA runtime's pool pages scale with the device's total memory).
-    footprint: dict[int, float] = {}
+    footprint: dict[tuple[str, int], float] = {}
+
+    def remote_readers() -> dict[str, Callable[[], list[dict]]]:
+        return {host: executor.gpus for host, executor in executors.items()
+                if host != "jack" and hasattr(executor, "gpus")}
+
+    def inventories(host: str) -> list[dict]:
+        if host == "jack":
+            return settled_gpu_inventory()
+        reader = remote_readers().get(host)
+        return settled_gpu_inventory(read=reader, interval=5.0) if reader else []
 
     def leg(label: str, slots: list[Slot]) -> tuple[list[RunResult], float, dict]:
         leg_root = root / label
         leg_root.mkdir()
-        baseline = {gpu["index"]: gpu["memory_used_mib"] for gpu in gpu_inventory()}
+        baseline = {(host, gpu["index"]): gpu["memory_used_mib"]
+                    for host in {slot.host for slot in slots} for gpu in inventories(host)}
         waiting = {"count": len(workload.runs)}
 
         def on_event(kind, _payload):
             if kind == "run-started":
                 waiting["count"] -= 1
 
-        monitor = Monitor(leg_root / "monitor.jsonl", lambda: waiting["count"])
+        monitor = Monitor(leg_root / "monitor.jsonl", lambda: waiting["count"],
+                          remote={h: r for h, r in remote_readers().items() if h in {s.host for s in slots}})
         monitor.start()
         results, wall = execute_allocation(
             workload, slots, leg_root, prefix_stop, executors,
@@ -1358,18 +1415,19 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             on_event=on_event)
         usage = monitor.stop()
         for slot in slots:
-            peak = usage["gpu_peak_memory_mib"].get(str(slot.device))
-            if slot.host == "jack" and peak is not None and slot.device in baseline:
-                estimate = max(0.0, peak - baseline[slot.device]) / slot.capacity
-                footprint[slot.device] = max(footprint.get(slot.device, 0.0), estimate)
-        usage["baseline_memory_mib"] = {str(k): v for k, v in baseline.items()}
+            key = (slot.host, slot.device)
+            peak = usage["gpu_peak_memory_mib"].get(f"{slot.host}:{slot.device}")
+            if peak is not None and key in baseline:
+                estimate = max(0.0, peak - baseline[key]) / slot.capacity
+                footprint[key] = max(footprint.get(key, 0.0), estimate)
+        usage["baseline_memory_mib"] = {f"{h}:{d}": v for (h, d), v in baseline.items()}
         return results, wall, usage
 
-    def per_process(device: int) -> float:
+    def per_process(host: str, device: int) -> float:
         if per_process_mib is not None:
             return per_process_mib
         # An unmeasured device is assumed as large as the largest measured one.
-        return footprint.get(device, max(footprint.values(), default=0.0))
+        return footprint.get((host, device), max(footprint.values(), default=0.0))
 
     # The serial leg is the golden: each run alone on the first serial slot.
     golden_slots = serial[0]
@@ -1430,7 +1488,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     pending = [slots for slots in candidates if slots != golden_slots]
     while pending:
         slots = pending.pop(0)
-        fit = device_fits(slots, per_process, devices=settled_gpu_inventory())             if any(per_process(s.device) > 0 for s in slots) else []
+        fit = device_fits(slots, per_process, inventories=inventories) \
+            if any(per_process(s.host, s.device) > 0 for s in slots) else []
         missing = [slot.host for slot in slots if not inventory["hosts"].get(slot.host, {}).get("eligible")]
         wider = [f"{concurrency(slots)} lanes for {len(workload.runs)} runs would leave a slot unmeasured"]             if concurrency(slots) > len(workload.runs) else []
         if missing or fit or wider:
@@ -1453,7 +1512,8 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             if stop_on_saturation and not_useful >= 2:
                 break
         if auto_devices and entry["status"] == "qualified" and not pending:
-            grown = grow_allocation(slots, per_process, devices=settled_gpu_inventory())
+            grown = grow_allocation(slots, lambda device: per_process("jack", device),
+                                    devices=settled_gpu_inventory())
             if grown is not None:
                 pending.append(grown)
 
@@ -1538,7 +1598,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
         "target_generation": target,
         "qualification_updates": qualification_updates,
         "run_ids": [run.id for run in workload.runs],
-        "gpu_footprint_mib": {str(device): mib for device, mib in sorted(footprint.items())},
+        "gpu_footprint_mib": {f"{host}:{device}": mib for (host, device), mib in sorted(footprint.items())},
         "remote_staging": staging,
         "inventory": inventory,
         "golden": {"allocation": allocation_text(golden_slots), "root": str(root / "serial-golden"),
@@ -1710,12 +1770,12 @@ def recorded_gpus(detail: dict) -> dict[int, tuple[str, str]]:
 def check_gpu_identity(choice: dict, slots: list[Slot], current: Callable[[str], dict[int, tuple[str, str]]]) -> None:
     """Verdict M4: every device the allocation uses is the device the receipt measured."""
     hosts = choice["inventory"]["hosts"]
-    footprint = {int(device): mib for device, mib in choice.get("gpu_footprint_mib", {}).items()}
+    footprint = choice.get("gpu_footprint_mib", {})
     live: dict[str, dict] = {}
     for slot in slots:
         recorded = recorded_gpus(hosts.get(slot.host, {}).get("detail", {}))
         if slot.device not in recorded:
-            if recorded or (slot.host == "jack" and footprint.get(slot.device, 0) > 0) or slot.host != "jack":
+            if recorded or footprint.get(f"{slot.host}:{slot.device}", 0) > 0 or slot.host != "jack":
                 raise LaunchRefused(f"the receipt records no GPU {slot.device} on {slot.host}")
             continue  # a workload that measured no GPU use on a GPU-less inventory
         if slot.host not in live:
@@ -1769,9 +1829,17 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
         raise LaunchRefused(f"launch root already exists: {root}")
     check_gpu_identity(choice, slots, gpus or live_gpus(HALEYSPC_ADDRESS))
     # Current reservations win: refuse rather than squeeze in beside other GPU work.
-    footprint = {int(device): mib for device, mib in choice.get("gpu_footprint_mib", {}).items()}
-    crowded = device_fits(slots, lambda device: footprint.get(device, max(footprint.values(), default=0.0)),
-                          devices=settled_gpu_inventory())
+    footprint = choice.get("gpu_footprint_mib", {})
+
+    def launch_inventory(host: str) -> list[dict]:
+        if host == "jack":
+            return settled_gpu_inventory()
+        reader = getattr(executors.get(host), "gpus", None)
+        return settled_gpu_inventory(read=reader, interval=5.0) if reader else []
+
+    crowded = device_fits(slots, lambda host, device: footprint.get(f"{host}:{device}",
+                                                                    max(footprint.values(), default=0.0)),
+                          inventories=launch_inventory)
     if crowded:
         raise LaunchRefused("not enough free GPU memory for the qualified allocation right now: " + "; ".join(crowded))
     runs_root = root / "runs"
@@ -1813,7 +1881,9 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
             entry.update(status="finished", exit_code=payload["exit_code"], finished_at=iso(utc_now()))
         save()
 
-    monitor = Monitor(root / "monitor.jsonl", lambda: waiting["count"])
+    monitor = Monitor(root / "monitor.jsonl", lambda: waiting["count"],
+                      remote={s.host: executors[s.host].gpus for s in slots
+                              if s.host != "jack" and hasattr(executors.get(s.host), "gpus")})
     monitor.start()
     results, wall = execute_allocation(
         workload, slots, runs_root, workload.launch_stop, executors,

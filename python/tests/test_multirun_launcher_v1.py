@@ -333,14 +333,19 @@ class UnitTests(unittest.TestCase):
     def test_gpu_fit_uses_each_device_footprint(self) -> None:
         devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2939},
                    {"index": 1, "memory_total_mib": 6144, "memory_used_mib": 9}]
-        footprint = {0: 2853.0, 1: 2599.0}
-        self.assertEqual(launcher.device_fits(alloc("3@0+2@1"), footprint.get, devices=devices), [])
-        reasons = launcher.device_fits(alloc("4@0+3@1"), footprint.get, devices=devices)
-        self.assertEqual([reason.split(":")[0] for reason in reasons], ["device 0", "device 1"])
-        self.assertEqual(launcher.device_fits(alloc("1@2"), lambda _: 100.0, devices=devices),
-                         ["device 2 not present"])
+        footprint = {("jack", 0): 2853.0, ("jack", 1): 2599.0, ("haleyspc", 0): 2400.0}
+        remote = [{"index": 0, "memory_total_mib": 8188, "memory_used_mib": 1000}]
+        per_process = lambda host, device: footprint[(host, device)]  # noqa: E731
+        inventories = {"jack": devices, "haleyspc": remote}.__getitem__
+        self.assertEqual(launcher.device_fits(alloc("3@0+2@1+2@haleyspc:0"), per_process,
+                                              inventories=inventories), [])
+        reasons = launcher.device_fits(alloc("4@0+3@1+3@haleyspc:0"), per_process, inventories=inventories)
+        self.assertEqual([reason.split(":")[0] + ":" + reason.split(":")[1] for reason in reasons],
+                         ["device jack:0", "device jack:1", "device haleyspc:0"])
+        self.assertEqual(launcher.device_fits(alloc("1@2"), lambda h, d: 100.0, inventories=inventories),
+                         ["device jack:2 not present"])
         # A workload that measured no device memory needs no device (and CI runners have none).
-        self.assertEqual(launcher.device_fits(alloc("2@0+1@1"), lambda _: 0.0, devices=[]), [])
+        self.assertEqual(launcher.device_fits(alloc("2@0+1@1"), lambda h, d: 0.0, inventories=lambda h: []), [])
 
     def test_auto_growth_adds_one_process_where_memory_has_most_room(self) -> None:
         devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2974},
@@ -372,6 +377,17 @@ class UnitTests(unittest.TestCase):
                 launcher.gpu_inventory = original
             self.assertEqual([c["allocation"] for c in choice["candidates"]],
                              ["1@jack:0", "2@jack:0", "3@jack:0"])
+
+    def test_remote_gpu_readings_parse_like_local_ones(self) -> None:
+        csv = "0, NVIDIA GeForce RTX 4060, GPU-17ee, 8188, 7867, 100\r\nnot a row\r\n"
+        runner = lambda command, **_: subprocess.CompletedProcess(command, 0, csv, "")  # noqa: E731
+        with tempfile.TemporaryDirectory() as directory:
+            workload = launcher.load_workload(fake_workload(Path(directory), runs=1))
+            executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", Path(directory),
+                                                      "C:/mirror", runner=runner)
+            self.assertEqual(executor.gpus(), [{"index": 0, "name": "NVIDIA GeForce RTX 4060", "uuid": "GPU-17ee",
+                                                "memory_total_mib": 8188, "memory_used_mib": 7867,
+                                                "utilization_percent": 100}])
 
     def test_fit_decisions_wait_for_released_memory_to_settle(self) -> None:
         readings = iter([[5700], [4100], [2900], [2900], [2900], [2900]])
@@ -651,7 +667,7 @@ class VerdictTests(unittest.TestCase):
         recorded = inventory()
         recorded["hosts"]["jack"]["detail"] = {"gpus": [{"index": 0, "name": "RTX A", "uuid": "GPU-1"}]}
         recorded["hosts"]["haleyspc"]["detail"] = {"gpus": ["0, RTX B, GPU-9, 8188, 900"]}
-        choice = {"inventory": recorded, "gpu_footprint_mib": {"0": 2900.0}}
+        choice = {"inventory": recorded, "gpu_footprint_mib": {"jack:0": 2900.0}}
         same = {"jack": {0: ("RTX A", "GPU-1")}, "haleyspc": {0: ("RTX B", "GPU-9")}}
         launcher.check_gpu_identity(choice, alloc("2@0+1@haleyspc:0"), same.__getitem__)
         for host, swapped in (("jack", {0: ("RTX A", "GPU-2")}), ("haleyspc", {0: ("RTX C", "GPU-9")})):
