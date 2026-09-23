@@ -6,6 +6,8 @@ mod sampler;
 mod effect_refs;
 #[cfg(test)]
 mod sampler_tests;
+#[cfg(test)]
+mod library_tests;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,serde::Serialize)]
 pub(crate) enum V4SearchStateErrorV1 {
@@ -17,10 +19,16 @@ pub(crate) enum V4SearchStateErrorV1 {
     SampleCandidateRebuildFailed,
     SampleBoundaryEncodingFailed,
     SampleBoundaryChanged,
+    LibraryChoicePlanFailed,
+    LibraryChoiceRebuildFailed,
+    LibraryChoiceOriginFailed,
     StepFailed,
     HaltedSimulation,
 }
 use V4SearchStateErrorV1 as Error;
+
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub(crate) enum V4SearchSampleMode { Legacy, LibraryChoiceV2 }
 
 #[derive(Debug,PartialEq,Eq)]
 struct Boundary {
@@ -31,9 +39,9 @@ struct Boundary {
     refs:Vec<FlatActionRefV2>,
     objects:Vec<FlatActionObjectV2>,
 }
-fn boundary(s:&FastActorSessionV1,d:FastActorDecisionV1)->Result<Boundary,Error> {
+fn boundary(s:&FastActorSessionV1,d:FastActorDecisionV1,mode:V4SearchSampleMode)->Result<Boundary,Error> {
     let (observation,semantics)=s.diagnostic_current_decision_input_v4(d).map_err(|_|Error::InvalidVisibleBinding)?;
-    if observation.extensions.decision_local_library.is_some() {return Err(Error::DecisionLocalLibrary);}
+    if mode==V4SearchSampleMode::Legacy && observation.extensions.decision_local_library.is_some() {return Err(Error::DecisionLocalLibrary);}
     // Match the scorer's frozen-source semantics, not a relabeled hidden card.
     let semantics:Vec<_>=semantics.into_iter().map(|x|frozen_pending_trigger_semantic_v4(&s.state,x)).collect();
     let visible=serde_json::to_vec(&(observation,semantics)).map_err(|_|Error::InvalidVisibleBinding)?;
@@ -61,25 +69,54 @@ impl FastActorSessionV1 {
     pub(crate) fn kernel_search_redeterminized_clone_v4(&self,seed:u64)->Result<Self,Error> {
         self.search_clone_v4_inner(seed,|_,_|{})
     }
+    pub(crate) fn kernel_search_redeterminized_clone_mode_v4(&self,seed:u64,mode:V4SearchSampleMode)->Result<Self,Error> {
+        self.search_clone_v4_mode_inner(seed,mode,|_,_|{})
+    }
+    pub(crate) fn kernel_search_redeterminized_clone_library_v2(&self,seed:u64)->Result<Self,Error> {
+        self.kernel_search_redeterminized_clone_mode_v4(seed,V4SearchSampleMode::LibraryChoiceV2)
+    }
     fn search_clone_v4_inner(&self,seed:u64,after_sample:impl FnOnce(&mut GameState,PlayerId))->Result<Self,Error> {
+        self.search_clone_v4_mode_inner(seed,V4SearchSampleMode::Legacy,after_sample)
+    }
+    fn search_clone_v4_mode_inner(&self,seed:u64,mode:V4SearchSampleMode,after_sample:impl FnOnce(&mut GameState,PlayerId))->Result<Self,Error> {
         if self.flat_action_contract_mode!=FlatActionContractModeV1::V3 {return Err(Error::UnsupportedActionContract);}
         let FastActorResponseV1::Decision(d)=self.current_response() else {return Err(Error::NoLiveDecision);};
-        let before=boundary(self,d)?;
+        let before=boundary(self,d,mode)?;
         let actor=self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
+        let plan=if mode==V4SearchSampleMode::LibraryChoiceV2 {
+            crate::effect::library_choice_search_v2::plan(&self.state,actor).map_err(|_|Error::LibraryChoicePlanFailed)?
+        } else {None};
+        let original_candidates=&self.current.as_ref().ok_or(Error::NoLiveDecision)?.candidates;
         let mut copy=self.clone();
-        sampler::redeterminize(&mut copy.state,actor,seed)?;
+        sampler::redeterminize_with_library_plan(&mut copy.state,actor,seed,plan.as_ref())?;
         after_sample(&mut copy.state,actor);
         let mut current=copy.current.take().ok_or(Error::NoLiveDecision)?;
+        if let Some(plan)=&plan {
+            plan.rebuild(&mut copy.state).map_err(|_|Error::LibraryChoiceRebuildFailed)?;
+            let pending=copy.state.engine.pending_effect.as_ref().ok_or(Error::LibraryChoiceOriginFailed)?;
+            let origin=crate::engine::pending_effect_targets_decision_v2(pending).ok_or(Error::LibraryChoiceOriginFailed)?;
+            current.origin_decision=PolicyDecisionV5::Surface(crate::surface_v2::SurfaceDecision::Decision(origin));
+        }
         current.candidates=core_policy_action_candidates_v5(&current.origin_decision,&copy.state).map_err(|_|Error::SampleCandidateRebuildFailed)?;
+        if plan.is_some() {
+            let Some(crate::effect::PendingEffectChoice::SelectTargets{legal,..})=copy.state.engine.pending_effect.as_ref().and_then(|p|p.choice.as_ref()) else {return Err(Error::LibraryChoiceOriginFailed);};
+            let expected:Vec<_>=legal.iter().map(|c|c.target).collect();
+            let actual:Vec<_>=current.candidates.iter().filter_map(|c|match &c.semantic {
+                ActionSemanticV1::ChooseEffectTarget{target:crate::rl::TargetRefV1::Object{object},..}=>Some(crate::state::Target::Object(ObjectId(object.arena_id))),
+                _=>None,
+            }).collect();
+            if actual!=expected {return Err(Error::LibraryChoiceOriginFailed);}
+        }
         current.flat_action_cache=None;current.flat_action_cache_error=None;
         current.flat_action_cache_v2=None;current.flat_action_cache_error_v2=None;
         // V3 normalization owns the live candidate ordering. Its cache may
         // reject hidden triggers; V4 intentionally derives its own fresh rows.
         let cache=super::super::flat_action_v3::prepare_and_build_v3(&copy,&mut current);
         flat_install_action_cache_build_result_v2(&mut current,cache);
+        if plan.is_some() && current.candidates!=*original_candidates {return Err(Error::SampleCandidateRebuildFailed);}
         copy.flat_action_cache_spare=None;copy.flat_action_cache_spare_v2=None;
         copy.current=Some(current);
-        let after=boundary(&copy,d).map_err(|_|Error::SampleBoundaryEncodingFailed)?;
+        let after=boundary(&copy,d,mode).map_err(|_|Error::SampleBoundaryEncodingFailed)?;
         if before!=after {return Err(Error::SampleBoundaryChanged);}
         Ok(copy)
     }
@@ -100,7 +137,7 @@ mod tests {
         for owner in [actor,actor.opponent()] {for name in ["Forest","Mountain","Island","Swamp","Counterspell"] {put(&mut s,owner,name,Zone::Library);}}
         s
     }
-    fn tensor_and_output(s:&FastActorSessionV1)->(crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1,Vec<u32>,u32) {
+    pub(super) fn tensor_and_output(s:&FastActorSessionV1)->(crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1,Vec<u32>,u32) {
         let mut p=FrozenPlayPolicyV1::training_fixture_v4();p.score_fast_session_v1(s).unwrap();
         let t=p.last_scored_training_tensor_v4().unwrap();
         let captured=crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(&crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3{common:t.common.clone()});

@@ -2,8 +2,8 @@
 use super::*;
 use crate::state::{AbilitySourceContractV4, SplitMix64, StackItem};
 
-fn conflicts(state: &GameState, pool: &[ObjectId]) -> bool {
-    if super::effect_refs::conflicts(state, pool) { return true; }
+fn conflicts(state: &GameState, pool: &[ObjectId], plan: Option<&crate::effect::library_choice_search_v2::Plan>) -> bool {
+    if super::effect_refs::conflicts(state, pool, plan) { return true; }
     let same = |id: ObjectId, generation: u32| {
         pool.contains(&id) && state.objects.get(id).zone_change_count == generation
     };
@@ -61,6 +61,9 @@ fn draw(rng: &mut SplitMix64, bound: u64) -> usize {
 
 /// Called only on a disposable cloned state. Failure never permits retrying a seed.
 pub(super) fn redeterminize(state: &mut GameState, actor: PlayerId, seed: u64) -> Result<(), Error> {
+    redeterminize_with_library_plan(state,actor,seed,None)
+}
+pub(super) fn redeterminize_with_library_plan(state: &mut GameState, actor: PlayerId, seed: u64, plan: Option<&crate::effect::library_choice_search_v2::Plan>) -> Result<(), Error> {
     let mut rng = SplitMix64::seed(seed);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
@@ -81,7 +84,7 @@ pub(super) fn redeterminize(state: &mut GameState, actor: PlayerId, seed: u64) -
         }
         let mut pool: Vec<_> = slots.iter().map(|x| x.2).collect();
         pool.sort_unstable();
-        if pool.windows(2).any(|x| x[0] == x[1]) || conflicts(state, &pool) { return Err(Error::HiddenStateContract); }
+        if pool.windows(2).any(|x| x[0] == x[1]) || conflicts(state, &pool, plan) { return Err(Error::HiddenStateContract); }
         for &(zone, _, id) in &slots {
             let obj = state.objects.get(id);
             if obj.owner != owner || obj.zone != zone || obj.spell_copy_origin.is_some()

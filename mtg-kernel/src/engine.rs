@@ -6593,6 +6593,18 @@ fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision>
     }
 }
 
+/// Pure live-choice projection shared by the engine and disposable search clones.
+pub(crate) fn pending_effect_targets_decision_v2(pending: &effect::EffectContinuation) -> Option<Decision> {
+    let effect::PendingEffectChoice::SelectTargets { player, selected, legal, min_targets, max_targets, .. } = pending.choice.as_ref()? else { return None; };
+    Some(Decision::ChooseEffectTargets {
+        player: *player, source: pending.resolving_item.source,
+        selected_count: selected.len().try_into().expect("effect selected-target count fits the u16 public contract"),
+        min_targets: *min_targets, max_targets: *max_targets,
+        legal_targets: legal.iter().map(|candidate|candidate.target).collect(),
+        can_finish: selected.len() >= usize::from(*min_targets),
+    })
+}
+
 /// Drives the generic v4 effect continuation. A suspended resolving item is
 /// represented on the public stack while the player chooses, but is removed
 /// again before interpreter execution resumes, matching the ordinary
@@ -6629,25 +6641,8 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
                     .try_into()
                     .expect("effect option count fits the u16 public contract"),
             },
-            effect::PendingEffectChoice::SelectTargets {
-                player,
-                selected,
-                legal,
-                min_targets,
-                max_targets,
-                ..
-            } => Decision::ChooseEffectTargets {
-                player: *player,
-                source: pending.resolving_item.source,
-                selected_count: selected
-                    .len()
-                    .try_into()
-                    .expect("effect selected-target count fits the u16 public contract"),
-                min_targets: *min_targets,
-                max_targets: *max_targets,
-                legal_targets: legal.iter().map(|candidate| candidate.target).collect(),
-                can_finish: selected.len() >= usize::from(*min_targets),
-            },
+            effect::PendingEffectChoice::SelectTargets { .. } =>
+                pending_effect_targets_decision_v2(pending).expect("matched SelectTargets"),
             effect::PendingEffectChoice::ChooseBoolean {
                 player,
                 default,

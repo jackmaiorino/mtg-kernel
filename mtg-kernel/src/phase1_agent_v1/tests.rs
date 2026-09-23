@@ -1251,3 +1251,22 @@ fn v4_evaluation_estimate_package_rejects_cross_labels_and_unsupported_settings(
     wire["search"]["kind"]=serde_json::json!("v4_information_set_v1");
     assert!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).is_err());
 }
+
+#[test]
+fn v4_library_v2_package_is_versioned_and_collection_stays_disabled_only() {
+    let mut p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/mean_search_pre_estimate.json")).unwrap();
+    let AgentSearchPolicyV1::V4InformationSetV1{mut descriptor}=p.search.clone() else{unreachable!()};
+    descriptor.schema=V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2.into();descriptor.algorithm=V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2.into();
+    p.search=AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor:V4InformationSetEstimateDescriptorV2(descriptor)};
+    p.validate_metadata_v1().unwrap();
+    let wire=serde_json::to_value(&p).unwrap();assert_eq!(wire["search"]["kind"],"v4_information_set_estimate_v2");
+    assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap(),p);
+    assert_eq!(p.load_supported_components_v1().err().unwrap(),"learned opening/play-draw or search execution is not implemented by this interface");
+    for (field,value) in [("schema",serde_json::json!(V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1)),("algorithm",serde_json::json!(V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1)),
+        ("root_allocation",serde_json::json!("puct")),("interior_bonus",serde_json::json!("prior_weighted")),("simulations",serde_json::json!(0))] {
+        let mut bad=wire.clone();bad["search"]["descriptor"][field]=value;
+        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),"{field}");
+    }
+    let mut old_label=wire;old_label["search"]["kind"]=serde_json::json!("v4_information_set_estimate_v1");
+    assert!(CompleteAgentPackageV1::from_json_v1(&old_label.to_string()).is_err());
+}

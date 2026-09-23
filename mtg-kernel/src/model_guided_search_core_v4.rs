@@ -118,7 +118,10 @@ pub(crate) fn search_with_allocation<E:Evaluator>(session:&FastActorSessionV1,l:
 pub(crate) fn search_with_policies<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,interior_bonus:InteriorBonus,w:Witness<'_>)->Result<Outcome> {
     search_with_backup(session,l,e,allocation,interior_bonus,BackupMode::Off,w)
 }
-pub(crate) fn search_with_backup<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,interior_bonus:InteriorBonus,backup:BackupMode,mut w:Witness<'_>)->Result<Outcome> {
+pub(crate) fn search_with_backup<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,interior_bonus:InteriorBonus,backup:BackupMode,w:Witness<'_>)->Result<Outcome> {
+    search_with_sample_mode(session,l,e,allocation,interior_bonus,backup,crate::rl_session::V4SearchSampleMode::Legacy,w)
+}
+pub(crate) fn search_with_sample_mode<E:Evaluator>(session:&FastActorSessionV1,l:Limits,e:&E,allocation:RootAllocation,interior_bonus:InteriorBonus,backup:BackupMode,mode:crate::rl_session::V4SearchSampleMode,mut w:Witness<'_>)->Result<Outcome> {
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|x|Error::Evaluator(format!("{x:?}")))?;
     let d=live(session)?;let count=d.legal_action_count;
     if count==0||l.depth==0||l.simulations<count||l.transitions<count{return Err(Error::InvalidBudget);}
@@ -133,7 +136,7 @@ pub(crate) fn search_with_backup<E:Evaluator>(session:&FastActorSessionV1,l:Limi
     let mut trace=Vec::new();
     let mut simulations=0;let mut transitions=0;
     while simulations<l.simulations && transitions<l.transitions {
-        let mut sample=session.kernel_search_redeterminized_clone_v4(seed(root_key,l.seed,simulations))
+        let mut sample=session.kernel_search_redeterminized_clone_mode_v4(seed(root_key,l.seed,simulations),mode)
             .map_err(|source|Error::State{stage:StateStage::Redeterminize,source})?;
         let census_before=census.clone();let transitions_before=transitions;
         let coverage=simulations<count;let mut remaining=l.depth;let mut at=0usize;

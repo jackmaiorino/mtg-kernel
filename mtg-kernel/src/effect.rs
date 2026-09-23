@@ -28,6 +28,7 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+pub(crate) mod library_choice_search_v2;
 
 /// Upper bound on `EffectOp::AddManaDynamic`'s evaluated amount, matching
 /// the planner's own `yield_per_tap` ceiling so an explicitly activated

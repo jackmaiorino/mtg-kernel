@@ -222,6 +222,10 @@ pub enum AgentSearchPolicyV1 {
     V4InformationSetEstimateV1 {
         descriptor: V4InformationSetEstimateDescriptorV1,
     },
+    /// Library-choice coverage with unchanged E budget/backup/ties.
+    V4InformationSetEstimateV2 {
+        descriptor: V4InformationSetEstimateDescriptorV2,
+    },
 }
 
 pub const V4_INFORMATION_SET_SEARCH_SCHEMA_V1:&str="mtg-kernel-v4-information-set-search/v1";
@@ -232,6 +236,11 @@ pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1:&str="v4-depth-keyed-estimate
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(transparent)]
 pub struct V4InformationSetEstimateDescriptorV1(pub V4InformationSetSearchDescriptorV1);
+pub const V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2:&str="mtg-kernel-v4-information-set-estimate-search/v2";
+pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2:&str="v4-depth-keyed-estimate-library-choice/v2";
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(transparent)]
+pub struct V4InformationSetEstimateDescriptorV2(pub V4InformationSetSearchDescriptorV1);
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(rename_all="snake_case")]
 pub enum V4SearchRootAllocationV1 {Puct,RoundRobin}
@@ -452,6 +461,12 @@ impl CompleteAgentPackageV1 {
                     "V4 estimate route requires RoundRobin and PriorFree")?;
                 Some((d,V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1,V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1))
             },
+            AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor}=>{
+                let d=&descriptor.0;
+                require(d.root_allocation==V4SearchRootAllocationV1::RoundRobin && d.interior_bonus==V4SearchInteriorBonusV1::PriorFree,
+                    "V4 estimate route requires RoundRobin and PriorFree")?;
+                Some((d,V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2,V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2))
+            },
             _=>None,
         };
         if let Some((d,schema,algorithm))=v4_descriptor {
@@ -519,12 +534,12 @@ impl CompleteAgentPackageV1 {
         self.validate_metadata_v1()?;
         require(matches!(self.opening,AgentOpeningPolicyV1::Existing{protocol:Bo3OpeningProtocolV1::KeepSevenV2})
             && matches!(self.play_draw,AgentPlayDrawPolicyV1::Fixed{..})
-            && matches!(self.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}),
+            && matches!(self.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV2{..}),
             "V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search")?;
         require(self.gameplay_sampler_identity==WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
             "evaluation behavior records require the wide categorical sampler")?;
         let loaded=self.load_bound_components_v1(false)?;
-        if matches!(self.search,AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}) {
+        if matches!(self.search,AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV2{..}) {
             require(loaded.current_runtime.generation_v1()==RuntimeContractGenerationV1::V4
                 && loaded.gameplay.feature_generation_v1()==PlayPolicyGenerationV1::V4,
                 "V4 search requires the actual V4 runtime and loaded policy")?;

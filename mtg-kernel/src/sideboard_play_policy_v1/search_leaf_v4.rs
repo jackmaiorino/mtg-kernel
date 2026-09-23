@@ -99,7 +99,17 @@ pub(crate) fn diagnostic_report(policy:&FrozenPlayPolicyV1,session:&FastActorSes
 #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
 pub(crate) fn report_search_observation(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
     limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
-    use crate::model_guided_search_core_v4::{Error,RootAllocation,InteriorBonus,BackupMode,search_with_backup};
+    report_search_observation_mode(policy,session,limits,crate::rl_session::V4SearchSampleMode::Legacy)
+}
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn report_search_observation_library_v2(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
+    limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+    report_search_observation_mode(policy,session,limits,crate::rl_session::V4SearchSampleMode::LibraryChoiceV2)
+}
+#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+fn report_search_observation_mode(policy:&FrozenPlayPolicyV1,session:&FastActorSessionV1,
+    limits:crate::model_guided_search_core_v4::Limits,mode:crate::rl_session::V4SearchSampleMode)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+    use crate::model_guided_search_core_v4::{Error,RootAllocation,InteriorBonus,BackupMode,search_with_sample_mode};
     crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|Error::ObserverEnvironment(format!("{e:?}")))?;
     let before=session.diagnostic_state_hash();let rng=policy.seat_rng;
     let capture=||policy.last_scored_training_tensor_v4().map(|t|
@@ -107,7 +117,7 @@ pub(crate) fn report_search_observation(policy:&FrozenPlayPolicyV1,session:&Fast
     let retained=capture()?;
     let evaluator=V4SearchLeafEvaluatorV1::new(policy).map_err(Error::Evaluator)?;
     let mut witness=|s:&FastActorSessionV1,n|evaluator.tensor_digest(s,n);
-    let result=search_with_backup(session,limits,&evaluator,RootAllocation::RoundRobin,InteriorBonus::PriorFree,BackupMode::Report,Some(&mut witness));
+    let result=search_with_sample_mode(session,limits,&evaluator,RootAllocation::RoundRobin,InteriorBonus::PriorFree,BackupMode::Report,mode,Some(&mut witness));
     // Check failures too. An invalid simulation is not permission to mutate
     // the ordinary policy or to return a partially trusted observation.
     let session_changed=before!=session.diagnostic_state_hash();

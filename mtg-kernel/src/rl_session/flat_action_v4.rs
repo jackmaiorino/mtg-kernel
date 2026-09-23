@@ -47,7 +47,7 @@
 
 use super::*;
 mod search_state;
-pub(crate) use search_state::V4SearchStateErrorV1;
+pub(crate) use search_state::{V4SearchStateErrorV1,V4SearchSampleMode};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 

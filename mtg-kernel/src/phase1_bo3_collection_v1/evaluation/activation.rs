@@ -64,6 +64,7 @@ impl ActivationSink {
         let d=match &options.search {
             AgentSearchPolicyV1::V4InformationSetV1{descriptor}=>descriptor,
             AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor}=>&descriptor.0,
+            AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor}=>&descriptor.0,
             _=>return Err("activation requires a V4 mean or E playing route".into()),
         };
         ensure(d.root_allocation==V4SearchRootAllocationV1::RoundRobin && d.interior_bonus==V4SearchInteriorBonusV1::PriorFree,

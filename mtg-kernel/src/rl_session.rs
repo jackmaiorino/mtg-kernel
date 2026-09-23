@@ -285,7 +285,7 @@ mod v3_spell_target_adapter_v1;
 #[cfg(test)]
 pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
 mod flat_action_v4;
-pub(crate) use flat_action_v4::V4SearchStateErrorV1;
+pub(crate) use flat_action_v4::{V4SearchStateErrorV1,V4SearchSampleMode};
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
     avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
