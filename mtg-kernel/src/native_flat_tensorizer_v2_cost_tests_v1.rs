@@ -297,6 +297,7 @@ fn stage_pass(corpus: &[OwnedScoringDecisionV2], action_json: &[Vec<Vec<u8>>]) -
             view,
             Some(&objects.projection),
             &mut scratch,
+            None,
         )
         .unwrap();
         total.actions_total += nanos(start);
@@ -485,11 +486,12 @@ fn tensorize_cost_breakdown_v1() {
     }
 }
 
-/// Leaf evaluator that records every decision the search encodes (the real
-/// forward still runs, so the tree is the production tree).
+/// Leaf evaluator that records every root prior and every eighth leaf
+/// decision the search encodes (the real forward still runs, so the tree is
+/// the production tree).
 struct CapturingEvaluatorV1<'a> {
     inner: crate::model_guided_search_core_v1::ModelGuidedSearchRealForwardValueEvaluatorV1<'a>,
-    captured: std::cell::RefCell<Vec<(u8, OwnedScoringDecisionV2)>>,
+    captured: std::cell::RefCell<Vec<OwnedScoringDecisionV2>>,
     leaf_events: std::cell::Cell<u64>,
 }
 
@@ -512,31 +514,57 @@ impl crate::model_guided_search_core_v1::ModelGuidedSearchLeafEvaluatorV1
             site,
             crate::model_guided_search_core_v1::ModelGuidedSearchLeafSiteV1::RootPrior
         ) || ordinal % 8 == 0;
-        if let (true, FastActorResponseV1::Decision(decision)) = (keep, session.current_response())
-        {
-            let seat = match decision.acting_player {
-                crate::rl::PlayerSeatV1::P0 => 0,
-                _ => 1,
-            };
+        if keep && matches!(session.current_response(), FastActorResponseV1::Decision(_)) {
             self.captured
                 .borrow_mut()
-                .push((seat, OwnedScoringDecisionV2::from_session(session)));
+                .push(OwnedScoringDecisionV2::from_session(session));
         }
         self.inner
             .evaluate_leaf_v1(session, leaf_key, legal_action_count, site)
     }
 }
 
-/// A fresh corpus from one complete search-wrapped match (model-guided
-/// search with the real forward in both seats, T512, played to the end):
-/// every root-prior decision plus every eighth leaf the search tensorizes,
-/// in encounter order. Returns the
-/// corpus, per-seat counts and the number of root decisions played.
-pub(super) fn build_search_corpus_v1(
-    decks: [&str; 2],
+/// One search-wrapped match, recorded as its reset parameters and the root
+/// action the search chose at every decision. The search's simulation seeds
+/// are bound to the build commit (by design), so a match cannot be replayed
+/// by searching again at another commit; replaying the recorded root actions
+/// reproduces every root decision exactly, because the engine is
+/// deterministic given its environment seed.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(super) struct SearchMatchReplayV1 {
+    pub(super) decks: [String; 2],
+    pub(super) episode_id: u64,
+    pub(super) seed: u64,
+    pub(super) actions: Vec<u32>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(super) struct SearchReplayFileV1 {
+    pub(super) schema: String,
+    pub(super) engine_commit: String,
+    pub(super) search: String,
+    pub(super) matches: Vec<SearchMatchReplayV1>,
+}
+
+fn search_session_v1(decks: &[String; 2], episode_id: u64, seed: u64) -> FastActorSessionV1 {
+    FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+        episode_id,
+        seed,
+        512,
+        65_536,
+        [decks[0].clone(), decks[1].clone()],
+    )
+    .unwrap()
+}
+
+/// Plays one complete match with model-guided search (T512, the real
+/// forward, runner-fixed weights) choosing for both seats. Returns the root
+/// actions and the captured decisions (root priors plus every eighth leaf).
+pub(super) fn play_search_match_v1(
+    decks: &[String; 2],
+    episode_id: u64,
     seed: u64,
-    target_decisions: usize,
-) -> (Vec<OwnedScoringDecisionV2>, [usize; 2], usize) {
+) -> (Vec<u32>, Vec<OwnedScoringDecisionV2>) {
     use crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1;
     use crate::model_guided_search_authority_v1::{
         ModelGuidedSearchAuthorityV1, ModelGuidedSearchConsumptionModeV1,
@@ -574,15 +602,8 @@ pub(super) fn build_search_corpus_v1(
         captured: std::cell::RefCell::new(Vec::new()),
         leaf_events: std::cell::Cell::new(0),
     };
-    let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
-        60_001,
-        seed,
-        512,
-        65_536,
-        [decks[0].to_string(), decks[1].to_string()],
-    )
-    .unwrap();
-    let mut roots = 0usize;
+    let mut session = search_session_v1(decks, episode_id, seed);
+    let mut actions = Vec::new();
     while let FastActorResponseV1::Decision(expected) = session.current_response() {
         let result = searcher
             .select_action_v1(&session, expected, &evaluator, &value_domain)
@@ -590,23 +611,45 @@ pub(super) fn build_search_corpus_v1(
         session
             .step(expected.episode_id, expected.step, result.selected_index)
             .unwrap();
-        roots += 1;
-        assert!(roots <= 2_000, "search match did not terminate");
+        actions.push(result.selected_index);
+        assert!(actions.len() <= 2_000, "search match did not terminate");
     }
-    assert!(
-        evaluator.captured.borrow().len() >= target_decisions,
-        "search corpus below {target_decisions} decisions"
-    );
-    let captured = evaluator.captured.into_inner();
+    (actions, evaluator.captured.into_inner())
+}
+
+/// Replays recorded matches and returns every root decision with its seat.
+pub(super) fn replay_search_corpus_v1(
+    replay: &SearchReplayFileV1,
+) -> (Vec<OwnedScoringDecisionV2>, [usize; 2]) {
+    let mut corpus = Vec::new();
     let mut seats = [0usize; 2];
-    for (seat, _) in &captured {
-        seats[usize::from(*seat)] += 1;
+    for recorded in &replay.matches {
+        let mut session = search_session_v1(&recorded.decks, recorded.episode_id, recorded.seed);
+        for &action in &recorded.actions {
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("replay ended before its recorded actions");
+            };
+            let seat = match expected.acting_player {
+                crate::rl::PlayerSeatV1::P0 => 0,
+                _ => 1,
+            };
+            seats[seat] += 1;
+            corpus.push(OwnedScoringDecisionV2::from_session(&session));
+            session
+                .step(expected.episode_id, expected.step, action)
+                .unwrap();
+        }
+        assert!(
+            !matches!(session.current_response(), FastActorResponseV1::Decision(_)),
+            "replayed match did not reach its recorded end"
+        );
     }
-    (
-        captured.into_iter().map(|(_, owned)| owned).collect(),
-        seats,
-        roots,
-    )
+    (corpus, seats)
+}
+
+pub(super) fn search_replay_path_v1() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../docs/reports/tensorize_cost_v1/goldens/search-matches-replay-v1.json")
 }
 
 pub(super) fn default_search_golden_path_v1() -> std::path::PathBuf {
@@ -614,17 +657,67 @@ pub(super) fn default_search_golden_path_v1() -> std::path::PathBuf {
         .join("../docs/reports/tensorize_cost_v1/goldens/search-corpus-fingerprints-v1.txt")
 }
 
-/// Writes or checks the search-wrapped-match golden (same env vars as the
-/// D5 golden, with `_SEARCH` appended: `MTG_KERNEL_TENSORIZE_GOLDEN_SEARCH_WRITE`,
-/// `MTG_KERNEL_TENSORIZE_GOLDEN_SEARCH`).
+/// Records the search-wrapped matches (run once, at the base commit): both
+/// deck orders of Rally/Burn plus both mirrors, two seeds each.
+/// `MTG_KERNEL_TENSORIZE_SEARCH_REPLAY_WRITE=<path>` overrides the location.
 #[test]
-#[ignore = "identity golden over a search-wrapped match: run explicitly"]
+#[ignore = "records search-wrapped matches: run explicitly"]
+fn tensorize_cost_search_record_v1() {
+    let pairings = [
+        ["Rally", "Burn"],
+        ["Burn", "Rally"],
+        ["Burn", "Burn"],
+        ["Rally", "Rally"],
+    ];
+    let mut matches = Vec::new();
+    for (pairing_index, pairing) in pairings.iter().enumerate() {
+        for seed in [41_777_u64, 41_778] {
+            let decks = [pairing[0].to_string(), pairing[1].to_string()];
+            let episode_id = 60_001 + pairing_index as u64;
+            let (actions, _) = play_search_match_v1(&decks, episode_id, seed);
+            println!(
+                "recorded {} vs {} seed={seed} roots={}",
+                decks[0],
+                decks[1],
+                actions.len()
+            );
+            matches.push(SearchMatchReplayV1 {
+                decks,
+                episode_id,
+                seed,
+                actions,
+            });
+        }
+    }
+    let replay = SearchReplayFileV1 {
+        schema: "tensorize-cost-v1/search-match-replay".to_owned(),
+        engine_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").to_owned(),
+        search: "model-guided T512, real forward, runner-fixed weights, both seats".to_owned(),
+        matches,
+    };
+    let path = std::env::var("MTG_KERNEL_TENSORIZE_SEARCH_REPLAY_WRITE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| search_replay_path_v1());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec_pretty(&replay).unwrap()).unwrap();
+    println!("replay written to {}", path.display());
+}
+
+/// Writes (`MTG_KERNEL_TENSORIZE_GOLDEN_SEARCH_WRITE`) or checks
+/// (`MTG_KERNEL_TENSORIZE_GOLDEN_SEARCH`) the golden over every root decision
+/// of the recorded search-wrapped matches.
+#[test]
+#[ignore = "identity golden over recorded search-wrapped matches: run explicitly"]
 fn tensorize_cost_search_golden_v1() {
-    let target = env_usize("MTG_KERNEL_TENSORIZE_SEARCH_TARGET_DECISIONS", 1_000);
-    let (corpus, seats, roots) = build_search_corpus_v1(["Rally", "Burn"], 41_777, target);
+    let replay: SearchReplayFileV1 =
+        serde_json::from_slice(&std::fs::read(search_replay_path_v1()).unwrap()).unwrap();
+    let (corpus, seats) = replay_search_corpus_v1(&replay);
     let label = format!(
-        "search T512 Rally-vs-Burn seed=41777 full-match roots={roots} root-priors+every-8th-leaf seat0={} seat1={}",
-        seats[0], seats[1]
+        "search-replay matches={} recorded_at={} seat0={} seat1={}",
+        replay.matches.len(),
+        replay.engine_commit,
+        seats[0],
+        seats[1]
     );
     assert!(
         corpus.len() >= 1_000 && seats[0] > 0 && seats[1] > 0,
@@ -654,4 +747,29 @@ fn tensorize_cost_search_golden_v1() {
         expected.lines().next().unwrap_or("")
     );
     println!("golden identical: {}", path.display());
+}
+
+/// Live differential at the current commit: plays one search-wrapped match
+/// and checks every captured decision (root priors and every eighth leaf)
+/// against the reference encoder (serde-Value state JSON, per-message sha2).
+#[test]
+#[ignore = "plays a search-wrapped match: run explicitly"]
+fn tensorize_cost_search_leaf_differential_v1() {
+    let decks = ["Rally".to_string(), "Burn".to_string()];
+    let (actions, captured) = play_search_match_v1(&decks, 60_101, 41_779);
+    let mut tensorizer = NativeFlatTensorizerV2::new();
+    let mut output = NativeFlatDecisionTensorV2::default();
+    for (index, owned) in captured.iter().enumerate() {
+        tensorizer.fill(owned.view(), &mut output).unwrap();
+        let (reference, _) = encode_full_decision_reference_v2(owned.view()).unwrap();
+        assert!(
+            output == reference,
+            "decision {index} differs from the reference encoder"
+        );
+    }
+    println!(
+        "leaf differential: roots={} decisions={} all identical to the reference encoder",
+        actions.len(),
+        captured.len()
+    );
 }
