@@ -447,6 +447,40 @@ fn tensorize_cost_breakdown_v1() {
         );
         std::hint::black_box(start);
     }
+    // Phase split of the production path (serial, one decision at a time):
+    // prepare (JSON writes and the non-digest tensors), hash (every digest),
+    // finish (digest features, output checks).
+    {
+        let batch = 1;
+        let mut slots: Vec<DigestSlotV1> = (0..batch).map(|_| DigestSlotV1::default()).collect();
+        let mut digests = DigestBatchV1::default();
+        let (mut prepare_ns, mut hash_ns, mut finish_ns) = (0u64, 0u64, 0u64);
+        for chunk in corpus.chunks(batch) {
+            let start = std::time::Instant::now();
+            let prepared: Vec<_> = chunk
+                .iter()
+                .zip(slots.iter_mut())
+                .map(|(owned, slot)| prepare_full_decision_v2(owned.view(), slot).unwrap())
+                .collect();
+            prepare_ns += nanos(start);
+            let start = std::time::Instant::now();
+            let offsets = hash_prepared_slots_v2(&slots[..chunk.len()], &mut digests);
+            hash_ns += nanos(start);
+            let start = std::time::Instant::now();
+            for (index, (owned, value)) in chunk.iter().zip(prepared).enumerate() {
+                let blocks = &digests.blocks[offsets[index]..offsets[index + 1]];
+                std::hint::black_box(finish_full_decision_v2(owned.view(), value, blocks).unwrap());
+            }
+            finish_ns += nanos(start);
+        }
+        let per = |ns: u64| ns as f64 / corpus.len() as f64 / 1_000.0;
+        println!(
+            "phases prepare_us={:.2} hash_us={:.2} finish_us={:.2}",
+            per(prepare_ns),
+            per(hash_ns),
+            per(finish_ns)
+        );
+    }
     if workers > 1 {
         for round in 0..rounds {
             let barrier = std::sync::Barrier::new(workers);

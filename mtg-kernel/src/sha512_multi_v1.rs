@@ -222,12 +222,27 @@ fn digest_bytes_v1(state: &[u64; 8]) -> [u8; 64] {
 fn scalar_job_v1(
     index: usize,
     job: &Sha512JobV1<'_>,
-    mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+    checkpoints: Option<&mut Sha512CheckpointsV1>,
 ) -> [u8; 64] {
-    use sha2::digest::generic_array::{typenum::U128, GenericArray};
     if job.start_block == 0 && checkpoints.is_none() {
         return sha512_job_scalar_v1(job);
     }
+    scalar_job_v1_from(index, job, job.start_block, checkpoints)
+}
+
+/// Continues `job` from `job.start_block` (any block, padding included) and
+/// records checkpoints as for a job that started at `original_start`.
+fn scalar_job_v1_from(
+    index: usize,
+    job: &Sha512JobV1<'_>,
+    original_start: usize,
+    mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+) -> [u8; 64] {
+    use sha2::digest::generic_array::{typenum::U128, GenericArray};
+    let recorded = Sha512JobV1 {
+        start_block: original_start,
+        ..*job
+    };
     let total = job.block_count();
     let mut state = job.start_state;
     let mut run: Vec<GenericArray<u8, U128>> = Vec::new();
@@ -247,7 +262,7 @@ fn scalar_job_v1(
         sha2::compress512(&mut state, &run);
         next = boundary;
         if let Some(checkpoints) = checkpoints.as_deref_mut() {
-            checkpoints.record(index, job, next, state);
+            checkpoints.record(index, &recorded, next, state);
         }
     }
     digest_bytes_v1(&state)
@@ -432,7 +447,8 @@ mod x86 {
     }
 
     /// One compression of four lanes; lanes with `active` all-zero keep their
-    /// previous state.
+    /// previous state. (Computing the whole schedule first and unrolling the
+    /// rounds measured slower on this kernel's target, an i7-13700K.)
     #[inline(always)]
     unsafe fn compress(state: &mut [__m256i; 8], blocks: &[[u8; 128]; LANES], active: __m256i) {
         let mut w = [_mm256_setzero_si256(); 16];
@@ -498,9 +514,25 @@ mod x86 {
         lanes
     }
 
-    /// Groups jobs by remaining block count (so lanes rarely idle) into groups
-    /// of four vector lanes; a group of one or two jobs goes to the `sha2`
-    /// crate, which is as fast as a half-empty vector group.
+    #[inline(always)]
+    unsafe fn load_lane_states(lanes: &[[u64; 8]; LANES]) -> [__m256i; 8] {
+        let mut state = [_mm256_setzero_si256(); 8];
+        for (word, slot) in state.iter_mut().enumerate() {
+            *slot = _mm256_setr_epi64x(
+                lanes[0][word] as i64,
+                lanes[1][word] as i64,
+                lanes[2][word] as i64,
+                lanes[3][word] as i64,
+            );
+        }
+        state
+    }
+
+    /// Longest job first; each lane takes the next job the moment its own
+    /// finishes, so lanes stay busy whatever the mix of lengths. Once the
+    /// queue is empty and at most two jobs are still running, they finish
+    /// through the `sha2` crate from their current chaining states (as fast
+    /// as a half-empty vector group).
     #[target_feature(enable = "avx2")]
     pub(super) unsafe fn sha512_jobs_avx2_v1(
         jobs: &[Sha512JobV1<'_>],
@@ -508,73 +540,89 @@ mod x86 {
         mut checkpoints: Option<&mut Sha512CheckpointsV1>,
     ) {
         let mut order: Vec<usize> = (0..jobs.len()).collect();
-        order.sort_by_key(|&index| jobs[index].remaining_blocks());
+        order.sort_by_key(|&index| std::cmp::Reverse(jobs[index].remaining_blocks()));
+        let mut queue = order.into_iter().peekable();
+        // Per lane: the job and the index of its next block.
+        let mut lanes: [Option<(usize, usize)>; LANES] = [None; LANES];
+        let mut lane_states = [[0u64; 8]; LANES];
+        let mut state = load_lane_states(&lane_states);
         let mut blocks = [[0u8; 128]; LANES];
-        for group in order.chunks(LANES) {
-            if group.len() <= 2 {
-                for &index in group {
-                    out[index] =
-                        super::scalar_job_v1(index, &jobs[index], checkpoints.as_deref_mut());
-                }
-                continue;
-            }
-            let mut lane_starts = [[0u64; 8]; LANES];
-            for (lane, &index) in group.iter().enumerate() {
-                lane_starts[lane] = jobs[index].start_state;
-            }
-            let mut state = [_mm256_setzero_si256(); 8];
-            for (word, slot) in state.iter_mut().enumerate() {
-                *slot = _mm256_setr_epi64x(
-                    lane_starts[0][word] as i64,
-                    lane_starts[1][word] as i64,
-                    lane_starts[2][word] as i64,
-                    lane_starts[3][word] as i64,
-                );
-            }
-            let mut remaining = [0usize; LANES];
-            for (lane, &index) in group.iter().enumerate() {
-                remaining[lane] = jobs[index].remaining_blocks();
-            }
-            let steps = remaining.iter().copied().max().unwrap_or(0);
-            for step in 0..steps {
-                let mut mask = [0i64; LANES];
-                for (lane, &index) in group.iter().enumerate() {
-                    if step < remaining[lane] {
-                        let job = &jobs[index];
-                        job.block(job.start_block + step, &mut blocks[lane]);
-                        mask[lane] = -1;
+        loop {
+            let mut refilled = false;
+            for lane in 0..LANES {
+                if lanes[lane].is_none() {
+                    if let Some(index) = queue.next() {
+                        lanes[lane] = Some((index, jobs[index].start_block));
+                        lane_states[lane] = jobs[index].start_state;
+                        refilled = true;
                     }
                 }
-                let active = _mm256_setr_epi64x(mask[0], mask[1], mask[2], mask[3]);
-                compress(&mut state, &blocks, active);
-                if let Some(checkpoints) = checkpoints.as_deref_mut() {
-                    // Extract lane states only when some lane reaches a
-                    // checkpoint; `record` applies the exact rule per lane.
-                    let due = group.iter().enumerate().any(|(lane, &index)| {
-                        let done = jobs[index].start_block + step + 1;
-                        mask[lane] != 0
-                            && done.is_multiple_of(checkpoints.every)
-                            && done <= jobs[index].data_block_count()
-                    });
-                    if due {
-                        let lane_states = vector_lane_states(&state);
-                        for (lane, &index) in group.iter().enumerate() {
-                            if mask[lane] != 0 {
-                                let job = &jobs[index];
-                                checkpoints.record(
-                                    index,
-                                    job,
-                                    job.start_block + step + 1,
-                                    lane_states[lane],
-                                );
-                            }
+            }
+            let running = lanes.iter().filter(|lane| lane.is_some()).count();
+            if running == 0 {
+                break;
+            }
+            if running <= 2 && queue.peek().is_none() {
+                // Scalar tail: continue each job from its current state.
+                for lane in 0..LANES {
+                    if let Some((index, next_block)) = lanes[lane] {
+                        let tail = Sha512JobV1 {
+                            start_block: next_block,
+                            start_state: lane_states[lane],
+                            ..jobs[index]
+                        };
+                        out[index] = super::scalar_job_v1_from(
+                            index,
+                            &tail,
+                            jobs[index].start_block,
+                            checkpoints.as_deref_mut(),
+                        );
+                    }
+                }
+                break;
+            }
+            if refilled {
+                state = load_lane_states(&lane_states);
+            }
+            let mut mask = [0i64; LANES];
+            for lane in 0..LANES {
+                if let Some((index, next_block)) = lanes[lane] {
+                    jobs[index].block(next_block, &mut blocks[lane]);
+                    mask[lane] = -1;
+                }
+            }
+            let active = _mm256_setr_epi64x(mask[0], mask[1], mask[2], mask[3]);
+            compress(&mut state, &blocks, active);
+            // Advance every lane; extract lane states only when a job ends or
+            // reaches a checkpoint.
+            let mut extract = false;
+            for lane in lanes.iter_mut().flatten() {
+                lane.1 += 1;
+                let job = &jobs[lane.0];
+                if lane.1 == job.block_count() {
+                    extract = true;
+                }
+                if let Some(checkpoints) = checkpoints.as_deref() {
+                    if lane.1.is_multiple_of(checkpoints.every) && lane.1 <= job.data_block_count()
+                    {
+                        extract = true;
+                    }
+                }
+            }
+            if extract {
+                lane_states = vector_lane_states(&state);
+                for lane in 0..LANES {
+                    if let Some((index, done)) = lanes[lane] {
+                        let job = &jobs[index];
+                        if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                            checkpoints.record(index, job, done, lane_states[lane]);
+                        }
+                        if done == job.block_count() {
+                            out[index] = digest_bytes_v1(&lane_states[lane]);
+                            lanes[lane] = None;
                         }
                     }
                 }
-            }
-            let lane_states = vector_lane_states(&state);
-            for (lane, &index) in group.iter().enumerate() {
-                out[index] = digest_bytes_v1(&lane_states[lane]);
             }
         }
     }

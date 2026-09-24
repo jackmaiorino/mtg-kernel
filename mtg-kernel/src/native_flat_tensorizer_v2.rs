@@ -273,38 +273,42 @@ struct ObjectProjectionV2 {
 
 pub(crate) struct NativeFlatTensorizerV2 {
     poisoned: bool,
-    canonical_json: Vec<u8>,
-    digests: DigestScratchV1,
+    slot: DigestSlotV1,
+    digests: DigestBatchV1,
 }
 
 impl Default for NativeFlatTensorizerV2 {
     fn default() -> Self {
         Self {
             poisoned: false,
-            canonical_json: Vec::with_capacity(16 * 1024),
-            digests: DigestScratchV1::default(),
+            slot: DigestSlotV1::default(),
+            digests: DigestBatchV1::default(),
         }
     }
 }
 
-/// Scratch for the batched digest path: each action's canonical JSON back to
-/// back, and the SHA-512 blocks of every state and action message. The full
-/// fill hashes all of one decision's messages in a single multi-buffer call;
-/// the messages and the block-to-feature mapping are unchanged.
-struct DigestScratchV1 {
+/// One decision's digest messages: its state canonical JSON and each
+/// action's canonical JSON back to back.
+#[derive(Default)]
+struct DigestSlotV1 {
+    state_json: Vec<u8>,
     action_scratch: Vec<u8>,
     action_json: Vec<u8>,
     action_ranges: Vec<(usize, usize)>,
+}
+
+/// SHA-512 blocks and cache checkpoints for every message of the slots
+/// hashed together (one decision in production). All of them go through one
+/// multi-buffer call; the messages and the block-to-feature mapping are
+/// unchanged.
+struct DigestBatchV1 {
     blocks: Vec<[u8; 64]>,
     checkpoints: Sha512CheckpointsV1,
 }
 
-impl Default for DigestScratchV1 {
+impl Default for DigestBatchV1 {
     fn default() -> Self {
         Self {
-            action_scratch: Vec::new(),
-            action_json: Vec::new(),
-            action_ranges: Vec::new(),
             blocks: Vec::new(),
             checkpoints: Sha512CheckpointsV1 {
                 every: STATE_CHECKPOINT_EVERY_V1,
@@ -424,21 +428,21 @@ fn state_prefix_cache_lookup_v1(json: &[u8]) -> Option<StatePrefixResumeV1> {
     })
 }
 
+/// `produced` holds the six state jobs' checkpoint lists (one schedule).
 fn state_prefix_cache_insert_v1(
     json: &[u8],
     resume: Option<StatePrefixResumeV1>,
-    produced: &Sha512CheckpointsV1,
+    produced: &[Vec<(usize, [u64; 8])>],
 ) {
     let Some(key) = state_prefix_cache_key_v1(json) else {
         return;
     };
     let mut checkpoints = resume.map_or_else(Vec::new, |hit| hit.prefix_checkpoints);
-    // The six state jobs come first and share one checkpoint schedule.
-    let first = &produced.states[0];
+    let first = &produced[0];
     for (index, (blocks, _)) in first.iter().enumerate() {
         let mut states = [[0u64; 8]; ACTION_HASH_BLOCK_COUNT_V1];
         for (counter, slot) in states.iter_mut().enumerate() {
-            let (counter_blocks, state) = produced.states[counter][index];
+            let (counter_blocks, state) = produced[counter][index];
             debug_assert_eq!(counter_blocks, *blocks);
             *slot = state;
         }
@@ -497,11 +501,16 @@ impl NativeFlatTensorizerV2 {
         }
         #[cfg(feature = "tensorize-cost-profile-v1")]
         let _profile = cost_profile_v1::Span::new(&cost_profile_v1::FILL);
-        match encode_full_decision_with_scratch_v2(
-            decision,
-            &mut self.canonical_json,
-            &mut self.digests,
-        ) {
+        let slot = &mut self.slot;
+        let encoded = prepare_full_decision_v2(decision, slot).and_then(|prepared| {
+            let offsets = hash_prepared_slots_v2(std::slice::from_ref(slot), &mut self.digests);
+            finish_full_decision_v2(
+                decision,
+                prepared,
+                &self.digests.blocks[offsets[0]..offsets[1]],
+            )
+        });
+        match encoded {
             Ok(encoded) => {
                 *output = encoded;
                 Ok(())
@@ -686,102 +695,137 @@ pub(crate) fn fill_native_flat_decision_tensors_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
-    let mut canonical_json = Vec::new();
-    let encoded = encode_full_decision_with_scratch_v2(
-        decision,
-        &mut canonical_json,
-        &mut DigestScratchV1::default(),
-    )?;
-    *output = encoded;
-    Ok(())
+    NativeFlatTensorizerV2::new().fill(decision, output)
 }
 
-fn encode_full_decision_with_scratch_v2(
+/// One decision's tensors except the 96-float digest tails, whose messages
+/// wait in the decision's [`DigestSlotV1`].
+struct PreparedDecisionV2 {
+    state_head: Vec<f32>,
+    objects: ObjectHalfV2,
+    edges: EdgeHalfV2,
+    actions: ActionHalfV1,
+}
+
+fn prepare_full_decision_v2(
     decision: FlatScoringDecisionViewV1<'_>,
-    canonical_json: &mut Vec<u8>,
-    digests: &mut DigestScratchV1,
-) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
+    slot: &mut DigestSlotV1,
+) -> Result<PreparedDecisionV2, NativeFlatTensorErrorV2> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
     }
     validate_auxiliary_tables_v2(decision)?;
     let objects = encode_objects_v2(decision)?;
     let edges = encode_edges_v2(decision, &objects.projection)?;
-    write_canonical_observation_v2(decision, &objects.projection, canonical_json)?;
+    write_canonical_observation_v2(decision, &objects.projection, &mut slot.state_json)?;
     // Profile-only (env-gated, inflates fill time while on): prefix reuse.
     #[cfg(feature = "tensorize-cost-profile-v1")]
     if std::env::var_os("MTG_KERNEL_TENSORIZE_PROFILE_PREFIX").is_some() {
-        cost_profile_v1::observe_state_json(canonical_json);
+        cost_profile_v1::observe_state_json(&slot.state_json);
     }
-    let mut state = encode_state_head_v2(decision)?;
-    digests.action_json.clear();
-    digests.action_ranges.clear();
-    let mut actions = encode_action_half_with_projection_and_scratch_v2(
+    let state_head = encode_state_head_v2(decision)?;
+    slot.action_json.clear();
+    slot.action_ranges.clear();
+    let actions = encode_action_half_with_projection_and_scratch_v2(
         decision,
         Some(&objects.projection),
-        &mut digests.action_scratch,
+        &mut slot.action_scratch,
         Some(DeferredActionJsonV1 {
-            json: &mut digests.action_json,
-            ranges: &mut digests.action_ranges,
+            json: &mut slot.action_json,
+            ranges: &mut slot.action_ranges,
         }),
     )?;
-    // Every digest of this decision in one multi-buffer call: six state
-    // messages, then six per action in row order. The state messages resume
-    // from the prefix cache when an earlier state JSON shares their leading
-    // blocks byte for byte.
-    let resume = state_prefix_cache_lookup_v1(canonical_json);
-    let mut jobs =
-        Vec::with_capacity(ACTION_HASH_BLOCK_COUNT_V1 * (1 + digests.action_ranges.len()));
-    for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
-        let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, canonical_json);
-        jobs.push(match &resume {
-            Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
-            None => job,
-        });
-    }
-    for &(start, end) in digests.action_ranges.iter() {
-        for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
-            jobs.push(Sha512JobV1::new(
-                ACTION_HASH_NAMESPACE_V1,
-                counter,
-                &digests.action_json[start..end],
-            ));
-        }
-    }
-    digests.blocks.clear();
-    digests.blocks.resize(jobs.len(), [0; 64]);
-    let caching = state_prefix_cache_key_v1(canonical_json).is_some();
-    sha512_jobs_v1(
-        &jobs,
-        &mut digests.blocks,
-        caching.then_some(&mut digests.checkpoints),
-    );
-    if caching {
-        state_prefix_cache_insert_v1(canonical_json, resume, &digests.checkpoints);
-    }
-    let head_len = state.len();
-    state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
-    digest_block_features_v1(
-        &digests.blocks[..ACTION_HASH_BLOCK_COUNT_V1],
-        &mut state[head_len..],
-    );
-    if actions.action_features.len()
-        != digests.action_ranges.len() * NATIVE_FLAT_ACTION_FEATURE_DIM_V1
+    if actions.action_features.len() != slot.action_ranges.len() * NATIVE_FLAT_ACTION_FEATURE_DIM_V1
     {
         return Err(NativeFlatTensorErrorV2::OutputInvariant);
     }
-    for (row, blocks) in actions
+    Ok(PreparedDecisionV2 {
+        state_head,
+        objects,
+        edges,
+        actions,
+    })
+}
+
+/// Digests every message of the given slots in one multi-buffer call: per
+/// slot, six state messages then six per action in row order. State messages
+/// resume from the prefix cache when an earlier state JSON shares their
+/// leading blocks byte for byte. Returns each slot's range in `batch.blocks`.
+fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(slots.len() + 1);
+    let mut resumes = Vec::with_capacity(slots.len());
+    let mut jobs = Vec::new();
+    for slot in slots {
+        offsets.push(jobs.len());
+        let resume = state_prefix_cache_lookup_v1(&slot.state_json);
+        for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+            let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, &slot.state_json);
+            jobs.push(match &resume {
+                Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+                None => job,
+            });
+        }
+        resumes.push(resume);
+        for &(start, end) in slot.action_ranges.iter() {
+            for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+                jobs.push(Sha512JobV1::new(
+                    ACTION_HASH_NAMESPACE_V1,
+                    counter,
+                    &slot.action_json[start..end],
+                ));
+            }
+        }
+    }
+    offsets.push(jobs.len());
+    batch.blocks.clear();
+    batch.blocks.resize(jobs.len(), [0; 64]);
+    let caching = state_prefix_cache_enabled_v1();
+    sha512_jobs_v1(
+        &jobs,
+        &mut batch.blocks,
+        caching.then_some(&mut batch.checkpoints),
+    );
+    if caching {
+        for ((slot, resume), &offset) in slots.iter().zip(resumes).zip(&offsets) {
+            state_prefix_cache_insert_v1(
+                &slot.state_json,
+                resume,
+                &batch.checkpoints.states[offset..offset + ACTION_HASH_BLOCK_COUNT_V1],
+            );
+        }
+    }
+    offsets
+}
+
+fn finish_full_decision_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    prepared: PreparedDecisionV2,
+    blocks: &[[u8; 64]],
+) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
+    let PreparedDecisionV2 {
+        mut state_head,
+        objects,
+        edges,
+        mut actions,
+    } = prepared;
+    let head_len = state_head.len();
+    state_head.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
+    digest_block_features_v1(
+        &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+        &mut state_head[head_len..],
+    );
+    for (row, row_blocks) in actions
         .action_features
         .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
-        .zip(digests.blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
+        .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
     {
         digest_block_features_v1(
-            blocks,
+            row_blocks,
             &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
         );
     }
     let output = NativeFlatDecisionTensorV2 {
-        state,
+        state: state_head,
         object_features: objects.features,
         object_card_ids: objects.card_ids,
         object_groups: objects.groups,
