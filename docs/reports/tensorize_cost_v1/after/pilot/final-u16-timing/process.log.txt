@@ -1,0 +1,8 @@
+running 1 test
+test native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1 ... MULTIRUN CONFIG runs=1 updates=16 topology=2x32 broker_target=16 base_seed=5500001 seed_offset=0 record_only=false ladder=false ladder_init=false wide=false envrand_v2=false population_authority=false population_runtime=false response_exploiter_runtime=false response_exploiter_denovo=false policy_anchor_beta=absent stop_after_generation=absent expected_resume_generation=absent
+MULTIRUN run=0 seed=5500001 store_root=D:\tensorize-cost-v1-work\pilot-prof\final-u16-timing\parent\run-0\store
+MULTIRUN run=0 gen=16 wall=74.0s eval W/L 23/9
+MULTIRUN AGGREGATE runs=1 episodes=1024 wall=74.0s eps_per_s=13.83 (non-evidence)
+MULTIRUN TENSORIZE_PROFILE fill_calls=122586 fill_s=25.761 fill_us_per_call=210.15 packet_calls=122586 packet_s=1.807 packet_us_per_call=14.74 forward_calls=115930 forward_s=63.487 forward_us_per_call=547.63 state_json_mean_bytes=0 prefix_shared_block_fraction_window64=0.0000
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 74.04s

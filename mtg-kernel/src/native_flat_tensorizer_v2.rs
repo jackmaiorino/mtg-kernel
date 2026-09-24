@@ -271,20 +271,11 @@ struct ObjectProjectionV2 {
     node_to_raw: Vec<usize>,
 }
 
+#[derive(Default)]
 pub(crate) struct NativeFlatTensorizerV2 {
     poisoned: bool,
     slot: DigestSlotV1,
     digests: DigestBatchV1,
-}
-
-impl Default for NativeFlatTensorizerV2 {
-    fn default() -> Self {
-        Self {
-            poisoned: false,
-            slot: DigestSlotV1::default(),
-            digests: DigestBatchV1::default(),
-        }
-    }
 }
 
 /// One decision's digest messages: its state canonical JSON and each
@@ -5682,6 +5673,7 @@ fn encode_action_v1<'a>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_action_with_scratch_v1<'a>(
     decision: FlatScoringDecisionViewV1<'a>,
     action_index: usize,

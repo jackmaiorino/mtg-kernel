@@ -1,0 +1,1302 @@
+{
+  "adapter": "native-science-loop-pilot-v1",
+  "candidates": [
+    {
+      "allocation": "1@jack:0",
+      "completed_updates": 120,
+      "concurrency": 1,
+      "episodes": 7680,
+      "episodes_per_second": 11.5706866087873,
+      "host_statistics": {
+        "jack": {
+          "startup_seconds": 19.801232933998108,
+          "steady_update_seconds": 3.0847455978393556,
+          "tail_seconds": 9.548257994651795,
+          "wall_seconds": 663.7462632656097
+        }
+      },
+      "hosts": [
+        "jack"
+      ],
+      "id": "alloc-1atjackd0",
+      "overhead_seconds": 0.0,
+      "per_run": {
+        "base-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "9027ed12d0d4c245e3a68e2070d3221adbe966d66cdfd553ffdc74096301a1f3",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s1": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "a63e8bfddee8d3489643e6ac5bad153e63bdfe6be856ac90336ed547baad3556",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s2": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "db30174c489be69a9167c06eef6371f805683a527188785a4ea830bcd51d771b",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s3": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "e0c67b423e08d12b24f73a7e0ec162c10972f8f2f5a852d1aad9607e4e65da1c",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s4": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "c3cd5bbb54d2c3e86df128030efbcd8a91031bc8b6de148b450905f6aae4e04f",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "a7ec1b81d12f7ab1b83725e1972f7c84990f9b40aa4f05367b167d62a4ae6131",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s1": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "c05fbc638cb608329c395f7b670578807e7c759a4813d615c14ece0caf3fec8f",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s2": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "6a28d97bdbc8eee92dfece24c037dbadc3c7f49ae83ba23c101517753ae8047e",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s3": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "78b3d67f4b3735460e4077d3db5480a1af0f53423dc23e1aeae3eba567d4d6e6",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s4": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "febf4514901de95bd79e25e0c783133a183b2e4e784022228235fb4c6efba439",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        }
+      },
+      "projected_seconds": 4241.969274520874,
+      "reasons": [],
+      "startup_seconds": 19.801232933998108,
+      "status": "qualified",
+      "steady_update_seconds": 3.0847455978393556,
+      "tail_seconds": 9.548257994651795,
+      "usage": {
+        "baseline_memory_mib": {
+          "jack:0": 2659,
+          "jack:1": 133
+        },
+        "cpu_mean_percent": 13.315300963480565,
+        "gpu_peak_memory_mib": {
+          "jack:0": 5606,
+          "jack:1": 263
+        },
+        "idle_capacity_events": [
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 14.1,
+            "window_start": 1790229659.847107
+          },
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 15.3,
+            "window_start": 1790229779.847107
+          },
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 11.5,
+            "window_start": 1790229899.847107
+          },
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 12.0,
+            "window_start": 1790230019.847107
+          }
+        ],
+        "samples": 130
+      },
+      "wall_seconds": 663.7462632656097
+    },
+    {
+      "allocation": "1@jack:0+1@jack:1",
+      "completed_updates": 120,
+      "concurrency": 2,
+      "episodes": 7680,
+      "episodes_per_second": 19.963660797298058,
+      "host_statistics": {
+        "jack": {
+          "startup_seconds": 20.76726131439209,
+          "steady_update_seconds": 3.496791112422943,
+          "tail_seconds": 9.514100074768066,
+          "wall_seconds": 384.6989827156067
+        }
+      },
+      "hosts": [
+        "jack"
+      ],
+      "id": "alloc-1atjackd0_1atjackd1",
+      "overhead_seconds": 0.0,
+      "per_run": {
+        "base-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "9027ed12d0d4c245e3a68e2070d3221adbe966d66cdfd553ffdc74096301a1f3",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s1": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "a63e8bfddee8d3489643e6ac5bad153e63bdfe6be856ac90336ed547baad3556",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s2": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "db30174c489be69a9167c06eef6371f805683a527188785a4ea830bcd51d771b",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s3": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "e0c67b423e08d12b24f73a7e0ec162c10972f8f2f5a852d1aad9607e4e65da1c",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s4": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "c3cd5bbb54d2c3e86df128030efbcd8a91031bc8b6de148b450905f6aae4e04f",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s0": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "a7ec1b81d12f7ab1b83725e1972f7c84990f9b40aa4f05367b167d62a4ae6131",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s1": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "c05fbc638cb608329c395f7b670578807e7c759a4813d615c14ece0caf3fec8f",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s2": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "6a28d97bdbc8eee92dfece24c037dbadc3c7f49ae83ba23c101517753ae8047e",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s3": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "78b3d67f4b3735460e4077d3db5480a1af0f53423dc23e1aeae3eba567d4d6e6",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s4": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "febf4514901de95bd79e25e0c783133a183b2e4e784022228235fb4c6efba439",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        }
+      },
+      "projected_seconds": 2389.3531188964844,
+      "reasons": [],
+      "startup_seconds": 20.76726131439209,
+      "status": "qualified",
+      "steady_update_seconds": 3.496791112422943,
+      "tail_seconds": 9.514100074768066,
+      "usage": {
+        "baseline_memory_mib": {
+          "jack:0": 2657,
+          "jack:1": 0
+        },
+        "cpu_mean_percent": 22.301087245192743,
+        "gpu_peak_memory_mib": {
+          "jack:0": 5604,
+          "jack:1": 2862
+        },
+        "idle_capacity_events": [
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 19.8,
+            "window_start": 1790230399.8904603
+          },
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 23.7,
+            "window_start": 1790230519.8904603
+          }
+        ],
+        "samples": 75
+      },
+      "wall_seconds": 384.6989827156067
+    },
+    {
+      "allocation": "2@jack:0+1@jack:1",
+      "completed_updates": 120,
+      "concurrency": 3,
+      "episodes": 7680,
+      "episodes_per_second": 26.974516453334278,
+      "host_statistics": {
+        "jack": {
+          "startup_seconds": 20.910772943496703,
+          "steady_update_seconds": 3.709071522951126,
+          "tail_seconds": 9.886380982398986,
+          "wall_seconds": 284.7131667137146
+        }
+      },
+      "hosts": [
+        "jack"
+      ],
+      "id": "alloc-2atjackd0_1atjackd1",
+      "overhead_seconds": 0.0,
+      "per_run": {
+        "base-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "9027ed12d0d4c245e3a68e2070d3221adbe966d66cdfd553ffdc74096301a1f3",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s1": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "a63e8bfddee8d3489643e6ac5bad153e63bdfe6be856ac90336ed547baad3556",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s2": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "db30174c489be69a9167c06eef6371f805683a527188785a4ea830bcd51d771b",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s3": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "e0c67b423e08d12b24f73a7e0ec162c10972f8f2f5a852d1aad9607e4e65da1c",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "base-s4": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "c3cd5bbb54d2c3e86df128030efbcd8a91031bc8b6de148b450905f6aae4e04f",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "a7ec1b81d12f7ab1b83725e1972f7c84990f9b40aa4f05367b167d62a4ae6131",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s1": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "c05fbc638cb608329c395f7b670578807e7c759a4813d615c14ece0caf3fec8f",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s2": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "6a28d97bdbc8eee92dfece24c037dbadc3c7f49ae83ba23c101517753ae8047e",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s3": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "78b3d67f4b3735460e4077d3db5480a1af0f53423dc23e1aeae3eba567d4d6e6",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        },
+        "envrand-s4": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "febf4514901de95bd79e25e0c783133a183b2e4e784022228235fb4c6efba439",
+          "exit_code": 0,
+          "generations": [
+            4,
+            8,
+            12
+          ],
+          "host": "jack",
+          "output_count": 30
+        }
+      },
+      "projected_seconds": 2022.2332354545592,
+      "reasons": [],
+      "startup_seconds": 20.910772943496703,
+      "status": "qualified",
+      "steady_update_seconds": 3.709071522951126,
+      "tail_seconds": 9.886380982398986,
+      "usage": {
+        "baseline_memory_mib": {
+          "jack:0": 2657,
+          "jack:1": 133
+        },
+        "cpu_mean_percent": 32.986118008435916,
+        "gpu_peak_memory_mib": {
+          "jack:0": 8549,
+          "jack:1": 2862
+        },
+        "idle_capacity_events": [
+          {
+            "diagnosis": "runs waited for a slot while the CPU was below 60 percent busy for two consecutive windows: the allocation width, not CPU, limits throughput (check GPU memory headroom and per-slot capacity)",
+            "mean_cpu_percent": 34.5,
+            "window_start": 1790230801.9592032
+          }
+        ],
+        "samples": 55
+      },
+      "wall_seconds": 284.7131667137146
+    },
+    {
+      "allocation": "2@jack:0+2@jack:1",
+      "completed_updates": 0,
+      "concurrency": 4,
+      "episodes": 0,
+      "episodes_per_second": null,
+      "host_statistics": {
+        "jack": {
+          "startup_seconds": null,
+          "steady_update_seconds": null,
+          "tail_seconds": null,
+          "wall_seconds": 0.0
+        }
+      },
+      "hosts": [
+        "jack"
+      ],
+      "id": "alloc-2atjackd0_2atjackd1",
+      "overhead_seconds": 0.0,
+      "per_run": {},
+      "projected_seconds": null,
+      "reasons": [
+        "device jack:1: 2 processes need ~5724 MiB, 5369 MiB free after margin"
+      ],
+      "startup_seconds": null,
+      "status": "capacity-skipped",
+      "steady_update_seconds": null,
+      "tail_seconds": null,
+      "usage": {},
+      "wall_seconds": 0.0
+    },
+    {
+      "allocation": "2@jack:0+2@jack:1+1@haleyspc:0",
+      "completed_updates": 0,
+      "concurrency": 5,
+      "episodes": 0,
+      "episodes_per_second": null,
+      "host_statistics": {
+        "haleyspc": {
+          "startup_seconds": null,
+          "steady_update_seconds": null,
+          "tail_seconds": null,
+          "wall_seconds": 0.0
+        },
+        "jack": {
+          "startup_seconds": null,
+          "steady_update_seconds": null,
+          "tail_seconds": null,
+          "wall_seconds": 0.0
+        }
+      },
+      "hosts": [
+        "haleyspc",
+        "jack"
+      ],
+      "id": "alloc-2atjackd0_2atjackd1_1athaleyspcd0",
+      "overhead_seconds": 0.0,
+      "per_run": {},
+      "projected_seconds": null,
+      "reasons": [
+        "device jack:1: 2 processes need ~5724 MiB, 5369 MiB free after margin"
+      ],
+      "startup_seconds": null,
+      "status": "capacity-skipped",
+      "steady_update_seconds": null,
+      "tail_seconds": null,
+      "usage": {},
+      "wall_seconds": 0.0
+    },
+    {
+      "allocation": "2@jack:0+2@jack:1+2@haleyspc:0",
+      "completed_updates": 0,
+      "concurrency": 6,
+      "episodes": 0,
+      "episodes_per_second": null,
+      "host_statistics": {
+        "haleyspc": {
+          "startup_seconds": null,
+          "steady_update_seconds": null,
+          "tail_seconds": null,
+          "wall_seconds": 0.0
+        },
+        "jack": {
+          "startup_seconds": null,
+          "steady_update_seconds": null,
+          "tail_seconds": null,
+          "wall_seconds": 0.0
+        }
+      },
+      "hosts": [
+        "haleyspc",
+        "jack"
+      ],
+      "id": "alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+      "overhead_seconds": 0.0,
+      "per_run": {},
+      "projected_seconds": null,
+      "reasons": [
+        "device jack:1: 2 processes need ~5724 MiB, 5632 MiB free after margin"
+      ],
+      "startup_seconds": null,
+      "status": "capacity-skipped",
+      "steady_update_seconds": null,
+      "tail_seconds": null,
+      "usage": {},
+      "wall_seconds": 0.0
+    }
+  ],
+  "created_at": "2026-09-24T06:43:33.026875+00:00",
+  "data_tree_sha256": "bf51eeb0332891a4544467aaa059d3126d7731b60a92942f7059f1e8132b246b",
+  "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
+  "golden": {
+    "allocation": "1@jack:0",
+    "root": "D:\\tensorize-cost-v1-work\\launcher\\q-base\\serial-golden",
+    "runs": {
+      "base-s0": {
+        "digest_set_sha256": "9027ed12d0d4c245e3a68e2070d3221adbe966d66cdfd553ffdc74096301a1f3",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "89cbfdfaedf42a37df5d7a7442094ca4dea8ce33064055e656b7da747854ac14",
+          "store/checkpoints/update-00000000.sidecar.json": "f04b8b64c73b2c82cbee711da2c69901b5ceac4376a9072090ce44882e161bf3",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "58df76fda712c8ae6f2b8af11bd2c8449f2cf74c9dcd15b9ec2bf1ddda6be964",
+          "store/checkpoints/update-00000004.sidecar.json": "67c2226185b0f36702138e41b371b3063beebc216d1ca237134b0b9beb713ef9",
+          "store/checkpoints/update-00000004.state.f32le": "2ea2d0f4f233d851de5ff5605306ed37e4203822794596eb9cf63b05632a3301",
+          "store/checkpoints/update-00000008.checkpoint.json": "bdfd0669fae15a04885af0cf655358ba4261fe1637cd03ba466b9556861a2084",
+          "store/checkpoints/update-00000008.sidecar.json": "2155898a1b74a6b32ef75dca064dc3dfc3a481075a9d9f2487c7d6171caa4934",
+          "store/checkpoints/update-00000008.state.f32le": "f402640ee225bfcab6c0bc0034443a35a2906d3fc25e7335f439cdf49509af04",
+          "store/checkpoints/update-00000012.checkpoint.json": "f86cb665c3cb85a90025e56ec4b1f10ff57e7af575133bdeb60cddd6f1870453",
+          "store/checkpoints/update-00000012.sidecar.json": "063c65583fdd5f1588bb160626dbc923b71fa09141a4bd8f0779a9bc630551ee",
+          "store/checkpoints/update-00000012.state.f32le": "fe13a48de53e66d512c04f251ab8f8684f1983c5bac3a368aedd4302be831c12",
+          "store/heads/update-00000000.head.json": "0be67d12bd38d79d738612eceb2969ddc4c94ff00db7a1c3312ab93ff07d2668",
+          "store/heads/update-00000004.head.json": "aae40d6759bdd5b80115a8bc9bd362451aa7f0ac03ae23797d6a09b2a8ab5e88",
+          "store/heads/update-00000008.head.json": "862b389ed28e6d94d8f69be62b39d5d7ce510ba9a24bf35dea8a5ffd77028b4a",
+          "store/heads/update-00000012.head.json": "58095dba2bbf74b0c26d06c6b142800feeb75a5e49d2bf8a12383159b5687f71",
+          "store/latest.json": "271a6e47ce73cff7e51612103e941f87bfc30f03af7fad6447289981a30294cb",
+          "store/refs/update-00000000.ref.json": "54e750714ab0d83af133fa899f22a745931a13ff5003b7a125850b08188ffd6d",
+          "store/refs/update-00000004.ref.json": "96079b4464ec35f4396c67cef0e3b15556f21be02cf8395fa2deba4061b36167",
+          "store/refs/update-00000008.ref.json": "6a0394527ddb3fcab43a47b8898b033527a2e061e9c55f222939eb662724c09f",
+          "store/refs/update-00000012.ref.json": "0ab6d8e6c29769b322d51e4fdde51e697c5d94fb70713030a58fa1de4ea5696b",
+          "store/run.json": "4dc7225db3cf61d2ea41cb7a5ff1fb306095a6e3f9f05d0092552e523e45ef43",
+          "store/segments/segment-00000000.json": "70771aa6633a000757b1ccd7375fb47a260cfd20159823f8bc321d2d6182948c",
+          "store/segments/segment-00000004.continuation-00000000.json": "05735bbcf593c8f14eb98f86bfa08ad1c96cda460abd0220de07030e008061dd",
+          "store/segments/segment-00000004.json": "2f24895db33475ee646cba4d352f8496fe1880ddf8351a5f021743c6fbb7a5d1",
+          "store/segments/segment-00000008.continuation-00000000.json": "d58423d5a9b0ca3efa606592621b65e1c0a529380de03d0ea4faf3c02c038b4e",
+          "store/segments/segment-00000008.json": "0410049851cbe05d46d9556251485f7ad175d07538e4a36e565c0e3747d8e638",
+          "store/segments/segment-00000012.continuation-00000000.json": "82b01cf4f5a032144e2ff0d4a4fe48aa57e6740decc3d74ddb8dfbf89057e1c3",
+          "store/segments/segment-00000012.json": "18477e1011ed5a2be626ba3f9e171afee2d8b01326d4de37c47a93475cf65aa4"
+        }
+      },
+      "base-s1": {
+        "digest_set_sha256": "a63e8bfddee8d3489643e6ac5bad153e63bdfe6be856ac90336ed547baad3556",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "38a9f2618a74ec431bffd8256953179c2187b5fd1700ef6d8a11e4f8ee106fd0",
+          "store/checkpoints/update-00000000.sidecar.json": "dbd2e40f13ad72a36de036203e0ecd1ca79e902c0101f19e89d0c097cd78c55d",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "ec35e5602505ed8f7242a0f70b274244bd9e8d66d6ba9fbc5c2b89030872d2b0",
+          "store/checkpoints/update-00000004.sidecar.json": "13342608a95c065db0d2c5baa4e399e9f04af31b6b2110d6361bfee3f7bdb645",
+          "store/checkpoints/update-00000004.state.f32le": "9fba0879e96df3b3254ad63fb02dc1418993bbcf8fb2ce8ccc163b1c89337476",
+          "store/checkpoints/update-00000008.checkpoint.json": "2d4d99cfb1fcc1d9fda8c9700e0df0146df6af08ce6b5d3fdc70b79f48b53968",
+          "store/checkpoints/update-00000008.sidecar.json": "fbae81785fded20ab81c7df9ed27f4bceeb009d4e73feaed870c431a09e6f0f9",
+          "store/checkpoints/update-00000008.state.f32le": "bcee6e00684f9a5bce6a54c745e20f07fbba1dd57758b2263cff93d3c0bd801c",
+          "store/checkpoints/update-00000012.checkpoint.json": "cadaa35043d94bcdbaa3cd2fa9dc7da5e5a21bfe0040c8a6be0862906621b879",
+          "store/checkpoints/update-00000012.sidecar.json": "0ab6b2fd23e4063b928ef6f5a302786b0f70f0719694768d111249d64adf7691",
+          "store/checkpoints/update-00000012.state.f32le": "551b2a04dbe86095f9ad2ebfc55d5af77b9cddd9446009ada820a13a4c669435",
+          "store/heads/update-00000000.head.json": "72f08e71ab1f93d08122e96eef222e9fee41fd62480895ede4caf4e9fed37edf",
+          "store/heads/update-00000004.head.json": "93bf8e4d16e32f95ab96bd6b3cbbc352c2ee8ce9da9b7b14bb85e64284476d79",
+          "store/heads/update-00000008.head.json": "15be19ab4312ea7ce07e8cd4db2c891fe0cb05f53f3f47130b0d513d0c209e98",
+          "store/heads/update-00000012.head.json": "44d013716850edcec96218673c7db652be0871e9b1a0393964d0cbe4b764a5c7",
+          "store/latest.json": "35bd135fdf624387c7c5c99c02cb2de4a75b9486f79582d6a79832306f1fc605",
+          "store/refs/update-00000000.ref.json": "14afa092648073d40409cf4292d47f565485c5dd6624ffcfca0fe28703011f1a",
+          "store/refs/update-00000004.ref.json": "84e78c76a600a45a9d4f7b86f95fe8d31d1975458dd2ff91a2d1789af496f6c9",
+          "store/refs/update-00000008.ref.json": "e0c97f74cef5e4c5e7ed7bc649bbd60999be87e8a1e46d00b9e28b7cdc4a9111",
+          "store/refs/update-00000012.ref.json": "0bf3dff03a591164b32123978064bc23ea75d1acfe6c7f0bc46f25a992f8cd29",
+          "store/run.json": "10e6c48e3c29864100b8450e6f8a27bba5b27392d04fa206ba3bdaa71e65e0fc",
+          "store/segments/segment-00000000.json": "109a984b6232f4dd10074f76d805b1961f8e7a17a8aadb72b82721dfebec97bc",
+          "store/segments/segment-00000004.continuation-00000000.json": "3ca8ffea058d7b062949bd45a7c5e2ff740d07eac788793d7c0c5cb2b5b334db",
+          "store/segments/segment-00000004.json": "e93f942a4f1c2239fb9d437fa7b98656b0d2ec8e30ff072ed039e0490cd20d42",
+          "store/segments/segment-00000008.continuation-00000000.json": "de5da2842c7b689392159417e554e348a6705c163f8af02d5043d60094933c2b",
+          "store/segments/segment-00000008.json": "71b099c37ce716b6b516bb6f55ddb9bbdf90a47a683baab79f2739b71435cb75",
+          "store/segments/segment-00000012.continuation-00000000.json": "de07b6a42c1c64630a4b4a7b0105d229bef3b8354d5715e684df75c523cc10d9",
+          "store/segments/segment-00000012.json": "96aafbd8c694f28a51f2b29cd587d859996b22508d927b0c4273498d5879afa7"
+        }
+      },
+      "base-s2": {
+        "digest_set_sha256": "db30174c489be69a9167c06eef6371f805683a527188785a4ea830bcd51d771b",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "ebc649c1bceb50f6acd3eb3b002f738ed8f58e96552b5f6585a9d320a34ac4b3",
+          "store/checkpoints/update-00000000.sidecar.json": "79baa52690e05916486d0115383fa7b47486e048a5da2477d1f4903a6ca12f1c",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "31c90770cf1e7389034b30387a6ecf06b37b3ef062c72cb4fbdca389f1abbd35",
+          "store/checkpoints/update-00000004.sidecar.json": "a8cdcba256dad7af53d877a2f5b336d4ceab4f13fc5c471d582adaab95ffdb97",
+          "store/checkpoints/update-00000004.state.f32le": "9ec0c6904e0125bd1e3ccdb478735c729f8455b3c0da2788ec88f4713782e68c",
+          "store/checkpoints/update-00000008.checkpoint.json": "6fbdab8fcf7fcd4841107de0228df2780a9f1c117c25eb8d6978b643ecc87f74",
+          "store/checkpoints/update-00000008.sidecar.json": "afb3b656870224c09c921cfb86e8f3e47ce67984e1d0b3e8fb7006d4663c2f6e",
+          "store/checkpoints/update-00000008.state.f32le": "8c9af5f8eb957730ed27e10fbefc57901761ebd36159ae53f6a0313e3c1b90c6",
+          "store/checkpoints/update-00000012.checkpoint.json": "2f7d5c2c3cda87cfa40e02edb4780bf196959518265cf7270d8d72f1574c13b6",
+          "store/checkpoints/update-00000012.sidecar.json": "3f46e3ef39f7de9f2f8b520266855f08f4e51233aaa1818bf816c56a2102add4",
+          "store/checkpoints/update-00000012.state.f32le": "2caee5762470ec1682726ffa4e87c84984d7af75bf86501809953d844c27f8ef",
+          "store/heads/update-00000000.head.json": "76c47949ccaee65d1006314c65ef185fc13c6a771117fff99d01cc4bacfed9b1",
+          "store/heads/update-00000004.head.json": "c48de0da30f27fa9a260f94cb295e32358fa602bbc56dbd228f0717ff0d75740",
+          "store/heads/update-00000008.head.json": "d0aa1b182ccbff3aee4205e912adb14607af4597d82dfef7147d7d33de07306b",
+          "store/heads/update-00000012.head.json": "c0825308a88a0d9ef27beadb6c95c13fea05f3bd6fd1a63cbbf121be4529ee77",
+          "store/latest.json": "36992d1cdca77a5051dc5832edd80fb2d955684e73a5a25c4045e1afb5f1ddca",
+          "store/refs/update-00000000.ref.json": "7fc7f39640998d2146b72047bcd96614bf4fc1d2a935f6669fd14afb6f452842",
+          "store/refs/update-00000004.ref.json": "9ccc63e200906b64865dbf2a09b9f5bb1c902ca04a4667ac8b0282001e758501",
+          "store/refs/update-00000008.ref.json": "9912a1db4a6b1c9e620c5b10607b5742fd2cf3a9dee0be882e328f02d6991c05",
+          "store/refs/update-00000012.ref.json": "3bcac9947b59a71679c4e8d79b87ab8048f49aafbac0c7894dbf4aa441b83f69",
+          "store/run.json": "afea8242d315351c40efe24f0b61b8e4987c86c1664fc9f2db63b9cbab520b1a",
+          "store/segments/segment-00000000.json": "f2055ffec857fb555b64089b402486441fe03a9bc1359d2ea3b4a1842494d998",
+          "store/segments/segment-00000004.continuation-00000000.json": "5f2c83aace1d707130c67598246942076baac3400047afdf50d3ae0db78fe3d8",
+          "store/segments/segment-00000004.json": "bda4c7050f1c05b8d4b8c48305bfe3ab2f30808721efba3cc57f714a963b6b2c",
+          "store/segments/segment-00000008.continuation-00000000.json": "07bc3f10406924aafa38a8aa3fdab7ae8e2925a56ae95bdae8642da923fbd369",
+          "store/segments/segment-00000008.json": "5d8eaa38cbfe6958f70ffcebba2ead70051dee776d7760a54bd4f2c8bd5dc10c",
+          "store/segments/segment-00000012.continuation-00000000.json": "b95cee1dfe067fe47d98fce9ad35815faabb8056d88b5678c4d559f55841efe3",
+          "store/segments/segment-00000012.json": "624ee11e34a44053591dd023590208560e5c67280ebd209779fa57a714f211d9"
+        }
+      },
+      "base-s3": {
+        "digest_set_sha256": "e0c67b423e08d12b24f73a7e0ec162c10972f8f2f5a852d1aad9607e4e65da1c",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "f4ead7489576a83151a2baecbdbcd9c079e5258b692c49625e5efffc082f943c",
+          "store/checkpoints/update-00000000.sidecar.json": "867dd8bb2d2ab5d3ef6403279cac9a3e8a800508a3508984f3bd78e6ffbdafca",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "95773a1fc19aeb93e037e0b72f737b76986c981df0465c8d5f091862574bf254",
+          "store/checkpoints/update-00000004.sidecar.json": "5a02380bb92a4661fd564b465741ade950c5ee2732fe1acdac9e33864e8c6867",
+          "store/checkpoints/update-00000004.state.f32le": "03b931fdebea79ad57504a711ec9961ef233f9a9d93ae2bfd345a808ba100497",
+          "store/checkpoints/update-00000008.checkpoint.json": "704e9c48421a2e4393f581b5323a6c8327d4be52aecca22918acb80dc1a81eb6",
+          "store/checkpoints/update-00000008.sidecar.json": "d59dc1e96b649c3e19e040174a663bb56fe742b4938c87959a4c94b0a1e1038a",
+          "store/checkpoints/update-00000008.state.f32le": "47d6e78f3ebbf627bdb296ce46b1c8c008b36aa0fe1a5ee3334576cea6286297",
+          "store/checkpoints/update-00000012.checkpoint.json": "b65f0606f97738bed78ce92b57e9ae15145a3d2d340678ca82e02c72d3741d90",
+          "store/checkpoints/update-00000012.sidecar.json": "7ab030f1fda80dbd85ef4f1a59748341d7448a47c74ba6dedbad91552d88d45b",
+          "store/checkpoints/update-00000012.state.f32le": "3f55acac0977f0b1a19839d726ab0fbe77598f60142fa45b5c0b54fd9eea2576",
+          "store/heads/update-00000000.head.json": "e177a9a78c649f3170a439ccbd2e5a929450ca0dd615e007bc7d69bca0c84741",
+          "store/heads/update-00000004.head.json": "5a1cee40830a44e35006a66c3a45b2cb204151b1ff3496d11b9b1e530e564dd7",
+          "store/heads/update-00000008.head.json": "fee69558350f372fca070b4eb982996e87a83b1f1427dee7621cc29cb0442b40",
+          "store/heads/update-00000012.head.json": "c1f943f99795f712fdf1258861ef672893eea2eb6a07eeed3f2d70f4c58dfa01",
+          "store/latest.json": "569025e1c8c8f60035af3b7f734e2fea9c0403c233cb0ef088e576660acaa2c6",
+          "store/refs/update-00000000.ref.json": "f3e6b08d3ed72530140a8774d37c0defdaf2339d6d51a6a41f0db8717a823b3d",
+          "store/refs/update-00000004.ref.json": "53cd5a2a48645684861653970c27f0b8c78d9446fb3450f9a019c663930378ae",
+          "store/refs/update-00000008.ref.json": "532c66a5c9eb6fce4c07ef27f55ac79ead60084907f701d8b1f629c3c9d90202",
+          "store/refs/update-00000012.ref.json": "8ac4154ab437fd45499ada2fba6b503aeac2a6d58389dbb02b84941251ceb664",
+          "store/run.json": "332ac73cc7cb66dc0a29a6ae12cf76b35c312ef94b10a405ec99835559ec3c46",
+          "store/segments/segment-00000000.json": "24d7d6eb47a60c02f6056a1bd7cd1e9bc32e1a6cbf591c6ef862e0cb9cffe591",
+          "store/segments/segment-00000004.continuation-00000000.json": "83387394b3317be9be056a5865db85f68fb8b830b275013f30aff61704e6a178",
+          "store/segments/segment-00000004.json": "82c08674c8a3efb6ff6e45a252123b4b6b29244a70b9bf78289a74eb57feaaba",
+          "store/segments/segment-00000008.continuation-00000000.json": "fb38413bf1701ea92056bd7f3bcb7f745d05c0eefedf28eadc6a57702d1753e3",
+          "store/segments/segment-00000008.json": "261f2bf811792edaf492c1d6937bfeb541acd51a2bf47cf674371c29145579c7",
+          "store/segments/segment-00000012.continuation-00000000.json": "8472a48e318cba8a5d0c72451fb4bfd2cd92b9a2e8c0d0ca3ff47eee29d7540e",
+          "store/segments/segment-00000012.json": "39dc88c9de37e9875dcfc4b81d79dc488acec7de7e03cc009833a2ce98a069c1"
+        }
+      },
+      "base-s4": {
+        "digest_set_sha256": "c3cd5bbb54d2c3e86df128030efbcd8a91031bc8b6de148b450905f6aae4e04f",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "bdc4ab9572595b413fbb20e96c835d0894a55fc73287ffd7e0974ca006bea42d",
+          "store/checkpoints/update-00000000.sidecar.json": "5caef8d0bf57b6661bb7cf6e1199ab5e62f6d57de832288100b761777f4e216d",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "93d470a33878b41bbab336b09aee02bed27686e067dffc7b73cd3fc5722f5917",
+          "store/checkpoints/update-00000004.sidecar.json": "132c750e351e80858b69a450b9f104b0708d4c081250d0a3c7b704efed0afd44",
+          "store/checkpoints/update-00000004.state.f32le": "8328fab2b3f62ab5c0e2f3dc7b03dbe38224d726c7df46254d3cd3690e7c38f3",
+          "store/checkpoints/update-00000008.checkpoint.json": "75e7fde3a3526519a52b31a4fd812f7823e0ec38960c0c7153688d3f38b6ae70",
+          "store/checkpoints/update-00000008.sidecar.json": "99ad03417c85ace673aaa78841a2c0a18915ed508761eae7676a5d4a31da9321",
+          "store/checkpoints/update-00000008.state.f32le": "216d600b85f2c93cdfc17b238c03fe4ba99158e928b39ab12927f0b7729aeff3",
+          "store/checkpoints/update-00000012.checkpoint.json": "8bbea6c90f9b4859b4d60be496153e8c89ab8af7f898f3946849de717368c2a9",
+          "store/checkpoints/update-00000012.sidecar.json": "d4f7d5b7884a37fcfab7d16be1fe45969d302f84d769c2cac0c9364b3b74406c",
+          "store/checkpoints/update-00000012.state.f32le": "3829c12f7d6826fa8a22250d74679d00bf2f5f06b2031e0cdf041616be3be642",
+          "store/heads/update-00000000.head.json": "c2f3c17893f62a60ace5519aeb8de98a74b234b0470f3f2198cf090c6758d49e",
+          "store/heads/update-00000004.head.json": "90cd68948c1e3e976484d7f2b19c7680ee28150f5bf81ea8f7cdaa5fda80bec1",
+          "store/heads/update-00000008.head.json": "c7e29074bf6e70c4467a46e924c388956d4065c82b660968c42e493b160ba30c",
+          "store/heads/update-00000012.head.json": "ce08d8446cda1b83fca931a030c0c24b1426a848e13b0ebe913d52ce3fbe795f",
+          "store/latest.json": "a37aac9cfc3ef8243fde3c7a8a40b9c0363e29174ac0454a11f0e23bfafb6b8e",
+          "store/refs/update-00000000.ref.json": "e50be4e47dfd6446534b1ed1005e1f03cc5180200d2b0f51e6d453ec79b35bc4",
+          "store/refs/update-00000004.ref.json": "969460cc6d89c184a5f23e12605a5dc1faaa0e07e9efd7ec828bb694281a5300",
+          "store/refs/update-00000008.ref.json": "4ce9fb170019034164a29bdbf72a58e9066d24ddcabb9d8d9c25bb7a1534fbeb",
+          "store/refs/update-00000012.ref.json": "5be90e2bb7c90fb543a6276f662127c1633de5241ae464dfd4e108bafc3e4bce",
+          "store/run.json": "ae3ec92b87c40b6c04909716f1b53fcb5ab2a5d7802e11d01939a9fc9936f0a1",
+          "store/segments/segment-00000000.json": "a7e425105263f782ad391a7bca75a9afd02177b76cface6260ba1776849f2745",
+          "store/segments/segment-00000004.continuation-00000000.json": "e73f1b81b1deaf42069f9f912da55c9c17f056409c1fdb49dad636cbc5520866",
+          "store/segments/segment-00000004.json": "6007e736c30f3ec506c3c7e36d137ba06769e3f6556a8b239a8bd73edca30367",
+          "store/segments/segment-00000008.continuation-00000000.json": "ab041c9ce285101210a35c1fc13bab442cf3c4f54ca5cb4784a522ac7f3d4da1",
+          "store/segments/segment-00000008.json": "5f8d47e0dd23626fcdcc55c005930712b7f3a3ba63601c3ac96a0ab6d09b7ec1",
+          "store/segments/segment-00000012.continuation-00000000.json": "3c328d0533cae393f3bd7581d0fbc31046f2069b69ef389044a1d337047b1ff1",
+          "store/segments/segment-00000012.json": "1ca55f243f3ab3eac3c441a35b137b0963ba884cf2b46622e402680d6a8d5549"
+        }
+      },
+      "envrand-s0": {
+        "digest_set_sha256": "a7ec1b81d12f7ab1b83725e1972f7c84990f9b40aa4f05367b167d62a4ae6131",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "30e4bdacc8355cd2f762df343095d2b3ed3e12e67d90e3de9320f8cc8e358376",
+          "store/checkpoints/update-00000000.sidecar.json": "34aef531565546571fc8dd64755ee5454950c336c1ed4a7c5252439dff2525ba",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "514d7b07af19d3af40bc44d3038bf83f53c541f55db74261915e7572fe6beea5",
+          "store/checkpoints/update-00000004.sidecar.json": "b09215637f492ae68936573a19fd7641d0172d8c34d28342ad331c591eb4942e",
+          "store/checkpoints/update-00000004.state.f32le": "2aef223fe7adfa4f73c095300132bbd166f2f35a46be11230ad92236f1e76f28",
+          "store/checkpoints/update-00000008.checkpoint.json": "c74a564f0efe16fe65dde9b08f26b0a8265510b2a46a5710cfa17de3af357506",
+          "store/checkpoints/update-00000008.sidecar.json": "36a7cf8da03c4c808744bf98d451d2eb0584255c69323c28413440b1a9181922",
+          "store/checkpoints/update-00000008.state.f32le": "903870b08cca6cc7cb41ec7733a16c372d2ddf71ba62870112d75b635d4bc1ce",
+          "store/checkpoints/update-00000012.checkpoint.json": "633c85cd5836eed530463b5ba00c55d876b5a7ed2c63e44c24992ba7baf13a8b",
+          "store/checkpoints/update-00000012.sidecar.json": "1ccffc37de49070646903e66875af69e886bbc8a668f9fa1f484c2290c18017f",
+          "store/checkpoints/update-00000012.state.f32le": "f58d130d21952fb374bfbfd52ba1bf8fd5d92f0d35a2cbc39951149c918ab2c9",
+          "store/heads/update-00000000.head.json": "dc30962e8500795926a64b671f251d876f352b8c17bdcc2103f60e3382bbfe6e",
+          "store/heads/update-00000004.head.json": "56c89a5365a69e8305aca172cc86bd4b5aaf72104062afab27c483043bca2aed",
+          "store/heads/update-00000008.head.json": "fa7bee6b6db3cf4d1e971c685d85081bdbac159f268757df47514ca5c2613a8a",
+          "store/heads/update-00000012.head.json": "38751baa1554b70407c69db2f5220be603390df79d77473447a527ccabe614b6",
+          "store/latest.json": "751aebc2abe42c979bea1203ec8d186e476fc828195f2c44d02ff95ff3d9efa7",
+          "store/refs/update-00000000.ref.json": "3c956cb7e0013ea92f3e04a1e0a6a1b48ccc68c93608a7f4899b9aab04753138",
+          "store/refs/update-00000004.ref.json": "eea3b4599f3522e91e3e4a21bb381ce5dfb2b9d1052f935cbf856bbeed8e6d5b",
+          "store/refs/update-00000008.ref.json": "00915c3cb0421485627dd0bdb1a68e3b0ac3f7902ff869c4542490168c384285",
+          "store/refs/update-00000012.ref.json": "9ee00ac287bb946424ff52ec10853ade903454e61d54e05353a16337fda85b8a",
+          "store/run.json": "0ab7c645913f94e087c15baab0d5a7f9de7a7e195a37f6852848269ef6e2d68e",
+          "store/segments/segment-00000000.json": "0d41ee3831fac5ad1dee5f911c0886086232e52c7571715e6dd26f4cb7cfcbe4",
+          "store/segments/segment-00000004.continuation-00000000.json": "8ce1a633180b6c24d29d4279aa71051392e69f83e0a5db7b7d7002c3591d05c0",
+          "store/segments/segment-00000004.json": "e98bd0daf36c1a4cdd36d7be999215e6e5223f0f55c2bf1cf130f5c9f2d5d73b",
+          "store/segments/segment-00000008.continuation-00000000.json": "7892fc1d38eec6e183a409474f9018b01d46e8b8d440949d7d4dc8fbc49f36d1",
+          "store/segments/segment-00000008.json": "068d2473fc683c547894abe00a77fd367bc3ecc7ddd36455887f88935ff29a97",
+          "store/segments/segment-00000012.continuation-00000000.json": "3ed34e1007f1344b99b70251483c5ce9358bb368bbdd1d9966a29be2f027b947",
+          "store/segments/segment-00000012.json": "8316d94d02ccdf13261ba89fca195a9673e5f7d6c1deb936fb073bebe953939e"
+        }
+      },
+      "envrand-s1": {
+        "digest_set_sha256": "c05fbc638cb608329c395f7b670578807e7c759a4813d615c14ece0caf3fec8f",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "d7ad9af1d3369b3b0e340fdf65ba4b62b26af81f6d2384c19affd61e5bdd326f",
+          "store/checkpoints/update-00000000.sidecar.json": "e43fbc4a22358669137c9c8b6dbf14b3027772e6822a2269b7239d56277f0bd3",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "a14aaa4f75e093e9e9789cfa271378dcfc3472c727754f849b3283a11451d14a",
+          "store/checkpoints/update-00000004.sidecar.json": "789007d6c82d17ad50b9e88630a11e0ab89f422f21b90e92aef393c52c1c5525",
+          "store/checkpoints/update-00000004.state.f32le": "95cfcfd1db20d011ffed552e4d5bb569deefee79a281aa16e348665de1f2458a",
+          "store/checkpoints/update-00000008.checkpoint.json": "a275260c924f0421d7182fc394db4c418f4c0f07015a9af5d4eeb5244894e03b",
+          "store/checkpoints/update-00000008.sidecar.json": "0978d113b403d504d22a2d854a71e4a3e3d97fd600d4c81dc7aacc8ea565bd7b",
+          "store/checkpoints/update-00000008.state.f32le": "0cf102f79290f29cd4cfb9cff8b7b0d48f34778f48452b7699d1cce4c45dc2fa",
+          "store/checkpoints/update-00000012.checkpoint.json": "3148e9d931e7387f72f63475a753b8776babf1d548f62d9e922a923d7025bcb4",
+          "store/checkpoints/update-00000012.sidecar.json": "3c482bb4ce32f2442a9c89d6114d784acd2d7ed38c4d13fdf8860517b41a79ad",
+          "store/checkpoints/update-00000012.state.f32le": "c69a9c94a241452c5511384bf239b8f2ff2fa53423bc0663135ee80523930104",
+          "store/heads/update-00000000.head.json": "06f6e2c7b2e8f481c4112ea3e4bc795c8c5f73c591714aa02791c660a0f82da2",
+          "store/heads/update-00000004.head.json": "3d2a4be77b30b924b8f8dafb96a2416f99c5814b1436813c1c7c6f878959145f",
+          "store/heads/update-00000008.head.json": "63022ab2cf147b246fde4feeb1d929345576ec2884d0e84582f3f05d83d4147a",
+          "store/heads/update-00000012.head.json": "c8fd4b4107b857f462bc8c75484492c84cf7597278aa51bbe7b163b820f7b442",
+          "store/latest.json": "acec6b547152d86d14e4898f72af9c5568a4a038e720f2dd9fe142258d75d5ba",
+          "store/refs/update-00000000.ref.json": "bb2b49a7d5f335d4d2fb533e1e8ba9247d188e395aa555d2cd5d35377dcdd0aa",
+          "store/refs/update-00000004.ref.json": "804a4bcbc3162fc8d1b50a39c520bf5f52c7d841cbafc303daf8b5effaef03d6",
+          "store/refs/update-00000008.ref.json": "f983289296fd36d9a0015460e6081c9ab3a76aee9303161548390674079790dd",
+          "store/refs/update-00000012.ref.json": "64dcdb323538ed6c0f64ca62ddd8277ac6a9a561145aeacda469b39c1f951b8c",
+          "store/run.json": "21e2b8b083d532bf5e9e6e69c6dd7b9a0f2ad00347c362bc69421633df7f5a78",
+          "store/segments/segment-00000000.json": "0e6c06ee9ad0cbe286bf126e36da472fd3c99a30608fdc917791852c76d5c9e0",
+          "store/segments/segment-00000004.continuation-00000000.json": "4305bb64faa0a727aef673ef1702271f91366bc88f3e12b86a92f3d379ff836c",
+          "store/segments/segment-00000004.json": "e6896aa2909ce69ecac454bade493d08e23442e507c251ad0e48d60755a8e122",
+          "store/segments/segment-00000008.continuation-00000000.json": "1f1f295064926cfd283c71d6f08f71f4c9f24974130fc8f0b6a5495178649a38",
+          "store/segments/segment-00000008.json": "3b76aa576b9e1340f03fa31c270517edf18a6f37af829e1724c671abfa608d2c",
+          "store/segments/segment-00000012.continuation-00000000.json": "abe91739d4f3f187be8f74e3cd44385077d8b289031051405511e4bb196dd4b2",
+          "store/segments/segment-00000012.json": "01e6aca73ae7e34053852a7db6de8f5f7395d3c62a9727f6015fa32cbeb0e0af"
+        }
+      },
+      "envrand-s2": {
+        "digest_set_sha256": "6a28d97bdbc8eee92dfece24c037dbadc3c7f49ae83ba23c101517753ae8047e",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "e78807bdd92efcd4c484f5b5e2d51f6641512d251e979a8ea44f20a7a3c80e4a",
+          "store/checkpoints/update-00000000.sidecar.json": "59a53a3027b459d7455e1a7159eab7af1408c81560ca5883daf782b0a0e6e985",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "d59937876cd9bc876579dbc6333b53862e7be7c037c52fff898029f45b367cc8",
+          "store/checkpoints/update-00000004.sidecar.json": "d0aed1e2ac97e2bbd58c01e1d3f479b4fed44decc2163c3a2f27947b862bb9b4",
+          "store/checkpoints/update-00000004.state.f32le": "a88493f3fc02320fe15f95577d1a72596d21b804f14cd4b1d2d2ee55c6a0f66c",
+          "store/checkpoints/update-00000008.checkpoint.json": "ec204a1b5032a3dfe01d478e70a8784b70ec8bf20cfbbf7f776ccf2a86358acb",
+          "store/checkpoints/update-00000008.sidecar.json": "cff5feac37e49b4fae7da6294a3836009d2f534f429ab8ec192974656bb8dbe9",
+          "store/checkpoints/update-00000008.state.f32le": "32833c6767845f6c5f0c65e28a680f335ca1f0b35005ee9c1b7a64e2324764e8",
+          "store/checkpoints/update-00000012.checkpoint.json": "457ed12b6e8db2471e1fbcb16886e066ff118a34ec78edcf92097f8c1100f010",
+          "store/checkpoints/update-00000012.sidecar.json": "bc678a0420b61d82d5298f8a76c6c3b5024d8f4228e4ea5c4c0aa9057b41e732",
+          "store/checkpoints/update-00000012.state.f32le": "ba329e512bda41ee4c07f56a2adde6ae9693df1ee79534f2c6af6a940ec5d7d9",
+          "store/heads/update-00000000.head.json": "040bbd84612d884134861b5ff759cb82adb6f7e62358b184052d9f33352ce2e5",
+          "store/heads/update-00000004.head.json": "b42d1825789196b898a787d29085dadb30c1c1813df28d5e68105c7dc0bd6b56",
+          "store/heads/update-00000008.head.json": "7baf13be2671ce0ed0dfc723575a057770ce166936d1d2284cee9d7665e3e6a9",
+          "store/heads/update-00000012.head.json": "d0f9ebdb1fa86357dfd6d6cba732165b700632bee2ff8d958a109e42eb6baf7a",
+          "store/latest.json": "b4734cf91483b55a375c7867a160396aa4778d4df9580b14d59b163b3ce8f07b",
+          "store/refs/update-00000000.ref.json": "c7f4c759ee7bef34a4114be37eefd631d50becfe3b9d26df957b1903ec23c71b",
+          "store/refs/update-00000004.ref.json": "5c0720912b9419215545f7319848f2697c2fcb071c0e052e5407c08b2db8a2dd",
+          "store/refs/update-00000008.ref.json": "227fd6191ad43dc4672709f55f4e5bce90e05124ccb9703e7e85e04eaae849aa",
+          "store/refs/update-00000012.ref.json": "217d5e30e1320551667f133e6bbf2dac20a9cbc61bce717ec06fcc6bbc2f8b11",
+          "store/run.json": "c1636071e7af00a064dc4e359aad9ec402c6566cb8d41da41c060378ef7f4010",
+          "store/segments/segment-00000000.json": "4acbc154376267549e219bf02c719461ee288b0c30ed8f355b29dbae6a978747",
+          "store/segments/segment-00000004.continuation-00000000.json": "96af85e4ff61c0272440e38488c791a2cc88bd6e5b6d426e6f5b6539248a556d",
+          "store/segments/segment-00000004.json": "8fcd7dcb86e6a2937688b18e40c97a0ed0daf156da3a5dc96f9dd7a41f9b2a98",
+          "store/segments/segment-00000008.continuation-00000000.json": "bd3df02cda4b80e6d1d2bf4833b6b461c44abd2b0f8e9461105a922f93e3e2e7",
+          "store/segments/segment-00000008.json": "497035ea8b79a5bbacd79fd6ce11fdbf738f4faf6e8fd666b3e43e78c8a90f81",
+          "store/segments/segment-00000012.continuation-00000000.json": "1fd571d9476328640c2b7293f567fd1679ba8313b37f8dc00b970b90ff457e12",
+          "store/segments/segment-00000012.json": "20681c6996450a65795d5c9abaa59f55bf8f59814544c50ffaa1e5ff72ed4ad3"
+        }
+      },
+      "envrand-s3": {
+        "digest_set_sha256": "78b3d67f4b3735460e4077d3db5480a1af0f53423dc23e1aeae3eba567d4d6e6",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "8f4095248a4203532be1dac092ecbe16ba2851408c0be66015b75c0d90b4c8b4",
+          "store/checkpoints/update-00000000.sidecar.json": "026dd4a66602ee3f598ae820c5eebda153dc33696b30992610d8f6ebcec4b43f",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "5bf7e4bcb57b2d1b2b9914b01784aa69e311f08dbeb646633a79fa32e1eb7374",
+          "store/checkpoints/update-00000004.sidecar.json": "837fe9968aaf3e2af4158f12268b8cad6920872287bfd869783b823ac15d70ab",
+          "store/checkpoints/update-00000004.state.f32le": "ff07534fc954ef49058457d927d585ad705f684025b78acd9e15bc71a1a35fbc",
+          "store/checkpoints/update-00000008.checkpoint.json": "b4a37b05c826f765cbf2469ffd132ca27050d4d997fd61b9eb7c542082acb81a",
+          "store/checkpoints/update-00000008.sidecar.json": "f3a875a53321674338e59bda05c53357f1d5ac505a2cd460727199033335f924",
+          "store/checkpoints/update-00000008.state.f32le": "9f97bf66804b7e6c3702df767312872d68ee7c412de48b3b506464a5c6d5f710",
+          "store/checkpoints/update-00000012.checkpoint.json": "80e9b52cd22ef3311d0848539366ad669c40ab1e53d648bb397837889fb48176",
+          "store/checkpoints/update-00000012.sidecar.json": "234f1fb7b2a24a971918803ab7f4a3ea985852ebfdce2936a6f1ff4405004d05",
+          "store/checkpoints/update-00000012.state.f32le": "96b6037e2bdc24c0eb4125dc5a36a5ef9ee62a1a537816864ad209b28505ae99",
+          "store/heads/update-00000000.head.json": "82f8abbebea77cdedd37bbb0fef7b89bda88993598ff476afa5f415e3445f5f3",
+          "store/heads/update-00000004.head.json": "f733313c13f0df9186f613c0578de479a43def5c1efd2683cc84aaf6ce74ab0f",
+          "store/heads/update-00000008.head.json": "045f828b42a2646a904ebe65be3e7b54310134d51f0d29a193171391a942a20f",
+          "store/heads/update-00000012.head.json": "616a45d86c578bc24693875e2e0cfa44668da02a40cb0df6b27c0cb9bcd2f5f1",
+          "store/latest.json": "8c0565ab07e7831d918f19449eff2fb2854f2815bc9af4045919288fd75ff3c6",
+          "store/refs/update-00000000.ref.json": "27cfebc8f9563288d8bb29705d31e5cfdc67aa1c1fa3ee6a1a26f2b491f80f99",
+          "store/refs/update-00000004.ref.json": "727afcbec946e041ee7c19eb256aa92dadcbee8045f4b6f1c7f7a61274dd2cd8",
+          "store/refs/update-00000008.ref.json": "957e63ecee41602bee4f9d4f0b2085013df28cced4f16ed65dfbf17191cc8147",
+          "store/refs/update-00000012.ref.json": "588766dd6383ce6262611501ec3c63c819d0f82fe88db618682bbfa23ba986b8",
+          "store/run.json": "df2c36852579fcbf657cb51a870a350b9801bc8287a74ebe6b7ab8e31b5f474f",
+          "store/segments/segment-00000000.json": "68df4fc8da5a29659e6d494317d3dadd2b844cee2d2ca14cb662e57d912ca75f",
+          "store/segments/segment-00000004.continuation-00000000.json": "077e1212071da6070212d958cbb99271ee050a3bd88b259b4a5415605b8f624b",
+          "store/segments/segment-00000004.json": "2ab81e583490e61610e377184c0c5b39bc0364ee8a15f5612485e79cb3a10793",
+          "store/segments/segment-00000008.continuation-00000000.json": "18ecfb2ba9e0920acf7d1d36b307a7e9eae7f1f9015c4e905b968b16d6c08c02",
+          "store/segments/segment-00000008.json": "2b2bd2d7e8648d4646ade47f77c29f2ee853c91eec40728ee2352b3996f03fd2",
+          "store/segments/segment-00000012.continuation-00000000.json": "28bbb05c73d9fc434ee2a4e4f90bc2897bab2961c08c13726cb7d8d28b2e9967",
+          "store/segments/segment-00000012.json": "d4d4836a164f77c774fdcd7a52225c5e867a85712d9d53e69a7e152eb3a98ae2"
+        }
+      },
+      "envrand-s4": {
+        "digest_set_sha256": "febf4514901de95bd79e25e0c783133a183b2e4e784022228235fb4c6efba439",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "784a8859827e1fad97ebd8034eb0c67ad9bc2fcda9fefacbeb3c5cc3bae5a216",
+          "store/checkpoints/update-00000000.sidecar.json": "bc4ff01807799dd2a5682d6b9383eefaed78c3de1da97ef648d02e2d902aae78",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "ddbea2cd6404b3be154e0121243a70780bc5ebbe7d520b54a1a34a0503f62746",
+          "store/checkpoints/update-00000004.sidecar.json": "6d8bb023e2250da34ba884a49ba70e1c35a44c2a66e19c12953de558c028f572",
+          "store/checkpoints/update-00000004.state.f32le": "40b929f3d80c5fdb1aca3b9cd6561f40c756d9b4231a9e420156ef616de4667f",
+          "store/checkpoints/update-00000008.checkpoint.json": "6f71224ba94adc7ceec6382cc3a915ee171235c436a084718047aa2a49ff50db",
+          "store/checkpoints/update-00000008.sidecar.json": "5934b8b64da045ec28a98b8ffb893d4bfa2fb50faad29df5e374c06026c1c44f",
+          "store/checkpoints/update-00000008.state.f32le": "1377ef1750cea6939693dbebb939b697dc46a37cc6bbc98b14f5cb5452176287",
+          "store/checkpoints/update-00000012.checkpoint.json": "64efad6f0cc5e91c058548371b4ebaac6f7ee6593116e553b88389cf91fb4edc",
+          "store/checkpoints/update-00000012.sidecar.json": "957636e9f6d8ec2de4bd3c3e879f6aa72f3c45bf5cc5963a154dba894b81989b",
+          "store/checkpoints/update-00000012.state.f32le": "6eab970dd4b140ca2d6c087143516397c18f1effe8205a92400332bbb41cd897",
+          "store/heads/update-00000000.head.json": "7c6343470d15b35793d4a9e3f7bec7d794c26bc1847235ab23d9c9ddccdf31da",
+          "store/heads/update-00000004.head.json": "0ae111481551ba4490943e44936ef7999319f41bf7ae115e090de119cf4c7524",
+          "store/heads/update-00000008.head.json": "730017aaba7918f342120e5e51405de4e9cdc7a9e33d20c47ffa1813bac0b887",
+          "store/heads/update-00000012.head.json": "27797f1fc8708c53e3e80062ddb31a7ec5ed14b408d7f0318a9a32516f584287",
+          "store/latest.json": "d2ba2bd0d6b583d0cf5c694088772fb5e1c7f696b4b2b00d6d559df4ce62fcd3",
+          "store/refs/update-00000000.ref.json": "ac5c2c1e4002527cf4f7bedaeeb7d8686129b865e0a9a50e943ad4f1939fb3a2",
+          "store/refs/update-00000004.ref.json": "e79fb4d7c30ff635cee0ca6758a935d1a402c6e479371c5883237df9a1e59abf",
+          "store/refs/update-00000008.ref.json": "68e2c1f1833cece6557cb65f19e001052c2f2262aba2e45f05b81081eb502b1e",
+          "store/refs/update-00000012.ref.json": "83b91dd79dd6c4717f53a2f92106749671545a8cb9e3b88f8a83df2f42ef7fcd",
+          "store/run.json": "361c32846c084ff824effba1638b894c141184c44a34c1b698dfd3018e589355",
+          "store/segments/segment-00000000.json": "537ab0c52ad9b05fc158a5e414bb09e4e740dafeb42110867ca2b14dfc08a629",
+          "store/segments/segment-00000004.continuation-00000000.json": "76c6129bd9795e59c36c1e0663836937cf4e26eab3183d637f53d9440f2b68e0",
+          "store/segments/segment-00000004.json": "a4f7774ff3559e39ea554b9428e2e606eb3787220e7f71b63e591615a55b3659",
+          "store/segments/segment-00000008.continuation-00000000.json": "1d36b5f4bc541a2a99dc59dfb9ceeea4ddd332b0f8ca0c01e4bac2ad836e03e1",
+          "store/segments/segment-00000008.json": "980f1d119dcf0430f810c0cf3e4ba0550acccd213152c5599e9321ec441f0d59",
+          "store/segments/segment-00000012.continuation-00000000.json": "56bbb602a30cd6d3b0d2d7c81a73dfef05b945e483599cf966250dae0f20c9f9",
+          "store/segments/segment-00000012.json": "6970066b74bf30ce28a951edd667616cd2f30fd25c64ab2b4aaeaca04d2468a4"
+        }
+      }
+    },
+    "serial_repeat": {
+      "digest_set_sha256": "9027ed12d0d4c245e3a68e2070d3221adbe966d66cdfd553ffdc74096301a1f3",
+      "root": "D:\\tensorize-cost-v1-work\\launcher\\q-base\\serial-repeat",
+      "run_id": "base-s0"
+    }
+  },
+  "gpu_footprint_mib": {
+    "jack:0": 2947.0,
+    "jack:1": 2862.0
+  },
+  "inventory": {
+    "hosts": {
+      "haleyspc": {
+        "checked_at": "2026-09-24T05:06:49.146890+00:00",
+        "detail": {
+          "competing": 0,
+          "cpus": 16,
+          "free_memory_gib": 18.9,
+          "gpus": [
+            "0, NVIDIA GeForce RTX 4060, GPU-17eeab7a-ad2e-5a59-4c42-8cd26a0d7223, 8188, 515"
+          ]
+        },
+        "eligible": true,
+        "reason": "reachable; idle; GPUs present"
+      },
+      "jack": {
+        "checked_at": "2026-09-24T05:06:49.146890+00:00",
+        "detail": {
+          "competing_processes": [],
+          "cpu_logical": 24,
+          "free_disk_gib_cwd_drive": 227.4,
+          "gpus": [
+            {
+              "index": 0,
+              "memory_total_mib": 12282,
+              "memory_used_mib": 2682,
+              "name": "NVIDIA GeForce RTX 4070 SUPER",
+              "utilization_percent": 0,
+              "uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d"
+            },
+            {
+              "index": 1,
+              "memory_total_mib": 6144,
+              "memory_used_mib": 0,
+              "name": "NVIDIA GeForce RTX 3050",
+              "utilization_percent": 0,
+              "uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3"
+            }
+          ],
+          "memory": {
+            "available_gib": 81.2,
+            "total_gib": 127.8
+          }
+        },
+        "eligible": true,
+        "reason": "24 logical CPUs, 2 GPUs, 0 competing training processes"
+      },
+      "runpod": {
+        "checked_at": "2026-09-24T05:06:49.146890+00:00",
+        "detail": {
+          "client_balance_usd": 211.1080698488,
+          "running_pods": 0,
+          "spend_limit_usd": 80
+        },
+        "eligible": false,
+        "reason": "account reachable, but RunPod pods are Linux and this Windows-built workload's training bytes differ across targets (per-target train_state_sha256 witnesses in mtg-kernel/src/native_trainer_v1.rs); qualifying it needs a Linux build with Linux goldens and a lease guard, which this launcher does not implement"
+      }
+    },
+    "schema": "mtg-kernel-multirun-inventory/v1"
+  },
+  "launcher_sha256": "7af5720fa17e5a50fb2ab54be7e70d2cc48936fbc8ad2ebaf67a25e9de62e046",
+  "planned_updates": 128,
+  "qualification_updates": 12,
+  "remote_staging": {},
+  "run_ids": [
+    "base-s0",
+    "envrand-s0",
+    "base-s1",
+    "envrand-s1",
+    "base-s2",
+    "envrand-s2",
+    "base-s3",
+    "envrand-s3",
+    "base-s4",
+    "envrand-s4"
+  ],
+  "schema": "mtg-kernel-multirun-compute-choice/v1",
+  "selected": "alloc-2atjackd0_1atjackd1",
+  "selection_rule": "minimum projected completion seconds among byte-identical, fully completed allocations; projection simulates the scheduler with each host's measured startup + planned_updates * steady_update + tail per run, plus staging overhead",
+  "sentinel": {
+    "allocation": "2@jack:0+1@jack:1",
+    "candidate": "alloc-2atjackd0_1atjackd1",
+    "entries": [
+      {
+        "arm": "base",
+        "byte_identical": true,
+        "completed_generation": 128,
+        "device": 0,
+        "differing_outputs": [],
+        "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "base-s0--jack-0-0",
+        "output_count": 233,
+        "run_id": "base-s0"
+      },
+      {
+        "arm": "envrand",
+        "byte_identical": true,
+        "completed_generation": 128,
+        "device": 0,
+        "differing_outputs": [],
+        "digest_set_sha256": "9d7397ea9b7d7e42cd794b06249dc892aea29122ac3241aaa3e72100d922ba5f",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "envrand-s0--jack-0-1",
+        "output_count": 233,
+        "run_id": "envrand-s0"
+      },
+      {
+        "arm": "base",
+        "byte_identical": true,
+        "completed_generation": 128,
+        "device": 1,
+        "differing_outputs": [],
+        "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "base-s0--jack-1-0",
+        "output_count": 233,
+        "run_id": "base-s0"
+      },
+      {
+        "arm": "envrand",
+        "byte_identical": true,
+        "completed_generation": 128,
+        "device": 1,
+        "differing_outputs": [],
+        "digest_set_sha256": "9d7397ea9b7d7e42cd794b06249dc892aea29122ac3241aaa3e72100d922ba5f",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "envrand-s0--jack-1-1",
+        "output_count": 233,
+        "run_id": "envrand-s0"
+      }
+    ],
+    "gpu_peak_memory_mib": {
+      "jack:0": 8999,
+      "jack:1": 3022
+    },
+    "gpu_total_memory_mib": {
+      "jack:0": 12282,
+      "jack:1": 6144
+    },
+    "memory_crowded": [],
+    "passed": true,
+    "root": "D:\\tensorize-cost-v1-work\\launcher\\q-base\\sentinel-alloc-2atjackd0_1atjackd1",
+    "serial": {
+      "base-s0": {
+        "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",
+        "output_count": 233,
+        "root": "D:\\tensorize-cost-v1-work\\launcher\\q-base\\sentinel-serial\\base-s0"
+      },
+      "envrand-s0": {
+        "digest_set_sha256": "9d7397ea9b7d7e42cd794b06249dc892aea29122ac3241aaa3e72100d922ba5f",
+        "output_count": 233,
+        "root": "D:\\tensorize-cost-v1-work\\launcher\\q-base\\sentinel-serial\\envrand-s0"
+      }
+    },
+    "wall_seconds": 583.2460899353027
+  },
+  "sentinel_failures": [],
+  "start_generation": 0,
+  "target_generation": 128,
+  "workload": {
+    "adapter": "native-science-loop-pilot-v1",
+    "arms": {
+      "base": {
+        "knobs": {}
+      },
+      "envrand": {
+        "knobs": {
+          "MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2": "1"
+        }
+      }
+    },
+    "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
+    "knobs": {
+      "MULTIRUN_BROKER_TARGET": "16",
+      "MULTIRUN_SESSIONS": "32",
+      "MULTIRUN_WORKERS": "2"
+    },
+    "planned_updates": 128,
+    "runs": [
+      {
+        "arm": "base",
+        "id": "base-s0",
+        "seed": 5500001
+      },
+      {
+        "arm": "envrand",
+        "id": "envrand-s0",
+        "seed": 5600001
+      },
+      {
+        "arm": "base",
+        "id": "base-s1",
+        "seed": 5500002
+      },
+      {
+        "arm": "envrand",
+        "id": "envrand-s1",
+        "seed": 5600002
+      },
+      {
+        "arm": "base",
+        "id": "base-s2",
+        "seed": 5500003
+      },
+      {
+        "arm": "envrand",
+        "id": "envrand-s2",
+        "seed": 5600003
+      },
+      {
+        "arm": "base",
+        "id": "base-s3",
+        "seed": 5500004
+      },
+      {
+        "arm": "envrand",
+        "id": "envrand-s3",
+        "seed": 5600004
+      },
+      {
+        "arm": "base",
+        "id": "base-s4",
+        "seed": 5500005
+      },
+      {
+        "arm": "envrand",
+        "id": "envrand-s4",
+        "seed": 5600005
+      }
+    ],
+    "schema": "mtg-kernel-multirun-workload/v1"
+  },
+  "workload_sha256": "8b003bded8e9cd37aef3efdae99b3ca81dd6aed07f756893c3a790fd94a4802e"
+}

@@ -1,0 +1,12 @@
+﻿{
+    "exe":  "D:/tensorize-cost-v1-work/exe/final-prof-cuda.exe",
+    "exe_sha256":  "a3b7494caa2a30d898ef0d53711a33f0998aa59d0c82fd89389e5aaca527bfe7",
+    "updates":  16,
+    "device":  0,
+    "seed":  "5500001",
+    "prefix_stat":  false,
+    "exit_code":  null,
+    "wall_s":  74.6712843,
+    "process_cpu_s":  152.84375,
+    "user_cpu_s":  113.234375
+}

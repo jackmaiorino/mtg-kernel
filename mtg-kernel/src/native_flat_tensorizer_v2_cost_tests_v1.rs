@@ -567,7 +567,7 @@ impl crate::model_guided_search_core_v1::ModelGuidedSearchLeafEvaluatorV1
         let keep = matches!(
             site,
             crate::model_guided_search_core_v1::ModelGuidedSearchLeafSiteV1::RootPrior
-        ) || ordinal % 8 == 0;
+        ) || ordinal.is_multiple_of(8);
         if keep && matches!(session.current_response(), FastActorResponseV1::Decision(_)) {
             self.captured
                 .borrow_mut()
