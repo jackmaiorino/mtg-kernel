@@ -1,0 +1,7 @@
+{
+  "serial_full_length_wall_seconds": {
+    "base-s0": 270,
+    "envrand-s0": 238
+  },
+  "method": "process.log mtime minus invocation.json mtime of the sentinel's serial runs (each alone on GPU 0)"
+}
