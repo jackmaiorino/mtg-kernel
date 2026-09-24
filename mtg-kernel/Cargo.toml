@@ -9,7 +9,8 @@ burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"],
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-sha2 = "0.10"
+# `compress` only exports sha2's own compress512 (resumable digests).
+sha2 = { version = "0.10", features = ["compress"] }
 
 [features]
 # PERFORMANCE-ONLY instrumentation for examples/bench_kernel.rs (section 5,

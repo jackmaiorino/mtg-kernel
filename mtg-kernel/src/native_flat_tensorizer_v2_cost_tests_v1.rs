@@ -251,14 +251,27 @@ fn nanos(start: std::time::Instant) -> u64 {
     start.elapsed().as_nanos() as u64
 }
 
-/// One timed pass over `corpus`. Each stage is timed in isolation on the same
-/// inputs; `fill` is the production call, measured separately.
-fn stage_pass(corpus: &[OwnedScoringDecisionV2], action_json: &[Vec<Vec<u8>>]) -> StageNs {
+/// One timed pass over `corpus`, starting at `offset` and wrapping around (so
+/// concurrent threads never walk the same decisions in lockstep, which would
+/// hand the process-wide state prefix cache each other's identical JSONs).
+/// Each stage is timed in isolation on the same inputs; `fill` is the
+/// production call, measured separately.
+fn stage_pass(
+    corpus: &[OwnedScoringDecisionV2],
+    action_json: &[Vec<Vec<u8>>],
+    offset: usize,
+) -> StageNs {
     let mut tensorizer = NativeFlatTensorizerV2::new();
     let mut output = NativeFlatDecisionTensorV2::default();
     let mut scratch = Vec::with_capacity(16 * 1024);
     let mut total = StageNs::default();
-    for (owned, jsons) in corpus.iter().zip(action_json) {
+    let rotated = corpus
+        .iter()
+        .zip(action_json)
+        .cycle()
+        .skip(offset)
+        .take(corpus.len());
+    for (owned, jsons) in rotated {
         let view = owned.view();
         let start = std::time::Instant::now();
         tensorizer.fill(view, &mut output).unwrap();
@@ -421,10 +434,10 @@ fn tensorize_cost_breakdown_v1() {
     let _ = std::io::stdout().flush();
 
     // Warm-up.
-    std::hint::black_box(stage_pass(&corpus, &action_json));
+    std::hint::black_box(stage_pass(&corpus, &action_json, 0));
     for round in 0..rounds {
         let start = std::time::Instant::now();
-        let stages = stage_pass(&corpus, &action_json);
+        let stages = stage_pass(&corpus, &action_json, 0);
         report(
             &format!("serial round={round}"),
             1,
@@ -440,10 +453,13 @@ fn tensorize_cost_breakdown_v1() {
             let start = std::time::Instant::now();
             let results: Vec<StageNs> = std::thread::scope(|scope| {
                 let handles: Vec<_> = (0..workers)
-                    .map(|_| {
-                        scope.spawn(|| {
+                    .map(|worker| {
+                        let barrier = &barrier;
+                        let corpus = &corpus;
+                        let action_json = &action_json;
+                        scope.spawn(move || {
                             barrier.wait();
-                            stage_pass(&corpus, &action_json)
+                            stage_pass(corpus, action_json, worker * corpus.len() / workers)
                         })
                     })
                     .collect();
@@ -458,16 +474,20 @@ fn tensorize_cost_breakdown_v1() {
                 total.add(stages);
             }
             // Throughput from a fill-only pass: every thread runs the
-            // production call over the whole corpus at once.
+            // production call over the whole corpus at once, each from its
+            // own rotation offset.
             let barrier = std::sync::Barrier::new(workers);
             let start = std::time::Instant::now();
             std::thread::scope(|scope| {
-                for _ in 0..workers {
-                    scope.spawn(|| {
+                for worker in 0..workers {
+                    let barrier = &barrier;
+                    let corpus = &corpus;
+                    scope.spawn(move || {
                         let mut tensorizer = NativeFlatTensorizerV2::new();
                         let mut output = NativeFlatDecisionTensorV2::default();
+                        let offset = worker * corpus.len() / workers;
                         barrier.wait();
-                        for owned in &corpus {
+                        for owned in corpus.iter().cycle().skip(offset).take(corpus.len()) {
                             tensorizer.fill(owned.view(), &mut output).unwrap();
                             std::hint::black_box(&output);
                         }
@@ -771,5 +791,56 @@ fn tensorize_cost_search_leaf_differential_v1() {
         "leaf differential: roots={} decisions={} all identical to the reference encoder",
         actions.len(),
         captured.len()
+    );
+}
+
+/// The shared state-prefix cache changes cost, never output: eight threads
+/// tensorize the D5 corpus concurrently, each in its own permutation (so the
+/// cache sees different histories), and every decision's fingerprint must
+/// equal the pinned golden's.
+#[test]
+#[ignore = "identity under concurrent, reordered cache use over the 10k D5 corpus: run explicitly"]
+fn tensorize_cost_d5_concurrent_shuffled_identity_v1() {
+    let target = env_usize(
+        "MTG_KERNEL_TIMING_HARNESS_TENSORIZE_TARGET_DECISIONS",
+        10_000,
+    );
+    let (corpus, _) = build_d5_corpus_v1(target);
+    let golden = std::fs::read_to_string(default_golden_path_v1())
+        .unwrap()
+        .replace("\r\n", "\n");
+    let expected: Vec<String> = golden
+        .lines()
+        .skip(1)
+        .map(|line| line.rsplit(' ').next().unwrap().to_owned())
+        .collect();
+    assert_eq!(expected.len(), corpus.len());
+    std::thread::scope(|scope| {
+        for thread in 0..8_u64 {
+            let corpus = &corpus;
+            let expected = &expected;
+            scope.spawn(move || {
+                let mut order: Vec<usize> = (0..corpus.len()).collect();
+                let mut random = 0xfeed_0000_u64 + thread;
+                for index in (1..order.len()).rev() {
+                    let pick = (d5_next_random_v1(&mut random) % (index as u64 + 1)) as usize;
+                    order.swap(index, pick);
+                }
+                let mut tensorizer = NativeFlatTensorizerV2::new();
+                for index in order {
+                    let fingerprint =
+                        decision_fingerprint_v1(&mut tensorizer, corpus[index].view());
+                    assert_eq!(
+                        hex(&fingerprint),
+                        expected[index],
+                        "thread {thread} decision {index}"
+                    );
+                }
+            });
+        }
+    });
+    println!(
+        "concurrent shuffled identity: 8 threads x {} decisions",
+        corpus.len()
     );
 }

@@ -20,7 +20,7 @@ use crate::rl_session::{
     FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
     FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1, FLAT_ACTION_FLAG_VALUE_V1,
 };
-use crate::sha512_multi_v1::{sha512_jobs_v1, Sha512JobV1};
+use crate::sha512_multi_v1::{sha512_jobs_v1, Sha512CheckpointsV1, Sha512JobV1};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
@@ -291,12 +291,174 @@ impl Default for NativeFlatTensorizerV2 {
 /// back, and the SHA-512 blocks of every state and action message. The full
 /// fill hashes all of one decision's messages in a single multi-buffer call;
 /// the messages and the block-to-feature mapping are unchanged.
-#[derive(Default)]
 struct DigestScratchV1 {
     action_scratch: Vec<u8>,
     action_json: Vec<u8>,
     action_ranges: Vec<(usize, usize)>,
     blocks: Vec<[u8; 64]>,
+    checkpoints: Sha512CheckpointsV1,
+}
+
+impl Default for DigestScratchV1 {
+    fn default() -> Self {
+        Self {
+            action_scratch: Vec::new(),
+            action_json: Vec::new(),
+            action_ranges: Vec::new(),
+            blocks: Vec::new(),
+            checkpoints: Sha512CheckpointsV1 {
+                every: STATE_CHECKPOINT_EVERY_V1,
+                states: Vec::new(),
+            },
+        }
+    }
+}
+
+// --- State digest prefix cache ------------------------------------------
+//
+// Consecutive decisions often share a long prefix of their state JSON. The
+// six state digests are Merkle-Damgard hashes of `namespace || counter ||
+// json`, so their chaining states after any block depend only on the bytes
+// up to that block. The cache keeps, for recent state JSONs, the six chaining
+// states at every eighth data-only block. A new JSON resumes from the
+// deepest checkpoint inside its byte-for-byte common prefix with a cached
+// JSON (compared in full, never by hash) and inside its own data-only
+// blocks, so its digests are exactly those of hashing from scratch. The cache
+// is shared by all tensorizers in the process; it changes cost, never output.
+
+const STATE_CHECKPOINT_EVERY_V1: usize = 8;
+const STATE_CACHE_ENTRIES_V1: usize = 64;
+const STATE_HEADER_BYTES_V1: usize = STATE_HASH_NAMESPACE_V2.len() + 4;
+/// JSON bytes inside the first checkpoint span; entries sharing fewer
+/// leading bytes cannot share a checkpoint, so they are not compared.
+const STATE_CACHE_KEY_BYTES_V1: usize = 128 * STATE_CHECKPOINT_EVERY_V1 - STATE_HEADER_BYTES_V1;
+
+struct StatePrefixEntryV1 {
+    key: u64,
+    json: Vec<u8>,
+    /// `(blocks, six chaining states)`, ascending by `blocks`.
+    checkpoints: Vec<(usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])>,
+}
+
+struct StatePrefixResumeV1 {
+    blocks: usize,
+    states: [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1],
+    /// The matched entry's checkpoints up to `blocks`, reused for the new
+    /// entry (identical prefix, identical states).
+    prefix_checkpoints: Vec<(usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])>,
+}
+
+struct StatePrefixCacheV1 {
+    entries: Vec<StatePrefixEntryV1>,
+    next: usize,
+}
+
+static STATE_PREFIX_CACHE_V1: std::sync::Mutex<StatePrefixCacheV1> =
+    std::sync::Mutex::new(StatePrefixCacheV1 {
+        entries: Vec::new(),
+        next: 0,
+    });
+
+fn state_prefix_cache_enabled_v1() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("MTG_KERNEL_TENSORIZE_STATE_CACHE").map_or(true, |value| value != "0")
+    })
+}
+
+/// Bucketing key over the first checkpoint span (not an identity: every
+/// candidate is compared byte for byte).
+fn state_prefix_cache_key_v1(json: &[u8]) -> Option<u64> {
+    if !state_prefix_cache_enabled_v1() || json.len() < STATE_CACHE_KEY_BYTES_V1 {
+        return None;
+    }
+    let mut hash = 0x243f_6a88_85a3_08d3_u64;
+    for chunk in json[..STATE_CACHE_KEY_BYTES_V1].chunks(8) {
+        let mut word = [0u8; 8];
+        word[..chunk.len()].copy_from_slice(chunk);
+        hash = (hash ^ u64::from_le_bytes(word)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        hash ^= hash >> 29;
+    }
+    Some(hash)
+}
+
+fn common_prefix_len_v1(left: &[u8], right: &[u8]) -> usize {
+    let limit = left.len().min(right.len());
+    let mut index = 0;
+    while index + 64 <= limit && left[index..index + 64] == right[index..index + 64] {
+        index += 64;
+    }
+    while index < limit && left[index] == right[index] {
+        index += 1;
+    }
+    index
+}
+
+fn state_prefix_cache_lookup_v1(json: &[u8]) -> Option<StatePrefixResumeV1> {
+    let key = state_prefix_cache_key_v1(json)?;
+    let data_blocks = (STATE_HEADER_BYTES_V1 + json.len()) / 128;
+    let cache = STATE_PREFIX_CACHE_V1
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut best: Option<(usize, &StatePrefixEntryV1, usize)> = None;
+    for entry in cache.entries.iter().filter(|entry| entry.key == key) {
+        let shared = common_prefix_len_v1(json, &entry.json);
+        // Blocks whose bytes are identical in both messages and hold no
+        // padding in the new one (the entry only records data-only blocks).
+        let usable = ((STATE_HEADER_BYTES_V1 + shared) / 128).min(data_blocks);
+        let deepest = entry
+            .checkpoints
+            .iter()
+            .rposition(|(blocks, _)| *blocks <= usable);
+        if let Some(position) = deepest {
+            let blocks = entry.checkpoints[position].0;
+            if best.is_none_or(|(best_blocks, _, _)| blocks > best_blocks) {
+                best = Some((blocks, entry, position));
+            }
+        }
+    }
+    best.map(|(blocks, entry, position)| StatePrefixResumeV1 {
+        blocks,
+        states: entry.checkpoints[position].1,
+        prefix_checkpoints: entry.checkpoints[..=position].to_vec(),
+    })
+}
+
+fn state_prefix_cache_insert_v1(
+    json: &[u8],
+    resume: Option<StatePrefixResumeV1>,
+    produced: &Sha512CheckpointsV1,
+) {
+    let Some(key) = state_prefix_cache_key_v1(json) else {
+        return;
+    };
+    let mut checkpoints = resume.map_or_else(Vec::new, |hit| hit.prefix_checkpoints);
+    // The six state jobs come first and share one checkpoint schedule.
+    let first = &produced.states[0];
+    for (index, (blocks, _)) in first.iter().enumerate() {
+        let mut states = [[0u64; 8]; ACTION_HASH_BLOCK_COUNT_V1];
+        for (counter, slot) in states.iter_mut().enumerate() {
+            let (counter_blocks, state) = produced.states[counter][index];
+            debug_assert_eq!(counter_blocks, *blocks);
+            *slot = state;
+        }
+        checkpoints.push((*blocks, states));
+    }
+    let entry = StatePrefixEntryV1 {
+        key,
+        json: json.to_vec(),
+        checkpoints,
+    };
+    let mut cache = STATE_PREFIX_CACHE_V1
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cache.entries.len() < STATE_CACHE_ENTRIES_V1 {
+        cache.entries.push(entry);
+    } else {
+        let slot = cache.next;
+        cache.entries[slot] = entry;
+        cache.next = (slot + 1) % STATE_CACHE_ENTRIES_V1;
+    }
 }
 
 /// Where an action's canonical JSON goes when its digest is deferred.
@@ -564,28 +726,39 @@ fn encode_full_decision_with_scratch_v2(
         }),
     )?;
     // Every digest of this decision in one multi-buffer call: six state
-    // messages, then six per action in row order.
+    // messages, then six per action in row order. The state messages resume
+    // from the prefix cache when an earlier state JSON shares their leading
+    // blocks byte for byte.
+    let resume = state_prefix_cache_lookup_v1(canonical_json);
     let mut jobs =
         Vec::with_capacity(ACTION_HASH_BLOCK_COUNT_V1 * (1 + digests.action_ranges.len()));
     for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
-        jobs.push(Sha512JobV1 {
-            prefix: STATE_HASH_NAMESPACE_V2,
-            counter,
-            body: canonical_json,
+        let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, canonical_json);
+        jobs.push(match &resume {
+            Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+            None => job,
         });
     }
     for &(start, end) in digests.action_ranges.iter() {
         for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
-            jobs.push(Sha512JobV1 {
-                prefix: ACTION_HASH_NAMESPACE_V1,
+            jobs.push(Sha512JobV1::new(
+                ACTION_HASH_NAMESPACE_V1,
                 counter,
-                body: &digests.action_json[start..end],
-            });
+                &digests.action_json[start..end],
+            ));
         }
     }
     digests.blocks.clear();
     digests.blocks.resize(jobs.len(), [0; 64]);
-    sha512_jobs_v1(&jobs, &mut digests.blocks);
+    let caching = state_prefix_cache_key_v1(canonical_json).is_some();
+    sha512_jobs_v1(
+        &jobs,
+        &mut digests.blocks,
+        caching.then_some(&mut digests.checkpoints),
+    );
+    if caching {
+        state_prefix_cache_insert_v1(canonical_json, resume, &digests.checkpoints);
+    }
     let head_len = state.len();
     state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
     digest_block_features_v1(

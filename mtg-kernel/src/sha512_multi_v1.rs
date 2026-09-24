@@ -2,25 +2,60 @@
 //!
 //! The V2 tensorizer derives each 96-float digest tail from six SHA-512
 //! digests of `namespace || counter_le32 || canonical_json`, counters 0 to 5.
-//! Those messages share a length, so four of them can run through one AVX2
-//! compression in lockstep (one 64-bit lane each). This module computes
+//! Those messages share a length, so four of them can be compressed in
+//! lockstep in the 64-bit lanes of one AVX2 compression. This module computes
 //! exactly FIPS 180-4 SHA-512; the scalar path is the `sha2` crate the
-//! tensorizer used before, and differential tests pin the AVX2 path to it.
+//! tensorizer used before (its `compress512` for resumed or checkpointed
+//! jobs), and differential tests pin the AVX2 path to it.
 //!
-//! Jobs of different lengths may share a group: a lane whose message has
-//! run out of blocks keeps its state (masked blend) until the group ends.
+//! Measured on the six-counter state shape (i7-13700K): four AVX2 lanes plus
+//! two `sha2` jobs are about 1.4x faster than six `sha2` jobs, at one thread
+//! and at 24. Interleaving two scalar lanes into the AVX2 round loop was
+//! slower (1.2x) and was removed.
+//!
+//! A job may resume from a chaining state taken after its first
+//! `start_block` blocks, and the caller may ask for the chaining state at
+//! every `every`-th data-only block (a block holding no padding). SHA-512 is
+//! Merkle-Damgard, so the state after block `k` depends only on the first
+//! `k + 1` blocks: a resume is exact whenever those blocks are byte-identical,
+//! which the caller must establish by comparing bytes.
+//!
+//! Jobs of different lengths may share a group: a lane whose message has run
+//! out of blocks keeps its state (masked blend) until the group ends.
 
 use sha2::{Digest, Sha512};
 
-/// One message `prefix || counter.to_le_bytes() || body`.
+/// One message `prefix || counter.to_le_bytes() || body`, optionally resumed
+/// from `start_state` after its first `start_block` blocks.
 #[derive(Clone, Copy)]
 pub(crate) struct Sha512JobV1<'a> {
     pub(crate) prefix: &'a [u8],
     pub(crate) counter: u32,
     pub(crate) body: &'a [u8],
+    pub(crate) start_block: usize,
+    pub(crate) start_state: [u64; 8],
 }
 
-impl Sha512JobV1<'_> {
+impl<'a> Sha512JobV1<'a> {
+    pub(crate) fn new(prefix: &'a [u8], counter: u32, body: &'a [u8]) -> Self {
+        Self {
+            prefix,
+            counter,
+            body,
+            start_block: 0,
+            start_state: INITIAL_STATE_V1,
+        }
+    }
+
+    /// Resumes after `start_block` blocks whose chaining state is `state`.
+    /// Only data-only blocks may be skipped.
+    pub(crate) fn resumed(mut self, start_block: usize, state: [u64; 8]) -> Self {
+        assert!(start_block <= self.data_block_count());
+        self.start_block = start_block;
+        self.start_state = state;
+        self
+    }
+
     fn header_len(&self) -> usize {
         self.prefix.len() + 4
     }
@@ -30,8 +65,17 @@ impl Sha512JobV1<'_> {
     }
 
     /// Padded block count: message, 0x80, zeros, 16-byte length.
-    fn block_count(&self) -> usize {
+    pub(crate) fn block_count(&self) -> usize {
         (self.message_len() + 1 + 16).div_ceil(128)
+    }
+
+    /// Leading blocks that hold only message bytes (no padding).
+    pub(crate) fn data_block_count(&self) -> usize {
+        self.message_len() / 128
+    }
+
+    fn remaining_blocks(&self) -> usize {
+        self.block_count() - self.start_block
     }
 
     /// Writes padded block `index` into `out`.
@@ -66,8 +110,35 @@ impl Sha512JobV1<'_> {
     }
 }
 
-/// Reference digest through the `sha2` crate (the pre-existing path).
+/// Chaining states a batch reports: for job `j`, `(blocks, state)` pairs
+/// where `state` follows the first `blocks` blocks, for every multiple of
+/// `every` above the job's start and at most its data-only block count.
+pub(crate) struct Sha512CheckpointsV1 {
+    pub(crate) every: usize,
+    pub(crate) states: Vec<Vec<(usize, [u64; 8])>>,
+}
+
+impl Sha512CheckpointsV1 {
+    fn record(
+        &mut self,
+        job_index: usize,
+        job: &Sha512JobV1<'_>,
+        blocks_done: usize,
+        state: [u64; 8],
+    ) {
+        if blocks_done > job.start_block
+            && blocks_done.is_multiple_of(self.every)
+            && blocks_done <= job.data_block_count()
+        {
+            self.states[job_index].push((blocks_done, state));
+        }
+    }
+}
+
+/// Reference digest through the `sha2` crate (the pre-existing path) for a
+/// job that starts at block zero.
 pub(crate) fn sha512_job_scalar_v1(job: &Sha512JobV1<'_>) -> [u8; 64] {
+    assert_eq!(job.start_block, 0);
     let mut digest = Sha512::new();
     digest.update(job.prefix);
     digest.update(job.counter.to_le_bytes());
@@ -75,21 +146,56 @@ pub(crate) fn sha512_job_scalar_v1(job: &Sha512JobV1<'_>) -> [u8; 64] {
     digest.finalize().into()
 }
 
-/// Digests every job into `out` (same order). Uses 4-lane AVX2 when the CPU
-/// has it, otherwise the `sha2` crate per job.
-pub(crate) fn sha512_jobs_v1(jobs: &[Sha512JobV1<'_>], out: &mut [[u8; 64]]) {
+/// How a batch of jobs is scheduled. Every mode computes the same digests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sha512ModeV1 {
+    /// The `sha2` crate one job at a time.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Scalar,
+    /// Groups of four jobs in the lanes of one AVX2 compression; groups of
+    /// one or two go to the `sha2` crate.
+    Avx2,
+}
+
+/// Digests every job into `out` (same order) with the fastest mode the CPU
+/// supports.
+pub(crate) fn sha512_jobs_v1(
+    jobs: &[Sha512JobV1<'_>],
+    out: &mut [[u8; 64]],
+    checkpoints: Option<&mut Sha512CheckpointsV1>,
+) {
+    sha512_jobs_with_mode_v1(default_mode_v1(), jobs, out, checkpoints);
+}
+
+/// Digests with an explicit mode (AVX2 modes fall back to scalar without
+/// AVX2).
+pub(crate) fn sha512_jobs_with_mode_v1(
+    mode: Sha512ModeV1,
+    jobs: &[Sha512JobV1<'_>],
+    out: &mut [[u8; 64]],
+    mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+) {
     assert_eq!(jobs.len(), out.len());
+    if let Some(checkpoints) = checkpoints.as_deref_mut() {
+        assert!(checkpoints.every > 0);
+        checkpoints.states.clear();
+        checkpoints.states.resize(jobs.len(), Vec::new());
+    }
     #[cfg(target_arch = "x86_64")]
     {
-        if avx2_available_v1() {
+        if mode != Sha512ModeV1::Scalar && avx2_available_v1() {
             // SAFETY: AVX2 support was checked at runtime.
-            unsafe { x86::sha512_jobs_avx2_v1(jobs, out) };
+            unsafe { x86::sha512_jobs_avx2_v1(jobs, out, checkpoints) };
             return;
         }
     }
-    for (job, digest) in jobs.iter().zip(out.iter_mut()) {
-        *digest = sha512_job_scalar_v1(job);
+    for (index, (job, digest)) in jobs.iter().zip(out.iter_mut()).enumerate() {
+        *digest = scalar_job_v1(index, job, checkpoints.as_deref_mut());
     }
+}
+
+fn default_mode_v1() -> Sha512ModeV1 {
+    Sha512ModeV1::Avx2
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -102,7 +208,52 @@ fn avx2_available_v1() -> bool {
     })
 }
 
-const INITIAL_STATE_V1: [u64; 8] = [
+fn digest_bytes_v1(state: &[u64; 8]) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    for (bytes, word) in out.chunks_exact_mut(8).zip(state) {
+        bytes.copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+/// One job through the `sha2` crate: `Sha512` itself for a fresh job without
+/// checkpoints, otherwise `sha2::compress512` (the compression `Sha512` uses)
+/// over runs of blocks between checkpoints.
+fn scalar_job_v1(
+    index: usize,
+    job: &Sha512JobV1<'_>,
+    mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+) -> [u8; 64] {
+    use sha2::digest::generic_array::{typenum::U128, GenericArray};
+    if job.start_block == 0 && checkpoints.is_none() {
+        return sha512_job_scalar_v1(job);
+    }
+    let total = job.block_count();
+    let mut state = job.start_state;
+    let mut run: Vec<GenericArray<u8, U128>> = Vec::new();
+    let mut block = [0u8; 128];
+    let mut next = job.start_block;
+    while next < total {
+        let boundary = match checkpoints.as_deref() {
+            Some(checkpoints) => (next / checkpoints.every + 1) * checkpoints.every,
+            None => total,
+        }
+        .min(total);
+        run.clear();
+        for block_index in next..boundary {
+            job.block(block_index, &mut block);
+            run.push(GenericArray::clone_from_slice(&block));
+        }
+        sha2::compress512(&mut state, &run);
+        next = boundary;
+        if let Some(checkpoints) = checkpoints.as_deref_mut() {
+            checkpoints.record(index, job, next, state);
+        }
+    }
+    digest_bytes_v1(&state)
+}
+
+pub(crate) const INITIAL_STATE_V1: [u64; 8] = [
     0x6a09_e667_f3bc_c908,
     0xbb67_ae85_84ca_a73b,
     0x3c6e_f372_fe94_f82b,
@@ -198,7 +349,7 @@ const ROUND_CONSTANTS_V1: [u64; 80] = [
 
 #[cfg(target_arch = "x86_64")]
 mod x86 {
-    use super::{Sha512JobV1, INITIAL_STATE_V1, ROUND_CONSTANTS_V1};
+    use super::{digest_bytes_v1, Sha512CheckpointsV1, Sha512JobV1, ROUND_CONSTANTS_V1};
     use std::arch::x86_64::*;
 
     const LANES: usize = 4;
@@ -241,7 +392,8 @@ mod x86 {
         )
     }
 
-    /// Loads word `word` (big-endian) of each lane's block into one vector.
+    /// Loads the sixteen big-endian words of each lane's block, transposed so
+    /// vector `i` holds word `i` of every lane.
     #[inline(always)]
     unsafe fn load_words(blocks: &[[u8; 128]; LANES], w: &mut [__m256i; 16]) {
         // Byte swap within each 64-bit element.
@@ -331,41 +483,98 @@ mod x86 {
         }
     }
 
+    #[inline(always)]
+    unsafe fn vector_lane_states(state: &[__m256i; 8]) -> [[u64; 8]; LANES] {
+        let mut words = [[0u64; LANES]; 8];
+        for (row, value) in words.iter_mut().zip(state) {
+            _mm256_storeu_si256(row.as_mut_ptr().cast(), *value);
+        }
+        let mut lanes = [[0u64; 8]; LANES];
+        for (lane, lane_state) in lanes.iter_mut().enumerate() {
+            for (word, row) in lane_state.iter_mut().zip(&words) {
+                *word = row[lane];
+            }
+        }
+        lanes
+    }
+
+    /// Groups jobs by remaining block count (so lanes rarely idle) into groups
+    /// of four vector lanes; a group of one or two jobs goes to the `sha2`
+    /// crate, which is as fast as a half-empty vector group.
     #[target_feature(enable = "avx2")]
-    pub(super) unsafe fn sha512_jobs_avx2_v1(jobs: &[Sha512JobV1<'_>], out: &mut [[u8; 64]]) {
-        // Group jobs of equal block count first so lanes rarely idle.
+    pub(super) unsafe fn sha512_jobs_avx2_v1(
+        jobs: &[Sha512JobV1<'_>],
+        out: &mut [[u8; 64]],
+        mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+    ) {
         let mut order: Vec<usize> = (0..jobs.len()).collect();
-        order.sort_by_key(|&index| jobs[index].block_count());
+        order.sort_by_key(|&index| jobs[index].remaining_blocks());
         let mut blocks = [[0u8; 128]; LANES];
         for group in order.chunks(LANES) {
-            let mut counts = [0usize; LANES];
+            if group.len() <= 2 {
+                for &index in group {
+                    out[index] =
+                        super::scalar_job_v1(index, &jobs[index], checkpoints.as_deref_mut());
+                }
+                continue;
+            }
+            let mut lane_starts = [[0u64; 8]; LANES];
             for (lane, &index) in group.iter().enumerate() {
-                counts[lane] = jobs[index].block_count();
+                lane_starts[lane] = jobs[index].start_state;
             }
-            let max_blocks = counts.iter().copied().max().unwrap_or(0);
             let mut state = [_mm256_setzero_si256(); 8];
-            for (slot, initial) in state.iter_mut().zip(INITIAL_STATE_V1) {
-                *slot = _mm256_set1_epi64x(initial as i64);
+            for (word, slot) in state.iter_mut().enumerate() {
+                *slot = _mm256_setr_epi64x(
+                    lane_starts[0][word] as i64,
+                    lane_starts[1][word] as i64,
+                    lane_starts[2][word] as i64,
+                    lane_starts[3][word] as i64,
+                );
             }
-            for block_index in 0..max_blocks {
+            let mut remaining = [0usize; LANES];
+            for (lane, &index) in group.iter().enumerate() {
+                remaining[lane] = jobs[index].remaining_blocks();
+            }
+            let steps = remaining.iter().copied().max().unwrap_or(0);
+            for step in 0..steps {
                 let mut mask = [0i64; LANES];
-                for lane in 0..LANES {
-                    if block_index < counts[lane] {
-                        jobs[group[lane]].block(block_index, &mut blocks[lane]);
+                for (lane, &index) in group.iter().enumerate() {
+                    if step < remaining[lane] {
+                        let job = &jobs[index];
+                        job.block(job.start_block + step, &mut blocks[lane]);
                         mask[lane] = -1;
                     }
                 }
                 let active = _mm256_setr_epi64x(mask[0], mask[1], mask[2], mask[3]);
                 compress(&mut state, &blocks, active);
-            }
-            let mut words = [[0u64; LANES]; 8];
-            for (row, value) in words.iter_mut().zip(state) {
-                _mm256_storeu_si256(row.as_mut_ptr().cast(), value);
-            }
-            for (lane, &index) in group.iter().enumerate() {
-                for (word, row) in words.iter().enumerate() {
-                    out[index][word * 8..word * 8 + 8].copy_from_slice(&row[lane].to_be_bytes());
+                if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                    // Extract lane states only when some lane reaches a
+                    // checkpoint; `record` applies the exact rule per lane.
+                    let due = group.iter().enumerate().any(|(lane, &index)| {
+                        let done = jobs[index].start_block + step + 1;
+                        mask[lane] != 0
+                            && done.is_multiple_of(checkpoints.every)
+                            && done <= jobs[index].data_block_count()
+                    });
+                    if due {
+                        let lane_states = vector_lane_states(&state);
+                        for (lane, &index) in group.iter().enumerate() {
+                            if mask[lane] != 0 {
+                                let job = &jobs[index];
+                                checkpoints.record(
+                                    index,
+                                    job,
+                                    job.start_block + step + 1,
+                                    lane_states[lane],
+                                );
+                            }
+                        }
+                    }
                 }
+            }
+            let lane_states = vector_lane_states(&state);
+            for (lane, &index) in group.iter().enumerate() {
+                out[index] = digest_bytes_v1(&lane_states[lane]);
             }
         }
     }
@@ -374,6 +583,8 @@ mod x86 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MODES: [Sha512ModeV1; 2] = [Sha512ModeV1::Scalar, Sha512ModeV1::Avx2];
 
     fn next(state: &mut u64) -> u64 {
         *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -384,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_buffer_matches_sha2_on_every_length_boundary() {
+    fn every_mode_matches_sha2_on_every_length_boundary() {
         let mut random = 0x5eed_u64;
         let body: Vec<u8> = (0..4_096).map(|_| next(&mut random) as u8).collect();
         let prefixes: [&[u8]; 3] = [b"observation-state", b"legal-action", b""];
@@ -396,59 +607,125 @@ mod tests {
             let jobs: Vec<Sha512JobV1<'_>> = lengths
                 .iter()
                 .enumerate()
-                .map(|(index, &len)| Sha512JobV1 {
-                    prefix,
-                    counter: (index % 7) as u32,
-                    body: &body[..len],
-                })
+                .map(|(index, &len)| Sha512JobV1::new(prefix, (index % 7) as u32, &body[..len]))
                 .collect();
-            let mut actual = vec![[0u8; 64]; jobs.len()];
-            sha512_jobs_v1(&jobs, &mut actual);
-            for (job, digest) in jobs.iter().zip(&actual) {
-                assert_eq!(*digest, sha512_job_scalar_v1(job), "len {}", job.body.len());
+            for mode in MODES {
+                let mut actual = vec![[0u8; 64]; jobs.len()];
+                sha512_jobs_with_mode_v1(mode, &jobs, &mut actual, None);
+                for (job, digest) in jobs.iter().zip(&actual) {
+                    assert_eq!(
+                        *digest,
+                        sha512_job_scalar_v1(job),
+                        "{mode:?} len {}",
+                        job.body.len()
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn multi_buffer_handles_partial_groups() {
+    fn every_mode_handles_partial_groups() {
         let body = b"{\"semantic\":{\"action_kind\":\"pass\",\"actor\":\"self\"}}";
-        for count in 0..=9 {
+        for count in 0..=13 {
             let jobs: Vec<Sha512JobV1<'_>> = (0..count)
-                .map(|counter| Sha512JobV1 {
-                    prefix: b"legal-action",
-                    counter,
-                    body,
-                })
+                .map(|counter| Sha512JobV1::new(b"legal-action", counter, body))
                 .collect();
-            let mut actual = vec![[0u8; 64]; jobs.len()];
-            sha512_jobs_v1(&jobs, &mut actual);
-            for (job, digest) in jobs.iter().zip(&actual) {
+            for mode in MODES {
+                let mut actual = vec![[0u8; 64]; jobs.len()];
+                sha512_jobs_with_mode_v1(mode, &jobs, &mut actual, None);
+                for (job, digest) in jobs.iter().zip(&actual) {
+                    assert_eq!(*digest, sha512_job_scalar_v1(job), "{mode:?} count {count}");
+                }
+            }
+        }
+    }
+
+    /// Checkpoints taken in one mode resume exactly in every mode, from every
+    /// checkpoint, including jobs whose messages differ after the resume
+    /// point.
+    #[test]
+    fn checkpoints_resume_exactly_in_every_mode() {
+        let mut random = 0x0c0f_fee0_u64;
+        let base: Vec<u8> = (0..3_000).map(|_| next(&mut random) as u8).collect();
+        let mut variant = base.clone();
+        variant[2_000] ^= 0x5a;
+        variant.truncate(2_700);
+        let prefix = b"observation-state";
+        for record_mode in MODES {
+            let jobs: Vec<Sha512JobV1<'_>> = (0..6)
+                .map(|counter| Sha512JobV1::new(prefix, counter, &base))
+                .collect();
+            let mut digests = vec![[0u8; 64]; 6];
+            let mut checkpoints = Sha512CheckpointsV1 {
+                every: 2,
+                states: Vec::new(),
+            };
+            sha512_jobs_with_mode_v1(record_mode, &jobs, &mut digests, Some(&mut checkpoints));
+            let data_blocks = jobs[0].data_block_count();
+            for (job, digest) in jobs.iter().zip(&digests) {
                 assert_eq!(*digest, sha512_job_scalar_v1(job));
             }
+            for states in &checkpoints.states {
+                let expected: Vec<usize> = (1..=data_blocks / 2).map(|k| k * 2).collect();
+                assert_eq!(
+                    states.iter().map(|(blocks, _)| *blocks).collect::<Vec<_>>(),
+                    expected
+                );
+            }
+            for resume_mode in MODES {
+                for checkpoint in 0..checkpoints.states[0].len() {
+                    for body in [&base[..], &variant[..]] {
+                        // The variant differs at body byte 2,000 (message
+                        // byte 2,021, block 15), so only resumes after at
+                        // most 15 blocks apply to it.
+                        let blocks = checkpoints.states[0][checkpoint].0;
+                        if body.len() != base.len() && blocks * 128 > 21 + 2_000 {
+                            continue;
+                        }
+                        let resumed: Vec<Sha512JobV1<'_>> = (0..6)
+                            .map(|counter| {
+                                let (blocks, state) =
+                                    checkpoints.states[counter as usize][checkpoint];
+                                Sha512JobV1::new(prefix, counter, body).resumed(blocks, state)
+                            })
+                            .collect();
+                        let mut actual = vec![[0u8; 64]; 6];
+                        sha512_jobs_with_mode_v1(resume_mode, &resumed, &mut actual, None);
+                        for (counter, digest) in actual.iter().enumerate() {
+                            let fresh = Sha512JobV1::new(prefix, counter as u32, body);
+                            assert_eq!(
+                                *digest,
+                                sha512_job_scalar_v1(&fresh),
+                                "record {record_mode:?} resume {resume_mode:?} checkpoint {checkpoint}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
     #[test]
-    fn known_answer_abc() {
-        // FIPS 180-2 example: SHA-512("abc").
-        let job = Sha512JobV1 {
-            prefix: b"",
-            counter: 0,
-            body: b"",
-        };
-        // The counter always contributes four bytes, so check the scalar and
-        // vector paths agree on a message equal to "abc" by construction.
-        let mut digest = [[0u8; 64]; 1];
-        sha512_jobs_v1(&[job], &mut digest);
-        assert_eq!(digest[0], sha512_job_scalar_v1(&job));
+    fn known_answer_matches_fips_vector() {
+        // Every mode against sha2 on a message made only of the four counter
+        // bytes ("abcd"), and sha2 itself against the FIPS 180-2 "abc" vector.
+        let expected: [u8; 64] = Sha512::digest(b"abcd").into();
+        let job = Sha512JobV1::new(b"", u32::from_le_bytes(*b"abcd"), b"");
+        for mode in MODES {
+            let jobs = [job; 6];
+            let mut out = [[0u8; 64]; 6];
+            sha512_jobs_with_mode_v1(mode, &jobs, &mut out, None);
+            assert!(out.iter().all(|digest| *digest == expected), "{mode:?}");
+        }
         let abc: [u8; 64] = Sha512::digest(b"abc").into();
-        assert_eq!(abc[..8], [0xdd, 0xaf, 0x35, 0xa1, 0x93, 0x61, 0x7a, 0xba]);
+        assert_eq!(abc[..4], [0xdd, 0xaf, 0x35, 0xa1]);
     }
 
-    /// Throughput of the scalar and multi-buffer paths on the tensorizer's
-    /// state shape: six counters over one body of `MTG_KERNEL_SHA512_BENCH_BYTES`
-    /// (default 21,544, the D5 corpus mean state JSON).
+    /// Throughput of each mode on the tensorizer's state shape: six counters
+    /// over one body of `MTG_KERNEL_SHA512_BENCH_BYTES` (default 21,544, the
+    /// D5 corpus mean state JSON), on `MTG_KERNEL_SHA512_BENCH_THREADS`
+    /// threads at once.
     #[test]
     #[ignore = "timing probe: run explicitly"]
     fn multi_buffer_throughput_probe_v1() {
@@ -459,19 +736,14 @@ mod tests {
         let mut random = 7_u64;
         let body: Vec<u8> = (0..bytes).map(|_| next(&mut random) as u8).collect();
         let jobs: Vec<Sha512JobV1<'_>> = (0..6)
-            .map(|counter| Sha512JobV1 {
-                prefix: b"observation-state",
-                counter,
-                body: &body,
-            })
+            .map(|counter| Sha512JobV1::new(b"observation-state", counter, &body))
             .collect();
         let threads: usize = std::env::var("MTG_KERNEL_SHA512_BENCH_THREADS")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(1);
         let rounds = 2_000;
-        // Wall time per six-counter set on each thread, all threads at once.
-        let timed = |multi: bool| -> f64 {
+        let timed = |mode: Sha512ModeV1| -> f64 {
             let barrier = std::sync::Barrier::new(threads);
             let start = std::time::Instant::now();
             std::thread::scope(|scope| {
@@ -480,13 +752,12 @@ mod tests {
                         let mut out = vec![[0u8; 64]; 6];
                         barrier.wait();
                         for _ in 0..rounds {
-                            if multi {
-                                sha512_jobs_v1(std::hint::black_box(&jobs), &mut out);
-                            } else {
-                                for (job, digest) in jobs.iter().zip(out.iter_mut()) {
-                                    *digest = sha512_job_scalar_v1(std::hint::black_box(job));
-                                }
-                            }
+                            sha512_jobs_with_mode_v1(
+                                mode,
+                                std::hint::black_box(&jobs),
+                                &mut out,
+                                None,
+                            );
                             std::hint::black_box(&out);
                         }
                     });
@@ -494,11 +765,12 @@ mod tests {
             });
             start.elapsed().as_nanos() as f64 / rounds as f64 / 1_000.0
         };
-        let scalar = timed(false);
-        let multi = timed(true);
+        let scalar = timed(Sha512ModeV1::Scalar);
+        let avx2 = timed(Sha512ModeV1::Avx2);
         println!(
-            "sha512 six-counter body={bytes} threads={threads} scalar_us={scalar:.2} multi_us={multi:.2} speedup={:.2}",
-            scalar / multi
+            "sha512 six-counter body={bytes} threads={threads} scalar_us={scalar:.2} \
+             avx2_us={avx2:.2} avx2_speedup={:.2}",
+            scalar / avx2
         );
     }
 }
