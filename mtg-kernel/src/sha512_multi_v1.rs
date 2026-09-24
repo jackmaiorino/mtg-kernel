@@ -238,15 +238,12 @@ fn scalar_job_v1_from(
     original_start: usize,
     mut checkpoints: Option<&mut Sha512CheckpointsV1>,
 ) -> [u8; 64] {
-    use sha2::digest::generic_array::{typenum::U128, GenericArray};
     let recorded = Sha512JobV1 {
         start_block: original_start,
         ..*job
     };
     let total = job.block_count();
     let mut state = job.start_state;
-    let mut run: Vec<GenericArray<u8, U128>> = Vec::new();
-    let mut block = [0u8; 128];
     let mut next = job.start_block;
     while next < total {
         let boundary = match checkpoints.as_deref() {
@@ -254,18 +251,55 @@ fn scalar_job_v1_from(
             None => total,
         }
         .min(total);
-        run.clear();
-        for block_index in next..boundary {
-            job.block(block_index, &mut block);
-            run.push(GenericArray::clone_from_slice(&block));
-        }
-        sha2::compress512(&mut state, &run);
+        compress_range_v1(job, &mut state, next, boundary);
         next = boundary;
         if let Some(checkpoints) = checkpoints.as_deref_mut() {
             checkpoints.record(index, &recorded, next, state);
         }
     }
     digest_bytes_v1(&state)
+}
+
+/// Compresses blocks `from..to` of `job` into `state` with `sha2::compress512`.
+/// Blocks lying wholly inside the body are one contiguous body slice and are
+/// passed without copying; the header block and padded blocks are assembled.
+fn compress_range_v1(job: &Sha512JobV1<'_>, state: &mut [u64; 8], from: usize, to: usize) {
+    use sha2::digest::generic_array::{typenum::U128, GenericArray};
+    let header_len = job.header_len();
+    let message_len = job.message_len();
+    let mut block = [0u8; 128];
+    let mut index = from;
+    while index < to {
+        let start = index * 128;
+        if start >= header_len && start + 128 <= message_len {
+            // Longest run of body-only blocks from here (the header block is
+            // excluded by the check above, so every later block starts in
+            // the body).
+            let mut end = index;
+            while end < to && end * 128 + 128 <= message_len {
+                end += 1;
+            }
+            let bytes = &job.body[start - header_len..end * 128 - header_len];
+            // SAFETY: GenericArray<u8, U128> is a [u8; 128] (align 1), and
+            // `bytes` holds exactly `end - index` whole blocks; sha2 itself
+            // casts the same way inside compress512.
+            let blocks = unsafe {
+                std::slice::from_raw_parts(
+                    bytes.as_ptr().cast::<GenericArray<u8, U128>>(),
+                    end - index,
+                )
+            };
+            sha2::compress512(state, blocks);
+            index = end;
+        } else {
+            job.block(index, &mut block);
+            sha2::compress512(
+                state,
+                std::slice::from_ref(GenericArray::from_slice(&block)),
+            );
+            index += 1;
+        }
+    }
 }
 
 pub(crate) const INITIAL_STATE_V1: [u64; 8] = [
@@ -367,6 +401,9 @@ mod x86 {
     use super::{digest_bytes_v1, Sha512CheckpointsV1, Sha512JobV1, ROUND_CONSTANTS_V1};
     use std::arch::x86_64::*;
 
+    // Every helper carries the `avx2` target feature itself, so the AVX2
+    // intrinsics can always be inlined into it.
+
     const LANES: usize = 4;
 
     macro_rules! rotr {
@@ -375,7 +412,8 @@ mod x86 {
         };
     }
 
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn big_sigma0(x: __m256i) -> __m256i {
         _mm256_xor_si256(
             _mm256_xor_si256(rotr!(x, 28, 36), rotr!(x, 34, 30)),
@@ -383,7 +421,8 @@ mod x86 {
         )
     }
 
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn big_sigma1(x: __m256i) -> __m256i {
         _mm256_xor_si256(
             _mm256_xor_si256(rotr!(x, 14, 50), rotr!(x, 18, 46)),
@@ -391,7 +430,8 @@ mod x86 {
         )
     }
 
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn small_sigma0(x: __m256i) -> __m256i {
         _mm256_xor_si256(
             _mm256_xor_si256(rotr!(x, 1, 63), rotr!(x, 8, 56)),
@@ -399,7 +439,8 @@ mod x86 {
         )
     }
 
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn small_sigma1(x: __m256i) -> __m256i {
         _mm256_xor_si256(
             _mm256_xor_si256(rotr!(x, 19, 45), rotr!(x, 61, 3)),
@@ -409,7 +450,8 @@ mod x86 {
 
     /// Loads the sixteen big-endian words of each lane's block, transposed so
     /// vector `i` holds word `i` of every lane.
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn load_words(blocks: &[[u8; 128]; LANES], w: &mut [__m256i; 16]) {
         // Byte swap within each 64-bit element.
         let swap = _mm256_setr_epi8(
@@ -449,7 +491,8 @@ mod x86 {
     /// One compression of four lanes; lanes with `active` all-zero keep their
     /// previous state. (Computing the whole schedule first and unrolling the
     /// rounds measured slower on this kernel's target, an i7-13700K.)
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn compress(state: &mut [__m256i; 8], blocks: &[[u8; 128]; LANES], active: __m256i) {
         let mut w = [_mm256_setzero_si256(); 16];
         load_words(blocks, &mut w);
@@ -499,7 +542,8 @@ mod x86 {
         }
     }
 
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn vector_lane_states(state: &[__m256i; 8]) -> [[u64; 8]; LANES] {
         let mut words = [[0u64; LANES]; 8];
         for (row, value) in words.iter_mut().zip(state) {
@@ -514,7 +558,8 @@ mod x86 {
         lanes
     }
 
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn load_lane_states(lanes: &[[u64; 8]; LANES]) -> [__m256i; 8] {
         let mut state = [_mm256_setzero_si256(); 8];
         for (word, slot) in state.iter_mut().enumerate() {
