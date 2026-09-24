@@ -20,8 +20,10 @@
 //! `k + 1` blocks: a resume is exact whenever those blocks are byte-identical,
 //! which the caller must establish by comparing bytes.
 //!
-//! Jobs of different lengths may share a group: a lane whose message has run
-//! out of blocks keeps its state (masked blend) until the group ends.
+//! Scheduling: longest job first, and a lane takes the next job as soon as its
+//! own ends. Once the queue is empty, a lane with no job left is masked (its
+//! state kept by a blend) while at least three jobs still run; the last one or
+//! two jobs finish through `sha2::compress512` from their chaining states.
 
 use sha2::{Digest, Sha512};
 
