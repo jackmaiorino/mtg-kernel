@@ -297,6 +297,8 @@ impl NativeFlatTensorizerV2 {
         if self.poisoned {
             return Err(NativeFlatTensorErrorV2::Poisoned);
         }
+        #[cfg(feature = "tensorize-cost-profile-v1")]
+        let _profile = cost_profile_v1::Span::new(&cost_profile_v1::FILL);
         match encode_full_decision_with_scratch_v2(decision, &mut self.canonical_json) {
             Ok(encoded) => {
                 *output = encoded;
@@ -499,6 +501,11 @@ fn encode_full_decision_with_scratch_v2(
     let objects = encode_objects_v2(decision)?;
     let edges = encode_edges_v2(decision, &objects.projection)?;
     write_canonical_observation_v2(decision, &objects.projection, canonical_json)?;
+    // Profile-only (env-gated, inflates fill time while on): prefix reuse.
+    #[cfg(feature = "tensorize-cost-profile-v1")]
+    if std::env::var_os("MTG_KERNEL_TENSORIZE_PROFILE_PREFIX").is_some() {
+        cost_profile_v1::observe_state_json(canonical_json);
+    }
     let state = encode_state_v2(decision, canonical_json)?;
     let actions = encode_action_half_with_projection_and_scratch_v2(
         decision,
@@ -6248,6 +6255,110 @@ fn action_kind_name_v1(kind: FlatScorerActionKindV1) -> &'static str {
     }
 }
 
+/// Measurement-only counters for the tensorize-cost lane (feature
+/// `tensorize-cost-profile-v1`, off by default).
+#[cfg(feature = "tensorize-cost-profile-v1")]
+pub(crate) mod cost_profile_v1 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub(crate) struct Counter {
+        nanos: AtomicU64,
+        calls: AtomicU64,
+    }
+
+    impl Counter {
+        const fn new() -> Self {
+            Self {
+                nanos: AtomicU64::new(0),
+                calls: AtomicU64::new(0),
+            }
+        }
+    }
+
+    pub(crate) static FILL: Counter = Counter::new();
+    pub(crate) static PACKET: Counter = Counter::new();
+    pub(crate) static FORWARD: Counter = Counter::new();
+
+    pub(crate) struct Span {
+        counter: &'static Counter,
+        start: std::time::Instant,
+    }
+
+    impl Span {
+        pub(crate) fn new(counter: &'static Counter) -> Self {
+            Self {
+                counter,
+                start: std::time::Instant::now(),
+            }
+        }
+    }
+
+    impl Drop for Span {
+        fn drop(&mut self) {
+            self.counter
+                .nanos
+                .fetch_add(self.start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.counter.calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Prefix-reuse potential over the live stream: for each state JSON, the
+    /// longest common prefix with any of the last 64 seen (all threads),
+    /// counted in whole SHA-512 blocks after the 21-byte header.
+    static RECENT: std::sync::Mutex<std::collections::VecDeque<Vec<u8>>> =
+        std::sync::Mutex::new(std::collections::VecDeque::new());
+    static SHARED_BLOCKS: AtomicU64 = AtomicU64::new(0);
+    static TOTAL_BLOCKS: AtomicU64 = AtomicU64::new(0);
+    static STATE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn observe_state_json(json: &[u8]) {
+        let blocks = (21 + json.len() + 17).div_ceil(128);
+        let mut recent = RECENT.lock().unwrap();
+        let best = recent
+            .iter()
+            .map(|other| json.iter().zip(other).take_while(|(a, b)| a == b).count())
+            .max()
+            .unwrap_or(0);
+        if recent.len() == 64 {
+            recent.pop_front();
+        }
+        recent.push_back(json.to_vec());
+        drop(recent);
+        SHARED_BLOCKS.fetch_add(
+            ((21 + best) / 128).min(blocks - 1) as u64,
+            Ordering::Relaxed,
+        );
+        TOTAL_BLOCKS.fetch_add(blocks as u64, Ordering::Relaxed);
+        STATE_BYTES.fetch_add(json.len() as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn report() -> String {
+        let line = |name: &str, counter: &Counter| {
+            let nanos = counter.nanos.load(Ordering::Relaxed);
+            let calls = counter.calls.load(Ordering::Relaxed);
+            format!(
+                "{name}_calls={calls} {name}_s={:.3} {name}_us_per_call={:.2}",
+                nanos as f64 / 1e9,
+                nanos as f64 / calls.max(1) as f64 / 1e3
+            )
+        };
+        let total = TOTAL_BLOCKS.load(Ordering::Relaxed);
+        format!(
+            "{} {} {} state_json_mean_bytes={:.0} prefix_shared_block_fraction_window64={:.4}",
+            line("fill", &FILL),
+            line("packet", &PACKET),
+            line("forward", &FORWARD),
+            STATE_BYTES.load(Ordering::Relaxed) as f64
+                / FILL.calls.load(Ordering::Relaxed).max(1) as f64,
+            SHARED_BLOCKS.load(Ordering::Relaxed) as f64 / total.max(1) as f64
+        )
+    }
+}
+
+#[cfg(test)]
+#[path = "native_flat_tensorizer_v2_cost_tests_v1.rs"]
+mod cost_tests_v1;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7010,7 +7121,7 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct OwnedScoringDecisionV2 {
+    pub(super) struct OwnedScoringDecisionV2 {
         globals: FlatGlobalsV2,
         objects: Vec<FlatObjectCoreV1>,
         relations: Vec<FlatRelationV2>,
@@ -7025,7 +7136,7 @@ mod tests {
     }
 
     impl OwnedScoringDecisionV2 {
-        fn from_session(session: &FastActorSessionV1) -> Self {
+        pub(super) fn from_session(session: &FastActorSessionV1) -> Self {
             let FastActorResponseV1::Decision(expected) = session.current_response() else {
                 panic!("expected a live decision");
             };
@@ -7065,7 +7176,7 @@ mod tests {
             owned
         }
 
-        fn view(&self) -> FlatScoringDecisionViewV1<'_> {
+        pub(super) fn view(&self) -> FlatScoringDecisionViewV1<'_> {
             FlatScoringDecisionViewV1::new(
                 &self.globals,
                 &self.objects,

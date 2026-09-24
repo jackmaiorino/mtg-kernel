@@ -27,6 +27,10 @@ flat-action-diagnostic = []
 # Environment-only microprofile for the production V2 full tensorizer. The
 # feature exposes no trainer or model shortcut and is off in normal builds.
 native-flat-tensorizer-diagnostic = []
+# Measurement-only counters (tensorize-cost lane): cumulative wall time and
+# call counts of tensorizer fill, packet encode and pooled forward, printed by
+# the multirun pilot. Off by default; production builds carry no counters.
+tensorize-cost-profile-v1 = []
 # Windows-only production admission for the native V2 training-store writer.
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.

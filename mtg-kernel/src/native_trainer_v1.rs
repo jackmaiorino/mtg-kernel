@@ -830,9 +830,15 @@ impl NativePolicyForwardPoolV1 {
                                 match worker_tensorizer
                                     .fill(decision.packet.scorer_view_v1(), &mut tensor)
                                 {
-                                    Ok(()) => worker_builder
-                                        .forward_v1(native_encoded_decision_view_v1(&tensor))
-                                        .map_err(NativePolicyForwardTaskErrorV1::Forward),
+                                    Ok(()) => {
+                                        #[cfg(feature = "tensorize-cost-profile-v1")]
+                                        let _profile = crate::native_flat_tensorizer_v2::cost_profile_v1::Span::new(
+                                            &crate::native_flat_tensorizer_v2::cost_profile_v1::FORWARD,
+                                        );
+                                        worker_builder
+                                            .forward_v1(native_encoded_decision_view_v1(&tensor))
+                                            .map_err(NativePolicyForwardTaskErrorV1::Forward)
+                                    }
                                     Err(error) => {
                                         Err(NativePolicyForwardTaskErrorV1::Tensor(error))
                                     }
