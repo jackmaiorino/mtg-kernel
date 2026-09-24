@@ -1,0 +1,13 @@
+# D3 attempt003: local execution interrupted
+
+Recorded September 23, 2026, 22:54 EDT. Status: incomplete and technically invalid for a strength decision. No ADVANCE or NO-ADVANCE, win rate, or partial effect estimate is reported. D4 remains unselected.
+
+The local guarded launcher and its native children are absent. Its last progress record reports 880 completed jobs, but its 24 active-worker entries are stale. No aggregate completion receipt exists. Independent local artifact audit finds 1,484 assigned jobs: 880 successful execution receipts, zero failed execution receipts, 24 started logs without execution receipts, and 580 never-started jobs. All 880 completed stores rehash exactly to their execution receipts. This verifies preservation, not cross-attempt reproducibility or scientific validity.
+
+Evidence: `E:/mtg-g115-lineage-20260923/d3-attempt003-interruption-local-001.json` and `d3-attempt003-monitor.jsonl`. The local launcher was PID54728, creation time1790213971.8490098. The lost observation handles do not authorize a restart. A separate collab observer reports exit around22:46:53 and no Windows Application/System error events in that window. The actual cause of process exit remains unobserved; temporal coincidence with a tool/app interruption is not proof of causation.
+
+At the latest check, Haley still has the original launcher identities12172/28508, 290 of564 completed jobs and eight active workers, with fresh progress and no terminal receipt. It remains under the original10,800-second per-match and36,000-second shard bounds. Its already-authorized shard is left running to preserve independently useful completion and reproducibility evidence. It cannot repair the incomplete local panel, and no partial outcomes have been read. Recovery must verify actual remote termination even though its local SSH controller is absent.
+
+The frozen manifest remains `d3-attempt003-preparation-001/launch-final-windows-001.json`, SHA256 `3ad1cd267692672ccf6706bccbf07d02f4f884efb13f607d661264fed2dc5438`. All earlier attempts and current complete/partial outputs are retained. No native job was restarted, no settings changed, no new review entry or session opened, and no paid allocation made.
+
+Next work is bounded interruption diagnosis and remote evidence recovery. Establish durable execution ownership and the applicable reviewed restart conditions before considering a new formal attempt. Do not manufacture the absent local aggregate receipt, combine partial attempts into a passing panel, or classify the unobserved cause as a proven environmental exception. The attempt002 result verdict and corrected-design disposition remain recorded in `g115_d3_r8_disposition_20260923.md`; they are not a strength verdict for attempt003.
