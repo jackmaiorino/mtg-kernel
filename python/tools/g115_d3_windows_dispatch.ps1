@@ -1,10 +1,12 @@
 param(
     [string]$Manifest,
-    [ValidateSet('jack','haleyspc')][string]$HostName,
+    [ValidateSet('jack','haleyspc','runpod')][string]$HostName,
     [string]$WorkerRoot,
     [string]$ControlRoot,
     [string]$Python,
-    [string]$RunConfig
+    [string]$RunConfig,
+    [string]$CloudPackage,
+    [string]$CloudControl
 )
 $ErrorActionPreference = 'Stop'
 
@@ -26,7 +28,14 @@ if ($RunConfig) {
         Assert-Hash $PSCommandPath $config.transport_sha256
         Assert-Hash $config.manifest $config.manifest_sha256
         Assert-Hash $config.launcher $config.launcher_sha256
-        if (Test-Path -LiteralPath $config.worker_root) { throw 'Worker root already exists; never resume or overwrite it' }
+        if ($config.host_name -eq 'runpod') {
+            Assert-Hash $config.cloud_controller $config.cloud_controller_sha256
+            Assert-Hash $config.cloud_package $config.cloud_package_sha256
+            Assert-Hash (Join-Path $config.cloud_control 'lease/lease.json') $config.cloud_lease_sha256
+            foreach ($name in @('formal-manifest.json','completion.json','lease/created-pod.json','lease/create-pod-failure.json')) {
+                if (Test-Path -LiteralPath (Join-Path $config.cloud_control $name)) { throw 'Cloud control already attempted; use fresh preparation' }
+            }
+        } elseif (Test-Path -LiteralPath $config.worker_root) { throw 'Worker root already exists; never resume or overwrite it' }
         $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^public_feature_evaluation_v1.exe$|^trainer.exe$|^mtg_kernel.*exe$|^cargo.exe$|^rustc.exe$' })
         if ($busy.Count -ne 0) { throw 'Competing native work present; preserve existing work' }
         $receipt.worker_started_utc = [DateTime]::UtcNow.ToString('o')
@@ -34,7 +43,13 @@ if ($RunConfig) {
         # Windows PowerShell treats native stderr as an error record. Preserve it
         # without aborting observation of a still-running guarded child.
         $ErrorActionPreference = 'Continue'
-        & $config.python -u $config.launcher --manifest $config.manifest --host $config.host_name --root $config.worker_root > (Join-Path $config.control_root 'worker.log') 2>&1
+        if ($config.host_name -eq 'runpod') {
+            # The controller and its external lease guard inherit the WMI owner's
+            # lifetime. Only the existing cloud controller may allocate or dispatch.
+            & $config.python -u $config.cloud_controller --manifest $config.manifest --package $config.cloud_package --control $config.cloud_control --execute > (Join-Path $config.control_root 'worker.log') 2>&1
+        } else {
+            & $config.python -u $config.launcher --manifest $config.manifest --host $config.host_name --root $config.worker_root > (Join-Path $config.control_root 'worker.log') 2>&1
+        }
         $ErrorActionPreference = 'Stop'
         $receipt.exit_code = $LASTEXITCODE
         $receipt.complete = ($LASTEXITCODE -eq 0)
@@ -49,20 +64,40 @@ if ($RunConfig) {
     exit 0
 }
 
-foreach ($value in @($Manifest,$HostName,$WorkerRoot,$ControlRoot,$Python)) {
-    if (-not $value) { throw 'Manifest, HostName, WorkerRoot, ControlRoot and Python are required' }
+foreach ($value in @($Manifest,$HostName,$ControlRoot,$Python)) {
+    if (-not $value) { throw 'Manifest, HostName, ControlRoot and Python are required' }
 }
-foreach ($value in @($Manifest,$WorkerRoot,$ControlRoot,$Python,$PSCommandPath)) {
+$cloudMode = $HostName -eq 'runpod'
+if ($cloudMode) {
+    if (-not $CloudPackage -or -not $CloudControl -or $WorkerRoot) { throw 'Cloud mode requires CloudPackage and CloudControl, without WorkerRoot' }
+    $modePaths = @($CloudPackage,$CloudControl)
+} else {
+    if (-not $WorkerRoot -or $CloudPackage -or $CloudControl) { throw 'Windows mode requires WorkerRoot without cloud arguments' }
+    $modePaths = @($WorkerRoot)
+}
+foreach ($value in (@($Manifest,$ControlRoot,$Python,$PSCommandPath) + $modePaths)) {
     if (-not [IO.Path]::IsPathRooted($value) -or $value.Contains('"')) { throw 'Absolute paths without literal quotes required' }
 }
-if ((Test-Path -LiteralPath $WorkerRoot) -or (Test-Path -LiteralPath $ControlRoot)) {
+if ((-not $cloudMode -and (Test-Path -LiteralPath $WorkerRoot)) -or (Test-Path -LiteralPath $ControlRoot)) {
     throw 'Fresh worker and control roots required; no automatic resume'
 }
 $plan = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
 $launcher = $plan.documents.launcher.path
 Assert-Hash $launcher $plan.documents.launcher.sha256
+Assert-Hash $PSCommandPath $plan.transport.dispatcher.sha256
 if ([IO.Path]::GetFileName($launcher) -ne 'g115_d3_launch_v1.py') { throw 'Only the supported D3 launcher is allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
+if ($cloudMode) {
+    $cloudController = $plan.transport.cloud_controller.path
+    if ([IO.Path]::GetFileName($cloudController) -ne 'g115_d3_cloud_v1.py') { throw 'Only the supported D3 cloud controller is allowed' }
+    Assert-Hash $cloudController $plan.transport.cloud_controller.sha256
+    Assert-Hash $CloudPackage $plan.transport.cloud_package.sha256
+    if ($CloudControl -ne $plan.transport.cloud_control) { throw 'Cloud control differs from pinned manifest' }
+    if (-not (Test-Path -LiteralPath (Join-Path $CloudControl 'lease/lease.json') -PathType Leaf)) { throw 'Fresh prepared cloud lease required' }
+    foreach ($name in @('formal-manifest.json','completion.json','lease/created-pod.json','lease/create-pod-failure.json')) {
+        if (Test-Path -LiteralPath (Join-Path $CloudControl $name)) { throw 'Cloud control already attempted; use fresh preparation' }
+    }
+}
 New-Item -ItemType Directory -Path $ControlRoot | Out-Null
 $config = [ordered]@{
     manifest=$Manifest; manifest_sha256=(Get-FileHash -LiteralPath $Manifest).Hash.ToLowerInvariant()
@@ -70,11 +105,25 @@ $config = [ordered]@{
     python=$Python; host_name=$HostName; worker_root=$WorkerRoot; control_root=$ControlRoot
     transport_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
 }
+if ($cloudMode) {
+    $config.cloud_controller = $cloudController
+    $config.cloud_controller_sha256 = $plan.transport.cloud_controller.sha256
+    $config.cloud_package = $CloudPackage
+    $config.cloud_package_sha256 = $plan.transport.cloud_package.sha256
+    $config.cloud_control = $CloudControl
+    $config.cloud_lease_sha256 = (Get-FileHash -LiteralPath (Join-Path $CloudControl 'lease/lease.json')).Hash.ToLowerInvariant()
+}
 $configPath = Join-Path $ControlRoot 'config.json'
 Save-Json $configPath $config
 # Full native admission is still performed by the unchanged launcher in the owner.
 $ErrorActionPreference = 'Continue'
-& $Python $launcher --manifest $Manifest --host $HostName --check-only > (Join-Path $ControlRoot 'check-only.log') 2>&1
+if ($cloudMode) {
+    # Planning only: actual hardware, funding and resident-guard admission happen
+    # in the unchanged controller before the unchanged remote launcher runs.
+    & $Python $cloudController --manifest $Manifest > (Join-Path $ControlRoot 'check-only.log') 2>&1
+} else {
+    & $Python $launcher --manifest $Manifest --host $HostName --check-only > (Join-Path $ControlRoot 'check-only.log') 2>&1
+}
 $ErrorActionPreference = 'Stop'
 if ($LASTEXITCODE -ne 0) { throw 'Supported launcher preflight refused; inspect retained check-only.log' }
 $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
