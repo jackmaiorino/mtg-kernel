@@ -770,6 +770,8 @@ class VerdictTests(unittest.TestCase):
     def test_m5_segments_and_knobs_are_validated(self) -> None:
         adapter = launcher.NativeSciencePilotAdapterV1()
         adapter.validate({"knobs": {"MULTIRUN_POPULATION_RUNTIME": "1", "MULTIRUN_RESPONSE_EXPLOITER_DENOVO": "1"}})
+        adapter.validate({"knobs": {"MTG_KERNEL_CUBECL_MAX_PAGE_MIB": "512"}})
+        self.assertIn("MTG_KERNEL_CUBECL_MAX_PAGE_MIB", launcher.INHERITED_ENV_BLOCKLIST)
         with tempfile.TemporaryDirectory() as directory:
             raw = json.loads(fake_workload(Path(directory), runs=1, planned=9).read_text())
             for segment, parents in [({"resume_generation": 9, "stop_generation": 9}, {"run-0": directory}),

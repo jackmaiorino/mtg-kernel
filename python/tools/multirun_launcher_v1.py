@@ -404,6 +404,9 @@ class NativeSciencePilotAdapterV1(Adapter):
         "MULTIRUN_POPULATION_SLOT_ROOTS", "MULTIRUN_RESPONSE_EXPLOITER_RUNTIME",
         "MULTIRUN_RESPONSE_EXPLOITER_DENOVO", "MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN",
         "MULTIRUN_RESPONSE_EXPLOITER_SLOT_ROOTS",
+        # Opt-in CUDA memory pool page cap (qualification/cubecl-cuda-pagecap):
+        # allocation bookkeeping only, but part of the qualified configuration.
+        "MTG_KERNEL_CUBECL_MAX_PAGE_MIB",
     }
     # The fixture's record publishes a checkpoint every four updates, and the
     # harness honours a stop generation only at a checkpoint boundary (any
@@ -609,6 +612,11 @@ class RunResult:
     log: str = ""
 
 
+# Variables that change what a run does must come from the workload, never
+# from the caller's shell.
+INHERITED_ENV_BLOCKLIST = ("MTG_KERNEL_PILOT_CUDA_ORDINAL", "CUDA_VISIBLE_DEVICES", "MTG_KERNEL_CUBECL_MAX_PAGE_MIB")
+
+
 class LocalExecutor:
     """Runs one process per run on this machine."""
 
@@ -633,7 +641,7 @@ class LocalExecutor:
         start = self.workload.start_generation
         argv = adapter.argv(self.workload, str(self.workload.executable), run, str(run_root), device, stop_after)
         env = {key: value for key, value in os.environ.items()
-               if not key.startswith("MULTIRUN_") and key not in ("MTG_KERNEL_PILOT_CUDA_ORDINAL", "CUDA_VISIBLE_DEVICES")}
+               if not key.startswith("MULTIRUN_") and key not in INHERITED_ENV_BLOCKLIST}
         env.update(adapter.environment(self.workload, run, str(run_root), device, stop_after))
         env.update(extra_env or {})
         log_path = run_root / "process.log"

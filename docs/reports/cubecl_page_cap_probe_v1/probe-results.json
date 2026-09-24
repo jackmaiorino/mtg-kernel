@@ -1,0 +1,83 @@
+{
+  "schema": "mtg-kernel-cubecl-page-cap-probe/v1",
+  "executable_sha256": "5a580d2ee58de1c9 (prefix; built from branch opus/cubecl-page-cap-v1)",
+  "workload": "pilot base-s0 seed 5500001, 128-update record stopped at 12, alone on GPU 0 (RTX 4070 SUPER)",
+  "reference": "q6 serial golden base-s0 (PR #107 round 2)",
+  "results_by_cap_mib": {
+    "none": {
+      "exit": 0,
+      "wall": 66.1,
+      "peak_mib_above_baseline": 2915,
+      "outputs": 30,
+      "identical_to_q6_golden": true,
+      "differing": []
+    },
+    "512": {
+      "exit": 0,
+      "wall": 66.1,
+      "peak_mib_above_baseline": 2947,
+      "outputs": 30,
+      "identical_to_q6_golden": true,
+      "differing": []
+    },
+    "256": {
+      "exit": 0,
+      "wall": 69.1,
+      "peak_mib_above_baseline": 2465,
+      "outputs": 30,
+      "identical_to_q6_golden": true,
+      "differing": []
+    },
+    "128": {
+      "exit": 101,
+      "wall": 24.0,
+      "peak_mib_above_baseline": 1441,
+      "outputs": 9,
+      "identical_to_q6_golden": false,
+      "differing": [
+        "store/checkpoints/update-00000004.checkpoint.json",
+        "store/checkpoints/update-00000004.sidecar.json",
+        "store/checkpoints/update-00000004.state.f32le",
+        "store/checkpoints/update-00000008.checkpoint.json",
+        "store/checkpoints/update-00000008.sidecar.json",
+        "store/checkpoints/update-00000008.state.f32le",
+        "store/checkpoints/update-00000012.checkpoint.json",
+        "store/checkpoints/update-00000012.sidecar.json"
+      ]
+    },
+    "64": {
+      "exit": 101,
+      "wall": 20.2,
+      "peak_mib_above_baseline": 640,
+      "outputs": 9,
+      "identical_to_q6_golden": false,
+      "differing": [
+        "store/checkpoints/update-00000004.checkpoint.json",
+        "store/checkpoints/update-00000004.sidecar.json",
+        "store/checkpoints/update-00000004.state.f32le",
+        "store/checkpoints/update-00000008.checkpoint.json",
+        "store/checkpoints/update-00000008.sidecar.json",
+        "store/checkpoints/update-00000008.state.f32le",
+        "store/checkpoints/update-00000012.checkpoint.json",
+        "store/checkpoints/update-00000012.sidecar.json"
+      ]
+    },
+    "32": {
+      "exit": 101,
+      "wall": 17.0,
+      "peak_mib_above_baseline": 418,
+      "outputs": 9,
+      "identical_to_q6_golden": false,
+      "differing": [
+        "store/checkpoints/update-00000004.checkpoint.json",
+        "store/checkpoints/update-00000004.sidecar.json",
+        "store/checkpoints/update-00000004.state.f32le",
+        "store/checkpoints/update-00000008.checkpoint.json",
+        "store/checkpoints/update-00000008.sidecar.json",
+        "store/checkpoints/update-00000008.state.f32le",
+        "store/checkpoints/update-00000012.checkpoint.json",
+        "store/checkpoints/update-00000012.sidecar.json"
+      ]
+    }
+  }
+}

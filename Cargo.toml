@@ -14,6 +14,10 @@ edition = "2021"
 # decoder, or admitted-backend literal changes.
 [patch.crates-io]
 burn-cubecl = { path = "qualification/burn-cubecl-simpleunit" }
+# Opt-in memory pool page-size cap for concurrent training processes
+# (MTG_KERNEL_CUBECL_MAX_PAGE_MIB); unset, it is upstream cubecl-cuda 0.10.0
+# byte for byte in behaviour. See docs/multirun_qualified_launcher_v1.md.
+cubecl-cuda = { path = "qualification/cubecl-cuda-pagecap" }
 
 [profile.release]
 lto = "thin"
