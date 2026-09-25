@@ -1,14 +1,23 @@
 """Offline refusal checks; deliberately never dispatch MTG or GPU work."""
 import copy
+import os
 from pathlib import Path
 import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from g115_d4_timing_launch_v1 import admission, require_idle_gpu
+from g115_d4_timing_launch_v1 import admission, require_idle_gpu, native_environment
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_native_cuda_environment_is_child_only(self):
+        before = dict(os.environ)
+        env = native_environment(dict(cuda_bin='C:/private/runtime/bin'), Path('C:/private/temp'))
+        self.assertEqual(env['CUDA_PATH'], str(Path('C:/private/runtime')))
+        self.assertEqual(env['PATH'], 'C:/private/runtime/bin' + os.pathsep + before['PATH'])
+        self.assertEqual(env['TEMP'], str(Path('C:/private/temp')))
+        self.assertEqual(dict(os.environ), before)
+
     def setUp(self):
         self.plan = dict(schema='g115-d4-bounded-timing/v1', configs=dict(control={}, broader={}),
                          workers=[1, 4, 8], native_timeout_seconds=300, total_timeout_seconds=3600,

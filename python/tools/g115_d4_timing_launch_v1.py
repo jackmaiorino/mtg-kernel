@@ -67,6 +67,10 @@ def admission(manifest, host):
             for name in ('initialization', 'parameters'):
                 checked(descriptor[name])
     placement = manifest['hosts'][host]
+    if placement.get('runtime_manifest'):
+        runtime = pinned_json(placement['runtime_manifest'])
+        for item in runtime['files']:
+            checked(item)
     if placement['computer_name'].lower() != os.environ.get('COMPUTERNAME', '').lower():
         raise ValueError('manifest belongs to another computer')
     minimum = (32 if host == 'jack' else 8) * 1024**3
@@ -78,6 +82,13 @@ def admission(manifest, host):
     if not root.is_absolute() or root.exists() or not root.parent.is_dir():
         raise ValueError('fresh absolute root with existing parent required')
     return configs, placement
+
+
+def native_environment(placement, temp):
+    env = dict(os.environ, TEMP=str(temp), TMP=str(temp))
+    env['CUDA_PATH'] = str(Path(placement['cuda_bin']).parent)
+    env['PATH'] = placement['cuda_bin'] + os.pathsep + env['PATH']
+    return env
 
 
 def require_idle_gpu(placement, gpu_csv):
@@ -174,8 +185,7 @@ def run_cases(manifest, configs, placement, root):
                 write(case/'config.json', config)
                 write(case/'inventory.json', live)
                 (case/'temp').mkdir()
-                env = dict(os.environ, TEMP=str(case/'temp'), TMP=str(case/'temp'))
-                env['PATH'] = placement['cuda_bin'] + ';' + env['PATH']
+                env = native_environment(placement, case/'temp')
                 child = None
                 record = dict(complete=False, arm=arm, workers=workers, started_epoch=time.time())
                 try:
