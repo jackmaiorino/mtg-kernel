@@ -82,7 +82,7 @@ def limits(plan, work, commands):
 
 
 def admission(plan, host):
-    require(os.name == 'nt' and host == 'jack', 'Archive-resident Jack qualification only')
+    require(os.name == 'nt' and host in ('jack', 'haleyspc'), 'Windows archive qualification only')
     require(checked(plan['documents']['launcher']).resolve() == Path(__file__).resolve(), 'Wrong owner')
     checked(plan['transport']['dispatcher'])
     expected = {Path(__file__).with_name(n).resolve() for n in
@@ -109,15 +109,18 @@ def admission(plan, host):
             require(len(matches) == 1 and matches[0]['files'].get(file['member']) == file['sha256'],
                     'Member is not bound by the archive index')
     root = Path(plan['worker_root'])
-    require(root.is_absolute() and root.resolve().drive.lower() == 'e:' and not root.exists(),
-            'Fresh E root required')
-    live = inventory(root, 32*1024**3, plan['cap_bytes'])
+    drive = 'e:' if host == 'jack' else 'c:'
+    reserve_memory = (32 if host == 'jack' else 8)*1024**3
+    require(root.is_absolute() and root.resolve().drive.lower() == drive and not root.exists(),
+            'Fresh host-specific root required')
+    live = inventory(root, reserve_memory, plan['cap_bytes'])
     require(live['computer_name'].lower() == plan['computer_name'].lower(), 'Wrong host')
     return work, commands, binary, compact, live
 
 
-def execute(plan, work, commands, binary, compact, live):
-    storage = AuditStorage(plan['worker_root'], plan['cap_bytes'])
+def execute(plan, work, commands, binary, compact, live, host):
+    storage = AuditStorage(plan['worker_root'], plan['cap_bytes'], drive='e:' if host == 'jack' else 'c:')
+    reserve_memory = (32 if host == 'jack' else 8)*1024**3
     started = time.monotonic()
     stop = threading.Event()
     result = {'complete': False, 'phases': [], 'inventory': live, 'formal_measurement': False}
@@ -125,7 +128,7 @@ def execute(plan, work, commands, binary, compact, live):
 
     def guard():
         require(not stop.is_set() and time.monotonic()-started < 900, 'Pipeline stopped or timed out')
-        require(available_memory() >= 32*1024**3, 'Memory reserve reached')
+        require(available_memory() >= reserve_memory, 'Memory reserve reached')
         storage.check()
 
     def child(command, folder, label, qos=False):
@@ -282,7 +285,7 @@ def main():
     require(bool(handle), 'Timing mutex creation failed')
     try:
         require(ctypes.get_last_error() != 183, 'D4 owner already present')
-        execute(plan, work, commands, binary, compact, live)
+        execute(plan, work, commands, binary, compact, live, args.host)
     finally:
         kernel.CloseHandle(handle)
 

@@ -98,11 +98,11 @@ def physical_tree(path, allow_atomic_rename=False):
 
 class AuditStorage:
     """Fresh-root owner; journal survives failure, no resume or deletion API."""
-    def __init__(self, root, cap, control_allowance=64*1024**2):
+    def __init__(self, root, cap, control_allowance=64*1024**2, drive='e:'):
         requested = Path(root)
         self.root = requested.resolve()
-        require(requested.is_absolute() and self.root.drive.lower() == 'e:'
-                and not self.root.exists() and self.root.parent.is_dir(), 'Fresh owned E root required')
+        require(drive in ('e:', 'c:') and requested.is_absolute() and self.root.drive.lower() == drive
+                and not self.root.exists() and self.root.parent.is_dir(), 'Fresh owned host-specific root required')
         self.ledger = Ledger(cap, control_allowance)
         self.reserve_bytes = 60*GIB
         require(shutil.disk_usage(self.root.parent).free >= self.reserve_bytes+cap,
