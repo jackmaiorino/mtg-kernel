@@ -37,7 +37,7 @@ if ($RunConfig) {
             }
         } elseif (Test-Path -LiteralPath $config.worker_root) { throw 'Worker root already exists; never resume or overwrite it' }
         $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^public_feature_evaluation_v1.exe$|^trainer.exe$|^mtg_kernel.*exe$|^cargo.exe$|^rustc.exe$' })
-        if ([IO.Path]::GetFileName($config.launcher) -eq 'g115_d4_build_launch_v1.py') {
+        if ([IO.Path]::GetFileName($config.launcher) -in @('g115_d4_build_launch_v1.py','g115_d4_replay_timing_launch_v1.py')) {
             $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(public_.*|native_.*|learned_sideboard_v1|trainer|mtg_kernel.*|cargo|rustc)\.exe$' })
         }
         if ($busy.Count -ne 0) { throw 'Competing native work present; preserve existing work' }
@@ -95,6 +95,8 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-eval-timing/v1') { throw 'D4 evaluation admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_d4_build_launch_v1.py') {
     if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-windows-build/v1') { throw 'D4 build mode admits the named Jack build launcher only' }
+} elseif ($launcherName -eq 'g115_d4_replay_timing_launch_v1.py') {
+    if ($cloudMode -or $plan.schema -ne 'g115-d4-replay-timing/v1') { throw 'D4 archived replay admits bounded Windows timing only' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4 launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {
