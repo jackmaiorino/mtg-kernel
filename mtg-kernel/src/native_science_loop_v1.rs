@@ -2125,6 +2125,11 @@ mod windows_science_loop_tests {
              wall={aggregate_wall:.1}s eps_per_s={:.2} (non-evidence){wide_label}",
             total_episodes as f64 / aggregate_wall
         );
+        #[cfg(feature = "tensorize-cost-profile-v1")]
+        println!(
+            "MULTIRUN TENSORIZE_PROFILE {}",
+            crate::native_flat_tensorizer_v2::cost_profile_v1::report()
+        );
     }
 
     /// Saturation-curve evaluation over a surviving pathfinding store:

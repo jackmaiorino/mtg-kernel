@@ -839,6 +839,10 @@ impl FlatScoredFamilyCore for FlatScoredFamilyV2 {
         encoder: &mut Self::Encoder,
         mut packet: Self::OwnedPacket,
     ) -> Result<Self::ValidatedPacket, ()> {
+        #[cfg(feature = "tensorize-cost-profile-v1")]
+        let _profile = crate::native_flat_tensorizer_v2::cost_profile_v1::Span::new(
+            &crate::native_flat_tensorizer_v2::cost_profile_v1::PACKET,
+        );
         let decision = session
             .encode_current_flat_scoring_decision_owned_v2(
                 expected,

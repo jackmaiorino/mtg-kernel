@@ -176,6 +176,8 @@ pub mod native_cuda_qualification_metrics_v1;
 pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
+// Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
+pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
 // Section 1.5 / Section 5.3 item 3). Test-only, `#[ignore]`d: requires the
 // real de-novo screen checkpoint store on D:, which does not exist in a

@@ -20,6 +20,7 @@ use crate::rl_session::{
     FLAT_ACTION_FLAG_CAST_IT_V1, FLAT_ACTION_FLAG_CHANGE_TARGET_V1, FLAT_ACTION_FLAG_INCLUDE_V1,
     FLAT_ACTION_FLAG_PAY_V1, FLAT_ACTION_FLAG_USE_COST_V1, FLAT_ACTION_FLAG_VALUE_V1,
 };
+use crate::sha512_multi_v1::{sha512_jobs_v1, Sha512CheckpointsV1, Sha512JobV1};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
@@ -270,16 +271,208 @@ struct ObjectProjectionV2 {
     node_to_raw: Vec<usize>,
 }
 
+#[derive(Default)]
 pub(crate) struct NativeFlatTensorizerV2 {
     poisoned: bool,
-    canonical_json: Vec<u8>,
+    slot: DigestSlotV1,
+    digests: DigestBatchV1,
 }
 
-impl Default for NativeFlatTensorizerV2 {
+/// One decision's digest messages: its state canonical JSON and each
+/// action's canonical JSON back to back.
+#[derive(Default)]
+struct DigestSlotV1 {
+    state_json: Vec<u8>,
+    action_scratch: Vec<u8>,
+    action_json: Vec<u8>,
+    action_ranges: Vec<(usize, usize)>,
+}
+
+/// SHA-512 blocks and cache checkpoints for every message of the slots
+/// hashed together (one decision in production). All of them go through one
+/// multi-buffer call; the messages and the block-to-feature mapping are
+/// unchanged.
+struct DigestBatchV1 {
+    blocks: Vec<[u8; 64]>,
+    checkpoints: Sha512CheckpointsV1,
+}
+
+impl Default for DigestBatchV1 {
     fn default() -> Self {
         Self {
-            poisoned: false,
-            canonical_json: Vec::with_capacity(16 * 1024),
+            blocks: Vec::new(),
+            checkpoints: Sha512CheckpointsV1 {
+                every: STATE_CHECKPOINT_EVERY_V1,
+                states: Vec::new(),
+            },
+        }
+    }
+}
+
+// --- State digest prefix cache ------------------------------------------
+//
+// Consecutive decisions often share a long prefix of their state JSON. The
+// six state digests are Merkle-Damgard hashes of `namespace || counter ||
+// json`, so their chaining states after any block depend only on the bytes
+// up to that block. The cache keeps, for recent state JSONs, the six chaining
+// states at every eighth data-only block. A new JSON resumes from the
+// deepest checkpoint inside its byte-for-byte common prefix with a cached
+// JSON (compared in full, never by hash) and inside its own data-only
+// blocks, so its digests are exactly those of hashing from scratch. The cache
+// is shared by all tensorizers in the process; it changes cost, never output.
+
+const STATE_CHECKPOINT_EVERY_V1: usize = 8;
+const STATE_CACHE_ENTRIES_V1: usize = 64;
+const STATE_HEADER_BYTES_V1: usize = STATE_HASH_NAMESPACE_V2.len() + 4;
+/// JSON bytes inside the first checkpoint span; entries sharing fewer
+/// leading bytes cannot share a checkpoint, so they are not compared.
+const STATE_CACHE_KEY_BYTES_V1: usize = 128 * STATE_CHECKPOINT_EVERY_V1 - STATE_HEADER_BYTES_V1;
+
+struct StatePrefixEntryV1 {
+    key: u64,
+    json: Vec<u8>,
+    /// `(blocks, six chaining states)`, ascending by `blocks`.
+    checkpoints: Vec<(usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])>,
+}
+
+struct StatePrefixResumeV1 {
+    blocks: usize,
+    states: [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1],
+    /// The matched entry's checkpoints up to `blocks`, reused for the new
+    /// entry (identical prefix, identical states).
+    prefix_checkpoints: Vec<(usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])>,
+}
+
+struct StatePrefixCacheV1 {
+    entries: Vec<StatePrefixEntryV1>,
+    next: usize,
+}
+
+static STATE_PREFIX_CACHE_V1: std::sync::Mutex<StatePrefixCacheV1> =
+    std::sync::Mutex::new(StatePrefixCacheV1 {
+        entries: Vec::new(),
+        next: 0,
+    });
+
+fn state_prefix_cache_enabled_v1() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("MTG_KERNEL_TENSORIZE_STATE_CACHE").map_or(true, |value| value != "0")
+    })
+}
+
+/// Bucketing key over the first checkpoint span (not an identity: every
+/// candidate is compared byte for byte).
+fn state_prefix_cache_key_v1(json: &[u8]) -> Option<u64> {
+    if !state_prefix_cache_enabled_v1() || json.len() < STATE_CACHE_KEY_BYTES_V1 {
+        return None;
+    }
+    let mut hash = 0x243f_6a88_85a3_08d3_u64;
+    for chunk in json[..STATE_CACHE_KEY_BYTES_V1].chunks(8) {
+        let mut word = [0u8; 8];
+        word[..chunk.len()].copy_from_slice(chunk);
+        hash = (hash ^ u64::from_le_bytes(word)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        hash ^= hash >> 29;
+    }
+    Some(hash)
+}
+
+fn common_prefix_len_v1(left: &[u8], right: &[u8]) -> usize {
+    let limit = left.len().min(right.len());
+    let mut index = 0;
+    while index + 64 <= limit && left[index..index + 64] == right[index..index + 64] {
+        index += 64;
+    }
+    while index < limit && left[index] == right[index] {
+        index += 1;
+    }
+    index
+}
+
+fn state_prefix_cache_lookup_v1(json: &[u8]) -> Option<StatePrefixResumeV1> {
+    let key = state_prefix_cache_key_v1(json)?;
+    let data_blocks = (STATE_HEADER_BYTES_V1 + json.len()) / 128;
+    let cache = STATE_PREFIX_CACHE_V1
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut best: Option<(usize, &StatePrefixEntryV1, usize)> = None;
+    for entry in cache.entries.iter().filter(|entry| entry.key == key) {
+        let shared = common_prefix_len_v1(json, &entry.json);
+        // Blocks whose bytes are identical in both messages and hold no
+        // padding in the new one (the entry only records data-only blocks).
+        let usable = ((STATE_HEADER_BYTES_V1 + shared) / 128).min(data_blocks);
+        let deepest = entry
+            .checkpoints
+            .iter()
+            .rposition(|(blocks, _)| *blocks <= usable);
+        if let Some(position) = deepest {
+            let blocks = entry.checkpoints[position].0;
+            if best.is_none_or(|(best_blocks, _, _)| blocks > best_blocks) {
+                best = Some((blocks, entry, position));
+            }
+        }
+    }
+    best.map(|(blocks, entry, position)| StatePrefixResumeV1 {
+        blocks,
+        states: entry.checkpoints[position].1,
+        prefix_checkpoints: entry.checkpoints[..=position].to_vec(),
+    })
+}
+
+/// `produced` holds the six state jobs' checkpoint lists (one schedule).
+fn state_prefix_cache_insert_v1(
+    json: &[u8],
+    resume: Option<StatePrefixResumeV1>,
+    produced: &[Vec<(usize, [u64; 8])>],
+) {
+    let Some(key) = state_prefix_cache_key_v1(json) else {
+        return;
+    };
+    let mut checkpoints = resume.map_or_else(Vec::new, |hit| hit.prefix_checkpoints);
+    let first = &produced[0];
+    for (index, (blocks, _)) in first.iter().enumerate() {
+        let mut states = [[0u64; 8]; ACTION_HASH_BLOCK_COUNT_V1];
+        for (counter, slot) in states.iter_mut().enumerate() {
+            let (counter_blocks, state) = produced[counter][index];
+            debug_assert_eq!(counter_blocks, *blocks);
+            *slot = state;
+        }
+        checkpoints.push((*blocks, states));
+    }
+    let entry = StatePrefixEntryV1 {
+        key,
+        json: json.to_vec(),
+        checkpoints,
+    };
+    let mut cache = STATE_PREFIX_CACHE_V1
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cache.entries.len() < STATE_CACHE_ENTRIES_V1 {
+        cache.entries.push(entry);
+    } else {
+        let slot = cache.next;
+        cache.entries[slot] = entry;
+        cache.next = (slot + 1) % STATE_CACHE_ENTRIES_V1;
+    }
+}
+
+/// Where an action's canonical JSON goes when its digest is deferred.
+struct DeferredActionJsonV1<'s> {
+    json: &'s mut Vec<u8>,
+    ranges: &'s mut Vec<(usize, usize)>,
+}
+
+const STATE_HASH_NAMESPACE_V2: &[u8] = b"observation-state";
+
+/// Converts SHA-512 blocks to digest features exactly as
+/// `append_digest_features_v2` and `action_hash_features_v1` do: each
+/// little-endian u32 chunk `x` becomes `((x / u32::MAX) * 2 - 1) as f32`.
+fn digest_block_features_v1(blocks: &[[u8; 64]], output: &mut [f32]) {
+    debug_assert_eq!(blocks.len() * 16, output.len());
+    for (block, features) in blocks.iter().zip(output.chunks_exact_mut(16)) {
+        for (chunk, feature) in block.chunks_exact(4).zip(features) {
+            let integer = u32::from_le_bytes(chunk.try_into().expect("four-byte hash chunk"));
+            *feature = ((f64::from(integer) / f64::from(u32::MAX)) * 2.0 - 1.0) as f32;
         }
     }
 }
@@ -297,7 +490,18 @@ impl NativeFlatTensorizerV2 {
         if self.poisoned {
             return Err(NativeFlatTensorErrorV2::Poisoned);
         }
-        match encode_full_decision_with_scratch_v2(decision, &mut self.canonical_json) {
+        #[cfg(feature = "tensorize-cost-profile-v1")]
+        let _profile = cost_profile_v1::Span::new(&cost_profile_v1::FILL);
+        let slot = &mut self.slot;
+        let encoded = prepare_full_decision_v2(decision, slot).and_then(|prepared| {
+            let offsets = hash_prepared_slots_v2(std::slice::from_ref(slot), &mut self.digests);
+            finish_full_decision_v2(
+                decision,
+                prepared,
+                &self.digests.blocks[offsets[0]..offsets[1]],
+            )
+        });
+        match encoded {
             Ok(encoded) => {
                 *output = encoded;
                 Ok(())
@@ -482,31 +686,137 @@ pub(crate) fn fill_native_flat_decision_tensors_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     output: &mut NativeFlatDecisionTensorV2,
 ) -> Result<(), NativeFlatTensorErrorV2> {
-    let mut canonical_json = Vec::new();
-    let encoded = encode_full_decision_with_scratch_v2(decision, &mut canonical_json)?;
-    *output = encoded;
-    Ok(())
+    NativeFlatTensorizerV2::new().fill(decision, output)
 }
 
-fn encode_full_decision_with_scratch_v2(
+/// One decision's tensors except the 96-float digest tails, whose messages
+/// wait in the decision's [`DigestSlotV1`].
+struct PreparedDecisionV2 {
+    state_head: Vec<f32>,
+    objects: ObjectHalfV2,
+    edges: EdgeHalfV2,
+    actions: ActionHalfV1,
+}
+
+fn prepare_full_decision_v2(
     decision: FlatScoringDecisionViewV1<'_>,
-    canonical_json: &mut Vec<u8>,
-) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
+    slot: &mut DigestSlotV1,
+) -> Result<PreparedDecisionV2, NativeFlatTensorErrorV2> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
     }
     validate_auxiliary_tables_v2(decision)?;
     let objects = encode_objects_v2(decision)?;
     let edges = encode_edges_v2(decision, &objects.projection)?;
-    write_canonical_observation_v2(decision, &objects.projection, canonical_json)?;
-    let state = encode_state_v2(decision, canonical_json)?;
+    write_canonical_observation_v2(decision, &objects.projection, &mut slot.state_json)?;
+    // Profile-only (env-gated, inflates fill time while on): prefix reuse.
+    #[cfg(feature = "tensorize-cost-profile-v1")]
+    if std::env::var_os("MTG_KERNEL_TENSORIZE_PROFILE_PREFIX").is_some() {
+        cost_profile_v1::observe_state_json(&slot.state_json);
+    }
+    let state_head = encode_state_head_v2(decision)?;
+    slot.action_json.clear();
+    slot.action_ranges.clear();
     let actions = encode_action_half_with_projection_and_scratch_v2(
         decision,
         Some(&objects.projection),
-        canonical_json,
+        &mut slot.action_scratch,
+        Some(DeferredActionJsonV1 {
+            json: &mut slot.action_json,
+            ranges: &mut slot.action_ranges,
+        }),
     )?;
+    if actions.action_features.len() != slot.action_ranges.len() * NATIVE_FLAT_ACTION_FEATURE_DIM_V1
+    {
+        return Err(NativeFlatTensorErrorV2::OutputInvariant);
+    }
+    Ok(PreparedDecisionV2 {
+        state_head,
+        objects,
+        edges,
+        actions,
+    })
+}
+
+/// Digests every message of the given slots in one multi-buffer call: per
+/// slot, six state messages then six per action in row order. State messages
+/// resume from the prefix cache when an earlier state JSON shares their
+/// leading blocks byte for byte. Returns each slot's range in `batch.blocks`.
+fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(slots.len() + 1);
+    let mut resumes = Vec::with_capacity(slots.len());
+    let mut jobs = Vec::new();
+    for slot in slots {
+        offsets.push(jobs.len());
+        let resume = state_prefix_cache_lookup_v1(&slot.state_json);
+        for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+            let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, &slot.state_json);
+            jobs.push(match &resume {
+                Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+                None => job,
+            });
+        }
+        resumes.push(resume);
+        for &(start, end) in slot.action_ranges.iter() {
+            for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+                jobs.push(Sha512JobV1::new(
+                    ACTION_HASH_NAMESPACE_V1,
+                    counter,
+                    &slot.action_json[start..end],
+                ));
+            }
+        }
+    }
+    offsets.push(jobs.len());
+    batch.blocks.clear();
+    batch.blocks.resize(jobs.len(), [0; 64]);
+    let caching = state_prefix_cache_enabled_v1();
+    sha512_jobs_v1(
+        &jobs,
+        &mut batch.blocks,
+        caching.then_some(&mut batch.checkpoints),
+    );
+    if caching {
+        for ((slot, resume), &offset) in slots.iter().zip(resumes).zip(&offsets) {
+            state_prefix_cache_insert_v1(
+                &slot.state_json,
+                resume,
+                &batch.checkpoints.states[offset..offset + ACTION_HASH_BLOCK_COUNT_V1],
+            );
+        }
+    }
+    offsets
+}
+
+fn finish_full_decision_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    prepared: PreparedDecisionV2,
+    blocks: &[[u8; 64]],
+) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
+    let PreparedDecisionV2 {
+        mut state_head,
+        objects,
+        edges,
+        mut actions,
+    } = prepared;
+    let head_len = state_head.len();
+    state_head.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
+    digest_block_features_v1(
+        &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+        &mut state_head[head_len..],
+    );
+    for (row, row_blocks) in actions
+        .action_features
+        .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+        .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
+    {
+        digest_block_features_v1(
+            row_blocks,
+            &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
+        );
+    }
     let output = NativeFlatDecisionTensorV2 {
-        state,
+        state: state_head,
         object_features: objects.features,
         object_card_ids: objects.card_ids,
         object_groups: objects.groups,
@@ -548,6 +858,7 @@ fn encode_full_decision_reference_v2(
         decision,
         Some(&objects.projection),
         &mut action_scratch,
+        None,
     )?;
     let output = NativeFlatDecisionTensorV2 {
         state,
@@ -2332,6 +2643,20 @@ fn encode_state_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     canonical_json: &[u8],
 ) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
+    let mut state = encode_state_head_v2(decision)?;
+    append_digest_features_v2(
+        &mut state,
+        STATE_HASH_NAMESPACE_V2,
+        canonical_json,
+        NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2,
+    );
+    Ok(state)
+}
+
+/// The 123 non-digest state features.
+fn encode_state_head_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
     let globals = decision.globals();
     let mut state = Vec::with_capacity(NATIVE_FLAT_STATE_FEATURE_DIM_V2);
     append_one_hot_v2(&mut state, globals.phase as usize, 12)?;
@@ -2474,12 +2799,6 @@ fn encode_state_v2(
     if state.len() != NATIVE_FLAT_STATE_FEATURE_DIM_V2 - NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2 {
         return Err(NativeFlatTensorErrorV2::OutputInvariant);
     }
-    append_digest_features_v2(
-        &mut state,
-        b"observation-state",
-        canonical_json,
-        NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2,
-    );
     Ok(state)
 }
 
@@ -5241,13 +5560,16 @@ fn encode_action_half_v1(
     decision: FlatScoringDecisionViewV1<'_>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     let mut canonical_json = Vec::new();
-    encode_action_half_with_projection_and_scratch_v2(decision, None, &mut canonical_json)
+    encode_action_half_with_projection_and_scratch_v2(decision, None, &mut canonical_json, None)
 }
 
+/// With `deferred`, each action's canonical JSON is appended there and its
+/// 96 hash features are left zero for the caller to fill from the digests.
 fn encode_action_half_with_projection_and_scratch_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
+    mut deferred: Option<DeferredActionJsonV1<'_>>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
@@ -5290,6 +5612,7 @@ fn encode_action_half_with_projection_and_scratch_v2(
             projection,
             canonical_json,
             false,
+            deferred.as_mut(),
         )?;
         out.action_features.extend_from_slice(&encoded.features);
         let action_index = i64::try_from(action_index)
@@ -5346,9 +5669,11 @@ fn encode_action_v1<'a>(
         projection,
         &mut canonical_json,
         true,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_action_with_scratch_v1<'a>(
     decision: FlatScoringDecisionViewV1<'a>,
     action_index: usize,
@@ -5357,6 +5682,7 @@ fn encode_action_with_scratch_v1<'a>(
     projection: Option<&ObjectProjectionV2>,
     canonical_json_scratch: &mut Vec<u8>,
     retain_canonical_json: bool,
+    deferred: Option<&mut DeferredActionJsonV1<'_>>,
 ) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
     let resolved = resolve_action_refs_v1(decision, action_index, raw_refs)?;
     let mut expected = FlatScorerActionCoreV1 {
@@ -5711,9 +6037,17 @@ fn encode_action_with_scratch_v1<'a>(
         return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
     }
     write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
-    let (sha512_blocks, hash_features) = action_hash_features_v1(canonical_json_scratch);
     let mut features = explicit_action_features_v1(action, &resolved)?;
-    features[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].copy_from_slice(&hash_features);
+    let sha512_blocks = if let Some(deferred) = deferred {
+        let start = deferred.json.len();
+        deferred.json.extend_from_slice(canonical_json_scratch);
+        deferred.ranges.push((start, deferred.json.len()));
+        [[0u8; ACTION_HASH_BLOCK_BYTES_V1]; ACTION_HASH_BLOCK_COUNT_V1]
+    } else {
+        let (sha512_blocks, hash_features) = action_hash_features_v1(canonical_json_scratch);
+        features[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].copy_from_slice(&hash_features);
+        sha512_blocks
+    };
 
     let mut ref_features = try_vec_capacity(projected_refs.len())?;
     let mut ref_card_ids = try_vec_capacity(projected_refs.len())?;
@@ -6247,6 +6581,110 @@ fn action_kind_name_v1(kind: FlatScorerActionKindV1) -> &'static str {
         FlatScorerActionKindV1::OrderTriggers => "order_triggers",
     }
 }
+
+/// Measurement-only counters for the tensorize-cost lane (feature
+/// `tensorize-cost-profile-v1`, off by default).
+#[cfg(feature = "tensorize-cost-profile-v1")]
+pub(crate) mod cost_profile_v1 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub(crate) struct Counter {
+        nanos: AtomicU64,
+        calls: AtomicU64,
+    }
+
+    impl Counter {
+        const fn new() -> Self {
+            Self {
+                nanos: AtomicU64::new(0),
+                calls: AtomicU64::new(0),
+            }
+        }
+    }
+
+    pub(crate) static FILL: Counter = Counter::new();
+    pub(crate) static PACKET: Counter = Counter::new();
+    pub(crate) static FORWARD: Counter = Counter::new();
+
+    pub(crate) struct Span {
+        counter: &'static Counter,
+        start: std::time::Instant,
+    }
+
+    impl Span {
+        pub(crate) fn new(counter: &'static Counter) -> Self {
+            Self {
+                counter,
+                start: std::time::Instant::now(),
+            }
+        }
+    }
+
+    impl Drop for Span {
+        fn drop(&mut self) {
+            self.counter
+                .nanos
+                .fetch_add(self.start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.counter.calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Prefix-reuse potential over the live stream: for each state JSON, the
+    /// longest common prefix with any of the last 64 seen (all threads),
+    /// counted in whole SHA-512 blocks after the 21-byte header.
+    static RECENT: std::sync::Mutex<std::collections::VecDeque<Vec<u8>>> =
+        std::sync::Mutex::new(std::collections::VecDeque::new());
+    static SHARED_BLOCKS: AtomicU64 = AtomicU64::new(0);
+    static TOTAL_BLOCKS: AtomicU64 = AtomicU64::new(0);
+    static STATE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn observe_state_json(json: &[u8]) {
+        let blocks = (21 + json.len() + 17).div_ceil(128);
+        let mut recent = RECENT.lock().unwrap();
+        let best = recent
+            .iter()
+            .map(|other| json.iter().zip(other).take_while(|(a, b)| a == b).count())
+            .max()
+            .unwrap_or(0);
+        if recent.len() == 64 {
+            recent.pop_front();
+        }
+        recent.push_back(json.to_vec());
+        drop(recent);
+        SHARED_BLOCKS.fetch_add(
+            ((21 + best) / 128).min(blocks - 1) as u64,
+            Ordering::Relaxed,
+        );
+        TOTAL_BLOCKS.fetch_add(blocks as u64, Ordering::Relaxed);
+        STATE_BYTES.fetch_add(json.len() as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn report() -> String {
+        let line = |name: &str, counter: &Counter| {
+            let nanos = counter.nanos.load(Ordering::Relaxed);
+            let calls = counter.calls.load(Ordering::Relaxed);
+            format!(
+                "{name}_calls={calls} {name}_s={:.3} {name}_us_per_call={:.2}",
+                nanos as f64 / 1e9,
+                nanos as f64 / calls.max(1) as f64 / 1e3
+            )
+        };
+        let total = TOTAL_BLOCKS.load(Ordering::Relaxed);
+        format!(
+            "{} {} {} state_json_mean_bytes={:.0} prefix_shared_block_fraction_window64={:.4}",
+            line("fill", &FILL),
+            line("packet", &PACKET),
+            line("forward", &FORWARD),
+            STATE_BYTES.load(Ordering::Relaxed) as f64
+                / FILL.calls.load(Ordering::Relaxed).max(1) as f64,
+            SHARED_BLOCKS.load(Ordering::Relaxed) as f64 / total.max(1) as f64
+        )
+    }
+}
+
+#[cfg(test)]
+#[path = "native_flat_tensorizer_v2_cost_tests_v1.rs"]
+mod cost_tests_v1;
 
 #[cfg(test)]
 mod tests {
@@ -7010,7 +7448,7 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct OwnedScoringDecisionV2 {
+    pub(super) struct OwnedScoringDecisionV2 {
         globals: FlatGlobalsV2,
         objects: Vec<FlatObjectCoreV1>,
         relations: Vec<FlatRelationV2>,
@@ -7025,7 +7463,7 @@ mod tests {
     }
 
     impl OwnedScoringDecisionV2 {
-        fn from_session(session: &FastActorSessionV1) -> Self {
+        pub(super) fn from_session(session: &FastActorSessionV1) -> Self {
             let FastActorResponseV1::Decision(expected) = session.current_response() else {
                 panic!("expected a live decision");
             };
@@ -7065,7 +7503,7 @@ mod tests {
             owned
         }
 
-        fn view(&self) -> FlatScoringDecisionViewV1<'_> {
+        pub(super) fn view(&self) -> FlatScoringDecisionViewV1<'_> {
             FlatScoringDecisionViewV1::new(
                 &self.globals,
                 &self.objects,

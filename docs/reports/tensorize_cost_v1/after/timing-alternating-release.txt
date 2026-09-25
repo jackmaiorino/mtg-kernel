@@ -1,0 +1,59 @@
+# Executables (T3, FABLE-REVIEW-20260924). Both are the mtg_kernel lib-test binary in the release profile
+# (thin LTO, 1 codegen unit), run from D:/mtg-kernel-tensorize-cost-v1/mtg-kernel.
+#   base-release  SHA-256 87d947bf0ed2d28f5487fbbb117e3a965962d1c21b4151e59d6f0664fccf9b60
+#                 built 2026-09-23 21:07 EDT from main cdc1c5a6 plus the lane's first uncommitted timing harness
+#                 (tensorizer code identical to cdc1c5a6; the harness was committed with later additions in d17bd867)
+#   final-release SHA-256 5d73a2eba527f31db548b4801a9bb16d164a3b9f1d0efb8b9f996db008843169
+#                 built 2026-09-24 00:46 EDT from the tree committed as db135983 (same binary as identity-final-release.txt)
+# The alternation was scripted, not manual: one shell loop ran base, final, base, final, then final with
+# MTG_KERNEL_TENSORIZE_STATE_CACHE=0, each with MTG_KERNEL_TENSORIZE_ROUNDS=3 and the test
+# native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_breakdown_v1 --ignored --exact --nocapture.
+=== pass=1 exe=base-release cache=on
+corpus decisions=10051 scenarios=106 mean_state_json_bytes=21543.6 mean_action_rows=3.91 mean_action_json_bytes=138.5
+breakdown serial round=0 workers=1 decisions=10051 fill_us=169.58 serialize_us=10.00 hash_us=151.93 other_us=7.65 [objects_edges=2.52 state_serialize=8.86 state_hash=144.36 state_other=0.23 actions_total=11.51 actions_hash=7.57 actions_skip=2.80] fill_throughput_decisions_per_s=5897
+breakdown serial round=1 workers=1 decisions=10051 fill_us=169.35 serialize_us=9.99 hash_us=151.89 other_us=7.47 [objects_edges=2.62 state_serialize=8.94 state_hash=144.33 state_other=0.23 actions_total=11.41 actions_hash=7.56 actions_skip=2.79] fill_throughput_decisions_per_s=5905
+breakdown serial round=2 workers=1 decisions=10051 fill_us=169.15 serialize_us=9.96 hash_us=151.32 other_us=7.88 [objects_edges=2.46 state_serialize=8.94 state_hash=143.77 state_other=0.22 actions_total=11.34 actions_hash=7.55 actions_skip=2.77] fill_throughput_decisions_per_s=5912
+breakdown parallel round=0 workers=24 decisions=241224 fill_us=335.95 serialize_us=18.23 hash_us=304.27 other_us=13.46 [objects_edges=4.28 state_serialize=15.75 state_hash=290.31 state_other=0.34 actions_total=21.21 actions_hash=13.96 actions_skip=4.77] fill_throughput_decisions_per_s=69434
+breakdown parallel round=1 workers=24 decisions=241224 fill_us=332.12 serialize_us=18.13 hash_us=301.84 other_us=12.15 [objects_edges=4.31 state_serialize=15.89 state_hash=287.78 state_other=0.37 actions_total=21.16 actions_hash=14.06 actions_skip=4.85] fill_throughput_decisions_per_s=69759
+breakdown parallel round=2 workers=24 decisions=241224 fill_us=333.72 serialize_us=18.44 hash_us=302.23 other_us=13.06 [objects_edges=4.31 state_serialize=16.11 state_hash=288.26 state_other=0.35 actions_total=21.18 actions_hash=13.97 actions_skip=4.88] fill_throughput_decisions_per_s=69095
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_breakdown_v1 ... ok
+=== pass=1 exe=final-release cache=on
+corpus decisions=10051 scenarios=106 mean_state_json_bytes=21543.6 mean_action_rows=3.91 mean_action_json_bytes=138.5
+state_prefix_reuse window=8 shared_block_fraction=0.2482
+breakdown serial round=0 workers=1 decisions=10051 fill_us=105.11 serialize_us=9.79 hash_us=152.11 other_us=-56.79 [objects_edges=2.48 state_serialize=8.82 state_hash=144.54 state_other=0.18 actions_total=11.26 actions_hash=7.57 actions_skip=2.73] fill_throughput_decisions_per_s=9514
+breakdown serial round=1 workers=1 decisions=10051 fill_us=105.23 serialize_us=9.82 hash_us=152.10 other_us=-56.69 [objects_edges=2.49 state_serialize=8.74 state_hash=144.61 state_other=0.20 actions_total=11.29 actions_hash=7.48 actions_skip=2.73] fill_throughput_decisions_per_s=9503
+breakdown serial round=2 workers=1 decisions=10051 fill_us=105.23 serialize_us=9.79 hash_us=152.16 other_us=-56.72 [objects_edges=2.46 state_serialize=8.71 state_hash=144.65 state_other=0.18 actions_total=11.29 actions_hash=7.51 actions_skip=2.70] fill_throughput_decisions_per_s=9503
+phases prepare_us=15.90 hash_us=85.96 finish_us=1.72
+breakdown parallel round=0 workers=24 decisions=241224 fill_us=203.31 serialize_us=17.81 hash_us=300.30 other_us=-114.81 [objects_edges=4.43 state_serialize=15.55 state_hash=286.13 state_other=0.32 actions_total=21.25 actions_hash=14.18 actions_skip=4.81] fill_throughput_decisions_per_s=111060
+breakdown parallel round=1 workers=24 decisions=241224 fill_us=205.87 serialize_us=18.56 hash_us=299.84 other_us=-112.53 [objects_edges=4.38 state_serialize=16.32 state_hash=285.48 state_other=0.33 actions_total=21.62 actions_hash=14.36 actions_skip=5.01] fill_throughput_decisions_per_s=111162
+breakdown parallel round=2 workers=24 decisions=241224 fill_us=204.07 serialize_us=18.08 hash_us=300.15 other_us=-114.15 [objects_edges=4.39 state_serialize=15.98 state_hash=285.96 state_other=0.33 actions_total=21.15 actions_hash=14.19 actions_skip=4.86] fill_throughput_decisions_per_s=111354
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_breakdown_v1 ... ok
+=== pass=2 exe=base-release cache=on
+corpus decisions=10051 scenarios=106 mean_state_json_bytes=21543.6 mean_action_rows=3.91 mean_action_json_bytes=138.5
+breakdown serial round=0 workers=1 decisions=10051 fill_us=169.49 serialize_us=10.23 hash_us=153.89 other_us=5.36 [objects_edges=2.56 state_serialize=9.11 state_hash=146.38 state_other=0.24 actions_total=11.44 actions_hash=7.52 actions_skip=2.80] fill_throughput_decisions_per_s=5900
+breakdown serial round=1 workers=1 decisions=10051 fill_us=169.18 serialize_us=9.96 hash_us=152.69 other_us=6.54 [objects_edges=2.53 state_serialize=8.88 state_hash=145.15 state_other=0.23 actions_total=11.36 actions_hash=7.54 actions_skip=2.73] fill_throughput_decisions_per_s=5911
+breakdown serial round=2 workers=1 decisions=10051 fill_us=169.64 serialize_us=10.23 hash_us=152.20 other_us=7.21 [objects_edges=2.47 state_serialize=8.98 state_hash=144.69 state_other=0.23 actions_total=11.51 actions_hash=7.51 actions_skip=2.75] fill_throughput_decisions_per_s=5895
+breakdown parallel round=0 workers=24 decisions=241224 fill_us=331.83 serialize_us=17.81 hash_us=301.12 other_us=12.89 [objects_edges=4.26 state_serialize=15.54 state_hash=287.25 state_other=0.34 actions_total=20.89 actions_hash=13.88 actions_skip=4.74] fill_throughput_decisions_per_s=69393
+breakdown parallel round=1 workers=24 decisions=241224 fill_us=331.14 serialize_us=18.23 hash_us=301.84 other_us=11.07 [objects_edges=4.25 state_serialize=15.93 state_hash=287.75 state_other=0.35 actions_total=21.18 actions_hash=14.09 actions_skip=4.79] fill_throughput_decisions_per_s=69617
+breakdown parallel round=2 workers=24 decisions=241224 fill_us=330.92 serialize_us=17.56 hash_us=301.60 other_us=11.76 [objects_edges=4.17 state_serialize=15.48 state_hash=287.46 state_other=0.34 actions_total=21.06 actions_hash=14.14 actions_skip=4.84] fill_throughput_decisions_per_s=69615
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_breakdown_v1 ... ok
+=== pass=2 exe=final-release cache=on
+corpus decisions=10051 scenarios=106 mean_state_json_bytes=21543.6 mean_action_rows=3.91 mean_action_json_bytes=138.5
+state_prefix_reuse window=8 shared_block_fraction=0.2482
+breakdown serial round=0 workers=1 decisions=10051 fill_us=105.67 serialize_us=9.93 hash_us=152.52 other_us=-56.78 [objects_edges=2.48 state_serialize=8.70 state_hash=144.99 state_other=0.20 actions_total=11.50 actions_hash=7.53 actions_skip=2.74] fill_throughput_decisions_per_s=9463
+breakdown serial round=1 workers=1 decisions=10051 fill_us=105.45 serialize_us=9.83 hash_us=151.57 other_us=-55.95 [objects_edges=2.48 state_serialize=8.74 state_hash=144.07 state_other=0.18 actions_total=11.30 actions_hash=7.49 actions_skip=2.72] fill_throughput_decisions_per_s=9483
+breakdown serial round=2 workers=1 decisions=10051 fill_us=105.01 serialize_us=9.79 hash_us=151.45 other_us=-56.23 [objects_edges=2.50 state_serialize=8.70 state_hash=144.03 state_other=0.18 actions_total=11.17 actions_hash=7.42 actions_skip=2.67] fill_throughput_decisions_per_s=9523
+phases prepare_us=16.04 hash_us=86.55 finish_us=1.73
+breakdown parallel round=0 workers=24 decisions=241224 fill_us=203.69 serialize_us=18.15 hash_us=300.62 other_us=-115.08 [objects_edges=4.45 state_serialize=15.82 state_hash=286.36 state_other=0.32 actions_total=21.39 actions_hash=14.25 actions_skip=4.81] fill_throughput_decisions_per_s=110581
+breakdown parallel round=1 workers=24 decisions=241224 fill_us=204.03 serialize_us=17.84 hash_us=302.37 other_us=-116.18 [objects_edges=4.44 state_serialize=15.92 state_hash=288.09 state_other=0.33 actions_total=21.12 actions_hash=14.28 actions_skip=4.93] fill_throughput_decisions_per_s=110420
+breakdown parallel round=2 workers=24 decisions=241224 fill_us=204.31 serialize_us=18.10 hash_us=300.82 other_us=-114.61 [objects_edges=4.41 state_serialize=15.86 state_hash=286.62 state_other=0.33 actions_total=21.44 actions_hash=14.20 actions_skip=5.00] fill_throughput_decisions_per_s=110326
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_breakdown_v1 ... ok
+=== pass=3 exe=final-release cache=off
+breakdown serial round=0 workers=1 decisions=10051 fill_us=122.70 serialize_us=9.49 hash_us=152.30 other_us=-39.09 [objects_edges=2.50 state_serialize=8.59 state_hash=144.64 state_other=0.18 actions_total=11.25 actions_hash=7.66 actions_skip=2.69] fill_throughput_decisions_per_s=8150
+breakdown serial round=1 workers=1 decisions=10051 fill_us=122.78 serialize_us=9.60 hash_us=152.43 other_us=-39.25 [objects_edges=2.47 state_serialize=8.58 state_hash=144.88 state_other=0.19 actions_total=11.24 actions_hash=7.55 actions_skip=2.67] fill_throughput_decisions_per_s=8145
+breakdown serial round=2 workers=1 decisions=10051 fill_us=123.01 serialize_us=9.56 hash_us=152.42 other_us=-38.96 [objects_edges=2.47 state_serialize=8.65 state_hash=144.81 state_other=0.19 actions_total=11.19 actions_hash=7.61 actions_skip=2.67] fill_throughput_decisions_per_s=8129
+phases prepare_us=15.82 hash_us=103.84 finish_us=1.69
+breakdown parallel round=0 workers=24 decisions=241224 fill_us=234.39 serialize_us=17.37 hash_us=297.15 other_us=-80.12 [objects_edges=4.28 state_serialize=15.35 state_hash=283.18 state_other=0.35 actions_total=20.75 actions_hash=13.96 actions_skip=4.77] fill_throughput_decisions_per_s=93347
+breakdown parallel round=1 workers=24 decisions=241224 fill_us=234.96 serialize_us=17.47 hash_us=297.04 other_us=-79.55 [objects_edges=4.23 state_serialize=15.28 state_hash=283.13 state_other=0.31 actions_total=21.05 actions_hash=13.91 actions_skip=4.95] fill_throughput_decisions_per_s=92793
+breakdown parallel round=2 workers=24 decisions=241224 fill_us=233.43 serialize_us=17.81 hash_us=296.77 other_us=-81.15 [objects_edges=4.17 state_serialize=15.56 state_hash=282.84 state_other=0.31 actions_total=20.82 actions_hash=13.93 actions_skip=4.63] fill_throughput_decisions_per_s=93299
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_breakdown_v1 ... ok

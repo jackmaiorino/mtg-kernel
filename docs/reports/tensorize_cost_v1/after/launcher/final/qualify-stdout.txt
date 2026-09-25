@@ -1,0 +1,41 @@
+{
+  "selected": "alloc-2atjackd0_1atjackd1",
+  "candidates": [
+    {
+      "id": "alloc-1atjackd0",
+      "status": "qualified",
+      "episodes_per_second": 11.53833611464603,
+      "projected_seconds": 4333.351711153983
+    },
+    {
+      "id": "alloc-1atjackd0_1atjackd1",
+      "status": "qualified",
+      "episodes_per_second": 20.01465080488019,
+      "projected_seconds": 2406.427120089531
+    },
+    {
+      "id": "alloc-2atjackd0_1atjackd1",
+      "status": "qualified",
+      "episodes_per_second": 27.373121822760986,
+      "projected_seconds": 2022.975962638855
+    },
+    {
+      "id": "alloc-2atjackd0_2atjackd1",
+      "status": "capacity-skipped",
+      "episodes_per_second": null,
+      "projected_seconds": null
+    },
+    {
+      "id": "alloc-2atjackd0_2atjackd1_1athaleyspcd0",
+      "status": "capacity-skipped",
+      "episodes_per_second": null,
+      "projected_seconds": null
+    },
+    {
+      "id": "alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+      "status": "capacity-skipped",
+      "episodes_per_second": null,
+      "projected_seconds": null
+    }
+  ]
+}

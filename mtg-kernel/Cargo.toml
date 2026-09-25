@@ -9,7 +9,8 @@ burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"],
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-sha2 = "0.10"
+# `compress` only exports sha2's own compress512 (resumable digests).
+sha2 = { version = "0.10", features = ["compress"] }
 
 [features]
 # PERFORMANCE-ONLY instrumentation for examples/bench_kernel.rs (section 5,
@@ -27,6 +28,10 @@ flat-action-diagnostic = []
 # Environment-only microprofile for the production V2 full tensorizer. The
 # feature exposes no trainer or model shortcut and is off in normal builds.
 native-flat-tensorizer-diagnostic = []
+# Measurement-only counters (tensorize-cost lane): cumulative wall time and
+# call counts of tensorizer fill, packet encode and pooled forward, printed by
+# the multirun pilot. Off by default; production builds carry no counters.
+tensorize-cost-profile-v1 = []
 # Windows-only production admission for the native V2 training-store writer.
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.
