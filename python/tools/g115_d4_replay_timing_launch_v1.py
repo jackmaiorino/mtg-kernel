@@ -116,8 +116,9 @@ def admission(plan, host):
         pins(command)
     requested_root = Path(plan['worker_root'])
     root = requested_root.resolve()
-    require(requested_root.is_absolute() and root.drive.lower() == 'e:' and not root.exists()
-            and root.parent.is_dir(), 'Fresh E-drive worker root required')
+    expected_drive = 'e:' if host == 'jack' else 'c:'
+    require(requested_root.is_absolute() and root.drive.lower() == expected_drive and not root.exists()
+            and root.parent.is_dir(), 'Fresh host-specific evidence drive root required')
     reserve = (32 if host == 'jack' else 8)*GIB
     live = inventory(root, reserve, plan['output_cap_bytes'])
     require(live['computer_name'].lower() == plan['computer_name'].lower(), 'Wrong computer')
