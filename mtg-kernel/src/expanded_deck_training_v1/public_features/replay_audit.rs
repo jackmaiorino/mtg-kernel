@@ -1,6 +1,7 @@
 //! CPU-only scoring of the same archived actor-visible tensors by fixed models.
 //! No session reconstruction, optimizer update, sampler draw or terminal lookup.
 use super::*;
+use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Deserialize)]
@@ -15,11 +16,26 @@ pub enum Model {
         config: PinnedFileV1,
         checkpoint: PinnedFileV1,
     },
+    /// Ordinary expanded-trainer checkpoint, with its original source schema.
+    NativeExpanded {
+        label: String,
+        source: ExpandedModelSourceV1,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrajectoryKind {
+    #[default]
+    PublicInput,
+    NativeExpandedV3,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuditCommand {
+    #[serde(default)]
+    pub trajectory_kind: TrajectoryKind,
     pub models: Vec<Model>,
     pub trajectories: Vec<PinnedFileV1>,
     pub output_directory: PathBuf,
@@ -32,9 +48,123 @@ pub struct AuditCommand {
 
 struct Loaded {
     label: String,
-    policy: PublicInputPlayPolicyV1,
+    policy: AuditPolicy,
     state_hash: String,
     identity: Value,
+}
+
+enum AuditPolicy {
+    Public(PublicInputPlayPolicyV1),
+    Native(FrozenPlayPolicyV1),
+}
+
+impl AuditPolicy {
+    fn fork(&self) -> Result<Self, String> {
+        match self {
+            Self::Public(policy) => Ok(Self::Public(policy.fork_for_collection()?)),
+            Self::Native(policy) => Ok(Self::Native(policy.fork_for_collection_v3()?)),
+        }
+    }
+
+    fn score(
+        &self,
+        row: &DecisionRecordV1,
+        auxiliary: Option<&PublicFeatureRowsV1>,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        match self {
+            Self::Public(policy) => {
+                let auxiliary = auxiliary.ok_or("learner public row missing")?;
+                let tensor = NativeFlatDecisionTensorV4 {
+                    common: row.tensor.tensor(),
+                };
+                auxiliary.validate_tokens(&tensor.common.object_card_ids)?;
+                policy.replay(&tensor, auxiliary)
+            }
+            Self::Native(policy) => match policy.feature_identity_v1().generation {
+                FreshLineageGenerationV1::V3 => {
+                    policy.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
+                        common: row.tensor.tensor(),
+                    })
+                }
+                FreshLineageGenerationV1::V4 => {
+                    policy.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
+                        common: row.tensor.tensor(),
+                    })
+                }
+            },
+        }
+    }
+}
+
+/// Internal view only. The input's original schema and state identity are
+/// retained; native records never acquire synthetic public-feature rows.
+struct SavedTrajectory {
+    state_hash: String,
+    episode: ExpandedEpisodeV1,
+    decisions: Vec<DecisionRecordV1>,
+    auxiliary: Vec<Option<PublicFeatureRowsV1>>,
+}
+
+fn read_trajectory(
+    bytes: &[u8],
+    kind: TrajectoryKind,
+    models: &[Loaded],
+) -> Result<SavedTrajectory, String> {
+    match kind {
+        TrajectoryKind::PublicInput => {
+            ensure(
+                models
+                    .iter()
+                    .all(|m| matches!(&m.policy, AuditPolicy::Public(_))),
+                "public trajectories require public models",
+            )?;
+            let t: Trajectory = serde_json::from_slice(bytes).map_err(err)?;
+            ensure(
+                t.schema == "mtg-kernel-public-input-trajectory/v1"
+                    && t.decisions.len() == t.auxiliary.len(),
+                "trajectory schema/rows differ",
+            )?;
+            Ok(SavedTrajectory {
+                state_hash: t.optimizer_state_sha256,
+                episode: t.episode,
+                decisions: t.decisions,
+                auxiliary: t.auxiliary,
+            })
+        }
+        TrajectoryKind::NativeExpandedV3 => {
+            let t: ExpandedTrajectoryV1 = serde_json::from_slice(bytes).map_err(err)?;
+            ensure(
+                t.schema == FRESH_TRAJECTORY_SCHEMA,
+                "native trajectory schema differs",
+            )?;
+            ensure(t.episode.learner_seat < 2, "invalid native learner seat")?;
+            if let Some(seats) = &t.seat_behaviors {
+                ensure(
+                    seats[t.episode.learner_seat as usize].identity.state_sha256
+                        == t.behavior_state_sha256,
+                    "native learner behavior identity differs",
+                )?;
+            }
+            for model in models {
+                let AuditPolicy::Native(policy) = &model.policy else {
+                    return Err("native trajectories require native expanded models".into());
+                };
+                let identity = policy.actual_model_identity_v1();
+                ensure(
+                    identity.feature_contract_digest == t.feature_contract_digest
+                        && identity.feature_encoding_digest == t.feature_encoding_digest
+                        && identity.card_db_hash == t.card_db_hash,
+                    "native trajectory/model feature identity differs",
+                )?;
+            }
+            Ok(SavedTrajectory {
+                state_hash: t.behavior_state_sha256,
+                episode: t.episode,
+                decisions: t.decisions,
+                auxiliary: Vec::new(),
+            })
+        }
+    }
 }
 
 fn load(model: &Model) -> Result<Loaded, String> {
@@ -49,7 +179,7 @@ fn load(model: &Model) -> Result<Loaded, String> {
                 "base_model":base.actual_model_identity_v1(),"public_weights":"zero"});
             Ok(Loaded {
                 label: label.clone(),
-                policy: PublicInputPlayPolicyV1::new(base, weights(&public)?)?,
+                policy: AuditPolicy::Public(PublicInputPlayPolicyV1::new(base, weights(&public)?)?),
                 state_hash,
                 identity,
             })
@@ -66,9 +196,18 @@ fn load(model: &Model) -> Result<Loaded, String> {
                 .to_string();
             Ok(Loaded {
                 label: label.clone(),
-                policy,
+                policy: AuditPolicy::Public(policy),
                 state_hash,
                 identity: json!({"label":label,"model":identity}),
+            })
+        }
+        Model::NativeExpanded { label, source } => {
+            let (policy, identity) = load_expanded_inference_v1(source)?;
+            Ok(Loaded {
+                label: label.clone(),
+                state_hash: identity.state_sha256.clone(),
+                policy: AuditPolicy::Native(policy),
+                identity: json!({"label":label,"source":source,"model":identity}),
             })
         }
     }
@@ -78,14 +217,10 @@ fn audit_one(
     pin: &PinnedFileV1,
     models: &[Loaded],
     maximum: usize,
+    kind: TrajectoryKind,
 ) -> Result<(Value, usize), String> {
     let bytes = read_pinned_bytes(pin)?;
-    let trajectory: Trajectory = serde_json::from_slice(&bytes).map_err(err)?;
-    ensure(
-        trajectory.schema == "mtg-kernel-public-input-trajectory/v1"
-            && trajectory.decisions.len() == trajectory.auxiliary.len(),
-        "trajectory schema/rows differ",
-    )?;
+    let trajectory = read_trajectory(&bytes, kind, models)?;
     let learner = trajectory.episode.learner_seat;
     let eligible: Vec<_> = trajectory
         .decisions
@@ -107,13 +242,7 @@ fn audit_one(
     let mut sampler = WideCategoricalScratchV1::default();
     for index in selected {
         let row = &trajectory.decisions[index];
-        let auxiliary = trajectory.auxiliary[index]
-            .as_ref()
-            .ok_or("learner public row missing")?;
-        let tensor = NativeFlatDecisionTensorV4 {
-            common: row.tensor.tensor(),
-        };
-        auxiliary.validate_tokens(&tensor.common.object_card_ids)?;
+        let auxiliary = trajectory.auxiliary.get(index).and_then(Option::as_ref);
         ensure(
             (row.selected as usize) < row.logits.len(),
             "behavior selection out of bounds",
@@ -122,12 +251,12 @@ fn audit_one(
         let mut distributions = Vec::new();
         let mut tops = Vec::new();
         for model in models {
-            let output = model.policy.replay(&tensor, auxiliary)?;
+            let output = model.policy.score(row, auxiliary)?;
             ensure(
                 output.logits.len() == row.logits.len(),
                 "model changed legal menu length",
             )?;
-            if trajectory.optimizer_state_sha256 == model.state_hash {
+            if trajectory.state_hash == model.state_hash {
                 ensure(
                     bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                     "same-state policy replay differs from archived behavior",
@@ -177,7 +306,8 @@ fn audit_one(
             "models":scores,"comparisons":comparisons}));
     }
     Ok((
-        json!({"schema":"public-policy-replay-audit/v1","trajectory":pin,
+        json!({"schema":match kind { TrajectoryKind::PublicInput => "public-policy-replay-audit/v1",
+                                    TrajectoryKind::NativeExpandedV3 => "native-expanded-policy-replay-audit/v1" },"trajectory":pin,
         "episode_id":trajectory.episode.id,"own":trajectory.episode.registered[learner as usize].label,
         "opponent":trajectory.episode.registered[1-learner as usize].label,
         "learner_seat":learner,"postboard":trajectory.episode.postboard,
@@ -216,7 +346,7 @@ pub fn run(command: AuditCommand) -> Result<Value, String> {
                 .map(|m| {
                     Ok(Loaded {
                         label: m.label.clone(),
-                        policy: m.policy.fork_for_collection()?,
+                        policy: m.policy.fork()?,
                         state_hash: m.state_hash.clone(),
                         identity: m.identity.clone(),
                     })
@@ -240,8 +370,12 @@ pub fn run(command: AuditCommand) -> Result<Value, String> {
                             let Some(pin) = command.trajectories.get(i) else {
                                 break;
                             };
-                            let (value, count) =
-                                audit_one(pin, &owned, command.max_choice_rows_per_trajectory)?;
+                            let (value, count) = audit_one(
+                                pin,
+                                &owned,
+                                command.max_choice_rows_per_trajectory,
+                                command.trajectory_kind,
+                            )?;
                             out.push((i, value, count));
                         }
                         Ok::<_, String>(out)
@@ -284,7 +418,9 @@ pub fn run(command: AuditCommand) -> Result<Value, String> {
             value,
         )?;
     }
-    let completion = json!({"schema":"public-policy-replay-audit-completion/v1","models":identities,
+    let completion = json!({"schema":match command.trajectory_kind {
+        TrajectoryKind::PublicInput => "public-policy-replay-audit-completion/v1",
+        TrajectoryKind::NativeExpandedV3 => "native-expanded-policy-replay-audit-completion/v1" },"models":identities,
         "trajectories":result.len(),"choice_rows":rows,"exact_behavior_replay_rows":replayed,
         "sampler":WIDE_CATEGORICAL_SAMPLER_VERSION_V1,"probability_arithmetic":"Hamilton masses converted to f64; no draws",
         "terminal_outcomes_used":false});
