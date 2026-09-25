@@ -58,7 +58,9 @@ def structural(plan, host):
 def e_path(value):
     path = Path(value)
     require(path.is_absolute() and path.drive.lower() == 'e:', 'Build paths must be absolute on E')
-    return path.resolve()
+    resolved = path.resolve()
+    require(resolved.drive.lower() == 'e:', 'Resolved build path escaped E')
+    return resolved
 
 
 def available_memory():
