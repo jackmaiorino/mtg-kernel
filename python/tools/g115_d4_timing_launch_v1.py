@@ -80,6 +80,21 @@ def admission(manifest, host):
     return configs, placement
 
 
+def require_idle_gpu(placement, gpu_csv):
+    row = next((x.split(',') for x in gpu_csv.splitlines() if int(x.split(',')[0]) == placement['gpu_ordinal']), None)
+    if row is None or row[1].strip() != placement['gpu_uuid']:
+        raise ValueError('selected GPU identity differs')
+    utilization, used, free = map(int, row[2:5])
+    if placement['computer_name'].upper() == 'HALEYSPC':
+        # Existing public-training placement contract permits desktop contexts.
+        # The separate native-process census must still pass on every case.
+        idle = utilization <= 5 and free >= 2048
+    else:
+        idle = utilization == 0 and used < 100
+    if not idle:
+        raise ValueError('selected GPU idle state or reserve differs')
+
+
 def inventory(placement):
     if os.name != 'nt' or os.environ.get('CUDA_VISIBLE_DEVICES'):
         raise ValueError('Windows with original CUDA ordinal mapping required')
@@ -90,10 +105,8 @@ def inventory(placement):
     data['free_disk_bytes'] = shutil.disk_usage(Path(placement['worker_root']).parent).free
     if data['free_disk_bytes'] < placement['minimum_free_disk_bytes']:
         raise ValueError('disk reserve refusal')
-    gpu = subprocess.check_output(['nvidia-smi', '--query-gpu=index,uuid,utilization.gpu,memory.used', '--format=csv,noheader,nounits'], text=True, timeout=30)
-    row = next((x.split(',') for x in gpu.splitlines() if int(x.split(',')[0]) == placement['gpu_ordinal']), None)
-    if row is None or row[1].strip() != placement['gpu_uuid'] or int(row[2]) != 0 or int(row[3]) >= 100:
-        raise ValueError('selected GPU identity or idle state differs')
+    gpu = subprocess.check_output(['nvidia-smi', '--query-gpu=index,uuid,utilization.gpu,memory.used,memory.free', '--format=csv,noheader,nounits'], text=True, timeout=30)
+    require_idle_gpu(placement, gpu)
     data['gpu_inventory'] = gpu
     return data
 
