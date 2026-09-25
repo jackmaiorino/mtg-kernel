@@ -85,7 +85,10 @@ $plan = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
 $launcher = $plan.documents.launcher.path
 Assert-Hash $launcher $plan.documents.launcher.sha256
 Assert-Hash $PSCommandPath $plan.transport.dispatcher.sha256
-if ([IO.Path]::GetFileName($launcher) -ne 'g115_d3_launch_v1.py') { throw 'Only the supported D3 launcher is allowed' }
+$launcherName = [IO.Path]::GetFileName($launcher)
+if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
+    if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-timing/v1') { throw 'D4 admits bounded Windows timing only' }
+} elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only supported D3 or bounded D4 timing launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {
     $cloudController = $plan.transport.cloud_controller.path
