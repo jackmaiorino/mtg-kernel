@@ -88,6 +88,8 @@ Assert-Hash $PSCommandPath $plan.transport.dispatcher.sha256
 $launcherName = [IO.Path]::GetFileName($launcher)
 if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-timing/v1') { throw 'D4 admits bounded Windows timing only' }
+} elseif ($launcherName -eq 'g115_d4_eval_timing_launch_v1.py') {
+    if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-eval-timing/v1') { throw 'D4 evaluation admits bounded Windows timing only' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only supported D3 or bounded D4 timing launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {
