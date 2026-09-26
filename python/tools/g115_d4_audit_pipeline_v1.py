@@ -57,6 +57,106 @@ def resolve(value, staged):
     return value
 
 
+class SealedReuse:
+    """Read-only reuse from one closed, charged owner; invalid evidence aborts."""
+    def __init__(self, plan, work):
+        self.inputs = self.scores = {}
+        spec = plan.get('reuse')
+        if spec is None:
+            return
+        self.root = Path(spec['worker_root']).resolve(strict=True)
+        require(any(self.root.is_relative_to(Path(p).resolve(strict=True))
+                    for p in plan['retained_roots']), 'Reuse owner must be charged retained evidence')
+        require(checked(spec['manifest']).resolve() == self.root/'control/manifest.json'
+                and checked(spec['completion']).resolve() == self.root/'control/completion.json'
+                and checked(spec['journal']).resolve() == self.root/'control/storage.jsonl',
+                'Reuse receipts must belong to the retained owner')
+        previous = read(spec['manifest'])
+        completion = read(spec['completion'])
+        require(not completion['pending'] and previous['binary']['sha256'] == plan['binary']['sha256']
+                and previous['signal_tool']['sha256'] == plan['signal_tool']['sha256'],
+                'Reuse requires closed work with unchanged scientific tools')
+        events = [json.loads(line) for line in checked(spec['journal']).read_text().splitlines()]
+        require(events and events[-1]['event'] == 'closed' and not events[-1]['pending']
+                and not events[-1]['detail']['unfinished_trees'], 'Reuse owner is not closed')
+        self.good = {e['detail']['name'] for e in events
+                     if e['event'] == 'sealed' and e['detail']['failed'] is False}
+        self.inputs = spec['inputs']
+        self.scores = spec['scores']
+        require(set(self.inputs) <= {g['name'] for g in work['groups']}
+                and set(self.scores) <= {str(i) for i in range(len(work['commands']))},
+                'Reuse mapping contains foreign work')
+
+    def row(self, ref, filename):
+        path = checked(ref).resolve(strict=True)
+        require(path.name == filename and path.parent.parent == self.root/'jobs'
+                and path.parent.name in self.good, 'Only successfully sealed jobs may be reused')
+        return read(ref), path.parent
+
+    def stage(self, group, guard):
+        begin = time.monotonic()
+        ref = self.inputs[group['name']]
+        row, folder = self.row(ref, 'stage.json')
+        expected = {f'@stage/{group["name"]}/{f["name"]}': f for f in group['files']}
+        require(set(row['staged']) == set(expected), 'Reused input membership differs')
+        for key, value in row['staged'].items():
+            guard()
+            path = checked(value).resolve(strict=True)
+            file = expected[key]
+            require(path == folder/file['name'] and path.stat().st_size == file['bytes']
+                    and value['sha256'] == file['sha256'], 'Reused input differs from archive member')
+        row['reuse'] = {'source': ref, 'validation_seconds': time.monotonic()-begin}
+        return row
+
+    def score(self, index, command, signal, guard):
+        begin = time.monotonic()
+        ref = self.scores[str(index)]
+        row, folder = self.row(ref, 'scoring.json')
+        old_command = json.loads((folder/'command.json').read_bytes())
+        current = dict(command, workers=1, output_directory=old_command['output_directory'])
+        require(canonical(current) == canonical(old_command), 'Reused scoring command differs')
+        old_signal = json.loads((folder/'signal-command.json').read_bytes())
+        require(canonical(dict(signal, output=old_signal['output'])) == canonical(old_signal),
+                'Reused signal command differs')
+        def verify_inputs(value):
+            if isinstance(value, dict):
+                if set(value) == {'path', 'sha256'}:
+                    guard()
+                    checked(value)
+                else:
+                    for item in value.values():
+                        verify_inputs(item)
+            elif isinstance(value, list):
+                for item in value:
+                    verify_inputs(item)
+        verify_inputs(command)
+        verify_inputs(signal)
+        require(len(row['files']) == 11 and len({r['path'] for r in row['files']}) == 11,
+                'Reused output coverage differs')
+        signatures = {}
+        for value in row['files']:
+            guard()
+            path = checked(value).resolve(strict=True)
+            require(path.parent == folder/'output', 'Reused output escaped sealed job')
+            signatures[path.name] = hashlib.sha256(json.dumps(canonical(json.loads(path.read_bytes())),
+                                    sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        require(signatures == row['signatures'], 'Reused scoring signatures differ')
+        final = json.loads((folder/'output/completion.json').read_bytes())
+        require(final['trajectories'] == 10 and final['choice_rows'] == row['choice_rows'] > 0
+                and final['exact_behavior_replay_rows'] >= command['minimum_behavior_replay_rows']
+                and final['terminal_outcomes_used'] is False, 'Reused scoring is incomplete')
+        guard()
+        path = checked(row['signal']).resolve(strict=True)
+        require(path == folder/'signal.json', 'Reused signal escaped sealed job')
+        result = json.loads(path.read_bytes())
+        require(result['complete'] and result['summary']['normalized_statistics_bit_equal']
+                and hashlib.sha256(json.dumps(canonical(result), sort_keys=True,
+                    separators=(',', ':')).encode()).hexdigest() == row['signal_signature'],
+                'Reused signal differs or is incomplete')
+        row.update(index=index, reuse={'source': ref, 'validation_seconds': time.monotonic()-begin})
+        return row
+
+
 def qualification_capacity(plan, retained_bytes=None):
     """Retained evidence counts toward the host cap; new qualification writes stay <=4GiB."""
     cap = plan['cap_bytes']
@@ -375,14 +475,29 @@ def execute(plan, work, commands, binary, compact, live, host):
                     storage.seal(name, failed=True)
     try:
         save(storage.control/'manifest.json', plan)
+        reuse = SealedReuse(plan, work)
+        def reuse_record(name, action):
+            try:
+                row = action()
+                with storage.lock:
+                    storage._record('reused', {'name': name, 'source': row['reuse']['source']})
+                return row
+            except BaseException:
+                stop.set()
+                raise
         for workers in plan['workers']:
             guard(full_retained=True)
             begin = time.monotonic()
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                inputs = list(pool.map(lambda group: stage(group, workers), work['groups']))
+                inputs = list(pool.map(lambda group:
+                    reuse_record(f'w{workers}-input-{group["name"]}', lambda: reuse.stage(group, guard))
+                    if group['name'] in reuse.inputs else stage(group, workers), work['groups']))
             staged = {key: ref for row in inputs for key, ref in row['staged'].items()}
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(score, i, command, workers, staged) for i, command in enumerate(commands)]
+                futures = [pool.submit(lambda i=i, command=command:
+                    reuse_record(f'w{workers}-score-{i:02}', lambda: reuse.score(i, resolve(command, staged),
+                        resolve(signal_commands[i], staged), guard)) if str(i) in reuse.scores
+                    else score(i, command, workers, staged)) for i, command in enumerate(commands)]
                 rows = [f.result() for f in futures]
             signatures = [r['signatures'] for r in rows]
             require(reference is None or signatures == reference, 'Combined serial/parallel scoring differs')
@@ -395,6 +510,8 @@ def execute(plan, work, commands, binary, compact, live, host):
             phase = {'workers': workers, 'seconds': seconds, 'inputs': inputs, 'rows': rows,
                      'choice_rows': sum(r['choice_rows'] for r in rows), 'scoring_equal': True,
                      'signal_updates': len(signal_commands), 'signal_equal': True}
+            phase['reused_inputs'] = sum('reuse' in row for row in inputs)
+            phase['reused_scores'] = sum('reuse' in row for row in rows)
             save(storage.control/f'phase-{workers}.json', phase)
             result['phases'].append(phase)
             guard()

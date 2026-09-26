@@ -63,7 +63,7 @@ def execute(args):
                         for raw in f:
                             if not raw.endswith(b'\n'):break
                             offset+=len(raw);row=json.loads(raw)
-                            if row['event']=='sealed' and not row['detail']['failed']:
+                            if row['event']=='reused' or (row['event']=='sealed' and not row['detail']['failed']):
                                 name=row['detail']['name']
                                 workers=int(name.split('-',1)[0][1:])
                                 sealed_inputs+=('-input-' in name);sealed_scores+=('-score-' in name)
