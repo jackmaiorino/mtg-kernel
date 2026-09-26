@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import zipfile
+import traceback
 from g115_d4_audit_storage_v1 import AuditStorage, charge, require, physical_tree
 from g115_d4_build_launch_v1 import available_memory
 from g115_d4_replay_timing_launch_v1 import pin, checked, read, save, inventory, cpu_seconds
@@ -111,6 +112,7 @@ def signal_limits(plan, work, commands, host):
                 'Selected host cap exceeded')
         evidence = read(plan['throughput'])
         require(evidence['complete'] and evidence['signal_tool_sha256'] == plan['signal_tool']['sha256']
+                and evidence['observer_sha256'] == plan['observer']['sha256']
                 and evidence['binary_sha256'] == plan['binary']['sha256']
                 and evidence['launcher_sha256'] == plan['documents']['launcher']['sha256']
                 and evidence['dependencies'] == plan['dependencies']
@@ -139,6 +141,8 @@ def admission(plan, host):
     require(os.name == 'nt' and host in ('jack', 'haleyspc'), 'Windows archive qualification only')
     require(checked(plan['documents']['launcher']).resolve() == Path(__file__).resolve(), 'Wrong owner')
     checked(plan['transport']['dispatcher'])
+    require(checked(plan['observer']).name == 'g115_d4_audit_observer_v1.py',
+            'Qualification and production require the same pinned observer')
     expected = {Path(__file__).with_name(n).resolve() for n in
                 ['g115_d4_audit_storage_v1.py', 'g115_d4_build_launch_v1.py',
                  'g115_d4_replay_timing_launch_v1.py', 'windows_owned_child_policy_v1.py']}
@@ -196,16 +200,25 @@ def execute(plan, work, commands, binary, compact, live, host):
               'host': host, 'launcher_sha256': plan['documents']['launcher']['sha256'],
               'dependencies': plan['dependencies'], 'binary_sha256': plan['binary']['sha256'],
               'signal_tool_sha256': plan.get('signal_tool', {}).get('sha256')}
+    result['observer_sha256'] = plan['observer']['sha256']
     reference = None
     signal_commands = signal_limits(plan, work, commands, host)
     signal_reference = None
+    profiles = threading.local()
 
     def guard():
+        began = time.monotonic()
         require(not stop.is_set() and time.monotonic()-started < plan['total_seconds'], 'Pipeline stopped or timed out')
         require(available_memory() >= reserve_memory, 'Memory reserve reached')
-        storage.check()
+        timings = storage.check()
+        profile = getattr(profiles, 'current', None)
+        if profile is not None:
+            profile['guard_calls'] = profile.get('guard_calls', 0)+1
+            profile['guard_seconds'] = profile.get('guard_seconds', 0)+time.monotonic()-began
+            for key, value in timings.items():
+                profile[key] = profile.get(key, 0)+value
 
-    def child(command, folder, label, qos=False):
+    def child(command, folder, label):
         begin = time.monotonic()
         proc = None
         try:
@@ -213,7 +226,7 @@ def execute(plan, work, commands, binary, compact, live, host):
             with (folder/(label+'.stdout')).open('xb') as out, (folder/(label+'.stderr')).open('xb') as err:
                 proc = subprocess.Popen(command, stdout=out, stderr=err,
                                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
-                scheduling = configure_owned_child(proc, binary) if qos else None
+                scheduling = configure_owned_child(proc, Path(command[0]))
                 while True:
                     try:
                         proc.wait(timeout=1)
@@ -238,24 +251,37 @@ def execute(plan, work, commands, binary, compact, live, host):
         folder = storage.reserve(name, charge(2*raw+1024**2, len(group['files'])+8))
         begin = time.monotonic()
         succeeded = False
+        profile = {key: 0.0 for key in ('zip_open_seconds', 'read_seconds', 'write_seconds', 'flush_seconds')}
+        profiles.current = profile
         try:
             for file in group['files']:
                 guard()
+                opened = time.monotonic()
                 with zipfile.ZipFile(file['archive']['path']) as archive:
                     info = archive.getinfo(file['member'])
+                    profile['zip_open_seconds'] += time.monotonic()-opened
                     require(info.file_size == file['bytes'], 'ZIP entry length differs')
                     digest = hashlib.sha256()
                     count = 0
                     with archive.open(info) as source, (folder/file['name']).open('xb') as target:
-                        while block := source.read(1024**2):
+                        while True:
+                            began = time.monotonic()
+                            block = source.read(1024**2)
+                            profile['read_seconds'] += time.monotonic()-began
+                            if not block:
+                                break
                             count += len(block)
                             require(count <= file['bytes'], 'ZIP extraction exceeded declared length')
+                            began = time.monotonic()
                             target.write(block)
+                            profile['write_seconds'] += time.monotonic()-began
                             digest.update(block)
                             if count % (8*1024**2) == 0:
                                 guard()
+                        began = time.monotonic()
                         target.flush()
                         os.fsync(target.fileno())
+                        profile['flush_seconds'] += time.monotonic()-began
                     require(count == file['bytes'] and digest.hexdigest() == file['sha256'], 'Extracted member differs')
             extraction = time.monotonic()-begin
             compression = child([str(compact), '/C', '/A', '/Q', '/EXE:LZX']
@@ -267,12 +293,16 @@ def execute(plan, work, commands, binary, compact, live, host):
                 require(ref['sha256'] == file['sha256'], 'Compressed readback differs')
                 staged[f'@stage/{group["name"]}/{file["name"]}'] = ref
             row = {'name': name, 'extraction_seconds': extraction, 'compression': compression,
-                   'readback_seconds': time.monotonic()-check_start, 'staged': staged}
+                   'readback_seconds': time.monotonic()-check_start, 'staged': staged, 'profile': profile}
             save(folder/'stage.json', row)
             row['storage'] = storage.seal(name)
             succeeded = True
             return row
+        except BaseException as error:
+            save(folder/'failure.json', {'error': repr(error), 'traceback': traceback.format_exc(), 'profile': profile})
+            raise
         finally:
+            profiles.current = None
             if not succeeded:
                 stop.set()
                 if name in storage.ledger.pending:
@@ -282,11 +312,13 @@ def execute(plan, work, commands, binary, compact, live, host):
         name = f'w{workers}-score-{index:02}'
         folder = storage.reserve(name, 32*1024**2)
         succeeded = False
+        profile = {}
+        profiles.current = profile
         try:
             command = resolve(template, staged)
             command.update(workers=1, output_directory=str(folder/'output'))
             save(folder/'command.json', command)
-            timing = child([str(binary), str(folder/'command.json')], folder, 'scorer', qos=True)
+            timing = child([str(binary), str(folder/'command.json')], folder, 'scorer')
             final = json.loads((folder/'output/completion.json').read_bytes())
             require(final['trajectories'] == 10 and final['choice_rows'] > 0
                     and final['exact_behavior_replay_rows'] >= command['minimum_behavior_replay_rows']
@@ -309,11 +341,16 @@ def execute(plan, work, commands, binary, compact, live, host):
                 row.update(signal=pin(folder/'signal.json'), signal_timing=signal_timing,
                            signal_signature=hashlib.sha256(json.dumps(canonical(signal_result), sort_keys=True,
                                                           separators=(',', ':')).encode()).hexdigest())
+            row['profile'] = profile
             save(folder/'scoring.json', row)
             row['storage'] = storage.seal(name)
             succeeded = True
             return row
+        except BaseException as error:
+            save(folder/'failure.json', {'error': repr(error), 'traceback': traceback.format_exc(), 'profile': profile})
+            raise
         finally:
+            profiles.current = None
             if not succeeded:
                 stop.set()
                 if name in storage.ledger.pending:

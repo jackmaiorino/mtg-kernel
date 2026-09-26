@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import threading
+import time
 
 GIB = 1024**3
 
@@ -160,22 +161,41 @@ class AuditStorage:
 
     def check(self):
         """Use during owned writes/children; consumer stops its children on failure."""
+        began = time.monotonic()
         with self.lock:
+            timings = {'lock_wait_seconds': time.monotonic()-began}
+            phase = 'stopped_state'
             try:
                 require(not self.ledger.stopped, 'Storage owner stopped')
+                phase = 'disk_reserve'
+                began = time.monotonic()
                 require(shutil.disk_usage(self.root).free >= self.reserve_bytes,
                         'Disk reserve reached')
+                timings['disk_seconds'] = time.monotonic()-began
+                phase = 'retained_trees'
+                began = time.monotonic()
                 for path, original in self.retained.items():
                     require(physical_tree(path)['charged_bytes'] <= original,
                             'Sealed retained tree grew after admission')
+                timings['retained_seconds'] = time.monotonic()-began
+                phase = 'control_tree'
+                began = time.monotonic()
                 control = physical_tree(self.control)
                 require(control['charged_bytes'] <= self.control_allowance, 'Control allowance exceeded')
+                timings['control_seconds'] = time.monotonic()-began
+                phase = 'pending_trees'
+                began = time.monotonic()
                 for name, bound in self.ledger.pending.items():
                     require(physical_tree(self.root/'jobs'/name, allow_atomic_rename=True)['charged_bytes'] <= bound,
                             'Active tree exceeded reserved write bound')
-            except BaseException:
+                timings['pending_seconds'] = time.monotonic()-began
+                return timings
+            except BaseException as error:
+                first_failure = not self.ledger.stopped
                 self.ledger.stopped = True
-                self._record('stopped', {'reason': 'active storage check failed'})
+                if first_failure:
+                    self._record('stopped', {'reason': 'active storage check failed',
+                                            'phase': phase, 'error': repr(error)})
                 raise
 
     def seal(self, name, failed=False):

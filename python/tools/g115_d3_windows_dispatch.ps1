@@ -102,10 +102,8 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-replay-timing/v1') { throw 'D4 archived replay admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_d4_audit_pipeline_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-pipeline-qualification/v1' -or $plan.mode -notin @('qualification','production')) { throw 'D4 combined audit path requires guarded Windows qualification or production' }
-    if ($plan.mode -eq 'production') {
-        if ([IO.Path]::GetFileName($plan.observer.path) -ne 'g115_d4_audit_observer_v1.py') { throw 'Production requires the named utilization observer' }
-        Assert-Hash $plan.observer.path $plan.observer.sha256
-    }
+    if ([IO.Path]::GetFileName($plan.observer.path) -ne 'g115_d4_audit_observer_v1.py') { throw 'Audit qualification and production require the named utilization observer' }
+    Assert-Hash $plan.observer.path $plan.observer.sha256
 } elseif ($launcherName -eq 'g115_d4_archive_transfer_v1.py') {
     if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-archive-transfer/v1') { throw 'Archive transfer requires the named Jack WMI sender' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4 launchers are allowed' }
@@ -128,7 +126,7 @@ $config = [ordered]@{
     python=$Python; host_name=$HostName; worker_root=$WorkerRoot; control_root=$ControlRoot
     transport_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
 }
-if ($launcherName -eq 'g115_d4_audit_pipeline_v1.py' -and $plan.mode -eq 'production') {
+if ($launcherName -eq 'g115_d4_audit_pipeline_v1.py' -and $plan.observer) {
     $config.observer = $plan.observer.path
     $config.observer_sha256 = $plan.observer.sha256
 }
