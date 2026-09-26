@@ -57,6 +57,20 @@ def resolve(value, staged):
     return value
 
 
+def qualification_capacity(plan, retained_bytes=None):
+    """Retained evidence counts toward the host cap; new qualification writes stay <=4GiB."""
+    cap = plan['cap_bytes']
+    additional = plan.get('qualification_additional_bytes', cap)
+    require(type(cap) is int and type(additional) is int
+            and 0 < cap <= 60_000_000_000 and 0 < additional <= 4*1024**3,
+            'Qualification new-write allowance must be at most4GiB')
+    require(cap <= 4*1024**3 or bool(plan.get('retained_roots')),
+            'Larger total qualification cap requires charged retained evidence')
+    if retained_bytes is not None:
+        require(0 < cap-retained_bytes <= additional,
+                'Measured retained charge must leave only the declared qualification allowance')
+
+
 def limits(plan, work, commands):
     production = plan['mode'] == 'production'
     require(plan['schema'] == SCHEMA and plan['mode'] in ('qualification', 'production'), 'Unknown audit mode')
@@ -68,8 +82,8 @@ def limits(plan, work, commands):
                 'Full assigned audit shard required')
         require('signal_tool' in plan and 'signals' in work, 'All-record signal audit required')
     else:
-        require(plan['workers'] == MATRIX and plan['total_seconds'] == 900
-                and 0 < plan['cap_bytes'] <= 4*1024**3, 'Fixed qualification matrix required')
+        require(plan['workers'] == MATRIX and plan['total_seconds'] == 900, 'Fixed qualification matrix required')
+        qualification_capacity(plan)
         require(8 <= len(commands) <= 16 and 1 <= len(work['groups']) <= 32, 'Qualification coverage differs')
     names = [g['name'] for g in work['groups']]
     require(len(set(names)) == len(names) and all(name_ok(n) for n in names), 'Invalid input group names')
@@ -182,6 +196,10 @@ def admission(plan, host):
                 for i,a in enumerate(retained) for b in retained[i+1:]), 'Retained trees overlap')
     prior = sum(physical_tree(p)['charged_bytes'] for p in retained)
     require(prior < plan['cap_bytes'], 'Retained footprint exhausts cap')
+    require(plan['cap_bytes'] <= (40_000_000_000 if host == 'haleyspc' else 60_000_000_000),
+            'Selected host total cap exceeded')
+    if plan['mode'] == 'qualification':
+        qualification_capacity(plan, prior)
     if plan['mode'] == 'production' and host == 'haleyspc':
         require(all(any(Path(f['archive']['path']).resolve().is_relative_to(p) for p in retained)
                     for g in work['groups'] for f in g['files']), 'Uncharged transferred archive')
