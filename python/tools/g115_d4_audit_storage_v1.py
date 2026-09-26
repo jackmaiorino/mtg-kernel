@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import threading
 import time
 
@@ -73,26 +74,35 @@ def physical_tree(path, allow_atomic_rename=False):
     require(not requested.is_symlink() and not requested.is_junction(), 'Linked audit root refused')
     root = requested.resolve(strict=True)
     logical = stored = count = 0
-    for item in root.rglob('*'):
-        require(not item.is_symlink() and not item.is_junction(), 'Linked audit paths refused')
-        require(item.resolve().is_relative_to(root), 'Audit path escaped owned tree')
-        if not item.is_file():
-            continue
-        try:
-            high = W.DWORD()
-            ctypes.set_last_error(0)
-            low = kernel.GetCompressedFileSizeW(str(item), ctypes.byref(high))
-            if low == 0xffffffff and ctypes.get_last_error():
-                raise ctypes.WinError(ctypes.get_last_error())
-            data_bytes = (high.value << 32) | low
-            logical_size = item.stat().st_size
-        except FileNotFoundError:
-            if allow_atomic_rename:
-                continue  # Publication can rename an owned .partial between reads.
-            raise
-        stored += ((data_bytes+4095)//4096)*4096
-        logical += logical_size
-        count += 1
+    directories = [str(root)]
+    while directories:
+        with os.scandir(directories.pop()) as entries:
+            for item in entries:
+                try:
+                    metadata = item.stat(follow_symlinks=False)
+                    # Name-surrogate reparse points redirect paths (including
+                    # symlinks/junctions). WOF compression does not redirect.
+                    require(not metadata.st_reparse_tag & 0x20000000,
+                            'Linked audit paths refused')
+                    if stat.S_ISDIR(metadata.st_mode):
+                        directories.append(item.path)
+                        continue
+                    if not stat.S_ISREG(metadata.st_mode):
+                        continue
+                    high = W.DWORD()
+                    ctypes.set_last_error(0)
+                    low = kernel.GetCompressedFileSizeW(item.path, ctypes.byref(high))
+                    if low == 0xffffffff and ctypes.get_last_error():
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    data_bytes = (high.value << 32) | low
+                    logical_size = metadata.st_size
+                except FileNotFoundError:
+                    if allow_atomic_rename:
+                        continue  # An owned .partial can be published during any lookup.
+                    raise
+                stored += ((data_bytes+4095)//4096)*4096
+                logical += logical_size
+                count += 1
     return {'logical_bytes': logical, 'rounded_stored_bytes': stored, 'files': count,
             'charged_bytes': charge(stored, count)}
 
