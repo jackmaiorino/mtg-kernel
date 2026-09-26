@@ -560,16 +560,19 @@ impl SpellbenchBridgeServerV1 {
                 "the active game has already reached a terminal response",
             );
         }
-        let RlSessionResponseV1::Decision(current) = game.session.current_response() else {
-            let session_counts = (
-                game.session.policy_step_count(),
-                game.session.physical_decision_count(),
-            );
-            return self.fail_game_halted(
-                request_id,
-                session_counts,
-                "engine_contract_failure:decision_expected_before_step",
-            );
+        let current = match game.session.current_response() {
+            RlSessionResponseV1::Decision(current) => current,
+            RlSessionResponseV1::Terminal(terminal) => {
+                let session_counts = (
+                    game.session.policy_step_count(),
+                    game.session.physical_decision_count(),
+                );
+                let reason = format!(
+                    "engine_contract_failure:decision_expected_before_step:{}",
+                    terminal.terminal_reason
+                );
+                return self.fail_game_halted(request_id, session_counts, &reason);
+            }
         };
         if expected_step != current.step {
             return error_response_value_v1(
@@ -640,7 +643,7 @@ impl SpellbenchBridgeServerV1 {
                 None => self.fail_game_halted(
                     request_id,
                     answered_counts,
-                    "engine_contract_failure:session_step_rejected_after_validation",
+                    &session_rejection_reason_v1(&error),
                 ),
             },
         }
@@ -744,6 +747,34 @@ fn session_error_to_bridge_code_v1(error: &RlSessionError) -> Option<&'static st
         | RlSessionErrorCode::UnsupportedDeck
         | RlSessionErrorCode::EnvironmentRandomization => None,
     }
+}
+
+/// A session error code's snake_case name, spelled as the kernel's JSONL
+/// servers and the code's own serde form spell it.
+fn session_error_code_name_v1(code: RlSessionErrorCode) -> &'static str {
+    match code {
+        RlSessionErrorCode::EpisodeAlreadyTerminal => "episode_already_terminal",
+        RlSessionErrorCode::EpisodeIdMismatch => "episode_id_mismatch",
+        RlSessionErrorCode::ExpectedStepMismatch => "expected_step_mismatch",
+        RlSessionErrorCode::SelectedIndexOutOfRange => "selected_index_out_of_range",
+        RlSessionErrorCode::SelectedActionIdMismatch => "selected_action_id_mismatch",
+        RlSessionErrorCode::SelectedActionIdUnknown => "selected_action_id_unknown",
+        RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
+        RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
+        RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
+    }
+}
+
+/// Halted reason for a step the bridge validated but the session refused:
+/// the session error code and the kernel's message. Session step errors
+/// carry fixed text, so the reason is deterministic for a given game, which
+/// hosts need because they hash reasons into their ledgers.
+fn session_rejection_reason_v1(error: &RlSessionError) -> String {
+    format!(
+        "engine_contract_failure:session_step_rejected_after_validation:{}:{}",
+        session_error_code_name_v1(error.code),
+        error.message
+    )
 }
 
 fn request_id_from_value_v1(value: &Value) -> Option<String> {
@@ -1888,6 +1919,76 @@ mod tests {
         assert_eq!(
             reentry["response_type"], "decision",
             "a finished game frees the process"
+        );
+    }
+
+    #[test]
+    fn session_rejection_reason_names_the_code_as_the_kernel_spells_it() {
+        for code in [
+            RlSessionErrorCode::EpisodeAlreadyTerminal,
+            RlSessionErrorCode::EpisodeIdMismatch,
+            RlSessionErrorCode::ExpectedStepMismatch,
+            RlSessionErrorCode::SelectedIndexOutOfRange,
+            RlSessionErrorCode::SelectedActionIdMismatch,
+            RlSessionErrorCode::SelectedActionIdUnknown,
+            RlSessionErrorCode::StaleEnvironmentBinding,
+            RlSessionErrorCode::UnsupportedDeck,
+            RlSessionErrorCode::EnvironmentRandomization,
+        ] {
+            assert_eq!(
+                serde_json::to_value(code).unwrap(),
+                json!(session_error_code_name_v1(code))
+            );
+        }
+        let error = RlSessionError {
+            code: RlSessionErrorCode::StaleEnvironmentBinding,
+            message: "selected action no longer matches the active policy environment".to_string(),
+        };
+        assert_eq!(
+            session_rejection_reason_v1(&error),
+            "engine_contract_failure:session_step_rejected_after_validation:\
+             stale_environment_binding:selected action no longer matches the active policy environment"
+        );
+    }
+
+    #[test]
+    fn a_step_against_an_unsent_session_terminal_halts_with_the_session_reason() {
+        let mut server = test_server();
+        let capped = json!({
+            "request_type": "reset",
+            "protocol": SPELLBENCH_PROTOCOL_V1,
+            "request_id": "r-cap",
+            "game_id": "g-lost-terminal",
+            "format": "pauper-bo1",
+            "seats": [
+                {"seat": "p0", "deck": {"catalog_id": "Burn"}},
+                {"seat": "p1", "deck": {"catalog_id": "Burn"}},
+            ],
+            "game_seed": 3,
+            "max_decisions": 0,
+            "max_steps": 128,
+        })
+        .to_string();
+        let terminal = parse_line(&server.handle_line(&capped));
+        assert_eq!(terminal["response_type"], "terminal");
+        // Defense in depth: were a session terminal ever left unsent, the
+        // next step halts with the session's own terminal reason attached.
+        server.game.as_mut().unwrap().terminal_sent = false;
+        let step = json!({
+            "request_type": "step",
+            "protocol": SPELLBENCH_PROTOCOL_V1,
+            "request_id": "s-0",
+            "game_id": "g-lost-terminal",
+            "expected_step": 0,
+            "selection": {"candidate_id": 0, "semantic_echo": {"kind": "pass"}},
+        })
+        .to_string();
+        let halted = parse_line(&server.handle_line(&step));
+        assert_eq!(halted["response_type"], "terminal");
+        assert_eq!(halted["outcome"], "halted");
+        assert_eq!(
+            halted["reason"],
+            "engine_contract_failure:decision_expected_before_step:physical_decision_cap_reached:0"
         );
     }
 

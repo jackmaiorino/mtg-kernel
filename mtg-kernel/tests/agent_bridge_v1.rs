@@ -541,6 +541,84 @@ fn agent_bridge_applies_exactly_the_chosen_kernel_action() {
     }
 }
 
+/// Plays one mirror under the sweep policy through the in-process bridge.
+/// Returns the terminal response line, the last answered decision, and the
+/// candidate chosen for it.
+fn drive_sweep_game(deck: &str, seed: u64, game_id: &str) -> (String, Value, usize) {
+    let mut server = test_server();
+    let mut line = server.handle_line(&reset_line_for("r-0", game_id, [deck, deck], seed));
+    let mut answered = None;
+    loop {
+        let current = parse_line(&line);
+        if current["response_type"] != "decision" {
+            let (decision, choice) = answered.expect("the game answers at least one decision");
+            return (line, decision, choice);
+        }
+        let step = current["step"].as_u64().unwrap();
+        let choice = sweep_choice(seed, step, current["candidates"].as_array().unwrap().len());
+        line = server.handle_line(&step_line_for(&format!("s-{step}"), &current, choice));
+        answered = Some((current, choice));
+    }
+}
+
+/// Reproduces a kernel defect (Elves halts of the pauper-kernel launch
+/// benchmark): policy surface v5's attacker scan offers `include: false` for
+/// a goaded creature the engine requires to attack, so once it is declined
+/// no answer to the scan's last substep is legal, and the session refuses
+/// the answer the bridge validated. The halted reason names the session
+/// error code and carries the kernel's message, byte-identical across runs
+/// (the arena hashes its ledger). If a kernel fix lets this game finish,
+/// pin the reason on another post-validation rejection.
+#[test]
+fn agent_bridge_names_the_session_error_when_a_validated_step_is_refused() {
+    let (line, answered, choice) = drive_sweep_game("Elves", 11, "g-goad-scan");
+    let terminal = parse_line(&line);
+    assert_eq!(terminal["outcome"], "halted", "{terminal}");
+    assert_eq!(terminal["classification"], "halted");
+    assert_eq!(terminal["winner"], Value::Null);
+    assert_eq!(
+        terminal["reason"],
+        "engine_contract_failure:session_step_rejected_after_validation:\
+         stale_environment_binding:selected action no longer matches the active policy environment"
+    );
+    // The refused answer closes an attacker inclusion scan at step 99.
+    assert_eq!(answered["step"], 99);
+    assert_eq!(
+        answered["candidates"][choice]["semantic"]["kind"],
+        "choose_attacker_inclusion"
+    );
+    let group = &answered["group"];
+    assert_eq!(
+        group["substep_index"].as_u64().unwrap() + 1,
+        group["substep_count"].as_u64().unwrap()
+    );
+    assert_eq!(terminal["step_count"], 100);
+    assert_eq!(
+        terminal["decision_count"],
+        group["group_id"].as_u64().unwrap() + 1
+    );
+    let (again, _, _) = drive_sweep_game("Elves", 11, "g-goad-scan");
+    assert_eq!(again, line, "the halted terminal is deterministic");
+}
+
+/// Reproduces a kernel defect (CawGates halts of the pauper-kernel launch
+/// benchmark): Journey to Nowhere exiling a token records a linked exile for
+/// an object that then ceases to exist, and the kernel's own observation
+/// builder fails closed on the dangling record. The bridge passes the
+/// kernel's halted terminal through with its reason unchanged.
+#[test]
+fn agent_bridge_passes_a_kernel_halt_through_with_its_reason() {
+    let (line, _, _) = drive_sweep_game("CawGates", 22, "g-token-exile");
+    let terminal = parse_line(&line);
+    assert_eq!(terminal["outcome"], "halted", "{terminal}");
+    assert_eq!(terminal["classification"], "halted");
+    assert_eq!(
+        terminal["reason"],
+        "fail_closed:observation:linked-exile exact card incarnation is not uniquely in exile"
+    );
+    assert_eq!(terminal["step_count"], 90);
+}
+
 #[test]
 fn agent_bridge_serves_sequential_games_with_fresh_game_ids() {
     // Spec Section 2: at most one ACTIVE game per process; game ids are

@@ -190,7 +190,15 @@ decision and its answer). Only after every check does the bridge apply the
 selection to the session by dense index plus the kernel `stable_id`, so the
 double binding cannot desynchronize. A `step` that passes validation but is
 then rejected by the session with an unmappable session error is an engine
-contract failure and halts the game (Section 8).
+contract failure and halts the game (Section 8) with `reason`
+`engine_contract_failure:session_step_rejected_after_validation:<code>:<message>`:
+the session error code in snake_case, as the kernel's JSONL servers spell it
+(for example `stale_environment_binding`), and the kernel's message. Session
+step messages are fixed text, so the reason is deterministic for a given
+game. The known source is a kernel defect: policy surface v5's combat scans
+offer inclusion answers whose final declaration the engine refuses (a
+declined goaded attacker, a single blocker for a menace attacker). The bridge
+reports the refusal rather than guessing another answer.
 
 ## 8. Fail-closed terminal synthesis
 
@@ -198,7 +206,9 @@ A `decision` whose candidates cannot be represented in neutral semantics
 (`Ambiguous`, legacy aggregate combat variants, colorless `choose_color`,
 multi-card `discard`, unresolvable `card_db_id`) is never partially emitted:
 the game ends immediately as `terminal` with `outcome`/`classification`
-`halted`, `winner: null`, `reason` an `engine_contract_failure:*` string, and
+`halted`, `winner: null`, `reason` an `engine_contract_failure:*` string
+naming the cause (a `step` that finds the session already ended reports
+`engine_contract_failure:decision_expected_before_step:<session reason>`), and
 the game's counts: in answer to a `step`, the answered decision counts as a
 step and its physical decision counts once that substep closes its group;
 otherwise the session's current `step_count`/`decision_count`. Policy surface v5
