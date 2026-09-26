@@ -92,8 +92,13 @@ requests that fail parsing or decoding are never cached.
   legal-action list; `display_text` passes through (currently always `null`).
 - `provenance` repeats the Section 2 engine identity minus `source_revision`.
 - `extensions.x_kernel_v5` carries the raw `ObservationV5` and
-  `LegalActionV5` payloads (`{"observation": ..., "legal_actions": [...]}`)
-  so kernel-native models can play without a neutral re-encoding.
+  `LegalActionV5` payloads as JSON text,
+  `{"observation_json": "<ObservationV5>", "legal_actions_json": "<[LegalActionV5]>"}`,
+  each the kernel's own `serde_json` serialization, so kernel-native models
+  can play without a neutral re-encoding. The payloads travel as strings
+  because they contain u64 hashes (`card_db_hash`,
+  `visible_projection_hash`) beyond the spec's `2^53` integer bound; every
+  integer the bridge emits as a JSON number satisfies `|x| <= 2^53`.
 
 ### Phase-step mapping (`ZoneIndependentStepV1` → spec Section 7.3)
 

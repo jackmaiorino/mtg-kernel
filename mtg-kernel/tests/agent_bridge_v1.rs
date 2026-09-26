@@ -86,6 +86,15 @@ fn expected_candidates_sha256(decision: &Value) -> String {
     format!("{:x}", Sha256::digest(canonical.as_bytes()))
 }
 
+/// Parses one raw kernel v5 payload (`observation` or `legal_actions`) from
+/// the `x_kernel_v5` extension, which carries it as exact JSON text.
+fn kernel_v5_payload(decision: &Value, field: &str) -> Value {
+    let text = decision["extensions"]["x_kernel_v5"][format!("{field}_json")]
+        .as_str()
+        .unwrap_or_else(|| panic!("x_kernel_v5.{field}_json is a string"));
+    serde_json::from_str(text).expect("x_kernel_v5 payload is valid JSON")
+}
+
 /// Asserts every decision invariant a host may rely on, and returns the
 /// candidate index a deterministic "attack when offered" policy selects.
 fn assert_decision_shape(decision: &Value, expected_step: u64) -> usize {
@@ -135,13 +144,17 @@ fn assert_decision_shape(decision: &Value, expected_step: u64) -> usize {
             "card_pool_identity": decision["provenance"]["card_pool_identity"],
         })
     );
-    let extension = &decision["extensions"]["x_kernel_v5"];
     assert_eq!(
-        extension["legal_actions"].as_array().unwrap().len(),
+        kernel_v5_payload(decision, "legal_actions")
+            .as_array()
+            .unwrap()
+            .len(),
         candidates.len()
     );
     assert_eq!(
-        extension["observation"]["step_index"].as_u64().unwrap(),
+        kernel_v5_payload(decision, "observation")["step_index"]
+            .as_u64()
+            .unwrap(),
         expected_step
     );
     // Policy: attack with everything offered, block with everything offered;
@@ -220,6 +233,52 @@ fn drive_burn_mirror(
     }
 }
 
+/// Spec Section 2: every protocol number is an integer with `|x| <= 2^53`.
+const SPEC_MAX_SAFE_INTEGER: u64 = 1 << 53;
+
+fn assert_spec_safe_integers(value: &Value, path: &str) {
+    match value {
+        Value::Number(number) => {
+            let within = if let Some(unsigned) = number.as_u64() {
+                unsigned <= SPEC_MAX_SAFE_INTEGER
+            } else if let Some(signed) = number.as_i64() {
+                signed.unsigned_abs() <= SPEC_MAX_SAFE_INTEGER
+            } else {
+                false
+            };
+            assert!(within, "{path} = {number} is not a spec-safe integer");
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                assert_spec_safe_integers(item, &format!("{path}[{index}]"));
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map {
+                assert_spec_safe_integers(item, &format!("{path}.{key}"));
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn agent_bridge_emits_only_spec_safe_integers() {
+    let mut server = test_server();
+    let hello = parse_line(&server.handle_line(&hello_line("h-0")));
+    assert_spec_safe_integers(&hello, "hello");
+    let (terminal, _) = drive_burn_mirror(
+        |line| {
+            let response = parse_line(&server.handle_line(line));
+            assert_spec_safe_integers(&response, "response");
+            response
+        },
+        "g-safe-integers",
+        5151,
+    );
+    assert_eq!(terminal["response_type"], "terminal");
+}
+
 #[test]
 fn agent_bridge_in_process_burn_mirror_reaches_terminal_with_clean_groups() {
     let mut server = test_server();
@@ -266,8 +325,7 @@ fn agent_bridge_semantics_round_trip_both_directions() {
     );
     // Answer with the LAST candidate to prove non-zero indices bind exactly.
     let chosen = candidate_count - 1;
-    let chosen_stable_id = current["extensions"]["x_kernel_v5"]["legal_actions"][chosen]
-        ["stable_id"]
+    let chosen_stable_id = kernel_v5_payload(&current, "legal_actions")[chosen]["stable_id"]
         .as_str()
         .unwrap()
         .to_string();

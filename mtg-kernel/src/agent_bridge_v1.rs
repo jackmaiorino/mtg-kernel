@@ -1231,11 +1231,15 @@ fn decision_response_value_v1(
         }));
     }
     let candidates_sha256 = candidates_sha256_v1(&candidates);
+    // The raw v5 payloads travel as JSON text: they carry u64 hashes
+    // (`card_db_hash`, `visible_projection_hash`) beyond the spec's 2^53
+    // integer bound, and kernel-native consumers parse the exact bytes with
+    // the kernel's own deserializers.
     let extensions = json!({
         SPELLBENCH_EXTENSION_KERNEL_V5: {
-            "observation": serde_json::to_value(&decision.observation)
+            "observation_json": serde_json::to_string(&decision.observation)
                 .map_err(|_| "engine_contract_failure:observation serialization".to_string())?,
-            "legal_actions": serde_json::to_value(&decision.legal_actions)
+            "legal_actions_json": serde_json::to_string(&decision.legal_actions)
                 .map_err(|_| "engine_contract_failure:legal_actions serialization".to_string())?,
         }
     });
@@ -1493,16 +1497,14 @@ mod tests {
         }
         assert_eq!(response["candidates_sha256"].as_str().unwrap().len(), 64);
         assert_eq!(response["provenance"]["engine_name"], "mtg-kernel");
-        assert!(response["extensions"]["x_kernel_v5"]["observation"].is_object());
-        assert!(response["extensions"]["x_kernel_v5"]["legal_actions"].is_array());
+        let extension = &response["extensions"]["x_kernel_v5"];
+        let observation: Value =
+            serde_json::from_str(extension["observation_json"].as_str().unwrap()).unwrap();
+        assert!(observation.is_object());
+        let legal_actions: Value =
+            serde_json::from_str(extension["legal_actions_json"].as_str().unwrap()).unwrap();
         // The kernel v5 payload must carry the same ordered candidates.
-        assert_eq!(
-            response["extensions"]["x_kernel_v5"]["legal_actions"]
-                .as_array()
-                .unwrap()
-                .len(),
-            candidates.len()
-        );
+        assert_eq!(legal_actions.as_array().unwrap().len(), candidates.len());
     }
 
     #[test]

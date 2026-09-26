@@ -47,6 +47,8 @@ SOURCE_REVISION_SENTINEL = "spellbench-golden-v1"
 OUTPUT_DIR = Path("data/agent_bridge_v1")
 MANIFEST_PATH = OUTPUT_DIR / "manifest.json"
 
+MAX_SAFE_INTEGER = 1 << 53  # spec Section 2: every protocol integer has |x| <= 2^53
+
 RESPONSE_TYPES = frozenset({"hello_ok", "decision", "terminal", "error"})
 ERROR_CODES = frozenset(
     {
@@ -190,12 +192,19 @@ def loads_json_strict(raw: str, *, context: str) -> Any:
             raise GoldenError(f"{context}: non-finite JSON number {value!r}")
         raise GoldenError(f"{context}: fractional JSON number {value!r}")
 
+    def parse_safe_int(value: str) -> int:
+        parsed = int(value)
+        if abs(parsed) > MAX_SAFE_INTEGER:
+            raise GoldenError(f"{context}: integer outside |x| <= 2^53: {value}")
+        return parsed
+
     try:
         return json.loads(
             raw,
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=reject_constant,
             parse_float=parse_finite_float,
+            parse_int=parse_safe_int,
         )
     except json.JSONDecodeError as exc:
         raise GoldenError(f"{context}: invalid JSON: {exc}") from exc
@@ -336,6 +345,17 @@ def validate_response(line: str, request_id: str | None) -> dict[str, Any]:
         raise GoldenError("extensions.x_kernel_v5 is missing")
     if any(not key.startswith("x_") for key in extensions):
         raise GoldenError("extension key outside the x_ namespace")
+    kernel_v5 = extensions["x_kernel_v5"]
+    if not isinstance(kernel_v5, dict) or set(kernel_v5) != {"observation_json", "legal_actions_json"}:
+        raise GoldenError("x_kernel_v5 must carry exactly observation_json and legal_actions_json")
+    if not all(isinstance(text, str) for text in kernel_v5.values()):
+        raise GoldenError("x_kernel_v5 payloads must be JSON text")
+    # The raw kernel payloads keep their full u64 range inside the JSON text.
+    if not isinstance(json.loads(kernel_v5["observation_json"]), dict):
+        raise GoldenError("x_kernel_v5 observation_json is not a JSON object")
+    legal_actions = json.loads(kernel_v5["legal_actions_json"])
+    if not isinstance(legal_actions, list) or len(legal_actions) != len(candidates):
+        raise GoldenError("x_kernel_v5 legal_actions_json does not match the candidates")
     return value
 
 
