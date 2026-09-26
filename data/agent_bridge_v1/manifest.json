@@ -21,15 +21,15 @@
       "name": "framing_errors",
       "description": "malformed JSON, malformed requests, and protocol mismatch without a game",
       "file": "framing_errors.transcript.jsonl",
-      "sha256": "29553989e019ec4a3cf538e5eaf8d78eb05f24cd931d4ba3082c9fc1aa7a313b",
+      "sha256": "04124161a2969f8820b650945802ae661740af0d68674f413f970ece99b96948",
       "line_count": 18
     },
     {
       "name": "degenerate_game",
-      "description": "zero-cap reset terminal, game_already_terminal, game_already_active",
+      "description": "zero-cap reset terminal, game_already_terminal, game id reuse, next game, game_already_active",
       "file": "degenerate_game.transcript.jsonl",
-      "sha256": "0765d38d1ec197c9b467face0a3fbe4347ddf05857227a8f505196e92daf07fb",
-      "line_count": 6
+      "sha256": "6f927cdbfe7170d9020a376eba3bcbf7c33ff6a90f73a3d7ec0346f49e4030f7",
+      "line_count": 10
     },
     {
       "name": "burn_mirror_capped",

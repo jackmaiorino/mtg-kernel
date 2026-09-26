@@ -285,6 +285,12 @@ def validate_response(line: str, request_id: str | None) -> dict[str, Any]:
             raise GoldenError(f"error response shape drift: {error!r}")
         if error["code"] not in ERROR_CODES:
             raise GoldenError(f"error code {error['code']!r} is outside the closed table")
+        # Spec Section 4.1: the echoed id, or "" when the request's id is unreadable.
+        expected_echo = "" if request_id is None else request_id
+        if value.get("request_id") != expected_echo:
+            raise GoldenError(
+                f"error request_id drift: {value.get('request_id')!r} != {expected_echo!r}"
+            )
         return value
     if response_type == "hello_ok":
         engine = value.get("engine")
@@ -539,8 +545,14 @@ def scenario_degenerate_game(session: BridgeSession) -> None:
         ),
         "game_already_terminal",
     )
+    # A finished game frees the process; game ids stay unique per process.
     expect_error(
-        session.exchange(reset_request("r-2", "g-again", 3, 16, 2048)),
+        session.exchange(reset_request("r-2", "g-degenerate", 3, 0, 128)),
+        "malformed_request",
+    )
+    expect_decision(session.exchange(reset_request("r-3", "g-next", 3, 16, 2048)))
+    expect_error(
+        session.exchange(reset_request("r-4", "g-overlap", 3, 16, 2048)),
         "game_already_active",
     )
 
@@ -591,7 +603,7 @@ SCENARIOS: tuple[tuple[str, str, Callable[[BridgeSession], None]], ...] = (
     ),
     (
         "degenerate_game",
-        "zero-cap reset terminal, game_already_terminal, game_already_active",
+        "zero-cap reset terminal, game_already_terminal, game id reuse, next game, game_already_active",
         scenario_degenerate_game,
     ),
     (

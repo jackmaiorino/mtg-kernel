@@ -25,8 +25,9 @@ use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
 use crate::mana::ManaColor;
 use crate::rl::{
-    parse_strict_json_value, ActionSemanticV1, CardStableRefV1, ObservationV5, PlayerSeatV1,
-    TargetRefV1, TerminalClassificationV1, TerminalOutcomeV1, ZoneIndependentStepV1,
+    parse_strict_json_value, ActionSemanticV1, CardStableRefV1, ObservationV5,
+    PendingEffectChoiceSemanticV4, PendingEffectSemanticV4, PlayerSeatV1, TargetRefV1,
+    TerminalClassificationV1, TerminalOutcomeV1, ZoneIndependentStepV1,
 };
 use crate::rl_session::{
     RlEpisodeSessionV1, RlSessionDecisionV1, RlSessionError, RlSessionErrorCode,
@@ -37,6 +38,7 @@ use crate::KERNEL_VERSION;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{self, BufRead, Read};
 
@@ -50,6 +52,10 @@ pub const SPELLBENCH_FORMAT_PAUPER_BO1_V1: &str = "pauper-bo1";
 pub const SPELLBENCH_EXTENSION_KERNEL_V5: &str = "x_kernel_v5";
 /// Process environment variable supplying `engine.source_revision`.
 pub const SPELLBENCH_SOURCE_REVISION_ENV_V1: &str = "SPELLBENCH_SOURCE_REVISION";
+/// Catalog decks refused with `unsupported_deck`: they stage actions (Escape)
+/// that policy surface v5 cannot represent, so most of their games halt and
+/// the rest would be a biased sample for any rating.
+pub const SPELLBENCH_POLICY_V5_UNPLAYABLE_DECKS_V1: &[&str] = &["Terror"];
 /// Deterministic `game_id` (host string) to `episode_id` (kernel u64)
 /// mapping identity: FNV-1a 64 over the game id's UTF-8 bytes. One game per
 /// process makes collisions across game ids unreachable within a session.
@@ -223,6 +229,7 @@ struct SpellbenchBridgeGameV1 {
 pub struct SpellbenchBridgeServerV1 {
     identity: SpellbenchEngineIdentityV1,
     game: Option<SpellbenchBridgeGameV1>,
+    used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
 }
 
@@ -237,6 +244,7 @@ impl SpellbenchBridgeServerV1 {
         SpellbenchBridgeServerV1 {
             identity: SpellbenchEngineIdentityV1::current(),
             game: None,
+            used_game_ids: HashSet::new(),
             last_exchange: None,
         }
     }
@@ -246,6 +254,7 @@ impl SpellbenchBridgeServerV1 {
         SpellbenchBridgeServerV1 {
             identity,
             game: None,
+            used_game_ids: HashSet::new(),
             last_exchange: None,
         }
     }
@@ -427,11 +436,20 @@ impl SpellbenchBridgeServerV1 {
             max_decisions,
             max_steps,
         } = reset;
-        if self.game.is_some() {
+        // Spec Section 2: at most one active game per process, and game ids
+        // are unique per process; a finished game frees the process.
+        if self.game.as_ref().is_some_and(|game| !game.terminal_sent) {
             return error_response_value_v1(
                 Some(request_id),
                 "game_already_active",
-                "this engine process already hosts a game; one game per process",
+                "this engine process already hosts an active game",
+            );
+        }
+        if self.used_game_ids.contains(game_id) {
+            return error_response_value_v1(
+                Some(request_id),
+                "malformed_request",
+                "game_id was already used by this engine process",
             );
         }
         if format != SPELLBENCH_FORMAT_PAUPER_BO1_V1 {
@@ -451,6 +469,16 @@ impl SpellbenchBridgeServerV1 {
         let mut deck_ids: SessionDeckIdsV1 = [String::new(), String::new()];
         for (index, seat) in seats.iter().enumerate() {
             match (&seat.deck.catalog_id, &seat.deck.decklist) {
+                (Some(catalog_id), None)
+                    if SPELLBENCH_POLICY_V5_UNPLAYABLE_DECKS_V1.contains(&catalog_id.as_str()) =>
+                {
+                    return error_response_value_v1(
+                        Some(request_id),
+                        "unsupported_deck",
+                        "this deck needs actions policy surface v5 cannot represent (Escape); \
+                         most of its games would halt",
+                    );
+                }
                 (Some(catalog_id), None) => deck_ids[index] = catalog_id.clone(),
                 (None, Some(_)) => {
                     return error_response_value_v1(
@@ -492,6 +520,7 @@ impl SpellbenchBridgeServerV1 {
         let response =
             self.session_response_to_wire(request_id, game_id, session.current_response(), counts);
         let terminal_sent = matches!(response, WireResponseV1::Terminal(_));
+        self.used_game_ids.insert(game_id.to_string());
         self.game = Some(SpellbenchBridgeGameV1 {
             game_id: game_id.to_string(),
             episode_id,
@@ -532,8 +561,13 @@ impl SpellbenchBridgeServerV1 {
             );
         }
         let RlSessionResponseV1::Decision(current) = game.session.current_response() else {
+            let session_counts = (
+                game.session.policy_step_count(),
+                game.session.physical_decision_count(),
+            );
             return self.fail_game_halted(
                 request_id,
+                session_counts,
                 "engine_contract_failure:decision_expected_before_step",
             );
         };
@@ -552,9 +586,14 @@ impl SpellbenchBridgeServerV1 {
                 "candidate_id does not index the current candidate list",
             );
         };
-        let recomputed = match neutral_semantic_v1(&chosen.semantic, current.acting_player) {
+        // From here on the decision counts as answered: a halted terminal
+        // reports it as a step (and its group, if this substep closes it).
+        let answered_counts = answered_decision_counts_v1(&current);
+        let recomputed = match NeutralObserverV1::from_observation(&current.observation)
+            .and_then(|observer| neutral_semantic_v1(&chosen.semantic, &observer))
+        {
             Ok(semantic) => semantic,
-            Err(reason) => return self.fail_game_halted(request_id, &reason),
+            Err(reason) => return self.fail_game_halted(request_id, answered_counts, &reason),
         };
         let echo_canonical = match spellbench_canonical_json_v1(&selection.semantic_echo) {
             Some(canonical) => canonical,
@@ -600,6 +639,7 @@ impl SpellbenchBridgeServerV1 {
                 Some(code) => error_response_value_v1(Some(request_id), code, &error.message),
                 None => self.fail_game_halted(
                     request_id,
+                    answered_counts,
                     "engine_contract_failure:session_step_rejected_after_validation",
                 ),
             },
@@ -635,17 +675,14 @@ impl SpellbenchBridgeServerV1 {
 
     /// Marks the active game halted and returns the synthetic terminal. Used
     /// when the bridge itself cannot honor the protocol for this game.
-    fn fail_game_halted(&mut self, request_id: &str, reason: &str) -> Value {
-        let (game_id, counts) = {
-            let game = self.game.as_ref().expect("halted failure needs a game");
-            (
-                game.game_id.clone(),
-                (
-                    game.session.policy_step_count(),
-                    game.session.physical_decision_count(),
-                ),
-            )
-        };
+    /// `counts` are the (step, physical decision) totals the terminal reports.
+    fn fail_game_halted(&mut self, request_id: &str, counts: (u64, u64), reason: &str) -> Value {
+        let game_id = self
+            .game
+            .as_ref()
+            .expect("halted failure needs a game")
+            .game_id
+            .clone();
         let value = self.halted_terminal_value(request_id, &game_id, counts, reason);
         if let Some(game) = self.game.as_mut() {
             game.terminal_sent = true;
@@ -680,6 +717,17 @@ impl SpellbenchBridgeServerV1 {
 enum WireResponseV1 {
     Decision(Value),
     Terminal(Value),
+}
+
+/// Totals a terminal reports once `decision` has been answered: the answered
+/// decision is a step, and its physical decision counts when this substep
+/// closes its group (spec Section 8 counts only completed groups).
+fn answered_decision_counts_v1(decision: &RlSessionDecisionV1) -> (u64, u64) {
+    let closes_group = decision.substep_index + 1 == decision.substep_count;
+    (
+        decision.step + 1,
+        decision.physical_decision_id + u64::from(closes_group),
+    )
 }
 
 /// Kernel session errors that still map onto the closed spellbench table.
@@ -718,11 +766,13 @@ fn contains_fractional_number_v1(value: &Value) -> bool {
     }
 }
 
+/// Spec Section 4.1: responses always carry a string `request_id`; when the
+/// request's id cannot be read (malformed line, non-string id) it is "".
 fn error_response_value_v1(request_id: Option<&str>, code: &str, message: &str) -> Value {
     json!({
         "response_type": "error",
         "protocol": SPELLBENCH_PROTOCOL_V1,
-        "request_id": request_id,
+        "request_id": request_id.unwrap_or(""),
         "error": {"code": code, "message": message},
     })
 }
@@ -808,19 +858,96 @@ fn mana_choice_str_v1(color: ManaColor) -> &'static str {
     }
 }
 
+/// Object incarnation key: `(arena_id, zone_change_count)`.
+type ObjectKeyV1 = (u32, u32);
+
+/// What the acting seat knows about objects, read from its own observation:
+/// the name the observation shows for every card it lists (public zones, own
+/// hand, known library and hand cards; transformed faces read correctly),
+/// and the objects its pending effect offers as targets (a search or look
+/// lets the chooser see them).
+struct NeutralObserverV1 {
+    seat: PlayerSeatV1,
+    named: HashMap<ObjectKeyV1, String>,
+    offered: HashSet<ObjectKeyV1>,
+}
+
+impl NeutralObserverV1 {
+    fn from_observation(observation: &ObservationV5) -> Result<Self, String> {
+        let mut named = HashMap::new();
+        let surface = &observation.projection.surface;
+        let public = surface
+            .battlefield
+            .iter()
+            .chain(surface.graveyards.iter())
+            .flatten()
+            .chain(surface.exile.iter())
+            .map(|card| (&card.stable, card.card_name.as_str()));
+        let private = observation
+            .own_hand
+            .iter()
+            .chain(observation.known_hand_cards.iter().flatten())
+            .chain(
+                observation
+                    .known_library_cards
+                    .iter()
+                    .flatten()
+                    .map(|known| &known.card),
+            )
+            .map(|card| (&card.stable, card.card_name.as_str()));
+        for (stable, card_name) in public.chain(private) {
+            let key = (stable.arena_id, stable.zone_change_count);
+            if let Some(previous) = named.insert(key, card_name.to_string()) {
+                if previous != card_name {
+                    return Err(format!(
+                        "engine_contract_failure:observation names object {} as {previous} and {card_name}",
+                        stable.arena_id
+                    ));
+                }
+            }
+        }
+        let mut offered = HashSet::new();
+        if let Some(PendingEffectSemanticV4 {
+            choice:
+                Some(PendingEffectChoiceSemanticV4::Targets {
+                    legal_targets,
+                    selected_targets,
+                    ..
+                }),
+            ..
+        }) = &surface.engine_context.pending_effect
+        {
+            for target in legal_targets.iter().chain(selected_targets) {
+                if let TargetRefV1::Object { object } = target {
+                    offered.insert((object.arena_id, object.zone_change_count));
+                }
+            }
+        }
+        Ok(NeutralObserverV1 {
+            seat: observation.acting_player,
+            named,
+            offered,
+        })
+    }
+}
+
 /// Converts one kernel stable card reference into the neutral observer-relative
 /// object reference. `object_id` is `obj-<arena_id>-z<zone_change_count>`
-/// (see [`SPELLBENCH_OBJECT_ID_DERIVATION_V1`]). `card_name` resolves from
-/// the build-time card registry by `card_db_id`; it is null exactly when the
-/// object's identity is hidden from the observing seat (its owner's library,
-/// or a hand the observer does not own).
+/// (see [`SPELLBENCH_OBJECT_ID_DERIVATION_V1`]). `card_name` is the name the
+/// acting seat's observation shows for the object; an object the observation
+/// does not list takes its registry name unless it sits in a hidden zone (a
+/// library, or a hand the observer does not own) and is not offered to the
+/// observer as a target, in which case it is null.
 fn neutral_object_ref_v1(
     reference: &CardStableRefV1,
-    observer: PlayerSeatV1,
+    observer: &NeutralObserverV1,
 ) -> Result<Value, String> {
+    let key = (reference.arena_id, reference.zone_change_count);
     let hidden = reference.zone == Zone::Library
-        || (reference.zone == Zone::Hand && reference.owner != observer);
-    let card_name = if hidden {
+        || (reference.zone == Zone::Hand && reference.owner != observer.seat);
+    let card_name = if let Some(name) = observer.named.get(&key) {
+        Value::String(name.clone())
+    } else if hidden && !observer.offered.contains(&key) {
         Value::Null
     } else {
         let definition = CARD_DEFS
@@ -842,7 +969,10 @@ fn neutral_object_ref_v1(
     }))
 }
 
-fn neutral_target_ref_v1(target: &TargetRefV1, observer: PlayerSeatV1) -> Result<Value, String> {
+fn neutral_target_ref_v1(
+    target: &TargetRefV1,
+    observer: &NeutralObserverV1,
+) -> Result<Value, String> {
     match target {
         TargetRefV1::Player { player } => Ok(json!({"player": seat_str_v1(*player)})),
         TargetRefV1::Object { object } => {
@@ -859,7 +989,7 @@ fn neutral_target_ref_v1(target: &TargetRefV1, observer: PlayerSeatV1) -> Result
 /// refuses them, so an occurrence here is an engine contract failure.
 fn neutral_semantic_v1(
     semantic: &ActionSemanticV1,
-    observer: PlayerSeatV1,
+    observer: &NeutralObserverV1,
 ) -> Result<Value, String> {
     match semantic {
         ActionSemanticV1::Pass { .. } => Ok(json!({"kind": "pass"})),
@@ -1219,14 +1349,14 @@ fn decision_response_value_v1(
     game_id: &str,
     decision: &RlSessionDecisionV1,
 ) -> Result<Value, String> {
-    let observer = decision.acting_player;
+    let observer = NeutralObserverV1::from_observation(&decision.observation)?;
     let mut candidates = Vec::with_capacity(decision.legal_actions.len());
     for (index, action) in decision.legal_actions.iter().enumerate() {
         let candidate_id = u32::try_from(index)
             .map_err(|_| "engine_contract_failure:candidate index exceeds u32".to_string())?;
         candidates.push(json!({
             "candidate_id": candidate_id,
-            "semantic": neutral_semantic_v1(&action.semantic, observer)?,
+            "semantic": neutral_semantic_v1(&action.semantic, &observer)?,
             "display_text": action.display_text,
         }));
     }
@@ -1755,7 +1885,10 @@ mod tests {
         assert_eq!(response["error"]["code"], "game_already_terminal");
 
         let reentry = parse_line(&server.handle_line(&reset_line("r-2", "g-again", 7)));
-        assert_eq!(reentry["error"]["code"], "game_already_active");
+        assert_eq!(
+            reentry["response_type"], "decision",
+            "a finished game frees the process"
+        );
     }
 
     #[test]
@@ -1763,7 +1896,7 @@ mod tests {
         let mut server = test_server();
         let response = parse_line(&server.handle_line("this is not json"));
         assert_eq!(response["error"]["code"], "malformed_json");
-        assert_eq!(response["request_id"], Value::Null);
+        assert_eq!(response["request_id"], "");
 
         let response = parse_line(&server.handle_line("{\"a\":1,\"a\":2}"));
         assert_eq!(response["error"]["code"], "malformed_json");

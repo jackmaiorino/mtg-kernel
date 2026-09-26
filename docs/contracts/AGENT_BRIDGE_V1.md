@@ -58,7 +58,8 @@ requests that fail parsing or decoding are never cached.
   `protocol_mismatch`; a missing or non-string `protocol` is
   `malformed_request`.
 - Request ids are echoed when the envelope carries a string `request_id`;
-  otherwise the error response's `request_id` is `null`.
+  otherwise the error response's `request_id` is `""` (spec Section 4.1:
+  every response carries a string `request_id`).
 - Protocol numbers are integers; u64/i64-typed fields accept their full typed
   range (the `2^53` bound constrains senders, not this receiver).
 
@@ -68,12 +69,17 @@ requests that fail parsing or decoding are never cached.
 - `seats` must be exactly `p0` then `p1`, else `malformed_request`.
 - A deck must carry exactly one of `catalog_id` / `decklist` (both or neither
   is `malformed_request`). `decklist` is `unsupported_deck`; this engine
-  never substitutes. An unknown `catalog_id` is `unsupported_deck`.
+  never substitutes. An unknown `catalog_id` is `unsupported_deck`, and so
+  is `Terror`: it stages Escape, which policy surface v5 cannot represent,
+  so most of its games would halt and the rest would bias any rating
+  (`SPELLBENCH_POLICY_V5_UNPLAYABLE_DECKS_V1`).
 - `game_seed` maps to the session `env_seed`; `max_decisions` maps to the
   session's physical-decision cap; `max_steps` maps to the session's
   policy-step cap.
-- One game per process: any second `reset`, even after a terminal response,
-  is `game_already_active`.
+- At most one active game per process: a `reset` while a game is active is
+  `game_already_active`; once a terminal was sent the next `reset` starts a
+  new game. `game_id` is unique per process: reusing one is
+  `malformed_request`.
 - The response is the first `decision` (step 0) or a `terminal` for a
   degenerate game (e.g. `max_decisions: 0` truncates immediately).
 
@@ -121,12 +127,16 @@ requests that fail parsing or decoding are never cached.
 
 `CardStableRefV1` maps to `{object_id, card_name, owner_seat, controller_seat,
 zone}` with `object_id` per Section 2, seats `"p0"`/`"p1"`, and `zone` the
-lowercase zone name. `card_name` resolves from the build-time card registry
-(`CARD_DEFS[card_db_id].name`); it is `null` exactly when the object's
-identity is hidden from the acting observer: its owner's library, or a hand
-the observer does not own. Every candidate reference in the served pool
-resolves publicly; the null path is defensive and spec-licensed. A
-`card_db_id` outside the registry is an engine contract failure (Section 8).
+lowercase zone name. `card_name` is what the acting seat knows, read from
+its own `ObservationV5`: the name the observation shows for every card it
+lists (battlefield, graveyards, exile, own hand, known library and hand
+cards, so a transformed double-faced card reads as its current face). An
+object the observation does not list takes its registry name
+(`CARD_DEFS[card_db_id].name`) unless it sits in a hidden zone (a library, or
+a hand the observer does not own) and is not a target the pending effect
+offers the observer (a search or look), in which case `card_name` is
+`null`. A `card_db_id` outside the registry, or an observation that names
+one object two ways, is an engine contract failure (Section 8).
 
 Target references map `TargetRefV1::Player` → `{"player": seat}` and
 `TargetRefV1::Object` → `{"object": <object reference>}`.
@@ -189,12 +199,14 @@ A `decision` whose candidates cannot be represented in neutral semantics
 multi-card `discard`, unresolvable `card_db_id`) is never partially emitted:
 the game ends immediately as `terminal` with `outcome`/`classification`
 `halted`, `winner: null`, `reason` an `engine_contract_failure:*` string, and
-the session's current `step_count`/`decision_count`. Policy surface v5
+the game's counts: in answer to a `step`, the answered decision counts as a
+step and its physical decision counts once that substep closes its group;
+otherwise the session's current `step_count`/`decision_count`. Policy surface v5
 already refuses `Ambiguous` and aggregate combat semantics
 (`validate_policy_action_semantic_v5`), so this path is defense in depth.
 After a terminal response of any origin, further `step` requests are
-`game_already_terminal` and further `reset` requests are
-`game_already_active`.
+`game_already_terminal`; a `reset` with a fresh `game_id` starts the next
+game.
 
 ## 9. terminal (response)
 
@@ -212,11 +224,11 @@ After a terminal response of any origin, further `step` requests are
 | Code | Bridge trigger |
 |---|---|
 | `malformed_json` | invalid/duplicate-key/non-finite/fractional JSON; non-UTF-8 or oversized line |
-| `malformed_request` | non-object top level; missing/mistyped/unknown fields; bad `request_type`; bad seat shape; deck with both/neither selector |
+| `malformed_request` | non-object top level; missing/mistyped/unknown fields; bad `request_type`; bad seat shape; deck with both/neither selector; reused `game_id` |
 | `protocol_mismatch` | string `protocol` other than `spellbench/v1` |
 | `request_id_reuse_mismatch` | cached `request_id` with different request bytes |
 | `step_before_reset` | `step` before any `reset` |
-| `game_already_active` | any second `reset` |
+| `game_already_active` | `reset` while a game is active |
 | `game_id_mismatch` | `step` naming a different game id |
 | `expected_step_mismatch` | `expected_step` ≠ pending decision `step` |
 | `candidate_id_out_of_range` | `candidate_id` outside the current candidate list |

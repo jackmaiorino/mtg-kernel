@@ -6,8 +6,10 @@
 use mtg_kernel::agent_bridge_v1::{
     SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1, SPELLBENCH_PROTOCOL_V1,
 };
+use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -279,6 +281,331 @@ fn agent_bridge_emits_only_spec_safe_integers() {
     assert_eq!(terminal["response_type"], "terminal");
 }
 
+/// Catalog decks policy surface v5 can play through (Terror is refused).
+const SWEEP_DECKS: [&str; 8] = [
+    "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "CawGates", "Faeries",
+];
+
+fn splitmix64(state: u64) -> u64 {
+    let mut z = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Deterministic test policy: a pseudo-random candidate per (seed, step).
+fn sweep_choice(seed: u64, step: u64, candidate_count: usize) -> usize {
+    (splitmix64(seed ^ step.wrapping_mul(0xD1B5_4A32_D192_ED03)) % candidate_count as u64) as usize
+}
+
+fn reset_line_for(request_id: &str, game_id: &str, decks: [&str; 2], game_seed: u64) -> String {
+    json!({
+        "request_type": "reset",
+        "protocol": SPELLBENCH_PROTOCOL_V1,
+        "request_id": request_id,
+        "game_id": game_id,
+        "format": "pauper-bo1",
+        "seats": [
+            {"seat": "p0", "deck": {"catalog_id": decks[0]}},
+            {"seat": "p1", "deck": {"catalog_id": decks[1]}},
+        ],
+        "game_seed": game_seed,
+        "max_decisions": 600,
+        "max_steps": 6000,
+    })
+    .to_string()
+}
+
+/// FNV-1a 64 over the game id's UTF-8 bytes (`fnv1a64-utf8-game-id/v1`).
+fn episode_id_for(game_id: &str) -> u64 {
+    game_id.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+type ObjectKey = (u64, u64);
+
+fn collect_named_cards(node: &Value, named: &mut HashMap<ObjectKey, String>) {
+    match node {
+        Value::Object(map) => {
+            if let (Some(stable), Some(Value::String(name))) =
+                (map.get("stable"), map.get("card_name"))
+            {
+                let key = (
+                    stable["arena_id"].as_u64().unwrap(),
+                    stable["zone_change_count"].as_u64().unwrap(),
+                );
+                if let Some(previous) = named.insert(key, name.clone()) {
+                    assert_eq!(
+                        &previous, name,
+                        "observation names {key:?} twice differently"
+                    );
+                }
+            }
+            map.values()
+                .for_each(|child| collect_named_cards(child, named));
+        }
+        Value::Array(items) => items
+            .iter()
+            .for_each(|child| collect_named_cards(child, named)),
+        _ => {}
+    }
+}
+
+/// What the acting seat's own observation reveals: the name it shows for each
+/// object, and the objects its pending effect offers as targets.
+fn acting_seat_knowledge(observation: &Value) -> (HashMap<ObjectKey, String>, HashSet<ObjectKey>) {
+    let mut named = HashMap::new();
+    collect_named_cards(observation, &mut named);
+    let mut offered = HashSet::new();
+    let choice = &observation["projection"]["engine_context"]["pending_effect"]["choice"];
+    if choice["choice_kind"] == "targets" {
+        for key in ["legal_targets", "selected_targets"] {
+            for target in choice[key].as_array().unwrap() {
+                if let Some(object) = target.get("object") {
+                    offered.insert((
+                        object["arena_id"].as_u64().unwrap(),
+                        object["zone_change_count"].as_u64().unwrap(),
+                    ));
+                }
+            }
+        }
+    }
+    (named, offered)
+}
+
+fn collect_object_refs<'a>(node: &'a Value, refs: &mut Vec<&'a Value>) {
+    match node {
+        Value::Object(map) => {
+            if map.contains_key("object_id") && map.contains_key("zone") {
+                refs.push(node);
+            }
+            map.values()
+                .for_each(|child| collect_object_refs(child, refs));
+        }
+        Value::Array(items) => items
+            .iter()
+            .for_each(|child| collect_object_refs(child, refs)),
+        _ => {}
+    }
+}
+
+fn object_key(object_ref: &Value) -> ObjectKey {
+    // obj-<arena_id:06>-z<zone_change_count:04>
+    let id = object_ref["object_id"].as_str().unwrap();
+    let (arena, zone_changes) = id.strip_prefix("obj-").unwrap().split_once("-z").unwrap();
+    (arena.parse().unwrap(), zone_changes.parse().unwrap())
+}
+
+/// Spec Section 5: `card_name` is the name the observing seat knows, null
+/// only for identities hidden from it.
+fn assert_candidate_names_follow_the_observation(decision: &Value) -> usize {
+    let (named, offered) = acting_seat_knowledge(&kernel_v5_payload(decision, "observation"));
+    let acting = decision["acting_seat"].as_str().unwrap();
+    let mut refs = Vec::new();
+    for candidate in decision["candidates"].as_array().unwrap() {
+        collect_object_refs(&candidate["semantic"], &mut refs);
+    }
+    for object_ref in &refs {
+        let key = object_key(object_ref);
+        let shown = &object_ref["card_name"];
+        match named.get(&key) {
+            Some(name) => assert_eq!(shown, name, "name the observation gives {object_ref}"),
+            None if offered.contains(&key) => {
+                assert!(
+                    shown.is_string(),
+                    "offered target must be named: {object_ref}"
+                )
+            }
+            None => {
+                let zone = object_ref["zone"].as_str().unwrap();
+                let hidden = zone == "library"
+                    || (zone == "hand" && object_ref["owner_seat"].as_str().unwrap() != acting);
+                assert_eq!(shown.is_null(), hidden, "visibility of {object_ref}");
+            }
+        }
+    }
+    refs.len()
+}
+
+#[test]
+fn agent_bridge_names_what_the_acting_seat_knows_and_counts_every_terminal() {
+    let mut checked_refs = 0;
+    for deck in SWEEP_DECKS {
+        for seed in 1..=3_u64 {
+            let mut server = test_server();
+            let game_id = format!("g-sweep-{deck}-{seed}");
+            let mut current = parse_line(&server.handle_line(&reset_line_for(
+                "r-0",
+                &game_id,
+                [deck, deck],
+                seed,
+            )));
+            let mut last: Option<Value> = None;
+            while current["response_type"] == "decision" {
+                checked_refs += assert_candidate_names_follow_the_observation(&current);
+                let step = current["step"].as_u64().unwrap();
+                let choice =
+                    sweep_choice(seed, step, current["candidates"].as_array().unwrap().len());
+                let next = parse_line(&server.handle_line(&step_line_for(
+                    &format!("s-{step}"),
+                    &current,
+                    choice,
+                )));
+                last = Some(current);
+                current = next;
+            }
+            assert_eq!(
+                current["response_type"], "terminal",
+                "{deck} seed {seed}: {current}"
+            );
+            // The reference host's count rule: every answered decision is a
+            // step, and a physical decision counts once its group completes.
+            let (steps, decisions) = match &last {
+                None => (0, 0),
+                Some(answered) => {
+                    let group = &answered["group"];
+                    let closed = group["substep_index"].as_u64().unwrap() + 1
+                        == group["substep_count"].as_u64().unwrap();
+                    (
+                        answered["step"].as_u64().unwrap() + 1,
+                        group["group_id"].as_u64().unwrap() + u64::from(closed),
+                    )
+                }
+            };
+            assert_eq!(
+                current["step_count"], steps,
+                "{deck} seed {seed}: {current}"
+            );
+            assert_eq!(
+                current["decision_count"], decisions,
+                "{deck} seed {seed}: {current}"
+            );
+        }
+    }
+    assert!(
+        checked_refs > 10_000,
+        "sweep checked only {checked_refs} references"
+    );
+}
+
+#[test]
+fn agent_bridge_applies_exactly_the_chosen_kernel_action() {
+    // Differential: a raw kernel session stepped in lockstep with the bridge
+    // must see the same observation and legal actions at every step.
+    for deck in ["Burn", "Faeries", "CawGates", "Spy"] {
+        let seed = 42;
+        let game_id = format!("g-diff-{deck}");
+        let mut server = test_server();
+        let mut session = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            episode_id_for(&game_id),
+            seed,
+            600,
+            6000,
+            [deck.to_string(), deck.to_string()],
+        )
+        .unwrap();
+        let mut current =
+            parse_line(&server.handle_line(&reset_line_for("r-0", &game_id, [deck, deck], seed)));
+        let mut kernel = session.current_response();
+        loop {
+            match (&kernel, current["response_type"].as_str().unwrap()) {
+                (RlSessionResponseV1::Decision(expected), "decision") => {
+                    let extension = &current["extensions"]["x_kernel_v5"];
+                    assert_eq!(
+                        extension["observation_json"].as_str().unwrap(),
+                        serde_json::to_string(&expected.observation).unwrap()
+                    );
+                    assert_eq!(
+                        extension["legal_actions_json"].as_str().unwrap(),
+                        serde_json::to_string(&expected.legal_actions).unwrap()
+                    );
+                    let step = expected.step;
+                    let choice = sweep_choice(seed, step, expected.legal_actions.len());
+                    let stable_id = expected.legal_actions[choice].stable_id.clone();
+                    let request = step_line_for(&format!("s-{step}"), &current, choice);
+                    current = parse_line(&server.handle_line(&request));
+                    kernel = session
+                        .step(episode_id_for(&game_id), step, choice as u32, &stable_id)
+                        .unwrap();
+                }
+                (RlSessionResponseV1::Terminal(expected), "terminal") => {
+                    assert_eq!(current["step_count"], expected.policy_step_count, "{deck}");
+                    break;
+                }
+                (_, other) => {
+                    panic!("{deck}: bridge answered {other} where the kernel did not: {current}")
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn agent_bridge_serves_sequential_games_with_fresh_game_ids() {
+    // Spec Section 2: at most one ACTIVE game per process; game ids are
+    // unique per process.
+    let mut server = test_server();
+    let capped = |request_id: &str, game_id: &str| {
+        json!({
+            "request_type": "reset",
+            "protocol": SPELLBENCH_PROTOCOL_V1,
+            "request_id": request_id,
+            "game_id": game_id,
+            "format": "pauper-bo1",
+            "seats": [
+                {"seat": "p0", "deck": {"catalog_id": "Burn"}},
+                {"seat": "p1", "deck": {"catalog_id": "Burn"}},
+            ],
+            "game_seed": 1,
+            "max_decisions": 0,
+            "max_steps": 0,
+        })
+        .to_string()
+    };
+    let first = parse_line(&server.handle_line(&capped("r-1", "g-1")));
+    assert_eq!(first["response_type"], "terminal");
+    let second = parse_line(&server.handle_line(&capped("r-2", "g-2")));
+    assert_eq!(
+        second["response_type"], "terminal",
+        "a finished game frees the process"
+    );
+    let reused = parse_line(&server.handle_line(&capped("r-3", "g-1")));
+    assert_eq!(
+        reused["error"]["code"], "malformed_request",
+        "game ids are unique per process"
+    );
+    let live = parse_line(&server.handle_line(&reset_line_for("r-4", "g-3", ["Burn", "Burn"], 5)));
+    assert_eq!(live["response_type"], "decision");
+    let overlapping = parse_line(&server.handle_line(&capped("r-5", "g-4")));
+    assert_eq!(overlapping["error"]["code"], "game_already_active");
+}
+
+#[test]
+fn agent_bridge_errors_echo_an_empty_request_id_when_none_is_readable() {
+    // Spec Section 4.1: every response carries a string request_id.
+    let mut server = test_server();
+    for line in [
+        "not json at all",
+        "[1,2,3]",
+        r#"{"request_type":"hello","protocol":"spellbench/v1","request_id":7}"#,
+    ] {
+        let response = parse_line(&server.handle_line(line));
+        assert_eq!(response["response_type"], "error", "{line}");
+        assert_eq!(response["request_id"], "", "{line}");
+    }
+}
+
+#[test]
+fn agent_bridge_refuses_decks_policy_v5_cannot_play() {
+    // Terror stages Escape, which policy surface v5 cannot represent: most of
+    // its games would halt, biasing any rating built from the rest.
+    let mut server = test_server();
+    let response =
+        parse_line(&server.handle_line(&reset_line_for("r-0", "g-terror", ["Terror", "Burn"], 1)));
+    assert_eq!(response["error"]["code"], "unsupported_deck");
+}
+
 #[test]
 fn agent_bridge_in_process_burn_mirror_reaches_terminal_with_clean_groups() {
     let mut server = test_server();
@@ -312,9 +639,9 @@ fn agent_bridge_in_process_burn_mirror_reaches_terminal_with_clean_groups() {
 #[test]
 fn agent_bridge_semantics_round_trip_both_directions() {
     // Forward: every emitted candidate semantic is spec-shaped and hashed.
-    // Reverse: echoing candidate k selects exactly kernel legal action k,
-    // proven by the x_kernel_v5 extension advancing with the matching
-    // stable_id applied (the session rejects any other binding).
+    // Reverse: a non-zero candidate is accepted and a wrong echo is refused;
+    // agent_bridge_applies_exactly_the_chosen_kernel_action proves the
+    // selected kernel action is applied.
     let mut server = test_server();
     let current = parse_line(&server.handle_line(&burn_mirror_reset_line("r-0", "g-rt", 99)));
     assert_eq!(current["response_type"], "decision");
@@ -325,10 +652,6 @@ fn agent_bridge_semantics_round_trip_both_directions() {
     );
     // Answer with the LAST candidate to prove non-zero indices bind exactly.
     let chosen = candidate_count - 1;
-    let chosen_stable_id = kernel_v5_payload(&current, "legal_actions")[chosen]["stable_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
     let step = step_line_for("s-0", &current, chosen);
     let next = parse_line(&server.handle_line(&step));
     assert_ne!(next["response_type"], "error", "echo of candidate {chosen}");
@@ -349,7 +672,6 @@ fn agent_bridge_semantics_round_trip_both_directions() {
         let rejected = parse_line(&server.handle_line(&bad));
         assert_eq!(rejected["error"]["code"], "semantic_echo_mismatch");
     }
-    let _ = chosen_stable_id;
 }
 
 struct BridgeProcess {
@@ -624,8 +946,9 @@ fn agent_bridge_process_error_table_retry_and_framing() {
     let response = process.exchange(&late_step);
     assert_eq!(response["error"]["code"], "game_already_terminal");
 
+    // A finished game frees the process for the next game id.
     let reentry = process.exchange(&burn_mirror_reset_line("r-2", "g-again", 1));
-    assert_eq!(reentry["error"]["code"], "game_already_active");
+    assert_eq!(reentry["response_type"], "decision");
 
     // \r\n is tolerated on read.
     write!(process.stdin, "{}\r\n", hello_line("h-crlf")).unwrap();
