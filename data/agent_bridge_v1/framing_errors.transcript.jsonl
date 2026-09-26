@@ -1,0 +1,18 @@
+{"dir":"host_to_engine","line":"this is not json"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"malformed_json\",\"message\":\"request line is not valid strict JSON\"},\"protocol\":\"spellbench/v1\",\"request_id\":null,\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"request_type\":\"hello\",\"request_type\":\"hello\"}"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"malformed_json\",\"message\":\"request line is not valid strict JSON\"},\"protocol\":\"spellbench/v1\",\"request_id\":null,\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"expected_step\":1.5,\"game_id\":\"g-none\",\"protocol\":\"spellbench/v1\",\"request_id\":\"frac\",\"request_type\":\"step\",\"selection\":{\"candidate_id\":0,\"semantic_echo\":{\"kind\":\"pass\"}}}"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"malformed_json\",\"message\":\"request line contains a fractional number\"},\"protocol\":\"spellbench/v1\",\"request_id\":null,\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"[1,2,3]"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"malformed_request\",\"message\":\"request top level must be a JSON object\"},\"protocol\":\"spellbench/v1\",\"request_id\":null,\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"protocol\":\"spellbench/v0\",\"request_id\":\"p-1\",\"request_type\":\"hello\"}"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"protocol_mismatch\",\"message\":\"protocol must be spellbench/v1\"},\"protocol\":\"spellbench/v1\",\"request_id\":\"p-1\",\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"protocol\":\"spellbench/v1\",\"request_id\":\"m-1\",\"request_type\":\"hello\",\"surprise\":true}"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"malformed_request\",\"message\":\"request does not match the spellbench/v1 environment schema\"},\"protocol\":\"spellbench/v1\",\"request_id\":\"m-1\",\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"protocol\":\"spellbench/v1\",\"request_id\":\"m-2\",\"request_type\":\"teleport\"}"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"malformed_request\",\"message\":\"request does not match the spellbench/v1 environment schema\"},\"protocol\":\"spellbench/v1\",\"request_id\":\"m-2\",\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"expected_step\":0,\"game_id\":\"g-none\",\"protocol\":\"spellbench/v1\",\"request_id\":\"s-early\",\"request_type\":\"step\",\"selection\":{\"candidate_id\":0,\"semantic_echo\":{\"kind\":\"pass\"}}}"}
+{"dir":"engine_to_host","line":"{\"error\":{\"code\":\"step_before_reset\",\"message\":\"step request received before any reset\"},\"protocol\":\"spellbench/v1\",\"request_id\":\"s-early\",\"response_type\":\"error\"}"}
+{"dir":"host_to_engine","line":"{\"protocol\":\"spellbench/v1\",\"request_id\":\"h-after\",\"request_type\":\"hello\"}"}
+{"dir":"engine_to_host","line":"{\"capabilities\":{\"decklists_as_data\":false},\"engine\":{\"card_pool_identity\":\"mtg-kernel-pauper-pool-v1/carddb-64c82a261e078f1a\",\"name\":\"mtg-kernel\",\"rules_snapshot_id\":\"mtg-kernel-rules/0.0.4-spike/carddb-64c82a261e078f1a\",\"source_revision\":\"spellbench-golden-v1\",\"version\":\"0.0.4-spike\"},\"extensions\":[\"x_kernel_v5\"],\"formats\":[\"pauper-bo1\"],\"protocol\":\"spellbench/v1\",\"request_id\":\"h-after\",\"response_type\":\"hello_ok\"}"}

@@ -1,0 +1,51 @@
+//! Spellbench `spellbench/v1` environment-role stdio binary.
+//!
+//! One compact JSON request object per stdin line, one compact JSON response
+//! object per stdout line, in order. Framing follows spec Section 2 through
+//! `agent_bridge_v1::read_bridge_input_line_v1` (8 MiB cap, `\r\n` tolerated
+//! on read); the protocol itself is served by
+//! `agent_bridge_v1::SpellbenchBridgeServerV1`. Closing stdin ends the
+//! process with exit code 0; there is no quit message. stderr is diagnostics
+//! only and never part of the protocol.
+
+use mtg_kernel::agent_bridge_v1::{
+    read_bridge_input_line_v1, BridgeInputLineV1, SpellbenchBridgeServerV1,
+};
+use std::io::{self, Write};
+
+fn main() {
+    let mut args = std::env::args_os();
+    let _program = args.next();
+    if args.next().is_some() {
+        eprintln!("usage: agent_bridge_v1");
+        std::process::exit(2);
+    }
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let mut stdout = io::stdout().lock();
+    let mut server = SpellbenchBridgeServerV1::new();
+    let mut buffer: Vec<u8> = Vec::new();
+
+    loop {
+        let response = match read_bridge_input_line_v1(&mut reader, &mut buffer) {
+            Ok(BridgeInputLineV1::Eof) => break,
+            Ok(BridgeInputLineV1::Oversized) => server.oversized_line_response(),
+            Ok(BridgeInputLineV1::Line(bytes)) => match String::from_utf8(bytes) {
+                Ok(line) => server.handle_line(&line),
+                Err(_) => server.invalid_utf8_line_response(),
+            },
+            Err(err) => {
+                eprintln!("stdin read failed: {err}");
+                std::process::exit(1);
+            }
+        };
+        if let Err(err) = writeln!(stdout, "{response}") {
+            eprintln!("stdout write failed: {err}");
+            std::process::exit(1);
+        }
+        if let Err(err) = stdout.flush() {
+            eprintln!("stdout flush failed: {err}");
+            std::process::exit(1);
+        }
+    }
+}

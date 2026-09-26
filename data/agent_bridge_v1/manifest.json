@@ -1,0 +1,42 @@
+{
+  "schema": "kernel_agent_bridge_goldens/v1",
+  "protocol": "spellbench/v1",
+  "generator": "mtg-kernel-agent-bridge-goldens-stdlib-python-v1",
+  "engine_binary": {
+    "env_var": "MTG_KERNEL_AGENT_BRIDGE_V1_BIN",
+    "default_path": "target/release/agent_bridge_v1"
+  },
+  "environment": {
+    "SPELLBENCH_SOURCE_REVISION": "spellbench-golden-v1"
+  },
+  "scenarios": [
+    {
+      "name": "hello",
+      "description": "hello handshake and engine identity",
+      "file": "hello.transcript.jsonl",
+      "sha256": "015644e5b113ba6da3568a27aeecd7d780263f6e29bb7261bcf841c38561e7c5",
+      "line_count": 2
+    },
+    {
+      "name": "framing_errors",
+      "description": "malformed JSON, malformed requests, and protocol mismatch without a game",
+      "file": "framing_errors.transcript.jsonl",
+      "sha256": "29553989e019ec4a3cf538e5eaf8d78eb05f24cd931d4ba3082c9fc1aa7a313b",
+      "line_count": 18
+    },
+    {
+      "name": "degenerate_game",
+      "description": "zero-cap reset terminal, game_already_terminal, game_already_active",
+      "file": "degenerate_game.transcript.jsonl",
+      "sha256": "0765d38d1ec197c9b467face0a3fbe4347ddf05857227a8f505196e92daf07fb",
+      "line_count": 6
+    },
+    {
+      "name": "burn_mirror_capped",
+      "description": "capped Burn mirror driven by candidate 0 with retry and reuse probes",
+      "file": "burn_mirror_capped.transcript.jsonl",
+      "sha256": "5939c850082748e9d6b1acb1e763c996169c05ad9b90eeb0caaf4d45e4966353",
+      "line_count": 56
+    }
+  ]
+}

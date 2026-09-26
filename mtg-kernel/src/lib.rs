@@ -33,6 +33,12 @@ compile_error!(
     "native-training-store-v2-production requires Windows MSVC x86_64/aarch64 release without debug assertions"
 );
 
+// Spellbench `spellbench/v1` environment-role bridge (spec authority:
+// SPELLBENCH_PROTOCOL_V1.md; adapter contract: docs/contracts/AGENT_BRIDGE_V1.md).
+// In-process server over RlEpisodeSessionV1 plus the strict NDJSON stdio
+// framing used by src/bin/agent_bridge_v1.rs. Purely additive surface; no
+// kernel_rl_jsonl v5/v6 behavior changes.
+pub mod agent_bridge_v1;
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;

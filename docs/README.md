@@ -20,3 +20,7 @@ current documentation paths from their original Git paths.
 - [Observation diagnostics classification retry v1](contracts/OBSERVATION_DIAGNOSTICS_CLASSIFICATION_RETRY_V1.md)
 - [Observation diagnostics result v1](reports/OBSERVATION_DIAGNOSTICS_RESULT_V1.md)
 - [Invalid action-ingress execution v1](archive/ACTION_INGRESS_ADMISSION_EXECUTION_V1_INVALID.md)
+
+## Protocol contracts
+
+- [Agent bridge v1 (spellbench/v1 environment role)](contracts/AGENT_BRIDGE_V1.md)

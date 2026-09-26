@@ -164,11 +164,14 @@ jobs:
         include:
           - os: ubuntu-24.04
             kernel_bin: target/release/kernel_rl_env
+            agent_bridge_bin: target/release/agent_bridge_v1
           - os: windows-2025
             kernel_bin: target/release/kernel_rl_env.exe
+            agent_bridge_bin: target/release/agent_bridge_v1.exe
     runs-on: ${{ matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
+      MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/${{ matrix.agent_bridge_bin }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -199,7 +202,11 @@ jobs:
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
 
       - name: Build release JSONL environment
-        run: cargo build --release --locked --bin kernel_rl_env
+        run: cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1
+
+      - name: Validate agent bridge v1 golden transcripts
+        if: matrix.shard == 0
+        run: uv run --no-sync python python/tools/generate_agent_bridge_goldens.py --check --repo-root .
 
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count 2
