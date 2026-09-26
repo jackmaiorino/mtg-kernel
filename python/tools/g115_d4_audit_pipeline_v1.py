@@ -224,11 +224,11 @@ def execute(plan, work, commands, binary, compact, live, host):
     signal_reference = None
     profiles = threading.local()
 
-    def guard():
+    def guard(full_retained=False):
         began = time.monotonic()
         require(not stop.is_set() and time.monotonic()-started < plan['total_seconds'], 'Pipeline stopped or timed out')
         require(available_memory() >= reserve_memory, 'Memory reserve reached')
-        timings = storage.check()
+        timings = storage.check(full_retained=full_retained)
         profile = getattr(profiles, 'current', None)
         if profile is not None:
             profile['guard_calls'] = profile.get('guard_calls', 0)+1
@@ -376,6 +376,7 @@ def execute(plan, work, commands, binary, compact, live, host):
     try:
         save(storage.control/'manifest.json', plan)
         for workers in plan['workers']:
+            guard(full_retained=True)
             begin = time.monotonic()
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 inputs = list(pool.map(lambda group: stage(group, workers), work['groups']))
@@ -389,6 +390,7 @@ def execute(plan, work, commands, binary, compact, live, host):
             signal_signatures = [r.get('signal_signature') for r in rows]
             require(signal_reference is None or signal_signatures == signal_reference, 'Serial/parallel raw signals differ')
             signal_reference = signal_signatures
+            guard(full_retained=True)
             seconds = time.monotonic()-begin
             phase = {'workers': workers, 'seconds': seconds, 'inputs': inputs, 'rows': rows,
                      'choice_rows': sum(r['choice_rows'] for r in rows), 'scoring_equal': True,

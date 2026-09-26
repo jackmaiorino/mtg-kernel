@@ -107,6 +107,75 @@ def physical_tree(path, allow_atomic_rename=False):
             'charged_bytes': charge(stored, count)}
 
 
+class RetainedTreeWatch:
+    """Charge a closed local tree once; any subsequent write invalidates it.
+
+    Arm before measuring. Keep a non-delete-shared root handle because subtree
+    notifications do not cover renaming the root itself. No notification is
+    rearmed or ignored. Full allocation scans still run at phase boundaries.
+    """
+    def __init__(self, path):
+        require(os.name == 'nt', 'Windows retained-tree watch required')
+        self.path = Path(path).resolve(strict=True)
+        self.kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        k = self.kernel
+        k.GetDriveTypeW.argtypes = [W.LPCWSTR]
+        k.GetDriveTypeW.restype = W.UINT
+        require(k.GetDriveTypeW(self.path.anchor) == 3, 'Retained watch requires a local fixed drive')
+        k.CreateFileW.argtypes = [W.LPCWSTR, W.DWORD, W.DWORD, W.LPVOID, W.DWORD, W.DWORD, W.HANDLE]
+        k.CreateFileW.restype = W.HANDLE
+        k.CloseHandle.argtypes = [W.HANDLE]
+        k.CloseHandle.restype = W.BOOL
+        k.FindFirstChangeNotificationW.argtypes = [W.LPCWSTR, W.BOOL, W.DWORD]
+        k.FindFirstChangeNotificationW.restype = W.HANDLE
+        k.FindCloseChangeNotification.argtypes = [W.HANDLE]
+        k.FindCloseChangeNotification.restype = W.BOOL
+        k.WaitForSingleObject.argtypes = [W.HANDLE, W.DWORD]
+        k.WaitForSingleObject.restype = W.DWORD
+        self.root_handle = self.notification = None
+        invalid = ctypes.c_void_p(-1).value
+        try:
+            handle = k.CreateFileW(str(self.path), 1, 3, None, 3, 0x02000000, None)
+            if handle == invalid:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.root_handle = handle
+            # Names, directories, attributes, size, last write and security.
+            # Last access is excluded: reading retained evidence is permitted.
+            handle = k.FindFirstChangeNotificationW(str(self.path), True, 0x11f)
+            if handle == invalid:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.notification = handle
+            self.charged_bytes = physical_tree(self.path)['charged_bytes']
+            self.check()
+        except BaseException:
+            self.close()
+            raise
+
+    def check(self, full=False):
+        require(self.notification is not None, 'Retained-tree watch is closed')
+        status = self.kernel.WaitForSingleObject(self.notification, 0)
+        if status == 0xffffffff:
+            raise ctypes.WinError(ctypes.get_last_error())
+        require(status == 258, 'Sealed retained tree changed after admission: '+str(self.path))
+        if full:
+            require(physical_tree(self.path)['charged_bytes'] <= self.charged_bytes,
+                    'Sealed retained tree grew after admission')
+            self.check()
+
+    def close(self):
+        if self.notification is not None:
+            self.kernel.FindCloseChangeNotification(self.notification)
+            self.notification = None
+        if self.root_handle is not None:
+            self.kernel.CloseHandle(self.root_handle)
+            self.root_handle = None
+
+    def __del__(self):
+        # Also release watches if the surrounding owner's admission raises.
+        if hasattr(self, 'root_handle'):
+            self.close()
+
+
 class AuditStorage:
     """Fresh-root owner; journal survives failure, no resume or deletion API."""
     def __init__(self, root, cap, control_allowance=64*1024**2, drive='e:', retained_roots=()):
@@ -116,13 +185,16 @@ class AuditStorage:
                 and not self.root.exists() and self.root.parent.is_dir(), 'Fresh owned host-specific root required')
         self.ledger = Ledger(cap, control_allowance)
         self.retained = {}
+        self.retained_watches = []
         for path in retained_roots:
             retained = Path(path).resolve(strict=True)
             require(retained.drive.lower() == drive and retained.is_dir()
                     and not self.root.is_relative_to(retained) and not retained.is_relative_to(self.root)
                     and all(not retained.is_relative_to(p) and not p.is_relative_to(retained)
                             for p in self.retained), 'Retained trees must be disjoint on the owned drive')
-            self.retained[retained] = physical_tree(retained)['charged_bytes']
+            watch = RetainedTreeWatch(retained)
+            self.retained_watches.append(watch)
+            self.retained[retained] = watch.charged_bytes
         retained_charge = sum(self.retained.values())
         self.ledger.committed += retained_charge
         require(self.ledger.committed < cap, 'Retained trees exhaust job cap')
@@ -137,7 +209,8 @@ class AuditStorage:
         self.control_allowance = control_allowance
         self.journal = (self.control/'storage.jsonl').open('x', encoding='utf-8')
         self._record('created', {'cap': cap, 'control_allowance': control_allowance,
-                                'retained': {str(p):n for p,n in self.retained.items()}})
+                                'retained': {str(p):n for p,n in self.retained.items()},
+                                'retained_monitor': 'armed_change_notification_and_phase_allocation_scan'})
 
     def _record(self, event, detail):
         line = json.dumps({'event': event, 'detail': detail, 'committed': self.ledger.committed,
@@ -169,7 +242,7 @@ class AuditStorage:
                 raise
             return folder
 
-    def check(self):
+    def check(self, full_retained=False):
         """Use during owned writes/children; consumer stops its children on failure."""
         began = time.monotonic()
         with self.lock:
@@ -184,9 +257,8 @@ class AuditStorage:
                 timings['disk_seconds'] = time.monotonic()-began
                 phase = 'retained_trees'
                 began = time.monotonic()
-                for path, original in self.retained.items():
-                    require(physical_tree(path)['charged_bytes'] <= original,
-                            'Sealed retained tree grew after admission')
+                for watch in self.retained_watches:
+                    watch.check(full=full_retained)
                 timings['retained_seconds'] = time.monotonic()-began
                 phase = 'control_tree'
                 began = time.monotonic()
@@ -225,5 +297,9 @@ class AuditStorage:
     def close(self):
         with self.lock:
             self.ledger.stopped = True
-            self._record('closed', {'unfinished_trees': list(self.ledger.pending)})
-            self.journal.close()
+            try:
+                self._record('closed', {'unfinished_trees': list(self.ledger.pending)})
+            finally:
+                self.journal.close()
+                for watch in self.retained_watches:
+                    watch.close()
