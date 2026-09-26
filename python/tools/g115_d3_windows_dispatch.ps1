@@ -106,6 +106,8 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     Assert-Hash $plan.observer.path $plan.observer.sha256
 } elseif ($launcherName -eq 'g115_d4_archive_transfer_v1.py') {
     if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-archive-transfer/v1') { throw 'Archive transfer requires the named Jack WMI sender' }
+} elseif ($launcherName -eq 'g115_d4_audit_verify_v1.py') {
+    if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-verification/v1') { throw 'Audit verification requires the bounded Windows verification owner' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4 launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {
