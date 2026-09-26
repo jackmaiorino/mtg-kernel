@@ -50,6 +50,9 @@ if ($RunConfig) {
             # The controller and its external lease guard inherit the WMI owner's
             # lifetime. Only the existing cloud controller may allocate or dispatch.
             & $config.python -u $config.cloud_controller --manifest $config.manifest --package $config.cloud_package --control $config.cloud_control --execute > (Join-Path $config.control_root 'worker.log') 2>&1
+        } elseif ($config.observer) {
+            Assert-Hash $config.observer $config.observer_sha256
+            & $config.python -B -u $config.observer --manifest $config.manifest --host $config.host_name --root $config.worker_root --report-root (Join-Path $config.control_root 'telemetry') > (Join-Path $config.control_root 'worker.log') 2>&1
         } else {
             & $config.python -u $config.launcher --manifest $config.manifest --host $config.host_name --root $config.worker_root > (Join-Path $config.control_root 'worker.log') 2>&1
         }
@@ -99,6 +102,12 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-replay-timing/v1') { throw 'D4 archived replay admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_d4_audit_pipeline_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-pipeline-qualification/v1' -or $plan.mode -notin @('qualification','production')) { throw 'D4 combined audit path requires guarded Windows qualification or production' }
+    if ($plan.mode -eq 'production') {
+        if ([IO.Path]::GetFileName($plan.observer.path) -ne 'g115_d4_audit_observer_v1.py') { throw 'Production requires the named utilization observer' }
+        Assert-Hash $plan.observer.path $plan.observer.sha256
+    }
+} elseif ($launcherName -eq 'g115_d4_archive_transfer_v1.py') {
+    if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-archive-transfer/v1') { throw 'Archive transfer requires the named Jack WMI sender' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4 launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {
@@ -118,6 +127,10 @@ $config = [ordered]@{
     launcher=$launcher; launcher_sha256=$plan.documents.launcher.sha256
     python=$Python; host_name=$HostName; worker_root=$WorkerRoot; control_root=$ControlRoot
     transport_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
+}
+if ($launcherName -eq 'g115_d4_audit_pipeline_v1.py' -and $plan.mode -eq 'production') {
+    $config.observer = $plan.observer.path
+    $config.observer_sha256 = $plan.observer.sha256
 }
 if ($cloudMode) {
     $config.cloud_controller = $cloudController
