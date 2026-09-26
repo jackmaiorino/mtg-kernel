@@ -61,8 +61,22 @@ class SealedReuse:
     """Read-only reuse from one closed, charged owner; invalid evidence aborts."""
     def __init__(self, plan, work):
         self.inputs = self.scores = {}
+        self.input_owners = self.score_owners = None
         spec = plan.get('reuse')
         if spec is None:
+            return
+        if 'sources' in spec:
+            require(1 <= len(spec['sources']) <= 8
+                    and all('sources' not in s for s in spec['sources']), 'Flat bounded reuse sources required')
+            self.inputs, self.scores, self.input_owners, self.score_owners = {}, {}, {}, {}
+            for source in spec['sources']:
+                owner = SealedReuse(dict(plan, reuse=source), work)
+                require(not (self.inputs.keys() & owner.inputs.keys())
+                        and not (self.scores.keys() & owner.scores.keys()), 'Overlapping reused work refused')
+                self.inputs.update(owner.inputs)
+                self.scores.update(owner.scores)
+                self.input_owners.update({key: owner for key in owner.inputs})
+                self.score_owners.update({key: owner for key in owner.scores})
             return
         self.root = Path(spec['worker_root']).resolve(strict=True)
         require(any(self.root.is_relative_to(Path(p).resolve(strict=True))
@@ -94,6 +108,8 @@ class SealedReuse:
         return read(ref), path.parent
 
     def stage(self, group, guard):
+        if self.input_owners is not None:
+            return self.input_owners[group['name']].stage(group, guard)
         begin = time.monotonic()
         ref = self.inputs[group['name']]
         row, folder = self.row(ref, 'stage.json')
@@ -109,6 +125,8 @@ class SealedReuse:
         return row
 
     def score(self, index, command, signal, guard):
+        if self.score_owners is not None:
+            return self.score_owners[str(index)].score(index, command, signal, guard)
         begin = time.monotonic()
         ref = self.scores[str(index)]
         row, folder = self.row(ref, 'scoring.json')
@@ -342,6 +360,7 @@ def execute(plan, work, commands, binary, compact, live, host):
         try:
             guard()
             with (folder/(label+'.stdout')).open('xb') as out, (folder/(label+'.stderr')).open('xb') as err:
+                spawned = time.monotonic()
                 proc = subprocess.Popen(command, stdout=out, stderr=err,
                                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
                 scheduling = configure_owned_child(proc, Path(command[0]))
@@ -351,7 +370,10 @@ def execute(plan, work, commands, binary, compact, live, host):
                         break
                     except subprocess.TimeoutExpired:
                         guard()
-                        require(time.monotonic()-begin < 120, 'Owned child time bound reached')
+                        # A guard can wait behind sibling filesystem work. Do
+                        # not kill a child that exited while that check ran.
+                        if proc.poll() is None:
+                            require(time.monotonic()-spawned < 120, 'Owned child time bound reached')
                 require(proc.returncode == 0, 'Owned child failed; no retry')
                 guard()
                 return {'seconds': time.monotonic()-begin, 'cpu_seconds': cpu_seconds(proc),

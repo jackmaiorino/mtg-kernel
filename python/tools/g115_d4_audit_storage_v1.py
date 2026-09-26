@@ -64,8 +64,8 @@ class Ledger:
                 'Measured tree exceeded reservation; admission stopped')
 
 
-def physical_tree(path, allow_atomic_rename=False):
-    """Measure sealed files using Windows allocation data, rejecting linked trees."""
+def physical_tree(path, allow_atomic_rename=False, use_logical_bound=False):
+    """Measure allocation, or the conservative logical bound for owned active files."""
     require(os.name == 'nt', 'Windows allocation measurement required')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.GetCompressedFileSizeW.argtypes = [W.LPCWSTR, ctypes.POINTER(W.DWORD)]
@@ -89,13 +89,20 @@ def physical_tree(path, allow_atomic_rename=False):
                         continue
                     if not stat.S_ISREG(metadata.st_mode):
                         continue
-                    high = W.DWORD()
-                    ctypes.set_last_error(0)
-                    low = kernel.GetCompressedFileSizeW(item.path, ctypes.byref(high))
-                    if low == 0xffffffff and ctypes.get_last_error():
-                        raise ctypes.WinError(ctypes.get_last_error())
-                    data_bytes = (high.value << 32) | low
                     logical_size = metadata.st_size
+                    if use_logical_bound:
+                        # Our active writers use ordinary sequential writes or
+                        # WOF compression, with no allocation beyond EOF. The
+                        # uncompressed length bounds their file allocation and
+                        # needs no handle to an exclusively open publication.
+                        data_bytes = logical_size
+                    else:
+                        high = W.DWORD()
+                        ctypes.set_last_error(0)
+                        low = kernel.GetCompressedFileSizeW(item.path, ctypes.byref(high))
+                        if low == 0xffffffff and ctypes.get_last_error():
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        data_bytes = (high.value << 32) | low
                 except FileNotFoundError:
                     if allow_atomic_rename:
                         continue  # An owned .partial can be published during any lookup.
@@ -268,7 +275,8 @@ class AuditStorage:
                 phase = 'pending_trees'
                 began = time.monotonic()
                 for name, bound in self.ledger.pending.items():
-                    require(physical_tree(self.root/'jobs'/name, allow_atomic_rename=True)['charged_bytes'] <= bound,
+                    require(physical_tree(self.root/'jobs'/name, allow_atomic_rename=True,
+                                          use_logical_bound=True)['charged_bytes'] <= bound,
                             'Active tree exceeded reserved write bound')
                 timings['pending_seconds'] = time.monotonic()-began
                 return timings
