@@ -98,14 +98,25 @@ def physical_tree(path, allow_atomic_rename=False):
 
 class AuditStorage:
     """Fresh-root owner; journal survives failure, no resume or deletion API."""
-    def __init__(self, root, cap, control_allowance=64*1024**2, drive='e:'):
+    def __init__(self, root, cap, control_allowance=64*1024**2, drive='e:', retained_roots=()):
         requested = Path(root)
         self.root = requested.resolve()
         require(drive in ('e:', 'c:') and requested.is_absolute() and self.root.drive.lower() == drive
                 and not self.root.exists() and self.root.parent.is_dir(), 'Fresh owned host-specific root required')
         self.ledger = Ledger(cap, control_allowance)
+        self.retained = {}
+        for path in retained_roots:
+            retained = Path(path).resolve(strict=True)
+            require(retained.drive.lower() == drive and retained.is_dir()
+                    and not self.root.is_relative_to(retained) and not retained.is_relative_to(self.root)
+                    and all(not retained.is_relative_to(p) and not p.is_relative_to(retained)
+                            for p in self.retained), 'Retained trees must be disjoint on the owned drive')
+            self.retained[retained] = physical_tree(retained)['charged_bytes']
+        retained_charge = sum(self.retained.values())
+        self.ledger.committed += retained_charge
+        require(self.ledger.committed < cap, 'Retained trees exhaust job cap')
         self.reserve_bytes = 60*GIB
-        require(shutil.disk_usage(self.root.parent).free >= self.reserve_bytes+cap,
+        require(shutil.disk_usage(self.root.parent).free >= self.reserve_bytes+cap-retained_charge,
                 'Full cap plus disk reserve unavailable at admission')
         self.lock = threading.RLock()
         self.root.mkdir()
@@ -114,7 +125,8 @@ class AuditStorage:
         self.control.mkdir()
         self.control_allowance = control_allowance
         self.journal = (self.control/'storage.jsonl').open('x', encoding='utf-8')
-        self._record('created', {'cap': cap, 'control_allowance': control_allowance})
+        self._record('created', {'cap': cap, 'control_allowance': control_allowance,
+                                'retained': {str(p):n for p,n in self.retained.items()}})
 
     def _record(self, event, detail):
         line = json.dumps({'event': event, 'detail': detail, 'committed': self.ledger.committed,
@@ -153,6 +165,9 @@ class AuditStorage:
                 require(not self.ledger.stopped, 'Storage owner stopped')
                 require(shutil.disk_usage(self.root).free >= self.reserve_bytes,
                         'Disk reserve reached')
+                for path, original in self.retained.items():
+                    require(physical_tree(path)['charged_bytes'] <= original,
+                            'Sealed retained tree grew after admission')
                 control = physical_tree(self.control)
                 require(control['charged_bytes'] <= self.control_allowance, 'Control allowance exceeded')
                 for name, bound in self.ledger.pending.items():

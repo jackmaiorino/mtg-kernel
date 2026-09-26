@@ -98,7 +98,7 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
 } elseif ($launcherName -eq 'g115_d4_replay_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-replay-timing/v1') { throw 'D4 archived replay admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_d4_audit_pipeline_v1.py') {
-    if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-pipeline-qualification/v1' -or $plan.mode -ne 'qualification') { throw 'D4 combined audit path admits bounded Windows qualification only' }
+    if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-pipeline-qualification/v1' -or $plan.mode -notin @('qualification','production')) { throw 'D4 combined audit path requires guarded Windows qualification or production' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4 launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {

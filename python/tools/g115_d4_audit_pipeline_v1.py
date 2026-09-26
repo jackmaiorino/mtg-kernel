@@ -1,6 +1,6 @@
-"""WMI-owned qualification of ZIP extraction, LZX/readback and archived scoring.
+"""WMI-owned archived learning-signal audit and complete-path qualification.
 
-Production remains refused until this complete path has allocation evidence.
+Production requires qualified signals, exact coverage and allocation evidence.
 All copies and failed trees are retained. Only named input members are extracted.
 """
 import argparse
@@ -12,16 +12,21 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
 import zipfile
-from g115_d4_audit_storage_v1 import AuditStorage, charge, require
+from g115_d4_audit_storage_v1 import AuditStorage, charge, require, physical_tree
 from g115_d4_build_launch_v1 import available_memory
 from g115_d4_replay_timing_launch_v1 import pin, checked, read, save, inventory, cpu_seconds
 from windows_owned_child_policy_v1 import configure_owned_child
 
 SCHEMA = 'g115-d4-audit-pipeline-qualification/v1'
 MATRIX = [1, 4, 8]
+REMOTE_ENDPOINTS = {'r4-a', 'r4-b', 'r5-a', 'r5-b'}
+LOCAL_ENDPOINTS = {'r1-a', 'r1-b', 'r2-a', 'r2-b', 'r3-a', 'r3-b',
+                   'reused-entropy-r1', 'reused-entropy-r2',
+                   'reused-balanced-r1', 'reused-balanced-r2', 'pilot-control', 'pilot-broader'}
 
 
 def name_ok(name):
@@ -52,12 +57,19 @@ def resolve(value, staged):
 
 
 def limits(plan, work, commands):
-    require(plan['schema'] == SCHEMA and plan['mode'] == 'qualification', 'Production is not admitted')
-    require(plan['workers'] == MATRIX and plan['total_seconds'] == 900
-            and plan['child_seconds'] == 120, 'Fixed combined-path qualification bounds required')
-    require(0 < plan['cap_bytes'] <= 4*1024**3 and plan['formal_measurement'] is False,
-            'Small qualification cap required')
-    require(8 <= len(commands) <= 16 and 1 <= len(work['groups']) <= 32, 'Qualification coverage differs')
+    production = plan['mode'] == 'production'
+    require(plan['schema'] == SCHEMA and plan['mode'] in ('qualification', 'production'), 'Unknown audit mode')
+    require(plan['child_seconds'] == 120 and plan['formal_measurement'] is False, 'Archived audit bounds differ')
+    if production:
+        require(plan['workers'] in ([4], [8]) and 900 <= plan['total_seconds'] <= 21600
+                and 0 < plan['cap_bytes'] <= 60_000_000_000, 'Bounded selected production allocation required')
+        require(len(commands) in (800, 2400) and 1 <= len(work['groups']) <= 2800,
+                'Full assigned audit shard required')
+        require('signal_tool' in plan and 'signals' in work, 'All-record signal audit required')
+    else:
+        require(plan['workers'] == MATRIX and plan['total_seconds'] == 900
+                and 0 < plan['cap_bytes'] <= 4*1024**3, 'Fixed qualification matrix required')
+        require(8 <= len(commands) <= 16 and 1 <= len(work['groups']) <= 32, 'Qualification coverage differs')
     names = [g['name'] for g in work['groups']]
     require(len(set(names)) == len(names) and all(name_ok(n) for n in names), 'Invalid input group names')
     total = 0
@@ -72,13 +84,55 @@ def limits(plan, work, commands):
                 'Explicit bounded input lengths required')
         require(sum(f['bytes'] for f in files) <= 192*1024**2, 'Group raw peak too large')
         total += sum(f['bytes'] for f in files)
-    require(total <= 1024**3, 'Qualification input volume exceeds 1GiB')
+    require(total <= (200*1024**3 if production else 1024**3), 'Input volume exceeds audit bound')
     for command in commands:
         require(2 <= len(command['models']) <= 3 and len(command['trajectories']) == 10
                 and command['max_choice_rows_per_trajectory'] == 16
                 and command['minimum_behavior_replay_rows'] >= 1, 'Scoring workload differs')
-    require({c.get('trajectory_kind', 'public_input') for c in commands}
-            == {'public_input', 'native_expanded_v3'}, 'Both archive families required')
+    kinds = {c.get('trajectory_kind', 'public_input') for c in commands}
+    require(kinds <= {'public_input', 'native_expanded_v3'} and (production or len(kinds) == 2),
+            'Unsupported or incomplete trajectory family')
+
+
+def signal_limits(plan, work, commands, host):
+    enabled = 'signal_tool' in plan
+    require(enabled == ('signals' in work), 'Signal owner and workload must agree')
+    signals = [read(p) for p in work['signals']] if enabled else []
+    require(not enabled or len(signals) == len(commands), 'Signal coverage differs')
+    for command, signal in zip(commands, signals):
+        require(signal['schema'] == 'g115-d4-learning-signal-command/v1'
+                and signal['trajectories'] == command['trajectories'], 'Signal/scorer trajectory order differs')
+    if plan['mode'] == 'production':
+        expected = REMOTE_ENDPOINTS if host == 'haleyspc' else LOCAL_ENDPOINTS
+        coverage = [(s['endpoint'], s['update']) for s in signals]
+        require(len(coverage) == len(set(coverage)) and set(coverage) == {(e,u) for e in expected for u in range(200)},
+                'Missing, duplicate or foreign assigned update')
+        require(plan['cap_bytes'] <= (40_000_000_000 if host == 'haleyspc' else 60_000_000_000),
+                'Selected host cap exceeded')
+        evidence = read(plan['throughput'])
+        require(evidence['complete'] and evidence['signal_tool_sha256'] == plan['signal_tool']['sha256']
+                and evidence['binary_sha256'] == plan['binary']['sha256']
+                and evidence['launcher_sha256'] == plan['documents']['launcher']['sha256']
+                and evidence['dependencies'] == plan['dependencies']
+                and evidence['host'] == host and evidence['scientific_outputs_verified'] is True,
+                'Compatible verified whole-path throughput evidence required')
+        phases = evidence['phases']
+        require([p['workers'] for p in phases] == MATRIX
+                and all(p['seconds'] > 0 and p['choice_rows'] == phases[0]['choice_rows']
+                        and p['signal_updates'] == phases[0]['signal_updates'] == 8 for p in phases),
+                'Matched serial/parallel complete-work timing required')
+        selected = min(phases, key=lambda p:p['seconds'])['workers']
+        allocation = read(plan['allocation'])
+        require(plan['workers'] == [selected] and allocation['workers'][host] == selected
+                and set(allocation['selected_for_production_wiring']['endpoints']) == REMOTE_ENDPOINTS,
+                'Workers or shard differ from selected allocation')
+        parity = read(plan['cross_host_signal_verification'])
+        require(parity['scientific_outputs_equal'] is True
+                and parity['signal_tool_sha256'] == plan['signal_tool']['sha256']
+                and parity['binary_sha256'] == plan['binary']['sha256'],
+                'Cross-host signal parity not verified')
+        require(host != 'haleyspc' or bool(plan.get('retained_roots')), 'Transferred archive storage must be charged')
+    return signals
 
 
 def admission(plan, host):
@@ -89,6 +143,9 @@ def admission(plan, host):
                 ['g115_d4_audit_storage_v1.py', 'g115_d4_build_launch_v1.py',
                  'g115_d4_replay_timing_launch_v1.py', 'windows_owned_child_policy_v1.py']}
     require({checked(p).resolve() for p in plan['dependencies']} == expected, 'Helper pins incomplete')
+    if 'signal_tool' in plan:
+        require(checked(plan['signal_tool']).resolve() == Path(__file__).with_name('g115_d4_learning_signal_v1.py').resolve(),
+                'Only the named learning-signal child is admitted')
     binary = checked(plan['binary'])
     build = read(plan['build'])
     require(binary.name == 'public_policy_replay_audit_v1.exe' and build['complete']
@@ -98,6 +155,7 @@ def admission(plan, host):
     work = read(plan['workload'])
     commands = [read(ref) for ref in work['commands']]
     limits(plan, work, commands)
+    signal_limits(plan, work, commands, host)
     indexes = {}
     for group in work['groups']:
         for file in group['files']:
@@ -113,21 +171,37 @@ def admission(plan, host):
     reserve_memory = (32 if host == 'jack' else 8)*1024**3
     require(root.is_absolute() and root.resolve().drive.lower() == drive and not root.exists(),
             'Fresh host-specific root required')
-    live = inventory(root, reserve_memory, plan['cap_bytes'])
+    retained = [Path(p).resolve(strict=True) for p in plan.get('retained_roots', [])]
+    require(len(retained) == len(set(retained)) and all(p.drive.lower() == drive and not root.resolve().is_relative_to(p)
+            and not p.is_relative_to(root.resolve()) for p in retained), 'Invalid retained tree scope')
+    require(all(not a.is_relative_to(b) and not b.is_relative_to(a)
+                for i,a in enumerate(retained) for b in retained[i+1:]), 'Retained trees overlap')
+    prior = sum(physical_tree(p)['charged_bytes'] for p in retained)
+    require(prior < plan['cap_bytes'], 'Retained footprint exhausts cap')
+    if plan['mode'] == 'production' and host == 'haleyspc':
+        require(all(any(Path(f['archive']['path']).resolve().is_relative_to(p) for p in retained)
+                    for g in work['groups'] for f in g['files']), 'Uncharged transferred archive')
+    live = inventory(root, reserve_memory, plan['cap_bytes']-prior)
     require(live['computer_name'].lower() == plan['computer_name'].lower(), 'Wrong host')
     return work, commands, binary, compact, live
 
 
 def execute(plan, work, commands, binary, compact, live, host):
-    storage = AuditStorage(plan['worker_root'], plan['cap_bytes'], drive='e:' if host == 'jack' else 'c:')
+    storage = AuditStorage(plan['worker_root'], plan['cap_bytes'], drive='e:' if host == 'jack' else 'c:',
+                           retained_roots=plan.get('retained_roots', []))
     reserve_memory = (32 if host == 'jack' else 8)*1024**3
     started = time.monotonic()
     stop = threading.Event()
-    result = {'complete': False, 'phases': [], 'inventory': live, 'formal_measurement': False}
+    result = {'complete': False, 'phases': [], 'inventory': live, 'formal_measurement': False,
+              'host': host, 'launcher_sha256': plan['documents']['launcher']['sha256'],
+              'dependencies': plan['dependencies'], 'binary_sha256': plan['binary']['sha256'],
+              'signal_tool_sha256': plan.get('signal_tool', {}).get('sha256')}
     reference = None
+    signal_commands = signal_limits(plan, work, commands, host)
+    signal_reference = None
 
     def guard():
-        require(not stop.is_set() and time.monotonic()-started < 900, 'Pipeline stopped or timed out')
+        require(not stop.is_set() and time.monotonic()-started < plan['total_seconds'], 'Pipeline stopped or timed out')
         require(available_memory() >= reserve_memory, 'Memory reserve reached')
         storage.check()
 
@@ -223,6 +297,18 @@ def execute(plan, work, commands, binary, compact, live, host):
                           sort_keys=True, separators=(',', ':')).encode()).hexdigest() for p in files}
             row = {'index': index, 'timing': timing, 'choice_rows': final['choice_rows'],
                    'signatures': signatures, 'files': [pin(p) for p in files]}
+            if signal_commands:
+                signal = resolve(signal_commands[index], staged)
+                signal['output'] = str(folder/'signal.json')
+                save(folder/'signal-command.json', signal)
+                signal_timing = child([sys.executable, '-B', str(checked(plan['signal_tool'])),
+                                       '--command', str(folder/'signal-command.json')], folder, 'signal')
+                signal_result = json.loads((folder/'signal.json').read_bytes())
+                require(signal_result['complete'] and signal_result['summary']['normalized_statistics_bit_equal'],
+                        'Incomplete learning-signal audit')
+                row.update(signal=pin(folder/'signal.json'), signal_timing=signal_timing,
+                           signal_signature=hashlib.sha256(json.dumps(canonical(signal_result), sort_keys=True,
+                                                          separators=(',', ':')).encode()).hexdigest())
             save(folder/'scoring.json', row)
             row['storage'] = storage.seal(name)
             succeeded = True
@@ -234,7 +320,7 @@ def execute(plan, work, commands, binary, compact, live, host):
                     storage.seal(name, failed=True)
     try:
         save(storage.control/'manifest.json', plan)
-        for workers in MATRIX:
+        for workers in plan['workers']:
             begin = time.monotonic()
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 inputs = list(pool.map(lambda group: stage(group, workers), work['groups']))
@@ -245,9 +331,13 @@ def execute(plan, work, commands, binary, compact, live, host):
             signatures = [r['signatures'] for r in rows]
             require(reference is None or signatures == reference, 'Combined serial/parallel scoring differs')
             reference = signatures
+            signal_signatures = [r.get('signal_signature') for r in rows]
+            require(signal_reference is None or signal_signatures == signal_reference, 'Serial/parallel raw signals differ')
+            signal_reference = signal_signatures
             seconds = time.monotonic()-begin
             phase = {'workers': workers, 'seconds': seconds, 'inputs': inputs, 'rows': rows,
-                     'choice_rows': sum(r['choice_rows'] for r in rows), 'scoring_equal': True}
+                     'choice_rows': sum(r['choice_rows'] for r in rows), 'scoring_equal': True,
+                     'signal_updates': len(signal_commands), 'signal_equal': True}
             save(storage.control/f'phase-{workers}.json', phase)
             result['phases'].append(phase)
             guard()
