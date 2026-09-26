@@ -1,4 +1,4 @@
-# Agent Bridge v1 — Spellbench `spellbench/v1` Environment Role
+# Agent Bridge v1: Spellbench `spellbench/v1` Environment Role
 
 Status: ACTIVE wire contract for the mtg-kernel native Spellbench adapter.
 The cross-engine protocol authority is the external
@@ -52,8 +52,8 @@ requests that fail parsing or decoding are never cached.
   through its newline, so framing resynchronizes for the next line.
 - Strict parse failures (invalid JSON, duplicate object keys, non-finite
   numbers) and fractional numbers anywhere in the line are `malformed_json`.
-- A non-object top level is `malformed_request`. Unknown fields — including
-  `x_`-prefixed ones, since requests have no designated extension point — are
+- A non-object top level is `malformed_request`. Unknown fields (including
+  `x_`-prefixed ones, since requests have no designated extension point) are
   `malformed_request`. A `protocol` string other than `spellbench/v1` is
   `protocol_mismatch`; a missing or non-string `protocol` is
   `malformed_request`.
@@ -67,7 +67,7 @@ requests that fail parsing or decoding are never cached.
 - `format` must be `"pauper-bo1"` exactly, else `unsupported_format`.
 - `seats` must be exactly `p0` then `p1`, else `malformed_request`.
 - A deck must carry exactly one of `catalog_id` / `decklist` (both or neither
-  is `malformed_request`). `decklist` is `unsupported_deck` — this engine
+  is `malformed_request`). `decklist` is `unsupported_deck`; this engine
   never substitutes. An unknown `catalog_id` is `unsupported_deck`.
 - `game_seed` maps to the session `env_seed`; `max_decisions` maps to the
   session's physical-decision cap; `max_steps` maps to the session's
@@ -139,7 +139,7 @@ carries it, and the neutral schema allows no other fields. Integer widening
 
 | Kernel variant | Neutral `kind` | Field mapping |
 |---|---|---|
-| `Pass` | `pass` | — |
+| `Pass` | `pass` | (none) |
 | `PlayLand` | `play_land` | `source` |
 | `CastSpell` | `cast_spell` | `source` |
 | `ActivateManaAbility` | `activate_mana_ability` | `source`; `mana_choice`: `"W".."C"` or `null`; `cost_target`: `{"object": ref}` or `null` |
@@ -166,7 +166,7 @@ carries it, and the neutral schema allows no other fields. Integer widening
 | `ChooseAttackerInclusion` | `choose_attacker_inclusion` | `attacker`, `include` |
 | `ChooseBlockerInclusion` | `choose_blocker_inclusion` | `attacker`, `blocker`, `include` |
 | `OrderTriggers` | `order_triggers` | `pending_sources`, `order` |
-| `Ambiguous`, `DeclareAttackers`, `DeclareBlockersForAttacker` | — | refused: never emitted; an occurrence fails the game as `halted` |
+| `Ambiguous`, `DeclareAttackers`, `DeclareBlockersForAttacker` | (none) | refused: never emitted; an occurrence fails the game as `halted` |
 
 ## 7. step
 
