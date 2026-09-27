@@ -627,6 +627,13 @@ pub fn run(command: Command) -> Result<Value, String> {
             &receipt,
         )?;
     }
+    if let Some(receipt) = opponent_kind::run_receipt(config, &config_hash)? {
+        publish_json(
+            &command.output_directory,
+            "opponent-kinds-receipt.json",
+            &receipt,
+        )?;
+    }
     let mut receipts = Vec::new();
     for update in first_update..last {
         let started = std::time::Instant::now();

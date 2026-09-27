@@ -215,3 +215,52 @@ impl OpponentRecordV1 {
         ensure(rows.next().is_none(), "opponent record has no row")
     }
 }
+
+/// Identity receipt for a run whose schedule declares opt-in opponent kinds:
+/// each distinct declaration is loaded once before collection (so a bad pin
+/// or an unadmitted kind stops the run early) and its effective identity is
+/// bound with the build and executable. None when the run declares none.
+pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option<Value>, String> {
+    let mut kinds: Vec<&ExpandedOpponentKindV1> = Vec::new();
+    let mut episodes = 0usize;
+    for episode in config.updates.iter().flatten() {
+        if let Some(kind) = &episode.opponent_kind {
+            episode.configurations_for_public_collector_v1()?;
+            episodes += 1;
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+    }
+    if kinds.is_empty() {
+        return Ok(None);
+    }
+    let mut entries = Vec::new();
+    for kind in kinds {
+        match kind {
+            ExpandedOpponentKindV1::PublicCheckpoint { config, checkpoint } => {
+                let (_, identity) = load_for_evaluation(config, checkpoint)?;
+                entries.push(json!({
+                    "kind": "public_checkpoint", "config": config, "checkpoint": checkpoint,
+                    "effective_identity": identity,
+                    "sampler": "ordinary behavior sampler of each menu width",
+                }));
+            }
+            ExpandedOpponentKindV1::Legacy { .. } => {
+                return Err(
+                    "legacy V3 opponents are declared but not admitted by this build".into(),
+                )
+            }
+        }
+    }
+    let executable = std::env::current_exe().map_err(err)?;
+    Ok(Some(json!({
+        "schema": "mtg-kernel-public-opponent-kinds-receipt/v1",
+        "config_sha256": config_sha256,
+        "episodes": episodes,
+        "kinds": entries,
+        "build": SearchBuildV1::current(),
+        "executable_sha256": sha(&fs::read(executable).map_err(err)?),
+        "non_claim": "Engineering identity only; no strength or promotion claim.",
+    })))
+}
