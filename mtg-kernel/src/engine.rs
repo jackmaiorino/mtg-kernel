@@ -2331,6 +2331,11 @@ fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
 /// ability's source is the dungeon card (309.4c), which is colorless and not
 /// a permanent. None of them is subject to a source-dependent restriction
 /// such as protection from monocolored, so they target without a source.
+/// `None` stands for that colorless nonpermanent source because the current
+/// source-dependent filters (protection from monocolored,
+/// `CreatureOtherThanSource`) treat the two alike. A restriction such a
+/// source could fail, like protection from colorless, needs an explicit
+/// dungeon source instead.
 fn triggered_ability_targeting_source(
     source: ObjectId,
     source_contract: Option<AbilitySourceContractV4>,
