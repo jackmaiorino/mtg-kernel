@@ -495,12 +495,17 @@ fn legacy_routes_tell_strict_r14_and_frozen_receipts_apart() {
         &unaccepted,
         "r14 admission receipt lacks its acceptance reference",
     );
-    let mut no_hash = r14.clone();
-    no_hash.registry_pins = json!({"destination_card_db_hash": "064a7c989255ab3c"});
-    refuse(
-        &no_hash,
-        "r14 admission receipt lacks the source card-DB hash",
-    );
+    // The version-1 source card-DB pin itself, not its shape: a missing hash
+    // and a well-formed wrong one are both refused (CODEX #570).
+    let wrong_db = "r14 admission receipt does not state the version-1 source card-DB hash";
+    for pins in [
+        json!({"destination_card_db_hash": "064a7c989255ab3c"}),
+        json!({"source_card_db_hash": "64c82a261e078f1a"}),
+    ] {
+        let mut bad = r14.clone();
+        bad.registry_pins = pins;
+        refuse(&bad, wrong_db);
+    }
     let malformed = "malformed admission acceptance reference";
     let edits: [fn(&mut AdmissionAcceptanceV1); 4] = [
         |a: &mut AdmissionAcceptanceV1| a.accepted_commit = "3d".repeat(4),
@@ -529,6 +534,90 @@ fn legacy_routes_tell_strict_r14_and_frozen_receipts_apart() {
     let mut unknown = strict.clone();
     unknown.route = "r15".into();
     refuse(&unknown, "unknown legacy admission route \"r15\"");
+}
+
+/// After loading, a panel receipt's registry and namespace fields must equal
+/// the loaded nested identity's, affirmatively; a strict receipt names no
+/// allowlist, an r14 receipt names the one its namespace rule carries and must
+/// be on the version-1 source card DB (CODEX #570). The strict identity is
+/// panel-export's current-1 as loaded at 634426da.
+#[test]
+fn registry_bindings_must_equal_the_loaded_identity() {
+    let strict_origin = json!({
+        "schema": "mtg-kernel-frozen-sideboard-play-transfer/v1",
+        "source_registry_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
+        "source_card_db_hash": "64c82a261e078f1a",
+        "namespace_rule": "card-token=id+1; original registry entries identical except deck membership; append-only",
+        "destination_registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+        "destination_card_db_hash": "064a7c989255ab3c",
+    });
+    let mut strict_pins = strict_origin.clone();
+    strict_pins.as_object_mut().unwrap().remove("schema");
+    strict_pins["allowlist_sha256"] = Value::Null;
+    assert_eq!(
+        check_registry_bindings_v1("strict", &strict_pins, &strict_origin),
+        Ok(())
+    );
+    let allowlist = "2f".repeat(32);
+    let mut r14_origin = strict_origin.clone();
+    r14_origin["source_card_db_hash"] = json!("a06fa9566106f0ea");
+    r14_origin["namespace_rule"] = json!(format!(
+        "card-token=id+1; names and order identical; entries identical except deck membership and exactly the 89 field differences on 87 cards of registry evolution allowlist sha256 {allowlist} (source {}, destination {}); append-only",
+        "af".repeat(32),
+        "ef".repeat(32)
+    ));
+    let mut r14_pins = r14_origin.clone();
+    r14_pins.as_object_mut().unwrap().remove("schema");
+    r14_pins["allowlist_sha256"] = json!(allowlist);
+    assert_eq!(
+        check_registry_bindings_v1("r14", &r14_pins, &r14_origin),
+        Ok(())
+    );
+    let refuse = |route: &str, pins: &Value, origin: &Value, message: &str| {
+        assert_eq!(
+            check_registry_bindings_v1(route, pins, origin).unwrap_err(),
+            message
+        );
+    };
+    for field in REGISTRY_BINDING_FIELDS {
+        let message = format!("admission receipt {field} differs from the loaded identity");
+        let mut changed = strict_pins.clone();
+        changed[field] = json!("0".repeat(16));
+        refuse("strict", &changed, &strict_origin, &message);
+        let mut missing = strict_pins.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        refuse("strict", &missing, &strict_origin, &message);
+    }
+    let mut named = strict_pins.clone();
+    named["allowlist_sha256"] = json!(allowlist);
+    refuse(
+        "strict",
+        &named,
+        &strict_origin,
+        "strict admission receipt names an allowlist",
+    );
+    let other = "a0".repeat(32);
+    for bad_allowlist in [Value::Null, json!(other), json!(&allowlist[..63])] {
+        let mut bad = r14_pins.clone();
+        bad["allowlist_sha256"] = bad_allowlist;
+        refuse(
+            "r14",
+            &bad,
+            &r14_origin,
+            "r14 admission receipt allowlist differs from the loaded namespace rule",
+        );
+    }
+    // A consistent receipt and identity on another source card DB are refused.
+    let mut off_origin = r14_origin.clone();
+    off_origin["source_card_db_hash"] = json!("64c82a261e078f1a");
+    let mut off_pins = r14_pins.clone();
+    off_pins["source_card_db_hash"] = json!("64c82a261e078f1a");
+    refuse(
+        "r14",
+        &off_pins,
+        &off_origin,
+        "r14 import is not on the version-1 source card DB",
+    );
 }
 
 /// Admission helper, not a check: prints the loaded identity fields of the

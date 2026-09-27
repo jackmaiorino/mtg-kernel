@@ -176,11 +176,30 @@ pub(crate) enum OpponentSeatV1 {
     },
 }
 
+/// Registry fields a panel receipt (strict or r14) states exactly as the
+/// loaded nested identity carries them (CODEX #570, FABLE-REVIEW-20260927
+/// 16:00 addendum change 2).
+const REGISTRY_BINDING_FIELDS: [&str; 5] = [
+    "source_registry_sha256",
+    "source_card_db_hash",
+    "namespace_rule",
+    "destination_registry_sha256",
+    "destination_card_db_hash",
+];
+/// Version-1 source card-DB pin of the R14 route (panel-export change 1).
+const R14_SOURCE_CARD_DB_HASH_V1: &str = "a06fa9566106f0ea";
+
+fn lower_hex_v1(s: &str, n: usize) -> bool {
+    s.len() == n
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Route of an admission receipt, checked before any load: a known route
 /// whose nested identity and import-descriptor schemas are its own. An R14
-/// receipt must also carry its acceptance reference and the source card-DB
-/// hash (registry_pins.source_card_db_hash); without them R14 stays refused
-/// (CODEX #558, #566).
+/// receipt must also carry its acceptance reference and state the version-1
+/// source card-DB hash (registry_pins.source_card_db_hash); without them R14
+/// stays refused (CODEX #558, #566, #570).
 pub(crate) fn legacy_route_v1(receipt: &LegacyAdmissionV1) -> Result<&'static str, String> {
     let (route, identity_schema, import_schema) = LEGACY_ROUTES
         .iter()
@@ -192,11 +211,6 @@ pub(crate) fn legacy_route_v1(receipt: &LegacyAdmissionV1) -> Result<&'static st
             && receipt.import_descriptor.schema.as_deref() == import_schema,
         "legacy admission route disagrees with its identity or import schema",
     )?;
-    let hex = |s: &str, n: usize| {
-        s.len() == n
-            && s.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    };
     if let Some(a) = &receipt.acceptance {
         let section = a.fable_section.split_once(".md#");
         ensure(
@@ -206,7 +220,7 @@ pub(crate) fn legacy_route_v1(receipt: &LegacyAdmissionV1) -> Result<&'static st
                 .codex_countersign
                 .strip_prefix("CODEX #")
                 .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-                && hex(&a.accepted_commit, 40),
+                && lower_hex_v1(&a.accepted_commit, 40),
             "malformed admission acceptance reference",
         )?;
     }
@@ -216,13 +230,49 @@ pub(crate) fn legacy_route_v1(receipt: &LegacyAdmissionV1) -> Result<&'static st
             "r14 admission receipt lacks its acceptance reference",
         )?;
         ensure(
-            receipt.registry_pins["source_card_db_hash"]
-                .as_str()
-                .is_some_and(|h| hex(h, 16)),
-            "r14 admission receipt lacks the source card-DB hash",
+            receipt.registry_pins["source_card_db_hash"] == R14_SOURCE_CARD_DB_HASH_V1,
+            "r14 admission receipt does not state the version-1 source card-DB hash",
         )?;
     }
     Ok(route)
+}
+
+/// After loading, a panel receipt's registry and namespace fields must equal
+/// the same-named fields of the loaded nested identity, affirmatively (a
+/// missing field is refused). A strict receipt names no allowlist; an r14
+/// receipt names the allowlist its loaded namespace rule carries, and the
+/// loaded identity must be on the version-1 source card DB (CODEX #570).
+pub(crate) fn check_registry_bindings_v1(
+    route: &str,
+    pins: &Value,
+    origin: &Value,
+) -> Result<(), String> {
+    for field in REGISTRY_BINDING_FIELDS {
+        ensure(
+            !pins[field].is_null() && pins[field] == origin[field],
+            &format!("admission receipt {field} differs from the loaded identity"),
+        )?;
+    }
+    let allowlist = &pins["allowlist_sha256"];
+    if route == "r14" {
+        let rule = origin["namespace_rule"].as_str().unwrap_or_default();
+        ensure(
+            allowlist.as_str().is_some_and(|a| {
+                lower_hex_v1(a, 64) && rule.contains(&format!("allowlist sha256 {a} "))
+            }),
+            "r14 admission receipt allowlist differs from the loaded namespace rule",
+        )?;
+        ensure(
+            origin["source_card_db_hash"] == R14_SOURCE_CARD_DB_HASH_V1,
+            "r14 import is not on the version-1 source card DB",
+        )?;
+    } else {
+        ensure(
+            allowlist.is_null(),
+            "strict admission receipt names an allowlist",
+        )?;
+    }
+    Ok(())
 }
 
 /// Checks a Legacy declaration against its admission receipt, then loads it
@@ -241,7 +291,7 @@ fn admit_legacy(
     let descriptor: ExpandedModelSourceV1 =
         serde_json::from_slice(&read_pinned_bytes(&receipt.model_source)?).map_err(err)?;
     let e = &receipt.expected_identity;
-    legacy_route_v1(&receipt)?;
+    let route = legacy_route_v1(&receipt)?;
     ensure(
         receipt.schema == LEGACY_ADMISSION_SCHEMA
             && descriptor == *source
@@ -270,6 +320,9 @@ fn admit_legacy(
             && identity.model.feature_encoding_digest == e.feature_encoding_digest,
         "legacy opponent must load as the admitted V3 model",
     )?;
+    if route != "v3-frozen" {
+        check_registry_bindings_v1(route, &receipt.registry_pins, &origin)?;
+    }
     let effective = json!({
         "schema": "legacy-collection-model/v1", "member": receipt.member, "route": receipt.route,
         "admission": admission, "identity": identity,
