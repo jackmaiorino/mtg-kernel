@@ -12,15 +12,18 @@ fn pin(path: &str, sha256: &str) -> PinnedFileV1 {
     }
 }
 
-fn burn() -> ExpandedDeckListV1 {
-    let registration =
-        crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+fn deck(id: &str) -> ExpandedDeckListV1 {
+    let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
     let cards = registration.registered_configuration();
     ExpandedDeckListV1 {
-        label: "Burn".into(),
+        label: id.into(),
         mainboard: cards.mainboard().to_vec(),
         sideboard: cards.sideboard().to_vec(),
     }
+}
+
+fn burn() -> ExpandedDeckListV1 {
+    deck("Burn")
 }
 
 fn recent_kind() -> ExpandedOpponentKindV1 {
@@ -225,29 +228,41 @@ fn legacy_seat(forced: bool, spell_adapter: bool) -> OpponentSeatV1 {
     }
 }
 
-/// Legacy fixture games on consecutive seeds, up to the first in which the
-/// opponent meets a singleton menu (under one percent of rows in natural
-/// games), at most 16 games.
+/// Legacy fixture games over pool pairings (learner deck, opponent deck) and
+/// consecutive seeds, up to the first in which the opponent meets a singleton
+/// menu, at most 32 games. Singleton menus are rare (none in 16 burn mirrors
+/// with the fixture policies; Terror facing Affinity met five in one real game).
 fn legacy_games(
     learner_seat: u8,
     forced: bool,
     spell_adapter: bool,
 ) -> Vec<(ExpandedEpisodeV1, Trajectory)> {
     let mut games = Vec::new();
-    for k in 0..16 {
-        let mut episode = episode(learner_seat, Some(legacy_kind(forced, spell_adapter)));
-        episode.seed += 2 * k;
-        let trajectory = play(&episode, legacy_seat(forced, spell_adapter));
-        let singleton = trajectory
-            .decisions
-            .iter()
-            .any(|r| r.actor != learner_seat && r.logits.len() <= 1);
-        games.push((episode, trajectory));
-        if singleton {
-            return games;
+    for (learner, opponent) in [
+        ("Affinity", "Terror"),
+        ("Burn", "Wildfire"),
+        ("Elves", "Terror"),
+        ("Burn", "Affinity"),
+    ] {
+        for k in 0..8 {
+            let mut episode = episode(learner_seat, Some(legacy_kind(forced, spell_adapter)));
+            episode.seed += 2 * k;
+            let mut decks = [deck(opponent), deck(opponent)];
+            decks[learner_seat as usize] = deck(learner);
+            episode.registered = decks.clone();
+            episode.selected = decks;
+            let trajectory = play(&episode, legacy_seat(forced, spell_adapter));
+            let singleton = trajectory
+                .decisions
+                .iter()
+                .any(|r| r.actor != learner_seat && r.logits.len() <= 1);
+            games.push((episode, trajectory));
+            if singleton {
+                return games;
+            }
         }
     }
-    panic!("no opponent singleton menu in 16 fixture games");
+    panic!("no opponent singleton menu in 32 fixture games");
 }
 
 /// Legacy V3 against a V4 learner, both adapter settings: same seed gives
