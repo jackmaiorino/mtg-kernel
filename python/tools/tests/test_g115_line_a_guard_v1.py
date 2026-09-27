@@ -242,6 +242,21 @@ class OrderPinAndYardstickTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     guard.require_calibration_before_training(self.order(directory, **kwargs))
 
+    def test_composition_comes_only_from_the_director_scope_ruling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ruling = Path(directory) / 'DIRECTOR-RULINGS.md'
+            ruling.write_text('Scope ruling: version 1 freezes as staged B.')
+            scope = dict(schema=guard.SCOPE_SCHEMA, composition='B',
+                         ruling=dict(path=str(ruling), sha256=guard.sha256_file(ruling),
+                                     excerpt='version 1 freezes as staged B'))
+            guard.require_scope_ruling(scope, 'B')
+            with self.assertRaisesRegex(ValueError, 'differs from the director scope ruling'):
+                guard.require_scope_ruling(scope, 'E')
+            with self.assertRaisesRegex(ValueError, 'text absent'):
+                guard.require_scope_ruling(dict(scope, ruling=dict(scope['ruling'], excerpt='freezes as E')), 'B')
+        with self.assertRaisesRegex(ValueError, 'scope ruling record required'):
+            guard.require_scope_ruling(None, 'B')
+
     def test_one_pinned_yardstick_executable(self):
         self.assertEqual(guard.require_one_yardstick([dict(yardstick_executable_sha256='a' * 64)] * 3), 'a' * 64)
         for values in (['a' * 64, 'b' * 64], ['a' * 64, None]):

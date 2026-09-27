@@ -152,10 +152,48 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(current['evaluation']['status'], 'bound')
 
     def test_roster_validation_refuses_changed_roles(self):
+        def bind_with_short_pin(roster):
+            roster['members'][2]['evaluation'] = dict(status='bound', source=dict(
+                kind='public_checkpoint', config=dict(path='E:/c.json', sha256='a' * 64),
+                checkpoint=dict(path='E:/k.json', sha256='abc')))
+
+        def train_the_holdout(roster):
+            roster['members'][-1]['training'] = dict(status='bound', episode_fields=dict(opponent=source('b' * 64, 'h')))
+
         for change, message in ((lambda r: r['members'][6].update(scope='full'), 'Role or scope'),
                                 (lambda r: r['members'].append(copy.deepcopy(r['members'][0])), 'Duplicate'),
-                                (lambda r: r['members'].pop(0), 'Canonical roles incomplete')):
+                                (lambda r: r['members'].pop(0), 'Role v3 must carry all 1'),
+                                (lambda r: r['members'].pop(3), 'Role recent must carry all 4'),
+                                (lambda r: r['members'][4].update(lineage=' '), 'Lineage id required'),
+                                (lambda r: r['roles']['recent'].reverse(), 'role table differs'),
+                                (bind_with_short_pin, 'Incomplete pin'),
+                                (train_the_holdout, 'holdout never receives training exposure')):
             roster = copy.deepcopy(self.roster)
+            change(roster)
+            with self.assertRaisesRegex(ValueError, message):
+                manifest.validate_roster(roster)
+
+    def test_frozen_roster_binds_template_tables_and_exact_weights(self):
+        def frozen():
+            roster = copy.deepcopy(self.roster)
+            roster['frozen'] = True
+            roster['exposure_tables'] = {c: dict(path='E:/decl/%s.json' % c, sha256=c.lower() * 64) for c in 'EB'}
+            weights = dict(normalization='equal ordered deck pairs within each member, then member weight')
+            for composition in 'EB':
+                ids = [m['id'] for m in manifest.composition_members(roster, composition)]
+                weights[composition] = {i: '1/%d' % len(ids) for i in ids}
+            roster['yardstick_weights'] = weights
+            return roster
+
+        manifest.validate_roster(frozen())
+        for change, message in (
+                (lambda r: r.update(template=dict(r['template'], sha256='0' * 64)), 'bind the template hash'),
+                (lambda r: r['exposure_tables'].pop('B'), 'both exposure tables'),
+                (lambda r: r['yardstick_weights'].update(normalization=''), 'normalization declared'),
+                (lambda r: r['yardstick_weights']['E'].update({'holdout/b-block48': '1/2'}), 'no holdout'),
+                (lambda r: r['yardstick_weights']['B'].update(v3='0.1'), 'exact rational'),
+                (lambda r: r['yardstick_weights']['B'].update(v3='1/2'), 'do not sum to one')):
+            roster = frozen()
             change(roster)
             with self.assertRaisesRegex(ValueError, message):
                 manifest.validate_roster(roster)

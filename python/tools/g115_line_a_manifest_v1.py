@@ -18,6 +18,7 @@ exposure and weights are read from the frozen roster manifest, never chosen.
 """
 import argparse
 import copy
+from fractions import Fraction
 import hashlib
 import json
 from pathlib import Path
@@ -42,6 +43,8 @@ ROLES = {'v3': 'full', 'd3-wrapper': 'full', 'recent': 'full', 'population': 'ra
 CANONICAL_ROLES = ('v3', 'd3-wrapper', 'recent')
 ARCHIVAL_ROLES = ('population', 'august')
 COMPOSITIONS = ('E', 'B')
+# Whole-role cardinalities of version 1 (R2): every declared identity, or the role defers whole (R3).
+ROLE_CARDINALITY = {'v3': 1, 'd3-wrapper': 1, 'recent': 4, 'population': 4, 'august': 4}
 PER_FULL_MEMBER = len(DECKS) * BLOCKS * len(SEATS)  # 448
 PER_RALLY_MEMBER = BLOCKS * len(SEATS)  # 64: one learner deck per block faces Rally
 
@@ -69,6 +72,12 @@ RECENT_ENDPOINTS = {
 }
 POPULATION_SLOTS = ('anchor-0', 'anchor-1', 'current-0', 'current-1')
 AUGUST_SLOTS = ('historical-0', 'historical-1', 'exploiter-0', 'exploiter-1')
+# Draft lineage labels from the ruling's refresh-034 evidence (DIRECTOR-RULINGS-20260927.md, Evidence).
+ARCHIVAL_LINEAGE = {'anchor-0': 'ladder-pilot pool3 primary 920012', 'anchor-1': 'scaled-selfplay 970002',
+                    'current-0': 'population-v2 cycle-2 975001',
+                    'current-1': 'population-v2 cycle-3 real-attempt-003',
+                    'historical-0': 'de-novo 971221', 'historical-1': 'de-novo 971223',
+                    'exploiter-0': 'de-novo 971222', 'exploiter-1': 'de-novo 971221'}
 # Frozen D3 whole-match options (d3-panel-preparation-001.json, every job).
 MATCH_OPTIONS = dict(max_physical_decisions=4000, max_physical_games=6, max_policy_steps=40000,
                      opening_protocol='keep_seven_v2')
@@ -145,6 +154,42 @@ def opponent_deck(learner_index, block):
     return DECKS[(learner_index + block) % 7]
 
 
+def require_complete_pins(value, where):
+    """A bound source names every file by path and full SHA256 (CODEX #524 C6)."""
+    if isinstance(value, dict):
+        if 'path' in value or 'sha256' in value:
+            digest = value.get('sha256')
+            require(bool(value.get('path')) and isinstance(digest, str) and len(digest) == 64 and
+                    all(c in '0123456789abcdef' for c in digest), 'Incomplete pin in ' + where)
+        for item in value.values():
+            require_complete_pins(item, where)
+    elif isinstance(value, list):
+        for item in value:
+            require_complete_pins(item, where)
+
+
+def pinned_ref(value):
+    return isinstance(value, dict) and set(value) == {'path', 'sha256'}
+
+
+def validate_weights(roster):
+    """Exact rational yardstick weights per composition over its non-holdout members, summing to one."""
+    weights = roster['yardstick_weights']
+    require(isinstance(weights, dict) and str(weights.get('normalization', '')).strip(),
+            'Frozen roster needs yardstick weights with their deck and cell normalization declared')
+    for composition in COMPOSITIONS:
+        table = weights.get(composition)
+        require(isinstance(table, dict), 'Yardstick weights missing for composition ' + composition)
+        members = {m['id'] for m in composition_members(roster, composition)}
+        require(set(table) == members, 'Yardstick weights must cover exactly the composition members, no holdout')
+        values = []
+        for member_id, text in table.items():
+            require(isinstance(text, str) and '/' in text, 'Weight must be an exact rational p/q: ' + member_id)
+            values.append(Fraction(text))
+            require(values[-1] > 0, 'Weight must be positive: ' + member_id)
+        require(sum(values) == 1, 'Yardstick weights of composition %s do not sum to one' % composition)
+
+
 def validate_roster(roster):
     require(roster['schema'] == ROSTER_SCHEMA, 'Wrong roster schema')
     ids = [member['id'] for member in roster['members']]
@@ -152,11 +197,30 @@ def validate_roster(roster):
     for member in roster['members']:
         require(member['role'] in ROLES and member['scope'] == ROLES[member['role']],
                 'Role or scope differs from the ruling: ' + member['id'])
+        require(isinstance(member.get('lineage'), str) and member['lineage'].strip(),
+                'Lineage id required: ' + member['id'])
         for use in ('evaluation', 'training'):
             require(member[use]['status'] in ('bound', 'pending'), 'Unknown %s status: %s' % (use, member['id']))
             require(member[use]['status'] == 'bound' or member[use].get('reason'), 'Pending without a reason')
-    roles = {member['role'] for member in roster['members'] if member['role'] != 'holdout'}
-    require(set(CANONICAL_ROLES) <= roles, 'Canonical roles incomplete')
+        if member['evaluation']['status'] == 'bound':
+            require_complete_pins(member['evaluation']['source'], member['id'])
+        if member['training']['status'] == 'bound':
+            require(member['role'] != 'holdout', 'The holdout never receives training exposure')
+            fields = member['training'].get('episode_fields')
+            require(isinstance(fields, dict) and 'opponent' in fields, 'Bound training source needs episode fields')
+            require_complete_pins(fields, member['id'])
+    for role, count in ROLE_CARDINALITY.items():
+        require(sum(m['role'] == role for m in roster['members']) == count,
+                'Role %s must carry all %d declared identities' % (role, count))
+    require(sum(m['role'] == 'holdout' for m in roster['members']) <= 1, 'At most one holdout')
+    table = {role: [m['id'] for m in roster['members'] if m['role'] == role] for role in ROLES}
+    require(roster.get('roles') == table, 'Roster role table differs from its members')
+    if roster['frozen']:
+        require(roster.get('template') == TEMPLATE, 'Frozen roster must bind the template hash')
+        tables = roster['exposure_tables']
+        require(set(tables) == set(COMPOSITIONS) and all(pinned_ref(t) for t in tables.values()),
+                'Frozen roster must bind both exposure tables by hash')
+        validate_weights(roster)
     return roster
 
 
@@ -208,17 +272,18 @@ def draft_roster(g115_source, panel_imports=None):
 
     imports = {m['label']: m for m in (panel_imports or {}).get('members', [])}
     members = [
-        dict(id='v3', role='v3', scope='full',
+        dict(id='v3', role='v3', scope='full', lineage='v3',
              evaluation=dict(status='bound', source=dict(kind='legacy', source=V3_SOURCE, v3_forced_actions=True,
                                                          v3_spell_target_reference_adapter=True)),
              training=pending(NOT_TRAINABLE['v3'])),
-        dict(id='d3-wrapper', role='d3-wrapper', scope='full',
+        dict(id='d3-wrapper', role='d3-wrapper', scope='full', lineage='g115 (search wrapper)',
              evaluation=dict(status='bound', source=dict(kind='information_set_search_v3', source=g115_source,
                                                          descriptor=SEARCH_DESCRIPTOR)),
              training=pending(NOT_TRAINABLE['d3-wrapper']))]
     for member_id, (replica, arm, checkpoint) in RECENT_ENDPOINTS.items():
         root = 'E:/mtg-postboard-campaign-20260921/control-variance-002/%s' % replica
         members.append(dict(id=member_id, role='recent', scope='full',
+                            lineage='g115 continuation %s/%s' % (replica, arm),
                             evaluation=dict(status='pending', checkpoint=dict(
                                 path='%s/endpoints/%s/checkpoint.json' % (root, arm), sha256=checkpoint),
                                 reason='public_checkpoint source needs its run config pin from the declaration'),
@@ -233,14 +298,17 @@ def draft_roster(g115_source, panel_imports=None):
                 evaluation = dict(status='bound', source=dict(kind='legacy', source=imported['model_source'],
                                                               v3_forced_actions=True,
                                                               v3_spell_target_reference_adapter=True))
-            members.append(dict(id='%s/%s' % (role, slot), role=role, scope='rally', evaluation=evaluation,
+            members.append(dict(id='%s/%s' % (role, slot), role=role, scope='rally',
+                                lineage=ARCHIVAL_LINEAGE[slot], evaluation=evaluation,
                                 training=pending(NOT_TRAINABLE[role])))
-    members.append(dict(id='holdout/b-block48', role='holdout', scope='full',
+    members.append(dict(id='holdout/b-block48', role='holdout', scope='full', lineage='campaign-002 b',
                         evaluation=pending('R7: enters only if Codex confirms canonical registrations'),
                         training=pending('never a training opponent')))
-    return dict(schema=ROSTER_SCHEMA, frozen=False, version=1,
+    roles = {role: [m['id'] for m in members if m['role'] == role] for role in ROLES}
+    return dict(schema=ROSTER_SCHEMA, frozen=False, version=1, template=TEMPLATE,
                 basis='DIRECTOR-RULINGS-20260927.md R2, R3, R7 (draft order; the declaration fixes order, '
-                      'exposure and weights)', members=members, exposure_tables={}, yardstick_weights=None)
+                      'lineages, exposure and weights)', roles=roles, members=members, exposure_tables={},
+                yardstick_weights=None)
 
 
 def validate_exposure(table, roster, template, composition):

@@ -21,6 +21,7 @@ THROUGHPUT_SCHEMA = 'g115-line-a-throughput/v1'
 WORKSHEET_SCHEMA = 'g115-line-a-byte-worksheet/v1'
 SCRATCH_SCHEMA = 'g115-line-a-scratch-manifest/v1'
 ORDER_SCHEMA = 'g115-line-a-order/v1'
+SCOPE_SCHEMA = 'g115-line-a-scope/v1'
 LOCK_SCHEMA = 'collab-e-io-lock/v1'
 HOSTS = ('jack', 'haleyspc', 'runpod')
 WORK_CLASSES = ('bo3-ordinary', 'bo3-search', 'training', 'training-search')
@@ -234,6 +235,17 @@ def require_calibration_before_training(order):
     require(usability['verdict'] == 'pass' and usability['excerpt'].strip() and usability['excerpt'] in text,
             'The frozen usability rule has not passed on record')
     return order
+
+
+def require_scope_ruling(scope, composition):
+    """Composition E or staged B comes only from the director's scope ruling (R3, R10), never from a missing source."""
+    require(scope is not None and scope['schema'] == SCOPE_SCHEMA, 'Director scope ruling record required')
+    require(scope['composition'] in ('E', 'B') and scope['composition'] == composition,
+            'Manifest composition differs from the director scope ruling')
+    ruling = scope['ruling']
+    text = checked(ruling).read_text(encoding='utf-8')
+    require(ruling['excerpt'].strip() and ruling['excerpt'] in text, 'Scope ruling text absent from its record')
+    return scope
 
 
 def require_one_yardstick(manifests):
