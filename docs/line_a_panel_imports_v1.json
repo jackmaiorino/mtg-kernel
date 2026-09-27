@@ -1,0 +1,864 @@
+{
+  "schema": "mtg-kernel-line-a-panel-imports/v1",
+  "revision": 1,
+  "status": "in progress: all 14 member stores resolved and pin-checked; exports, import descriptors and smoke receipts pending; 13 members (seven refresh-034 roles and all six v3b endpoints, card-DB hash a06fa9566106f0ea) are registry-blocked pending a Codex contract ruling; only refresh-034/current-1 has a passing registry candidate",
+  "producer": "Opus lane panel-export (collab/GOALS/opus-panel-export-20260927.md), branch opus/panel-export-v1",
+  "roster": "proposal v0.2 (collab/CODEX-G115-OPPONENT-PORTFOLIO-PROPOSAL-20260926.md, 2026-09-27 10:18 EDT): index 0 V3 and 1 D3 wrapper are outside this manifest; 2-9 refresh-034 slots 0-7; 10-12 v3b arm1 runs 0-2; 13-15 v3b arm2 runs 0-2",
+  "nonclaims": [
+    "No match outcome, score, classification or calibration value was read or is recorded here.",
+    "Membership is the fixed v0.2 roster; no member was chosen, dropped or reweighted by any result.",
+    "A resolved store is identity evidence only; playability needs the export, import, transfer and smoke receipts."
+  ],
+  "sources": {
+    "refresh_manifest": {
+      "path": "E:/mtg-kernel-population-v2-cycle3/refresh-manifests/population-v3-refresh-034.json",
+      "sha256": "7961e796b6a63962e0457dee27ff94cb508e163880bba31063bec0eb021e0605"
+    },
+    "v3b_archive_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726"
+  },
+  "destination": {
+    "registry": "data/cards_v1.json",
+    "registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "v3_feature_contract_digest": "9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68",
+    "v3_feature_encoding_digest": "c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b"
+  },
+  "members": [
+    {
+      "roster_index": 2,
+      "label": "refresh-034/anchor-0",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "D:\\mtg-kernel-ladder-pilot-20260725\\pool3\\primary",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-ladder-pilot-20260725/pool3/primary",
+        "generation": 384,
+        "ref_path": "E:/archive-d/mtg-kernel-ladder-pilot-20260725/pool3/primary/refs/update-00000384.ref.json",
+        "ref_sha256": "4d4bc3b578de5ee78b2c0a84557d34473c0a7d5e1ff6e6f5297cdbd56658b01d",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-ladder-pilot-20260725/pool3/primary/run.json",
+        "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+        "checkpoint_sidecar_sha256": "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb",
+        "checkpoint_payload_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+        "train_state_sha256": "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8",
+        "model_parameter_sha256": "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 0",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 3,
+      "label": "refresh-034/anchor-1",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "D:\\mtg-kernel-scaled-selfplay-population-v1\\replay\\three-lineage-replay\\attempt-001\\wave-00-seed-970002-gpu1\\run-0\\store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-scaled-selfplay-population-v1/replay/three-lineage-replay/attempt-001/wave-00-seed-970002-gpu1/run-0/store",
+        "generation": 1536,
+        "ref_path": "E:/archive-d/mtg-kernel-scaled-selfplay-population-v1/replay/three-lineage-replay/attempt-001/wave-00-seed-970002-gpu1/run-0/store/refs/update-00001536.ref.json",
+        "ref_sha256": "787dd2d462786bbadca816701a71382dadf875464c5964e7fc32508a12e49291",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-scaled-selfplay-population-v1/replay/three-lineage-replay/attempt-001/wave-00-seed-970002-gpu1/run-0/store/run.json",
+        "run_sha256": "dc171fe72549154e533e337bc39884faa76811809abc0bc573bb975cea500a42",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "8d6219e0c5acf040de202793b6f73131a30585ce3a1fea33b73e52734e91e53b",
+        "checkpoint_sidecar_sha256": "c26160867d4b378c5e714a2ce7ddbb7577b4852e222a4d3b8b170081bb6ab8d6",
+        "checkpoint_payload_sha256": "dc0f3c0d6ae9b4c87745c802b0b5b71b398b378d1689e9dd040c86ad12853ba2",
+        "train_state_sha256": "041dc02e23d51180f3f564d3070a6d9673ebc51339a73736e0d246c37614e602",
+        "model_parameter_sha256": "429446148ee88c527c307e0d9cde545a450a9f94e5be445b683d1d9955d93e53"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 1",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 4,
+      "label": "refresh-034/historical-0",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "D:\\mtg-kernel-denovo-campaign-v1\\seed-971221\\denovo-1024-screen-build\\attempt-001\\denovo-1024-store\\run-0\\store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971221/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store",
+        "generation": 1024,
+        "ref_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971221/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store/refs/update-00001024.ref.json",
+        "ref_sha256": "c9e18a09be639d2905aae5ccc7aa622be95f5150f5736300f60a289d2a0ade16",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971221/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store/run.json",
+        "run_sha256": "7d111d855c09858cbc8404152cdf8878af3d8d5244dc3983ac25ddb2fe566232",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "ac4e187d7f67b7c2ed381a7048ad244927393e97349729d088b37421e7793462",
+        "checkpoint_sidecar_sha256": "db9308c878cba48010924dffee37764db17070607a58ab6e7ecbb44962510a4e",
+        "checkpoint_payload_sha256": "d806130ccd919b6102e69a90914ccf715b7d88ae9962ffe710d7d4ebd5c63fe2",
+        "train_state_sha256": "db8be94e3487890663ae365086d47fc74666eb16175f0879015d1413b38158ae",
+        "model_parameter_sha256": "8298017f92076def29dc8087b508764a644d146493720e7c698f9083667621f9"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 2",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 5,
+      "label": "refresh-034/historical-1",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "D:\\mtg-kernel-denovo-campaign-v1\\seed-971223\\denovo-1024-screen-build\\attempt-002\\denovo-1024-store\\run-0\\store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971223/denovo-1024-screen-build/attempt-002/denovo-1024-store/run-0/store",
+        "generation": 1024,
+        "ref_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971223/denovo-1024-screen-build/attempt-002/denovo-1024-store/run-0/store/refs/update-00001024.ref.json",
+        "ref_sha256": "b9480bc4a08572fbc370a8992d81d8cc425f383b5a375fb104b02fdbc0fc3bb2",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971223/denovo-1024-screen-build/attempt-002/denovo-1024-store/run-0/store/run.json",
+        "run_sha256": "31dec27f24885c1fc657403f217591b03f4c5ff7f279988cbd54392d45450178",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "4065d769908079244f5fdccbf44d4252e8cd299e1279d492b18ed7cc93995fc9",
+        "checkpoint_sidecar_sha256": "c6ce84a653bccece18a028fabd4f2c16d568be878c5d86be0a158398026114dc",
+        "checkpoint_payload_sha256": "8fb3f4a690f04743c90519c4001d41d54230a417c0f8ac3f1b7ecaa1805b795c",
+        "train_state_sha256": "a7eccd6bf329620d5100e16638c50c79caff309a7d58863d450f5c6d78592c78",
+        "model_parameter_sha256": "2620bdc30efee0c83d98c295be2c0126c08838b508d06a0fcd4f02f92714669f"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 3",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 6,
+      "label": "refresh-034/current-0",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "C:\\mtg-kernel-population-v2-cycle2\\active\\cycle2-active-interval-0256-0384\\attempt-001\\seed-975001-store\\run-0\\store",
+        "resolved_store_root": "E:/c-evidence-archive-20260825/mtg-kernel-population-v2-cycle2/active/cycle2-active-interval-0256-0384/attempt-001/seed-975001-store/run-0/store",
+        "generation": 2048,
+        "ref_path": "E:/c-evidence-archive-20260825/mtg-kernel-population-v2-cycle2/active/cycle2-active-interval-0256-0384/attempt-001/seed-975001-store/run-0/store/refs/update-00002048.ref.json",
+        "ref_sha256": "a6cf382fc4a63bea55954df4a7d075f9149b6b7078bd6b08f2029e6e0b0dd4fc",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/c-evidence-archive-20260825/mtg-kernel-population-v2-cycle2/active/cycle2-active-interval-0256-0384/attempt-001/seed-975001-store/run-0/store/run.json",
+        "run_sha256": "ed2fa4ddfe259ecae0e82206d0560bfefbf789baca86a15bb92c58f0b268f902",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "3422361ec4011816efbd1b3beb02bf681aa342faf65712ef76aef47e793f00e7",
+        "checkpoint_sidecar_sha256": "0d317bce5af4461844cd24a2c93a626b8f0656c8338e9ac980c3719ae04de54c",
+        "checkpoint_payload_sha256": "b4516464e636eb77a1e2e603310760b08b4b9e5a3d551e1d1b7ccea65220fd6f",
+        "train_state_sha256": "7f19456f34a3bc0dfae987db68c335490faf58ffd212c7d7db68cd8dedb04043",
+        "model_parameter_sha256": "e43a7b93b866b16b6726ec926c6d46a9995bf2ac0ad6e101e998f15b0a6a990c"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 4",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 7,
+      "label": "refresh-034/current-1",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "E:\\mtg-kernel-population-v2-cycle3\\lineage\\real-attempt-003\\run-0\\store",
+        "resolved_store_root": "E:/mtg-kernel-population-v2-cycle3/lineage/real-attempt-003/run-0/store",
+        "generation": 2048,
+        "ref_path": "E:/mtg-kernel-population-v2-cycle3/lineage/real-attempt-003/run-0/store/refs/update-00002048.ref.json",
+        "ref_sha256": "9fac33ec0f17b0cbdf71725a182153484fba80721ee60fc91a7b30de01ddfcbc",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/mtg-kernel-population-v2-cycle3/lineage/real-attempt-003/run-0/store/run.json",
+        "run_sha256": "f25a63d0a2968016c2d44220b02d46b642fad5c4d524cd7ed82d699dbfda83a1",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "8d038f7b67ec2f2c8106e916c9d0490c05943e08fe89dfa963cc53ff6f975951",
+        "checkpoint_sidecar_sha256": "184345e8205b82741ece416b191afa40dea73d2632427e5361ded718043c5380",
+        "checkpoint_payload_sha256": "d1a2457835111715bffb8317e55244508c884cfddbd44333938ce8acbad9e19d",
+        "train_state_sha256": "0c1468839849b33240256a5cb5d68cbfb80b7fd8b02a8513339ad35367f3c9e9",
+        "model_parameter_sha256": "e9a334971aa22c5b4a5703527217ac5af6a1539ca1be851ace5dfca7372ddc48"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 5",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "64c82a261e078f1a",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "candidate",
+        "candidate_registry": "data/cards_v1.json at 18f4ca51419d215370d539cef726edd7f8e7ae0b (exporter commit of the V3 lineage's source export f191122c..., which paired this card-DB hash with this registry)",
+        "candidate_registry_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
+        "candidate_card_count": 162,
+        "reason": "passes validate_card_namespace against the destination with zero mismatches; binding to be checked in with the exporter (CLAUDE #441 item 3)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "store-resolved; export pending",
+      "open_items": [
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 8,
+      "label": "refresh-034/exploiter-0",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "D:\\mtg-kernel-denovo-campaign-v1\\seed-971222\\denovo-1024-screen-build\\attempt-001\\denovo-1024-store\\run-0\\store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971222/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store",
+        "generation": 1024,
+        "ref_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971222/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store/refs/update-00001024.ref.json",
+        "ref_sha256": "88586e305eb9bcad4912125f4dd5ae78047c32476b04053a28cf5627824bf98f",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971222/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store/run.json",
+        "run_sha256": "c9bd4a75d9ac8b73951e5d681295bfb3b8d468f5e00775535b69e3cd05a963f1",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "476594a1ad72e3180d4cf33ecb1e3034bb029cf19782595922fd8451ca5b6089",
+        "checkpoint_sidecar_sha256": "76db3ecac8965aad3dcb19e7d7214ba93b5bf84e8da6e19de50908d4978a07bb",
+        "checkpoint_payload_sha256": "bcaf671f77788655e7b8b40dcbc5942dd89b10e25a3d570e4ac34464bc2c7f5b",
+        "train_state_sha256": "5098754de0f32f46c855e6db038a8fdd469f902fc0fb354da9a650cebe2b4600",
+        "model_parameter_sha256": "6b42f88ed103090e029814371e38412bb5afb4979ead8571f7d628ce24780c8d"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 6",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 9,
+      "label": "refresh-034/exploiter-1",
+      "family": "population-v3-refresh-034",
+      "store": {
+        "pinned_store_root": "D:\\mtg-kernel-denovo-campaign-v1\\seed-971221\\denovo-1024-screen-build\\attempt-001\\denovo-1024-store\\run-0\\store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971221/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971221/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store/refs/update-00000512.ref.json",
+        "ref_sha256": "92864418cb8718e76602cd12bfee903b420735f7f3364c0a7a69c7f3e5a9691d",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-denovo-campaign-v1/seed-971221/denovo-1024-screen-build/attempt-001/denovo-1024-store/run-0/store/run.json",
+        "run_sha256": "7d111d855c09858cbc8404152cdf8878af3d8d5244dc3983ac25ddb2fe566232",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "26ac933447f12cea8c09a5a1c3ba447883325e32252148c12e0838d59804dc22",
+        "checkpoint_sidecar_sha256": "8ae4400ca2ef38e4e3895df5209bf99581d14a5436abd5738b4150a7484b13d3",
+        "checkpoint_payload_sha256": "f123b4e04fbbc49984fa3cc72f846e0098d70abf2e05a10fa52f8f32900d4400",
+        "train_state_sha256": "8378f2306a7576d0f39c8bf154fee7945cc700214a4f51c4ffd13eca341196cf",
+        "model_parameter_sha256": "10ae7b2f28a3116ef01eb38edfb83e64cffa73a3ba7a169a0520a4d05c8b729b"
+      },
+      "identity_pin_check": {
+        "against": "refresh-034 slot 7",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "pending",
+        "reason": "run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4).",
+        "training provenance: run.json carries 7 sentinel provenance fields; archived build receipt not yet located"
+      ]
+    },
+    {
+      "roster_index": 10,
+      "label": "exploiter-v3b/arm1/run-0",
+      "family": "exploiter-v3b-20260726",
+      "store": {
+        "pinned_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-0/store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-0/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-0/store/refs/update-00000512.ref.json",
+        "ref_sha256": "f9a46d0e9f488ffa7cef18f6f82f1477d29a95f72fa38fa07470cdb1f7fcb243",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-0/store/run.json",
+        "run_sha256": "0b46f9507caede181e745da51dabbb6c9f73d72d3eb2315f089ef248c60e2f80",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "871a9b000dbef519efca63068457629632677fdf160557651a79b07e79b5a20b",
+        "checkpoint_sidecar_sha256": "d58b8ec23222130dad71e33aa41b0431ac3b90db9fc48338d45d762834d2fc3c",
+        "checkpoint_payload_sha256": "269f4df289dc9d81b3f1aeba01a3c5f83bb7c194e1b36264fd12e27fc0b4b780",
+        "train_state_sha256": "d38b78c18462dfe093a4e24f5880922596bf3e19a7059d86373a5d83c713ac98",
+        "model_parameter_sha256": "8924a5ac04c7e4b102d0aac419e5e9d87c3e60ac3161f3b7bee0125cf4af969a"
+      },
+      "identity_pin_check": {
+        "against": "proposal census 2026-09-26 22:40 EDT (ref SHA256)",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "resolved",
+        "source": "archived build receipt (run.json provenance fields are sentinels)",
+        "build_receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
+        "build_receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
+        "git_head": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+        "git_status_clean": true,
+        "executable_sha256": "e7f6864de663962923d5751d4955f570a2ca06ede062046c220a559efb1f5510",
+        "feature": "experimental-burn-net8-packed-cuda-v1",
+        "cargo_lock_sha256": "f6795dab7abef68ae0d86be1ab7f7f118aafc57cfb27a4b5a0a94551731f104f",
+        "executable_available": false,
+        "executable_note": "not at its recorded path and no E:/pinned-binaries copy (regeneration gap, not an import blocker)",
+        "training_seed": 920013
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      ]
+    },
+    {
+      "roster_index": 11,
+      "label": "exploiter-v3b/arm1/run-1",
+      "family": "exploiter-v3b-20260726",
+      "store": {
+        "pinned_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-1/store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-1/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-1/store/refs/update-00000512.ref.json",
+        "ref_sha256": "3dcc2c31d0824ca42d5c5ece11253462156e68475aa65d2fc974fe26ee7d0aa4",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-1/store/run.json",
+        "run_sha256": "d2668a1fe92081a2497b751f080186aa9ba7b22c58e7c45a27b7b2f5137eed57",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "57a9db44216529036304f99f9cc818fd086fc786f42727fb36f38c9243c83531",
+        "checkpoint_sidecar_sha256": "afa245fe7c758707972d641e7405ffd86d94305d51bd97761e8b68a55eda5f57",
+        "checkpoint_payload_sha256": "986285d28c6d04c6fae8212c1779d14e7561b57d69c43312896ba583dfb363f7",
+        "train_state_sha256": "a9a666a7ff012add4abb780e0bbc8b993e392cadfd19648e43b1bb5b933bb310",
+        "model_parameter_sha256": "9ded28efc7255576d2e78b55636a90a64e973ecf093177836a1500b7c40f1703"
+      },
+      "identity_pin_check": {
+        "against": "proposal census 2026-09-26 22:40 EDT (ref SHA256)",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "resolved",
+        "source": "archived build receipt (run.json provenance fields are sentinels)",
+        "build_receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
+        "build_receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
+        "git_head": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+        "git_status_clean": true,
+        "executable_sha256": "e7f6864de663962923d5751d4955f570a2ca06ede062046c220a559efb1f5510",
+        "feature": "experimental-burn-net8-packed-cuda-v1",
+        "cargo_lock_sha256": "f6795dab7abef68ae0d86be1ab7f7f118aafc57cfb27a4b5a0a94551731f104f",
+        "executable_available": false,
+        "executable_note": "not at its recorded path and no E:/pinned-binaries copy (regeneration gap, not an import blocker)",
+        "training_seed": 920014
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      ]
+    },
+    {
+      "roster_index": 12,
+      "label": "exploiter-v3b/arm1/run-2",
+      "family": "exploiter-v3b-20260726",
+      "store": {
+        "pinned_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-2/store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-2/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-2/store/refs/update-00000512.ref.json",
+        "ref_sha256": "64460bba057a41fd39a660ef35adcef9a7ed5f5980df5796b2f21b3439a9eaa8",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm1/dev0/run-2/store/run.json",
+        "run_sha256": "af9e5c07ec3e0c334f8097f18508dc145bbe402690ba9f021bdca1c08913b33b",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "790a3f04f95ca3b131f7be3130134cdf09663c6f4433ac0f6c6a794c89054a36",
+        "checkpoint_sidecar_sha256": "54dea3767954a8b8858e39b3a229de1dc13852effefb94650d6215ea4a32b7e8",
+        "checkpoint_payload_sha256": "bfbb7f91a0dd0a7696c517379bc374c2e504c96f15bab450e67590e082a7bc42",
+        "train_state_sha256": "13c546535ea144223282e72305821f05e5fe09c679e8f8b12600d221eaa19644",
+        "model_parameter_sha256": "caaadfca9048ab2829c35e0958659b7c8cedc1ca32e495f5ea2e22ad7d0b7474"
+      },
+      "identity_pin_check": {
+        "against": "proposal census 2026-09-26 22:40 EDT (ref SHA256)",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "resolved",
+        "source": "archived build receipt (run.json provenance fields are sentinels)",
+        "build_receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
+        "build_receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
+        "git_head": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+        "git_status_clean": true,
+        "executable_sha256": "e7f6864de663962923d5751d4955f570a2ca06ede062046c220a559efb1f5510",
+        "feature": "experimental-burn-net8-packed-cuda-v1",
+        "cargo_lock_sha256": "f6795dab7abef68ae0d86be1ab7f7f118aafc57cfb27a4b5a0a94551731f104f",
+        "executable_available": false,
+        "executable_note": "not at its recorded path and no E:/pinned-binaries copy (regeneration gap, not an import blocker)",
+        "training_seed": 920015
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      ]
+    },
+    {
+      "roster_index": 13,
+      "label": "exploiter-v3b/arm2/run-0",
+      "family": "exploiter-v3b-20260726",
+      "store": {
+        "pinned_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-0/store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-0/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-0/store/refs/update-00000512.ref.json",
+        "ref_sha256": "4a9e25476c5eb8dedcc1be5289da06c2265adb009d3f68389633b135256288fd",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-0/store/run.json",
+        "run_sha256": "fee86543272b4f709be46bb7f9eec820d979d264a93b606408e07c9a6871e51f",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "8f1033c2800a21c27d5f167c007c34b1217de2210224b25596955445ac2f184b",
+        "checkpoint_sidecar_sha256": "e1057ccf2155fd71cd431668ecf7da2599a7c2970181602553e0a806c5edd094",
+        "checkpoint_payload_sha256": "db15f794c7dd1add5be1ab1f7aac4cfd381dd200c42d29909eb32e02476b8e75",
+        "train_state_sha256": "ef069a89d76200ac5af1b3b5ced63a35b8789f9be86c0cf305877668395a42c2",
+        "model_parameter_sha256": "858da7f08727f9908b05225b7c37d25e8d43ad6235eaa1d67e3ab18cd093b153"
+      },
+      "identity_pin_check": {
+        "against": "proposal census 2026-09-26 22:40 EDT (ref SHA256)",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "resolved",
+        "source": "archived build receipt (run.json provenance fields are sentinels)",
+        "build_receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
+        "build_receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
+        "git_head": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+        "git_status_clean": true,
+        "executable_sha256": "e7f6864de663962923d5751d4955f570a2ca06ede062046c220a559efb1f5510",
+        "feature": "experimental-burn-net8-packed-cuda-v1",
+        "cargo_lock_sha256": "f6795dab7abef68ae0d86be1ab7f7f118aafc57cfb27a4b5a0a94551731f104f",
+        "executable_available": false,
+        "executable_note": "not at its recorded path and no E:/pinned-binaries copy (regeneration gap, not an import blocker)",
+        "training_seed": 920016
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      ]
+    },
+    {
+      "roster_index": 14,
+      "label": "exploiter-v3b/arm2/run-1",
+      "family": "exploiter-v3b-20260726",
+      "store": {
+        "pinned_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-1/store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-1/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-1/store/refs/update-00000512.ref.json",
+        "ref_sha256": "96e5be520754e1625374bfd8bbdabe07cbcfa12d26551a9b5646f0465808fe82",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-1/store/run.json",
+        "run_sha256": "74ba06e68206f500f62389478271b87bae87306d2661433b5891affe93ea7671",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "fc34bc85b752c735a6cba9788f72fd7df2cc60fea39b28ec2964d431384ec456",
+        "checkpoint_sidecar_sha256": "edfbf45f0260f9f4af64b3089d50f2f713d1361be6bfbffb0227230cc071b8bc",
+        "checkpoint_payload_sha256": "a3fadb75c5ca00b0a23a591fe5138be127e66f6ce415dcb77b37da6a9c5cc453",
+        "train_state_sha256": "4ade6ec5d9fa35c23283a75009f6257a97d9479b08372eac1dfa434caf78f457",
+        "model_parameter_sha256": "3f700d5fc5cff0e17bc309d2de2183de72a61b20c2423b2b303ca3ab787e090c"
+      },
+      "identity_pin_check": {
+        "against": "proposal census 2026-09-26 22:40 EDT (ref SHA256)",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "resolved",
+        "source": "archived build receipt (run.json provenance fields are sentinels)",
+        "build_receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
+        "build_receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
+        "git_head": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+        "git_status_clean": true,
+        "executable_sha256": "e7f6864de663962923d5751d4955f570a2ca06ede062046c220a559efb1f5510",
+        "feature": "experimental-burn-net8-packed-cuda-v1",
+        "cargo_lock_sha256": "f6795dab7abef68ae0d86be1ab7f7f118aafc57cfb27a4b5a0a94551731f104f",
+        "executable_available": false,
+        "executable_note": "not at its recorded path and no E:/pinned-binaries copy (regeneration gap, not an import blocker)",
+        "training_seed": 920017
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      ]
+    },
+    {
+      "roster_index": 15,
+      "label": "exploiter-v3b/arm2/run-2",
+      "family": "exploiter-v3b-20260726",
+      "store": {
+        "pinned_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-2/store",
+        "resolved_store_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-2/store",
+        "generation": 512,
+        "ref_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-2/store/refs/update-00000512.ref.json",
+        "ref_sha256": "c74b9b61a8458a5c81fe38620c25eb9848f87f7e8ca33523e744573afd39bc76",
+        "ref_schema": "mtg_kernel_native_checkpoint_ref/v2",
+        "run_json_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/runs-arm2/dev0/run-2/store/run.json",
+        "run_sha256": "96a37f171928547852fd32e917a1305033c3d02c48f03a6e59e9eed6337c6bd2",
+        "run_json_sha256_verified": true,
+        "checkpoint_manifest_sha256": "3017b2223e65292075d82724fc7ade5498dbab01a613253fbbe16797c7ba431c",
+        "checkpoint_sidecar_sha256": "f8c61ab9e848f4682f4b95930e3c357a45a6f7b1bd46f962533fe032ba7d560a",
+        "checkpoint_payload_sha256": "5cf22e0f678c0a4f4543cdc1d6804ccd6c0e7a5cac70032ad0f65805a3e08b8e",
+        "train_state_sha256": "49a62d678fa988bb83ed3621b4e72a47c225d17f2773e1f7c0ce45a798a8c8a6",
+        "model_parameter_sha256": "87279f24933a39608e5c7e8c89a0b5578346a807a4ee04d75ae92bbcbe6e067e"
+      },
+      "identity_pin_check": {
+        "against": "proposal census 2026-09-26 22:40 EDT (ref SHA256)",
+        "all_match": true
+      },
+      "source_facts": {
+        "card_db_hash_u64_hex": "a06fa9566106f0ea",
+        "training_deck_ids": [
+          "Rally",
+          "Rally"
+        ],
+        "architecture_identity": "kernel-policy-value-net-8",
+        "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
+        "feature_encoding_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
+        "run_json_provenance_sentinel_fields": 7
+      },
+      "registry": {
+        "status": "unresolved",
+        "candidate_registry": "data/cards_v1.json at 1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec (v3b build receipt git_head)",
+        "candidate_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+        "candidate_card_count": 136,
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      },
+      "training_provenance": {
+        "status": "resolved",
+        "source": "archived build receipt (run.json provenance fields are sentinels)",
+        "build_receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
+        "build_receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
+        "git_head": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+        "git_status_clean": true,
+        "executable_sha256": "e7f6864de663962923d5751d4955f570a2ca06ede062046c220a559efb1f5510",
+        "feature": "experimental-burn-net8-packed-cuda-v1",
+        "cargo_lock_sha256": "f6795dab7abef68ae0d86be1ab7f7f118aafc57cfb27a4b5a0a94551731f104f",
+        "executable_available": false,
+        "executable_note": "not at its recorded path and no E:/pinned-binaries copy (regeneration gap, not an import blocker)",
+        "training_seed": 920018
+      },
+      "export": null,
+      "import_descriptor": null,
+      "model_source": null,
+      "smoke": null,
+      "status": "unresolved",
+      "open_items": [
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination ef738001...: 87 of 136 entries differ outside deck membership (85 lack the later engine_capability field; Generous Ent mechanics gained reach; Writhing Chrysalis colors R,G became none); names and order are identical. The card-DB hash a06fa9566106f0ea is the build-time hash at 1804e9f9 (v3b build receipt) and covers colors, keyword tables and engine_capability (build.rs lines 3987-4057 at 1804e9f9), so every run recording it shares these card definitions. Contract ruling requested from Codex (CLAUDE #441 item 4)."
+      ]
+    }
+  ]
+}
