@@ -225,67 +225,97 @@ fn legacy_seat(forced: bool, spell_adapter: bool) -> OpponentSeatV1 {
     }
 }
 
+/// Legacy fixture games on consecutive seeds, up to the first in which the
+/// opponent meets a singleton menu (under one percent of rows in natural
+/// games), at most 16 games.
+fn legacy_games(
+    learner_seat: u8,
+    forced: bool,
+    spell_adapter: bool,
+) -> Vec<(ExpandedEpisodeV1, Trajectory)> {
+    let mut games = Vec::new();
+    for k in 0..16 {
+        let mut episode = episode(learner_seat, Some(legacy_kind(forced, spell_adapter)));
+        episode.seed += 2 * k;
+        let trajectory = play(&episode, legacy_seat(forced, spell_adapter));
+        let singleton = trajectory
+            .decisions
+            .iter()
+            .any(|r| r.actor != learner_seat && r.logits.len() <= 1);
+        games.push((episode, trajectory));
+        if singleton {
+            return games;
+        }
+    }
+    panic!("no opponent singleton menu in 16 fixture games");
+}
+
 /// Legacy V3 against a V4 learner, both adapter settings: same seed gives
 /// the same bytes; forced singletons are recorded unscored and replay one
-/// draw; scored rows carry V3 digests; tampering is refused.
+/// draw; scored rows carry V3 digests; tampering is refused. The last game
+/// of each scan holds an opponent singleton menu.
 #[test]
 fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
     for (forced, spell_adapter) in [(true, true), (false, false)] {
         for learner_seat in [0, 1] {
-            let episode = episode(learner_seat, Some(legacy_kind(forced, spell_adapter)));
-            let a = play(&episode, legacy_seat(forced, spell_adapter));
-            let b = play(&episode, legacy_seat(forced, spell_adapter));
-            assert_eq!(
-                serde_json::to_vec(&a).unwrap(),
-                serde_json::to_vec(&b).unwrap()
-            );
-            assert_eq!(a.schema, LEGACY_TRAJECTORY_SCHEMA);
-            assert!(!admits_public_trajectory(&a));
-            let record = a.opponent_record.as_ref().expect("opponent record");
-            let opponent: Vec<_> = a
-                .decisions
-                .iter()
-                .filter(|r| r.actor != learner_seat)
-                .collect();
-            assert_eq!(record.rows.len(), opponent.len());
-            let singletons = opponent
-                .iter()
-                .filter(|r| r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER))
-                .count();
-            if forced {
-                assert!(singletons > 0, "fixture games contain forced singletons");
-                assert!(opponent
+            for (episode, a) in legacy_games(learner_seat, forced, spell_adapter) {
+                let b = play(&episode, legacy_seat(forced, spell_adapter));
+                assert_eq!(
+                    serde_json::to_vec(&a).unwrap(),
+                    serde_json::to_vec(&b).unwrap()
+                );
+                assert_eq!(a.schema, LEGACY_TRAJECTORY_SCHEMA);
+                assert!(!admits_public_trajectory(&a));
+                let record = a.opponent_record.as_ref().expect("opponent record");
+                let opponent: Vec<_> = a
+                    .decisions
                     .iter()
-                    .filter(|r| r.logits.is_empty())
-                    .all(|r| r.selected == 0 && r.tensor.is_empty()));
-            } else {
-                assert_eq!(singletons, 0);
-                assert!(opponent.iter().all(|r| !r.logits.is_empty()));
-            }
-            let hashes = a.configuration_sha256.clone();
-            record
-                .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
-                .unwrap();
-            let mut tampered = a.decisions.clone();
-            let row = tampered
-                .iter_mut()
-                .find(|r| r.actor != learner_seat && r.logits.len() > 1)
-                .expect("a scored opponent choice");
-            row.selected = (row.selected + 1) % row.logits.len() as u32;
-            assert!(record
-                .validate(&a.episode, &hashes, &tampered, &a.terminal)
-                .is_err());
-            if forced {
-                // A fabricated scored singleton is refused.
-                let mut fabricated = a.decisions.clone();
-                let row = fabricated
-                    .iter_mut()
-                    .find(|r| r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER))
+                    .filter(|r| r.actor != learner_seat)
+                    .collect();
+                assert_eq!(record.rows.len(), opponent.len());
+                let singletons = opponent
+                    .iter()
+                    .filter(|r| r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER))
+                    .count();
+                let menus = opponent.iter().filter(|r| r.logits.len() <= 1).count();
+                if forced {
+                    // Every singleton menu takes the forced path, unscored.
+                    assert_eq!(singletons, menus);
+                    assert!(opponent
+                        .iter()
+                        .filter(|r| r.logits.is_empty())
+                        .all(|r| r.selected == 0 && r.tensor.is_empty()));
+                } else {
+                    assert_eq!(singletons, 0);
+                    assert!(opponent.iter().all(|r| !r.logits.is_empty()));
+                }
+                let hashes = a.configuration_sha256.clone();
+                record
+                    .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
                     .unwrap();
-                row.logits = vec![0f32.to_bits()];
+                let mut tampered = a.decisions.clone();
+                let row = tampered
+                    .iter_mut()
+                    .find(|r| r.actor != learner_seat && r.logits.len() > 1)
+                    .expect("a scored opponent choice");
+                row.selected = (row.selected + 1) % row.logits.len() as u32;
                 assert!(record
-                    .validate(&a.episode, &hashes, &fabricated, &a.terminal)
+                    .validate(&a.episode, &hashes, &tampered, &a.terminal)
                     .is_err());
+                if singletons > 0 {
+                    // A fabricated scored singleton is refused.
+                    let mut fabricated = a.decisions.clone();
+                    let row = fabricated
+                        .iter_mut()
+                        .find(|r| {
+                            r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER)
+                        })
+                        .unwrap();
+                    row.logits = vec![0f32.to_bits()];
+                    assert!(record
+                        .validate(&a.episode, &hashes, &fabricated, &a.terminal)
+                        .is_err());
+                }
             }
         }
     }
@@ -408,8 +438,9 @@ fn legacy_admission_identity_probe() {
 #[test]
 fn legacy_seat_matches_the_evaluator_dispatch() {
     for (forced, spell_adapter) in [(true, true), (false, false)] {
-        let episode = episode(1, Some(legacy_kind(forced, spell_adapter)));
-        let trajectory = play(&episode, legacy_seat(forced, spell_adapter));
+        // The last scanned game holds an opponent singleton menu, so the
+        // forced dispatch is compared as well.
+        let (episode, trajectory) = legacy_games(1, forced, spell_adapter).pop().unwrap();
         let configs = episode.configurations_for_public_collector_v1().unwrap();
         let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
             1,
