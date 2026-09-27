@@ -5,6 +5,9 @@
 //! independently rechecks the bindings needed for inference, validates the
 //! complete train-state payload, and retains only a private immutable model and
 //! digest facts. Optimizer moments are validated during load and then dropped.
+//! The crate-private evaluation export constructor is the sole exception: its
+//! caller verifies an independently pinned inference export and preserves the
+//! original Store identity, without claiming to revalidate optimizer state.
 
 use crate::async_flat_scored_rollout_v2::{
     expected_scorer_contract, FlatBatchScorerErrorV2, FlatBatchScorerV2, FlatScoringBatchViewV2,
@@ -243,6 +246,38 @@ impl NativeCheckpointInferenceV1 {
     /// flat path, cannot express it.
     pub(crate) const fn search_model_v1(&self) -> &NativePolicyValueNetV1 {
         &self.model
+    }
+
+    /// Evaluation-export construction only. The export reader has checked the
+    /// exact parameter layout, finite values and padding transactionally. This
+    /// handle carries no optimizer or resume authority and exposes no mutable net.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_inference_export_v1(
+        model: NativePolicyValueNetV1,
+        run_sha256: [u8; 32],
+        checkpoint_manifest_sha256: [u8; 32],
+        checkpoint_payload_sha256: [u8; 32],
+        train_state_sha256: [u8; 32],
+        model_parameter_sha256: [u8; 32],
+        generation_index: u64,
+    ) -> Result<Self> {
+        model.validate_parameters_v1().map_err(map_model_error_v1)?;
+        if model.parameter_count_v1() != PARAMETER_COUNT_V1
+            || model.parameter_manifest_sha256_raw_v1() != model_parameter_sha256
+        {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::ModelInvalid,
+            ));
+        }
+        Ok(Self {
+            model,
+            run_sha256,
+            checkpoint_manifest_sha256,
+            checkpoint_payload_sha256,
+            train_state_sha256,
+            model_parameter_sha256,
+            generation_index,
+        })
     }
 
     /// Scores one already-typed V2 decision using only immutable handle state.

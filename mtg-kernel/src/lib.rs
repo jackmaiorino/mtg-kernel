@@ -161,6 +161,9 @@ pub mod native_checkpoint_inference_v1;
 // at module scope instead of item-by-item.
 #[allow(dead_code)]
 pub mod native_checkpoint_shadow_stdio_v1;
+// Inference-only transport of a Store-validated checkpoint to the frozen
+// native-inference-export/v1 bundle read by the sideboard play importer.
+pub mod native_checkpoint_export_v1;
 // Test-time-search wrapper S1 feasibility preflight
 // (LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md Section 5, S1), CP7-free. The
 // corpus builder plays seeded self-play with both seats on one checkpoint
