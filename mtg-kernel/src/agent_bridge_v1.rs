@@ -713,7 +713,10 @@ impl SpellbenchBridgeServerV1 {
                     game.session.physical_decision_count(),
                 );
                 let rows = std::mem::take(&mut game.flat_v4_rows);
-                if let Some(lockstep) = game.flat_v4.as_mut() {
+                // A halt the raw session reports ends the game with its own
+                // reason: the copy is neither stepped nor checked.
+                let lockstep = game.flat_v4.as_mut().filter(|_| !is_raw_halt_v1(&response));
+                if let Some(lockstep) = lockstep {
                     if let Err(error) =
                         lockstep.mirror_step(&rows, expected_step, selection.candidate_id)
                     {
@@ -826,12 +829,22 @@ enum WireResponseV1 {
     Terminal(Value),
 }
 
+/// A terminal the raw session itself classifies `halted`.
+fn is_raw_halt_v1(response: &RlSessionResponseV1) -> bool {
+    matches!(
+        response,
+        RlSessionResponseV1::Terminal(terminal)
+            if terminal.terminal_classification == TerminalClassificationV1::Halted
+    )
+}
+
 /// The `x_kernel_flat_v4` payload for `response` (None when the option is off
 /// or the game ended); stores the decision's row map. An Err is the halted
 /// reason: the engine could not produce the model input. A halt the raw
 /// session reports passes through before the lockstep check and keeps its
 /// own reason: the copy has no counterpart for some raw halts (for example
 /// `fail_closed:observation`), and a finished game needs no model input.
+/// (`handle_step` does not step the copy for such a halt either.)
 fn flat_v4_extension_v1(
     game: &mut SpellbenchBridgeGameV1,
     response: &RlSessionResponseV1,
@@ -846,10 +859,8 @@ fn flat_v4_extension_v1(
     let Some(lockstep) = flat_v4.as_ref() else {
         return Ok(None);
     };
-    if let RlSessionResponseV1::Terminal(terminal) = response {
-        if terminal.terminal_classification == TerminalClassificationV1::Halted {
-            return Ok(None);
-        }
+    if is_raw_halt_v1(response) {
+        return Ok(None);
     }
     lockstep
         .verify(session, response)
@@ -2626,6 +2637,135 @@ mod tests {
         assert_eq!(
             flat_v4_extension_v1(game, &RlSessionResponseV1::Terminal(truncated)),
             Err("engine_contract_failure:flat_v4_lockstep:diverged:response_kind".to_string())
+        );
+    }
+
+    /// A flagged server hosting a mirror game of `deck`, set up as
+    /// `handle_reset` does but without its deck checks (reset refuses
+    /// Terror), and the game's first decision.
+    fn flat_v4_server_hosting(
+        game_id: &str,
+        deck: &str,
+        seed: u64,
+    ) -> (SpellbenchBridgeServerV1, Value) {
+        let episode_id = spellbench_episode_id_v1(game_id);
+        let decks: SessionDeckIdsV1 = [deck.to_string(), deck.to_string()];
+        let session = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            episode_id,
+            seed,
+            3000,
+            30000,
+            decks.clone(),
+        )
+        .unwrap();
+        let lockstep = FlatV4LockstepV1::reset(episode_id, seed, 3000, 30000, decks).unwrap();
+        let mut game = SpellbenchBridgeGameV1 {
+            game_id: game_id.to_string(),
+            episode_id,
+            session,
+            terminal_sent: false,
+            flat_v4: Some(lockstep),
+            flat_v4_rows: Vec::new(),
+            flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+            force_flat_v4_encode_error: false,
+        };
+        let response = game.session.current_response();
+        let flat_v4 = flat_v4_extension_v1(&mut game, &response).unwrap();
+        let counts = (
+            game.session.policy_step_count(),
+            game.session.physical_decision_count(),
+        );
+        let mut server = flat_v4_server();
+        let WireResponseV1::Decision(decision) =
+            server.session_response_to_wire("r-0", game_id, response, counts, flat_v4)
+        else {
+            panic!("{game_id}: the game starts without a decision")
+        };
+        server.game = Some(game);
+        (server, decision)
+    }
+
+    #[test]
+    fn a_raw_halt_keeps_its_reason_when_the_copy_cannot_take_the_same_step() {
+        // Staging an Escape cast halts only the raw session (policy surface
+        // v5 cannot represent it, which is why reset refuses Terror); the
+        // copy plays on. With these picks, Terror seed 1 stages one at step
+        // 112. There the copy is put one step ahead, so its own step fails:
+        // the game is over, and the raw session's reason must win.
+        let (mut server, mut decision) = flat_v4_server_hosting("g-escape-1", "Terror", 1);
+        let mut rng = crate::state::SplitMix64::seed(1);
+        loop {
+            assert_eq!(
+                decision["response_type"], "decision",
+                "no raw halt: {decision}"
+            );
+            let rows = rows_of(&decision);
+            let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+            let game = server.game.as_mut().unwrap();
+            let RlSessionResponseV1::Decision(current) = game.session.current_response() else {
+                panic!("the bridge sent a decision")
+            };
+            // Would this step halt the raw session? Ask a clone.
+            let raw_halt = match game.session.clone().step(
+                game.episode_id,
+                current.step,
+                pick as u32,
+                &current.legal_actions[pick as usize].stable_id,
+            ) {
+                Ok(RlSessionResponseV1::Terminal(terminal))
+                    if terminal.terminal_classification == TerminalClassificationV1::Halted =>
+                {
+                    Some(terminal.terminal_reason)
+                }
+                _ => None,
+            };
+            if let Some(reason) = raw_halt {
+                assert_eq!(current.step, 112);
+                // One step ahead, the copy cannot take this step.
+                let fast = game.flat_v4.as_mut().unwrap().fast_session_mut_for_test();
+                let crate::rl_session::FastActorResponseV1::Decision(expected) =
+                    fast.current_response()
+                else {
+                    panic!("the copy stands at a decision")
+                };
+                fast.step(expected.episode_id, expected.step, 0).unwrap();
+                let terminal = parse_line(&server.handle_line(&flat_v4_step(&decision, pick)));
+                assert_eq!(
+                    reason,
+                    "fail_closed:observation:policy schema v5 cannot represent a staged Escape \
+                     graveyard-exile prefix; a versioned object-cost successor is required"
+                );
+                assert_eq!(terminal["classification"], "halted", "{terminal}");
+                assert_eq!(terminal["reason"], reason, "{terminal}");
+                return;
+            }
+            decision = parse_line(&server.handle_line(&flat_v4_step(&decision, pick)));
+        }
+    }
+
+    #[test]
+    fn flat_v4_a_copy_in_another_state_at_the_same_step_fails_the_equality_check() {
+        let mut server = flat_v4_server();
+        let decision = parse_line(&server.handle_line(&flat_v4_reset("g-other-state", "Burn", 6)));
+        // Same step and decision, another game state: the copy's step
+        // succeeds, so only the equality check can see the difference.
+        server
+            .game
+            .as_mut()
+            .unwrap()
+            .flat_v4
+            .as_mut()
+            .unwrap()
+            .fast_session_mut_for_test()
+            .kernel_search_state_mut_for_test_v1()
+            .players[1]
+            .life -= 1;
+        let terminal =
+            parse_line(&server.handle_line(&flat_v4_step(&decision, rows_of(&decision)[0])));
+        assert_eq!(terminal["classification"], "halted", "{terminal}");
+        assert_eq!(
+            terminal["reason"],
+            "engine_contract_failure:flat_v4_lockstep:diverged:game_state"
         );
     }
 }

@@ -274,5 +274,5 @@ no_current_decision, row_map, selection_not_in_training_list, fast_step,
 diverged) or `engine_contract_failure:flat_v4_encode:<detail>`
 (not_a_decision, encode, tensorize, row_count). A halt the session reports
 itself (for example `fail_closed:observation:<error>`) passes through before
-the lockstep check and keeps its own reason (Section 9). Without the flag
-nothing here runs.
+the copy is stepped or checked and keeps its own reason (Section 9). Without
+the flag nothing here runs.
