@@ -1084,6 +1084,7 @@ mod tests {
                         max_physical_decisions: 4000,
                         max_policy_steps: 40000,
                         opponent: None,
+                        opponent_search: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -1674,6 +1675,7 @@ mod tests {
                         starting_player: 0,
                         learner_seat: 0,
                         opponent: None,
+                        opponent_search: None,
                         registered: decks.clone(),
                         selected: decks.clone(),
                         postboard: false,

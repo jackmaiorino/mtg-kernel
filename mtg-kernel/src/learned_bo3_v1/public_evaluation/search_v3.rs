@@ -7,7 +7,7 @@ use crate::rl_session::RlSessionErrorCode;
 const SCHEMA: &str = "mtg-kernel-v4-information-set-estimate-search/v3";
 const ALGORITHM: &str = "v4-depth-keyed-estimate-library-independent-chance/v3";
 
-pub(super) struct SearchPlayV3 {
+pub(crate) struct SearchPlayV3 {
     policy: FrozenPlayPolicyV1,
     descriptor: V4InformationSetSearchDescriptorV1,
     game_index: u32,
@@ -17,7 +17,7 @@ pub(super) struct SearchPlayV3 {
 }
 
 impl SearchPlayV3 {
-    pub(super) fn new(policy: FrozenPlayPolicyV1, descriptor: V4InformationSetSearchDescriptorV1) -> Result<Self, String> {
+    pub(crate) fn new(policy: FrozenPlayPolicyV1, descriptor: V4InformationSetSearchDescriptorV1) -> Result<Self, String> {
         let d = &descriptor;
         if policy.feature_generation_v1() != PlayPolicyGenerationV1::V4
             || d.schema != SCHEMA || d.algorithm != ALGORITHM
@@ -43,13 +43,13 @@ impl SearchPlayV3 {
         Limits { simulations: self.descriptor.simulations, transitions: self.descriptor.transitions,
             depth: self.descriptor.depth, seed: self.descriptor.experiment_seed }
     }
-    pub(super) fn begin_match(&mut self) {
+    pub(crate) fn begin_match(&mut self) {
         self.game_index = 0;
         self.rows.clear();
         self.timings.clear();
         self.failure = None;
     }
-    pub(super) fn records(&self) -> Value {
+    pub(crate) fn records(&self) -> Value {
         json!({"schema":"v4-information-set-evaluation-decisions/v3",
             "descriptor":self.descriptor,"decisions":self.rows,"failure":self.failure})
     }
