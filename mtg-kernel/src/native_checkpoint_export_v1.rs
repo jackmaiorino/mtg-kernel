@@ -11,6 +11,7 @@
 use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonNullPolicyV1,
 };
+use crate::expanded_deck_training_v1::{load_expanded_inference_v1, ExpandedModelSourceV1};
 use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
@@ -21,15 +22,19 @@ use crate::native_checkpoint_shadow_stdio_v1::{
     POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1, SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1,
 };
 use crate::native_policy_value_net_v1::{
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, FEATURE_CONTRACT_DIGEST_V1,
-    FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
+    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1,
+    MODEL_CONFIG_FINGERPRINT_V1,
 };
 use crate::native_train_state_payload_v1::{
-    decode_section_v1, encode_section_v1, NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+    decode_section_v1, encode_section_v1, NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
+    NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
 };
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
+use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
+use crate::sideboard_play_policy_v1::FrozenPlayPolicyImportV1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::{self, File, OpenOptions};
@@ -664,6 +669,121 @@ pub fn export_native_checkpoint_v1(
     source_method_v1(&source)?;
     let loaded = load_store_checkpoint_v1(&source)?;
     write_loaded_v1(&loaded, &source, output_directory, exporter_build)
+}
+
+fn tensors_bit_identical_v1(
+    left: &[NativeNamedParameterV1],
+    right: &[NativeNamedParameterV1],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| {
+            a.name == b.name
+                && a.shape == b.shape
+                && a.values.len() == b.values.len()
+                && a.values
+                    .iter()
+                    .zip(&b.values)
+                    .all(|(x, y)| x.to_bits() == y.to_bits())
+        })
+}
+
+/// Round-trip acceptance for one exported archival member. The Store is
+/// loaded through the strict route and its payload file is re-read and hashed
+/// independently; the bundle is imported through the evaluator's own expanded
+/// inference loader (FrozenPlayPolicyImportV1 plus the explicit V3 transfer).
+/// Every named tensor must be bit-identical. Nothing is written.
+pub fn roundtrip_check_v1(
+    reference_path: &Path,
+    model_source_path: &Path,
+) -> Result<Value, String> {
+    require_v1(
+        reference_path.is_absolute() && model_source_path.is_absolute(),
+        "round-trip inputs must be absolute paths",
+    )?;
+    let reference_bytes = read_bounded_v1(reference_path, None, METADATA_MAX_BYTES_V1)?;
+    let source: ExportCheckpointSourceV1 =
+        serde_json::from_slice(&reference_bytes).map_err(|e| e.to_string())?;
+    let store = load_store_checkpoint_v1(&source)?;
+    let payload_path = source
+        .checkpoint
+        .store_root
+        .join("checkpoints")
+        .join(format!(
+            "update-{:08}.state.f32le",
+            source.checkpoint.generation
+        ));
+    let payload = read_bounded_v1(
+        &payload_path,
+        Some(NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1),
+        NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1,
+    )?;
+    require_v1(
+        hash_v1(&payload) == store.identity.loaded_payload_sha256,
+        "Store payload file differs from the validated checkpoint payload",
+    )?;
+    let section = &payload[..NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1];
+    let model_source_bytes = read_bounded_v1(model_source_path, None, METADATA_MAX_BYTES_V1)?;
+    let model_source: ExpandedModelSourceV1 =
+        serde_json::from_slice(&model_source_bytes).map_err(|e| e.to_string())?;
+    require_v1(
+        model_source.checkpoint.is_none(),
+        "archival imports are inference-only; a successor checkpoint is not admitted",
+    )?;
+    let import_bytes =
+        read_bounded_v1(&model_source.play_import.path, None, METADATA_MAX_BYTES_V1)?;
+    require_v1(
+        hash_v1(&import_bytes) == model_source.play_import.sha256,
+        "import descriptor SHA differs",
+    )?;
+    let import: FrozenPlayPolicyImportV1 =
+        serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
+    let bundle = read_bounded_v1(
+        &import.export_directory.join(MODEL_FILENAME_V1),
+        Some(NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1),
+        NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
+    )?;
+    let (policy, identity) = load_expanded_inference_v1(&model_source)?;
+    require_v1(
+        policy.uses_observation_successor_v3()
+            && policy.feature_generation_v1() == PlayPolicyGenerationV1::V3,
+        "imported member is not an explicitly V3-transferred policy",
+    )?;
+    let stored = store.inference.search_model_v1().parameter_snapshot_v1();
+    let imported = policy.training_parameters_v3();
+    let decoded_bundle = decode_section_v1(&bundle).map_err(|e| e.to_string())?;
+    let decoded_section = decode_section_v1(section).map_err(|e| e.to_string())?;
+    let actual = policy.actual_model_identity_v1();
+    let expected_model = &source.checkpoint.expected_model_sha256;
+    let checks = json!({
+        "raw_bundle_equals_store_parameter_section": bundle.as_slice() == section,
+        "tensors_bit_identical_imported_vs_store": tensors_bit_identical_v1(&imported, &stored),
+        "tensors_bit_identical_bundle_vs_store": tensors_bit_identical_v1(&decoded_bundle, &stored),
+        "tensors_bit_identical_payload_section_vs_store": tensors_bit_identical_v1(&decoded_section, &stored),
+        "store_model_parameter_sha256_equals_reference": &store.identity.model_parameter_sha256 == expected_model,
+        "imported_model_parameter_sha256_equals_reference": &actual.model_parameter_sha256 == expected_model
+            && &identity.model.model_parameter_sha256 == expected_model,
+        "imported_weights_sha256_equals_parameter_section_sha256": actual.weights_sha256 == hash_v1(section),
+    });
+    let failed: Vec<&String> = checks
+        .as_object()
+        .ok_or("round-trip checks must form an object")?
+        .iter()
+        .filter(|(_, passed)| **passed != Value::Bool(true))
+        .map(|(name, _)| name)
+        .collect();
+    require_v1(failed.is_empty(), &format!("round trip failed: {failed:?}"))?;
+    Ok(json!({"schema":"mtg-kernel-line-a-panel-roundtrip/v1",
+        "reference_sha256":hash_v1(&reference_bytes),
+        "model_source_sha256":hash_v1(&model_source_bytes),
+        "import_descriptor_sha256":model_source.play_import.sha256,
+        "store_identity":store.identity,
+        "store_payload_path":payload_path,
+        "parameter_section_sha256":hash_v1(section),
+        "tensor_count":stored.len(),
+        "parameter_count":stored.iter().map(|p| p.values.len()).sum::<usize>(),
+        "inference_identity":identity,
+        "checks":checks,
+        "passed":true}))
 }
 
 #[cfg(all(
