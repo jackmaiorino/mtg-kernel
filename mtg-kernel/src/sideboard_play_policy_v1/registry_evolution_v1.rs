@@ -17,6 +17,13 @@ pub const REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1: &str =
     "mtg-kernel-frozen-play-registry-evolution-import/v1";
 const IDENTITY_SCHEMA_V1: &str = "mtg-kernel-frozen-sideboard-play-registry-evolution-transfer/v1";
 const ALLOWLIST_SCHEMA_V1: &str = "mtg-kernel-registry-evolution-allowlist/v1";
+/// The source card database the allowlist describes: data/cards_v1.json at
+/// 1804e9f9 under that commit's build.rs (card-DB recomputation receipt
+/// 993da0d9). A source run recording any other card-DB hash is refused.
+const SOURCE_CARD_DB_HASH_V1: &str = "a06fa9566106f0ea";
+/// Learner initialization, collection and update refuse R14 descriptors.
+pub(crate) const REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1: &str =
+    "registry evolution imports are inference-only archival opponents; learner initialization, collection and update refuse them";
 /// The only admitted allowlist, keyed to source 16d308da (data/cards_v1.json
 /// at 1804e9f9) and destination ef738001 (the compiled registry).
 const ALLOWLIST_BYTES_V1: &[u8] = include_bytes!(
@@ -109,6 +116,14 @@ fn validate_allowlist_shape_v1(allowlist: &RegistryEvolutionAllowlistV1) -> Resu
                         .all(|d| d.field != "name" && d.field != "decks")
             }),
         "registry evolution allowlist is malformed",
+    )
+}
+
+/// The source run must record the pinned source card database.
+fn require_pinned_source_card_db_v1(source_run: &Value) -> Result<(), String> {
+    require(
+        string(source_run, "/environment/card_db_hash_u64_hex")? == SOURCE_CARD_DB_HASH_V1,
+        "source run card-DB hash is not the allowlist's pinned source card database",
     )
 }
 
@@ -234,7 +249,7 @@ impl FrozenPlayPolicyV1 {
     /// R14 route: `load_v1` check for check with the allowlist namespace
     /// step, then the same explicit V3 observation transfer as
     /// `load_feature_transfer_v3`. Inference-only archival imports.
-    pub fn load_registry_evolution_v3(
+    pub(crate) fn load_registry_evolution_v3(
         input: &FrozenPlayPolicyRegistryEvolutionImportV1,
         transfer: &FrozenPlayObservationTransferV3,
     ) -> Result<Self, String> {
@@ -321,6 +336,7 @@ impl FrozenPlayPolicyV1 {
                     == FEATURE_ENCODING_DIGEST_V1,
             "source run feature contracts differ",
         )?;
+        require_pinned_source_card_db_v1(&source_run)?;
 
         let source_registry_bytes = read_bounded(&input.source_registry_path, 4_194_304)?;
         require(
@@ -469,14 +485,43 @@ mod tests {
         let (mut source, destination, allowlist) = parsed();
         source["cards"][42]["mechanics"] = destination["cards"][42]["mechanics"].clone();
         assert!(validate_differences_v1(&source, &destination, &allowlist).is_err());
+        // Removing one allowlisted difference (the first entry) is a missing difference.
         let (mut source, destination, allowlist) = parsed();
-        source["cards"][7]["engine_capability"] =
-            destination["cards"][7]["engine_capability"].clone();
-        let admitted = allowlist.entries.iter().any(|entry| entry.id == 7);
-        assert_eq!(
-            validate_differences_v1(&source, &destination, &allowlist).is_err(),
-            admitted
-        );
+        let first = allowlist.entries[0].id;
+        assert!(allowlist.entries[0]
+            .differences
+            .iter()
+            .any(|d| d.field == "engine_capability"));
+        source["cards"][first]["engine_capability"] =
+            destination["cards"][first]["engine_capability"].clone();
+        assert!(validate_differences_v1(&source, &destination, &allowlist).is_err());
+    }
+
+    #[test]
+    fn presence_flag_only_and_changed_value_mutations_are_refused() {
+        // Same value (null) but a different presence flag: present-null is not absent.
+        let (mut source, destination, allowlist) = parsed();
+        let first = allowlist.entries[0].id;
+        source["cards"][first]["engine_capability"] = Value::Null;
+        assert!(validate_differences_v1(&source, &destination, &allowlist).is_err());
+        // An allowlisted field with a changed source value.
+        let (mut source, destination, allowlist) = parsed();
+        source["cards"][42]["mechanics"] = serde_json::json!(["etb_trigger"]);
+        assert!(validate_differences_v1(&source, &destination, &allowlist).is_err());
+        let (mut source, destination, allowlist) = parsed();
+        source["cards"][131]["colors"] = serde_json::json!(["R"]);
+        assert!(validate_differences_v1(&source, &destination, &allowlist).is_err());
+    }
+
+    #[test]
+    fn a_source_run_with_another_card_database_is_refused() {
+        let pinned =
+            serde_json::json!({"environment": {"card_db_hash_u64_hex": "a06fa9566106f0ea"}});
+        assert!(require_pinned_source_card_db_v1(&pinned).is_ok());
+        let other =
+            serde_json::json!({"environment": {"card_db_hash_u64_hex": "64c82a261e078f1a"}});
+        assert!(require_pinned_source_card_db_v1(&other).is_err());
+        assert!(require_pinned_source_card_db_v1(&serde_json::json!({})).is_err());
     }
 
     #[test]
