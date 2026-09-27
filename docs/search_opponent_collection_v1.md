@@ -13,8 +13,8 @@ The line (a) template (`a.json`, SHA256 `4352f9cc...`) is consumed by the public
 ```
 
 - The field is omitted when absent, so existing configs, trajectories and hashes are byte-identical (`contract_tests.rs`; net-opponent golden below).
-- Every episode consumer except the public collector refuses such an episode: the shared `ExpandedEpisodeV1::configurations()` rejects it; only the collector calls `configurations_admitting_search_v1()`.
-- A trajectory with a search opponent carries its own schema, `mtg-kernel-public-input-search-opponent-trajectory/v1`, so any reader that checks the ordinary public schema refuses it. The public replay audit also refuses any trajectory that carries a search record (`replay_audit.rs`, `admits_public_trajectory`). The Python tools that read public trajectories without a schema check read learner rows only (for example `audit_public_pilot_behavior_v1.py`).
+- Every episode consumer except the public collector refuses such an episode: the shared `ExpandedEpisodeV1::configurations()` rejects it; only the collector calls `configurations_for_public_collector_v1()`. The stack trainer (`stack_features.rs`) and the native expanded trainer use `configurations()`.
+- A trajectory with a search opponent carries its own schema, `mtg-kernel-public-input-search-opponent-trajectory/v1`, so any reader that checks the ordinary public schema refuses it. The public replay audit also refuses any trajectory that carries a search record (`replay_audit.rs`, `admits_public_trajectory`). Python readers: census below.
 - The collector checks the descriptor SHA256 (`5eb1d55d...`) and the g115 checkpoint SHA256 (`88c0b997...`) itself, independently of `SearchPlayV3::new`, which in turn refuses any other budget, algorithm, seed or model identity (`search_opponent.rs`, `SearchOpponentV1::load`).
 - On the opponent seat the unchanged evaluation wrapper `SearchPlayV3` chooses every action (S128, T1024, depth 8, seed 20260922). Only its visibility changed (pub(crate)); no search, sampler or descriptor code changed.
 - The stored row keeps its ordinary shape: the actor-visible tensor and the frozen net's logits and value, scored without sampling, with the search's action and the sampler identity `mtg-kernel-v4-information-set-estimate-search/v3`. The search seat draws no random number.
@@ -23,6 +23,21 @@ The line (a) template (`a.json`, SHA256 `4352f9cc...`) is consumed by the public
 - The update is unchanged and reads learner rows only. No opponent action, visit count or value enters any learner target.
 - A typed search error aborts the run: no fallback opponent, no derived-seed retry.
 - A run whose schedule has search games publishes `search-opponent-receipt.json`: config SHA256, descriptor and checkpoint SHA256, search episode ids, build and executable SHA256.
+
+## Python readers of public trajectories (census)
+
+Only `public_feature_training_v1` writes the opt-in opponent schemas. Opponent rows of every kind record another policy: D3 rows carry the frozen net's logits but the search's action, Legacy rows carry V3 tensors (empty for forced singletons), and public-checkpoint rows carry public rows (`auxiliary`), which an ordinary trajectory has for learner rows only. Rule: a reader run on treatment outputs asserts the ordinary schema or selects the learner seat. Census of tracked Python: files found by searching for `decisions`, `auxiliary` and `logits` indexing and trainer `episode-NNN.json` paths; every file that reads public-trainer rows was read.
+
+| Reader | Rows it reads | On treatment trajectories |
+|---|---|---|
+| `qualify_public_state_only_v1.py:136-140`, `qualify_state_prevention_compute_v1.py:46-49` | every row with a public row | now assert the ordinary schema |
+| `prevention_feature_mask_check_v1.py:47-52` | archive rows picked by a replay panel, any seat | now asserts the ordinary schema; the replay audit that builds the panel already refuses other schemas |
+| `audit_public_pilot_behavior_v1.py:31-32`, `prevention_policy_drift_v1.py:85,249`, `audit_archived_gae_batch_v1.py:51-53`, `public_learning_localization_v1.py:148-160`, `g115_d4_learning_signal_v1.py:56-73`, `read_control_entropy_snapshot_v1.py:38-39`, `broader_readout_retention_v1.py:32-33`, `link_burn_credit_v1.py:37` | learner seat only | unaffected; learner rows keep the ordinary form |
+| `public_feature_pilot_v1.py`, `qualify_public_learning_v1.py` and the launchers that pin `episode-NNN.json` hashes | no row contents (counts, hashes, byte identity, terminal class) | unaffected |
+| `public_policy_replay_audit_v1.py`; `prepare_terminal_retention_v1.py` (replay results, both seats) | replay audit input or output | refused by `admits_public_trajectory` before scoring |
+| `g115_d4_audit_manifest_v1.py` (`canonical_episode`) | episode fields; `order()` drops unknown keys | now refuses the opt-in fields instead of dropping them |
+
+The other readers of `decisions` read evaluation match documents, diagnostic captures (`collected.trajectory.games`), stack trajectories (`mtg-kernel-public-stack-trajectory/v1`, asserted by `public_stack_exposure_v1.py`) or native expanded trajectories, none of which can carry these opponents.
 
 ## Information boundary
 
