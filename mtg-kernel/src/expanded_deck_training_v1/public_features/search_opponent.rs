@@ -325,4 +325,6 @@ pub(crate) const REVIEWED_DESCRIPTOR_JSON: &str = r#"{"algorithm":"v4-depth-keye
 #[cfg(test)]
 mod boundary_tests;
 #[cfg(test)]
+mod collect_tests;
+#[cfg(test)]
 mod contract_tests;

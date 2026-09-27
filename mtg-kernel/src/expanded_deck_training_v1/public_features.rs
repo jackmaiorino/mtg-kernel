@@ -201,8 +201,7 @@ fn collect(
     state_hash: &str,
     enabled: bool,
 ) -> Result<Trajectory, String> {
-    let configs = episode.configurations_admitting_search_v1()?;
-    let (mut opponent, identity) = load_expanded_inference_v1(
+    let (opponent, identity) = load_expanded_inference_v1(
         episode
             .opponent
             .as_ref()
@@ -212,11 +211,38 @@ fn collect(
         opponent.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
         "public collection requires V4 opponent",
     )?;
-    let mut search = episode
+    let search = episode
         .opponent_search
         .as_ref()
         .map(|pin| search_opponent::SearchOpponentV1::load(pin, episode, &opponent, &identity))
         .transpose()?;
+    collect_with_opponent(
+        policy,
+        episode,
+        config_hash,
+        state_hash,
+        enabled,
+        (opponent, identity),
+        search,
+    )
+}
+
+/// One game with an already loaded opponent net and, for a search episode,
+/// its D3 wrapper. Split from `collect` so fixture policies can drive it.
+fn collect_with_opponent(
+    policy: &mut PublicInputPlayPolicyV1,
+    episode: &ExpandedEpisodeV1,
+    config_hash: &str,
+    state_hash: &str,
+    enabled: bool,
+    (mut opponent, identity): (FrozenPlayPolicyV1, ExpandedInferenceIdentityV1),
+    mut search: Option<search_opponent::SearchOpponentV1>,
+) -> Result<Trajectory, String> {
+    let configs = episode.configurations_admitting_search_v1()?;
+    ensure(
+        search.is_some() == episode.opponent_search.is_some(),
+        "search opponent dispatch differs from its episode",
+    )?;
     let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player)).map_err(err)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
