@@ -13,6 +13,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl::{
     legal_action_candidates_v1, observe_v2, ActionSemanticV1, PendingEffectChoiceSemanticV4,
 };
+use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
 use mtg_kernel::state::{
     CastMethodV4, Counters, GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone,
 };
@@ -340,6 +341,99 @@ fn guardian_protection_filters_monocolored_targets_blockers_and_damage() {
     let before = copied.clone();
     assert!(engine::step(&mut copied, Action::ChooseTarget(Target::Object(protected))).is_err());
     assert_eq!(copied, before);
+}
+
+/// Journey to Nowhere is monocolored, so an opponent's Guardian of the
+/// Guildpact is no legal target of its "exile target creature" trigger. With
+/// no other creature, 603.3d removes the trigger when it would go on the
+/// stack; it must not surface as a target decision with no legal action.
+#[test]
+fn journey_trigger_without_a_legal_target_is_removed_after_the_cast_resolves() {
+    let mut state = ready_main(0x4755_4152_4449_4151);
+    let guardian = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Guardian of the Guildpact",
+        Zone::Battlefield,
+    );
+    let journey = put_object(&mut state, PlayerId::P0, "Journey to Nowhere", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    engine::step(&mut state, Action::CastSpell(journey)).unwrap();
+    pass_until(&mut state, |state| {
+        state.objects.get(journey).zone == Zone::Battlefield
+            && state.stack.is_empty()
+            && state.engine.pending_triggers.is_empty()
+    });
+
+    assert_eq!(state.objects.get(guardian).zone, Zone::Battlefield);
+    assert!(state.exile.is_empty());
+    assert!(state.engine.linked_exile_records.is_empty());
+    let decision = engine::advance_until_decision(&mut state);
+    assert!(matches!(
+        decision,
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ));
+    assert!(!projected_actions(&state, &decision).is_empty());
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut value = *state;
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
+}
+
+/// Session-level reproduction. In-process `RlEpisodeSessionV1` CawGates
+/// mirrors under uniform random choice over the offered actions (episode
+/// 7000 + seed, policy state `0x5EED_0F5B_0000_0000 ^ seed`, 600-decision
+/// cap) halted with `fail_closed:nonterminal decision produced zero legal
+/// actions` when a Journey to Nowhere trigger had no legal target. These are
+/// the halting seeds of a 300-seed census on `main` 54725398 and on the
+/// unmerged rules-fix branch (dce845cd). Trajectories are not pinned, so the
+/// durable regression is the engine unit test
+/// `journey_to_nowhere_etb_trigger_is_dropped_when_its_only_possible_target_has_protection_from_monocolored`.
+#[test]
+fn cawgates_mirror_census_seeds_never_halt_on_a_decision_without_legal_actions() {
+    let mut halts = Vec::new();
+    for seed in [14_u64, 44, 102, 114, 118, 186, 188, 203, 218, 285] {
+        let episode_id = 7_000 + seed;
+        let mut session = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            episode_id,
+            seed,
+            600,
+            600 * 128,
+            ["CawGates".to_string(), "CawGates".to_string()],
+        )
+        .unwrap();
+        let mut rng = 0x5EED_0F5B_0000_0000 ^ seed;
+        loop {
+            match session.current_response() {
+                RlSessionResponseV1::Terminal(terminal) => {
+                    if terminal.terminal_reason.contains("zero legal actions") {
+                        halts.push((seed, terminal.policy_step_count, terminal.terminal_reason));
+                    }
+                    break;
+                }
+                RlSessionResponseV1::Decision(decision) => {
+                    let count = decision.legal_actions.len() as u64;
+                    let action = &decision.legal_actions[(splitmix64(&mut rng) % count) as usize];
+                    session
+                        .step(
+                            episode_id,
+                            decision.step,
+                            action.selected_index,
+                            &action.stable_id,
+                        )
+                        .unwrap();
+                }
+            }
+        }
+    }
+    assert!(halts.is_empty(), "zero-legal-action halts: {halts:#?}");
 }
 
 #[test]

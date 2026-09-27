@@ -8143,6 +8143,30 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
+            let trigger_source = pending.source_contract.map(|contract| TargetingSource {
+                object: pending.source,
+                card_def: contract.card_def,
+            });
+            if !target_prefix_can_complete_for_controller_and_source(
+                pending.target_spec,
+                &pending.targets,
+                pending.controller,
+                trigger_source,
+                state,
+            ) {
+                // 603.3d: a triggered ability with no legal choice for its
+                // targets is removed instead of being put on the stack. The
+                // collection-time filter in `trigger::collect_and_process`
+                // checks targets without the source, so a source-dependent
+                // restriction (protection from monocolored,
+                // `CreatureOtherThanSource`) can leave no legal target only
+                // here. Drop the trigger and keep draining rather than expose
+                // a `Decision::ChooseTargets` with no legal action, as
+                // `drain_pending_cast_or_decide` already aborts an impossible
+                // cast.
+                state.engine.pending_triggers.remove(0);
+                continue;
+            }
             return Some(Decision::ChooseTargets {
                 player: pending.controller,
                 spell: pending.source,
@@ -8151,10 +8175,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     pending.target_spec,
                     &pending.targets,
                     pending.controller,
-                    pending.source_contract.map(|contract| TargetingSource {
-                        object: pending.source,
-                        card_def: contract.card_def,
-                    }),
+                    trigger_source,
                     state,
                 ),
                 can_finish: pending.targets.len()
@@ -14156,6 +14177,51 @@ mod tests {
         assert_eq!(state.stack.len(), 2);
         assert_eq!(state.stack[0].source, second);
         assert_eq!(state.stack[1].source, first);
+    }
+
+    /// Ported from the Phase 1 branch (008379d8). Guardian of the Guildpact
+    /// (protection from monocolored) is the only creature on either
+    /// battlefield when Journey to Nowhere enters. Journey to Nowhere is
+    /// monocolored white, so its "exile target creature" trigger has no
+    /// legal target. The collection-time 603.3d filter in
+    /// `trigger::collect_and_process` checks targets without the source and
+    /// keeps the trigger; `drain_pending_triggers_or_decide` then exposed it
+    /// as a `Decision::ChooseTargets` with empty `legal_targets` and
+    /// `can_finish: false`, which halted CawGates mirror sessions with
+    /// `fail_closed:nonterminal decision produced zero legal actions`. Per
+    /// 603.3d the trigger is removed instead of going on the stack.
+    #[test]
+    fn journey_to_nowhere_etb_trigger_is_dropped_when_its_only_possible_target_has_protection_from_monocolored(
+    ) {
+        let mut state = ready_game_in_main1(0);
+        let guardian = put_in_hand(&mut state, PlayerId::P0, "Guardian of the Guildpact");
+        let journey = put_in_hand(&mut state, PlayerId::P0, "Journey to Nowhere");
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(guardian, Zone::Battlefield),
+                ProposedEvent::zone_change(journey, Zone::Battlefield),
+            ],
+        );
+        collect_and_queue_triggers(&mut state);
+
+        match advance_until_decision(&mut state) {
+            Decision::CastSpellOrPass { player, .. } => assert_eq!(player, PlayerId::P0),
+            other => panic!(
+                "expected the untargetable ETB trigger to be dropped and priority to return \
+                 normally, got: {other:?}"
+            ),
+        }
+        assert!(
+            state.engine.pending_triggers.is_empty(),
+            "the trigger with no legal target must be dropped, not left pending"
+        );
+        assert!(
+            state.exile.is_empty(),
+            "nothing was exiled: there was no legal target"
+        );
+        assert_eq!(state.objects.get(journey).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(guardian).zone, Zone::Battlefield);
     }
 
     #[test]
