@@ -40,6 +40,11 @@ REGISTRY_CANDIDATES = {
     '64c82a261e078f1a': ('18f4ca51419d215370d539cef726edd7f8e7ae0b',
                          'cycle-3 training commits 162b7579 and b01afb52 (EVIDENCE-NOTES.md) and search_authority.engine_commit a7043e30 (refresh manifests) all carry these registry bytes; the commit for generations 0-256 is not recorded'),
 }
+PARENT_REF_REQUESTED = {'refresh-034/anchor-0', 'refresh-034/anchor-1', 'refresh-034/current-0', 'refresh-034/current-1'}
+PINNED = Path('E:/pinned-binaries')
+TOOLS = {'exporter': '7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6/native_checkpoint_export_v1.exe',
+         'roundtrip': '3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024/native_inference_export_roundtrip_v1.exe',
+         'evaluator': '90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771/public_feature_evaluation_v1.exe'}
 CYCLE3_TRAINING_COMMITS = ['162b7579f899c3df76910be59a9a076d14adfd5e', 'b01afb528d27ffed942a06a4ab9f606edfb6258c',
                            'a7043e3044d38f20dbb95afbc430af74d2f11ec8']
 
@@ -67,17 +72,33 @@ def registry_record(card_db_hash):
               'destination_sha256': sha(DESTINATION), 'namespace_mismatch_count': len(changed),
               'namespace_mismatch_fields': sorted({f for c in changed for f in c['fields']}),
               'namespace_mismatch_examples': [c for c in changed if c['fields'] != ['engine_capability']][:5]}
+    record['card_db_hash_recomputation'] = ('pending: rerun the training commit build.rs card-DB recipe on the pinned bytes '
+                                            '(FABLE-REVIEW-20260927 panel-export change 2)')
     if changed:
+        record['namespace_v1'] = 'fails'
         record['status'] = 'unresolved'
         record['reason'] = ('validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; '
-                            'CODEX #520 item 4 keeps these members unresolved pending a director ruling (versioned compatibility route or panel revision)')
+                            'the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT')
         return record
     snapshot = REPO / 'data/line_a_source_registries' / (record['candidate_sha256'] + '.json')
-    commits = {c: hashlib.sha256(git_blob(c, 'data/cards_v1.json')).hexdigest() for c in CYCLE3_TRAINING_COMMITS}
-    record.update({'status': 'linked' if all(v == record['candidate_sha256'] for v in commits.values()) else 'candidate',
-                   'snapshot_repo_path': snapshot.relative_to(REPO).as_posix(), 'snapshot_sha256': sha(snapshot),
-                   'training_commit_registry_sha256': commits, 'evidence': {'notes': {'path': str(CYCLE3_NOTES), 'sha256': sha(CYCLE3_NOTES)}}})
+    record.update({'namespace_v1': 'passes', 'status': 'passes-v1',
+                   'snapshot_repo_path': snapshot.relative_to(REPO).as_posix(), 'snapshot_sha256': sha(snapshot)})
     return record
+
+
+def registry_linkage(facts, provenance):
+    """Typed evidence class linking a member's training to its registry bytes (FABLE-REVIEW-20260927 change 2)."""
+    if provenance.get('status') == 'resolved' and provenance.get('git_head'):
+        blob = hashlib.sha256(git_blob(provenance['git_head'], 'data/cards_v1.json')).hexdigest()
+        return {'class': 'build-receipt', 'receipt_path': provenance['build_receipt_path'], 'receipt_sha256': provenance['build_receipt_sha256'],
+                'clean_commit': provenance['git_head'], 'registry_blob_sha256': blob}
+    if facts['card_db_hash_u64_hex'] == '64c82a261e078f1a':
+        commits = {c: hashlib.sha256(git_blob(c, 'data/cards_v1.json')).hexdigest() for c in CYCLE3_TRAINING_COMMITS}
+        return {'class': 'commit-recorded',
+                'scope': 'generations 256-2048; the commit for generations 0-256 and the executable are not recorded; no build receipt',
+                'training_commit_registry_sha256': commits, 'evidence': {'path': CYCLE3_NOTES.as_posix(), 'sha256': sha(CYCLE3_NOTES)}}
+    return {'class': 'card-db-hash-only',
+            'scope': 'no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)'}
 
 
 def store_record(root, generation, pinned_root):
@@ -114,13 +135,19 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
     registry = registries.setdefault(facts['card_db_hash_u64_hex'], registry_record(facts['card_db_hash_u64_hex']))
     open_items = []
     if registry['status'] == 'unresolved': open_items.append('registry: ' + registry['reason'])
+    if label in PARENT_REF_REQUESTED: open_items.append('parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash')
     if facts['store_authority_route'] == 'none':
         open_items.append('store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it')
     if provenance['status'] != 'resolved': open_items.append('training provenance: ' + provenance['reason'])
     receipts = sealed_receipts(label)
     summary, roundtrip, smoke = (receipts.get(k) for k in ('summary', 'roundtrip', 'smoke'))
-    record = {'roster_index': index, 'label': label, 'family': family, 'store': store, 'identity_pin_check': pin_check,
-              'source_facts': facts, 'registry': registry, 'training_provenance': provenance}
+    version = ('version-1 target (R3: archival roles, Rally-opponent slots only)' if index <= 9
+               else 'later-version candidate (R10: after the eight, by 2026-10-04 18:00 EDT)')
+    record = {'roster_index': index, 'label': label, 'family': family, 'version_role': version, 'store': store,
+              'identity_pin_check': pin_check, 'source_facts': facts, 'registry': registry,
+              'registry_linkage': registry_linkage(facts, provenance), 'training_provenance': provenance}
+    if label in PARENT_REF_REQUESTED:
+        record['parent_ref'] = {'status': 'pending', 'requested_by': 'CODEX #526 (direct initialization or resume parent ref and hash)'}
     if summary:
         body = summary['body']
         record.update({'export': body['export'], 'import_descriptor': body['import_descriptor'], 'model_source': body['model_source'],
@@ -128,7 +155,8 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
     if roundtrip: record['roundtrip'] = {'receipt': {k: roundtrip[k] for k in ('path', 'sha256')}, 'passed': roundtrip['body'].get('passed'),
                                           'tensor_count': roundtrip['body'].get('tensor_count'), 'checks': roundtrip['body'].get('checks')}
     if smoke: record['smoke'] = {'receipt': {k: smoke[k] for k in ('path', 'sha256')}, 'completed': smoke['body'].get('completed'),
-                                  'command_sha256': smoke['body'].get('command_sha256')}
+                                  **{k: smoke['body'].get(k) for k in ('command_sha256', 'deck_pair', 'registered_sha256', 'postboard_sha256',
+                                                                       'max_physical_games', 'evaluator_sha256', 'evaluator_git_head')}}
     # Provenance gaps are recorded, not a playability gate; registry and authority gaps are.
     routable = registry['status'] != 'unresolved' and facts['store_authority_route'] != 'none'
     done = bool(roundtrip and roundtrip['body'].get('passed') and smoke and smoke['body'].get('completed'))
@@ -136,6 +164,20 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
     if routable and not done: open_items.append('export, round trip or smoke receipt not yet sealed')
     record['open_items'] = open_items
     return record
+
+
+def toolchain_record(members):
+    tools = {}
+    for role, relative in TOOLS.items():
+        path = PINNED / relative
+        tools[role] = {'path': path.as_posix(), 'sha256': sha(path), 'pinned_name_matches': path.parent.name == sha(path)}
+    exported = next((m for m in members if m.get('export')), None)
+    if exported:
+        tools['exporter']['build_identity'] = exported['export']['exporter_build']
+        tools['exporter']['clean_tree_attestation'] = ('the production build capture refuses a dirty build: validate_build_capture_constants requires '
+                                                       'NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest '
+                                                       '(native_store_production_capture_v2.rs:512-517), and the export succeeded')
+    return tools
 
 
 def main(revision, output):
@@ -173,7 +215,9 @@ def main(revision, output):
                               'Membership is the fixed v0.2 roster; no member was chosen, dropped or reweighted by any result.',
                               'Playable means exported, imported bit-exactly and loaded by the public evaluator; it is not a strength claim.'],
                 'sources': {'refresh_manifest': {'path': REFRESH.as_posix(), 'sha256': sha(REFRESH)}, 'v3b_archive_root': V3B.as_posix(),
-                            'sealed_root': SEALED.as_posix()},
+                            'sealed_root': SEALED.as_posix(),
+                            'rulings': 'collab/DIRECTOR-RULINGS-20260927.md R3, R10, R11, R14; collab/FABLE-REVIEW-20260927.md (panel-export verdict)'},
+                'toolchain': toolchain_record(members),
                 'destination': {'registry': 'data/cards_v1.json', 'registry_sha256': sha(DESTINATION),
                                 'v3_feature_contract_digest': '9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68',
                                 'v3_feature_encoding_digest': 'c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b'},
