@@ -439,6 +439,7 @@ mod tests {
                 starting_player: (index % 2) as u8,
                 learner_seat: 0,
                 opponent: None,
+                opponent_search: None,
                 registered: decks.clone(),
                 selected: decks.clone(),
                 postboard: false,
@@ -541,6 +542,7 @@ mod tests {
                 // Exercise common-model self-play and a separately owned
                 // policy for the other physical seat with the same weights.
                 opponent: (index >= 2).then(|| source.clone()),
+                opponent_search: None,
                 registered: [deck.clone(), deck.clone()],
                 selected: [deck.clone(), deck.clone()],
                 postboard: false,

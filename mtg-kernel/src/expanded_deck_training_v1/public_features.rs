@@ -94,6 +94,9 @@ struct Trajectory {
     decisions: Vec<DecisionRecordV1>,
     auxiliary: Vec<Option<PublicFeatureRowsV1>>,
     terminal: RlSessionTerminalV1,
+    /// Present only when the D3 wrapper played the opponent seat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search: Option<search_opponent::SearchTrajectoryV1>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -198,7 +201,7 @@ fn collect(
     state_hash: &str,
     enabled: bool,
 ) -> Result<Trajectory, String> {
-    let configs = episode.configurations()?;
+    let configs = episode.configurations_admitting_search_v1()?;
     let (mut opponent, identity) = load_expanded_inference_v1(
         episode
             .opponent
@@ -209,18 +212,30 @@ fn collect(
         opponent.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
         "public collection requires V4 opponent",
     )?;
+    let mut search = episode
+        .opponent_search
+        .as_ref()
+        .map(|pin| search_opponent::SearchOpponentV1::load(pin, episode, &opponent, &identity))
+        .transpose()?;
     let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player)).map_err(err)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_for_game_v1(seeds).map_err(err)?;
     opponent.reset_sampling_v1(seeds);
+    if let Some(search) = search.as_mut() {
+        search.reset_for_game(seeds)?;
+    }
     let mut decisions = Vec::new();
     let mut auxiliary = Vec::new();
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
                 let hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
-                validate_episode_records_v1(episode, &hashes, &decisions, &terminal)?;
+                let search = search.as_ref().map(|s| s.finish()).transpose()?;
+                match &search {
+                    None => validate_episode_records_v1(episode, &hashes, &decisions, &terminal)?,
+                    Some(record) => record.validate(episode, &hashes, &decisions, &terminal)?,
+                }
                 return Ok(Trajectory {
                     schema: "mtg-kernel-public-input-trajectory/v1".into(),
                     config_sha256: config_hash.into(),
@@ -232,6 +247,7 @@ fn collect(
                     decisions,
                     auxiliary,
                     terminal,
+                    search,
                 });
             }
             FastActorResponseV1::Decision(d) => {
@@ -240,11 +256,17 @@ fn collect(
                     "public collection step limit",
                 )?;
                 let learner = seat(d.acting_player) == episode.learner_seat;
+                let mut sampler_identity = None;
                 let (selected, scores, tensor) = if learner {
                     let input = PairedBo1PolicyInputV1::new(&session, d);
                     let (selected, scores) = policy.select_with_scores(&input).map_err(err)?;
                     let (tensor, rows) = policy.captured()?;
                     auxiliary.push(Some(rows.clone()));
+                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                } else if let Some(search) = search.as_mut() {
+                    let (selected, scores, tensor) = search.select(&mut opponent, &session, d)?;
+                    auxiliary.push(None);
+                    sampler_identity = Some(search_opponent::SEARCH_SAMPLER_IDENTITY.to_owned());
                     (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                 } else {
                     let (selected, scores, tensor) =
@@ -262,8 +284,9 @@ fn collect(
                     logits: bits(&scores.logits),
                     value: scores.value.to_bits(),
                     tensor,
-                    sampler_identity: decision_sampler_identity_v1(scores.logits.len())
-                        .map(str::to_owned),
+                    sampler_identity: sampler_identity.or_else(|| {
+                        decision_sampler_identity_v1(scores.logits.len()).map(str::to_owned)
+                    }),
                 });
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
             }
@@ -410,7 +433,7 @@ pub fn run(command: Command) -> Result<Value, String> {
             "public episode batch outside bounds",
         )?;
         for episode in episodes {
-            episode.configurations()?;
+            episode.configurations_admitting_search_v1()?;
             ensure(
                 episode.opponent.is_some() && ids.insert(episode.id.clone()),
                 "missing opponent or duplicate episode",
@@ -473,6 +496,13 @@ pub fn run(command: Command) -> Result<Value, String> {
     .map_err(err)?;
     fs::create_dir(&command.output_directory).map_err(err)?;
     publish_json(&command.output_directory, "config.json", config)?;
+    if let Some(receipt) = search_opponent::run_receipt(config, &config_hash)? {
+        publish_json(
+            &command.output_directory,
+            "search-opponent-receipt.json",
+            &receipt,
+        )?;
+    }
     let mut receipts = Vec::new();
     for update in first_update..last {
         let started = std::time::Instant::now();
