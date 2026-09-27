@@ -440,6 +440,7 @@ pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
 pub mod xmage_observed_inference_v1;
+pub mod spellbench_scorer_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
