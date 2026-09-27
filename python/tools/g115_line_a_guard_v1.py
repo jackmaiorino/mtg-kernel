@@ -192,9 +192,9 @@ def require_no_scratch_inputs(record, scratch_root):
 
 # e-io lock (storage ruling R3(f)): advisory, a waiter waits and never breaks it.
 
-def acquire_e_io(owner, phase, expected_seconds, lock_path=E_IO_LOCK, timeout_seconds=None, poll_seconds=5.0,
+def acquire_e_io(owner, phase, expected_seconds, lock_path=None, timeout_seconds=None, poll_seconds=5.0,
                  clock=time.time, sleep=time.sleep):
-    lock = Path(lock_path)
+    lock = Path(E_IO_LOCK if lock_path is None else lock_path)
     lock.parent.mkdir(parents=True, exist_ok=True)
     started = clock()
     while True:
@@ -218,7 +218,8 @@ def acquire_e_io(owner, phase, expected_seconds, lock_path=E_IO_LOCK, timeout_se
         return record
 
 
-def release_e_io(owner, lock_path=E_IO_LOCK):
+def release_e_io(owner, lock_path=None):
+    lock_path = E_IO_LOCK if lock_path is None else lock_path
     holder = read(lock_path)
     require(holder.get('owner') == owner, 'Only the holder releases the e-io lock')
     os.remove(lock_path)
@@ -257,8 +258,9 @@ def require_one_yardstick(manifests):
 
 # Pinned binaries (artifact law clause 4).
 
-def pin_binary(path, pinned_root=PINNED_ROOT):
+def pin_binary(path, pinned_root=None):
     """Copy a binary to <pinned_root>/<sha256>/<name> once, verified; return the pinned path and digest."""
+    pinned_root = PINNED_ROOT if pinned_root is None else pinned_root
     source = Path(path)
     digest = sha256_file(source)
     target = Path(pinned_root) / digest / source.name
@@ -273,7 +275,8 @@ def pin_binary(path, pinned_root=PINNED_ROOT):
     return target, digest
 
 
-def require_pinned(path, sha256, pinned_root=PINNED_ROOT):
+def require_pinned(path, sha256, pinned_root=None):
+    pinned_root = PINNED_ROOT if pinned_root is None else pinned_root
     expected = normalized(Path(pinned_root) / sha256 / Path(path).name)
     require(normalized(path) == expected, 'Executable must run from its pinned copy: ' + str(path))
     require(sha256_file(path) == sha256, 'Pinned executable hash changed')
