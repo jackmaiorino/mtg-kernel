@@ -8,11 +8,13 @@ use mtg_kernel::effect::{EffectOp, EffectTargetSelectionPurpose, PendingEffectCh
 use mtg_kernel::engine::{self, Action, Decision, UnsupportedMechanic};
 use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId, StackItemId};
+use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, TargetRefV1};
 use mtg_kernel::state::{
     AbilitySourceContractV4, Counters, GameObject, GameState, InitiativeTriggerBindingV1,
     InitiativeTriggerKindV1, ObjectStateV4, StackItemKind, Step, Target, UndercityRoomV1, Zone,
     UNDERCITY_DUNGEON_ID_V1,
 };
+use mtg_kernel::surface_v2::SurfaceDecision;
 use mtg_kernel::trigger;
 
 fn card_id(name: &str) -> u16 {
@@ -662,6 +664,204 @@ fn forge_trap_and_arena_have_exact_targets_effects_and_goad_lifetime() {
         Decision::DeclareAttackers { .. }
     ));
     engine::step(&mut expired, Action::DeclareAttackers(Vec::new())).unwrap();
+}
+
+/// Ventures P0 at upkeep from `from` along route `option` and returns the
+/// first decision after the entered room's ability triggers.
+fn venture_into_room(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+    from: UndercityRoomV1,
+    option: u16,
+    room: UndercityRoomV1,
+) -> Decision {
+    set_room(state, PlayerId::P0, Some(from));
+    enqueue_initiative(
+        state,
+        PlayerId::P0,
+        source,
+        InitiativeTriggerKindV1::VentureAtUpkeep,
+    );
+    advance_to_initiative_stack(state, InitiativeTriggerKindV1::VentureAtUpkeep);
+    assert!(matches!(
+        resolve_top_until_choice(state),
+        Some(Decision::ChooseEffectOption {
+            player: PlayerId::P0,
+            option_count: 2,
+            ..
+        })
+    ));
+    engine::step(state, Action::ChooseEffectOption(option)).unwrap();
+    let decision = engine::advance_until_decision(state);
+    assert_eq!(latest_room_event(state), Some(room));
+    decision
+}
+
+/// Puts the targeted room ability on the stack, checks that it keeps the
+/// Hunter's recorded source, resolves it, and checks its effect on `target`:
+/// Forge's two +1/+1 counters or Arena's goad by P0.
+fn resolve_room_ability_on(
+    state: &mut GameState,
+    room: UndercityRoomV1,
+    source: AbilitySourceContractV4,
+    target: ObjectId,
+) {
+    advance_to_initiative_stack(state, InitiativeTriggerKindV1::UndercityRoom(room));
+    let item = state.stack.last().expect("room ability on the stack");
+    assert_eq!(item.source, source.source);
+    assert_eq!(item.v4.ability_source_contract, Some(source));
+    assert_eq!(item.targets, vec![Target::Object(target)]);
+    resolve_top_until_choice(state);
+    match room {
+        UndercityRoomV1::Forge => assert_eq!(
+            state.objects.get(target).counters.plus1_plus1,
+            2,
+            "Forge must put two counters on its target, not fizzle"
+        ),
+        UndercityRoomV1::Arena => assert!(
+            matches!(
+                state.objects.get(target).v4.goaded_by.as_slice(),
+                [goad] if goad.player == PlayerId::P0
+            ),
+            "Arena must goad its target, not fizzle"
+        ),
+        other => panic!("{other:?} has no creature target"),
+    }
+}
+
+const GUARDIAN_ROOM_CASES: [(UndercityRoomV1, u16, UndercityRoomV1); 2] = [
+    (UndercityRoomV1::SecretEntrance, 0, UndercityRoomV1::Forge),
+    (UndercityRoomV1::Forge, 1, UndercityRoomV1::Arena),
+];
+
+/// A room ability's source is the Undercity dungeon card (309.4c), which is
+/// colorless, so protection from monocolored does not stop Forge or Arena.
+/// Avenging Hunter (mono-green) is only the designation's recorded
+/// provenance. Here the Hunter has died and Guardian of the Guildpact is the
+/// only creature, as when Elves holds the initiative against Caw-Gates.
+#[test]
+fn forge_and_arena_can_target_a_lone_guardian_of_the_guildpact() {
+    for (from, option, room) in GUARDIAN_ROOM_CASES {
+        let mut state = ready_state(0x4c4f_4e45_4755_4152 ^ u64::from(option));
+        let (hunter, source) = install_initiative_source(&mut state, PlayerId::P0);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(hunter, Zone::Graveyard),
+        );
+        collect_triggers(&mut state);
+        let guardian = put_object(
+            &mut state,
+            PlayerId::P1,
+            "Guardian of the Guildpact",
+            Zone::Battlefield,
+        );
+
+        let decision = venture_into_room(&mut state, source, from, option, room);
+        match &decision {
+            Decision::ChooseTargets {
+                player: PlayerId::P0,
+                spell,
+                remaining: 1,
+                legal_targets,
+                can_finish: false,
+            } => {
+                assert_eq!(
+                    legal_targets,
+                    &vec![Target::Object(guardian)],
+                    "{room:?} must be able to target the lone Guardian"
+                );
+                assert_eq!(*spell, hunter, "the trigger keeps its recorded source");
+            }
+            other => panic!("expected {room:?} to choose its target, got {other:?}"),
+        }
+        let pending = &state.engine.pending_triggers[0];
+        assert_eq!(pending.source_contract, Some(source));
+        let candidates = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state)
+            .expect("legal action projection");
+        assert!(candidates.iter().any(|candidate| matches!(
+            &candidate.record.semantic,
+            ActionSemanticV1::ChooseTarget {
+                target: TargetRefV1::Object { object },
+                ..
+            } if object.arena_id == guardian.0
+        )));
+
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(guardian))).unwrap();
+        resolve_room_ability_on(&mut state, room, source, guardian);
+    }
+}
+
+/// With other creatures on the battlefield, Forge and Arena offer the Guardian
+/// beside them instead of silently leaving it out.
+#[test]
+fn forge_and_arena_offer_guardian_of_the_guildpact_beside_other_creatures() {
+    for (from, option, room) in GUARDIAN_ROOM_CASES {
+        let mut state = ready_state(0x4245_5349_4445_4752 ^ u64::from(option));
+        let (hunter, source) = install_initiative_source(&mut state, PlayerId::P0);
+        let mystic = put_object(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+        let guardian = put_object(
+            &mut state,
+            PlayerId::P1,
+            "Guardian of the Guildpact",
+            Zone::Battlefield,
+        );
+
+        let decision = venture_into_room(&mut state, source, from, option, room);
+        assert!(
+            matches!(
+                &decision,
+                Decision::ChooseTargets {
+                    player: PlayerId::P0,
+                    legal_targets,
+                    can_finish: false,
+                    ..
+                } if legal_targets == &vec![
+                    Target::Object(hunter),
+                    Target::Object(mystic),
+                    Target::Object(guardian),
+                ]
+            ),
+            "{room:?} must offer every creature, got {decision:?}"
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(guardian))).unwrap();
+        resolve_room_ability_on(&mut state, room, source, guardian);
+    }
+}
+
+/// Contrast: an ordinary monocolored source still cannot target the Guardian.
+/// Humbling Elder is mono-blue and its ETB trigger targets an opponent's
+/// creature.
+#[test]
+fn a_monocolored_creature_trigger_still_cannot_target_guardian_of_the_guildpact() {
+    let mut state = ready_state(0x454c_4445_5247_5244);
+    let guardian = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Guardian of the Guildpact",
+        Zone::Battlefield,
+    );
+    let other = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Voldaren Epicure",
+        Zone::Battlefield,
+    );
+    let elder = put_object(&mut state, PlayerId::P0, "Humbling Elder", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(elder, Zone::Battlefield),
+    );
+    collect_triggers(&mut state);
+    let decision = engine::advance_until_decision(&mut state);
+    assert!(
+        matches!(
+            &decision,
+            Decision::ChooseTargets { player: PlayerId::P0, spell, legal_targets, .. }
+                if *spell == elder && legal_targets == &vec![Target::Object(other)]
+        ),
+        "Humbling Elder's trigger must not offer the Guardian, got {decision:?}"
+    );
+    assert!(engine::step(&mut state, Action::ChooseTarget(Target::Object(guardian))).is_err());
 }
 
 #[test]
