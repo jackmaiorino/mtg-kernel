@@ -87,6 +87,7 @@ mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
+mod line_b_teacher_packet_v1;
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -7031,6 +7032,108 @@ pub(crate) mod tests {
         );
         assert!(shuffled <= 0.2, "different-shuffle TVD {shuffled}");
         assert!(power > 0.2, "one-card TVD {power}");
+    }
+
+    /// Line (b) teach step on the fixture game, entered twice: once as a
+    /// teacher game and once as a canonical game. The packet's games and
+    /// census are identical for one and three workers, the census counts
+    /// match the records, and invalid options are refused.
+    #[test]
+    fn line_b_teach_step_builds_a_worker_invariant_packet() {
+        use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+        use line_b_teacher_operator_v1::{LineBRolloutOutcomeV1, LineBRootStatusV1};
+        use line_b_teacher_packet_v1::{
+            line_b_teach_v1, LineBGameSeedsV1, LineBPacketGameV1, LineBTeacherOptionsV1,
+            LINE_B_TEACHER_PACKET_SCHEMA_V1,
+        };
+        let (policy, trajectory) = line_b_operator_fixture_v1();
+        let trajectories = [trajectory.clone(), trajectory];
+        let options = |workers: usize| LineBTeacherOptionsV1 {
+            direction: LineBDivergenceV1::Reverse,
+            coefficient: 0.1,
+            temperature: 0.25,
+            rollouts: 2,
+            workers,
+            games: vec![
+                Some(LineBGameSeedsV1 {
+                    root_seed: 11,
+                    teacher_seed: 21,
+                }),
+                None,
+            ],
+        };
+        let student = "0".repeat(64);
+        let serial = line_b_teach_v1(&trajectories, &policy, &student, &options(1)).unwrap();
+        let pooled = line_b_teach_v1(&trajectories, &policy, &student, &options(3)).unwrap();
+        assert_eq!(serial.games, pooled.games);
+        assert_eq!(serial.census, pooled.census);
+        assert!(matches!(
+            serial.games[1],
+            LineBPacketGameV1::Canonical {
+                trajectory_index: 1
+            }
+        ));
+        let LineBPacketGameV1::Root(root) = &serial.games[0] else {
+            panic!("the fixture game has an eligible root");
+        };
+        let width = root.collection_logits.len();
+        assert_eq!(root.rollouts.len(), 2 * width);
+        let census = &serial.census;
+        assert_eq!(
+            (census.teacher_games, census.selected_roots, census.rollouts),
+            (1, 1, 2 * width)
+        );
+        assert_eq!(census.complete_roots + census.censored_roots, 1);
+        let censored = root
+            .rollouts
+            .iter()
+            .filter(|record| matches!(record.outcome, LineBRolloutOutcomeV1::Censored(_)))
+            .count();
+        assert_eq!(census.censored_rollouts, censored);
+        assert_eq!(
+            census.physical_decisions,
+            root.rollouts
+                .iter()
+                .map(|r| r.physical_decisions)
+                .sum::<u64>()
+        );
+        match &root.status {
+            LineBRootStatusV1::Complete { log_target, .. } => {
+                assert_eq!((census.complete_roots, log_target.len()), (1, width))
+            }
+            LineBRootStatusV1::Censored { censored_rollouts } => {
+                assert_eq!((census.censored_roots, *censored_rollouts), (1, censored))
+            }
+        }
+        let json = serde_json::to_value(&serial).unwrap();
+        assert_eq!(json["schema"], LINE_B_TEACHER_PACKET_SCHEMA_V1);
+        assert_eq!(json["games"][0]["kind"], "root");
+        assert_eq!(json["games"][1]["kind"], "canonical");
+        assert_eq!(
+            serde_json::to_vec(&serial).unwrap(),
+            serde_json::to_vec(
+                &line_b_teach_v1(&trajectories, &policy, &student, &options(1)).unwrap()
+            )
+            .unwrap(),
+            "the packet bytes repeat"
+        );
+        let mut refused = Vec::new();
+        let mut short = options(1);
+        short.games.pop();
+        refused.push(short);
+        for change in 0..4 {
+            let mut bad = options(1);
+            match change {
+                0 => bad.rollouts = 0,
+                1 => bad.temperature = 0.0,
+                2 => bad.coefficient = -1.0,
+                _ => bad.workers = 0,
+            }
+            refused.push(bad);
+        }
+        for bad in refused {
+            assert!(line_b_teach_v1(&trajectories, &policy, &student, &bad).is_err());
+        }
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,
