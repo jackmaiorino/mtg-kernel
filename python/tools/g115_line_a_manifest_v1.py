@@ -172,6 +172,17 @@ def pinned_ref(value):
     return isinstance(value, dict) and set(value) == {'path', 'sha256'}
 
 
+def exact_rational(value, member_id):
+    """'p/q' text or {'numerator': p, 'denominator': q} integers (the form CODEX #525 emits); never a float."""
+    if isinstance(value, dict):
+        require(set(value) == {'numerator', 'denominator'} and type(value['numerator']) is int and
+                type(value['denominator']) is int and value['denominator'] > 0,
+                'Weight must be an exact rational: ' + member_id)
+        return Fraction(value['numerator'], value['denominator'])
+    require(isinstance(value, str) and '/' in value, 'Weight must be an exact rational p/q: ' + member_id)
+    return Fraction(value)
+
+
 def validate_weights(roster):
     """Exact rational yardstick weights per composition over its non-holdout members, summing to one."""
     weights = roster['yardstick_weights']
@@ -183,9 +194,8 @@ def validate_weights(roster):
         members = {m['id'] for m in composition_members(roster, composition)}
         require(set(table) == members, 'Yardstick weights must cover exactly the composition members, no holdout')
         values = []
-        for member_id, text in table.items():
-            require(isinstance(text, str) and '/' in text, 'Weight must be an exact rational p/q: ' + member_id)
-            values.append(Fraction(text))
+        for member_id, value in table.items():
+            values.append(exact_rational(value, member_id))
             require(values[-1] > 0, 'Weight must be positive: ' + member_id)
         require(sum(values) == 1, 'Yardstick weights of composition %s do not sum to one' % composition)
 

@@ -186,7 +186,14 @@ class ManifestTests(unittest.TestCase):
             return roster
 
         manifest.validate_roster(frozen())
+        roster = frozen()  # CODEX #525's prospective B weights, in its {numerator, denominator} form
+        roster['yardstick_weights']['B'] = {
+            'v3': dict(numerator=267, denominator=800), 'd3-wrapper': dict(numerator=533, denominator=1600),
+            'recent/r4-a': dict(numerator=67, denominator=800), 'recent/r4-b': dict(numerator=67, denominator=800),
+            'recent/r5-a': dict(numerator=133, denominator=1600), 'recent/r5-b': dict(numerator=33, denominator=400)}
+        manifest.validate_roster(roster)
         for change, message in (
+                (lambda r: r['yardstick_weights']['B'].update(v3=dict(numerator=0.5, denominator=1)), 'exact rational'),
                 (lambda r: r.update(template=dict(r['template'], sha256='0' * 64)), 'bind the template hash'),
                 (lambda r: r['exposure_tables'].pop('B'), 'both exposure tables'),
                 (lambda r: r['yardstick_weights'].update(normalization=''), 'normalization declared'),
