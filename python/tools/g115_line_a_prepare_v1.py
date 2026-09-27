@@ -11,8 +11,13 @@ manifest is written and under the e-io lock (storage ruling R3(b), (f)).
 """
 import argparse
 import hashlib
+import itertools
 import json
 from pathlib import Path
+import re
+import shutil
+import subprocess
+import time
 
 import g115_d3_payload_v1 as payload
 import g115_line_a_guard_v1 as guard
@@ -121,6 +126,65 @@ def prepare_throughput(root, build_receipt, build_repo, host='jack', worker_coun
     require(len(jobs) <= launcher.THROUGHPUT_MAX_JOBS, 'Timing check too large')
     launcher.write_json(root / 'launch-manifest.json', launch)
     return launch
+
+
+BUSY = re.compile(r'^(public_feature_evaluation_v1|trainer|mtg_kernel.*|cargo|rustc)\.exe$', re.I)
+HALEYSPC = 'haley@100.71.75.65'
+
+
+def jack_facts():
+    """Jack's PC measured now: CPUs, memory, free disk, GPUs and competing native work."""
+    import psutil
+    gpus = subprocess.run(['nvidia-smi', '--query-gpu=index,name,uuid,memory.total,memory.used',
+                           '--format=csv,noheader'], capture_output=True, text=True).stdout.strip().splitlines()
+    competing = sorted({p.info['name'] for p in psutil.process_iter(['name']) if BUSY.match(p.info['name'] or '')})
+    return dict(checked_unix=time.time(), logical_cpus=psutil.cpu_count(), memory_available_bytes=
+                psutil.virtual_memory().available, d_free_bytes=shutil.disk_usage('D:/').free, gpus=gpus,
+                competing=competing, eligible=not competing,
+                reason='idle local host' if not competing else 'competing native work: ' + ', '.join(competing))
+
+
+def haleyspc_facts():
+    """Reachability and CPUs over SSH; the line (a) payload is not staged there (reported, not engineered)."""
+    probe = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', HALEYSPC,
+                            'echo %NUMBER_OF_PROCESSORS%'], capture_output=True, text=True, timeout=30)
+    reachable = probe.returncode == 0
+    return dict(checked_unix=time.time(), reachable=reachable,
+                logical_cpus=int(probe.stdout.strip()) if reachable and probe.stdout.strip().isdigit() else None,
+                eligible=False,
+                reason='reachable over SSH, but the pinned evaluator, payload and launcher are not staged on its '
+                       'mirrored paths; staging is remaining engineering' if reachable else 'SSH unreachable')
+
+
+def runpod_facts():
+    return dict(checked_unix=time.time(), eligible=False,
+                reason='the WMI transport and this launcher are Windows-only; no Linux path exists for this '
+                       'workload, and no paid allocation is authorized for line (a) (R12)')
+
+
+def throughput_evidence(host_records, inventory, overhead_seconds, units, binding, work_class):
+    """Assemble g115-line-a-throughput/v1: every measured allocation compared, fastest feasible selected."""
+    hosts = {}
+    for record in host_records:
+        guard.require(record['work_class'] == work_class and record['binding'] == binding,
+                      'Host evidence binds a different workload')
+        hosts[record['host']] = dict(overhead_seconds=overhead_seconds[record['host']],
+                                     phases=[{k: phase[k] for k in ('workers', 'seconds', 'completed', 'rows')}
+                                             for phase in record['phases']])
+    evidence = dict(schema=guard.THROUGHPUT_SCHEMA, binding=dict(binding, work_class=work_class),
+                    inventory=inventory, hosts=hosts, placements=[], selected=None, units=units)
+    allocations = [{host: phase['workers']} for host, item in hosts.items() for phase in item['phases']]
+    if len(hosts) > 1:
+        fastest = {host: max(item['phases'], key=guard.phase_rate)['workers'] for host, item in hosts.items()}
+        for size in range(2, len(hosts) + 1):
+            allocations += [{h: fastest[h] for h in names} for names in itertools.combinations(sorted(hosts), size)]
+    for allocation in allocations:
+        seconds = guard.projected_seconds(evidence, allocation, units)
+        evidence['placements'].append(dict(id='+'.join('%s-%d' % item for item in sorted(allocation.items())),
+                                           allocation=allocation, eligible=True, ineligibility_reason='',
+                                           projected_seconds=seconds))
+    evidence['selected'] = min(evidence['placements'], key=lambda p: (p['projected_seconds'], p['id']))['id']
+    return evidence
 
 
 def main():
