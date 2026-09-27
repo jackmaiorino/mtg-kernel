@@ -110,7 +110,9 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-verification/v1') { throw 'Audit verification requires the bounded Windows verification owner' }
 } elseif ($launcherName -eq 'g115_d4_header_audit_v1.py') {
     if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-header-audit/v1') { throw 'Header extraction requires the bounded read-only Jack owner' }
-} elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4 launchers are allowed' }
+} elseif ($launcherName -eq 'g115_line_a_windows_launch_v1.py') {
+    if ($cloudMode -or $plan.schema -ne 'g115-line-a-launch/v1') { throw 'Line (a) admits only the named guarded Windows launcher' }
+} elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4/line (a) launchers are allowed' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Qualified Python executable missing' }
 if ($cloudMode) {
     $cloudController = $plan.transport.cloud_controller.path
