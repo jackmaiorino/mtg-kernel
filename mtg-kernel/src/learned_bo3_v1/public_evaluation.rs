@@ -166,6 +166,23 @@ impl PairedBo1PolicyV1 for Play {
     }
 }
 
+/// Test-only handle on the evaluator's Legacy dispatch, so the collector's
+/// Legacy opponent can be checked against it. Not compiled outside tests.
+#[cfg(test)]
+pub(crate) fn legacy_play_for_test(
+    policy: FrozenPlayPolicyV1,
+    forced: bool,
+    spell_adapter: bool,
+) -> impl PairedBo1PolicyV1 {
+    Play::Legacy {
+        policy,
+        forced,
+        count: 0,
+        spell_adapter,
+        repairs: 0,
+    }
+}
+
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

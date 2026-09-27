@@ -370,3 +370,53 @@ fn legacy_admission_identity_probe() {
         })
     );
 }
+
+/// The collector's Legacy seat makes the evaluator's choices: replaying a
+/// collected game through the evaluator's own Legacy dispatch (same seeds,
+/// same physical-seat stream) reproduces every opponent action.
+#[test]
+fn legacy_seat_matches_the_evaluator_dispatch() {
+    for (forced, spell_adapter) in [(true, true), (false, false)] {
+        let episode = episode(1, Some(legacy_kind(forced, spell_adapter)));
+        let trajectory = play(&episode, legacy_seat(forced, spell_adapter));
+        let configs = episode.configurations_for_public_collector_v1().unwrap();
+        let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+            1,
+            episode.seed,
+            episode.max_physical_decisions,
+            episode.max_policy_steps,
+            episode.selected.each_ref().map(|d| d.label.clone()),
+            configs.each_ref().map(|c| c.mainboard().to_vec()),
+            PlayerId(episode.starting_player),
+        )
+        .unwrap();
+        let mut evaluator = crate::learned_bo3_v1::public_evaluation::legacy_play_for_test(
+            FrozenPlayPolicyV1::training_fixture_v3(),
+            forced,
+            spell_adapter,
+        );
+        evaluator
+            .reset_for_game_v1(paired_policy_seeds_v1(episode.seed))
+            .unwrap();
+        let mut compared = 0;
+        for row in &trajectory.decisions {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("replay ended early");
+            };
+            assert_eq!((d.step, seat(d.acting_player)), (row.step, row.actor));
+            if row.actor != episode.learner_seat {
+                let chosen = evaluator
+                    .select_action_v1(PairedBo1PolicyInputV1::new(&session, d))
+                    .unwrap();
+                assert_eq!(chosen, row.selected, "step {}", row.step);
+                compared += 1;
+            }
+            session.step(d.episode_id, d.step, row.selected).unwrap();
+        }
+        assert!(compared > 0);
+        assert!(matches!(
+            session.current_response(),
+            FastActorResponseV1::Terminal(_)
+        ));
+    }
+}
