@@ -79,6 +79,7 @@ pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod flat_policy_v3;
 pub mod flat_policy_v4;
+pub(crate) mod agent_bridge_flat_v4_encode;
 pub mod ids;
 pub mod policy_observation_v6;
 pub mod policy_observation_v7;
