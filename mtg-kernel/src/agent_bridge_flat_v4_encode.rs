@@ -16,6 +16,7 @@ use crate::native_flat_tensorizer_v4::{
     FEATURE_ENCODING_DIGEST_V4,
 };
 use crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1;
+use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::xmage_observed_inference_v1::ObservedTensorBitsV1;
 use serde_json::{json, Value};
@@ -63,10 +64,33 @@ pub(crate) struct FlatV4EncodeScratchV1 {
     action_refs: Vec<FlatScorerActionRefV2>,
 }
 
+/// One encoded decision: the V4 model input and the header of the decision
+/// it was computed for.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EncodedFlatV4V1 {
+    pub(crate) tensor: NativeFlatDecisionTensorV4,
+    /// The encoded decision's `step`.
+    pub(crate) step: u64,
+    /// The encoded decision's actor, "p0" or "p1".
+    pub(crate) acting_seat: &'static str,
+}
+
+/// Protocol seat spelling, as on the bridge's decision lines
+/// (`agent_bridge_v1::seat_str_v1`).
+fn protocol_seat_v1(seat: PlayerSeatV1) -> &'static str {
+    match seat {
+        PlayerSeatV1::P0 => "p0",
+        PlayerSeatV1::P1 => "p1",
+    }
+}
+
+/// Encodes the current decision of `fast` with the evaluation encoder and
+/// tensorizer and keeps that decision's `step` and seat with the tensor, so
+/// the payload is always labeled with the decision it encodes.
 pub(crate) fn encode_flat_v4_tensor_v1(
     fast: &FastActorSessionV1,
     scratch: &mut FlatV4EncodeScratchV1,
-) -> Result<NativeFlatDecisionTensorV4, FlatV4EncodeErrorV1> {
+) -> Result<EncodedFlatV4V1, FlatV4EncodeErrorV1> {
     let FastActorResponseV1::Decision(expected) = fast.current_response() else {
         return Err(FlatV4EncodeErrorV1::NotADecision);
     };
@@ -121,7 +145,11 @@ pub(crate) fn encode_flat_v4_tensor_v1(
     NativeFlatTensorizerV4::default()
         .fill(view, &mut tensor)
         .map_err(|error| FlatV4EncodeErrorV1::Tensorize(format!("{error:?}")))?;
-    Ok(tensor)
+    Ok(EncodedFlatV4V1 {
+        tensor,
+        step: expected.step,
+        acting_seat: protocol_seat_v1(expected.acting_player),
+    })
 }
 
 fn bits(values: &[f32]) -> Vec<u32> {
@@ -147,18 +175,25 @@ pub(crate) fn tensor_bits_v1(tensor: &NativeFlatDecisionTensorV4) -> ObservedTen
     }
 }
 
+/// The `x_kernel_flat_v4` payload for the decision `encoded` holds.
+///
+/// `acting_seat` is the protocol seat string and `step` is the protocol
+/// decision's `step`, both taken from the decision `encode_flat_v4_tensor_v1`
+/// encoded (the lockstep check requires that decision's header to equal the
+/// protocol decision's). `rows[r]` is the raw candidate id that tensor row
+/// `r` executes: the row map from
+/// `agent_bridge_flat_v4::map_rows_to_candidates_v1`. It must have one entry
+/// per tensor row.
 pub(crate) fn flat_v4_extension_value_v1(
-    tensor: &NativeFlatDecisionTensorV4,
-    row_candidate_ids: &[u32],
-    acting_seat: &str,
-    step: u64,
+    encoded: &EncodedFlatV4V1,
+    rows: &[u32],
 ) -> Result<Value, FlatV4EncodeErrorV1> {
     let action_dim = NativePolicyValueModelConfigV1::contract_v1().action_feature_dim;
-    let features = tensor.common.action_features.len();
+    let features = encoded.tensor.common.action_features.len();
     let tensor_actions = features / action_dim;
-    if tensor_actions * action_dim != features || tensor_actions != row_candidate_ids.len() {
+    if tensor_actions * action_dim != features || tensor_actions != rows.len() {
         return Err(FlatV4EncodeErrorV1::RowCount {
-            rows: row_candidate_ids.len(),
+            rows: rows.len(),
             tensor_actions,
         });
     }
@@ -167,16 +202,18 @@ pub(crate) fn flat_v4_extension_value_v1(
         "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V4,
         "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V4,
         "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
-        "acting_seat": acting_seat,
-        "step": step,
-        "row_candidate_ids": row_candidate_ids,
-        "tensor": serde_json::to_value(tensor_bits_v1(tensor)).expect("tensor bits serialize"),
+        "acting_seat": encoded.acting_seat,
+        "step": encoded.step,
+        "row_candidate_ids": rows,
+        "tensor": serde_json::to_value(tensor_bits_v1(&encoded.tensor))
+            .expect("tensor bits serialize"),
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rl::PlayerSeatV1;
     use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
     use serde_json::json;
 
@@ -193,6 +230,7 @@ mod tests {
         let mut harness = FrozenPlayPolicyV1::training_fixture_v4();
         let mut scratch = FlatV4EncodeScratchV1::default();
         let mut checked = 0;
+        let mut decisions_per_seat = [0_u32; 2];
         for (index, deck) in DECKS.iter().enumerate() {
             let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
                 900 + index as u64,
@@ -206,14 +244,30 @@ mod tests {
                 let FastActorResponseV1::Decision(decision) = session.current_response() else {
                     break;
                 };
-                let ours = encode_flat_v4_tensor_v1(&session, &mut scratch).unwrap();
+                let ours: EncodedFlatV4V1 =
+                    encode_flat_v4_tensor_v1(&session, &mut scratch).unwrap();
                 harness.score_fast_session_v1(&session).unwrap();
                 let theirs = harness.last_scored_training_tensor_v4().unwrap();
                 assert_eq!(
-                    bits_value(&ours),
+                    bits_value(&ours.tensor),
                     bits_value(theirs),
                     "{deck} decision {turn}"
                 );
+                // The payload names the decision it encodes, in protocol
+                // spelling: the Spellbench wire calls the seats "p0" and "p1".
+                let (seat, seat_index) = match decision.acting_player {
+                    PlayerSeatV1::P0 => ("p0", 0),
+                    PlayerSeatV1::P1 => ("p1", 1),
+                };
+                let rows: Vec<u32> = (0..decision.legal_action_count).collect();
+                let value = flat_v4_extension_value_v1(&ours, &rows).unwrap();
+                assert_eq!(value["step"], decision.step, "{deck} decision {turn}");
+                assert_eq!(value["acting_seat"], seat, "{deck} decision {turn}");
+                assert!(
+                    max_integer(&value) <= 1_u64 << 53,
+                    "{deck} decision {turn}: a payload number is not an integer in [0, 2^53]"
+                );
+                decisions_per_seat[seat_index] += 1;
                 checked += 1;
                 let row = (turn % u64::from(decision.legal_action_count)) as u32;
                 session
@@ -222,6 +276,10 @@ mod tests {
             }
         }
         assert!(checked >= 400, "only {checked} decisions checked");
+        assert!(
+            decisions_per_seat.iter().all(|&count| count > 0),
+            "decisions per seat (p0, p1): {decisions_per_seat:?}"
+        );
     }
 
     fn max_integer(value: &Value) -> u64 {
@@ -234,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn extension_value_carries_identity_row_map_and_safe_integers() {
+    fn extension_value_carries_identity_and_row_map() {
         let session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
             77,
             5,
@@ -246,10 +304,10 @@ mod tests {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             panic!("decision")
         };
-        let tensor =
+        let encoded =
             encode_flat_v4_tensor_v1(&session, &mut FlatV4EncodeScratchV1::default()).unwrap();
         let rows: Vec<u32> = (0..decision.legal_action_count).rev().collect();
-        let value = flat_v4_extension_value_v1(&tensor, &rows, "p0", decision.step).unwrap();
+        let value = flat_v4_extension_value_v1(&encoded, &rows).unwrap();
         assert_eq!(value["schema"], "mtg-kernel-spellbench-flat-v4/v1");
         assert_eq!(
             value["feature_contract_digest"],
@@ -260,10 +318,8 @@ mod tests {
             "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"
         );
         assert_eq!(value["card_db_hash"], "064a7c989255ab3c");
-        assert_eq!(value["acting_seat"], "p0");
         assert_eq!(value["row_candidate_ids"], json!(rows));
         assert_eq!(value["tensor"].as_object().unwrap().len(), 13);
-        assert!(max_integer(&value) <= 1_u64 << 53);
     }
 
     #[test]
@@ -276,16 +332,43 @@ mod tests {
             ["Burn".to_string(), "Burn".to_string()],
         )
         .unwrap();
-        let tensor =
+        let encoded =
             encode_flat_v4_tensor_v1(&session, &mut FlatV4EncodeScratchV1::default()).unwrap();
-        let actions = tensor.common.action_features.len() / 195;
+        let actions = encoded.tensor.common.action_features.len() / 195;
         let rows: Vec<u32> = (0..actions as u32 + 1).collect();
         assert_eq!(
-            flat_v4_extension_value_v1(&tensor, &rows, "p0", 0),
+            flat_v4_extension_value_v1(&encoded, &rows),
             Err(FlatV4EncodeErrorV1::RowCount {
                 rows: actions + 1,
                 tensor_actions: actions
             })
         );
+    }
+
+    #[test]
+    fn halt_reasons_name_each_encode_failure() {
+        for (error, reason) in [
+            (
+                FlatV4EncodeErrorV1::NotADecision,
+                "engine_contract_failure:flat_v4_encode:not_a_decision",
+            ),
+            (
+                FlatV4EncodeErrorV1::Encode("ObservationContract".to_string()),
+                "engine_contract_failure:flat_v4_encode:encode:ObservationContract",
+            ),
+            (
+                FlatV4EncodeErrorV1::Tensorize("ObjectOrder".to_string()),
+                "engine_contract_failure:flat_v4_encode:tensorize:ObjectOrder",
+            ),
+            (
+                FlatV4EncodeErrorV1::RowCount {
+                    rows: 3,
+                    tensor_actions: 2,
+                },
+                "engine_contract_failure:flat_v4_encode:row_count:3:2",
+            ),
+        ] {
+            assert_eq!(error.halt_reason(), reason, "{error:?}");
+        }
     }
 }
