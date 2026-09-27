@@ -9,9 +9,6 @@ use crate::durable_publication_v1::{
 use crate::fast_sampler::{
     WideCategoricalScratchV1, FAST_CATEGORICAL_MAX_ACTIONS, WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
 };
-use crate::unclamped_softmax_sampler_v1::{
-    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
-};
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::{
@@ -22,6 +19,7 @@ use crate::native_flat_tensorizer_v3::{FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRI
 use crate::native_flat_tensorizer_v4::{
     NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
 };
+use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -43,6 +41,9 @@ use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayModelIdentityV1, PlayPolicyOriginV1,
 };
 use crate::state::SplitMix64;
+use crate::unclamped_softmax_sampler_v1::{
+    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -704,6 +705,33 @@ impl CollectionSamplerV1 {
             document["collection_sampler"] = json!(identity);
         }
     }
+}
+
+/// Optimizer mask for a line (b) update; one value today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OptimizerMaskV1 {
+    /// `line-b-head-only-mask-v1`: only the seven scorer and value-head
+    /// tensors change; the 26 frozen tensors and their Adam moments are
+    /// restored bit for bit after every step.
+    #[serde(rename = "line-b-head-only-mask-v1")]
+    LineBHeadOnlyV1,
+}
+
+/// G115 line (b) update options. Absent for every existing update,
+/// command and run config, which keep their bytes and arithmetic.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineBUpdateOptionsV1 {
+    pub optimizer_mask: OptimizerMaskV1,
+}
+
+/// Frozen-tensor digest of `source` under the line (b) mask: every masked
+/// update of a run must repeat its initial source's value.
+pub(crate) fn line_b_frozen_sha256_v1(source: &ExpandedModelSourceV1) -> Result<String, String> {
+    let (_, state) = initialize(source)?;
+    let snapshot = state.snapshot_v1().map_err(err)?;
+    let mask = HeadOnlyMaskV1::for_snapshot_v1(&snapshot).map_err(err)?;
+    Ok(hex(&mask.frozen_sha256_v1(&snapshot)))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1762,9 +1790,7 @@ fn validate_episode_records_with_learner_sampler_v1(
             )?;
             let draw = rng[row.actor as usize].next_u64();
             let selected = if expected_identity == Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1) {
-                unclamped
-                    .sample(&floats(&row.logits), draw)
-                    .map_err(err)?
+                unclamped.sample(&floats(&row.logits), draw).map_err(err)?
             } else {
                 sampler.sample(&floats(&row.logits), draw).map_err(err)?
             };
@@ -1956,6 +1982,10 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "ExpandedLossSelectionV1::is_terminal_reinforce_value_v3"
         )]
         loss_selection: ExpandedLossSelectionV1,
+        /// G115 line (b) options (head-only optimizer mask); omitted when
+        /// absent, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line_b: Option<LineBUpdateOptionsV1>,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -1986,6 +2016,10 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        /// G115 line (b) options (head-only optimizer mask); omitted when
+        /// absent, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line_b: Option<LineBUpdateOptionsV1>,
         output_directory: PathBuf,
     },
 }
@@ -2120,6 +2154,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             update_backend,
             update_backward_execution,
             loss_selection,
+            line_b,
             output_directory,
         } => execute_update_v1(
             source,
@@ -2132,6 +2167,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            line_b,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -2143,6 +2179,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            line_b,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -2158,6 +2195,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                line_b,
             )
         }
     }
@@ -2295,6 +2333,7 @@ fn execute_update_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    line_b: Option<LineBUpdateOptionsV1>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -2486,6 +2525,18 @@ fn execute_update_v1(
         ),
     };
     let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
+    // Line (b) head-only mask: validate the topology and keep the pre-step
+    // snapshot, whatever backend runs the step below.
+    let masked_before = match &line_b {
+        Some(LineBUpdateOptionsV1 {
+            optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+        }) => {
+            let before = state.snapshot_v1().map_err(err)?;
+            let mask = HeadOnlyMaskV1::for_snapshot_v1(&before).map_err(err)?;
+            Some((mask, before))
+        }
+        None => None,
+    };
     let learner_started = std::time::Instant::now();
     let update = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
@@ -2637,6 +2688,24 @@ fn execute_update_v1(
         }
     };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+    // Restore every frozen tensor and its moments before any publication;
+    // from_snapshot_v1 revalidates the manifest and the canonical gauge.
+    let frozen_tensor_sha256 = match masked_before {
+        Some((mask, before)) => {
+            let mut after = state.snapshot_v1().map_err(err)?;
+            mask.restore_frozen_v1(&before, &mut after).map_err(err)?;
+            state =
+                NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &after)
+                    .map_err(err)?;
+            let frozen = hex(&mask.frozen_sha256_v1(&after));
+            ensure(
+                frozen == hex(&mask.frozen_sha256_v1(&before)),
+                "head-only mask left a frozen tensor changed",
+            )?;
+            Some(frozen)
+        }
+        None => None,
+    };
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -2713,6 +2782,10 @@ fn execute_update_v1(
     )?;
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     update_backend.record_update_execution_v1(&mut result);
+    if let Some(frozen) = frozen_tensor_sha256 {
+        result["line_b"] = json!({"optimizer_mask": HEAD_ONLY_MASK_VERSION_V1,
+            "frozen_tensor_sha256": frozen});
+    }
     // Advantage statistics (design section 3), gated on the new loss
     // identity only: a v3 update's `gae_targets` is always `None`, so v3
     // receipts gain zero new keys.
@@ -5926,6 +5999,7 @@ pub(crate) mod tests {
             let trajectories: Vec<PinnedFileV1> =
                 serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
             let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
+                line_b: None,
                 source: source.clone(),
                 trajectories,
                 learning_rate: 0.0003,
@@ -6353,6 +6427,182 @@ pub(crate) mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
         }
+    }
+
+    /// Line (b) head-only mask (`line-b-head-only-mask-v1`) through the real
+    /// Collect and Update commands with the production GAE loss on real
+    /// games: after every one of four updates each frozen tensor's parameter
+    /// and both Adam moments are byte-identical to the initial state, the
+    /// receipt repeats the initial frozen digest, the Adam age advances once
+    /// per update, the gauge keeps its anchor, and all seven head tensors
+    /// move. The play policy's copied embedding table is unchanged. Without
+    /// the mask the same schedule moves the trunk (power check).
+    #[test]
+    fn line_b_head_only_mask_freezes_trunk_bytes_across_real_updates() {
+        assert_line_b_mask_fixture_v1("cpu", ExpandedUpdateBackendV1::Cpu);
+    }
+
+    /// The same four-update mask fixture through the production CUDA bridge
+    /// on device 1: the restore runs after the device step and the next step
+    /// re-imports the restored host snapshot.
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    fn line_b_head_only_mask_freezes_trunk_bytes_across_real_cuda_updates() {
+        assert_line_b_mask_fixture_v1("cuda", ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 });
+    }
+
+    fn assert_line_b_mask_fixture_v1(backend_label: &str, update_backend: ExpandedUpdateBackendV1) {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let run = |label: &str, line_b: Option<LineBUpdateOptionsV1>, updates: u64| {
+            let root = std::env::temp_dir().join(format!(
+                "line-b-mask-{backend_label}-{label}-{}",
+                std::process::id()
+            ));
+            let source_struct =
+                fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                    &root.join("source"),
+                    feature_identity,
+                    |_parameters| {},
+                );
+            let descriptor_path = root.join("descriptor.json");
+            let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+            std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+            let mut source = ExpandedModelSourceV1 {
+                play_import: PinnedFileV1 {
+                    path: descriptor_path.canonicalize().unwrap(),
+                    sha256: sha(&descriptor_bytes),
+                },
+                feature_transfer: FrozenPlayObservationTransferV3 {
+                    expected_feature_contract_digest: feature_identity
+                        .feature_contract_digest
+                        .into(),
+                    expected_feature_encoding_digest: feature_identity
+                        .feature_encoding_digest
+                        .into(),
+                },
+                checkpoint: None,
+            };
+            let initial_source = source.clone();
+            let decks = [list("Affinity"), list("Terror")];
+            let mut outputs = Vec::new();
+            for iteration in 0..updates {
+                let episode = ExpandedEpisodeV1 {
+                    id: format!("line-b-mask-{label}-{iteration}"),
+                    seed: 2_026_092_711 + iteration,
+                    starting_player: (iteration % 2) as u8,
+                    learner_seat: 0,
+                    opponent: None,
+                    registered: decks.clone(),
+                    selected: decks.clone(),
+                    postboard: false,
+                    max_physical_decisions: 100_000,
+                    max_policy_steps: 1_000_000,
+                };
+                let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
+                    source: source.clone(),
+                    episodes: vec![episode],
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: CollectionSamplerV1::Legacy,
+                    output_directory: root.join(format!("collect-{iteration}")),
+                })
+                .unwrap();
+                let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+                    source: source.clone(),
+                    trajectories: serde_json::from_value(collected["trajectories"].clone())
+                        .unwrap(),
+                    learning_rate: 0.0003,
+                    value_coefficient: 0.5,
+                    update_backend,
+                    update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+                    loss_selection: gae_loss_selection_v1(),
+                    line_b: line_b.clone(),
+                    output_directory: root.join(format!("update-{iteration}")),
+                })
+                .unwrap();
+                let pin: PinnedFileV1 =
+                    serde_json::from_value(receipt["checkpoint"].clone()).unwrap();
+                let checkpoint: ExpandedCheckpointV1 = read_pinned(&pin).unwrap();
+                source.checkpoint = Some(pin);
+                outputs.push((checkpoint, receipt));
+            }
+            (initial_source, source, outputs)
+        };
+        let bits_of = |tensors: &[NativeNamedParameterV1]| -> Vec<Vec<u32>> {
+            tensors.iter().map(|t| bits(&t.values)).collect()
+        };
+        let saved_bits = |tensors: &[ParameterBitsV1]| -> Vec<Vec<u32>> {
+            tensors.iter().map(|t| t.values.clone()).collect()
+        };
+        let options = LineBUpdateOptionsV1 {
+            optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+        };
+        let (initial_source, final_source, masked) = run("masked", Some(options), 4);
+        let (initial_policy, initial_state) = initialize(&initial_source).unwrap();
+        let initial = initial_state.snapshot_v1().unwrap();
+        let mask = HeadOnlyMaskV1::for_snapshot_v1(&initial).unwrap();
+        let initial_frozen = line_b_frozen_sha256_v1(&initial_source).unwrap();
+        let (initial_parameters, initial_first, initial_second) = (
+            bits_of(&initial.parameters),
+            bits_of(&initial.first_moments),
+            bits_of(&initial.second_moments),
+        );
+        for (update, (checkpoint, receipt)) in masked.iter().enumerate() {
+            assert_eq!(checkpoint.adam_step, initial.adam_step + update as u64 + 1);
+            assert_eq!(
+                checkpoint.scorer_bias_anchor_bits,
+                initial.scorer_bias_anchor_bits
+            );
+            assert_eq!(
+                receipt["line_b"]["optimizer_mask"],
+                HEAD_ONLY_MASK_VERSION_V1
+            );
+            assert_eq!(
+                receipt["line_b"]["frozen_tensor_sha256"],
+                initial_frozen.as_str()
+            );
+            let (parameters, first, second) = (
+                saved_bits(&checkpoint.parameters),
+                saved_bits(&checkpoint.first_moments),
+                saved_bits(&checkpoint.second_moments),
+            );
+            for index in 0..initial_parameters.len() {
+                if mask.is_trainable_v1(index) {
+                    continue;
+                }
+                assert_eq!(
+                    parameters[index], initial_parameters[index],
+                    "update {update}"
+                );
+                assert_eq!(first[index], initial_first[index], "update {update}");
+                assert_eq!(second[index], initial_second[index], "update {update}");
+            }
+        }
+        let last = saved_bits(&masked.last().unwrap().0.parameters);
+        let moved = (0..initial_parameters.len())
+            .filter(|&index| mask.is_trainable_v1(index))
+            .filter(|&index| last[index] != initial_parameters[index])
+            .count();
+        assert_eq!(moved, 7, "every head tensor must move on this fixture");
+        let (final_policy, _) = initialize(&final_source).unwrap();
+        assert_eq!(
+            final_policy
+                .actual_model_identity_v1()
+                .embedding_table_sha256,
+            initial_policy
+                .actual_model_identity_v1()
+                .embedding_table_sha256
+        );
+        let (_, _, unmasked) = run("unmasked", None, 2);
+        assert!(unmasked
+            .iter()
+            .all(|(_, receipt)| receipt.get("line_b").is_none()));
+        let trunk = saved_bits(&unmasked.last().unwrap().0.parameters);
+        assert!(
+            (0..initial_parameters.len())
+                .filter(|&index| !mask.is_trainable_v1(index))
+                .any(|index| trunk[index] != initial_parameters[index]),
+            "without the mask the same schedule must move the trunk"
+        );
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,

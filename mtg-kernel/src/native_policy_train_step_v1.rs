@@ -71,6 +71,8 @@ use std::thread;
 
 mod weighted_v3;
 mod gae_v1;
+mod head_only_mask_v1;
+pub(crate) use head_only_mask_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 pub(crate) mod retention_v1;
 mod carryover_probe_v1;
 

@@ -5,11 +5,10 @@ use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
 use crate::expanded_deck_training_v1::{
-    execute_v1, load_expanded_inference_v1, CollectionSamplerV1, ExpandedEpisodeV1,
-    ExpandedInferenceIdentityV1,
-    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
-    ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_v1, CollectionSamplerV1,
+    ExpandedEpisodeV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
+    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1,
+    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -120,6 +119,10 @@ pub struct NativeExpandedTrainingRunV1 {
     /// omitted, so every existing config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
     pub collection_sampler: CollectionSamplerV1,
+    /// G115 line (b) update options (head-only optimizer mask); omitted
+    /// when absent, so every existing config and run identity is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_b: Option<LineBUpdateOptionsV1>,
     pub output_directory: PathBuf,
 }
 
@@ -589,8 +592,18 @@ fn validate_update(
     update_backend: ExpandedUpdateBackendV1,
     preparation_workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    line_b_frozen_sha256: Option<&str>,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
+    // A masked run's every update repeats the initial source's frozen digest.
+    check(
+        document
+            .get("line_b")
+            .and_then(|line_b| line_b.get("frozen_tensor_sha256"))
+            .and_then(Value::as_str)
+            == line_b_frozen_sha256,
+        "line (b) frozen tensors differ from the run's initial source",
+    )?;
     update_backend.validate_update_execution_v1(&document)?;
     validate_preparation_execution(
         &document,
@@ -669,6 +682,9 @@ fn record_loss_selection_execution(config: &NativeExpandedTrainingRunV1, documen
 
 fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &mut Value) {
     config.collection_sampler.record_v1(document);
+    if let Some(line_b) = &config.line_b {
+        document["line_b"] = json!(line_b);
+    }
     if config.collection_workers > 1 {
         document["collection_backend"] = json!("native-cpu-parallel-episodes-v1");
         document["collection_workers_requested"] = json!(config.collection_workers);
@@ -690,6 +706,7 @@ fn update_command(
 ) -> ExpandedTrainingCommandV1 {
     if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
+            line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
             learning_rate: config.learning_rate,
@@ -701,6 +718,7 @@ fn update_command(
         }
     } else {
         ExpandedTrainingCommandV1::UpdatePrepared {
+            line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
             learning_rate: config.learning_rate,
@@ -723,6 +741,12 @@ pub fn run_native_expanded_training_v1(
 ) -> Result<Value, String> {
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
+    // Masked runs compare every update's frozen digest with the initial source's.
+    let line_b_frozen_sha256 = config
+        .line_b
+        .as_ref()
+        .map(|_| line_b_frozen_sha256_v1(&config.initial_source))
+        .transpose()?;
     check(
         max_new_iterations != Some(0),
         "iteration limit must be positive",
@@ -803,8 +827,13 @@ pub fn run_native_expanded_training_v1(
                 "completed iteration schedule differs",
             )?;
             let collection = parse_pin(&receipt, "collection")?;
-            let trajectories =
-                validate_collection(&collection, &current, &episodes, &current_identity, config.collection_sampler)?;
+            let trajectories = validate_collection(
+                &collection,
+                &current,
+                &episodes,
+                &current_identity,
+                config.collection_sampler,
+            )?;
             let update = parse_pin(&receipt, "update")?;
             let (next, after) = validate_update(
                 &update,
@@ -816,6 +845,7 @@ pub fn run_native_expanded_training_v1(
                 config.update_backend,
                 config.preparation_workers,
                 config.max_prepared_tensor_mebibytes,
+                line_b_frozen_sha256.as_deref(),
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -874,7 +904,13 @@ pub fn run_native_expanded_training_v1(
             if path.exists() {
                 let candidate = pin(&path)?;
                 let started = Instant::now();
-                validate_collection(&candidate, &current, &episodes, &current_identity, config.collection_sampler)?;
+                validate_collection(
+                    &candidate,
+                    &current,
+                    &episodes,
+                    &current_identity,
+                    config.collection_sampler,
+                )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
             }
@@ -906,6 +942,7 @@ pub fn run_native_expanded_training_v1(
                     config.update_backend,
                     config.preparation_workers,
                     config.max_prepared_tensor_mebibytes,
+                    line_b_frozen_sha256.as_deref(),
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -940,8 +977,13 @@ pub fn run_native_expanded_training_v1(
             }
             let collection = collection_pin.as_ref().unwrap();
             let started = Instant::now();
-            let trajectories =
-                validate_collection(collection, &current, &episodes, &current_identity, config.collection_sampler)?;
+            let trajectories = validate_collection(
+                collection,
+                &current,
+                &episodes,
+                &current_identity,
+                config.collection_sampler,
+            )?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
             publish(
                 &attempt,
@@ -959,8 +1001,13 @@ pub fn run_native_expanded_training_v1(
         let collection = collection_pin.unwrap();
         let update = update_pin.unwrap();
         let started = Instant::now();
-        let trajectories =
-            validate_collection(&collection, &current, &episodes, &current_identity, config.collection_sampler)?;
+        let trajectories = validate_collection(
+            &collection,
+            &current,
+            &episodes,
+            &current_identity,
+            config.collection_sampler,
+        )?;
         collection_validation_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
         let (next, after) = validate_update(
@@ -973,6 +1020,7 @@ pub fn run_native_expanded_training_v1(
             config.update_backend,
             config.preparation_workers,
             config.max_prepared_tensor_mebibytes,
+            line_b_frozen_sha256.as_deref(),
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -1134,6 +1182,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
+            line_b: None,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -1473,10 +1522,7 @@ mod tests {
         let identity = CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1
             .identity_v1()
             .unwrap();
-        let legacy = write(
-            "legacy.json",
-            &json!({"episode": value(&episode).unwrap()}),
-        );
+        let legacy = write("legacy.json", &json!({"episode": value(&episode).unwrap()}));
         let unclamped = write(
             "unclamped.json",
             &json!({"episode": value(&episode).unwrap(), "learner_sampler": identity}),
@@ -1782,6 +1828,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
+            line_b: None,
             output_directory: root.join("run"),
         }
     }
