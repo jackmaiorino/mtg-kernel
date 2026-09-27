@@ -451,3 +451,21 @@ fn legacy_seat_matches_the_evaluator_dispatch() {
         ));
     }
 }
+
+/// Admission helper, not a check: admits the real Legacy member whose
+/// descriptor and receipt are named by MTG_LEGACY_CHECK_SOURCE and
+/// MTG_LEGACY_CHECK_ADMISSION (receipt SHA256 in MTG_LEGACY_CHECK_ADMISSION_SHA256),
+/// through the collector's own admission path, and prints its identity.
+#[test]
+#[ignore = "admission helper; needs MTG_LEGACY_CHECK_* variables"]
+fn legacy_admission_real_member_check() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name}"));
+    let source: ExpandedModelSourceV1 =
+        serde_json::from_slice(&std::fs::read(var("MTG_LEGACY_CHECK_SOURCE")).unwrap()).unwrap();
+    let admission = PinnedFileV1 {
+        path: var("MTG_LEGACY_CHECK_ADMISSION").into(),
+        sha256: var("MTG_LEGACY_CHECK_ADMISSION_SHA256"),
+    };
+    let (_, identity) = admit_legacy(&source, true, true, &admission).unwrap();
+    println!("LEGACY_ADMITTED {identity}");
+}
