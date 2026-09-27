@@ -1,7 +1,7 @@
 {
   "schema": "mtg-kernel-line-a-panel-imports/v1",
-  "revision": 3,
-  "status": "1 playable, 0 pending, 13 unresolved of 14 archival members",
+  "revision": 4,
+  "status": "1 playable, 7 exported awaiting R14 acceptance, 0 pending, 6 unresolved of 14 archival members",
   "producer": "Opus lane panel-export (collab/GOALS/opus-panel-export-20260927.md), branch opus/panel-export-v1, python/tools/line_a_panel_imports_v1.py",
   "roster": "proposal v0.2 (collab/CODEX-G115-OPPONENT-PORTFOLIO-PROPOSAL-20260926.md, 2026-09-27 10:18 EDT): 0 V3 and 1 D3 wrapper are outside this manifest; 2-9 refresh-034 slots 0-7; 10-12 v3b arm1 runs 0-2; 13-15 v3b arm2 runs 0-2",
   "nonclaims": [
@@ -19,44 +19,87 @@
     "rulings": "collab/DIRECTOR-RULINGS-20260927.md R3, R10, R11, R14; collab/FABLE-REVIEW-20260927.md (panel-export verdict)"
   },
   "toolchain": {
-    "exporter": {
-      "path": "E:/pinned-binaries/7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6/native_checkpoint_export_v1.exe",
-      "sha256": "7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6",
-      "pinned_name_matches": true,
-      "build_identity": {
-        "build_profile": "release",
-        "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
-        "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
-        "enabled_features": [
-          "experimental-burn-net8-packed-cuda-v1",
-          "native-training-store-v2-production"
-        ],
-        "host_triple": "x86_64-pc-windows-msvc",
-        "llvm_version": "21.1.8",
-        "package_name": "mtg-kernel",
-        "package_version": "0.0.4",
-        "rustc_commit_date": "2026-03-25",
-        "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
-        "rustc_release": "1.94.1",
-        "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
-        "schema": "mtg-kernel-launcher-build-identity/v2",
-        "source_git_commit": "40b06e6636da78ac95b72ddcd8d640923198731a",
-        "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
-        "source_tree_sha256": "09de18454d921b7b609d03c27f5e38b3916441ace9bbe8c3fb63748dbc886cf5",
-        "target_triple": "x86_64-pc-windows-msvc",
-        "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+    "40b06e66 (strict route: refresh-034/current-1)": {
+      "exporter": {
+        "path": "E:/pinned-binaries/7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6/native_checkpoint_export_v1.exe",
+        "sha256": "7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6",
+        "pinned_name_matches": true,
+        "build_identity": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "40b06e6636da78ac95b72ddcd8d640923198731a",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "09de18454d921b7b609d03c27f5e38b3916441ace9bbe8c3fb63748dbc886cf5",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "clean_tree_attestation": "the production build capture refuses a dirty build: validate_build_capture_constants requires NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest (native_store_production_capture_v2.rs:512-517), and the export succeeded"
       },
-      "clean_tree_attestation": "the production build capture refuses a dirty build: validate_build_capture_constants requires NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest (native_store_production_capture_v2.rs:512-517), and the export succeeded"
+      "roundtrip": {
+        "path": "E:/pinned-binaries/3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024/native_inference_export_roundtrip_v1.exe",
+        "sha256": "3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024",
+        "pinned_name_matches": true
+      },
+      "evaluator": {
+        "path": "E:/pinned-binaries/90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771/public_feature_evaluation_v1.exe",
+        "sha256": "90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771",
+        "pinned_name_matches": true
+      }
     },
-    "roundtrip": {
-      "path": "E:/pinned-binaries/3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024/native_inference_export_roundtrip_v1.exe",
-      "sha256": "3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024",
-      "pinned_name_matches": true
-    },
-    "evaluator": {
-      "path": "E:/pinned-binaries/90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771/public_feature_evaluation_v1.exe",
-      "sha256": "90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771",
-      "pinned_name_matches": true
+    "5dacb01b (R14 route: the seven a06fa9566106f0ea refresh-034 members)": {
+      "exporter": {
+        "path": "E:/pinned-binaries/6a5a229cad98fde27789fe2f915f5e3917c586c8038788db30cffe1fd2f7dd58/native_checkpoint_export_v1.exe",
+        "sha256": "6a5a229cad98fde27789fe2f915f5e3917c586c8038788db30cffe1fd2f7dd58",
+        "pinned_name_matches": true,
+        "build_identity": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "clean_tree_attestation": "the production build capture refuses a dirty build: validate_build_capture_constants requires NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest (native_store_production_capture_v2.rs:512-517), and the export succeeded"
+      },
+      "roundtrip": {
+        "path": "E:/pinned-binaries/3fe7a162a2dc573d6acdaf6100e8840ff7fca633ac88ef787f3f5c447aa90f9a/native_inference_export_roundtrip_v1.exe",
+        "sha256": "3fe7a162a2dc573d6acdaf6100e8840ff7fca633ac88ef787f3f5c447aa90f9a",
+        "pinned_name_matches": true
+      },
+      "evaluator": {
+        "path": "E:/pinned-binaries/020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd/public_feature_evaluation_v1.exe",
+        "sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "pinned_name_matches": true
+      }
     }
   },
   "destination": {
@@ -179,10 +222,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__anchor-0",
+        "metadata_sha256": "446f7e604412302ed970366d1840263667cf6ac45bb3beda2b9a388884ca4cdf",
+        "parameter_section_sha256": "895a034ba57e6d35903d77e55a88a8a98b220b064320ff3e694eabcfed4c8224",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "3af5cf3307be765b0efa766e99f3275eeb892f5d9b64db049b1d4931a65b5395"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-0/play-import.json",
+        "sha256": "df55c24640464561046a8986a7b754b6af0a0a0d3c9755eb94a45b2d8eaadb6b"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-0/model-source.json",
+        "sha256": "75730df694a95149b25ed78251622955cec6068fc43b9d1136b7426270918220"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/roundtrip.json",
+          "sha256": "27ed7ec99b8f05ef254cc330eeffc2a8d87d697d5d61d75930df34c932dee07b"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/smoke.json",
+          "sha256": "c08a6f74370c621ff82b29fc09322ebc725b2f9f14350f1a7a694d8e0a7aad05"
+        },
+        "completed": true,
+        "command_sha256": "f2519257f583dd652c7046771b898b2e890870317bc0f78d1f0687114e935295",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
@@ -304,10 +422,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__anchor-1",
+        "metadata_sha256": "35f8b76239aa6665b8716bd3d627520c1c759a2877a7f1bf650d6eb775764b43",
+        "parameter_section_sha256": "000fdb9de3d64e1245142e1d3fc0f23bb9dc850a10c503483e3c05af8a9e5e35",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "18894407021a5b4c8de89db5cb6be735d21f985c99ff1fc84019fbd7f32198c4"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-1/play-import.json",
+        "sha256": "64054be0703e33b652d311b97a266c6091f21928fc85fba95f3c96eaa39db218"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-1/model-source.json",
+        "sha256": "f058354f37b92f3d0205a27ce76f1a80fbe50469905b9483de2e09bff3255077"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/roundtrip.json",
+          "sha256": "cac72dbcfc95a92414e432f08c45ba309b93cd883830b8263e14e9f8f5d4259a"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/smoke.json",
+          "sha256": "c26a8d1b16fc734b51df288038d16fce8438d923afd4195600d83842372e7cd0"
+        },
+        "completed": true,
+        "command_sha256": "3bed3a3ef87bad468ce68546ac0b7e2f67a38a03cca9732ec3f34898e6afd0cc",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
@@ -414,10 +607,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__historical-0",
+        "metadata_sha256": "b95345b0abff60453a4563c4dafcf6a1620f3b0a9de3b0048d5062a9ff13d799",
+        "parameter_section_sha256": "5b85de0082d1b620b80d6accac2f4751f583f8ff91cccb8601730aeed7dd47e1",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "f61e9f918c977facfe0c53b6418b38e0197fa9fb25e1ef6db3c7c0a4c5e37eb9"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-0/play-import.json",
+        "sha256": "fe3d3571afff7c3d6aaebc353b157e248c1518323edf487b9dc2f573fffa3f6b"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-0/model-source.json",
+        "sha256": "a554c719d502a9fd08a04095678db3c1b0b1a8d8abec65d4eb36f00b82fd425f"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/roundtrip.json",
+          "sha256": "4f5aabb379fd6279b747eadf0150e5d845f051c6ebe19645848b1c643d792f77"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/smoke.json",
+          "sha256": "940453f506e33b38ef567fcd25e872d0d1d3a5aa3e3c8eb0f1e4544558e54788"
+        },
+        "completed": true,
+        "command_sha256": "9d1a9b89a0754ea3cc9a1cafee62f2c2615bba915d4cc0b6c3a9a4e56fb066d2",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
@@ -524,10 +792,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__historical-1",
+        "metadata_sha256": "0cd8d1a9c66dff0ab17d75efb189623f54d844b3bcb0819f853032b449abe81a",
+        "parameter_section_sha256": "2b89a53e97a8466e43f5061cfd62d5469d4fb95c23e5dab3b14c235116cb6a15",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "391ef9396b147f95e4bc60a91d119012373d787c21a47aac30649a6031255275"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-1/play-import.json",
+        "sha256": "0e1b94a4c2bf3445770fbf200192e555308c5b8fde8c6148fe793b42e4fc634a"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-1/model-source.json",
+        "sha256": "0bbf0feffd52aac92d0da848aafec88665855e7a7af11c35101d6710fa8df792"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/roundtrip.json",
+          "sha256": "4f332d43a9dc927c9c54fdd80b8712e7b0a39d7a57d7e0c6dedc7cd8ea50b9d2"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/smoke.json",
+          "sha256": "1b935006c926a6141a15869a62341d3ffce13234e4ba794f9391d3dd8d32005f"
+        },
+        "completed": true,
+        "command_sha256": "3527d11feba9220c6ed3d00899a0887fa9e4626a974361a116c7df5faef74994",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
@@ -657,10 +1000,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__current-0",
+        "metadata_sha256": "85ea6ce6b37c4d0c11184868bba56defb3b5baa25864c049ca6f470674c6bda2",
+        "parameter_section_sha256": "bd154667f1a6bcd0ec02f95d553dcd3e4fa3447922f505f44d9ad1e89cbf2bf3",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "51539880df73d28155898db60782561395e09bafee305dfce01e9bc7152a8f62"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-0/play-import.json",
+        "sha256": "0f891887ace8305f4c6eab12bc4738ea33813bf867084547fa94197147990390"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-0/model-source.json",
+        "sha256": "c1c0a93954e9a81ebf53722a5044a3cb4684390397272dbef5e4d02473e8dca8"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/roundtrip.json",
+          "sha256": "d138dddf4f67fd9f464ec47c665d600a6b25d61dfe014c2670e4aef9ff08c233"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/smoke.json",
+          "sha256": "2d19d20290152bcb98cf138647e32a44f658f3b7cbdb5136059f165fe0b7e2e8"
+        },
+        "completed": true,
+        "command_sha256": "333ff280dd5121cc2db7c22700042d06ecacbb6beba329b5544a9fe08856156c",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
@@ -964,10 +1382,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__exploiter-0",
+        "metadata_sha256": "7c0be37b24a7a798c9548c49bada5cf8d19dc43972148d8a476c7ebce0111ba9",
+        "parameter_section_sha256": "e668926271d15f800fd06df9a18d233bf74d568a57776773497ade9dbbd8f469",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "0ce1838b975826eccac4001815c2dd071bed80afe05e0247489e5dbdbcada8e4"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-0/play-import.json",
+        "sha256": "d7b4d745addbee1bd51ce7b5fe59377ac183189f1ca21bf3d0c023c66cd5fa08"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-0/model-source.json",
+        "sha256": "414f521130a430878b784a12ed314e5dbc51e9cfb6965776345fb3010be587f9"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/roundtrip.json",
+          "sha256": "60793a54a895e6b30ef0c269735bddccc4842172f1457f72e7774ad48ee645d1"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/smoke.json",
+          "sha256": "384d3fb6ee8a0c4ee6145d769ca95a5e1a60b7841b53651ca062dbb29d3d9b1b"
+        },
+        "completed": true,
+        "command_sha256": "ac76d4a1de071aef618b29d8b247be820338410818859c2b30a31e53256637b4",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
@@ -1074,10 +1567,85 @@
           }
         ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__exploiter-1",
+        "metadata_sha256": "3c7bc8577206d1771d3cb803b9f820407e4b0c4fed1c9d1a685e043408b10b47",
+        "parameter_section_sha256": "1dfc14eb759c7930e0546334cbc8663a69a550f741578995ed6cf5b20b8d89f4",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "2f20e252eb9a6294739e0c5be767d99bd9cdc402e6ef54d965e2c63e5be245ba"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-1/play-import.json",
+        "sha256": "1dedfa83c57f0cf77ad0fe02337563554ed23dc8b26c0f872fec96944ab01c6a"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-1/model-source.json",
+        "sha256": "68e84a44e7748df87d64856b7036a9ffc369cf293a7600a0d283e28db70e5f1c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/roundtrip.json",
+          "sha256": "ff1e17a4a0efc3d8c6391a49efb9fedf067b19260ec7ee7dfff0ddc9a290bddd"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/smoke.json",
+          "sha256": "1aa9b6f85c5fb1a2c1b7e05344103d6b9ed3bfe97a458cb31f01ffc5db3737e6"
+        },
+        "completed": true,
+        "command_sha256": "800c23befce0e4835c545a75fd4e31c6b19664d3c7dae3306c2f545d80928f16",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
+      },
+      "status": "exported-awaiting-r14-acceptance",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
-        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
+        "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
+        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
       ]
     },
     {
