@@ -85,6 +85,7 @@ fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
 }
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
+mod line_b_root_selection_v1;
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -1169,6 +1170,17 @@ impl From<CollectEpisodeErrorV1> for String {
     }
 }
 
+/// The collection session for `episode`. The line (b) root replay builds its
+/// game through this same call.
+fn episode_session_v1(
+    episode: &ExpandedEpisodeV1,
+    configs: &[DeckConfigurationV1; 2],
+) -> Result<FastActorSessionV1, String> {
+    FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)
+}
+
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -1201,9 +1213,7 @@ fn collect_episode(
         })
     });
     let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
-    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-        1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
+    let mut session = episode_session_v1(episode, &configs)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_sampling_v1(seeds);
     if let Some(other) = opponent.as_mut() {
@@ -6603,6 +6613,129 @@ pub(crate) mod tests {
                 .any(|index| trunk[index] != initial_parameters[index]),
             "without the mask the same schedule must move the trunk"
         );
+    }
+
+    /// Line (b) root selection on one real self-play game: the replayed root
+    /// is the minimum-rank eligible learner decision, repeats exactly, moves
+    /// with the root seed, and an altered trajectory fails the replay.
+    #[test]
+    fn line_b_root_selection_replays_a_real_game_and_takes_the_minimum_rank() {
+        use line_b_root_selection_v1::{
+            line_b_learner_row_v1, line_b_root_eligible_v1, line_b_root_rank_v1,
+            select_line_b_root_v1,
+        };
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        let learner = test_behavior(&policy, false);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-root-fixture".into(),
+            seed: 2_026_092_701,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: None,
+            registered: [deck.clone(), deck.clone()],
+            selected: [deck.clone(), deck],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+
+        // Independent replay: the visible key of every eligible decision.
+        let configs = trajectory.episode.configurations().unwrap();
+        let mut session = episode_session_v1(&trajectory.episode, &configs).unwrap();
+        let mut eligible = Vec::new();
+        for (index, row) in trajectory.decisions.iter().enumerate() {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("replay ended early");
+            };
+            if line_b_root_eligible_v1(&d, line_b_learner_row_v1(&trajectory.episode, row.actor)) {
+                let key = session.kernel_search_visible_key_v4(0).unwrap();
+                eligible.push((key, d.physical_decision_id, index));
+            }
+            session.step(d.episode_id, d.step, row.selected).unwrap();
+        }
+        assert!(
+            eligible.len() >= 8,
+            "fixture needs several eligible decisions"
+        );
+        let mut chosen = std::collections::BTreeSet::new();
+        for root_seed in 11_u64..=18 {
+            let root = select_line_b_root_v1(&trajectory, root_seed)
+                .unwrap()
+                .expect("the fixture has eligible roots");
+            let minimum = eligible
+                .iter()
+                .map(|(key, id, index)| (line_b_root_rank_v1(root_seed, key), *id, *index))
+                .min()
+                .unwrap();
+            assert_eq!(
+                (root.rank, root.physical_decision_id, root.decision_index),
+                minimum
+            );
+            assert_eq!(root.eligible_decisions, eligible.len());
+            let row = &trajectory.decisions[root.decision_index];
+            let FastActorResponseV1::Decision(d) = root.session.current_response() else {
+                panic!("the root session must be live at the root decision");
+            };
+            assert_eq!(
+                (d.step, d.physical_decision_id, root.actor),
+                (row.step, row.physical_decision_id, row.actor)
+            );
+            assert_eq!(
+                root.session.kernel_search_visible_key_v4(0).unwrap(),
+                root.visible_key
+            );
+            // A fresh fork of the collection policy scores the replayed root
+            // exactly as collection did: the rollouts can start from it.
+            let mut fork = policy.fork_for_collection_v3().unwrap();
+            fork.reset_sampling_v1([0, 0]);
+            let scores = fork.score_fast_session_v1(&root.session).unwrap();
+            assert_eq!(bits(&scores.logits), row.logits);
+            assert_eq!(scores.value.to_bits(), row.value);
+            chosen.insert(root.decision_index);
+        }
+        assert!(chosen.len() >= 2, "the root seed must move the root");
+        let first = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        let again = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        assert_eq!(
+            (
+                first.decision_index,
+                first.rank,
+                first.session.diagnostic_state_hash()
+            ),
+            (
+                again.decision_index,
+                again.rank,
+                again.session.diagnostic_state_hash()
+            )
+        );
+
+        // Altered trajectories fail the replay instead of yielding a root.
+        let mut truncated = trajectory.clone();
+        truncated.decisions.pop();
+        assert!(select_line_b_root_v1(&truncated, 11).is_err());
+        let mut reseeded = trajectory.clone();
+        reseeded.episode.seed ^= 1;
+        assert!(select_line_b_root_v1(&reseeded, 11).is_err());
+        let mut widened = trajectory.clone();
+        widened.decisions[0].logits.push(0);
+        assert!(select_line_b_root_v1(&widened, 11).is_err());
+
+        // Learner rows: both seats in self-play, only the learner seat otherwise.
+        assert!(line_b_learner_row_v1(&episode, 0) && line_b_learner_row_v1(&episode, 1));
+        let against = ExpandedEpisodeV1 {
+            opponent: Some(test_behavior(&policy, true).source),
+            learner_seat: 1,
+            ..episode.clone()
+        };
+        assert!(!line_b_learner_row_v1(&against, 0) && line_b_learner_row_v1(&against, 1));
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,
