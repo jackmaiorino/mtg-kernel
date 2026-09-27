@@ -3,6 +3,7 @@
 //! same trajectory bytes; learner rows still replay the behavior sampler;
 //! tampered search or learner rows are refused; ordinary validation refuses a
 //! search trajectory; the loader enforces both frozen pins before any read.
+use super::super::replay_audit::admits_public_trajectory;
 use super::super::{collect_with_opponent, weights, Trajectory};
 use super::*;
 
@@ -75,17 +76,22 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
     }
 }
 
+/// One game with fixture nets; the D3 wrapper plays the opponent seat when
+/// the episode pins it, the ordinary sampled net otherwise.
 fn play(episode: &ExpandedEpisodeV1) -> Result<Trajectory, String> {
     let base = FrozenPlayPolicyV1::training_fixture_v4();
     let mut learner = PublicInputPlayPolicyV1::new(base, weights(&ProjectionSnapshot::zero())?)?
         .with_inputs_enabled(false);
     let net = FrozenPlayPolicyV1::training_fixture_v4();
-    let search = SearchOpponentV1::new(
-        &net,
-        fixture_descriptor(&net),
-        REVIEWED_DESCRIPTOR_SHA256.into(),
-        1 - episode.learner_seat,
-    )?;
+    let search = match episode.opponent_search {
+        Some(_) => Some(SearchOpponentV1::new(
+            &net,
+            fixture_descriptor(&net),
+            REVIEWED_DESCRIPTOR_SHA256.into(),
+            1 - episode.learner_seat,
+        )?),
+        None => None,
+    };
     let id = identity(&net, Some(G115_CHECKPOINT_SHA256));
     collect_with_opponent(
         &mut learner,
@@ -94,8 +100,37 @@ fn play(episode: &ExpandedEpisodeV1) -> Result<Trajectory, String> {
         "state",
         false,
         (net, id),
-        Some(search),
+        search,
     )
+}
+
+#[test]
+fn replay_audit_admits_ordinary_and_refuses_search_opponent_trajectories() {
+    assert_ne!(
+        SEARCH_OPPONENT_TRAJECTORY_SCHEMA,
+        "mtg-kernel-public-input-trajectory/v1"
+    );
+    let mut plain = episode(0);
+    plain.opponent_search = None;
+    let t = play(&plain).unwrap();
+    assert_eq!(t.schema, "mtg-kernel-public-input-trajectory/v1");
+    assert!(t.search.is_none() && admits_public_trajectory(&t));
+    let mut relabeled =
+        serde_json::from_slice::<Trajectory>(&serde_json::to_vec(&t).unwrap()).unwrap();
+    relabeled.schema = SEARCH_OPPONENT_TRAJECTORY_SCHEMA.into();
+    assert!(!admits_public_trajectory(&relabeled));
+    let mut carried =
+        serde_json::from_slice::<Trajectory>(&serde_json::to_vec(&t).unwrap()).unwrap();
+    let net = FrozenPlayPolicyV1::training_fixture_v4();
+    carried.search = Some(SearchTrajectoryV1 {
+        schema: SEARCH_RECORD_SCHEMA.into(),
+        seat: 1,
+        descriptor_sha256: REVIEWED_DESCRIPTOR_SHA256.into(),
+        descriptor: fixture_descriptor(&net),
+        build: SearchBuildV1::current(),
+        decisions: vec![],
+    });
+    assert!(!admits_public_trajectory(&carried));
 }
 
 #[test]
@@ -109,6 +144,8 @@ fn search_opponent_games_replay_validate_and_refuse_tampering() {
             serde_json::to_vec(&a).unwrap(),
             serde_json::to_vec(&b).unwrap()
         );
+        assert_eq!(a.schema, SEARCH_OPPONENT_TRAJECTORY_SCHEMA);
+        assert!(!admits_public_trajectory(&a));
         let search = a.search.as_ref().expect("search record");
         let (learner, opponent): (Vec<_>, Vec<_>) =
             a.decisions.iter().partition(|r| r.actor == learner_seat);

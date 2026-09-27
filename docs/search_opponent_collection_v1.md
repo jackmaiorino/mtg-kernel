@@ -13,12 +13,13 @@ The line (a) template (`a.json`, SHA256 `4352f9cc...`) is consumed by the public
 ```
 
 - The field is omitted when absent, so existing configs, trajectories and hashes are byte-identical (`contract_tests.rs`; net-opponent golden below).
-- Every consumer except the public collector refuses such an episode: the shared `ExpandedEpisodeV1::configurations()` rejects it; only the collector calls `configurations_admitting_search_v1()`.
+- Every episode consumer except the public collector refuses such an episode: the shared `ExpandedEpisodeV1::configurations()` rejects it; only the collector calls `configurations_admitting_search_v1()`.
+- A trajectory with a search opponent carries its own schema, `mtg-kernel-public-input-search-opponent-trajectory/v1`, so any reader that checks the ordinary public schema refuses it. The public replay audit also refuses any trajectory that carries a search record (`replay_audit.rs`, `admits_public_trajectory`). The Python tools that read public trajectories without a schema check read learner rows only (for example `audit_public_pilot_behavior_v1.py`).
 - The collector checks the descriptor SHA256 (`5eb1d55d...`) and the g115 checkpoint SHA256 (`88c0b997...`) itself, independently of `SearchPlayV3::new`, which in turn refuses any other budget, algorithm, seed or model identity (`search_opponent.rs`, `SearchOpponentV1::load`).
 - On the opponent seat the unchanged evaluation wrapper `SearchPlayV3` chooses every action (S128, T1024, depth 8, seed 20260922). Only its visibility changed (pub(crate)); no search, sampler or descriptor code changed.
 - The stored row keeps its ordinary shape: the actor-visible tensor and the frozen net's logits and value, scored without sampling, with the search's action and the sampler identity `mtg-kernel-v4-information-set-estimate-search/v3`. The search seat draws no random number.
 - Each search trajectory carries compact per-decision records (actor, menu width, decision binding, root key, selected action, simulations, transitions, outcome SHA256) plus the descriptor and build (HEAD, clean flag, tracked-tree SHA256). A digest names the outcome but does not reconstruct the search tree; determinism is shown by replay.
-- Validation: learner rows replay the behavior sampler exactly as before; each search row must match its record in order; ordinary validation refuses a search trajectory.
+- Validation: learner rows replay the behavior sampler exactly as before; each search row must match its record in order, with simulations and transitions within the descriptor budget and the descriptor itself at the D3 budget; ordinary validation refuses a search trajectory.
 - The update is unchanged and reads learner rows only. No opponent action, visit count or value enters any learner target.
 - A typed search error aborts the run: no fallback opponent, no derived-seed retry.
 - A run whose schedule has search games publishes `search-opponent-receipt.json`: config SHA256, descriptor and checkpoint SHA256, search episode ids, build and executable SHA256.

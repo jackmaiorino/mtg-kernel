@@ -13,7 +13,15 @@ use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 
 /// Sampler identity of an opponent row chosen by the D3 wrapper.
 pub(crate) const SEARCH_SAMPLER_IDENTITY: &str = "mtg-kernel-v4-information-set-estimate-search/v3";
-const TRAJECTORY_SCHEMA: &str = "mtg-kernel-public-search-opponent-trajectory/v1";
+/// Outer schema of a public trajectory whose opponent seat was the D3
+/// wrapper. Distinct from the ordinary public schema so every reader that
+/// checks the ordinary string refuses it (FABLE-REVIEW-20260927 change 3).
+pub(crate) const SEARCH_OPPONENT_TRAJECTORY_SCHEMA: &str =
+    "mtg-kernel-public-input-search-opponent-trajectory/v1";
+/// Schema of the compact search record carried inside such a trajectory.
+const SEARCH_RECORD_SCHEMA: &str = "mtg-kernel-public-search-opponent-record/v1";
+/// The reviewed D3 budget: simulations, transitions, depth, experiment seed.
+const D3_BUDGET: (u32, u32, u16, u64) = (128, 1024, 8, 20260922);
 /// E:/mtg-g115-lineage-20260923/d3-search-descriptor-reviewed.json.
 pub(crate) const REVIEWED_DESCRIPTOR_SHA256: &str =
     "5eb1d55d13b78b341f8ff0c4df2589f8ee725974dc9fcadd691db6e12b2133d7";
@@ -173,7 +181,7 @@ impl SearchOpponentV1 {
             .ok_or("search wrapper records are missing")?;
         ensure(rows.len() == self.count, "search record count differs")?;
         Ok(SearchTrajectoryV1 {
-            schema: TRAJECTORY_SCHEMA.into(),
+            schema: SEARCH_RECORD_SCHEMA.into(),
             seat: self.seat,
             descriptor_sha256: self.descriptor_sha256.clone(),
             descriptor: self.descriptor.clone(),
@@ -229,14 +237,17 @@ impl SearchTrajectoryV1 {
         decisions: &[DecisionRecordV1],
         terminal: &RlSessionTerminalV1,
     ) -> Result<(), String> {
+        let d = &self.descriptor;
         ensure(
-            self.schema == TRAJECTORY_SCHEMA
+            self.schema == SEARCH_RECORD_SCHEMA
                 && episode.opponent_search.as_ref().map(|p| &p.sha256)
                     == Some(&self.descriptor_sha256)
                 && self.descriptor_sha256 == REVIEWED_DESCRIPTOR_SHA256
+                && (d.simulations, d.transitions, d.depth, d.experiment_seed) == D3_BUDGET
                 && self.seat == 1 - episode.learner_seat,
             "search trajectory identity differs from its episode",
         )?;
+        let (simulations, transitions) = (d.simulations, d.transitions);
         let mut records = self.decisions.iter();
         {
             let mut check = |row: &DecisionRecordV1| -> Result<(), String> {
@@ -258,8 +269,8 @@ impl SearchTrajectoryV1 {
                         )
                         && r.legal_action_count as usize == row.logits.len()
                         && r.selected == row.selected
-                        && r.simulations > 0
-                        && r.transitions > 0,
+                        && (1..=simulations).contains(&r.simulations)
+                        && (1..=transitions).contains(&r.transitions),
                     "search row differs from its search record",
                 )
             };

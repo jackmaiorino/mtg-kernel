@@ -263,7 +263,12 @@ fn collect_with_opponent(
                     Some(record) => record.validate(episode, &hashes, &decisions, &terminal)?,
                 }
                 return Ok(Trajectory {
-                    schema: "mtg-kernel-public-input-trajectory/v1".into(),
+                    schema: if search.is_some() {
+                        search_opponent::SEARCH_OPPONENT_TRAJECTORY_SCHEMA
+                    } else {
+                        "mtg-kernel-public-input-trajectory/v1"
+                    }
+                    .into(),
                     config_sha256: config_hash.into(),
                     optimizer_state_sha256: state_hash.into(),
                     inputs_enabled: enabled,
