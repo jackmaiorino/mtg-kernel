@@ -20,7 +20,7 @@ use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-mod search_v3;
+pub(crate) mod search_v3;
 use search_v3::SearchPlayV3;
 use crate::phase1_agent_v1::V4InformationSetSearchDescriptorV1;
 

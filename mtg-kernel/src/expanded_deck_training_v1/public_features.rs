@@ -11,6 +11,7 @@ use crate::public_cost_features_v1::PublicFeatureRowsV1;
 use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
 pub mod replay_audit;
+pub(crate) mod search_opponent;
 #[cfg(test)]
 mod tests;
 
