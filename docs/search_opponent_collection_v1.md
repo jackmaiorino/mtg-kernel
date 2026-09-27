@@ -35,3 +35,44 @@ Scope: the sampler reshuffles the learner's true unseen cards, so the search kno
 ## Determinism
 
 Search simulation seeds derive from engine encodings, so a search game reproduces only at its recorded commit and executable; the trajectory records the build and the run receipt the executable SHA256. Cross-commit reproduction is not attempted.
+
+## Opponent kinds interface v1 (proposal, director scope extension of 2026-09-27)
+
+Status: interface for countersign; not implemented. Adds two opt-in opponent kinds to the public collector beside ordinary V4 and the D3 wrapper.
+
+**Declaration.** One new optional episode field, `opponent_kind`, omitted when absent (every existing byte unchanged). Its JSON is the evaluator's `ModelSource` shape for the same kinds, so a launcher can copy an evaluation source:
+
+```json
+{"kind": "public_checkpoint", "config": {"path": "...", "sha256": "..."}, "checkpoint": {"path": "...", "sha256": "..."}}
+{"kind": "legacy", "source": {"play_import": {}, "feature_transfer": {}, "checkpoint": null},
+ "v3_forced_actions": true, "v3_spell_target_reference_adapter": true, "admission": {"path": "...", "sha256": "..."}}
+```
+
+| Episode fields | Opponent |
+|---|---|
+| `opponent` | ordinary V4 net (unchanged, V4 guard kept) |
+| `opponent` + `opponent_search` | D3 wrapper on frozen g115 (countersigned, merged) |
+| `opponent_kind` public_checkpoint, no `opponent` | recent public-input checkpoint |
+| `opponent_kind` legacy, no `opponent` | frozen V3 or a declared V3-transfer import |
+
+Any other combination, an unknown kind or an unknown field fails closed before collection; every consumer but the public collector refuses `opponent_kind` (as for `opponent_search`). A failed opponent is never substituted, skipped or retried.
+
+**Admission.**
+- public_checkpoint: loads through `public_features::load_for_evaluation` unchanged (checkpoint schema `mtg-kernel-public-input-checkpoint/v1`, the semantic config-hash check, optimizer pin, ages, projection mode). The effective identity keeps the public projection, `inputs_enabled` and projection mode, never base weights alone. Pins come from `line-a-recent-bindings-v1.json` (CODEX #529).
+- legacy: `admission` pins a declared-identity receipt naming the member, route (`v3-frozen`, `strict` or `r14`), the model-source descriptor SHA256 (must equal the declared `source`), the expected model identity and feature digests, the expected adapter flags and, for r14, the registry pins. After loading, the collector requires generation V3, the observation successor, and the declared flags; a true/true receipt alone is not authorization. The frozen V3 receipt comes from the D3 preparation envelope; panel receipts from opus-panel-export's manifest.
+
+**Opponent seat interface.** One lane-owned enum behind the collector with `reset(seeds, episode_id)`, `effective_identity()` and `decide(session, decision)`. Legacy reuses the evaluator's adapter precedence (forced singleton first, then the spell-target adapter, then ordinary V3 scoring) through one shared function; since that moves evaluator code, an evaluator golden (byte-identical evaluation records on a fixed seed set per kind) is part of delivery. Worker assignment never sets seeds or stream state.
+
+**Versioned decision record.** `DecisionRecordV1` keeps its type for every kind, so ordinary trajectories stay byte-identical. A trajectory with a new kind carries its own outer schema (`mtg-kernel-public-input-legacy-opponent-trajectory/v1` or `mtg-kernel-public-input-public-checkpoint-opponent-trajectory/v1`) and one record `mtg-kernel-public-opponent-record/v1`: kind, seat, effective identity, adapter version, and one row per opponent decision with step, physical decision, substep, actor, menu width, the ordered legal menu's SHA256, and a form:
+- `scored`: generation (v3 or v4), feature contract and encoding digests, observation (`original` or `spell_target_repaired`), sampler identity. The row holds the tensor, logits and value; a public checkpoint also stores its public auxiliary row.
+- `unscored_singleton` (V3 forced): the row has empty logits and tensor and sampler identity `mtg-kernel-v3-forced-singleton/v1`. Validation draws once from that seat's stream over one logit and requires action 0. No scored row is fabricated and no tensor is reused.
+
+Validation extends the existing seat hook: every sampled opponent row, singletons included, replays exactly one draw from its physical seat's continuing stream; diagnostic scoring never samples again. Learner rows replay unchanged.
+
+**Learner isolation.** At the same learner-visible state, weights and sampler position, learner tensors, auxiliary rows and logits are identical whatever the opponent kind (test). Opponent values, auxiliary rows, search statistics and decisions enter no target, normalization, entropy or gradient weight; learner-group filtering order is unchanged.
+
+**Receipts.** A run with any new kind publishes `opponent-kinds-receipt.json`: per kind, source, config, checkpoint and optimizer hashes, resulting weights and feature identity, adapter version, registry route, sampler identity and executable SHA256.
+
+**Per-kind blockers.**
+- public_checkpoint: none beyond implementation and countersign; four recent pins exist.
+- legacy: admission receipts. The frozen V3 receipt is this lane's metadata task. Panel members come from opus-panel-export: strict route now (current-1), R14 route pending for the other 13. V3 rows inside a V4-learner trajectory need the per-row generation contract countersigned.
