@@ -36,9 +36,9 @@ V3B_CENSUS = [(1, 0, 'f9a46d0e9f488ffa7cef18f6f82f1477d29a95f72fa38fa07470cdb1f7
 # Card-DB hash -> (training revision whose registry is the candidate, evidence of that linkage).
 REGISTRY_CANDIDATES = {
     'a06fa9566106f0ea': ('1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec',
-                         'v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions'),
+                         'the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class'),
     '64c82a261e078f1a': ('18f4ca51419d215370d539cef726edd7f8e7ae0b',
-                         'cycle-3 training commits 162b7579 and b01afb52 (EVIDENCE-NOTES.md) and search_authority.engine_commit a7043e30 (refresh manifests) all carry these registry bytes; the commit for generations 0-256 is not recorded'),
+                         'the registry revision whose bytes (af9d7256) the strict route pins; member-specific training linkage is the typed registry_linkage class'),
 }
 PARENT_REF_REQUESTED = {'refresh-034/anchor-0', 'refresh-034/anchor-1', 'refresh-034/current-0', 'refresh-034/current-1'}
 RECOMPUTATION = {'a06fa9566106f0ea': SEALED / 'receipts/card-db-recomputation/1804e9f9.json',
@@ -94,8 +94,8 @@ def registry_record(card_db_hash):
         record['namespace_v1'] = 'fails'
         record['status'] = 'unresolved'
         record['reason'] = ('validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; '
-                            'the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; '
-                            'admission waits for the R14 design verdict and CODEX #557 item 5')
+                            'the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), '
+                            'verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex\'s implementation countersign of the amended commit')
         return record
     snapshot = REPO / 'data/line_a_source_registries' / (record['candidate_sha256'] + '.json')
     record.update({'namespace_v1': 'passes', 'status': 'passes-v1',
@@ -185,13 +185,22 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
         record['lineage'] = lineage
     if summary:
         body = summary['body']
-        record.update({'export': body['export'], 'import_descriptor': body['import_descriptor'], 'model_source': body['model_source'],
-                       'legacy_adapter_flags': {'v3_forced_actions': True, 'v3_spell_target_reference_adapter': True}})
+        record.update({'export': body['export'], 'import_descriptor': body['import_descriptor'], 'model_source': body['model_source']})
     if roundtrip: record['roundtrip'] = {'receipt': {k: roundtrip[k] for k in ('path', 'sha256')}, 'passed': roundtrip['body'].get('passed'),
                                           'tensor_count': roundtrip['body'].get('tensor_count'), 'checks': roundtrip['body'].get('checks')}
     if smoke: record['smoke'] = {'receipt': {k: smoke[k] for k in ('path', 'sha256')}, 'completed': smoke['body'].get('completed'),
                                   **{k: smoke['body'].get(k) for k in ('command_sha256', 'deck_pair', 'registered_sha256', 'postboard_sha256',
                                                                        'max_physical_games', 'evaluator_sha256', 'evaluator_git_head')}}
+    if smoke:
+        # The Legacy adapter flags as the smoke ran them, read from both seat models (not constants).
+        flags = {(seat.get('v3_forced_actions'), seat.get('v3_spell_target_reference_adapter')) for seat in smoke['body'].get('models') or []}
+        if len(flags) == 1:
+            forced, spell_target = flags.pop()
+            record['legacy_adapter_flags'] = {'v3_forced_actions': forced, 'v3_spell_target_reference_adapter': spell_target,
+                                              'source': 'smoke receipt seat models'}
+    admission = SEALED / 'admission/r3' / (label.replace('/', '__') + '.json')
+    if admission.exists():
+        record['admission'] = {'path': admission.as_posix(), 'sha256': sha(admission), 'route': json.loads(admission.read_bytes())['route']}
     # Provenance gaps are recorded, not a playability gate; registry and authority gaps are.
     # An R14 import is engineering-complete once its receipts pass, but stays short of playable
     # until the route is accepted (R14_ACCEPTED, set only from the Fable verdict and Codex countersign).
@@ -202,7 +211,8 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
     if not routable and r14 and done and facts['store_authority_route'] != 'none':
         record['status'] = 'exported-awaiting-r14-acceptance'
         open_items = [i for i in open_items if not i.startswith('registry: ')] + [
-            'R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it']
+            'R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit '
+            'pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written']
     else:
         record['status'] = 'unresolved' if not routable else ('playable' if done else 'pending')
     if routable and not done: open_items.append('export, round trip or smoke receipt not yet sealed')
@@ -266,6 +276,33 @@ def main(revision, output):
                             'sealed_root': SEALED.as_posix(),
                             'rulings': 'collab/DIRECTOR-RULINGS-20260927.md R3, R10, R11, R14; collab/FABLE-REVIEW-20260927.md (panel-export verdict)'},
                 'toolchain': toolchain_record(members),
+                'r14_route': {
+                    'ruling': 'collab/DIRECTOR-RULINGS-20260927.md R14',
+                    'allowlist': {'path': 'data/line_a_source_registries/allowlists/r14-16d308da03202644-to-ef738001c3730760.json',
+                                  'sha256': sha(REPO / 'data/line_a_source_registries/allowlists/r14-16d308da03202644-to-ef738001c3730760.json'),
+                                  'source_registry_sha256': '16d308da032026442994649291453846e2c857842542795092df12530011fd77',
+                                  'source_card_db_hash': 'a06fa9566106f0ea',
+                                  'destination_registry_sha256': sha(DESTINATION)},
+                    'semantics_report': {'path': (SEALED / 'receipts/r14-semantics-report-v1.json').as_posix(),
+                                         'sha256': sha(SEALED / 'receipts/r14-semantics-report-v1.json')},
+                    'acceptance': {'fable_verdict': 'collab/FABLE-REVIEW-20260927.md, section "## Opus lane panel-export: R14 registry-evolution import route (design and implementation review)": COUNTERSIGN (scoped) with changes 1-8',
+                                   'codex_contract': 'CODEX #566 (changes 1, 2, 6, 7 countersigned as contract)',
+                                   'codex_implementation_countersign': 'pending on the amended commit (changes 1, 6, 7, 8 at 0cd213dd)',
+                                   'accepted': R14_ACCEPTED},
+                    'training_format_evidence': [
+                        'all seven a06fa9566106f0ea refresh-034 run.json environments record deck_ids [Rally, Rally] and no match-format field',
+                        'the training-era engine had no sideboard mechanism: git grep at 1804e9f9 and 967b8efd finds sideboard only in card_def.rs comments and one rl.rs provenance string (Fable, FABLE-REVIEW-20260927 R14 point 4)',
+                        'the Rally .dek at 1804e9f9 lists Cast into the Fire (3) and Relic of Progenitus (4) only as Sideboard; the other 16 Rally cards are full in 16d308da',
+                        'card_def.rs is identical to 1804e9f9 at the training commits 967b8efd, ccd93bda, 8c8d645d, 99986ce2, 614d6985 and 9e25d72d (only build.rs differs, 17+/3-), and the shared card-DB hash fixes the generated tables (Fable addendum M5); engine.rs and effect.rs differences stay unaudited and do not bear on NoEffect cards',
+                        'the V3 tensorizer and V6 observation read no keyword or color field outside tests, so the admitted differences act only through engine behaviour; the 14 admitted lands were unplayable in the training-era engine (is_playable_land requires is_executable)'],
+                    'admission': {'tool': 'python/tools/line_a_panel_admission_v1.py revision 3 (schema mtg-kernel-line-a-panel-admission/v1, '
+                                          'the shape the collector parses: LegacyAdmissionV1 at 634426da, CLAUDE #483, CODEX #570)',
+                                  'receipts_dir': (SEALED / 'admission/r3').as_posix(),
+                                  'receipts': sorted({p.name: sha(p) for p in (SEALED / 'admission/r3').glob('*.json')}.items()),
+                                  'superseded': ['admission/refresh-034__current-1.json (revision 1, e4d848ac): no registry bindings',
+                                                 'admission/v2/refresh-034__current-1.json (revision 2, 6018ee0b): a shape the collector does not parse; never announced or pinned']},
+                    'receipt_schemas': 'round-trip receipts are mtg-kernel-line-a-panel-roundtrip/v1 for current-1 (40b06e66 toolchain) and v2 for the R14 members (v2 records import_route for either route); smoke receipts are mtg-kernel-line-a-panel-smoke/v1',
+                },
                 'destination': {'registry': 'data/cards_v1.json', 'registry_sha256': sha(DESTINATION),
                                 'v3_feature_contract_digest': '9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68',
                                 'v3_feature_encoding_digest': 'c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b'},

@@ -1,6 +1,6 @@
 {
   "schema": "mtg-kernel-line-a-panel-imports/v1",
-  "revision": 4,
+  "revision": 5,
   "status": "1 playable, 7 exported awaiting R14 acceptance, 0 pending, 6 unresolved of 14 archival members",
   "producer": "Opus lane panel-export (collab/GOALS/opus-panel-export-20260927.md), branch opus/panel-export-v1, python/tools/line_a_panel_imports_v1.py",
   "roster": "proposal v0.2 (collab/CODEX-G115-OPPONENT-PORTFOLIO-PROPOSAL-20260926.md, 2026-09-27 10:18 EDT): 0 V3 and 1 D3 wrapper are outside this manifest; 2-9 refresh-034 slots 0-7; 10-12 v3b arm1 runs 0-2; 13-15 v3b arm2 runs 0-2",
@@ -102,6 +102,48 @@
       }
     }
   },
+  "r14_route": {
+    "ruling": "collab/DIRECTOR-RULINGS-20260927.md R14",
+    "allowlist": {
+      "path": "data/line_a_source_registries/allowlists/r14-16d308da03202644-to-ef738001c3730760.json",
+      "sha256": "2f883b5eeb029af8a7b46b19f4f9dfd08f1e78a084b282d21a75fcf0ecf5dcde",
+      "source_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+      "source_card_db_hash": "a06fa9566106f0ea",
+      "destination_registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14"
+    },
+    "semantics_report": {
+      "path": "E:/mtg-line-a-panel-imports-20260927/receipts/r14-semantics-report-v1.json",
+      "sha256": "96c027b6a161cd24cee0c184da48f29ad6527f211472129b3f6c1f29feb42ddd"
+    },
+    "acceptance": {
+      "fable_verdict": "collab/FABLE-REVIEW-20260927.md, section \"## Opus lane panel-export: R14 registry-evolution import route (design and implementation review)\": COUNTERSIGN (scoped) with changes 1-8",
+      "codex_contract": "CODEX #566 (changes 1, 2, 6, 7 countersigned as contract)",
+      "codex_implementation_countersign": "pending on the amended commit (changes 1, 6, 7, 8 at 0cd213dd)",
+      "accepted": false
+    },
+    "training_format_evidence": [
+      "all seven a06fa9566106f0ea refresh-034 run.json environments record deck_ids [Rally, Rally] and no match-format field",
+      "the training-era engine had no sideboard mechanism: git grep at 1804e9f9 and 967b8efd finds sideboard only in card_def.rs comments and one rl.rs provenance string (Fable, FABLE-REVIEW-20260927 R14 point 4)",
+      "the Rally .dek at 1804e9f9 lists Cast into the Fire (3) and Relic of Progenitus (4) only as Sideboard; the other 16 Rally cards are full in 16d308da",
+      "card_def.rs is identical to 1804e9f9 at the training commits 967b8efd, ccd93bda, 8c8d645d, 99986ce2, 614d6985 and 9e25d72d (only build.rs differs, 17+/3-), and the shared card-DB hash fixes the generated tables (Fable addendum M5); engine.rs and effect.rs differences stay unaudited and do not bear on NoEffect cards",
+      "the V3 tensorizer and V6 observation read no keyword or color field outside tests, so the admitted differences act only through engine behaviour; the 14 admitted lands were unplayable in the training-era engine (is_playable_land requires is_executable)"
+    ],
+    "admission": {
+      "tool": "python/tools/line_a_panel_admission_v1.py revision 3 (schema mtg-kernel-line-a-panel-admission/v1, the shape the collector parses: LegacyAdmissionV1 at 634426da, CLAUDE #483, CODEX #570)",
+      "receipts_dir": "E:/mtg-line-a-panel-imports-20260927/admission/r3",
+      "receipts": [
+        [
+          "refresh-034__current-1.json",
+          "8e92ea42bfec09b90a3b99aa34c2de7fada5994beffda15a00d0f013451d92aa"
+        ]
+      ],
+      "superseded": [
+        "admission/refresh-034__current-1.json (revision 1, e4d848ac): no registry bindings",
+        "admission/v2/refresh-034__current-1.json (revision 2, 6018ee0b): a shape the collector does not parse; never announced or pinned"
+      ]
+    },
+    "receipt_schemas": "round-trip receipts are mtg-kernel-line-a-panel-roundtrip/v1 for current-1 (40b06e66 toolchain) and v2 for the R14 members (v2 records import_route for either route); smoke receipts are mtg-kernel-line-a-panel-smoke/v1"
+  },
   "destination": {
     "registry": "data/cards_v1.json",
     "registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
@@ -151,7 +193,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -186,7 +228,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "card-db-hash-only",
@@ -259,10 +301,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-0/model-source.json",
         "sha256": "75730df694a95149b25ed78251622955cec6068fc43b9d1136b7426270918220"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/roundtrip.json",
@@ -297,10 +335,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -345,7 +388,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -380,7 +423,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "execution-manifest-clean-commit",
@@ -459,10 +502,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-1/model-source.json",
         "sha256": "f058354f37b92f3d0205a27ce76f1a80fbe50469905b9483de2e09bff3255077"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/roundtrip.json",
@@ -497,10 +536,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -545,7 +589,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -580,7 +624,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "execution-manifest-clean-commit",
@@ -644,10 +688,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-0/model-source.json",
         "sha256": "a554c719d502a9fd08a04095678db3c1b0b1a8d8abec65d4eb36f00b82fd425f"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/roundtrip.json",
@@ -682,10 +722,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -730,7 +775,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -765,7 +810,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "execution-manifest-clean-commit",
@@ -829,10 +874,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-1/model-source.json",
         "sha256": "0bbf0feffd52aac92d0da848aafec88665855e7a7af11c35101d6710fa8df792"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/roundtrip.json",
@@ -867,10 +908,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -915,7 +961,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -950,7 +996,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "execution-manifest-clean-commit",
@@ -1037,10 +1083,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-0/model-source.json",
         "sha256": "c1c0a93954e9a81ebf53722a5044a3cb4684390397272dbef5e4d02473e8dca8"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/roundtrip.json",
@@ -1075,10 +1117,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -1123,7 +1170,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
         "candidate_card_count": 162,
-        "linkage": "cycle-3 training commits 162b7579 and b01afb52 (EVIDENCE-NOTES.md) and search_authority.engine_commit a7043e30 (refresh manifests) all carry these registry bytes; the commit for generations 0-256 is not recorded",
+        "linkage": "the registry revision whose bytes (af9d7256) the strict route pins; member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 0,
         "namespace_mismatch_fields": [],
@@ -1235,10 +1282,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-1/model-source.json",
         "sha256": "468fc3046f639981a852fea81fde1e7ba47a246fd145ec356b7109ef432f148a"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-1/roundtrip.json",
@@ -1272,6 +1315,16 @@
         "max_physical_games": 3,
         "evaluator_sha256": "90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771",
         "evaluator_git_head": "40b06e6636da78ac95b72ddcd8d640923198731a"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__current-1.json",
+        "sha256": "8e92ea42bfec09b90a3b99aa34c2de7fada5994beffda15a00d0f013451d92aa",
+        "route": "strict"
       },
       "status": "playable",
       "open_items": [
@@ -1320,7 +1373,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1355,7 +1408,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "execution-manifest-clean-commit",
@@ -1419,10 +1472,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-0/model-source.json",
         "sha256": "414f521130a430878b784a12ed314e5dbc51e9cfb6965776345fb3010be587f9"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/roundtrip.json",
@@ -1457,10 +1506,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -1505,7 +1559,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1540,7 +1594,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "execution-manifest-clean-commit",
@@ -1604,10 +1658,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-1/model-source.json",
         "sha256": "68e84a44e7748df87d64856b7036a9ffc369cf293a7600a0d283e28db70e5f1c"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/roundtrip.json",
@@ -1642,10 +1692,15 @@
         "evaluator_sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
         "evaluator_git_head": "5dacb01b12dce9c8c5aa963137d342b017fb40d1"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
       "status": "exported-awaiting-r14-acceptance",
       "open_items": [
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store",
-        "R14 route acceptance (FABLE-QUEUE 16:17 entry; CODEX #557 item 5); the admission receipt is written only after it"
+        "R14 route acceptance: Fable COUNTERSIGN (scoped) rendered; Codex implementation countersign of the amended commit pending (due 2026-09-30 18:00 EDT); then bins rebuilt at that commit, round trips and smokes rerun, admission receipt written"
       ]
     },
     {
@@ -1690,7 +1745,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1725,7 +1780,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
@@ -1751,7 +1806,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1797,7 +1852,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1832,7 +1887,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
@@ -1858,7 +1913,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1904,7 +1959,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1939,7 +1994,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
@@ -1965,7 +2020,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -2011,7 +2066,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -2046,7 +2101,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
@@ -2072,7 +2127,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -2118,7 +2173,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -2153,7 +2208,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
@@ -2179,7 +2234,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -2225,7 +2280,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -2260,7 +2315,7 @@
         },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
@@ -2286,7 +2341,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     }
