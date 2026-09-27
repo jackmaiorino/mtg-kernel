@@ -21,6 +21,7 @@ import zipfile
 REMOTE = "haley@100.71.75.65"
 REMOTE_INPUT = "C:/mtg-node/public-device-placement-001"
 HOSTNAMES = {"jack": "DESKTOP-DJ1C40R", "haleyspc": "HALEYSPC"}
+DISK_RESERVE_BYTES = 60 * 1024**3
 
 
 def read(path):
@@ -186,11 +187,21 @@ def ssh_ps(script, timeout=60):
     return result.stdout
 
 
-def preflight(host, placements):
+def require_disk_reserve(free_bytes):
+    if type(free_bytes) is not int or free_bytes < DISK_RESERVE_BYTES:
+        raise ValueError("60 GiB target-volume reserve unavailable")
+
+
+def preflight(host, placements, target_drive):
+    drive = str(target_drive).upper()
+    if not re.fullmatch(r"[A-Z]", drive):
+        raise ValueError("single target drive letter required")
     script=r'''$ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|learned_sideboard|expanded_deck_training|phase1_native_actor|stack_feature_training|stack_policy_replay|public_feature_evaluation|cargo|rustc'} | Select-Object Name,ProcessId,CommandLine)
-[pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''
+$disk=Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='__TARGET_DRIVE__:'"
+if (-not $disk) {throw 'target volume unavailable'}
+[pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;disk_free_bytes=[int64]$disk.FreeSpace;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''.replace("__TARGET_DRIVE__",drive)
     if host == "haleyspc":
         result=json.loads(ssh_ps(script))
     else:
@@ -198,6 +209,7 @@ $active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer
         result=json.loads(subprocess.check_output(["powershell","-NoProfile","-EncodedCommand",encoded],text=True))
     if result["host"].upper() != HOSTNAMES[host] or result["active"]:
         raise ValueError("placement has a different host or competing native owner")
+    require_disk_reserve(result.get("disk_free_bytes"))
     rows={int(parts[0]):parts for parts in ([x.strip() for x in row.split(',')] for row in result["gpu"])}
     for placement in placements:
         row=rows[placement["gpu_ordinal"]]
@@ -207,17 +219,22 @@ $active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer
 
 
 def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seconds):
+    root = Path(root)
     staging_started=time.monotonic()
     if mode not in ["parallel","sequential","device_queues"] or set(configs) != set(placements):
         raise ValueError("invalid dispatch group")
     if not 0 < wall_seconds <= 7200 or not re.fullmatch(r"[a-z0-9-]+",root.name):
         raise ValueError("invalid root name or wall cap")
     binary = checked(binary_pin)
-    root.mkdir()
+    preflights = {}
     for host in {p["host"] for p in placements.values()}:
         if host not in HOSTNAMES:
             raise ValueError("no qualified dispatcher for host")
-        write(root/f"{host}-preflight.json",preflight(host,[p for p in placements.values() if p["host"]==host]))
+        target_drive = root.drive.rstrip(":") if host == "jack" else "C"
+        preflights[host] = preflight(host,[p for p in placements.values() if p["host"]==host],target_drive)
+    root.mkdir()
+    for host, report in preflights.items():
+        write(root/f"{host}-preflight.json",report)
     for name in configs:
         if not re.fullmatch(r"[a-z0-9-]+",name):
             raise ValueError("invalid job label")
