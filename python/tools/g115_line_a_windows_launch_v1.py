@@ -23,11 +23,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
 import g115_line_a_guard_v1 as guard
 import g115_line_a_manifest_v1 as manifest
+from g115_d3_qualify_v1 import minimum_reserve
 from g115_d4_audit_storage_v1 import Ledger, charge
 
 LAUNCH_SCHEMA = 'g115-line-a-launch/v1'
@@ -36,7 +38,13 @@ MODES = ('throughput', 'qualification', 'calibration', 'screen-evaluation')
 FORMAL_MODES = ('calibration', 'screen-evaluation')
 THROUGHPUT_MAX_JOBS = 64
 JOB_SETS = {'qualification': 'calibration', 'calibration': 'calibration', 'screen-evaluation': 'screen'}
+JOB_SET_SCHEMAS = {'qualification': 'g115-line-a-qualification-manifest/v1',
+                   'calibration': manifest.SCHEMAS['calibration'],
+                   'screen-evaluation': manifest.SCHEMAS['screen-evaluation']}
 CHILD_ENV_KEYS = ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'COMSPEC')
+COMPLETION_SCHEMA = 'g115-line-a-evaluation-completion/v1'
+COLLAB = 'C:/Users/Jack/IdeaProjects/collab'
+CATALOG_TOOL = COLLAB + '/tools/artifact_register.py'
 
 
 def require(ok, message):
@@ -193,6 +201,61 @@ def throughput(launch, host, root, now=None, prefix=None):
     return record
 
 
+def work_class(launch, job):
+    source = launch['member_sources'][job['member']]
+    return 'bo3-search' if source['kind'] == 'information_set_search_v3' else 'bo3-ordinary'
+
+
+def dispatch(launch, host, root, placements, jobs, prefix=None):
+    """An admitted evaluation job set: each work class at its selected worker count on this host.
+
+    The completion record carries identities, hashes, times and bytes only; no outcome is read.
+    """
+    root = Path(root)
+    worksheet = guard.read(guard.checked(launch['worksheet']))
+    ledger = Ledger(worksheet['cap_bytes'], launch['control_allowance_bytes'])
+    executable = guard.require_pinned(launch['executable']['path'], launch['executable']['sha256'])
+    (root / 'native').mkdir()
+    rows = []
+    for name in sorted(placements):
+        workers = placements[name]['allocation'][host]
+        items = [(job, evaluation_request(job, launch['deck_packet'], launch['learner_source'],
+                                          launch['member_sources'][job['member']], root / 'native' / job['id']))
+                 for job in jobs if work_class(launch, job) == name]
+        pool = Pool(executable, launch['executable']['git_head'], root, workers, ledger,
+                    launch['reservation_bytes'], launch['job_timeout_seconds'], launch['hosts'][host]['volume'],
+                    memory_reserve_bytes=minimum_reserve(host), prefix=prefix)
+        class_rows, seconds = pool.map(items)
+        rows += [dict(row, work_class=name, workers=workers) for row in class_rows]
+        if not all(row['complete'] for row in class_rows):
+            break
+    complete = len(rows) == len(jobs) and all(row['complete'] for row in rows)
+    result = dict(schema=COMPLETION_SCHEMA, complete=complete, mode=launch['mode'], job=launch['job'], host=host,
+                  jobs=len(jobs), completed=sum(row['complete'] for row in rows),
+                  not_started=[job['id'] for job in jobs if job['id'] not in {row['id'] for row in rows}],
+                  rows=[{k: row[k] for k in ('id', 'work_class', 'workers', 'complete', 'seconds', 'charged_bytes',
+                                              'match_sha256', 'error') if k in row} for row in rows],
+                  ledger=dict(cap_bytes=worksheet['cap_bytes'], committed_bytes=ledger.committed,
+                              stopped=ledger.stopped),
+                  outcomes_read=False)
+    write_json(root / 'completion.json', result)
+    return result
+
+
+def register(root, status, launch, run=subprocess.run):
+    """Catalog registration (artifact law clause 9) with a commit limited to the catalog file."""
+    verb = ['add', '--path', str(root)] if status == 'live' else ['update', '--id', str(root)]
+    retention = 'keep-full' if launch['mode'] in FORMAL_MODES else 'prunable'
+    run([sys.executable, CATALOG_TOOL] + verb + [
+        '--lane', 'opus-line-a-launcher', '--owner', 'opus-line-a-launcher', '--status', status,
+        '--retention', retention, '--purpose', 'line (a) %s job set %s' % (launch['mode'], launch['job']),
+        '--doc', 'docs/g115_line_a_launcher_v1.md', '--by', 'opus-line-a-launcher',
+        '--regen', 'pinned executable %s, launch manifest and seeds' % launch['executable']['sha256'][:12]],
+        check=True)
+    run(['git', '-C', COLLAB, 'commit', '-q', '-m', 'ARTIFACTS: %s (%s)' % (root, status), '--',
+         'ARTIFACTS/catalog.jsonl'], check=False)
+
+
 def admitted_jobs(launch):
     """The evaluation jobs a guarded mode may dispatch, from the pinned job-set manifest."""
     job_set = guard.read(guard.checked(launch['job_manifest']))
@@ -215,16 +278,15 @@ def check(launch, host, now=None):
     if launch['mode'] == 'throughput':
         return None, launch['throughput']['jobs']
     job_set, jobs = admitted_jobs(launch)
+    require(job_set['schema'] == JOB_SET_SCHEMAS[launch['mode']], 'Job-set schema differs from the launch mode')
     classes = {}
     for job in jobs:
-        work_class = 'bo3-search' if launch['member_sources'][job['member']]['kind'] == 'information_set_search_v3' \
-            else 'bo3-ordinary'
-        classes[work_class] = classes.get(work_class, 0) + 1
+        classes[work_class(launch, job)] = classes.get(work_class(launch, job), 0) + 1
     placements = {}
-    for work_class, units in classes.items():
-        evidence = launch['throughput_evidence'].get(work_class)
-        placements[work_class] = guard.require_throughput(
-            guard.read(guard.checked(evidence)) if evidence else None, work_class, units, launch['binding'], now)
+    for name, units in classes.items():
+        evidence = launch['throughput_evidence'].get(name)
+        placements[name] = guard.require_throughput(
+            guard.read(guard.checked(evidence)) if evidence else None, name, units, launch['binding'], now)
     for placement in placements.values():
         require(host in placement['allocation'], 'Selected placement does not use this host')
     worksheet = guard.read(guard.checked(launch['worksheet'])) if launch.get('worksheet') else None
@@ -260,7 +322,11 @@ def main():
         record = throughput(launch, args.host, args.root)
         print(json.dumps(dict(complete=True, phases=[(p['workers'], round(p['seconds'], 3)) for p in record['phases']])))
         return
-    raise SystemExit('Admitted evaluation dispatch lands with the qualification unit')
+    register(args.root, 'live', launch)
+    result = dispatch(launch, args.host, args.root, placements, jobs)
+    register(args.root, 'closed', launch)
+    print(json.dumps({k: v for k, v in result.items() if k != 'rows'}))
+    raise SystemExit(0 if result['complete'] else 1)
 
 
 if __name__ == '__main__':

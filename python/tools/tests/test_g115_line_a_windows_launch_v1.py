@@ -188,5 +188,146 @@ class ThroughputModeTests(unittest.TestCase):
                     launcher.throughput(launch, 'jack', Path(directory) / 'run', now=1.0, prefix=PREFIX)
 
 
+
+def qualification_launch(directory):
+    """A complete admitted (non-formal) launch manifest around the fake evaluator."""
+    import g115_line_a_manifest_v1 as manifest_module
+    directory = Path(directory)
+    binary = directory / 'public_feature_evaluation_v1.exe'
+    binary.write_bytes(b'stand-in')
+    pinned, digest = guard.pin_binary(binary, directory / 'pinned')
+
+    def ref(path, value=None):
+        if value is not None:
+            Path(path).write_text(json.dumps(value))
+        return dict(path=str(path), sha256=guard.sha256_file(path))
+
+    job_list = jobs(8)
+    body = dict(schema='g115-line-a-qualification-manifest/v1', launchable=True,
+                job_list_sha256=manifest_module.canonical_sha256(job_list))
+    body['manifest_sha256'] = manifest_module.canonical_sha256(body)
+    binding = dict(launcher_sha256='1' * 64, executable_sha256=digest, data_tree_sha256='3' * 64)
+    phases = [dict(workers=w, seconds=s, completed=8, rows=[dict(id='q%d' % k, sha256='%064d' % k) for k in range(8)])
+              for w, s in ((1, 16.0), (8, 4.0))]
+    now = 1_790_600_000.0
+    evidence = dict(schema=guard.THROUGHPUT_SCHEMA, binding=dict(binding, work_class='bo3-ordinary'),
+                    inventory=dict(jack=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
+                                   haleyspc=dict(checked_unix=now, eligible=False, reason='staging not engineered'),
+                                   runpod=dict(checked_unix=now, eligible=False, reason='no Linux path')),
+                    hosts=dict(jack=dict(phases=phases, overhead_seconds=5.0)), placements=[], selected='jack-8')
+    for workers in (1, 8):
+        allocation = dict(jack=workers)
+        evidence['placements'].append(dict(id='jack-%d' % workers, allocation=allocation, eligible=True,
+                                           ineligibility_reason='',
+                                           projected_seconds=guard.projected_seconds(evidence, allocation, 8)))
+    items = [dict(category=c, unit_bytes=100_000, units=8, measured_by=dict(path='E:/r.json', sha256='4' * 64))
+             for c in guard.WORKSHEET_CATEGORIES]
+    worksheet = dict(schema=guard.WORKSHEET_SCHEMA, job_set='calibration', manifest_sha256=body['manifest_sha256'],
+                     cap_bytes=guard.JOB_SET_CAPS['calibration'], items=items,
+                     projected_bytes=guard.projected_bytes(items))
+    job = 'g115-line-a-qualification-test'
+    scratch = dict(schema=guard.SCRATCH_SCHEMA, job=job, owner='opus-line-a-launcher', host='jack',
+                   root='D:/e-scratch/%s/' % job, sources=[dict(path='E:/x.json', sha256='a' * 64, bytes=1)],
+                   disposable=['native/**'], cap_bytes=10**9)
+    launch = dict(schema=launcher.LAUNCH_SCHEMA, mode='qualification', job=job,
+                  documents=dict(launcher=ref(Path(launcher.__file__))),
+                  executable=dict(path=str(pinned), sha256=digest, git_head=GIT_HEAD), binding=binding,
+                  job_manifest=ref(directory / 'job-set.json', body), job_manifest_sha256=body['manifest_sha256'],
+                  jobs=job_list, throughput_evidence={'bo3-ordinary': ref(directory / 'evidence.json', evidence)},
+                  worksheet=ref(directory / 'worksheet.json', worksheet),
+                  scratch_manifest=ref(directory / 'scratch.json', scratch),
+                  hosts=dict(jack=dict(volume=str(directory))), deck_packet=PACKET, learner_source=LEARNER,
+                  member_sources=MEMBERS, control_allowance_bytes=1, reservation_bytes=10**6,
+                  job_timeout_seconds=60)
+    return launch, now
+
+
+class AdmittedDispatchTests(unittest.TestCase):
+    def patches(self, directory):
+        return (patch.object(guard, 'PINNED_ROOT', str(Path(directory) / 'pinned')),
+                patch.object(guard, 'DISK_RESERVE_BYTES', 0), patch.object(launcher, 'minimum_reserve', lambda h: 0))
+
+    def test_admitted_qualification_runs_at_the_selected_worker_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launch, now = qualification_launch(directory)
+            first, second, third = self.patches(directory)
+            with first, second, third:
+                placements, admitted = launcher.check(launch, 'jack', now=now)
+                self.assertEqual(placements['bo3-ordinary']['id'], 'jack-8')
+                root = Path(directory) / 'run'
+                root.mkdir()
+                result = launcher.dispatch(launch, 'jack', root, placements, admitted, prefix=PREFIX)
+            self.assertTrue(result['complete'])
+            self.assertEqual((result['jobs'], result['completed'], result['not_started']), (8, 8, []))
+            self.assertEqual({row['workers'] for row in result['rows']}, {8})
+            self.assertFalse(result['outcomes_read'])
+            self.assertEqual(json.loads((root / 'completion.json').read_text()), result)
+
+    def test_admission_refuses_missing_worksheet_evidence_or_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launch, now = qualification_launch(directory)
+            first, second, third = self.patches(directory)
+            with first, second, third:
+                with self.assertRaisesRegex(ValueError, 'worksheet missing'):
+                    launcher.check(dict(launch, worksheet=None), 'jack', now=now)
+                with self.assertRaisesRegex(ValueError, 'Throughput evidence missing'):
+                    launcher.check(dict(launch, throughput_evidence={}), 'jack', now=now)
+                with self.assertRaisesRegex(ValueError, 'Jobs differ'):
+                    launcher.check(dict(launch, jobs=launch['jobs'][:-1]), 'jack', now=now)
+                formal = dict(launch, mode='calibration')
+                with self.assertRaisesRegex(ValueError, 'schema differs from the launch mode'):
+                    launcher.check(formal, 'jack', now=now)
+
+    def test_formal_modes_need_a_launchable_set_the_scope_ruling_and_the_yardstick(self):
+        import g115_line_a_manifest_v1 as manifest_module
+        with tempfile.TemporaryDirectory() as directory:
+            launch, now = qualification_launch(directory)
+            body = json.loads(Path(launch['job_manifest']['path']).read_text())
+            ruling = Path(directory) / 'ruling.md'
+            ruling.write_text('Scope ruling: version 1 freezes as staged B.')
+            scope = dict(schema=guard.SCOPE_SCHEMA, composition='B',
+                         ruling=dict(path=str(ruling), sha256=guard.sha256_file(ruling),
+                                     excerpt='version 1 freezes as staged B'))
+
+            def formal(launchable, yardstick, with_scope):
+                value = dict(body, schema=manifest_module.SCHEMAS['calibration'], launchable=launchable,
+                             composition='B', yardstick_executable_sha256=yardstick)
+                value.pop('manifest_sha256')
+                value['manifest_sha256'] = manifest_module.canonical_sha256(value)
+                path = Path(directory) / ('formal-%s-%s.json' % (launchable, yardstick[:4]))
+                path.write_text(json.dumps(value))
+                worksheet = json.loads(Path(launch['worksheet']['path']).read_text())
+                worksheet['manifest_sha256'] = value['manifest_sha256']
+                sheet = Path(directory) / ('sheet-%s-%s.json' % (launchable, yardstick[:4]))
+                sheet.write_text(json.dumps(worksheet))
+                return dict(launch, mode='calibration', scope=scope if with_scope else None,
+                            job_manifest=dict(path=str(path), sha256=guard.sha256_file(path)),
+                            job_manifest_sha256=value['manifest_sha256'],
+                            worksheet=dict(path=str(sheet), sha256=guard.sha256_file(sheet)))
+
+            first, second, third = self.patches(directory)
+            with first, second, third:
+                digest = launch['executable']['sha256']
+                with self.assertRaisesRegex(ValueError, 'not launchable'):
+                    launcher.check(formal(False, digest, True), 'jack', now=now)
+                with self.assertRaisesRegex(ValueError, 'scope ruling record required'):
+                    launcher.check(formal(True, digest, False), 'jack', now=now)
+                with self.assertRaisesRegex(ValueError, 'pinned yardstick executable'):
+                    launcher.check(formal(True, '9' * 64, True), 'jack', now=now)
+                placements, _ = launcher.check(formal(True, digest, True), 'jack', now=now)
+                self.assertEqual(placements['bo3-ordinary']['id'], 'jack-8')
+
+    def test_registration_commits_only_the_catalog_file(self):
+        calls = []
+        launch = dict(mode='qualification', job='j', executable=dict(sha256='a' * 64))
+        launcher.register('D:/e-scratch/j/run', 'live', launch, run=lambda args, check: calls.append(args))
+        launcher.register('D:/e-scratch/j/run', 'closed', launch, run=lambda args, check: calls.append(args))
+        self.assertIn('add', calls[0])
+        self.assertEqual(calls[0][calls[0].index('--retention') + 1], 'prunable')
+        self.assertIn('update', calls[2])
+        self.assertEqual(calls[1][-2:], ['--', 'ARTIFACTS/catalog.jsonl'])
+        self.assertEqual(calls[3][-2:], ['--', 'ARTIFACTS/catalog.jsonl'])
+
+
 if __name__ == '__main__':
     unittest.main()
