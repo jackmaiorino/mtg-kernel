@@ -7,6 +7,9 @@ use super::search_opponent::{SearchBuildV1, SearchOpponentV1};
 use super::*;
 use crate::rl_session::FastActorDecisionV1;
 
+#[cfg(test)]
+mod tests;
+
 /// Outer schema of a public trajectory whose opponent seat was a recent
 /// public-input checkpoint; distinct so ordinary readers refuse it.
 pub(crate) const PUBLIC_CHECKPOINT_TRAJECTORY_SCHEMA: &str =
