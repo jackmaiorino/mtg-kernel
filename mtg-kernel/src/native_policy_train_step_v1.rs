@@ -72,7 +72,11 @@ use std::thread;
 mod weighted_v3;
 mod gae_v1;
 mod head_only_mask_v1;
+mod line_b_auxiliary_v1;
 pub(crate) use head_only_mask_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
+pub(crate) use line_b_auxiliary_v1::{
+    LineBAuxiliaryInputV1, LineBAuxiliaryResultV1, LineBAuxiliaryRootV1,
+};
 pub(crate) mod retention_v1;
 mod carryover_probe_v1;
 
@@ -782,6 +786,10 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     },
     /// Stable CudaBurnDense bridge failure classification.
     CudaBackend {
+        code: &'static str,
+    },
+    /// Line (b) auxiliary-term input or combination failure.
+    LineBAuxiliary {
         code: &'static str,
     },
     EmptyBatch,
@@ -2635,6 +2643,50 @@ impl ScorerBiasGaugeAccumulatorV1 {
                 0.0
             };
             self.high_precision_residual += grad_output - log_probability.exp() * coefficient;
+        }
+        Ok(())
+    }
+
+    /// Line (b) auxiliary logit gradients `d_logits`, each rounded once to
+    /// binary32 from `exact` (binary64): the exact sum is zero up to binary64
+    /// rounding, so their scorer-bias residual is bounded by one binary32
+    /// rounding per term plus the reverse pass's binary32 accumulation.
+    pub(crate) fn observe_line_b_auxiliary_v1(
+        &mut self,
+        d_logits: &[f32],
+        exact: &[f64],
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        let operation_count = d_logits
+            .len()
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(8))
+            .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
+        let mut magnitude = 0.0_f64;
+        for value in d_logits {
+            magnitude += f64::from(*value).abs();
+        }
+        let gamma = f32_gamma(operation_count)?;
+        let bound_component = magnitude * gamma;
+        self.per_substep_bound_sum += bound_component;
+        self.sum_abs_policy_coefficients += magnitude;
+        self.substep_count = self
+            .substep_count
+            .checked_add(1)
+            .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
+        self.total_action_count = self
+            .total_action_count
+            .checked_add(d_logits.len())
+            .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
+        self.max_action_count = self.max_action_count.max(d_logits.len());
+        self.substep_bounds.push(NativeGaugeSubstepBoundV1 {
+            action_count: d_logits.len(),
+            abs_policy_coefficient: magnitude,
+            gamma_operation_count: operation_count,
+            gamma,
+            bound_component,
+        });
+        for value in exact {
+            self.high_precision_residual += value;
         }
         Ok(())
     }
