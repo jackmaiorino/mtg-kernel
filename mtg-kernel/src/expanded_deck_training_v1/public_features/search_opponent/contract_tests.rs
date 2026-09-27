@@ -39,6 +39,7 @@ fn episode(search: bool) -> ExpandedEpisodeV1 {
         starting_player: 1,
         learner_seat: 0,
         opponent: Some(g115()),
+        opponent_kind: None,
         opponent_search: search.then(|| {
             pin(
                 "d3-search-descriptor-reviewed.json",
@@ -72,17 +73,17 @@ fn absent_search_pin_keeps_every_serialized_byte() {
 fn only_the_public_collector_admits_a_search_episode() {
     let plain = episode(false);
     assert!(plain.configurations().is_ok());
-    assert!(plain.configurations_admitting_search_v1().is_ok());
+    assert!(plain.configurations_for_public_collector_v1().is_ok());
     let search = episode(true);
     assert_eq!(
         search.configurations().unwrap_err(),
         "search opponent is admitted only by the public-feature collector"
     );
-    assert!(search.configurations_admitting_search_v1().is_ok());
+    assert!(search.configurations_for_public_collector_v1().is_ok());
     let mut orphan = episode(true);
     orphan.opponent = None;
     assert_eq!(
-        orphan.configurations_admitting_search_v1().unwrap_err(),
+        orphan.configurations_for_public_collector_v1().unwrap_err(),
         "search opponent requires an explicit opponent model"
     );
 }

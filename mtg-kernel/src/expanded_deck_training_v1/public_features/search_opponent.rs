@@ -294,7 +294,7 @@ impl SearchTrajectoryV1 {
         let (simulations, transitions) = (d.simulations, d.transitions);
         let mut records = self.decisions.iter();
         {
-            let mut check = |row: &DecisionRecordV1| -> Result<(), String> {
+            let mut check = |row: &DecisionRecordV1| -> Result<SeatRowDrawV1, String> {
                 let r = records.next().ok_or("search row has no search record")?;
                 ensure(
                     row.sampler_identity.as_deref() == Some(SEARCH_SAMPLER_IDENTITY)
@@ -316,11 +316,13 @@ impl SearchTrajectoryV1 {
                         && (1..=simulations).contains(&r.simulations)
                         && (1..=transitions).contains(&r.transitions),
                     "search row differs from its search record",
-                )
+                )?;
+                // The wrapper chose without the seat stream: no draw.
+                Ok(SeatRowDrawV1::None)
             };
-            let check: SearchRowCheckV1<'_> = &mut check;
+            let check: SeatRowCheckV1<'_> = &mut check;
             validate_episode_records_with_search_v1(
-                episode.configurations_admitting_search_v1()?,
+                episode.configurations_for_public_collector_v1()?,
                 episode,
                 configuration_sha256,
                 decisions,

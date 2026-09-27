@@ -67,6 +67,7 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         starting_player: 1 - learner_seat,
         learner_seat,
         opponent: Some(source(G115_CHECKPOINT_SHA256)),
+        opponent_kind: None,
         opponent_search: Some(pin("d3.json", REVIEWED_DESCRIPTOR_SHA256)),
         registered: [deck.clone(), deck.clone()],
         selected: [deck.clone(), deck],
@@ -100,8 +101,11 @@ fn play(episode: &ExpandedEpisodeV1) -> Result<Trajectory, String> {
         "state",
         false,
         None,
-        (net, id),
-        search,
+        super::super::opponent_kind::OpponentSeatV1::Net {
+            net,
+            identity: id,
+            search,
+        },
     )
 }
 

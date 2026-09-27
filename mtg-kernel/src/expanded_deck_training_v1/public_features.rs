@@ -10,6 +10,7 @@ use crate::paired_bo1_harness_v1::{PairedBo1PolicyInputV1, PairedBo1PolicyV1};
 use crate::public_cost_features_v1::PublicFeatureRowsV1;
 use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
 
+pub(crate) mod opponent_kind;
 pub mod replay_audit;
 pub(crate) mod search_opponent;
 #[cfg(test)]
@@ -95,7 +96,11 @@ struct Trajectory {
     optimizer_state_sha256: String,
     inputs_enabled: bool,
     episode: ExpandedEpisodeV1,
-    opponent: ExpandedInferenceIdentityV1,
+    /// The loaded net's inference identity for ordinary and D3 opponents.
+    /// None for an opt-in opponent kind, whose effective identity lives in
+    /// `opponent_record`. Some serializes exactly as the former bare field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent: Option<ExpandedInferenceIdentityV1>,
     configuration_sha256: [String; 2],
     decisions: Vec<DecisionRecordV1>,
     auxiliary: Vec<Option<PublicFeatureRowsV1>>,
@@ -103,6 +108,9 @@ struct Trajectory {
     /// Present only when the D3 wrapper played the opponent seat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     search: Option<search_opponent::SearchTrajectoryV1>,
+    /// Present only for an opt-in opponent kind (opponent kinds interface v1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_record: Option<opponent_kind::OpponentRecordV1>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -208,21 +216,31 @@ fn collect(
     enabled: bool,
     audit_every: Option<u32>,
 ) -> Result<Trajectory, String> {
-    let (opponent, identity) = load_expanded_inference_v1(
-        episode
-            .opponent
-            .as_ref()
-            .ok_or("explicit opponent required")?,
-    )?;
-    ensure(
-        opponent.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
-        "public collection requires V4 opponent",
-    )?;
-    let search = episode
-        .opponent_search
-        .as_ref()
-        .map(|pin| search_opponent::SearchOpponentV1::load(pin, episode, &opponent, &identity))
-        .transpose()?;
+    let seat = match &episode.opponent_kind {
+        Some(kind) => opponent_kind::load_seat(kind, episode)?,
+        None => {
+            let (net, identity) = load_expanded_inference_v1(
+                episode
+                    .opponent
+                    .as_ref()
+                    .ok_or("explicit opponent required")?,
+            )?;
+            ensure(
+                net.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
+                "public collection requires V4 opponent",
+            )?;
+            let search = episode
+                .opponent_search
+                .as_ref()
+                .map(|pin| search_opponent::SearchOpponentV1::load(pin, episode, &net, &identity))
+                .transpose()?;
+            opponent_kind::OpponentSeatV1::Net {
+                net,
+                identity,
+                search,
+            }
+        }
+    };
     collect_with_opponent(
         policy,
         episode,
@@ -230,13 +248,13 @@ fn collect(
         state_hash,
         enabled,
         audit_every,
-        (opponent, identity),
-        search,
+        seat,
     )
 }
 
-/// One game with an already loaded opponent net and, for a search episode,
-/// its D3 wrapper. Split from `collect` so fixture policies can drive it.
+/// One game with an already loaded opponent seat: an ordinary V4 net, the
+/// D3 wrapper around it, or an opt-in opponent kind. Split from `collect` so
+/// fixture policies can drive it.
 fn collect_with_opponent(
     policy: &mut PublicInputPlayPolicyV1,
     episode: &ExpandedEpisodeV1,
@@ -244,21 +262,35 @@ fn collect_with_opponent(
     state_hash: &str,
     enabled: bool,
     audit_every: Option<u32>,
-    (mut opponent, identity): (FrozenPlayPolicyV1, ExpandedInferenceIdentityV1),
-    mut search: Option<search_opponent::SearchOpponentV1>,
+    mut opponent: opponent_kind::OpponentSeatV1,
 ) -> Result<Trajectory, String> {
-    let configs = episode.configurations_admitting_search_v1()?;
+    use opponent_kind::OpponentSeatV1 as Seat;
+    let configs = episode.configurations_for_public_collector_v1()?;
     ensure(
-        search.is_some() == episode.opponent_search.is_some(),
-        "search opponent dispatch differs from its episode",
+        match &opponent {
+            Seat::Net { search, .. } => {
+                episode.opponent_kind.is_none()
+                    && search.is_some() == episode.opponent_search.is_some()
+            }
+            Seat::PublicCheckpoint { .. } => matches!(
+                episode.opponent_kind,
+                Some(ExpandedOpponentKindV1::PublicCheckpoint { .. })
+            ),
+        },
+        "opponent dispatch differs from its episode",
     )?;
     let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player)).map_err(err)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_for_game_v1(seeds).map_err(err)?;
-    opponent.reset_sampling_v1(seeds);
-    if let Some(search) = search.as_mut() {
-        search.reset_for_game(seeds, &episode.id)?;
+    match &mut opponent {
+        Seat::Net { net, search, .. } => {
+            net.reset_sampling_v1(seeds);
+            if let Some(search) = search.as_mut() {
+                search.reset_for_game(seeds, &episode.id)?;
+            }
+        }
+        Seat::PublicCheckpoint { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
     }
     let mut decisions = Vec::new();
     let mut auxiliary = Vec::new();
@@ -266,18 +298,39 @@ fn collect_with_opponent(
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
                 let hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
-                let search = search.as_ref().map(|s| s.finish()).transpose()?;
-                match &search {
-                    None => validate_episode_records_v1(episode, &hashes, &decisions, &terminal)?,
-                    Some(record) => record.validate(episode, &hashes, &decisions, &terminal)?,
+                let schema = opponent.outer_schema();
+                let (identity, search, opponent_record) = match opponent {
+                    Seat::Net {
+                        identity, search, ..
+                    } => (
+                        Some(identity),
+                        search.as_ref().map(|s| s.finish()).transpose()?,
+                        None,
+                    ),
+                    Seat::PublicCheckpoint { identity, rows, .. } => (
+                        None,
+                        None,
+                        Some(opponent_kind::OpponentRecordV1::public_checkpoint(
+                            1 - episode.learner_seat,
+                            identity,
+                            rows,
+                        )),
+                    ),
+                };
+                match (&search, &opponent_record) {
+                    (None, None) => {
+                        validate_episode_records_v1(episode, &hashes, &decisions, &terminal)?
+                    }
+                    (Some(record), None) => {
+                        record.validate(episode, &hashes, &decisions, &terminal)?
+                    }
+                    (None, Some(record)) => {
+                        record.validate(episode, &hashes, &decisions, &terminal)?
+                    }
+                    (Some(_), Some(_)) => return Err("two opponent records".into()),
                 }
                 return Ok(Trajectory {
-                    schema: if search.is_some() {
-                        search_opponent::SEARCH_OPPONENT_TRAJECTORY_SCHEMA
-                    } else {
-                        "mtg-kernel-public-input-trajectory/v1"
-                    }
-                    .into(),
+                    schema: schema.into(),
                     config_sha256: config_hash.into(),
                     optimizer_state_sha256: state_hash.into(),
                     inputs_enabled: enabled,
@@ -288,6 +341,7 @@ fn collect_with_opponent(
                     auxiliary,
                     terminal,
                     search,
+                    opponent_record,
                 });
             }
             FastActorResponseV1::Decision(d) => {
@@ -303,19 +357,42 @@ fn collect_with_opponent(
                     let (tensor, rows) = policy.captured()?;
                     auxiliary.push(Some(rows.clone()));
                     (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
-                } else if let Some(search) = search.as_mut() {
-                    let (selected, scores, tensor) = search.select(&mut opponent, &session, d)?;
-                    if audit_every.is_some_and(|n| search.decisions() % u64::from(n.max(1)) == 0) {
-                        search_opponent::audit_live_root(search, &opponent, &session, d)?;
-                    }
-                    auxiliary.push(None);
-                    sampler_identity = Some(search_opponent::SEARCH_SAMPLER_IDENTITY.to_owned());
-                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                 } else {
-                    let (selected, scores, tensor) =
-                        opponent.select_with_training_tensor_v4(&session)?;
-                    auxiliary.push(None);
-                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                    match &mut opponent {
+                        Seat::Net {
+                            net,
+                            search: Some(search),
+                            ..
+                        } => {
+                            let (selected, scores, tensor) = search.select(net, &session, d)?;
+                            if audit_every
+                                .is_some_and(|n| search.decisions() % u64::from(n.max(1)) == 0)
+                            {
+                                search_opponent::audit_live_root(search, net, &session, d)?;
+                            }
+                            auxiliary.push(None);
+                            sampler_identity =
+                                Some(search_opponent::SEARCH_SAMPLER_IDENTITY.to_owned());
+                            (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        }
+                        Seat::Net {
+                            net, search: None, ..
+                        } => {
+                            let (selected, scores, tensor) =
+                                net.select_with_training_tensor_v4(&session)?;
+                            auxiliary.push(None);
+                            (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        }
+                        Seat::PublicCheckpoint { policy, rows, .. } => {
+                            let input = PairedBo1PolicyInputV1::new(&session, d);
+                            let (selected, scores) =
+                                policy.select_with_scores(&input).map_err(err)?;
+                            let (tensor, public_rows) = policy.captured()?;
+                            auxiliary.push(Some(public_rows.clone()));
+                            Seat::push_public_row(rows, &session, d, scores.logits.len())?;
+                            (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        }
+                    }
                 };
                 decisions.push(DecisionRecordV1 {
                     step: d.step,
@@ -478,9 +555,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             "public episode batch outside bounds",
         )?;
         for episode in episodes {
-            episode.configurations_admitting_search_v1()?;
+            episode.configurations_for_public_collector_v1()?;
             ensure(
-                episode.opponent.is_some() && ids.insert(episode.id.clone()),
+                (episode.opponent.is_some() || episode.opponent_kind.is_some())
+                    && ids.insert(episode.id.clone()),
                 "missing opponent or duplicate episode",
             )?;
         }
