@@ -9,15 +9,17 @@ with the identity it loads. Routes are told apart by the receipt route plus the 
 import-descriptor schemas, never by the evaluator's outer receipt schema.
 
 An R14 receipt also carries acceptance {fable_section, codex_countersign, accepted_commit}. The producer
-verifies that each reference exists before writing (CODEX #570: syntax is not evidence): the Fable
-section is found and its verdict countersigns; the Codex note is found, its heading countersigns and its
-body names the accepted commit; the commit exists, carries the pinned source card-DB constant, and is the
-commit the smoke evaluator was built at. The section and note bytes are hashed into evidence. A receipt
-never admits an unaccepted route. Receipts go to admission/r3/ (tool revision 3); admission/<member>.json
-(revision 1) and admission/v2/ (revision 2, a shape the collector does not parse) are superseded.
+verifies each reference before writing (CODEX #570: syntax is not evidence; #573: affirmative and exact):
+the Fable section heading matches exactly and its verdict countersigns; the Codex note holds exactly one
+line with the acceptance label, 'R14 implementation acceptance: COUNTERSIGN <full accepted commit>'; the
+commit exists, carries the pinned source card-DB constant, and is the commit the smoke evaluator was built
+at. A Fable design countersign never supplies Codex's implementation acceptance. The section and note
+bytes are hashed into evidence. A receipt never admits an unaccepted route. Receipts go to admission/r3/
+(tool revision 3); admission/<member>.json (revision 1) and admission/v2/ (revision 2, a shape the
+collector does not parse) are superseded.
 
 Usage: python python/tools/line_a_panel_admission_v1.py LABEL
-           [--fable-record PATH --fable-section HEADING --codex-note 'CODEX #N' --accepted-commit SHA]
+           [--fable-record PATH --fable-section 'FULL HEADING' --codex-note 'CODEX #N' --accepted-commit SHA]
 """
 import argparse, hashlib, json, re, subprocess
 from pathlib import Path
@@ -34,6 +36,11 @@ IDENTITY_SCHEMAS = {'strict': 'mtg-kernel-frozen-sideboard-play-transfer/v1',
 R14_SOURCE_CARD_DB_HASH = 'a06fa9566106f0ea'
 R14_LOADER = 'mtg-kernel/src/sideboard_play_policy_v1/registry_evolution_v1.rs'
 R14_PIN_LINE = 'const SOURCE_CARD_DB_HASH_V1: &str = "a06fa9566106f0ea";'
+# Codex emits exactly one line with this label after implementation acceptance (CODEX #573).
+ACCEPTANCE_LABEL = 'R14 implementation acceptance:'
+
+
+def acceptance_line(commit): return ACCEPTANCE_LABEL + ' COUNTERSIGN ' + commit
 
 
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -48,14 +55,17 @@ def section(lines, start, prefixes):
 
 
 def fable_reference(record, heading):
-    """The Fable section as 'FABLE-REVIEW-<date>.md#<heading>', its bytes hashed; its verdict must countersign."""
+    """The Fable section as 'FABLE-REVIEW-<date>.md#<heading>', its bytes hashed. The heading must equal the
+    section's full heading exactly (one such section), and its verdict must countersign. A Fable countersign
+    is the design verdict only; it never supplies Codex's implementation acceptance (codex_reference)."""
     record = Path(record)
     if not re.fullmatch(r'FABLE-REVIEW-\d{8}\.md', record.name):
         fail('the Fable record is not a FABLE-REVIEW-<date>.md file')
     lines = record.read_text(encoding='utf-8').splitlines()
-    start = next((i for i, line in enumerate(lines) if line.startswith('## ' + heading)), None)
-    if start is None:
-        fail('the Fable record has no section starting with the given heading')
+    matches = [i for i, line in enumerate(lines) if line == '## ' + heading]
+    if len(matches) != 1:
+        fail('the Fable record has no single section with exactly the given heading')
+    start = matches[0]
     title = lines[start][3:]
     verdict = re.search(r': (COUNTERSIGN|CHANGE-REQUIRED|REFUSE[D]?|REJECT(?:ED)?)\b', title)
     if not verdict or verdict.group(1) != 'COUNTERSIGN':
@@ -64,20 +74,22 @@ def fable_reference(record, heading):
     return record.name + '#' + title, {'record': record.as_posix(), 'section_sha256': hashlib.sha256(body.encode('utf-8')).hexdigest()}
 
 
-def codex_reference(note, commit):
-    """Codex's implementation countersign note, found in TO-CODEX.md; it must name the accepted commit."""
+def codex_reference(note, commit, mailbox=None):
+    """Codex's implementation acceptance (CODEX #573): the identified note (one heading '## CODEX #<n> [') has
+    exactly one line containing ACCEPTANCE_LABEL, and that whole line is acceptance_line(accepted commit).
+    A heading, a pending or negative line, or a commit mentioned in discussion is not acceptance."""
     if not re.fullmatch(r'CODEX #\d+', note):
         fail('the Codex note is not written CODEX #<n>')
-    mailbox = COLLAB / 'TO-CODEX.md'
+    mailbox = Path(mailbox) if mailbox else COLLAB / 'TO-CODEX.md'
     lines = mailbox.read_text(encoding='utf-8').splitlines()
-    start = next((i for i, line in enumerate(lines) if line.startswith('## ' + note + ' [')), None)
-    if start is None:
-        fail(note + ' is not in TO-CODEX.md')
-    if 'COUNTERSIGN' not in lines[start].upper():
-        fail(note + ' is not a countersign note')
+    starts = [i for i, line in enumerate(lines) if line.startswith('## ' + note + ' [')]
+    if len(starts) != 1:
+        fail(note + ' is not a single note in ' + mailbox.name)
+    start = starts[0]
     body = section(lines, start, ('## ',))
-    if commit[:8] not in body:
-        fail(note + ' does not name the accepted commit')
+    claimed = [line for line in body.splitlines() if ACCEPTANCE_LABEL in line]
+    if claimed != [acceptance_line(commit)]:
+        fail(note + ' holds no single exact line ' + repr(acceptance_line('<full accepted commit>')))
     return {'mailbox': mailbox.as_posix(), 'heading': lines[start][3:], 'note_sha256': hashlib.sha256(body.encode('utf-8')).hexdigest()}
 
 
