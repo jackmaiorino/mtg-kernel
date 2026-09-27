@@ -349,3 +349,24 @@ fn legacy_admission_refuses_mismatched_receipts() {
     }
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+/// Admission helper, not a check: prints the loaded model identity of the
+/// ExpandedModelSourceV1 JSON named by MTG_LEGACY_PROBE_SOURCE, so an
+/// admission receipt's expected_model is taken from a real load.
+#[test]
+#[ignore = "admission helper; needs MTG_LEGACY_PROBE_SOURCE"]
+fn legacy_admission_identity_probe() {
+    let path = std::env::var("MTG_LEGACY_PROBE_SOURCE").expect("MTG_LEGACY_PROBE_SOURCE");
+    let source: ExpandedModelSourceV1 =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let (policy, identity) = load_expanded_inference_v1(&source).unwrap();
+    println!(
+        "LEGACY_PROBE {}",
+        json!({
+            "model_source_sha256": sha(&serde_json::to_vec(&source).unwrap()),
+            "generation_v3": policy.feature_generation_v1() == PlayPolicyGenerationV1::V3,
+            "observation_successor_v3": policy.uses_observation_successor_v3(),
+            "expected_model": identity.model,
+        })
+    );
+}
