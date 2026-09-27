@@ -29,5 +29,5 @@ The seven awaiting members were exported, round-tripped bit-exactly and smoked a
 ## What remains
 
 - The collector's loaded-registry bindings (opus-search-opponent, CODEX #570), then Codex's tests and implementation countersign of the amended commits (due 2026-09-30 18:00 EDT); then the rebuild at the accepted commit, the reruns, the seven admission receipts and manifest r6.
-- v3b: no base Store authority admits these legacy-v1, non-promoted(2) stores; later version (due 2026-10-04 18:00 EDT).
+- v3b (later version, due 2026-10-04 18:00 EDT): no base Store authority admits these legacy-v1, non-promoted(2) stores. A probe through `load_checkpoint_v1` shows all six Store chains validate and only the authority predicate refuses them. The design entry (FABLE-QUEUE, 2026-09-27 17:47 EDT) proposes one authority variant pinned to the six endpoints and an R14 scope extension; implementation waits for the verdict and Codex's countersign.
 - Final review entry and closure PRUNE manifest. The PRUNE lists smoke commands, outputs and evaluator scratch as unread.
