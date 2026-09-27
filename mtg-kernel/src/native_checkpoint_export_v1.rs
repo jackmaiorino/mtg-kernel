@@ -34,6 +34,9 @@ use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
 use crate::paired_bo1_harness_v1::{PairedBo1PolicyV1, PlayPolicyGenerationV1};
+use crate::sideboard_play_policy_v1::registry_evolution_v1::{
+    pinned_allowlist_sha256_v1, pinned_allowlist_v1, REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1,
+};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyImportV1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -735,10 +738,21 @@ pub fn roundtrip_check_v1(
         hash_v1(&import_bytes) == model_source.play_import.sha256,
         "import descriptor SHA differs",
     )?;
-    let import: FrozenPlayPolicyImportV1 =
-        serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
+    let import: Value = serde_json::from_slice(&import_bytes).map_err(|e| e.to_string())?;
+    let registry_evolution =
+        import.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1);
+    if !registry_evolution {
+        serde_json::from_value::<FrozenPlayPolicyImportV1>(import.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    let export_directory = PathBuf::from(
+        import
+            .get("export_directory")
+            .and_then(Value::as_str)
+            .ok_or("import descriptor lacks export_directory")?,
+    );
     let bundle = read_bounded_v1(
-        &import.export_directory.join(MODEL_FILENAME_V1),
+        &export_directory.join(MODEL_FILENAME_V1),
         Some(NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1),
         NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1,
     )?;
@@ -772,10 +786,17 @@ pub fn roundtrip_check_v1(
         .map(|(name, _)| name)
         .collect();
     require_v1(failed.is_empty(), &format!("round trip failed: {failed:?}"))?;
-    Ok(json!({"schema":"mtg-kernel-line-a-panel-roundtrip/v1",
+    let admitted = if registry_evolution {
+        json!({"allowlist_sha256":pinned_allowlist_sha256_v1(),"entries":pinned_allowlist_v1()?.entries})
+    } else {
+        Value::Null
+    };
+    Ok(json!({"schema":"mtg-kernel-line-a-panel-roundtrip/v2",
         "reference_sha256":hash_v1(&reference_bytes),
         "model_source_sha256":hash_v1(&model_source_bytes),
         "import_descriptor_sha256":model_source.play_import.sha256,
+        "import_route":if registry_evolution {"registry-evolution-r14"} else {"strict-v1"},
+        "admitted_registry_differences":admitted,
         "store_identity":store.identity,
         "store_payload_path":payload_path,
         "parameter_section_sha256":hash_v1(section),

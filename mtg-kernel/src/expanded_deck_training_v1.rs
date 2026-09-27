@@ -855,6 +855,18 @@ fn load_ordinary_policy_v1(
         let descriptor = fresh_initialization_source::parse_source_v1(bytes)?;
         return fresh_initialization_source::load_policy_v1(&descriptor, &source.feature_transfer);
     }
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(crate::sideboard_play_policy_v1::registry_evolution_v1::REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1)
+    {
+        // R14 registry-evolution route: inference-only archival imports.
+        ensure(
+            source.checkpoint.is_none(),
+            "registry evolution imports admit no successor checkpoint",
+        )?;
+        let descriptor: crate::sideboard_play_policy_v1::registry_evolution_v1::FrozenPlayPolicyRegistryEvolutionImportV1 =
+            serde_json::from_slice(bytes).map_err(err)?;
+        return FrozenPlayPolicyV1::load_registry_evolution_v3(&descriptor, &source.feature_transfer);
+    }
     let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
     FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)
 }
