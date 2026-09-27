@@ -7,15 +7,16 @@ use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::expanded_deck_training_v1::{load_expanded_inference_v1, ExpandedModelSourceV1};
 use crate::fast_sampler::{WideCategoricalScratchV1, WIDE_CATEGORICAL_SAMPLER_VERSION_V1};
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
-use crate::native_flat_tensorizer_v4::{
-    NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
+use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
+use crate::sideboard_play_policy_v1::{
+    FreshFeatureIdentityV1, FreshLineageGenerationV1, FrozenPlayPolicyV1,
 };
-use crate::sideboard_play_policy_v1::{FreshLineageGenerationV1, FrozenPlayPolicyV1};
 use crate::xmage_observed_inference_v1::ObservedTensorBitsV1;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
@@ -29,6 +30,8 @@ pub const SELECTION_SAMPLED_WIDE_V1: &str = "sampled-wide-v1";
 pub const SELECTION_ARGMAX_FIRST_V1: &str = "argmax-first-v1";
 pub const MAX_SCORER_REQUEST_BYTES_V1: usize = 8 * 1024 * 1024;
 const MAX_CONFIG_BYTES_V1: u64 = 1024 * 1024;
+/// Longest cause text on a diagnostics line, cut on a character boundary.
+const MAX_CAUSE_BYTES_V1: usize = 512;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,8 +93,20 @@ fn first_argmax(logits: &[f32]) -> Option<usize> {
     Some(selected)
 }
 
+/// The canonical name of a supported selection, or `None`.
+fn selection_v1(selection: &str) -> Option<&'static str> {
+    match selection {
+        SELECTION_SAMPLED_WIDE_V1 => Some(SELECTION_SAMPLED_WIDE_V1),
+        SELECTION_ARGMAX_FIRST_V1 => Some(SELECTION_ARGMAX_FIRST_V1),
+        _ => None,
+    }
+}
+
 pub(crate) struct SpellbenchScorerV1 {
     policy: FrozenPlayPolicyV1,
+    /// The loaded policy's own feature identity (V4 only): the ready record
+    /// stamps it and every request must carry it.
+    feature_identity: FreshFeatureIdentityV1,
     model: Value,
     model_state_sha256: String,
     selection: &'static str,
@@ -105,16 +120,14 @@ impl SpellbenchScorerV1 {
         model_state_sha256: String,
         selection: &str,
     ) -> Result<Self, &'static str> {
-        let selection = match selection {
-            SELECTION_SAMPLED_WIDE_V1 => SELECTION_SAMPLED_WIDE_V1,
-            SELECTION_ARGMAX_FIRST_V1 => SELECTION_ARGMAX_FIRST_V1,
-            _ => return Err("selection"),
-        };
-        if policy.feature_identity_v1().generation != FreshLineageGenerationV1::V4 {
+        let selection = selection_v1(selection).ok_or("selection")?;
+        let feature_identity = policy.feature_identity_v1();
+        if feature_identity.generation != FreshLineageGenerationV1::V4 {
             return Err("model_generation_unsupported");
         }
         Ok(Self {
             policy,
+            feature_identity,
             model,
             model_state_sha256,
             selection,
@@ -127,8 +140,8 @@ impl SpellbenchScorerV1 {
             "schema": SCORER_READY_SCHEMA_V1,
             "model": self.model,
             "model_state_sha256": self.model_state_sha256,
-            "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V4,
-            "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V4,
+            "feature_contract_digest": self.feature_identity.feature_contract_digest,
+            "feature_encoding_digest": self.feature_identity.feature_encoding_digest,
             "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
             "selection": self.selection,
             "sampler_identity": WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
@@ -138,55 +151,82 @@ impl SpellbenchScorerV1 {
         })
     }
 
+    /// Scores one request line, writing a rejection's cause to stderr. The
+    /// in-crate entry point for tests (here and in the replay verifier);
+    /// the binary's path passes its diagnostics explicitly.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn score_line(&mut self, bytes: &[u8]) -> Result<Value, &'static str> {
-        let request: SpellbenchScorerRequestV1 =
-            serde_json::from_slice(bytes).map_err(|_| "request_json")?;
+        self.score_line_with_diagnostics(bytes, &mut stderr_diagnostics())
+    }
+
+    /// `score_line`, writing the cause of a rejection to `diagnostics`.
+    fn score_line_with_diagnostics(
+        &mut self,
+        bytes: &[u8],
+        diagnostics: &mut dyn Write,
+    ) -> Result<Value, &'static str> {
+        let request: SpellbenchScorerRequestV1 = serde_json::from_slice(bytes)
+            .map_err(|error| reject(diagnostics, "request_json", error))?;
         if request.schema != SCORER_REQUEST_SCHEMA_V1 {
-            return Err("request_schema");
+            let cause = format!("schema {:?}", request.schema);
+            return Err(reject(diagnostics, "request_schema", cause));
         }
-        if request.feature_contract_digest != FEATURE_CONTRACT_DIGEST_V4
-            || request.feature_encoding_digest != FEATURE_ENCODING_DIGEST_V4
+        if request.feature_contract_digest != self.feature_identity.feature_contract_digest
+            || request.feature_encoding_digest != self.feature_identity.feature_encoding_digest
         {
-            return Err("request_feature_contract");
+            let cause = format!(
+                "contract {:?}, encoding {:?}",
+                request.feature_contract_digest, request.feature_encoding_digest
+            );
+            return Err(reject(diagnostics, "request_feature_contract", cause));
         }
         if request.request_id.is_empty()
             || request.game_id.is_empty()
             || !matches!(request.seat.as_str(), "p0" | "p1")
         {
-            return Err("request_identity");
+            let cause = format!(
+                "request_id {:?}, game_id {:?}, seat {:?}",
+                request.request_id, request.game_id, request.seat
+            );
+            return Err(reject(diagnostics, "request_identity", cause));
         }
         let rows = request.row_candidate_ids.len();
-        if rows == 0
-            || request
-                .row_candidate_ids
-                .iter()
-                .collect::<BTreeSet<_>>()
-                .len()
-                != rows
-        {
-            return Err("row_candidate_ids");
+        let distinct = request
+            .row_candidate_ids
+            .iter()
+            .collect::<BTreeSet<_>>()
+            .len();
+        if rows == 0 || distinct != rows {
+            let cause = format!("{rows} ids, {distinct} distinct");
+            return Err(reject(diagnostics, "row_candidate_ids", cause));
         }
         let seed = match (self.selection, request.sample_seed) {
             (SELECTION_SAMPLED_WIDE_V1, Some(seed)) => Some(seed),
             (SELECTION_ARGMAX_FIRST_V1, None) => None,
-            _ => return Err("sample_seed"),
+            (selection, seed) => {
+                let cause = format!("selection {selection} with sample_seed {seed:?}");
+                return Err(reject(diagnostics, "sample_seed", cause));
+            }
         };
         let output = self
             .policy
             .score_training_tensor_v4(&into_tensor_v4(request.tensor))
-            .map_err(|_| "native_inference")?;
+            .map_err(|error| reject(diagnostics, "native_inference", error))?;
         if output.logits.len() != rows {
-            return Err("row_count");
+            let cause = format!("{} logits for {rows} rows", output.logits.len());
+            return Err(reject(diagnostics, "row_count", cause));
         }
         if !output.value.is_finite() || output.logits.iter().any(|value| !value.is_finite()) {
-            return Err("invalid_model_output");
+            let cause = "a logit or the value is not finite";
+            return Err(reject(diagnostics, "invalid_model_output", cause));
         }
         let selected = match seed {
             Some(seed) => self
                 .sampler
                 .sample(&output.logits, seed)
-                .map_err(|_| "sampler")?,
-            None => first_argmax(&output.logits).ok_or("invalid_model_output")?,
+                .map_err(|error| reject(diagnostics, "sampler", error))?,
+            None => first_argmax(&output.logits)
+                .ok_or_else(|| reject(diagnostics, "invalid_model_output", "no finite maximum"))?,
         };
         Ok(json!({
             "schema": SCORER_CHOICE_SCHEMA_V1,
@@ -202,11 +242,66 @@ impl SpellbenchScorerV1 {
     }
 }
 
+/// Writes one diagnostics line, `spellbench scorer: <code>: <cause>`, and
+/// returns `code`. Line breaks in the cause become spaces and it is cut to
+/// `MAX_CAUSE_BYTES_V1`. The binary's diagnostics go to stderr; stdout
+/// records carry only the code. Best effort: a failed diagnostics write
+/// never changes what goes to stdout.
+fn reject(diagnostics: &mut dyn Write, code: &'static str, cause: impl Display) -> &'static str {
+    let mut cause = cause.to_string().replace(['\r', '\n'], " ");
+    if cause.len() > MAX_CAUSE_BYTES_V1 {
+        let mut end = MAX_CAUSE_BYTES_V1;
+        while !cause.is_char_boundary(end) {
+            end -= 1;
+        }
+        cause.truncate(end);
+    }
+    let line = format!("spellbench scorer: {code}: {cause}\n");
+    let _ = diagnostics.write_all(line.as_bytes());
+    let _ = diagnostics.flush();
+    code
+}
+
+/// The public entry points' diagnostics: stderr, written directly so a
+/// closed stderr cannot panic the scorer.
+#[cfg(not(test))]
+fn stderr_diagnostics() -> std::io::Stderr {
+    std::io::stderr()
+}
+
+/// Under libtest the same lines go through `eprint!`, which keeps them in
+/// each test's captured output instead of the console.
+#[cfg(test)]
+fn stderr_diagnostics() -> CapturedStderrV1 {
+    CapturedStderrV1
+}
+
+#[cfg(test)]
+struct CapturedStderrV1;
+
+#[cfg(test)]
+impl Write for CapturedStderrV1 {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        eprint!("{}", String::from_utf8_lossy(bytes));
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// One bounded JSONL record; a trailing `\r` is dropped (xmage framing).
-fn read_record<R: BufRead>(reader: &mut R, limit: usize) -> Result<Option<Vec<u8>>, &'static str> {
+fn read_record<R: BufRead>(
+    reader: &mut R,
+    limit: usize,
+    diagnostics: &mut dyn Write,
+) -> Result<Option<Vec<u8>>, &'static str> {
     let mut bytes = Vec::new();
     loop {
-        let buffer = reader.fill_buf().map_err(|_| "input_io")?;
+        let buffer = reader
+            .fill_buf()
+            .map_err(|error| reject(diagnostics, "input_io", error))?;
         if buffer.is_empty() {
             return Ok((!bytes.is_empty()).then_some(bytes));
         }
@@ -217,7 +312,8 @@ fn read_record<R: BufRead>(reader: &mut R, limit: usize) -> Result<Option<Vec<u8
             .checked_add(take)
             .is_none_or(|size| size > limit)
         {
-            return Err("request_too_large");
+            let cause = format!("a record exceeds {limit} bytes");
+            return Err(reject(diagnostics, "request_too_large", cause));
         }
         bytes.extend_from_slice(&buffer[..take]);
         reader.consume(take + usize::from(newline.is_some()));
@@ -230,94 +326,163 @@ fn read_record<R: BufRead>(reader: &mut R, limit: usize) -> Result<Option<Vec<u8
     }
 }
 
-fn write_record<W: Write>(writer: &mut W, value: &Value) -> Result<(), String> {
-    serde_json::to_writer(&mut *writer, value).map_err(|_| "output_json".to_string())?;
-    writer
-        .write_all(b"\n")
-        .map_err(|_| "output_io".to_string())?;
-    writer.flush().map_err(|_| "output_io".to_string())
+fn write_record<W: Write>(
+    writer: &mut W,
+    value: &Value,
+    diagnostics: &mut dyn Write,
+) -> Result<(), String> {
+    if let Err(error) = serde_json::to_writer(&mut *writer, value) {
+        return Err(reject(diagnostics, "output_json", error).into());
+    }
+    if let Err(error) = writer.write_all(b"\n").and_then(|()| writer.flush()) {
+        return Err(reject(diagnostics, "output_io", error).into());
+    }
+    Ok(())
 }
 
 fn error_record(code: &str) -> Value {
     json!({"schema": SCORER_ERROR_SCHEMA_V1, "code": code, "service_continues": false})
 }
 
+/// Writes the cause to diagnostics and the one error record for `code` to
+/// `writer`, and ends the service with that code.
+fn refuse<W: Write, T>(
+    writer: &mut W,
+    diagnostics: &mut dyn Write,
+    code: &'static str,
+    cause: impl Display,
+) -> Result<T, String> {
+    reject(diagnostics, code, cause);
+    write_record(writer, &error_record(code), diagnostics)?;
+    Err(code.into())
+}
+
+/// Answers request lines until EOF or the first rejection, writing causes to
+/// stderr. Like `score_line`, an in-crate entry point for tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn serve_scorer_v1<R: BufRead, W: Write>(
     scorer: &mut SpellbenchScorerV1,
     reader: &mut R,
     writer: &mut W,
 ) -> Result<(), String> {
+    serve_with_diagnostics_v1(scorer, reader, writer, &mut stderr_diagnostics())
+}
+
+fn serve_with_diagnostics_v1<R: BufRead, W: Write>(
+    scorer: &mut SpellbenchScorerV1,
+    reader: &mut R,
+    writer: &mut W,
+    diagnostics: &mut dyn Write,
+) -> Result<(), String> {
     loop {
-        let result = match read_record(reader, MAX_SCORER_REQUEST_BYTES_V1) {
+        // Rejections below have already written their cause to diagnostics.
+        let result = match read_record(reader, MAX_SCORER_REQUEST_BYTES_V1, diagnostics) {
             Ok(None) => return Ok(()),
-            Ok(Some(bytes)) => scorer.score_line(&bytes),
+            Ok(Some(bytes)) => scorer.score_line_with_diagnostics(&bytes, diagnostics),
             Err(code) => Err(code),
         };
         match result {
-            Ok(value) => write_record(writer, &value)?,
+            Ok(value) => write_record(writer, &value, diagnostics)?,
             Err(code) => {
-                write_record(writer, &error_record(code))?;
+                write_record(writer, &error_record(code), diagnostics)?;
                 return Err(code.into());
             }
         }
     }
 }
 
+/// Every failure before the ready record, including an unknown selection
+/// (checked before the model load), emits one error record.
 pub fn run_spellbench_scorer_v1<R: BufRead, W: Write>(
     config: SpellbenchScorerConfigV1,
     reader: &mut R,
     writer: &mut W,
 ) -> Result<(), String> {
-    if config.schema != SCORER_CONFIG_SCHEMA_V1 {
-        write_record(writer, &error_record("config_schema"))?;
-        return Err("config_schema".into());
-    }
-    let (policy, identity) = match load_expanded_inference_v1(&config.source) {
-        Ok(loaded) => loaded,
-        Err(message) => {
-            eprintln!("spellbench scorer: checkpoint load failed: {message}");
-            write_record(writer, &error_record("checkpoint_load"))?;
-            return Err("checkpoint_load".into());
-        }
-    };
-    let model = serde_json::to_value(&identity).map_err(|_| "identity_json".to_string())?;
-    let mut scorer = match SpellbenchScorerV1::new(
-        policy,
-        model,
-        identity.state_sha256.clone(),
-        &config.selection,
-    ) {
-        Ok(scorer) => scorer,
-        Err(code) => {
-            write_record(writer, &error_record(code))?;
-            return Err(code.into());
-        }
-    };
-    write_record(writer, &scorer.ready_record())?;
-    serve_scorer_v1(&mut scorer, reader, writer)
+    run_with_diagnostics_v1(config, reader, writer, &mut stderr_diagnostics())
 }
 
+fn run_with_diagnostics_v1<R: BufRead, W: Write>(
+    config: SpellbenchScorerConfigV1,
+    reader: &mut R,
+    writer: &mut W,
+    diagnostics: &mut dyn Write,
+) -> Result<(), String> {
+    if config.schema != SCORER_CONFIG_SCHEMA_V1 {
+        let cause = format!("schema {:?}", config.schema);
+        return refuse(writer, diagnostics, "config_schema", cause);
+    }
+    let Some(selection) = selection_v1(&config.selection) else {
+        let cause = format!("selection {:?}", config.selection);
+        return refuse(writer, diagnostics, "selection", cause);
+    };
+    let (policy, identity) = match load_expanded_inference_v1(&config.source) {
+        Ok(loaded) => loaded,
+        Err(message) => return refuse(writer, diagnostics, "checkpoint_load", message),
+    };
+    let model = match serde_json::to_value(&identity) {
+        Ok(model) => model,
+        Err(error) => return refuse(writer, diagnostics, "identity_json", error),
+    };
+    let mut scorer =
+        match SpellbenchScorerV1::new(policy, model, identity.state_sha256.clone(), selection) {
+            Ok(scorer) => scorer,
+            Err(code) => {
+                let cause = "this scorer serves fresh-lineage V4 policies only";
+                return refuse(writer, diagnostics, code, cause);
+            }
+        };
+    write_record(writer, &scorer.ready_record(), diagnostics)?;
+    serve_with_diagnostics_v1(&mut scorer, reader, writer, diagnostics)
+}
+
+/// As `run_spellbench_scorer_v1`; a config that cannot be opened, read or
+/// parsed, or exceeds 1 MiB, also emits one error record.
 pub fn run_spellbench_scorer_config_path_v1<R: BufRead, W: Write>(
     path: &Path,
     reader: &mut R,
     writer: &mut W,
 ) -> Result<(), String> {
+    run_config_path_with_diagnostics_v1(path, reader, writer, &mut stderr_diagnostics())
+}
+
+fn run_config_path_with_diagnostics_v1<R: BufRead, W: Write>(
+    path: &Path,
+    reader: &mut R,
+    writer: &mut W,
+    diagnostics: &mut dyn Write,
+) -> Result<(), String> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) => {
+            let cause = format!("{}: {error}", path.display());
+            return refuse(writer, diagnostics, "config_open", cause);
+        }
+    };
     let mut bytes = Vec::new();
-    File::open(path)
-        .map_err(|_| "config_open".to_string())?
-        .take(MAX_CONFIG_BYTES_V1 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "config_read".to_string())?;
-    if bytes.len() as u64 > MAX_CONFIG_BYTES_V1 {
-        return Err("config_too_large".into());
+    if let Err(error) = file.take(MAX_CONFIG_BYTES_V1 + 1).read_to_end(&mut bytes) {
+        let cause = format!("{}: {error}", path.display());
+        return refuse(writer, diagnostics, "config_read", cause);
     }
-    let config = serde_json::from_slice(&bytes).map_err(|_| "config_json".to_string())?;
-    run_spellbench_scorer_v1(config, reader, writer)
+    if bytes.len() as u64 > MAX_CONFIG_BYTES_V1 {
+        let cause = format!("{} exceeds {MAX_CONFIG_BYTES_V1} bytes", path.display());
+        return refuse(writer, diagnostics, "config_too_large", cause);
+    }
+    let config = match serde_json::from_slice(&bytes) {
+        Ok(config) => config,
+        Err(error) => {
+            let cause = format!("{}: {error}", path.display());
+            return refuse(writer, diagnostics, "config_json", cause);
+        }
+    };
+    run_with_diagnostics_v1(config, reader, writer, diagnostics)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_flat_tensorizer_v4::{
+        FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
+    };
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
     use crate::state::SplitMix64;
     use std::io::Cursor;
@@ -347,9 +512,9 @@ mod tests {
         }
     }
 
-    /// A live Rally decision with at least two candidates, the harness's
-    /// logits on it, and a scorer request with a reversed row map.
-    fn live_case(sample_seed: Option<u64>) -> (FastActorSessionV1, Vec<f32>, Vec<u32>, Vec<u8>) {
+    /// The first `count` live Rally decisions with at least two candidates
+    /// (the game takes row 0 at every decision in between).
+    fn live_sessions(count: usize) -> Vec<FastActorSessionV1> {
         let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
             4242,
             17,
@@ -358,17 +523,27 @@ mod tests {
             ["Rally".to_string(), "Rally".to_string()],
         )
         .unwrap();
-        loop {
+        let mut found = Vec::new();
+        while found.len() < count {
             let FastActorResponseV1::Decision(decision) = session.current_response() else {
                 panic!("game ended")
             };
             if decision.legal_action_count >= 2 {
-                break;
+                found.push(session.clone());
             }
             session.step(decision.episode_id, decision.step, 0).unwrap();
         }
+        found
+    }
+
+    /// The harness's logits on `session` and a scorer request for it with a
+    /// reversed row map.
+    fn request_for(
+        session: &FastActorSessionV1,
+        sample_seed: Option<u64>,
+    ) -> (Vec<f32>, Vec<u32>, Vec<u8>) {
         let mut harness = FrozenPlayPolicyV1::training_fixture_v4();
-        let scores = harness.score_fast_session_v1(&session).unwrap();
+        let scores = harness.score_fast_session_v1(session).unwrap();
         let tensor = harness.last_scored_training_tensor_v4().unwrap().clone();
         let rows: Vec<u32> = (0..scores.logits.len() as u32).rev().collect();
         let request = json!({
@@ -379,12 +554,15 @@ mod tests {
             "row_candidate_ids": rows, "sample_seed": sample_seed,
             "tensor": serde_json::to_value(request_bits(&tensor)).unwrap(),
         });
-        (
-            session,
-            scores.logits,
-            rows,
-            serde_json::to_vec(&request).unwrap(),
-        )
+        (scores.logits, rows, serde_json::to_vec(&request).unwrap())
+    }
+
+    /// The first live decision with at least two candidates, the harness's
+    /// logits on it, and a scorer request with a reversed row map.
+    fn live_case(sample_seed: Option<u64>) -> (FastActorSessionV1, Vec<f32>, Vec<u32>, Vec<u8>) {
+        let session = live_sessions(1).remove(0);
+        let (logits, rows, bytes) = request_for(&session, sample_seed);
+        (session, logits, rows, bytes)
     }
 
     fn scorer(selection: &str) -> SpellbenchScorerV1 {
@@ -416,17 +594,41 @@ mod tests {
 
     #[test]
     fn sampled_scorer_matches_the_harness_selection_for_the_same_seat_stream() {
-        let seat_seed = 6_130_830_677_676_653_025_u64;
-        let sample_seed = SplitMix64::seed(seat_seed).next_u64();
-        let (session, _, rows, bytes) = live_case(Some(sample_seed));
-        let choice = scorer(SELECTION_SAMPLED_WIDE_V1)
-            .score_line(&bytes)
-            .unwrap();
+        // 64 seat seeds: the original pin, then 63 more from its stream.
+        let first = 6_130_830_677_676_653_025_u64;
+        let mut stream = SplitMix64::seed(first);
+        let seat_seeds: Vec<u64> = std::iter::once(first)
+            .chain((1..64).map(|_| stream.next_u64()))
+            .collect();
+        let mut scorer = scorer(SELECTION_SAMPLED_WIDE_V1);
         let mut harness = FrozenPlayPolicyV1::training_fixture_v4();
-        harness.reset_sampling_v1([seat_seed, seat_seed]);
-        let harness_row = harness.select_fast_session_v1(&session).unwrap() as usize;
-        assert_eq!(choice["selected_row"], json!(harness_row));
-        assert_eq!(choice["selected_candidate_id"], json!(rows[harness_row]));
+        let mut rows_ever_differ = false;
+        for (decision, session) in live_sessions(3).iter().enumerate() {
+            let (_, rows, bytes) = request_for(session, None);
+            let mut request: Value = serde_json::from_slice(&bytes).unwrap();
+            let mut selected = BTreeSet::new();
+            for &seat_seed in &seat_seeds {
+                // The bot sends the first draw of the acting seat's stream.
+                request["sample_seed"] = json!(SplitMix64::seed(seat_seed).next_u64());
+                let choice = scorer
+                    .score_line(&serde_json::to_vec(&request).unwrap())
+                    .unwrap();
+                harness.reset_sampling_v1([seat_seed, seat_seed]);
+                let harness_row = harness.select_fast_session_v1(session).unwrap() as usize;
+                assert_eq!(
+                    choice["selected_row"],
+                    json!(harness_row),
+                    "decision {decision}, seat seed {seat_seed}"
+                );
+                assert_eq!(choice["selected_candidate_id"], json!(rows[harness_row]));
+                selected.insert(harness_row);
+            }
+            rows_ever_differ |= selected.len() > 1;
+        }
+        assert!(
+            rows_ever_differ,
+            "every seed chose the same row, so the comparison proves nothing about sampling"
+        );
     }
 
     #[test]
@@ -466,6 +668,100 @@ mod tests {
         );
     }
 
+    /// A named in-place edit of a request's JSON.
+    type Corruption<'a> = (&'a str, &'a dyn Fn(&mut Value));
+
+    /// `bytes` with `edit` applied to its JSON.
+    fn edited(bytes: &[u8], edit: &dyn Fn(&mut Value)) -> Vec<u8> {
+        let mut value: Value = serde_json::from_slice(bytes).unwrap();
+        edit(&mut value);
+        serde_json::to_vec(&value).unwrap()
+    }
+
+    #[test]
+    fn a_request_with_another_schema_or_an_empty_or_unknown_identity_is_refused() {
+        let (_, _, _, bytes) = live_case(Some(7));
+        let mut scorer = scorer(SELECTION_SAMPLED_WIDE_V1);
+        assert!(
+            scorer.score_line(&bytes).is_ok(),
+            "the unedited request scores"
+        );
+        assert_eq!(
+            scorer.score_line(&edited(&bytes, &|v| v["schema"] =
+                json!("mtg-kernel-spellbench-scorer-request/v2"))),
+            Err("request_schema")
+        );
+        for (field, bad) in [
+            ("request_id", json!("")),
+            ("game_id", json!("")),
+            ("seat", json!("p2")),
+        ] {
+            assert_eq!(
+                scorer.score_line(&edited(&bytes, &|v| v[field] = bad.clone())),
+                Err("request_identity"),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tensor_the_forward_refuses_is_a_native_inference_rejection() {
+        let (_, _, _, bytes) = live_case(Some(7));
+        let mut scorer = scorer(SELECTION_SAMPLED_WIDE_V1);
+        let corruptions: [Corruption<'_>; 3] = [
+            ("state one value short", &|v| {
+                v["tensor"]["state"].as_array_mut().unwrap().pop();
+            }),
+            ("NaN state bits", &|v| {
+                v["tensor"]["state"][0] = json!(f32::NAN.to_bits())
+            }),
+            ("negative object group", &|v| {
+                v["tensor"]["object_groups"][0] = json!(-1)
+            }),
+        ];
+        for (name, corrupt) in corruptions {
+            assert_eq!(
+                scorer.score_line(&edited(&bytes, corrupt)),
+                Err("native_inference"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_record_of_exactly_the_limit_is_read_and_one_byte_more_is_refused() {
+        // The limit counts every byte before the newline; JSON allows the
+        // trailing spaces that pad a real request to the boundary.
+        let (_, _, _, bytes) = live_case(Some(9));
+        let mut at_limit = bytes.clone();
+        at_limit.resize(MAX_SCORER_REQUEST_BYTES_V1, b' ');
+        let mut input = at_limit.clone();
+        input.push(b'\n');
+        input.extend_from_slice(&at_limit);
+        input.extend_from_slice(b" \n");
+        let mut output = Vec::new();
+        let mut diagnostics = Vec::new();
+        let result = serve_with_diagnostics_v1(
+            &mut scorer(SELECTION_SAMPLED_WIDE_V1),
+            &mut std::io::BufReader::with_capacity(64 * 1024, Cursor::new(input)),
+            &mut output,
+            &mut diagnostics,
+        );
+        assert_eq!(result, Err("request_too_large".to_string()));
+        let lines = records(&output);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["schema"], SCORER_CHOICE_SCHEMA_V1);
+        assert_eq!(
+            lines[0]["request_sha256"],
+            format!("{:x}", Sha256::digest(&at_limit))
+        );
+        assert_eq!(lines[1], error("request_too_large"));
+        assert_eq!(
+            only_cause(&diagnostics, "request_too_large"),
+            format!("a record exceeds {MAX_SCORER_REQUEST_BYTES_V1} bytes")
+        );
+    }
+
     #[test]
     fn serve_loop_answers_each_line_then_stops_at_the_first_rejection() {
         let (_, _, _, bytes) = live_case(Some(9));
@@ -488,9 +784,9 @@ mod tests {
         assert_eq!(lines[2]["code"], "request_json");
     }
 
-    #[test]
-    fn load_failure_emits_one_error_record_and_stops() {
-        let config: SpellbenchScorerConfigV1 = serde_json::from_value(json!({
+    /// A well-formed config whose model files do not exist.
+    fn missing_model_config() -> Value {
+        json!({
             "schema": SCORER_CONFIG_SCHEMA_V1, "selection": SELECTION_SAMPLED_WIDE_V1,
             "source": {
                 "play_import": {"path": "E:/does-not-exist/descriptor.json", "sha256": "0".repeat(64)},
@@ -500,8 +796,40 @@ mod tests {
                 },
                 "checkpoint": null
             }
-        }))
-        .unwrap();
+        })
+    }
+
+    /// A fresh directory under the system temp dir.
+    fn scratch_dir(label: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "mtg-kernel-spellbench-scorer-v1-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    /// Every JSONL record written to `output`.
+    fn records(output: &[u8]) -> Vec<Value> {
+        output
+            .split(|b| *b == b'\n')
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_slice(l).unwrap())
+            .collect()
+    }
+
+    fn error(code: &str) -> Value {
+        json!({"schema": SCORER_ERROR_SCHEMA_V1, "code": code, "service_continues": false})
+    }
+
+    #[test]
+    fn load_failure_emits_one_error_record_and_stops() {
+        let config: SpellbenchScorerConfigV1 =
+            serde_json::from_value(missing_model_config()).unwrap();
         let mut output = Vec::new();
         let result = run_spellbench_scorer_v1(config, &mut Cursor::new(Vec::new()), &mut output);
         assert_eq!(result, Err("checkpoint_load".to_string()));
@@ -511,6 +839,130 @@ mod tests {
             record,
             json!({"schema": SCORER_ERROR_SCHEMA_V1, "code": "checkpoint_load", "service_continues": false})
         );
+    }
+
+    #[test]
+    fn config_failures_emit_one_error_record_and_stop() {
+        let dir = scratch_dir("config-failures");
+        let unparseable = dir.join("unparseable.json");
+        std::fs::write(&unparseable, b"{\"schema\": ").unwrap();
+        let too_large = dir.join("too-large.json");
+        std::fs::write(&too_large, vec![b' '; MAX_CONFIG_BYTES_V1 as usize + 1]).unwrap();
+        for (path, code) in [
+            (dir.join("missing.json"), "config_open"),
+            (unparseable, "config_json"),
+            (too_large, "config_too_large"),
+        ] {
+            let mut output = Vec::new();
+            let result = run_spellbench_scorer_config_path_v1(
+                &path,
+                &mut Cursor::new(Vec::new()),
+                &mut output,
+            );
+            assert_eq!(result, Err(code.to_string()), "{code}");
+            assert_eq!(records(&output), vec![error(code)], "{code}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The cause on the single diagnostics line a rejection wrote for `code`.
+    fn only_cause(diagnostics: &[u8], code: &str) -> String {
+        let text = std::str::from_utf8(diagnostics).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1, "{code}: {text:?}");
+        let prefix = format!("spellbench scorer: {code}: ");
+        assert!(lines[0].starts_with(&prefix), "{code}: {text:?}");
+        lines[0][prefix.len()..].to_owned()
+    }
+
+    #[test]
+    fn request_rejections_write_their_cause_to_diagnostics() {
+        let (_, _, _, bytes) = live_case(Some(7));
+        let mut scorer = scorer(SELECTION_SAMPLED_WIDE_V1);
+        let mut diagnostics = Vec::new();
+        scorer
+            .score_line_with_diagnostics(&bytes, &mut diagnostics)
+            .unwrap();
+        assert!(diagnostics.is_empty(), "a scored request writes nothing");
+
+        let mut diagnostics = Vec::new();
+        assert_eq!(
+            scorer.score_line_with_diagnostics(b"not json", &mut diagnostics),
+            Err("request_json")
+        );
+        assert!(only_cause(&diagnostics, "request_json").contains("line 1 column"));
+
+        let mut short_state: Value = serde_json::from_slice(&bytes).unwrap();
+        short_state["tensor"]["state"].as_array_mut().unwrap().pop();
+        let mut diagnostics = Vec::new();
+        assert_eq!(
+            scorer.score_line_with_diagnostics(
+                &serde_json::to_vec(&short_state).unwrap(),
+                &mut diagnostics
+            ),
+            Err("native_inference")
+        );
+        assert!(only_cause(&diagnostics, "native_inference")
+            .starts_with("native policy/value v1 error: "));
+
+        // A long cause with line breaks stays one bounded line.
+        let mut long_schema: Value = serde_json::from_slice(&bytes).unwrap();
+        long_schema["schema"] = json!("x\r\ny".repeat(4_096));
+        let mut diagnostics = Vec::new();
+        assert_eq!(
+            scorer.score_line_with_diagnostics(
+                &serde_json::to_vec(&long_schema).unwrap(),
+                &mut diagnostics
+            ),
+            Err("request_schema")
+        );
+        assert!(only_cause(&diagnostics, "request_schema").len() <= MAX_CAUSE_BYTES_V1);
+    }
+
+    #[test]
+    fn config_and_load_failures_write_their_cause_to_diagnostics() {
+        let dir = scratch_dir("config-causes");
+        let unparseable = dir.join("unparseable.json");
+        std::fs::write(&unparseable, b"{\"schema\": ").unwrap();
+        let mut diagnostics = Vec::new();
+        let _ = run_config_path_with_diagnostics_v1(
+            &dir.join("missing.json"),
+            &mut Cursor::new(Vec::new()),
+            &mut Vec::new(),
+            &mut diagnostics,
+        );
+        assert!(!only_cause(&diagnostics, "config_open").is_empty());
+        let mut diagnostics = Vec::new();
+        let _ = run_config_path_with_diagnostics_v1(
+            &unparseable,
+            &mut Cursor::new(Vec::new()),
+            &mut Vec::new(),
+            &mut diagnostics,
+        );
+        assert!(only_cause(&diagnostics, "config_json").contains("line 1 column"));
+        let mut diagnostics = Vec::new();
+        let _ = run_with_diagnostics_v1(
+            serde_json::from_value(missing_model_config()).unwrap(),
+            &mut Cursor::new(Vec::new()),
+            &mut Vec::new(),
+            &mut diagnostics,
+        );
+        assert!(!only_cause(&diagnostics, "checkpoint_load").is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn selection_is_refused_before_the_model_load() {
+        let mut config = missing_model_config();
+        config["selection"] = json!("greedy-v1");
+        let mut output = Vec::new();
+        let result = run_spellbench_scorer_v1(
+            serde_json::from_value(config).unwrap(),
+            &mut Cursor::new(Vec::new()),
+            &mut output,
+        );
+        assert_eq!(result, Err("selection".to_string()));
+        assert_eq!(records(&output), vec![error("selection")]);
     }
 
     #[test]
@@ -524,6 +976,58 @@ mod tests {
             ready["sampler_identity"],
             "f32-q8-expq63-hamilton-splitmix64-wide-v1"
         );
+    }
+
+    /// Every ready-record field but the model's own identity equals the
+    /// literal value Task 5's bot (`kernel_flat_bot.py`) pins or expects.
+    fn assert_ready_pins(ready: &Value, selection: &str) {
+        let keys: BTreeSet<&str> = ready
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            BTreeSet::from([
+                "schema",
+                "model",
+                "model_state_sha256",
+                "feature_contract_digest",
+                "feature_encoding_digest",
+                "card_db_hash",
+                "selection",
+                "sampler_identity",
+                "float_encoding",
+                "max_request_bytes",
+                "game_state_owned",
+            ])
+        );
+        let mut pinned = ready.clone();
+        let fields = pinned.as_object_mut().unwrap();
+        fields.remove("model");
+        fields.remove("model_state_sha256");
+        assert_eq!(
+            pinned,
+            json!({
+                "schema": "mtg-kernel-spellbench-scorer-ready/v1",
+                "feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b",
+                "feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de",
+                "card_db_hash": "064a7c989255ab3c",
+                "selection": selection,
+                "sampler_identity": "f32-q8-expq63-hamilton-splitmix64-wide-v1",
+                "float_encoding": "ieee754-binary32-u32-bits",
+                "max_request_bytes": 8_388_608,
+                "game_state_owned": false,
+            })
+        );
+    }
+
+    #[test]
+    fn ready_record_carries_exactly_the_values_the_bot_pins() {
+        for selection in [SELECTION_SAMPLED_WIDE_V1, SELECTION_ARGMAX_FIRST_V1] {
+            assert_ready_pins(&scorer(selection).ready_record(), selection);
+        }
     }
 
     /// Needs SPELLBENCH_KERNEL_BOT_CONFIG_DIR=E:/spellbench-archive/kernel-bots.
@@ -556,6 +1060,8 @@ mod tests {
             let ready: Value =
                 serde_json::from_slice(output.split(|b| *b == b'\n').next().unwrap()).unwrap();
             assert_eq!(ready["model_state_sha256"], state, "{name}");
+            assert_eq!(ready["model"]["state_sha256"], state, "{name}");
+            assert_ready_pins(&ready, SELECTION_SAMPLED_WIDE_V1);
             if name == "g115" {
                 assert_eq!(
                     ready["model"]["model"]["weights_sha256"],
