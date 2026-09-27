@@ -152,6 +152,11 @@ impl SearchOpponentV1 {
         })
     }
 
+    /// Search decisions made in the current game.
+    pub(crate) fn decisions(&self) -> u64 {
+        self.count as u64
+    }
+
     pub(crate) fn reset_for_game(
         &mut self,
         seeds: [u64; 2],
@@ -365,6 +370,160 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
         "executable_sha256": sha(&fs::read(executable).map_err(err)?),
         "non_claim": "Engineering identity only; no strength or promotion claim.",
     })))
+}
+
+/// Perturbations of a live root that leave the searcher's information set
+/// unchanged (FABLE-REVIEW-20260927 change 2).
+const AUDIT_VARIANTS: [&str; 4] = [
+    "learner draw-consistent hand/library swap",
+    "learner library order",
+    "searcher library order",
+    "future randomness",
+];
+
+/// Counts of one boundary audit. Observational and deterministic.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BoundaryAuditCountsV1 {
+    pub(crate) roots: u64,
+    pub(crate) checked: [u64; 4],
+    pub(crate) skipped: [u64; 4],
+}
+
+/// The decision part of a search outcome: everything but node keys, whose
+/// hidden zone-change offsets may legitimately differ.
+fn audit_fields(outcome: &crate::model_guided_search_core_v4::Outcome) -> Result<Value, String> {
+    let v = serde_json::to_value(outcome).map_err(err)?;
+    let estimates: Vec<Value> = v["estimator"]["nodes"][0]["edges"]
+        .as_array()
+        .ok_or("boundary audit: estimator missing")?
+        .iter()
+        .map(|e| e["value"].clone())
+        .collect();
+    Ok(json!({
+        "selected": v["estimator"]["selected_by_estimate"], "selected_by_core": v["selected"],
+        "selected_by_mean": v["selected_by_mean"], "root_estimates": estimates,
+        "root_visits": v["root_visits"], "root_value_sums": v["root_value_sums"],
+        "root_priors": v["root_priors"], "root_work": v["root_work"], "nodes": v["nodes"],
+        "simulations": v["simulations"], "transitions": v["transitions"],
+        "headroom": v["headroom"], "census": v["census"],
+    }))
+}
+
+impl SearchOpponentV1 {
+    /// Reruns the unchanged D3 search on each available perturbation of a
+    /// live root and requires the same decision fields. A fresh fork of the
+    /// net searches; the wrapper, its records and the session are untouched.
+    /// A perturbation that is unavailable, or that would change the searcher's
+    /// decision binding or visible key, is counted as skipped.
+    pub(crate) fn audit_root(
+        &self,
+        net: &FrozenPlayPolicyV1,
+        session: &FastActorSessionV1,
+        decision: FastActorDecisionV1,
+        counts: &mut BoundaryAuditCountsV1,
+    ) -> Result<(), String> {
+        use crate::model_guided_search_core_v4::Limits;
+        let d = &self.descriptor;
+        let limits = Limits {
+            simulations: d.simulations,
+            transitions: d.transitions,
+            depth: d.depth,
+            seed: d.experiment_seed,
+        };
+        let policy = net.fork_for_collection_v3()?;
+        let search = |s: &FastActorSessionV1| {
+            PairedBo1PolicyInputV1::new(s, decision)
+                .report_search_future_v3(&policy, limits)
+                .map_err(|e| format!("boundary audit search: {e:?}"))
+                .and_then(|o| audit_fields(&o))
+        };
+        let expected = search(session)?;
+        let depth = u32::from(d.depth);
+        let key = session
+            .kernel_search_visible_key_v4(depth)
+            .map_err(|e| format!("boundary audit key: {e:?}"))?;
+        let (learner, searcher) = (PlayerId(1 - self.seat), PlayerId(self.seat));
+        let variants = [
+            session.diagnostic_draw_consistent_swap_clone_v1(learner),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(Some(learner.index()), false)
+                .ok(),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(Some(searcher.index()), false)
+                .ok(),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(None, true)
+                .ok(),
+        ];
+        counts.roots += 1;
+        for (i, variant) in variants.iter().enumerate() {
+            let admissible = variant.as_ref().filter(|v| {
+                v.current_response() == FastActorResponseV1::Decision(decision)
+                    && v.kernel_search_visible_key_v4(depth).ok() == Some(key)
+            });
+            let Some(variant) = admissible else {
+                counts.skipped[i] += 1;
+                continue;
+            };
+            ensure(
+                search(variant)? == expected,
+                &format!(
+                    "boundary audit: {} changed the D3 decision at episode {} step {}",
+                    AUDIT_VARIANTS[i], self.episode_id, decision.step
+                ),
+            )?;
+            counts.checked[i] += 1;
+        }
+        Ok(())
+    }
+}
+
+/// Run-wide audit counts. One trainer run per process; collector threads add
+/// their per-root counts here and the run publishes the total at completion.
+static AUDIT_COUNTS: std::sync::Mutex<BoundaryAuditCountsV1> =
+    std::sync::Mutex::new(BoundaryAuditCountsV1 {
+        roots: 0,
+        checked: [0; 4],
+        skipped: [0; 4],
+    });
+
+pub(crate) fn reset_audit_counts() {
+    *AUDIT_COUNTS.lock().unwrap_or_else(|p| p.into_inner()) = BoundaryAuditCountsV1::default();
+}
+
+/// Audits one live search root and adds its counts to the run total. A
+/// mismatch stops collection like a typed search error.
+pub(crate) fn audit_live_root(
+    search: &SearchOpponentV1,
+    net: &FrozenPlayPolicyV1,
+    session: &FastActorSessionV1,
+    decision: FastActorDecisionV1,
+) -> Result<(), String> {
+    let mut counts = BoundaryAuditCountsV1::default();
+    search.audit_root(net, session, decision, &mut counts)?;
+    let mut total = AUDIT_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
+    total.roots += counts.roots;
+    for i in 0..4 {
+        total.checked[i] += counts.checked[i];
+        total.skipped[i] += counts.skipped[i];
+    }
+    Ok(())
+}
+
+pub(crate) fn audit_report(every: u32) -> Result<Value, String> {
+    let counts = AUDIT_COUNTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    Ok(json!({
+        "schema": "mtg-kernel-public-search-opponent-boundary-audit/v1",
+        "every": every,
+        "variants": AUDIT_VARIANTS,
+        "counts": counts,
+        "assertion": "each checked variant gave the same D3 decision fields as the live root (selected actions, root estimates, visits, value sums, priors, root work, nodes, simulations, transitions, headroom, census); node keys and outcome digests are not compared",
+        "non_claim": "Engineering boundary audit; no strength claim.",
+    }))
 }
 
 /// Publishes `search-failure.json` in the update directory when a collection

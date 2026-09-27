@@ -99,6 +99,7 @@ fn play(episode: &ExpandedEpisodeV1) -> Result<Trajectory, String> {
         "config",
         "state",
         false,
+        None,
         (net, id),
         search,
     )
@@ -278,5 +279,51 @@ fn typed_search_failure_publishes_a_public_failure_record() {
     assert_eq!(
         publish_failure(&directory, "ordinary error".into()),
         "ordinary error"
+    );
+}
+
+/// FABLE-REVIEW-20260927 change 2, the audit core on a live fixture root:
+/// every perturbation is available here and none moves the D3 decision.
+#[test]
+fn boundary_audit_checks_every_available_perturbation_of_a_live_root() {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+    let (searcher, learner) = (crate::ids::PlayerId::P0, crate::ids::PlayerId::P1);
+    let mut state = ready_state();
+    put(&mut state, searcher, "Lightning Bolt", Zone::Hand);
+    state.players[searcher.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+    for name in ["Gut Shot", "Lotus Petal"] {
+        let id = put(&mut state, learner, name, Zone::Hand);
+        state.objects.get_mut(id).zone_change_count = 1;
+    }
+    for owner in [searcher, learner] {
+        for name in ["Forest", "Mountain", "Island", "Swamp", "Counterspell"] {
+            put(&mut state, owner, name, Zone::Library);
+        }
+    }
+    let session = FastActorSessionV1::from_v3_fixture_state(state);
+    let FastActorResponseV1::Decision(decision) = session.current_response() else {
+        panic!("fixture has no live decision");
+    };
+    let net = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut search = SearchOpponentV1::new(
+        &net,
+        fixture_descriptor(&net),
+        REVIEWED_DESCRIPTOR_SHA256.into(),
+        0,
+    )
+    .unwrap();
+    search.reset_for_game([1, 2], "audit-fixture").unwrap();
+    let mut counts = BoundaryAuditCountsV1::default();
+    search
+        .audit_root(&net, &session, decision, &mut counts)
+        .unwrap();
+    assert_eq!(
+        counts,
+        BoundaryAuditCountsV1 {
+            roots: 1,
+            checked: [1; 4],
+            skipped: [0; 4]
+        }
     );
 }

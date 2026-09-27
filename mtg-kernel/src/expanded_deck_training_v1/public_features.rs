@@ -75,6 +75,12 @@ pub struct Command {
     /// Omission retains its original device assignment.
     #[serde(default)]
     pub execution_gpu_ordinal: Option<usize>,
+    /// Execution-only diagnostic (FABLE-REVIEW-20260927 change 2): audit every
+    /// Nth search-opponent decision of each game against perturbations of the
+    /// hidden state. Excluded from the config hash; trajectories are unchanged;
+    /// counts go to search-opponent-audit.json. None audits nothing.
+    #[serde(default)]
+    pub search_boundary_audit_every: Option<u32>,
 }
 
 fn default_collector_workers() -> usize {
@@ -200,6 +206,7 @@ fn collect(
     config_hash: &str,
     state_hash: &str,
     enabled: bool,
+    audit_every: Option<u32>,
 ) -> Result<Trajectory, String> {
     let (opponent, identity) = load_expanded_inference_v1(
         episode
@@ -222,6 +229,7 @@ fn collect(
         config_hash,
         state_hash,
         enabled,
+        audit_every,
         (opponent, identity),
         search,
     )
@@ -235,6 +243,7 @@ fn collect_with_opponent(
     config_hash: &str,
     state_hash: &str,
     enabled: bool,
+    audit_every: Option<u32>,
     (mut opponent, identity): (FrozenPlayPolicyV1, ExpandedInferenceIdentityV1),
     mut search: Option<search_opponent::SearchOpponentV1>,
 ) -> Result<Trajectory, String> {
@@ -296,6 +305,9 @@ fn collect_with_opponent(
                     (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                 } else if let Some(search) = search.as_mut() {
                     let (selected, scores, tensor) = search.select(&mut opponent, &session, d)?;
+                    if audit_every.is_some_and(|n| search.decisions() % u64::from(n.max(1)) == 0) {
+                        search_opponent::audit_live_root(search, &opponent, &session, d)?;
+                    }
                     auxiliary.push(None);
                     sampler_identity = Some(search_opponent::SEARCH_SAMPLER_IDENTITY.to_owned());
                     (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
@@ -350,6 +362,7 @@ fn collect_parallel(
     config_hash: &str,
     state_hash: &str,
     enabled: bool,
+    audit_every: Option<u32>,
     workers: usize,
     fork_seconds: &mut f64,
 ) -> Result<Vec<Trajectory>, String> {
@@ -389,6 +402,7 @@ fn collect_parallel(
                                         config_hash,
                                         state_hash,
                                         enabled,
+                                        audit_every,
                                     )?,
                                 ));
                             }
@@ -527,6 +541,7 @@ pub fn run(command: Command) -> Result<Value, String> {
     .map_err(err)?;
     fs::create_dir(&command.output_directory).map_err(err)?;
     publish_json(&command.output_directory, "config.json", config)?;
+    search_opponent::reset_audit_counts();
     if let Some(receipt) = search_opponent::run_receipt(config, &config_hash)? {
         publish_json(
             &command.output_directory,
@@ -559,6 +574,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 &config_hash,
                 &before,
                 config.inputs_enabled,
+                command.search_boundary_audit_every,
                 command.collector_workers,
                 &mut fork_seconds,
             )
@@ -587,6 +603,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                     &config_hash,
                     &before,
                     config.inputs_enabled,
+                    command.search_boundary_audit_every,
                 )
                 .map_err(|e| search_opponent::publish_failure(&directory, e))?;
                 rollout_seconds += collection_started.elapsed().as_secs_f64();
@@ -755,6 +772,13 @@ pub fn run(command: Command) -> Result<Value, String> {
     }
     let result = json!({"schema":"mtg-kernel-public-input-run/v1","execution_gpu_ordinal":execution_gpu_ordinal,"collector_workers":command.collector_workers,"config_sha256":config_hash,"first_update":first_update,"next_update":last,"receipts":receipts,
         "non_claim":"Bounded local continuation only; no evaluation, promotion or human-strength claim."});
+    if let Some(every) = command.search_boundary_audit_every {
+        publish_json(
+            &command.output_directory,
+            "search-opponent-audit.json",
+            &search_opponent::audit_report(every)?,
+        )?;
+    }
     publish_json(&command.output_directory, "completion.json", &result)?;
     Ok(result)
 }
