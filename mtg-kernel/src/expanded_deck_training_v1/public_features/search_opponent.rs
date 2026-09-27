@@ -22,6 +22,10 @@ pub(crate) const SEARCH_OPPONENT_TRAJECTORY_SCHEMA: &str =
 const SEARCH_RECORD_SCHEMA: &str = "mtg-kernel-public-search-opponent-record/v1";
 /// The reviewed D3 budget: simulations, transitions, depth, experiment seed.
 const D3_BUDGET: (u32, u32, u16, u64) = (128, 1024, 8, 20260922);
+/// Prefix of the error string that carries a typed search failure record.
+const SEARCH_FAILURE_MARKER: &str = "search-opponent-failure/v1:";
+/// Opt-in sampler dump of the full hidden state; never set while collecting.
+const HIDDEN_STATE_DUMP_ENV: &str = "MTG_V4_SEARCH_FAILURE_STATE";
 /// E:/mtg-g115-lineage-20260923/d3-search-descriptor-reviewed.json.
 pub(crate) const REVIEWED_DESCRIPTOR_SHA256: &str =
     "5eb1d55d13b78b341f8ff0c4df2589f8ee725974dc9fcadd691db6e12b2133d7";
@@ -86,6 +90,7 @@ pub(crate) struct SearchOpponentV1 {
     descriptor_sha256: String,
     descriptor: V4InformationSetSearchDescriptorV1,
     count: usize,
+    episode_id: String,
 }
 
 impl SearchOpponentV1 {
@@ -132,6 +137,10 @@ impl SearchOpponentV1 {
         seat: u8,
     ) -> Result<Self, String> {
         ensure(seat < 2, "invalid search seat")?;
+        ensure(
+            std::env::var_os(HIDDEN_STATE_DUMP_ENV).is_none(),
+            "MTG_V4_SEARCH_FAILURE_STATE must stay unset while collecting with a search opponent",
+        )?;
         let wrapper = SearchPlayV3::new(net.fork_for_collection_v3()?, descriptor.clone())?;
         Ok(Self {
             wrapper,
@@ -139,12 +148,18 @@ impl SearchOpponentV1 {
             descriptor_sha256,
             descriptor,
             count: 0,
+            episode_id: String::new(),
         })
     }
 
-    pub(crate) fn reset_for_game(&mut self, seeds: [u64; 2]) -> Result<(), String> {
+    pub(crate) fn reset_for_game(
+        &mut self,
+        seeds: [u64; 2],
+        episode_id: &str,
+    ) -> Result<(), String> {
         self.wrapper.begin_match();
         self.count = 0;
+        self.episode_id = episode_id.into();
         self.wrapper.reset_for_game_v1(seeds).map_err(err)
     }
 
@@ -165,9 +180,33 @@ impl SearchOpponentV1 {
         let selected = self
             .wrapper
             .select_action_v1(PairedBo1PolicyInputV1::new(session, decision))
-            .map_err(err)?;
+            .map_err(|error| self.failure(decision, error))?;
         self.count += 1;
         Ok((selected, scores, tensor))
+    }
+
+    /// A typed search error ends the run (no fallback, no retry). The error
+    /// carries a failure record with public bindings only: episode, seat,
+    /// decision position, menu width and the wrapper's error variant.
+    fn failure(
+        &self,
+        decision: FastActorDecisionV1,
+        error: crate::rl_session::RlSessionError,
+    ) -> String {
+        let record = json!({
+            "schema": "mtg-kernel-public-search-opponent-failure/v1",
+            "episode_id": self.episode_id,
+            "seat": self.seat,
+            "step": decision.step,
+            "physical_decision_id": decision.physical_decision_id,
+            "substep_index": decision.substep_index,
+            "legal_action_count": decision.legal_action_count,
+            "error": self.wrapper.records()["failure"]["error"].clone(),
+            "descriptor_sha256": self.descriptor_sha256,
+            "build": SearchBuildV1::current(),
+            "non_claim": "No hidden state is recorded; MTG_V4_SEARCH_FAILURE_STATE is unset.",
+        });
+        format!("{SEARCH_FAILURE_MARKER}{record} ({})", error.message)
     }
 
     pub(crate) fn finish(&self) -> Result<SearchTrajectoryV1, String> {
@@ -326,6 +365,25 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
         "executable_sha256": sha(&fs::read(executable).map_err(err)?),
         "non_claim": "Engineering identity only; no strength or promotion claim.",
     })))
+}
+
+/// Publishes `search-failure.json` in the update directory when a collection
+/// error carries a typed search failure record, then returns the error so the
+/// run still stops. Other errors pass through unchanged.
+pub(crate) fn publish_failure(directory: &Path, error: String) -> String {
+    let Some(start) = error.find(SEARCH_FAILURE_MARKER) else {
+        return error;
+    };
+    let tail = &error[start + SEARCH_FAILURE_MARKER.len()..];
+    let parsed = serde_json::Deserializer::from_str(tail)
+        .into_iter::<Value>()
+        .next()
+        .and_then(Result::ok);
+    match parsed.map(|record| publish_json(directory, "search-failure.json", &record)) {
+        Some(Ok(_)) => error,
+        Some(Err(publish)) => format!("{error}; failure receipt not written: {publish}"),
+        None => format!("{error}; failure record unreadable"),
+    }
 }
 
 /// Byte copy of the reviewed D3 descriptor,

@@ -215,3 +215,68 @@ fn loader_enforces_reviewed_descriptor_and_g115_before_reading() {
     // Both pins pass; the descriptor bytes are then read and fail closed.
     assert!(SearchOpponentV1::load(&reviewed, &episode, &net, &g115).is_err());
 }
+
+/// FABLE-REVIEW-20260927 change 4: a typed search error stops collection
+/// and leaves a failure receipt with public bindings only.
+#[test]
+fn typed_search_failure_publishes_a_public_failure_record() {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+    let mut state = ready_state();
+    put(
+        &mut state,
+        crate::ids::PlayerId::P0,
+        "Lightning Bolt",
+        Zone::Hand,
+    );
+    for name in ["Forest", "Mountain", "Island"] {
+        put(&mut state, crate::ids::PlayerId::P0, name, Zone::Library);
+        put(&mut state, crate::ids::PlayerId::P1, name, Zone::Library);
+    }
+    let session = FastActorSessionV1::from_v3_fixture_state(state);
+    let FastActorResponseV1::Decision(mut stale) = session.current_response() else {
+        panic!("fixture has no live decision");
+    };
+    stale.step += 1;
+    let mut net = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut search = SearchOpponentV1::new(
+        &net,
+        fixture_descriptor(&net),
+        REVIEWED_DESCRIPTOR_SHA256.into(),
+        0,
+    )
+    .unwrap();
+    search.reset_for_game([1, 2], "failure-fixture").unwrap();
+    let error = search
+        .select(&mut net, &session, stale)
+        .err()
+        .expect("typed failure");
+    assert!(error.contains(SEARCH_FAILURE_MARKER));
+    let directory = std::env::temp_dir().join(format!(
+        "mtg-search-failure-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    assert_eq!(publish_failure(&directory, error.clone()), error);
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("search-failure.json")).unwrap())
+            .unwrap();
+    std::fs::remove_dir_all(&directory).unwrap();
+    assert_eq!(
+        record["schema"],
+        "mtg-kernel-public-search-opponent-failure/v1"
+    );
+    assert_eq!(record["episode_id"], "failure-fixture");
+    assert_eq!(record["seat"], 0);
+    assert_eq!(record["step"], stale.step);
+    assert_eq!(record["error"], "InvalidAdapterBinding");
+    assert!(record.get("state").is_none());
+    assert_eq!(
+        publish_failure(&directory, "ordinary error".into()),
+        "ordinary error"
+    );
+}

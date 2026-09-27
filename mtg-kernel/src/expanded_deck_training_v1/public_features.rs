@@ -249,7 +249,7 @@ fn collect_with_opponent(
     policy.reset_for_game_v1(seeds).map_err(err)?;
     opponent.reset_sampling_v1(seeds);
     if let Some(search) = search.as_mut() {
-        search.reset_for_game(seeds)?;
+        search.reset_for_game(seeds, &episode.id)?;
     }
     let mut decisions = Vec::new();
     let mut auxiliary = Vec::new();
@@ -561,7 +561,8 @@ pub fn run(command: Command) -> Result<Value, String> {
                 config.inputs_enabled,
                 command.collector_workers,
                 &mut fork_seconds,
-            )?;
+            )
+            .map_err(|e| search_opponent::publish_failure(&directory, e))?;
             rollout_seconds = collection_started.elapsed().as_secs_f64() - fork_seconds;
             let publish_started = std::time::Instant::now();
             for (index, trajectory) in trajectories.iter().enumerate() {
@@ -586,7 +587,8 @@ pub fn run(command: Command) -> Result<Value, String> {
                     &config_hash,
                     &before,
                     config.inputs_enabled,
-                )?;
+                )
+                .map_err(|e| search_opponent::publish_failure(&directory, e))?;
                 rollout_seconds += collection_started.elapsed().as_secs_f64();
                 let publish_started = std::time::Instant::now();
                 trajectory_hashes.push(
