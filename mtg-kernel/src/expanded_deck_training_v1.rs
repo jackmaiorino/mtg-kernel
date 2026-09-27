@@ -6954,6 +6954,85 @@ pub(crate) mod tests {
         );
     }
 
+    /// Fable change 5c, distribution level; statistic and bound declared
+    /// before any run. A different-shuffle partner of the fixture root (the
+    /// card identities of two unseen opponent objects exchanged: the same
+    /// actor information set, another (object id, card) assignment) gives
+    /// different worlds at a fixed seed and the same distribution over seeds.
+    /// Statistic: the card on top of the opponent's library in the
+    /// FutureChanceV3 world, 400 seeds per root from disjoint ranges; the
+    /// total variation distance between the two empirical distributions must
+    /// be at most 0.2 (about five standard deviations above its null mean for
+    /// a Burn library). Power: a partner whose unseen opponent objects all
+    /// hold one card must exceed the bound.
+    #[test]
+    fn line_b_teacher_worlds_of_different_shuffles_agree_in_distribution() {
+        use crate::rl_session::{FastActorSessionV1, V4SearchSampleMode};
+        use line_b_root_selection_v1::select_line_b_root_v1;
+        use std::collections::BTreeMap;
+        let (_, trajectory) = line_b_operator_fixture_v1();
+        let root = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        let (actor, opponent) = (PlayerId(root.actor), PlayerId(1 - root.actor));
+        let partner = root
+            .session
+            .diagnostic_exchanged_unseen_cards_clone_v1(actor, opponent)
+            .unwrap();
+        assert_eq!(
+            partner.kernel_search_visible_key_v4(0).unwrap(),
+            root.visible_key
+        );
+        assert_ne!(
+            partner.diagnostic_state_hash(),
+            root.session.diagnostic_state_hash()
+        );
+        let uniform = root
+            .session
+            .diagnostic_uniform_unseen_cards_clone_v1(actor, opponent)
+            .unwrap();
+        let world = |session: &FastActorSessionV1, seed: u64| {
+            session
+                .kernel_search_redeterminized_clone_mode_v4(
+                    seed,
+                    V4SearchSampleMode::FutureChanceV3,
+                )
+                .unwrap()
+        };
+        for seed in 0..8 {
+            assert_ne!(
+                world(&root.session, seed).diagnostic_state_hash(),
+                world(&partner, seed).diagnostic_state_hash(),
+                "a different shuffle gives a different world at seed {seed}"
+            );
+        }
+        let distribution = |session: &FastActorSessionV1, first: u64| {
+            let mut counts = BTreeMap::<Option<u16>, f64>::new();
+            for seed in first..first + 400 {
+                let top = world(session, seed).diagnostic_library_top_card_v1(opponent);
+                *counts.entry(top).or_default() += 1.0 / 400.0;
+            }
+            counts
+        };
+        let distance = |a: &BTreeMap<Option<u16>, f64>, b: &BTreeMap<Option<u16>, f64>| {
+            let keys: std::collections::BTreeSet<_> = a.keys().chain(b.keys()).collect();
+            0.5 * keys
+                .into_iter()
+                .map(|key| {
+                    (a.get(key).copied().unwrap_or(0.0) - b.get(key).copied().unwrap_or(0.0)).abs()
+                })
+                .sum::<f64>()
+        };
+        let base = distribution(&root.session, 0);
+        assert!(base.len() >= 3, "the statistic needs several cards");
+        let shuffled = distance(&base, &distribution(&partner, 10_000));
+        let power = distance(&base, &distribution(&uniform, 20_000));
+        eprintln!(
+            "top-card categories {}; different-shuffle TVD {shuffled:.4}; one-card TVD {power:.4}",
+            base.len()
+        );
+        assert!(shuffled <= 0.2, "different-shuffle TVD {shuffled}");
+        assert!(power > 0.2, "one-card TVD {power}");
+    }
+
     /// Pinned against the value this exact fixture (same seeds, decks,
     /// learning rate, value coefficient, unmanipulated real weights, CPU
     /// sequential backend) actually produced running it end to end through
