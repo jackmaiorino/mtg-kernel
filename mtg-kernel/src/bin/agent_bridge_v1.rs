@@ -6,24 +6,30 @@
 //! on read); the protocol itself is served by
 //! `agent_bridge_v1::SpellbenchBridgeServerV1`. Closing stdin ends the
 //! process with exit code 0; there is no quit message. stderr is diagnostics
-//! only and never part of the protocol.
+//! only and never part of the protocol. The only accepted argument is
+//! `--x-kernel-flat-v4` (bridge contract Section 11); any other exits 2.
 
 use mtg_kernel::agent_bridge_v1::{
-    read_bridge_input_line_v1, BridgeInputLineV1, SpellbenchBridgeServerV1,
+    read_bridge_input_line_v1, BridgeInputLineV1, SpellbenchBridgeOptionsV1,
+    SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1, SPELLBENCH_FLAG_X_KERNEL_FLAT_V4,
 };
 use std::io::{self, Write};
 
 fn main() {
-    let mut args = std::env::args_os();
-    let _program = args.next();
-    if args.next().is_some() {
-        eprintln!("usage: agent_bridge_v1");
-        std::process::exit(2);
+    let mut options = SpellbenchBridgeOptionsV1::default();
+    for argument in std::env::args_os().skip(1) {
+        if argument.to_str() == Some(SPELLBENCH_FLAG_X_KERNEL_FLAT_V4) {
+            options.x_kernel_flat_v4 = true;
+        } else {
+            eprintln!("usage: agent_bridge_v1 [{SPELLBENCH_FLAG_X_KERNEL_FLAT_V4}]");
+            std::process::exit(2);
+        }
     }
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     let mut stdout = io::stdout().lock();
-    let mut server = SpellbenchBridgeServerV1::new();
+    let mut server =
+        SpellbenchBridgeServerV1::with_options(SpellbenchEngineIdentityV1::current(), options);
     let mut buffer: Vec<u8> = Vec::new();
 
     loop {

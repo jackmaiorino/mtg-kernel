@@ -1106,3 +1106,40 @@ fn search_halted_sweep_games() {
         }
     }
 }
+
+#[test]
+fn agent_bridge_process_flag_enables_x_kernel_flat_v4() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agent_bridge_v1"))
+        .arg("--x-kernel-flat-v4")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut exchange = |line: String| -> Value {
+        writeln!(stdin, "{line}").unwrap();
+        let mut response = String::new();
+        stdout.read_line(&mut response).unwrap();
+        serde_json::from_str(&response).unwrap()
+    };
+    let hello = exchange(hello_line("h-1"));
+    assert_eq!(
+        hello["extensions"],
+        json!(["x_kernel_v5", "x_kernel_flat_v4"])
+    );
+    let decision = exchange(burn_mirror_reset_line("r-1", "g-flag", 12345));
+    assert_eq!(
+        decision["extensions"]["x_kernel_flat_v4"]["schema"],
+        "mtg-kernel-spellbench-flat-v4/v1"
+    );
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    let refused = Command::new(env!("CARGO_BIN_EXE_agent_bridge_v1"))
+        .arg("--bogus")
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2));
+}

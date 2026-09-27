@@ -33,7 +33,7 @@ v5/v6 behavior, no frozen contract, and no roadmap gate.
 | `engine.card_pool_identity` | `mtg-kernel-pauper-pool-v1/carddb-<KERNEL_CARDDB_HASH:016x>` |
 | `formats` | `["pauper-bo1"]` |
 | `capabilities` | `{"decklists_as_data": false}` |
-| `extensions` | `["x_kernel_v5"]` |
+| `extensions` | `["x_kernel_v5"]`, or `["x_kernel_v5","x_kernel_flat_v4"]` with `--x-kernel-flat-v4` |
 | `game_id` → `episode_id` | `fnv1a64-utf8-game-id/v1`: FNV-1a 64 over the game id's UTF-8 bytes |
 | object id derivation | `kernel-arena-id-zone-change-count/v1`: `obj-<arena_id:06>-z<zone_change_count:04>` |
 | candidates hash | spec Section 4.3 canonical JSON of `[{"candidate_id", "semantic"}]` in decision order, SHA-256 lowercase hex, `display_text` excluded |
@@ -105,6 +105,8 @@ requests that fail parsing or decoding are never cached.
   because they contain u64 hashes (`card_db_hash`,
   `visible_projection_hash`) beyond the spec's `2^53` integer bound; every
   integer the bridge emits as a JSON number satisfies `|x| <= 2^53`.
+- With `--x-kernel-flat-v4`, `extensions.x_kernel_flat_v4` also carries the
+  acting seat's V4 model input for Phase 1 policies (Section 11).
 
 ### Phase-step mapping (`ZoneIndependentStepV1` → spec Section 7.3)
 
@@ -246,3 +248,31 @@ game.
 | `unsupported_format` | `format` other than `pauper-bo1` |
 | `unsupported_deck` | `decklist` decks or unknown `catalog_id` |
 | `game_already_terminal` | `step` after any terminal response |
+
+## 11. x_kernel_flat_v4 (opt-in, `--x-kernel-flat-v4`)
+
+For Phase 1 V4 policies (g115, A48, c12). The bridge runs a lockstep copy of
+the game as `FastActorSessionV1` in flat-action V3 mode (the session type and
+mode those policies trained and were evaluated on), created with the same
+catalog decks, seed and limits, stepped with the same executed actions and
+compared for equal game state, counters and decision header after every step.
+Every decision carries, for the acting seat only:
+
+`{"schema": "mtg-kernel-spellbench-flat-v4/v1", "feature_contract_digest",
+"feature_encoding_digest", "card_db_hash", "acting_seat", "step",
+"row_candidate_ids", "tensor"}`
+
+`tensor` is the V4 model input from the kernel's own encoder and tensorizer
+(13 arrays; floats as IEEE-754 binary32 bit patterns). Row r executes
+candidate `row_candidate_ids[r]`; the training list can reorder search
+targets, relabel effect sources and omit required-goad exclusions and
+infeasible menace blocks, so it may cover fewer candidates than the decision.
+
+Any failure to produce this input ends the game `halted` with reason
+`engine_contract_failure:flat_v4_lockstep:<detail>` (reset,
+no_current_decision, row_map, selection_not_in_training_list, fast_step,
+diverged) or `engine_contract_failure:flat_v4_encode:<detail>`
+(not_a_decision, encode, tensorize, row_count). A halt the session reports
+itself (for example `fail_closed:observation:<error>`) passes through before
+the lockstep check and keeps its own reason (Section 9). Without the flag
+nothing here runs.

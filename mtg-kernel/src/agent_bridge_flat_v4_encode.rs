@@ -3,6 +3,7 @@
 //! encoder and tensorizer calls as `FrozenPlayPolicyV1::score_owned`, plus
 //! the row to candidate-id map and the feature identities.
 
+use crate::agent_bridge_v1::seat_str_v1;
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::flat_policy_v2::{
     FlatCompletedDungeonV2, FlatContextPathElementV2, FlatEffectSubtypeChangeV2,
@@ -16,7 +17,6 @@ use crate::native_flat_tensorizer_v4::{
     FEATURE_ENCODING_DIGEST_V4,
 };
 use crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1;
-use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::xmage_observed_inference_v1::ObservedTensorBitsV1;
 use serde_json::{json, Value};
@@ -65,23 +65,15 @@ pub(crate) struct FlatV4EncodeScratchV1 {
 }
 
 /// One encoded decision: the V4 model input and the header of the decision
-/// it was computed for.
+/// it was computed for. Only `encode_flat_v4_tensor_v1` builds one (the
+/// fields are private), so a payload always names the decision it encodes.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EncodedFlatV4V1 {
-    pub(crate) tensor: NativeFlatDecisionTensorV4,
+    tensor: NativeFlatDecisionTensorV4,
     /// The encoded decision's `step`.
-    pub(crate) step: u64,
-    /// The encoded decision's actor, "p0" or "p1".
-    pub(crate) acting_seat: &'static str,
-}
-
-/// Protocol seat spelling, as on the bridge's decision lines
-/// (`agent_bridge_v1::seat_str_v1`).
-fn protocol_seat_v1(seat: PlayerSeatV1) -> &'static str {
-    match seat {
-        PlayerSeatV1::P0 => "p0",
-        PlayerSeatV1::P1 => "p1",
-    }
+    step: u64,
+    /// The encoded decision's actor in protocol spelling, "p0" or "p1".
+    acting_seat: &'static str,
 }
 
 /// Encodes the current decision of `fast` with the evaluation encoder and
@@ -148,7 +140,7 @@ pub(crate) fn encode_flat_v4_tensor_v1(
     Ok(EncodedFlatV4V1 {
         tensor,
         step: expected.step,
-        acting_seat: protocol_seat_v1(expected.acting_player),
+        acting_seat: seat_str_v1(expected.acting_player),
     })
 }
 

@@ -21,6 +21,13 @@
 //! - Retransmission safety is a single-entry byte-exact request-id cache, the
 //!   same discipline as `KernelRlJsonlServerV1`.
 
+use crate::agent_bridge_flat_v4::{FlatV4LockstepErrorV1, FlatV4LockstepV1};
+#[cfg(test)]
+use crate::agent_bridge_flat_v4_encode::FlatV4EncodeErrorV1;
+use crate::agent_bridge_flat_v4_encode::{
+    encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
+    SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
+};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
 use crate::mana::ManaColor;
@@ -48,7 +55,8 @@ pub const SPELLBENCH_PROTOCOL_V1: &str = "spellbench/v1";
 pub const SPELLBENCH_MAX_LINE_BYTES_V1: usize = 8 * 1024 * 1024;
 /// The single format this engine serves.
 pub const SPELLBENCH_FORMAT_PAUPER_BO1_V1: &str = "pauper-bo1";
-/// The only extension key this bridge emits (raw v5 payloads, Section 9).
+/// The extension key every decision carries (raw v5 payloads, Section 9);
+/// `x_kernel_flat_v4` is opt-in ([`SpellbenchBridgeOptionsV1`]).
 pub const SPELLBENCH_EXTENSION_KERNEL_V5: &str = "x_kernel_v5";
 /// Process environment variable supplying `engine.source_revision`.
 pub const SPELLBENCH_SOURCE_REVISION_ENV_V1: &str = "SPELLBENCH_SOURCE_REVISION";
@@ -64,6 +72,15 @@ pub const SPELLBENCH_GAME_ID_TO_EPISODE_V1: &str = "fnv1a64-utf8-game-id/v1";
 /// decimal, zero-padded (`%06` / `%04`). Reissued on every zone change, which
 /// satisfies the spec's stale-id prohibition and reissue recommendation.
 pub const SPELLBENCH_OBJECT_ID_DERIVATION_V1: &str = "kernel-arena-id-zone-change-count/v1";
+/// Command-line flag enabling `x_kernel_flat_v4`.
+pub const SPELLBENCH_FLAG_X_KERNEL_FLAT_V4: &str = "--x-kernel-flat-v4";
+
+/// Opt-in behaviors of one bridge process.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpellbenchBridgeOptionsV1 {
+    /// Run the lockstep training-mode copy and attach `x_kernel_flat_v4`.
+    pub x_kernel_flat_v4: bool,
+}
 
 fn fnv1a64_utf8_v1(text: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
@@ -72,6 +89,11 @@ fn fnv1a64_utf8_v1(text: &str) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// The kernel episode id a Spellbench game id maps to (Section 2).
+pub fn spellbench_episode_id_v1(game_id: &str) -> u64 {
+    fnv1a64_utf8_v1(game_id)
 }
 
 /// Engine identity reported by `hello_ok` and repeated as decision/terminal
@@ -222,12 +244,19 @@ struct SpellbenchBridgeGameV1 {
     episode_id: u64,
     session: RlEpisodeSessionV1,
     terminal_sent: bool,
+    flat_v4: Option<FlatV4LockstepV1>,
+    /// Row map of the pending decision (row r executes candidate rows[r]).
+    flat_v4_rows: Vec<u32>,
+    flat_v4_scratch: FlatV4EncodeScratchV1,
+    #[cfg(test)]
+    force_flat_v4_encode_error: bool,
 }
 
 /// In-process spellbench/v1 environment-role server. The stdio binary is a
 /// thin framing shell around [`SpellbenchBridgeServerV1::handle_line`].
 pub struct SpellbenchBridgeServerV1 {
     identity: SpellbenchEngineIdentityV1,
+    options: SpellbenchBridgeOptionsV1,
     game: Option<SpellbenchBridgeGameV1>,
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
@@ -241,18 +270,26 @@ impl Default for SpellbenchBridgeServerV1 {
 
 impl SpellbenchBridgeServerV1 {
     pub fn new() -> Self {
-        SpellbenchBridgeServerV1 {
-            identity: SpellbenchEngineIdentityV1::current(),
-            game: None,
-            used_game_ids: HashSet::new(),
-            last_exchange: None,
-        }
+        Self::with_options(
+            SpellbenchEngineIdentityV1::current(),
+            SpellbenchBridgeOptionsV1::default(),
+        )
     }
 
     /// Test constructor with an explicit identity (no environment read).
     pub fn with_engine_identity(identity: SpellbenchEngineIdentityV1) -> Self {
+        Self::with_options(identity, SpellbenchBridgeOptionsV1::default())
+    }
+
+    /// Server with an explicit identity and opt-in behaviors (the stdio
+    /// binary passes the production identity and its command-line flags).
+    pub fn with_options(
+        identity: SpellbenchEngineIdentityV1,
+        options: SpellbenchBridgeOptionsV1,
+    ) -> Self {
         SpellbenchBridgeServerV1 {
             identity,
+            options,
             game: None,
             used_game_ids: HashSet::new(),
             last_exchange: None,
@@ -388,15 +425,21 @@ impl SpellbenchBridgeServerV1 {
 
     fn dispatch_request(&mut self, request: &SpellbenchRequestV1) -> Value {
         match request {
-            SpellbenchRequestV1::Hello { request_id, .. } => json!({
-                "response_type": "hello_ok",
-                "protocol": SPELLBENCH_PROTOCOL_V1,
-                "request_id": request_id,
-                "engine": self.identity().hello_engine_value(),
-                "formats": [SPELLBENCH_FORMAT_PAUPER_BO1_V1],
-                "capabilities": {"decklists_as_data": false},
-                "extensions": [SPELLBENCH_EXTENSION_KERNEL_V5],
-            }),
+            SpellbenchRequestV1::Hello { request_id, .. } => {
+                let mut extensions = vec![SPELLBENCH_EXTENSION_KERNEL_V5];
+                if self.options.x_kernel_flat_v4 {
+                    extensions.push(SPELLBENCH_EXTENSION_KERNEL_FLAT_V4);
+                }
+                json!({
+                    "response_type": "hello_ok",
+                    "protocol": SPELLBENCH_PROTOCOL_V1,
+                    "request_id": request_id,
+                    "engine": self.identity().hello_engine_value(),
+                    "formats": [SPELLBENCH_FORMAT_PAUPER_BO1_V1],
+                    "capabilities": {"decklists_as_data": false},
+                    "extensions": extensions,
+                })
+            }
             SpellbenchRequestV1::Reset {
                 request_id,
                 game_id,
@@ -496,7 +539,18 @@ impl SpellbenchBridgeServerV1 {
                 }
             }
         }
-        let episode_id = fnv1a64_utf8_v1(game_id);
+        let episode_id = spellbench_episode_id_v1(game_id);
+        let lockstep = if self.options.x_kernel_flat_v4 {
+            Some(FlatV4LockstepV1::reset(
+                episode_id,
+                game_seed,
+                max_decisions,
+                max_steps,
+                deck_ids.clone(),
+            ))
+        } else {
+            None
+        };
         let session = match RlEpisodeSessionV1::reset_with_decks_and_limits(
             episode_id,
             game_seed,
@@ -513,21 +567,43 @@ impl SpellbenchBridgeServerV1 {
                 );
             }
         };
+        let (lockstep, lockstep_failure) = match lockstep {
+            Some(Ok(lockstep)) => (Some(lockstep), None),
+            Some(Err(error)) => (None, Some(error.halt_reason())),
+            None => (None, None),
+        };
         let counts = (
             session.policy_step_count(),
             session.physical_decision_count(),
         );
-        let response =
-            self.session_response_to_wire(request_id, game_id, session.current_response(), counts);
-        let terminal_sent = matches!(response, WireResponseV1::Terminal(_));
-        self.used_game_ids.insert(game_id.to_string());
-        self.game = Some(SpellbenchBridgeGameV1 {
+        let response = session.current_response();
+        let mut game = SpellbenchBridgeGameV1 {
             game_id: game_id.to_string(),
             episode_id,
             session,
-            terminal_sent,
-        });
-        match response {
+            terminal_sent: false,
+            flat_v4: lockstep,
+            flat_v4_rows: Vec::new(),
+            flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+            #[cfg(test)]
+            force_flat_v4_encode_error: false,
+        };
+        let flat_v4 = match lockstep_failure {
+            Some(reason) => Err(reason),
+            None => flat_v4_extension_v1(&mut game, &response),
+        };
+        let wire = match flat_v4 {
+            Ok(flat_v4) => {
+                self.session_response_to_wire(request_id, game_id, response, counts, flat_v4)
+            }
+            Err(reason) => WireResponseV1::Terminal(
+                self.halted_terminal_value(request_id, game_id, counts, &reason),
+            ),
+        };
+        game.terminal_sent = matches!(wire, WireResponseV1::Terminal(_));
+        self.used_game_ids.insert(game_id.to_string());
+        self.game = Some(game);
+        match wire {
             WireResponseV1::Decision(value) | WireResponseV1::Terminal(value) => value,
         }
     }
@@ -617,6 +693,13 @@ impl SpellbenchBridgeServerV1 {
                 "semantic_echo does not equal the selected candidate semantic",
             );
         }
+        if game.flat_v4.is_some() && !game.flat_v4_rows.contains(&selection.candidate_id) {
+            let reason = FlatV4LockstepErrorV1::SelectionNotInTrainingList {
+                candidate_id: selection.candidate_id,
+            }
+            .halt_reason();
+            return self.fail_game_halted(request_id, answered_counts, &reason);
+        }
         let applied = game.session.step(
             game.episode_id,
             expected_step,
@@ -629,7 +712,20 @@ impl SpellbenchBridgeServerV1 {
                     game.session.policy_step_count(),
                     game.session.physical_decision_count(),
                 );
-                let wire = self.session_response_to_wire(request_id, game_id, response, counts);
+                let rows = std::mem::take(&mut game.flat_v4_rows);
+                if let Some(lockstep) = game.flat_v4.as_mut() {
+                    if let Err(error) =
+                        lockstep.mirror_step(&rows, expected_step, selection.candidate_id)
+                    {
+                        return self.fail_game_halted(request_id, counts, &error.halt_reason());
+                    }
+                }
+                let flat_v4 = match flat_v4_extension_v1(game, &response) {
+                    Ok(flat_v4) => flat_v4,
+                    Err(reason) => return self.fail_game_halted(request_id, counts, &reason),
+                };
+                let wire =
+                    self.session_response_to_wire(request_id, game_id, response, counts, flat_v4);
                 let game = self.game.as_mut().expect("active game");
                 if matches!(wire, WireResponseV1::Terminal(_)) {
                     game.terminal_sent = true;
@@ -653,17 +749,25 @@ impl SpellbenchBridgeServerV1 {
     /// that cannot be represented in neutral semantics fails the whole game
     /// as `halted` (spec Sections 8 and 11) rather than emitting an
     /// unlicensed candidate. `counts` carries the session's current
-    /// (step, physical decision) totals for that halted terminal.
+    /// (step, physical decision) totals for that halted terminal. `flat_v4`
+    /// is the decision's `x_kernel_flat_v4` payload, when the option is on.
     fn session_response_to_wire(
         &self,
         request_id: &str,
         game_id: &str,
         response: RlSessionResponseV1,
         counts: (u64, u64),
+        flat_v4: Option<Value>,
     ) -> WireResponseV1 {
         match response {
             RlSessionResponseV1::Decision(decision) => {
-                match decision_response_value_v1(self.identity(), request_id, game_id, &decision) {
+                match decision_response_value_v1(
+                    self.identity(),
+                    request_id,
+                    game_id,
+                    &decision,
+                    flat_v4,
+                ) {
                     Ok(value) => WireResponseV1::Decision(value),
                     Err(reason) => WireResponseV1::Terminal(
                         self.halted_terminal_value(request_id, game_id, counts, &reason),
@@ -720,6 +824,51 @@ impl SpellbenchBridgeServerV1 {
 enum WireResponseV1 {
     Decision(Value),
     Terminal(Value),
+}
+
+/// The `x_kernel_flat_v4` payload for `response` (None when the option is off
+/// or the game ended); stores the decision's row map. An Err is the halted
+/// reason: the engine could not produce the model input. A halt the raw
+/// session reports passes through before the lockstep check and keeps its
+/// own reason: the copy has no counterpart for some raw halts (for example
+/// `fail_closed:observation`), and a finished game needs no model input.
+fn flat_v4_extension_v1(
+    game: &mut SpellbenchBridgeGameV1,
+    response: &RlSessionResponseV1,
+) -> Result<Option<Value>, String> {
+    let SpellbenchBridgeGameV1 {
+        session,
+        flat_v4,
+        flat_v4_rows,
+        flat_v4_scratch,
+        ..
+    } = game;
+    let Some(lockstep) = flat_v4.as_ref() else {
+        return Ok(None);
+    };
+    if let RlSessionResponseV1::Terminal(terminal) = response {
+        if terminal.terminal_classification == TerminalClassificationV1::Halted {
+            return Ok(None);
+        }
+    }
+    lockstep
+        .verify(session, response)
+        .map_err(|error| error.halt_reason())?;
+    let RlSessionResponseV1::Decision(decision) = response else {
+        return Ok(None);
+    };
+    let rows = lockstep
+        .row_candidate_ids(decision)
+        .map_err(|error| error.halt_reason())?;
+    #[cfg(test)]
+    if game.force_flat_v4_encode_error {
+        return Err(FlatV4EncodeErrorV1::Encode("forced by test".to_string()).halt_reason());
+    }
+    let encoded = encode_flat_v4_tensor_v1(lockstep.fast_session(), flat_v4_scratch)
+        .map_err(|error| error.halt_reason())?;
+    let value = flat_v4_extension_value_v1(&encoded, &rows).map_err(|error| error.halt_reason())?;
+    *flat_v4_rows = rows;
+    Ok(Some(value))
 }
 
 /// Totals a terminal reports once `decision` has been answered: the answered
@@ -814,7 +963,8 @@ fn serialize_response_line_v1(value: &Value) -> String {
     serde_json::to_string(value).expect("bridge response serializes")
 }
 
-fn seat_str_v1(seat: PlayerSeatV1) -> &'static str {
+/// Protocol seat spelling, shared by decision lines and `x_kernel_flat_v4`.
+pub(crate) fn seat_str_v1(seat: PlayerSeatV1) -> &'static str {
     match seat {
         PlayerSeatV1::P0 => "p0",
         PlayerSeatV1::P1 => "p1",
@@ -1388,6 +1538,7 @@ fn decision_response_value_v1(
     request_id: &str,
     game_id: &str,
     decision: &RlSessionDecisionV1,
+    flat_v4: Option<Value>,
 ) -> Result<Value, String> {
     let observer = NeutralObserverV1::from_observation(&decision.observation)?;
     let mut candidates = Vec::with_capacity(decision.legal_actions.len());
@@ -1405,7 +1556,7 @@ fn decision_response_value_v1(
     // (`card_db_hash`, `visible_projection_hash`) beyond the spec's 2^53
     // integer bound, and kernel-native consumers parse the exact bytes with
     // the kernel's own deserializers.
-    let extensions = json!({
+    let mut extensions = json!({
         SPELLBENCH_EXTENSION_KERNEL_V5: {
             "observation_json": serde_json::to_string(&decision.observation)
                 .map_err(|_| "engine_contract_failure:observation serialization".to_string())?,
@@ -1413,6 +1564,9 @@ fn decision_response_value_v1(
                 .map_err(|_| "engine_contract_failure:legal_actions serialization".to_string())?,
         }
     });
+    if let Some(flat_v4) = flat_v4 {
+        extensions[SPELLBENCH_EXTENSION_KERNEL_FLAT_V4] = flat_v4;
+    }
     Ok(json!({
         "response_type": "decision",
         "protocol": SPELLBENCH_PROTOCOL_V1,
@@ -1586,6 +1740,7 @@ mod tests {
     fn game_id_episode_mapping_is_fnv1a64_utf8() {
         assert_eq!(fnv1a64_utf8_v1(""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a64_utf8_v1("g-0001"), 0xdfeb_5eb2_d13b_a7ae);
+        assert_eq!(spellbench_episode_id_v1("g-0001"), 0xdfeb_5eb2_d13b_a7ae);
     }
 
     #[test]
@@ -2184,6 +2339,293 @@ mod tests {
         assert_eq!(
             optional_cost_choice_str_v1(OptionalCostChoice::SacrificeLand),
             "sacrifice_land"
+        );
+    }
+
+    fn flat_v4_server() -> SpellbenchBridgeServerV1 {
+        SpellbenchBridgeServerV1::with_options(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+            SpellbenchBridgeOptionsV1 {
+                x_kernel_flat_v4: true,
+            },
+        )
+    }
+
+    fn flat_v4_reset(game_id: &str, deck: &str, seed: u64) -> String {
+        json!({"request_type": "reset", "protocol": "spellbench/v1", "request_id": format!("r-{game_id}"),
+            "game_id": game_id, "format": "pauper-bo1",
+            "seats": [{"seat": "p0", "deck": {"catalog_id": deck}}, {"seat": "p1", "deck": {"catalog_id": deck}}],
+            "game_seed": seed, "max_decisions": 3000, "max_steps": 30000}).to_string()
+    }
+
+    fn flat_v4_step(decision: &Value, candidate_id: u64) -> String {
+        json!({"request_type": "step", "protocol": "spellbench/v1", "request_id": format!("s-{}", decision["step"]),
+            "game_id": decision["game_id"], "expected_step": decision["step"],
+            "selection": {"candidate_id": candidate_id,
+                "semantic_echo": decision["candidates"][candidate_id as usize]["semantic"]}}).to_string()
+    }
+
+    fn rows_of(decision: &Value) -> Vec<u64> {
+        decision["extensions"]["x_kernel_flat_v4"]["row_candidate_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_u64().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn flat_v4_is_opt_in_and_listed_in_hello() {
+        let hello =
+            json!({"request_type": "hello", "protocol": "spellbench/v1", "request_id": "h-1"})
+                .to_string();
+        let off: Value = serde_json::from_str(
+            &SpellbenchBridgeServerV1::with_engine_identity(
+                SpellbenchEngineIdentityV1::with_source_revision(None),
+            )
+            .handle_line(&hello),
+        )
+        .unwrap();
+        assert_eq!(off["extensions"], json!(["x_kernel_v5"]));
+        let on: Value = serde_json::from_str(&flat_v4_server().handle_line(&hello)).unwrap();
+        assert_eq!(on["extensions"], json!(["x_kernel_v5", "x_kernel_flat_v4"]));
+    }
+
+    #[test]
+    fn flat_v4_whole_games_carry_the_extension_on_every_decision_of_every_deck() {
+        for deck in [
+            "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "CawGates", "Faeries",
+        ] {
+            for seed in [3_u64, 4] {
+                let mut server = flat_v4_server();
+                let mut line =
+                    server.handle_line(&flat_v4_reset(&format!("g-{deck}-{seed}"), deck, seed));
+                let mut rng = crate::state::SplitMix64::seed(seed);
+                let mut longest = line.len();
+                loop {
+                    let response: Value = serde_json::from_str(&line).unwrap();
+                    if response["response_type"] != "decision" {
+                        let reason = response["reason"].as_str().unwrap_or("");
+                        assert!(!reason.contains("flat_v4"), "{deck} seed {seed}: {reason}");
+                        break;
+                    }
+                    let extension = &response["extensions"]["x_kernel_flat_v4"];
+                    assert_eq!(extension["step"], response["step"]);
+                    assert_eq!(extension["acting_seat"], response["acting_seat"]);
+                    let rows = rows_of(&response);
+                    assert!(
+                        !rows.is_empty()
+                            && rows.len() <= response["candidates"].as_array().unwrap().len()
+                    );
+                    let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+                    line = server.handle_line(&flat_v4_step(&response, pick));
+                    longest = longest.max(line.len());
+                }
+                assert!(
+                    longest < 1024 * 1024,
+                    "{deck} seed {seed}: a {longest}-byte decision line"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn flat_v4_selection_outside_the_training_list_halts_the_game() {
+        let mut server = flat_v4_server();
+        let mut decision: Value =
+            serde_json::from_str(&server.handle_line(&flat_v4_reset("g-filter", "Burn", 5)))
+                .unwrap();
+        while rows_of(&decision).len() < 2 {
+            let only = rows_of(&decision)[0];
+            decision =
+                serde_json::from_str(&server.handle_line(&flat_v4_step(&decision, only))).unwrap();
+        }
+        let dropped = rows_of(&decision)[0] as u32;
+        server
+            .game
+            .as_mut()
+            .unwrap()
+            .flat_v4_rows
+            .retain(|id| *id != dropped);
+        let terminal: Value =
+            serde_json::from_str(&server.handle_line(&flat_v4_step(&decision, u64::from(dropped))))
+                .unwrap();
+        assert_eq!(terminal["response_type"], "terminal");
+        assert_eq!(terminal["classification"], "halted");
+        assert_eq!(
+            terminal["reason"],
+            format!(
+                "engine_contract_failure:flat_v4_lockstep:selection_not_in_training_list:{dropped}"
+            )
+        );
+    }
+
+    #[test]
+    fn flat_v4_lockstep_divergence_halts_the_game() {
+        let mut server = flat_v4_server();
+        let decision: Value =
+            serde_json::from_str(&server.handle_line(&flat_v4_reset("g-diverge", "Burn", 6)))
+                .unwrap();
+        {
+            let fast = server
+                .game
+                .as_mut()
+                .unwrap()
+                .flat_v4
+                .as_mut()
+                .unwrap()
+                .fast_session_mut_for_test();
+            let crate::rl_session::FastActorResponseV1::Decision(expected) =
+                fast.current_response()
+            else {
+                panic!("decision")
+            };
+            fast.step(expected.episode_id, expected.step, 0).unwrap();
+        }
+        let terminal: Value = serde_json::from_str(
+            &server.handle_line(&flat_v4_step(&decision, rows_of(&decision)[0])),
+        )
+        .unwrap();
+        assert_eq!(terminal["classification"], "halted");
+        assert!(
+            terminal["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("engine_contract_failure:flat_v4_lockstep:"),
+            "{terminal}"
+        );
+    }
+
+    #[test]
+    fn flat_v4_encode_failure_halts_instead_of_emitting_a_decision() {
+        let mut server = flat_v4_server();
+        let decision: Value =
+            serde_json::from_str(&server.handle_line(&flat_v4_reset("g-encode", "Burn", 7)))
+                .unwrap();
+        server.game.as_mut().unwrap().force_flat_v4_encode_error = true;
+        let response: Value = serde_json::from_str(
+            &server.handle_line(&flat_v4_step(&decision, rows_of(&decision)[0])),
+        )
+        .unwrap();
+        assert_eq!(response["classification"], "halted");
+        assert_eq!(
+            response["reason"],
+            "engine_contract_failure:flat_v4_encode:encode:forced by test"
+        );
+    }
+
+    #[test]
+    fn flat_v4_capped_games_truncate_instead_of_halting() {
+        // The lockstep check compares terminals too: both sessions must reach
+        // each cap with the identical truncated terminal.
+        for (max_decisions, max_steps, reason) in [
+            (0_u64, 2048_u64, "physical_decision_cap_reached:0"),
+            (8, 2048, "physical_decision_cap_reached:8"),
+            (3000, 12, "policy_step_cap_reached:12"),
+        ] {
+            let mut server = flat_v4_server();
+            let reset = json!({"request_type": "reset", "protocol": "spellbench/v1",
+                "request_id": "r-cap", "game_id": format!("g-cap-{max_decisions}-{max_steps}"),
+                "format": "pauper-bo1",
+                "seats": [{"seat": "p0", "deck": {"catalog_id": "Burn"}}, {"seat": "p1", "deck": {"catalog_id": "Burn"}}],
+                "game_seed": 3, "max_decisions": max_decisions, "max_steps": max_steps})
+            .to_string();
+            let mut response = parse_line(&server.handle_line(&reset));
+            while response["response_type"] == "decision" {
+                response = parse_line(
+                    &server.handle_line(&flat_v4_step(&response, rows_of(&response)[0])),
+                );
+            }
+            assert_eq!(response["classification"], "truncated", "{response}");
+            assert_eq!(response["reason"], reason, "{response}");
+        }
+    }
+
+    /// A real session terminal after answered decisions: a Burn mirror capped
+    /// at four physical decisions, answered with candidate 0.
+    fn capped_session_terminal() -> RlSessionTerminalV1 {
+        let mut session = RlEpisodeSessionV1::reset_with_decks_and_limits(
+            41,
+            3,
+            4,
+            128,
+            ["Burn".to_string(), "Burn".to_string()],
+        )
+        .unwrap();
+        loop {
+            match session.current_response() {
+                RlSessionResponseV1::Decision(decision) => {
+                    let stable_id = decision.legal_actions[0].stable_id.clone();
+                    session
+                        .step(decision.episode_id, decision.step, 0, &stable_id)
+                        .unwrap();
+                }
+                RlSessionResponseV1::Terminal(terminal) => return terminal,
+            }
+        }
+    }
+
+    /// `terminal` as the kernel reports a fail-closed halt (the fields
+    /// `halted_terminal` in rl_session.rs sets).
+    fn as_kernel_halt(mut terminal: RlSessionTerminalV1, reason: &str) -> RlSessionTerminalV1 {
+        terminal.terminal_outcome = TerminalOutcomeV1::Halted;
+        terminal.terminal_classification = TerminalClassificationV1::Halted;
+        terminal.terminal_code = crate::rl::TerminalSafeCodeV2::FailClosed;
+        terminal.winner = None;
+        terminal.terminal_reward = [0, 0];
+        terminal.terminal_reason = reason.to_string();
+        terminal
+    }
+
+    #[test]
+    fn a_kernel_halt_passes_through_the_bridge_with_its_own_reason() {
+        let terminal = capped_session_terminal();
+        assert!(terminal.policy_step_count > 0 && terminal.physical_decision_count > 0);
+        let reason =
+            "fail_closed:observation:linked-exile exact card incarnation is not uniquely in exile";
+        let identity = SpellbenchEngineIdentityV1::with_source_revision(None);
+        assert_eq!(
+            terminal_response_value_v1(
+                &identity,
+                "s-9",
+                "g-halt",
+                &as_kernel_halt(terminal.clone(), reason)
+            ),
+            json!({
+                "response_type": "terminal",
+                "protocol": "spellbench/v1",
+                "request_id": "s-9",
+                "game_id": "g-halt",
+                "outcome": "halted",
+                "classification": "halted",
+                "winner": null,
+                "reason": reason,
+                "step_count": terminal.policy_step_count,
+                "decision_count": terminal.physical_decision_count,
+                "provenance": identity.provenance_value(),
+            })
+        );
+    }
+
+    #[test]
+    fn flat_v4_lets_a_raw_halt_keep_its_reason_and_still_checks_other_terminals() {
+        let mut server = flat_v4_server();
+        let decision: Value =
+            serde_json::from_str(&server.handle_line(&flat_v4_reset("g-raw-halt", "Burn", 8)))
+                .unwrap();
+        assert_eq!(decision["response_type"], "decision");
+        let truncated = capped_session_terminal();
+        let halted = as_kernel_halt(truncated.clone(), "fail_closed:observation:probe");
+        // The copy stands at its first decision, so the lockstep check calls
+        // any terminal a divergence. A raw halt passes through before it.
+        let game = server.game.as_mut().unwrap();
+        assert_eq!(
+            flat_v4_extension_v1(game, &RlSessionResponseV1::Terminal(halted)),
+            Ok(None)
+        );
+        assert_eq!(
+            flat_v4_extension_v1(game, &RlSessionResponseV1::Terminal(truncated)),
+            Err("engine_contract_failure:flat_v4_lockstep:diverged:response_kind".to_string())
         );
     }
 }
