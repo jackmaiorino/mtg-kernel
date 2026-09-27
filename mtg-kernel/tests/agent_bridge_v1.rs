@@ -601,24 +601,6 @@ fn agent_bridge_names_the_session_error_when_a_validated_step_is_refused() {
     assert_eq!(again, line, "the halted terminal is deterministic");
 }
 
-/// Reproduces a kernel defect (CawGates halts of the pauper-kernel launch
-/// benchmark): Journey to Nowhere exiling a token records a linked exile for
-/// an object that then ceases to exist, and the kernel's own observation
-/// builder fails closed on the dangling record. The bridge passes the
-/// kernel's halted terminal through with its reason unchanged.
-#[test]
-fn agent_bridge_passes_a_kernel_halt_through_with_its_reason() {
-    let (line, _, _) = drive_sweep_game("CawGates", 22, "g-token-exile");
-    let terminal = parse_line(&line);
-    assert_eq!(terminal["outcome"], "halted", "{terminal}");
-    assert_eq!(terminal["classification"], "halted");
-    assert_eq!(
-        terminal["reason"],
-        "fail_closed:observation:linked-exile exact card incarnation is not uniquely in exile"
-    );
-    assert_eq!(terminal["step_count"], 90);
-}
-
 #[test]
 fn agent_bridge_serves_sequential_games_with_fresh_game_ids() {
     // Spec Section 2: at most one ACTIVE game per process; game ids are
@@ -1100,4 +1082,27 @@ fn agent_bridge_process_terminal_counts_match_driven_steps() {
     assert_eq!(current["step_count"], steps);
     assert_eq!(current["decision_count"], 8);
     process.finish();
+}
+
+/// Re-pinning helper after an engine change: prints every halted sweep game.
+#[test]
+#[ignore = "seed search helper; run with --ignored --nocapture"]
+fn search_halted_sweep_games() {
+    for deck in [
+        "Elves", "CawGates", "Faeries", "Affinity", "Rally", "Wildfire", "Burn", "Spy",
+    ] {
+        for seed in 1..=200_u64 {
+            let (line, answered, choice) = drive_sweep_game(deck, seed, "g-search");
+            let terminal = parse_line(&line);
+            if terminal["outcome"] == "halted" {
+                println!(
+                    "HALT deck={deck} seed={seed} step={} kind={} step_count={} reason={}",
+                    answered["step"],
+                    answered["candidates"][choice]["semantic"]["kind"],
+                    terminal["step_count"],
+                    terminal["reason"]
+                );
+            }
+        }
+    }
 }

@@ -745,7 +745,8 @@ fn session_error_to_bridge_code_v1(error: &RlSessionError) -> Option<&'static st
         | RlSessionErrorCode::SelectedActionIdUnknown
         | RlSessionErrorCode::StaleEnvironmentBinding
         | RlSessionErrorCode::UnsupportedDeck
-        | RlSessionErrorCode::EnvironmentRandomization => None,
+        | RlSessionErrorCode::EnvironmentRandomization
+        | RlSessionErrorCode::NonNaturalTerminal => None,
     }
 }
 
@@ -762,6 +763,7 @@ fn session_error_code_name_v1(code: RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
         RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
+        RlSessionErrorCode::NonNaturalTerminal => "non_natural_terminal",
     }
 }
 
@@ -886,6 +888,17 @@ fn mana_choice_str_v1(color: ManaColor) -> &'static str {
         ManaColor::R => "R",
         ManaColor::G => "G",
         ManaColor::C => "C",
+    }
+}
+
+/// Neutral `choose_optional_cost_which.choice` (spec Section 6 allows other
+/// lowercase snake_case values beside the documented ones).
+fn optional_cost_choice_str_v1(choice: OptionalCostChoice) -> &'static str {
+    match choice {
+        OptionalCostChoice::Decline => "decline",
+        OptionalCostChoice::Discard => "discard",
+        OptionalCostChoice::SacrificeLand => "sacrifice_land",
+        OptionalCostChoice::ReturnPermanent => "return_permanent",
     }
 }
 
@@ -1187,11 +1200,7 @@ fn neutral_semantic_v1(
         })),
         ActionSemanticV1::ChooseOptionalCostWhich { choice, .. } => Ok(json!({
             "kind": "choose_optional_cost_which",
-            "choice": match choice {
-                OptionalCostChoice::Decline => "decline",
-                OptionalCostChoice::Discard => "discard",
-                OptionalCostChoice::SacrificeLand => "sacrifice_land",
-            },
+            "choice": optional_cost_choice_str_v1(*choice),
         })),
         ActionSemanticV1::ChooseSpellCopyPayment { source, pay, .. } => Ok(json!({
             "kind": "choose_spell_copy_payment",
@@ -1934,6 +1943,7 @@ mod tests {
             RlSessionErrorCode::StaleEnvironmentBinding,
             RlSessionErrorCode::UnsupportedDeck,
             RlSessionErrorCode::EnvironmentRandomization,
+            RlSessionErrorCode::NonNaturalTerminal,
         ] {
             assert_eq!(
                 serde_json::to_value(code).unwrap(),
@@ -2153,6 +2163,27 @@ mod tests {
         assert!(
             saw_inclusion_scan,
             "an attacking Burn mirror policy must reach a decomposed combat scan"
+        );
+    }
+
+    #[test]
+    fn port_maps_the_codex_lineage_enum_additions() {
+        assert_eq!(
+            session_error_code_name_v1(RlSessionErrorCode::NonNaturalTerminal),
+            "non_natural_terminal"
+        );
+        let refused = RlSessionError {
+            code: RlSessionErrorCode::NonNaturalTerminal,
+            message: "non-natural".to_string(),
+        };
+        assert_eq!(session_error_to_bridge_code_v1(&refused), None);
+        assert_eq!(
+            optional_cost_choice_str_v1(OptionalCostChoice::ReturnPermanent),
+            "return_permanent"
+        );
+        assert_eq!(
+            optional_cost_choice_str_v1(OptionalCostChoice::SacrificeLand),
+            "sacrifice_land"
         );
     }
 }

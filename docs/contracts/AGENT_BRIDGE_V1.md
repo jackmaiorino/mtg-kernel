@@ -168,7 +168,7 @@ carries it, and the neutral schema allows no other fields. Integer widening
 | `ChooseEffectBoolean` | `choose_boolean` | `source`, `value` |
 | `FinishTargetSelection` | `finish_target_selection` | `source`, `selected_count` |
 | `ChooseOptionalCostUse` | `choose_optional_cost_use` | `use_cost` |
-| `ChooseOptionalCostWhich` | `choose_optional_cost_which` | `choice`: `"decline"`/`"discard"`/`"sacrifice_land"` |
+| `ChooseOptionalCostWhich` | `choose_optional_cost_which` | `choice`: `"decline"`/`"discard"`/`"sacrifice_land"`/`"return_permanent"` |
 | `ChooseSpellCopyPayment` | `choose_spell_copy_payment` | `source`, `pay` |
 | `ChooseSpellCopyRetarget` | `choose_spell_copy_retarget` | `source`, `change_target` |
 | `ChooseMadnessCast` | `choose_madness_cast` | `card`, `cast_it` |
