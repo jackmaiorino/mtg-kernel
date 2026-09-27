@@ -392,6 +392,7 @@ fn legacy_admission_refuses_mismatched_receipts() {
         registry_pins: json!({}),
         evidence: json!({}),
         nonclaims: vec![],
+        acceptance: None,
     };
     let mut r14 = receipt.clone();
     r14.route = "r14".into();
@@ -405,22 +406,129 @@ fn legacy_admission_refuses_mismatched_receipts() {
     import.import_descriptor.sha256 = "cd".repeat(32);
     let mut generation = receipt.clone();
     generation.expected_identity.feature_generation = "V4".into();
-    for (name, bad) in [
-        ("r14.json", &r14),
-        ("flags.json", &flags),
-        ("route.json", &route),
-        ("bytes.json", &bytes),
-        ("import.json", &import),
-        ("generation.json", &generation),
+    let differs = "legacy opponent differs from its admission receipt";
+    for (name, bad, expected) in [
+        (
+            "r14.json",
+            &r14,
+            "legacy admission route disagrees with its identity or import schema",
+        ),
+        ("flags.json", &flags, differs),
+        (
+            "route.json",
+            &route,
+            "unknown legacy admission route \"unreviewed\"",
+        ),
+        ("bytes.json", &bytes, differs),
+        ("import.json", &import, differs),
+        ("generation.json", &generation, differs),
     ] {
         let admission = write(name, &serde_json::to_vec(bad).unwrap());
         let error = admit_legacy(&source, true, true, &admission).err().unwrap();
-        assert_eq!(
-            error, "legacy opponent differs from its admission receipt",
-            "{name}"
-        );
+        assert_eq!(error, expected, "{name}");
     }
     std::fs::remove_dir_all(&directory).unwrap();
+}
+
+/// Routes are told apart by the receipt route plus the nested identity and
+/// import schemas: strict, R14 and frozen-V3 receipts each pass only under
+/// their own route, and an R14 receipt needs its acceptance reference and
+/// source card-DB hash (FABLE-REVIEW-20260927 16:00 addendum, change 2).
+#[test]
+fn legacy_routes_tell_strict_r14_and_frozen_receipts_apart() {
+    let receipt = |route: &str, identity: &str, import: Option<&str>| LegacyAdmissionV1 {
+        schema: LEGACY_ADMISSION_SCHEMA.into(),
+        member: "fixture".into(),
+        route: route.into(),
+        model_source: pin("model-source.json", &"6d".repeat(32)),
+        import_descriptor: AdmissionImportV1 {
+            path: "play-import.json".into(),
+            sha256: "6c".repeat(32),
+            schema: import.map(Into::into),
+        },
+        expected_identity: AdmissionIdentityV1 {
+            identity_schema: identity.into(),
+            model_parameter_sha256: "00".repeat(32),
+            weights_sha256: "00".repeat(32),
+            feature_generation: "V3".into(),
+            observation_successor: true,
+            feature_contract_digest: "93".repeat(32),
+            feature_encoding_digest: "c4".repeat(32),
+        },
+        adapter_flags: AdmissionFlagsV1 {
+            v3_forced_actions: true,
+            v3_spell_target_reference_adapter: true,
+        },
+        registry_pins: json!({}),
+        evidence: json!({}),
+        nonclaims: vec![],
+        acceptance: None,
+    };
+    let strict_identity = "mtg-kernel-frozen-sideboard-play-transfer/v1";
+    let r14_identity = "mtg-kernel-frozen-sideboard-play-registry-evolution-transfer/v1";
+    let r14_import = Some("mtg-kernel-frozen-play-registry-evolution-import/v1");
+    let accepted = AdmissionAcceptanceV1 {
+        fable_section:
+            "FABLE-REVIEW-20260927.md#Opus lane panel-export: R14 registry-evolution import route"
+                .into(),
+        codex_countersign: "CODEX #599".into(),
+        accepted_commit: "3d".repeat(20),
+    };
+    let strict = receipt("strict", strict_identity, None);
+    let frozen = receipt(
+        "v3-frozen",
+        "mtg-kernel-registry-transferred-play/v1",
+        Some("mtg-kernel-expanded-registry-transfer-source/v1"),
+    );
+    let mut r14 = receipt("r14", r14_identity, r14_import);
+    r14.acceptance = Some(accepted.clone());
+    r14.registry_pins = json!({"source_card_db_hash": "a06fa9566106f0ea"});
+    assert_eq!(legacy_route_v1(&strict), Ok("strict"));
+    assert_eq!(legacy_route_v1(&frozen), Ok("v3-frozen"));
+    assert_eq!(legacy_route_v1(&r14), Ok("r14"));
+    let refuse = |bad: &LegacyAdmissionV1, message: &str| {
+        assert_eq!(legacy_route_v1(bad).unwrap_err(), message);
+    };
+    let mut unaccepted = r14.clone();
+    unaccepted.acceptance = None;
+    refuse(
+        &unaccepted,
+        "r14 admission receipt lacks its acceptance reference",
+    );
+    let mut no_hash = r14.clone();
+    no_hash.registry_pins = json!({"destination_card_db_hash": "064a7c989255ab3c"});
+    refuse(
+        &no_hash,
+        "r14 admission receipt lacks the source card-DB hash",
+    );
+    let malformed = "malformed admission acceptance reference";
+    let edits: [fn(&mut AdmissionAcceptanceV1); 4] = [
+        |a: &mut AdmissionAcceptanceV1| a.accepted_commit = "3d".repeat(4),
+        |a: &mut AdmissionAcceptanceV1| a.codex_countersign = "codex 566".into(),
+        |a: &mut AdmissionAcceptanceV1| a.fable_section = "FABLE-REVIEW-20260927.md#".into(),
+        |a: &mut AdmissionAcceptanceV1| a.fable_section = "notes.md#R14".into(),
+    ];
+    for edit in edits {
+        let mut bad = r14.clone();
+        edit(bad.acceptance.as_mut().unwrap());
+        refuse(&bad, malformed);
+    }
+    // An R14 receipt labelled strict, and a strict receipt labelled R14 even
+    // with an acceptance reference, are both refused.
+    let mismatch = "legacy admission route disagrees with its identity or import schema";
+    let mut r14_as_strict = r14.clone();
+    r14_as_strict.route = "strict".into();
+    refuse(&r14_as_strict, mismatch);
+    let mut strict_as_r14 = strict.clone();
+    strict_as_r14.route = "r14".into();
+    strict_as_r14.acceptance = Some(accepted);
+    refuse(&strict_as_r14, mismatch);
+    let mut import_only = strict.clone();
+    import_only.import_descriptor.schema = r14_import.map(Into::into);
+    refuse(&import_only, mismatch);
+    let mut unknown = strict.clone();
+    unknown.route = "r15".into();
+    refuse(&unknown, "unknown legacy admission route \"r15\"");
 }
 
 /// Admission helper, not a check: prints the loaded identity fields of the

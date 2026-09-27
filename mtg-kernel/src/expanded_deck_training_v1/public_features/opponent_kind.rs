@@ -28,9 +28,27 @@ const OPPONENT_RECORD_SCHEMA: &str = "mtg-kernel-public-opponent-record/v1";
 pub(crate) const LEGACY_ADMISSION_SCHEMA: &str = "mtg-kernel-line-a-panel-admission/v1";
 /// Sampler identity of an unscored V3 forced singleton row.
 pub(crate) const V3_FORCED_SINGLETON_SAMPLER: &str = "mtg-kernel-v3-forced-singleton/v1";
-/// Admitted routes. The R14 registry route is refused until its acceptance
-/// is bound (CODEX #558: a matching receipt alone cannot admit it).
-const LEGACY_ROUTES: [&str; 2] = ["v3-frozen", "strict"];
+/// Admitted routes with the nested identity schema and import-descriptor
+/// schema each implies. Routes are told apart by the receipt route plus the
+/// nested identity schema, never by the evaluator's outer receipt schema
+/// (FABLE-REVIEW-20260927 16:00 addendum, change 2).
+const LEGACY_ROUTES: [(&str, &str, Option<&str>); 3] = [
+    (
+        "strict",
+        "mtg-kernel-frozen-sideboard-play-transfer/v1",
+        None,
+    ),
+    (
+        "r14",
+        "mtg-kernel-frozen-sideboard-play-registry-evolution-transfer/v1",
+        Some("mtg-kernel-frozen-play-registry-evolution-import/v1"),
+    ),
+    (
+        "v3-frozen",
+        "mtg-kernel-registry-transferred-play/v1",
+        Some("mtg-kernel-expanded-registry-transfer-source/v1"),
+    ),
+];
 
 /// How one opponent row was produced.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +114,17 @@ pub(crate) struct AdmissionIdentityV1 {
     pub(crate) feature_encoding_digest: String,
 }
 
+/// Acceptance reference of a route that needs one (R14): the Fable record
+/// section ("FABLE-REVIEW-<date>.md#<section heading>"), Codex's
+/// implementation countersign note ("CODEX #<n>") and the accepted commit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdmissionAcceptanceV1 {
+    pub(crate) fable_section: String,
+    pub(crate) codex_countersign: String,
+    pub(crate) accepted_commit: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AdmissionFlagsV1 {
@@ -119,6 +148,8 @@ pub(crate) struct LegacyAdmissionV1 {
     pub(crate) registry_pins: Value,
     pub(crate) evidence: Value,
     pub(crate) nonclaims: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) acceptance: Option<AdmissionAcceptanceV1>,
 }
 
 /// The opponent seat of one public-collector game.
@@ -145,6 +176,55 @@ pub(crate) enum OpponentSeatV1 {
     },
 }
 
+/// Route of an admission receipt, checked before any load: a known route
+/// whose nested identity and import-descriptor schemas are its own. An R14
+/// receipt must also carry its acceptance reference and the source card-DB
+/// hash (registry_pins.source_card_db_hash); without them R14 stays refused
+/// (CODEX #558, #566).
+pub(crate) fn legacy_route_v1(receipt: &LegacyAdmissionV1) -> Result<&'static str, String> {
+    let (route, identity_schema, import_schema) = LEGACY_ROUTES
+        .iter()
+        .copied()
+        .find(|(route, ..)| *route == receipt.route)
+        .ok_or_else(|| format!("unknown legacy admission route {:?}", receipt.route))?;
+    ensure(
+        receipt.expected_identity.identity_schema == identity_schema
+            && receipt.import_descriptor.schema.as_deref() == import_schema,
+        "legacy admission route disagrees with its identity or import schema",
+    )?;
+    let hex = |s: &str, n: usize| {
+        s.len() == n
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    if let Some(a) = &receipt.acceptance {
+        let section = a.fable_section.split_once(".md#");
+        ensure(
+            section.is_some_and(|(file, heading)| {
+                file.starts_with("FABLE-REVIEW-") && !heading.trim().is_empty()
+            }) && a
+                .codex_countersign
+                .strip_prefix("CODEX #")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                && hex(&a.accepted_commit, 40),
+            "malformed admission acceptance reference",
+        )?;
+    }
+    if route == "r14" {
+        ensure(
+            receipt.acceptance.is_some(),
+            "r14 admission receipt lacks its acceptance reference",
+        )?;
+        ensure(
+            receipt.registry_pins["source_card_db_hash"]
+                .as_str()
+                .is_some_and(|h| hex(h, 16)),
+            "r14 admission receipt lacks the source card-DB hash",
+        )?;
+    }
+    Ok(route)
+}
+
 /// Checks a Legacy declaration against its admission receipt, then loads it
 /// and verifies generation, observation successor and model identity. A
 /// receipt with adapter flags true/true is not by itself authorization: the
@@ -161,9 +241,9 @@ fn admit_legacy(
     let descriptor: ExpandedModelSourceV1 =
         serde_json::from_slice(&read_pinned_bytes(&receipt.model_source)?).map_err(err)?;
     let e = &receipt.expected_identity;
+    legacy_route_v1(&receipt)?;
     ensure(
         receipt.schema == LEGACY_ADMISSION_SCHEMA
-            && LEGACY_ROUTES.contains(&receipt.route.as_str())
             && descriptor == *source
             && (
                 &receipt.import_descriptor.path,
