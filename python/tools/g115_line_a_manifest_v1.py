@@ -2,15 +2,19 @@
 
 Engineering only. This module turns pinned inputs into hash-addressable
 manifests; it never dispatches, reads outcomes, or selects a member, seed,
-weight or threshold. A manifest is launchable only when every roster slot,
-engine contract, byte worksheet and throughput record is bound; otherwise it
-lists exactly what blocks it and the launcher refuses it.
+weight, exposure or threshold. A manifest is launchable only when the roster
+is frozen and every member source, exposure table, engine contract, byte
+worksheet and throughput record is bound; otherwise it lists exactly what
+blocks it and the launcher refuses it.
 
-Counts and rules come from the proposal's v0.2 section
-(collab/CODEX-G115-OPPONENT-PORTFOLIO-PROPOSAL-20260926.md, 2026-09-27 10:18):
+Rules come from the proposal's v0.2 section as corrected by the director's
+ruling of 2026-09-27 (collab/DIRECTOR-RULINGS-20260927.md, R2 to R4, R7, R10):
 seven canonical learner decks in fixed order, opponent deck (i + j) mod 7,
-32 blocks, both learner seats, 16 equal-weight members, integer win weight
-20/n_r for rotation r = j mod 7 (denominator 31,360 per endpoint).
+32 blocks, both learner seats; full-scope members play every cell (448 BO3
+per evaluated endpoint) and the archival roles only Rally-opponent cells
+(64); composition E carries the archival roles, the staged fallback B does
+not; the descriptive holdout joins the screen evaluation only. Member order,
+exposure and weights are read from the frozen roster manifest, never chosen.
 """
 import argparse
 import copy
@@ -25,25 +29,21 @@ SCHEMAS = {
     'screen-training': 'g115-line-a-screen-training-manifest/v1',
     'screen-evaluation': 'g115-line-a-screen-evaluation-manifest/v1',
 }
+ROSTER_SCHEMA = 'g115-line-a-roster/v1'
+EXPOSURE_SCHEMA = 'g115-line-a-exposure-table/v1'
 DECK_PACKET_SCHEMA = 'g115-line-a-deck-packet/v1'
 DECKS = ('Affinity', 'Burn', 'Elves', 'Faeries', 'Rally', 'Terror', 'Wildfire')
+RALLY = DECKS.index('Rally')
 DECK_MAP_RULE = 'learner deck index i, block index j: opponent deck index (i + j) mod 7'
 BLOCKS = 32
 SEATS = (0, 1)
-ROSTER_SIZE = 16
-ROSTER_ROLES = (
-    'V3', 'D3 wrapper',
-    'refresh-034/anchor-0', 'refresh-034/anchor-1', 'refresh-034/historical-0', 'refresh-034/historical-1',
-    'refresh-034/current-0', 'refresh-034/current-1', 'refresh-034/exploiter-0', 'refresh-034/exploiter-1',
-    'exploiter-v3b/arm1/run-0', 'exploiter-v3b/arm1/run-1', 'exploiter-v3b/arm1/run-2',
-    'exploiter-v3b/arm2/run-0', 'exploiter-v3b/arm2/run-1', 'exploiter-v3b/arm2/run-2',
-)
-ROTATION_BLOCKS = tuple(sum(1 for j in range(BLOCKS) if j % 7 == r) for r in range(7))  # (5,5,5,5,4,4,4)
-WEIGHTS = tuple(20 // n for n in ROTATION_BLOCKS)  # integer win weight 20/n_r: (4,4,4,4,5,5,5)
-DENOMINATOR = 31360
-CALIBRATION_BO3 = 7168
-TRAINING_GAMES = 8000
-SCREEN_EVALUATION_BO3 = 35840
+ROLES = {'v3': 'full', 'd3-wrapper': 'full', 'recent': 'full', 'population': 'rally', 'august': 'rally',
+         'holdout': 'full'}
+CANONICAL_ROLES = ('v3', 'd3-wrapper', 'recent')
+ARCHIVAL_ROLES = ('population', 'august')
+COMPOSITIONS = ('E', 'B')
+PER_FULL_MEMBER = len(DECKS) * BLOCKS * len(SEATS)  # 448
+PER_RALLY_MEMBER = BLOCKS * len(SEATS)  # 64: one learner deck per block faces Rally
 
 TEMPLATE = dict(path='E:/mtg-postboard-campaign-20260921/control-variance-001/replica-1/configs/a.json',
                 sha256='4352f9cc6bb29e382ea8543ae6be59d547ec16619f716f604bfae24a715e158e')
@@ -60,6 +60,15 @@ V3_SOURCE = dict(
         expected_feature_encoding_digest='c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b'),
     play_import=dict(path='E:/mtg-meta-recovery-20260921/entropy-scorer-qualification-003/adapter/play-import-source.json',
                      sha256='9b5364158496c21adf02fcbf0c02aac5c5a94b424166c02c226e8f08f0779661'))
+# Recent role (R2(c)): control-variance-002 replicas 4 and 5, both arms, pins from their training audits.
+RECENT_ENDPOINTS = {
+    'recent/r4-a': ('replica-4', 'a', '57bd7bb3f93f093acafc3792c5588f20b52d262135cdc009137d52e0093b85f9'),
+    'recent/r4-b': ('replica-4', 'b', 'f098a5dbaffe69f48e018e229a4bade3051df5b9e0aa8c7438b0f9022267c091'),
+    'recent/r5-a': ('replica-5', 'a', '6c4c9296148b06696fcf013800a19ac2dc7723d56af32c870da1839707bfec5e'),
+    'recent/r5-b': ('replica-5', 'b', 'aa85976c8c911d8f24f14576c1aa2501f08229f45010531d8821410f51fc702f'),
+}
+POPULATION_SLOTS = ('anchor-0', 'anchor-1', 'current-0', 'current-1')
+AUGUST_SLOTS = ('historical-0', 'historical-1', 'exploiter-0', 'exploiter-1')
 # Frozen D3 whole-match options (d3-panel-preparation-001.json, every job).
 MATCH_OPTIONS = dict(max_physical_decisions=4000, max_physical_games=6, max_policy_steps=40000,
                      opening_protocol='keep_seven_v2')
@@ -67,15 +76,20 @@ MATCH_OPTIONS = dict(max_physical_decisions=4000, max_physical_games=6, max_poli
 GAME_ONE_CHOOSER = 0
 CAPS = dict(calibration=12_000_000_000, screen=48_000_000_000, total=60_000_000_000)
 PENDING_CONTRACTS = (
-    'C1 episode schedule rule (CLAUDE #445)',
-    'C2 screen-training config materialization and loading receipt (CLAUDE #445)',
-    'C3 one BO3 per evaluator request and the pinned yardstick evaluator build (CLAUDE #445)',
-    'C4 transport allowlist extension (CLAUDE #445)',
-    'C5 game-one chooser 0 and the template-derived deck packet',
+    'C2 loading receipt must trace the pre-update model, moments and age to the pinned g115 input (CODEX #523)',
+    'C3 one new integrated yardstick executable, pinned before calibration (CODEX #523)',
+    'C5 game-one chooser 0 and the template-derived deck packet (not yet countersigned)',
     'lane design verdict (FABLE-QUEUE.md, Opus lane line-a-launcher)',
 )
-UNSUPPORTED_TRAINING = ('public_feature_training_v1 accepts only V4 opponents '
-                        '(expanded_deck_training_v1/public_features.rs:207-210); owner not yet named (CLAUDE #445)')
+NOT_TRAINABLE = {
+    'v3': 'public_feature_training_v1 accepts only V4 opponents and has no V3 adapters '
+          '(public_features.rs:207-210); ownerless-blocker entry filed by Codex (CODEX #523)',
+    'd3-wrapper': 'D3 wrapper as training opponent: opus-search-opponent lane (opponent_search pin, CODEX #521)',
+    'recent': 'public-input checkpoints are evaluation-only; the training opponent loader reads only ordinary '
+              'expanded-deck checkpoints (expanded_deck_training_v1.rs:862-875); owner not yet named',
+    'population': 'V3-transfer archival import; public_feature_training_v1 accepts only V4 opponents',
+    'august': 'V3-transfer archival import; public_feature_training_v1 accepts only V4 opponents',
+}
 
 
 def require(ok, message):
@@ -104,6 +118,10 @@ def check_template_shape(template):
     return [episode for update in updates for episode in update]
 
 
+def opponent_label(episode):
+    return episode['registered'][1 - episode['learner_seat']]['label']
+
+
 def deck_packet(template):
     """Canonical registrations and fixed game-two decks, read from the template's own episodes."""
     decks, postboard = {}, {}
@@ -127,20 +145,50 @@ def opponent_deck(learner_index, block):
     return DECKS[(learner_index + block) % 7]
 
 
-def evaluation_jobs(prefix, labelled_seeds):
-    """Block-major enumeration of one endpoint's 7,168 BO3 cells."""
+def validate_roster(roster):
+    require(roster['schema'] == ROSTER_SCHEMA, 'Wrong roster schema')
+    ids = [member['id'] for member in roster['members']]
+    require(len(ids) == len(set(ids)), 'Duplicate roster member id')
+    for member in roster['members']:
+        require(member['role'] in ROLES and member['scope'] == ROLES[member['role']],
+                'Role or scope differs from the ruling: ' + member['id'])
+        for use in ('evaluation', 'training'):
+            require(member[use]['status'] in ('bound', 'pending'), 'Unknown %s status: %s' % (use, member['id']))
+            require(member[use]['status'] == 'bound' or member[use].get('reason'), 'Pending without a reason')
+    roles = {member['role'] for member in roster['members'] if member['role'] != 'holdout'}
+    require(set(CANONICAL_ROLES) <= roles, 'Canonical roles incomplete')
+    return roster
+
+
+def composition_members(roster, composition, holdout=False):
+    """E carries every declared role; staged B drops both archival roles whole."""
+    require(composition in COMPOSITIONS, 'Unknown composition')
+    members = [m for m in roster['members'] if m['role'] != 'holdout' and
+               (composition == 'E' or m['role'] not in ARCHIVAL_ROLES)]
+    if holdout:
+        members += [m for m in roster['members'] if m['role'] == 'holdout']
+    return members
+
+
+def evaluation_jobs(prefix, labelled_seeds, members):
+    """Block-major cells of one endpoint; Rally-scope members only where the opponent deck is Rally."""
     labels = list(labelled_seeds)
     require(len(labels) == BLOCKS, 'Evaluation needs 32 seed blocks')
     jobs = []
     for j, label in enumerate(labels):
-        for member in range(ROSTER_SIZE):
+        for member in members:
             for i, deck in enumerate(DECKS):
+                if member['scope'] == 'rally' and (i + j) % 7 != RALLY:
+                    continue
                 for seat in SEATS:
-                    jobs.append(dict(id=f'{prefix}-b{j:02d}-m{member:02d}-d{i}-s{seat}', block=j, seed_label=label,
-                                     seed=labelled_seeds[label], member=member, learner_deck=deck,
-                                     opponent_deck=opponent_deck(i, j), learner_seat=seat, rotation=j % 7,
-                                     weight=WEIGHTS[j % 7]))
+                    jobs.append(dict(id=f"{prefix}-b{j:02d}-{member['id']}-d{i}-s{seat}", block=j, seed_label=label,
+                                     seed=labelled_seeds[label], member=member['id'], learner_deck=deck,
+                                     opponent_deck=opponent_deck(i, j), learner_seat=seat, rotation=j % 7))
     return jobs
+
+
+def expected_bo3(members):
+    return sum(PER_RALLY_MEMBER if m['scope'] == 'rally' else PER_FULL_MEMBER for m in members)
 
 
 def native_match(job, packet):
@@ -153,110 +201,80 @@ def native_match(job, packet):
                            packet['postboard'][by_seat[1] + '|' + by_seat[0]]])
 
 
-def evaluation_roster(g115_source, panel_imports=None):
-    """16 evaluation identities in v0.2 order; unbound slots stay pending, never replaced."""
-    roster = [dict(index=0, role=ROSTER_ROLES[0], status='bound',
-                   source=dict(kind='legacy', source=V3_SOURCE, v3_forced_actions=True,
-                               v3_spell_target_reference_adapter=True),
-                   note='transfer envelope rebound to the pinned evaluator build at binding time'),
-              dict(index=1, role=ROSTER_ROLES[1], status='bound', descriptor=SEARCH_DESCRIPTOR,
-                   source=dict(kind='information_set_search_v3', source=g115_source,
-                               descriptor=SEARCH_DESCRIPTOR['sha256']),
-                   note='descriptor file content replaces its hash at binding time')]
-    members = {m['roster_index']: m for m in (panel_imports or {}).get('members', [])}
-    for index in range(2, ROSTER_SIZE):
-        member = members.get(index)
-        if member and member.get('status') == 'playable' and member.get('model_source'):
-            require(member['label'] == ROSTER_ROLES[index], 'Panel import order differs at index %d' % index)
-            # CODEX #520 item 5: true/true authority adapters for explicitly V3-transferred members.
-            roster.append(dict(index=index, role=ROSTER_ROLES[index], status='bound',
-                               source=dict(kind='legacy', source=member['model_source'],
-                                           v3_forced_actions=True, v3_spell_target_reference_adapter=True)))
-        else:
-            reason = member['status'] if member else 'no panel import manifest supplied'
-            roster.append(dict(index=index, role=ROSTER_ROLES[index], status='pending', reason=reason))
-    return roster
+def draft_roster(g115_source, panel_imports=None):
+    """The ruling's roster as a DRAFT (not the frozen declaration): order, weights and exposure stay Codex's."""
+    def pending(reason):
+        return dict(status='pending', reason=reason)
+
+    imports = {m['label']: m for m in (panel_imports or {}).get('members', [])}
+    members = [
+        dict(id='v3', role='v3', scope='full',
+             evaluation=dict(status='bound', source=dict(kind='legacy', source=V3_SOURCE, v3_forced_actions=True,
+                                                         v3_spell_target_reference_adapter=True)),
+             training=pending(NOT_TRAINABLE['v3'])),
+        dict(id='d3-wrapper', role='d3-wrapper', scope='full',
+             evaluation=dict(status='bound', source=dict(kind='information_set_search_v3', source=g115_source,
+                                                         descriptor=SEARCH_DESCRIPTOR)),
+             training=pending(NOT_TRAINABLE['d3-wrapper']))]
+    for member_id, (replica, arm, checkpoint) in RECENT_ENDPOINTS.items():
+        root = 'E:/mtg-postboard-campaign-20260921/control-variance-002/%s' % replica
+        members.append(dict(id=member_id, role='recent', scope='full',
+                            evaluation=dict(status='pending', checkpoint=dict(
+                                path='%s/endpoints/%s/checkpoint.json' % (root, arm), sha256=checkpoint),
+                                reason='public_checkpoint source needs its run config pin from the declaration'),
+                            training=pending(NOT_TRAINABLE['recent'])))
+    for role, slots in (('population', POPULATION_SLOTS), ('august', AUGUST_SLOTS)):
+        for slot in slots:
+            imported = imports.get('refresh-034/' + slot)
+            status = imported['status'] if imported else 'no panel import manifest supplied'
+            evaluation = pending('panel import: ' + status)
+            if imported and imported.get('status') == 'playable' and imported.get('model_source'):
+                # CODEX #520 item 5: true/true authority adapters for explicitly V3-transferred members.
+                evaluation = dict(status='bound', source=dict(kind='legacy', source=imported['model_source'],
+                                                              v3_forced_actions=True,
+                                                              v3_spell_target_reference_adapter=True))
+            members.append(dict(id='%s/%s' % (role, slot), role=role, scope='rally', evaluation=evaluation,
+                                training=pending(NOT_TRAINABLE[role])))
+    members.append(dict(id='holdout/b-block48', role='holdout', scope='full',
+                        evaluation=pending('R7: enters only if Codex confirms canonical registrations'),
+                        training=pending('never a training opponent')))
+    return dict(schema=ROSTER_SCHEMA, frozen=False, version=1,
+                basis='DIRECTOR-RULINGS-20260927.md R2, R3, R7 (draft order; the declaration fixes order, '
+                      'exposure and weights)', members=members, exposure_tables={}, yardstick_weights=None)
 
 
-def training_roster(evaluation):
-    """Treatment opponents per roster slot; only V4 sources are trainable at 500cfae9."""
-    result = []
-    for slot in evaluation:
-        if slot['index'] == 1:
-            result.append(dict(index=1, role=slot['role'], status='pending',
-                               reason='D3 wrapper as training opponent: opus-search-opponent lane (opponent_search pin)'))
-        else:
-            reason = UNSUPPORTED_TRAINING if slot['status'] == 'bound' else slot['reason']
-            result.append(dict(index=slot['index'], role=slot['role'], status='pending', reason=reason))
-    return result
-
-
-def rotation_check(jobs, members):
-    weights = sum(job['weight'] for job in jobs)
-    require(weights == DENOMINATOR * members // ROSTER_SIZE, 'Integer weights do not sum to the denominator')
-
-
-def byte_worksheet(cap, measured=None):
-    if measured is None:
-        return dict(cap_bytes=cap, projected_bytes=None, status='unmeasured: qualification pending')
-    return dict(cap_bytes=cap, projected_bytes=measured, status='measured')
-
-
-def blocking(roster_slots, worksheet):
-    reasons = ['slot %s (%s) pending: %s' % (s.get('index', s.get('id')), s['role'], s['reason'])
-               for s in roster_slots if s['status'] != 'bound']
-    if worksheet['status'] != 'measured':
-        reasons.append('byte worksheet ' + worksheet['status'])
-    reasons.append('throughput evidence absent for the selected placement')
-    reasons.extend('pending: ' + item for item in PENDING_CONTRACTS)
-    return reasons
-
-
-def provenance(panel_imports_sha256):
-    here = Path(__file__).resolve().parent
-    return dict(builder=dict(path='python/tools/g115_line_a_manifest_v1.py',
-                             sha256=file_sha256(here / 'g115_line_a_manifest_v1.py')),
-                seed_consumer=dict(path='python/tools/g115_line_a_seeds_v1.py',
-                                   sha256=file_sha256(here / 'g115_line_a_seeds_v1.py')),
-                panel_imports_sha256=panel_imports_sha256)
-
-
-def finish(manifest, panel_imports_sha256):
-    manifest['provenance'] = provenance(panel_imports_sha256)
-    manifest['manifest_sha256'] = canonical_sha256(manifest)
-    return manifest
-
-
-def calibration_manifest(seed_manifest, packet, roster, learner_source, imports_sha256=None):
-    labelled = seeds.calibration_seeds(seed_manifest)
-    jobs = evaluation_jobs('cal', labelled)
-    require(len(jobs) == CALIBRATION_BO3, 'Calibration count differs')
-    rotation_check(jobs, ROSTER_SIZE)
-    worksheet = byte_worksheet(CAPS['calibration'])
-    reasons = blocking(roster, worksheet)
-    return finish(dict(
-        schema=SCHEMAS['calibration'], dry_run=True, launchable=not reasons, blocking=reasons,
-        seed_manifest=dict(path=seeds.SEED_MANIFEST_PATH, sha256=seeds.SEED_MANIFEST_SHA256),
-        decks=list(DECKS), deck_map_rule=DECK_MAP_RULE, deck_packet_sha256=canonical_sha256(packet),
-        learner=dict(role='untouched g115', source=learner_source),
-        roster=roster, seeds=[dict(label=label, seed=value) for label, value in labelled.items()],
-        match_options=dict(MATCH_OPTIONS, game_one_chooser=GAME_ONE_CHOOSER),
-        scoring=dict(rotation_blocks=list(ROTATION_BLOCKS), weights=list(WEIGHTS), denominator=DENOMINATOR),
-        counts=dict(bo3=len(jobs), members=ROSTER_SIZE, decks=len(DECKS), blocks=BLOCKS, seats=len(SEATS),
-                    per_member=len(jobs) // ROSTER_SIZE),
-        job_list_sha256=canonical_sha256(jobs), byte_budget=worksheet,
-        scratch_root='D:/e-scratch/g115-line-a-calibration/'), imports_sha256)
+def validate_exposure(table, roster, template, composition):
+    """Structural checks only: the declaration chooses the table; this refuses tables that break the ruling."""
+    require(table['schema'] == EXPOSURE_SCHEMA and table['composition'] == composition, 'Wrong exposure table')
+    episodes = check_template_shape(template)
+    assignments = table['assignments']
+    require(len(assignments) == len(episodes), 'Exposure table must assign all 2,000 episodes')
+    allowed = {m['id']: m for m in composition_members(roster, composition)}
+    for index, (member_id, episode) in enumerate(zip(assignments, episodes)):
+        require(member_id in allowed, 'Episode %d assigned outside the composition: %s' % (index, member_id))
+        rally_slot = opponent_label(episode) == 'Rally'
+        archival = allowed[member_id]['role'] in ARCHIVAL_ROLES
+        require(archival == (rally_slot and composition == 'E'), 'Episode %d breaks the Rally-slot rule (R3)' % index)
+    counts = {}
+    for member_id in assignments:
+        counts[member_id] = counts.get(member_id, 0) + 1
+    return counts
 
 
 def training_config(template, schedule, block, arm, opponents=None):
-    """Template copy: only episode seed, id and (treatment) opponent change."""
+    """Template copy: only episode seed, id and (treatment) opponent fields change.
+
+    `opponents[e]` holds flattened episode e's per-episode opponent fields, for example
+    {'opponent': ...} or {'opponent': ..., 'opponent_search': ...}.
+    """
     config = copy.deepcopy(template)
     for index, episode in enumerate(check_template_shape(config)):
         update, slot = divmod(index, seeds.GAMES_PER_UPDATE)
         episode['seed'] = schedule['seeds'][index]
         episode['id'] = f'la-b{block:02d}-i{update:03d}-s{slot:02d}'
         if arm == 'treatment':
-            episode['opponent'] = copy.deepcopy(opponents[index % ROSTER_SIZE])
+            episode.pop('opponent', None)
+            episode.update(copy.deepcopy(opponents[index]))
     return config
 
 
@@ -272,11 +290,73 @@ def control_opponent_counts(template):
     return counts
 
 
-def screen_training_manifest(seed_manifest, template, training_slots, imports_sha256=None):
+def byte_worksheet(cap, measured=None):
+    if measured is None:
+        return dict(cap_bytes=cap, projected_bytes=None, status='unmeasured: qualification pending')
+    return dict(cap_bytes=cap, projected_bytes=measured, status='measured')
+
+
+def blocking(roster, slots, use, worksheet):
+    reasons = [] if roster['frozen'] else ['roster is a draft; the frozen declaration fixes order, exposure and weights']
+    reasons += ['member %s %s pending: %s' % (m['id'], use, m[use]['reason']) for m in slots
+                if m[use]['status'] != 'bound']
+    if worksheet['status'] != 'measured':
+        reasons.append('byte worksheet ' + worksheet['status'])
+    reasons.append('throughput evidence absent for the selected placement')
+    reasons.extend('pending: ' + item for item in PENDING_CONTRACTS)
+    return reasons
+
+
+def provenance(roster, panel_imports_sha256):
+    here = Path(__file__).resolve().parent
+    return dict(builder=dict(path='python/tools/g115_line_a_manifest_v1.py',
+                             sha256=file_sha256(here / 'g115_line_a_manifest_v1.py')),
+                seed_consumer=dict(path='python/tools/g115_line_a_seeds_v1.py',
+                                   sha256=file_sha256(here / 'g115_line_a_seeds_v1.py')),
+                roster_sha256=canonical_sha256(roster), panel_imports_sha256=panel_imports_sha256)
+
+
+def finish(manifest, roster, panel_imports_sha256):
+    manifest['provenance'] = provenance(roster, panel_imports_sha256)
+    manifest['manifest_sha256'] = canonical_sha256(manifest)
+    return manifest
+
+
+def seed_manifest_ref():
+    return dict(path=seeds.SEED_MANIFEST_PATH, sha256=seeds.SEED_MANIFEST_SHA256)
+
+
+def member_rows(members):
+    return [dict(id=m['id'], role=m['role'], scope=m['scope']) for m in members]
+
+
+def calibration_manifest(seed_manifest, packet, roster, composition, learner_source, imports_sha256=None):
+    labelled = seeds.calibration_seeds(seed_manifest)
+    members = composition_members(roster, composition)
+    jobs = evaluation_jobs('cal', labelled, members)
+    require(len(jobs) == expected_bo3(members), 'Calibration count differs')
+    worksheet = byte_worksheet(CAPS['calibration'])
+    reasons = blocking(roster, members, 'evaluation', worksheet)
+    return finish(dict(
+        schema=SCHEMAS['calibration'], composition=composition, dry_run=True, launchable=not reasons,
+        blocking=reasons, seed_manifest=seed_manifest_ref(), decks=list(DECKS), deck_map_rule=DECK_MAP_RULE,
+        deck_packet_sha256=canonical_sha256(packet), learner=dict(role='untouched g115', source=learner_source),
+        members=member_rows(members), seeds=[dict(label=label, seed=value) for label, value in labelled.items()],
+        match_options=dict(MATCH_OPTIONS, game_one_chooser=GAME_ONE_CHOOSER),
+        yardstick_weights=roster['yardstick_weights'],
+        counts=dict(bo3=len(jobs), full_members=sum(m['scope'] == 'full' for m in members),
+                    rally_members=sum(m['scope'] == 'rally' for m in members), blocks=BLOCKS, seats=len(SEATS)),
+        job_list_sha256=canonical_sha256(jobs), byte_budget=worksheet,
+        scratch_root='D:/e-scratch/g115-line-a-calibration/',
+        order='calibration is dispatched before any screen-training manifest (R10)'), roster, imports_sha256)
+
+
+def screen_training_manifest(seed_manifest, template, roster, composition, imports_sha256=None):
     schedules = seeds.schedules(seed_manifest)
-    counts = control_opponent_counts(template)
-    require(counts == {G115_CHECKPOINT_SHA256: 1000, A48_CHECKPOINT_SHA256: 1000},
+    require(control_opponent_counts(template) == {G115_CHECKPOINT_SHA256: 1000, A48_CHECKPOINT_SHA256: 1000},
             'Control template is not 1,000 g115 and 1,000 A48')
+    members = composition_members(roster, composition)
+    table_ref = roster['exposure_tables'].get(composition)
     runs = []
     for block, label in enumerate(seeds.TRAINING_LABELS):
         schedule = schedules[label]
@@ -290,88 +370,98 @@ def screen_training_manifest(seed_manifest, template, training_slots, imports_sh
                            config_sha256=hashlib.sha256(config_bytes(
                                training_config(template, schedule, block, arm))).hexdigest())
             else:
-                run.update(opponents=dict(rule='flattened episode e plays roster index e mod 16',
-                                          per_member=seeds.EPISODES // ROSTER_SIZE),
+                run.update(opponents=dict(rule='R4 exposure table of the frozen declaration', table=table_ref),
                            config_sha256=None)
             runs.append(run)
     games = sum(run['episodes'] for run in runs)
-    require(games == TRAINING_GAMES, 'Training game count differs')
     worksheet = byte_worksheet(CAPS['screen'])
-    reasons = blocking(training_slots, worksheet)
+    reasons = blocking(roster, members, 'training', worksheet)
+    if table_ref is None:
+        reasons.insert(0, 'exposure table for composition %s pending (declaration, R4)' % composition)
     return finish(dict(
-        schema=SCHEMAS['screen-training'], dry_run=True, launchable=not reasons, blocking=reasons,
-        seed_manifest=dict(path=seeds.SEED_MANIFEST_PATH, sha256=seeds.SEED_MANIFEST_SHA256),
-        template=TEMPLATE, schedule_rule=seeds.SCHEDULE_RULE,
-        changed_fields=['updates[*][*].seed', 'updates[*][*].id', 'updates[*][*].opponent (treatment only)'],
-        loading_receipt=('update 0 before_state_sha256 and every trajectory optimizer_state_sha256 must be '
-                         'equal across the matched arms of a block and match the pinned g115 state'),
-        roster=training_slots, runs=runs, counts=dict(runs=len(runs), games=games),
+        schema=SCHEMAS['screen-training'], composition=composition, dry_run=True, launchable=not reasons,
+        blocking=reasons, seed_manifest=seed_manifest_ref(), template=TEMPLATE, schedule_rule=seeds.SCHEDULE_RULE,
+        changed_fields=['updates[*][*].seed', 'updates[*][*].id', 'treatment only: updates[*][*] opponent fields'],
+        loading_receipt=('the pre-update model, Adam moments and age traced to the pinned g115 input, and equal '
+                         'across the matched arms of a block (CODEX #523 C2)'),
+        members=member_rows(members), runs=runs, counts=dict(runs=len(runs), games=games),
         seeds=[dict(label=label, seed=schedules[label]['block_seed']) for label in seeds.TRAINING_LABELS],
-        byte_budget=worksheet, scratch_root='D:/e-scratch/g115-line-a-screen/'), imports_sha256)
+        byte_budget=worksheet, scratch_root='D:/e-scratch/g115-line-a-screen/',
+        order='refused unless the calibration completed and the frozen usability rule passed (R10)'),
+        roster, imports_sha256)
 
 
-def screen_evaluation_manifest(seed_manifest, packet, roster, learner_source, imports_sha256=None):
+def screen_evaluation_manifest(seed_manifest, packet, roster, composition, learner_source, holdout=False,
+                               imports_sha256=None):
     labelled = seeds.screen_evaluation_seeds(seed_manifest)
-    per_endpoint = evaluation_jobs('scr', labelled)
-    rotation_check(per_endpoint, ROSTER_SIZE)
-    endpoints = [dict(id='g115', role='untouched g115, evaluated once and shared', status='bound',
-                      source=learner_source)]
+    members = composition_members(roster, composition, holdout)
+    per_endpoint = evaluation_jobs('scr', labelled, members)
+    require(len(per_endpoint) == expected_bo3(members), 'Screen evaluation count differs')
+    endpoints = [dict(id='g115', role='untouched g115, evaluated once and shared',
+                      evaluation=dict(status='bound', source=learner_source))]
     for block in range(2):
         for arm in ('treatment', 'control'):
-            endpoints.append(dict(id=f'la-screen-b{block:02d}-{arm}', role='trained endpoint', status='pending',
-                                  reason='produced by the screen training run'))
+            endpoints.append(dict(id=f'la-screen-b{block:02d}-{arm}', role='trained endpoint',
+                                  evaluation=dict(status='pending', reason='produced by the screen training run')))
     total = len(per_endpoint) * len(endpoints)
-    require(total == SCREEN_EVALUATION_BO3, 'Screen evaluation count differs')
     worksheet = byte_worksheet(CAPS['screen'])
-    reasons = blocking(roster + endpoints, worksheet)
+    reasons = blocking(roster, members + endpoints, 'evaluation', worksheet)
     return finish(dict(
-        schema=SCHEMAS['screen-evaluation'], dry_run=True, launchable=not reasons, blocking=reasons,
-        seed_manifest=dict(path=seeds.SEED_MANIFEST_PATH, sha256=seeds.SEED_MANIFEST_SHA256),
+        schema=SCHEMAS['screen-evaluation'], composition=composition, holdout=holdout, dry_run=True,
+        launchable=not reasons, blocking=reasons, seed_manifest=seed_manifest_ref(),
         seed_rule='unsigned big-endian first 8 bytes of SHA256(ASCII("g115-line-a-seed-v2|" + label))',
         decks=list(DECKS), deck_map_rule=DECK_MAP_RULE, deck_packet_sha256=canonical_sha256(packet),
-        roster=roster, endpoints=endpoints,
+        members=member_rows(members),
+        endpoints=[dict(id=e['id'], role=e['role'], status=e['evaluation']['status']) for e in endpoints],
         seeds=[dict(label=label, seed=value) for label, value in labelled.items()],
         match_options=dict(MATCH_OPTIONS, game_one_chooser=GAME_ONE_CHOOSER),
-        scoring=dict(rotation_blocks=list(ROTATION_BLOCKS), weights=list(WEIGHTS), denominator=DENOMINATOR),
+        yardstick_weights=roster['yardstick_weights'],
         counts=dict(bo3=total, endpoints=len(endpoints), per_endpoint=len(per_endpoint)),
         job_list_sha256=canonical_sha256(per_endpoint), byte_budget=worksheet,
-        scratch_root='D:/e-scratch/g115-line-a-screen/'), imports_sha256)
+        scratch_root='D:/e-scratch/g115-line-a-screen/'), roster, imports_sha256)
 
 
-def build(seed_manifest, template, panel_imports=None, imports_sha256=None):
-    packet = deck_packet(template)
+def build(seed_manifest, template, roster, imports_sha256=None):
     require(template['source']['checkpoint']['sha256'] == G115_CHECKPOINT_SHA256, 'Template does not start from g115')
-    roster = evaluation_roster(template['source'], panel_imports)
+    validate_roster(roster)
+    packet = deck_packet(template)
     learner = dict(kind='legacy', source=template['source'], v3_forced_actions=False)
-    return dict(deck_packet=packet,
-                calibration=calibration_manifest(seed_manifest, packet, roster, learner, imports_sha256),
-                screen_training=screen_training_manifest(seed_manifest, template, training_roster(roster),
-                                                         imports_sha256),
-                screen_evaluation=screen_evaluation_manifest(seed_manifest, packet, roster, learner,
-                                                             imports_sha256))
+    result = dict(deck_packet=packet, roster=roster)
+    for composition in COMPOSITIONS:
+        suffix = '_' + composition
+        result['calibration' + suffix] = calibration_manifest(seed_manifest, packet, roster, composition, learner,
+                                                              imports_sha256)
+        result['screen_training' + suffix] = screen_training_manifest(seed_manifest, template, roster, composition,
+                                                                      imports_sha256)
+        for holdout in (False, True):
+            name = 'screen_evaluation' + suffix + ('_holdout' if holdout else '')
+            result[name] = screen_evaluation_manifest(seed_manifest, packet, roster, composition, learner, holdout,
+                                                      imports_sha256)
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--seed-manifest', type=Path, default=Path(seeds.SEED_MANIFEST_PATH))
     parser.add_argument('--template', type=Path, default=Path(TEMPLATE['path']))
+    parser.add_argument('--roster', type=Path, help='Frozen g115-line-a-roster/v1 manifest; default: ruling draft')
     parser.add_argument('--panel-imports', type=Path, help='mtg-kernel-line-a-panel-imports/v1 manifest')
     parser.add_argument('--out', type=Path, help='Fresh directory for the dry-run manifests')
     args = parser.parse_args()
+    template = load_template(args.template)
     imports = imports_sha256 = None
     if args.panel_imports:
         imports = json.loads(args.panel_imports.read_bytes())
         imports_sha256 = file_sha256(args.panel_imports)
         require(imports['schema'] == 'mtg-kernel-line-a-panel-imports/v1', 'Wrong panel import schema')
-    result = build(seeds.load_seed_manifest(args.seed_manifest), load_template(args.template), imports,
-                   imports_sha256)
+    roster = json.loads(args.roster.read_bytes()) if args.roster else draft_roster(template['source'], imports)
+    result = build(seeds.load_seed_manifest(args.seed_manifest), template, roster, imports_sha256)
     if args.out:
         args.out.mkdir(parents=True)
         for name, value in result.items():
             (args.out / (name + '.json')).write_bytes(seeds.canonical_bytes(value))
-    summary = {name: dict(sha256=canonical_sha256(value) if name == 'deck_packet' else value['manifest_sha256'],
-                          counts=value.get('counts'), launchable=value.get('launchable'),
-                          blocking=len(value.get('blocking', [])))
+    summary = {name: dict(sha256=value.get('manifest_sha256') or canonical_sha256(value), counts=value.get('counts'),
+                          launchable=value.get('launchable'), blocking=len(value.get('blocking', [])))
                for name, value in result.items()}
     summary['panel_imports_sha256'] = imports_sha256
     print(json.dumps(summary, indent=2))

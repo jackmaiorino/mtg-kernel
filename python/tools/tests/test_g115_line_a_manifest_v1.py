@@ -60,19 +60,45 @@ def synthetic_template():
                 **{'lambda': 0.9}, projection_mode='state_only', entropy_coefficient=0.0)
 
 
+def exposure_table(template, roster, composition):
+    """A structurally valid test table; the real table is the declaration's (R4), never chosen here."""
+    members = manifest.composition_members(roster, composition)
+    canonical = [m['id'] for m in members if m['role'] in manifest.CANONICAL_ROLES]
+    archival = [m['id'] for m in members if m['role'] in manifest.ARCHIVAL_ROLES]
+    assignments, next_canonical, next_archival = [], 0, 0
+    for episode in manifest.check_template_shape(template):
+        if composition == 'E' and manifest.opponent_label(episode) == 'Rally':
+            assignments.append(archival[next_archival % len(archival)])
+            next_archival += 1
+        else:
+            assignments.append(canonical[next_canonical % len(canonical)])
+            next_canonical += 1
+    return dict(schema=manifest.EXPOSURE_SCHEMA, composition=composition, assignments=assignments)
+
+
 class ManifestTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.seed_manifest = seeds.load_seed_manifest(FIXTURE)
         cls.template = synthetic_template()
-        cls.result = manifest.build(cls.seed_manifest, cls.template)
+        cls.roster = manifest.draft_roster(cls.template['source'])
+        cls.result = manifest.build(cls.seed_manifest, cls.template, cls.roster)
 
-    def test_counts_are_the_proposal_counts(self):
-        calibration = self.result['calibration']
-        self.assertEqual(calibration['counts'], dict(bo3=7168, members=16, decks=7, blocks=32, seats=2, per_member=448))
-        self.assertEqual(self.result['screen_training']['counts'], dict(runs=4, games=8000))
-        self.assertEqual(self.result['screen_evaluation']['counts'], dict(bo3=35840, endpoints=5, per_endpoint=7168))
-        self.assertEqual(len(manifest.evaluation_jobs('cal', seeds.calibration_seeds(self.seed_manifest))), 7168)
+    def test_counts_are_the_ruling_counts_for_both_compositions(self):
+        self.assertEqual((manifest.PER_FULL_MEMBER, manifest.PER_RALLY_MEMBER), (448, 64))
+        expected = {'E': (3200, 16000, 18240), 'B': (2688, 13440, 15680)}
+        for composition, (calibration, screen, with_holdout) in expected.items():
+            with self.subTest(composition=composition):
+                self.assertEqual(self.result['calibration_' + composition]['counts']['bo3'], calibration)
+                self.assertEqual(self.result['screen_evaluation_' + composition]['counts'],
+                                 dict(bo3=screen, endpoints=5, per_endpoint=calibration))
+                self.assertEqual(self.result['screen_evaluation_%s_holdout' % composition]['counts']['bo3'],
+                                 with_holdout)
+                self.assertEqual(with_holdout - screen, 2240)
+                self.assertEqual(self.result['screen_training_' + composition]['counts'], dict(runs=4, games=8000))
+        self.assertEqual(self.result['calibration_E']['counts']['full_members'], 6)
+        self.assertEqual(self.result['calibration_E']['counts']['rally_members'], 8)
+        self.assertEqual(self.result['calibration_B']['counts']['rally_members'], 0)
 
     def test_deck_order_and_map(self):
         self.assertEqual(manifest.DECKS, ('Affinity', 'Burn', 'Elves', 'Faeries', 'Rally', 'Terror', 'Wildfire'))
@@ -80,60 +106,91 @@ class ManifestTests(unittest.TestCase):
                          ['Affinity', 'Burn', 'Elves', 'Faeries', 'Rally', 'Terror', 'Wildfire', 'Affinity'])
         self.assertEqual(manifest.opponent_deck(6, 1), 'Affinity')
         self.assertEqual(manifest.opponent_deck(3, 31), 'Wildfire')  # (3 + 31) mod 7 = 6
-        jobs = manifest.evaluation_jobs('cal', seeds.calibration_seeds(self.seed_manifest))
+        members = manifest.composition_members(self.roster, 'B')
+        jobs = manifest.evaluation_jobs('cal', seeds.calibration_seeds(self.seed_manifest), members)
         for job in jobs:
             i = manifest.DECKS.index(job['learner_deck'])
             self.assertEqual(job['opponent_deck'], manifest.DECKS[(i + job['block']) % 7])
         pairs = collections.Counter((job['learner_deck'], job['opponent_deck']) for job in jobs)
         self.assertEqual(len(pairs), 49)
+        blocks_per_rotation = [sum(1 for j in range(32) if j % 7 == r) for r in range(7)]
+        self.assertEqual(blocks_per_rotation, [5, 5, 5, 5, 4, 4, 4])
         for (learner, opponent), count in pairs.items():
             rotation = (manifest.DECKS.index(opponent) - manifest.DECKS.index(learner)) % 7
-            self.assertEqual(count, manifest.ROTATION_BLOCKS[rotation] * 16 * 2)
+            self.assertEqual(count, blocks_per_rotation[rotation] * 6 * 2)
 
-    def test_integer_weights_sum_to_31360_per_endpoint(self):
-        self.assertEqual(manifest.ROTATION_BLOCKS, (5, 5, 5, 5, 4, 4, 4))
-        self.assertEqual(manifest.WEIGHTS, (4, 4, 4, 4, 5, 5, 5))
-        for labelled in (seeds.calibration_seeds(self.seed_manifest), seeds.screen_evaluation_seeds(self.seed_manifest)):
-            self.assertEqual(sum(job['weight'] for job in manifest.evaluation_jobs('x', labelled)), 31360)
+    def test_archival_members_play_only_rally_opponent_cells(self):
+        members = manifest.composition_members(self.roster, 'E')
+        jobs = manifest.evaluation_jobs('cal', seeds.calibration_seeds(self.seed_manifest), members)
+        archival = [job for job in jobs if job['member'].startswith(('population/', 'august/'))]
+        self.assertEqual(len(archival), 8 * 64)
+        self.assertEqual({job['opponent_deck'] for job in archival}, {'Rally'})
+        per_block = collections.Counter((job['member'], job['block']) for job in archival)
+        self.assertEqual(set(per_block.values()), {2})  # one learner deck per block, both seats
 
     def test_every_seed_label_and_value_is_listed(self):
-        self.assertEqual(self.result['calibration']['seeds'],
+        self.assertEqual(self.result['calibration_E']['seeds'],
                          [dict(label=l, seed=v) for l, v in seeds.calibration_seeds(self.seed_manifest).items()])
-        self.assertEqual([s['label'] for s in self.result['screen_evaluation']['seeds']],
+        self.assertEqual([s['label'] for s in self.result['screen_evaluation_E']['seeds']],
                          list(seeds.SCREEN_EVALUATION_LABELS))
-        self.assertEqual(self.result['screen_training']['seeds'], [
+        self.assertEqual(self.result['screen_training_B']['seeds'], [
             dict(label='screen-training-pair/block/00', seed=5129419802126035267),
             dict(label='screen-training-pair/block/01', seed=11192956680141436156)])
 
-    def test_roster_order_and_pending_slots(self):
-        roster = self.result['calibration']['roster']
-        self.assertEqual([slot['role'] for slot in roster], list(manifest.ROSTER_ROLES))
-        self.assertEqual(manifest.ROSTER_ROLES[:2], ('V3', 'D3 wrapper'))
-        self.assertEqual(manifest.ROSTER_ROLES[10:], tuple('exploiter-v3b/arm%d/run-%d' % (a, r)
-                                                           for a in (1, 2) for r in range(3)))
-        self.assertEqual([slot['status'] for slot in roster], ['bound', 'bound'] + ['pending'] * 14)
-        self.assertEqual(roster[0]['source']['v3_forced_actions'], True)
-        self.assertEqual(roster[1]['source']['kind'], 'information_set_search_v3')
-
-    def test_playable_import_binds_its_slot_and_order_is_enforced(self):
-        imports = dict(members=[dict(roster_index=7, label='refresh-034/current-1', status='playable',
+    def test_draft_roster_follows_the_ruling_roles(self):
+        roles = collections.Counter(m['role'] for m in self.roster['members'])
+        self.assertEqual(roles, {'v3': 1, 'd3-wrapper': 1, 'recent': 4, 'population': 4, 'august': 4, 'holdout': 1})
+        self.assertFalse(self.roster['frozen'])
+        v3 = self.roster['members'][0]
+        self.assertEqual(v3['evaluation']['source']['v3_forced_actions'], True)
+        self.assertEqual({m['training']['status'] for m in self.roster['members']}, {'pending'})
+        self.assertIn('accepts only V4 opponents', v3['training']['reason'])
+        imports = dict(members=[dict(label='refresh-034/current-1', status='playable',
                                      model_source=source('d' * 64, 'current-1'))])
-        roster = manifest.evaluation_roster(self.template['source'], imports)
-        self.assertEqual(roster[7]['status'], 'bound')
-        self.assertEqual(sum(slot['status'] == 'pending' for slot in roster), 13)
-        imports['members'][0]['label'] = 'refresh-034/current-0'
-        with self.assertRaisesRegex(ValueError, 'order differs'):
-            manifest.evaluation_roster(self.template['source'], imports)
+        bound = manifest.draft_roster(self.template['source'], imports)
+        current = [m for m in bound['members'] if m['id'] == 'population/current-1'][0]
+        self.assertEqual(current['evaluation']['status'], 'bound')
+
+    def test_roster_validation_refuses_changed_roles(self):
+        for change, message in ((lambda r: r['members'][6].update(scope='full'), 'Role or scope'),
+                                (lambda r: r['members'].append(copy.deepcopy(r['members'][0])), 'Duplicate'),
+                                (lambda r: r['members'].pop(0), 'Canonical roles incomplete')):
+            roster = copy.deepcopy(self.roster)
+            change(roster)
+            with self.assertRaisesRegex(ValueError, message):
+                manifest.validate_roster(roster)
 
     def test_nothing_is_launchable_while_anything_is_pending(self):
-        for name in ('calibration', 'screen_training', 'screen_evaluation'):
-            value = self.result[name]
-            self.assertFalse(value['launchable'])
+        for name, value in self.result.items():
+            if name in ('deck_packet', 'roster'):
+                continue
+            self.assertFalse(value['launchable'], name)
+            self.assertIn('roster is a draft', value['blocking'][0 if 'training' not in name else 1])
             self.assertTrue(any('byte worksheet unmeasured' in r for r in value['blocking']))
             self.assertTrue(any('throughput evidence absent' in r for r in value['blocking']))
-        training = self.result['screen_training']['roster']
-        self.assertEqual({slot['status'] for slot in training}, {'pending'})
-        self.assertIn('accepts only V4 opponents', training[0]['reason'])
+        self.assertIn('exposure table for composition E pending', self.result['screen_training_E']['blocking'][0])
+
+    def test_exposure_table_checks_the_rally_slot_rule(self):
+        for composition in ('E', 'B'):
+            table = exposure_table(self.template, self.roster, composition)
+            counts = manifest.validate_exposure(table, self.roster, self.template, composition)
+            self.assertEqual(sum(counts.values()), 2000)
+            if composition == 'B':
+                self.assertFalse(any(m.startswith(('population/', 'august/')) for m in counts))
+        table = exposure_table(self.template, self.roster, 'E')
+        rally = [i for i, e in enumerate(manifest.check_template_shape(self.template))
+                 if manifest.opponent_label(e) == 'Rally']
+        other = next(i for i in range(2000) if i not in set(rally))
+        for index, member in ((rally[0], 'v3'), (other, 'august/historical-0')):
+            broken = copy.deepcopy(table)
+            broken['assignments'][index] = member
+            with self.assertRaisesRegex(ValueError, 'Rally-slot rule'):
+                manifest.validate_exposure(broken, self.roster, self.template, 'E')
+        with self.assertRaisesRegex(ValueError, 'outside the composition'):
+            manifest.validate_exposure(dict(table, composition='B'), self.roster, self.template, 'B')
+        with self.assertRaisesRegex(ValueError, 'all 2,000'):
+            manifest.validate_exposure(dict(table, assignments=table['assignments'][:-1]), self.roster,
+                                       self.template, 'E')
 
     def test_control_config_changes_only_seed_and_id(self):
         schedule = seeds.episode_schedule(self.seed_manifest, 'screen-training-pair/block/01')
@@ -147,14 +204,17 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual({k: v for k, v in config.items() if k != 'updates'},
                          {k: v for k, v in self.template.items() if k != 'updates'})
 
-    def test_treatment_assigns_roster_index_e_mod_16(self):
+    def test_treatment_takes_per_episode_opponent_fields_and_keeps_seeds_and_ids(self):
         schedule = seeds.episode_schedule(self.seed_manifest, 'screen-training-pair/block/00')
-        opponents = [source('%064x' % k, 'member-%d' % k) for k in range(16)]
-        config = manifest.training_config(self.template, schedule, 0, 'treatment', opponents)
+        search = dict(opponent=source(manifest.G115_CHECKPOINT_SHA256, 'g115'),
+                      opponent_search=dict(path='C:/fixture/descriptor.json', sha256='a' * 64))
+        plain = dict(opponent=source('b' * 64, 'member'))
+        fields = [search if e % 3 == 0 else plain for e in range(2000)]
+        config = manifest.training_config(self.template, schedule, 0, 'treatment', fields)
         episodes = [e for u in config['updates'] for e in u]
-        counts = collections.Counter(e['opponent']['checkpoint']['sha256'] for e in episodes)
-        self.assertEqual(set(counts.values()), {125})
-        self.assertEqual(episodes[17]['opponent'], opponents[1])
+        self.assertEqual(episodes[3]['opponent_search'], search['opponent_search'])
+        self.assertNotIn('opponent_search', episodes[4])
+        self.assertEqual(episodes[4]['opponent'], plain['opponent'])
         control = manifest.training_config(self.template, schedule, 0, 'control')
         self.assertEqual([e['seed'] for e in episodes], [e['seed'] for u in control['updates'] for e in u])
         self.assertEqual([e['id'] for e in episodes], [e['id'] for u in control['updates'] for e in u])
@@ -182,7 +242,7 @@ class ManifestTests(unittest.TestCase):
         template = copy.deepcopy(self.template)
         template['updates'][0][1]['opponent'] = source(manifest.G115_CHECKPOINT_SHA256, 'g115')
         with self.assertRaisesRegex(ValueError, '1,000 g115 and 1,000 A48'):
-            manifest.screen_training_manifest(self.seed_manifest, template, [])
+            manifest.screen_training_manifest(self.seed_manifest, template, self.roster, 'E')
 
     def test_template_pin_is_enforced(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -192,14 +252,17 @@ class ManifestTests(unittest.TestCase):
                 manifest.load_template(path)
 
     def test_manifest_hash_is_deterministic_and_covers_provenance(self):
-        again = manifest.build(self.seed_manifest, synthetic_template())
-        for name in ('calibration', 'screen_training', 'screen_evaluation'):
-            first, second = self.result[name], again[name]
-            self.assertEqual(first['manifest_sha256'], second['manifest_sha256'])
+        template = synthetic_template()
+        again = manifest.build(self.seed_manifest, template, manifest.draft_roster(template['source']))
+        for name, first in self.result.items():
+            if name in ('deck_packet', 'roster'):
+                continue
+            self.assertEqual(first['manifest_sha256'], again[name]['manifest_sha256'])
             body = {k: v for k, v in first.items() if k != 'manifest_sha256'}
             self.assertEqual(seeds.canonical_sha256(body), first['manifest_sha256'])
             self.assertEqual(first['provenance']['builder']['sha256'],
                              hashlib.sha256(Path(manifest.__file__).read_bytes()).hexdigest())
+            self.assertEqual(first['provenance']['roster_sha256'], seeds.canonical_sha256(self.roster))
 
 
 if __name__ == '__main__':

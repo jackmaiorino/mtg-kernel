@@ -1,0 +1,97 @@
+{
+  "deck_packet": {
+    "sha256": "5b2964887a70605bbc09e894e8fe06f36245aa5f13f10b964de2d008ce890cc5",
+    "counts": null,
+    "launchable": null,
+    "blocking": 0
+  },
+  "roster": {
+    "sha256": "1d9e41297681b5afc7e072943763bac0c8552163a686f2d7dada412239593db4",
+    "counts": null,
+    "launchable": null,
+    "blocking": 0
+  },
+  "calibration_E": {
+    "sha256": "0fdbcbd2fa17b514eb40c5c16b488f95e89d2a61e65c1db3182d663ef302e7ee",
+    "counts": {
+      "bo3": 3200,
+      "full_members": 6,
+      "rally_members": 8,
+      "blocks": 32,
+      "seats": 2
+    },
+    "launchable": false,
+    "blocking": 19
+  },
+  "screen_training_E": {
+    "sha256": "d2cb2f51088d47e64e15b1e93e53530fe6fe473a9a527816784fbec33e6a1c0d",
+    "counts": {
+      "runs": 4,
+      "games": 8000
+    },
+    "launchable": false,
+    "blocking": 22
+  },
+  "screen_evaluation_E": {
+    "sha256": "ec6385dc16e10cbe35e1216279815e31c3f65846892aeb2c4b98ef32f9f8f018",
+    "counts": {
+      "bo3": 16000,
+      "endpoints": 5,
+      "per_endpoint": 3200
+    },
+    "launchable": false,
+    "blocking": 23
+  },
+  "screen_evaluation_E_holdout": {
+    "sha256": "5a3cffd74f85b2eaef996c21b129f27de6ea64bbe6384d42f4945d9849b3f8e1",
+    "counts": {
+      "bo3": 18240,
+      "endpoints": 5,
+      "per_endpoint": 3648
+    },
+    "launchable": false,
+    "blocking": 24
+  },
+  "calibration_B": {
+    "sha256": "81f9fb4c3f837a43b0398723a798e1f77ccbd071daafde890fdb7f688cc8a871",
+    "counts": {
+      "bo3": 2688,
+      "full_members": 6,
+      "rally_members": 0,
+      "blocks": 32,
+      "seats": 2
+    },
+    "launchable": false,
+    "blocking": 11
+  },
+  "screen_training_B": {
+    "sha256": "05f3a2ee2b18194f76526d683a1ef88097c88baf3b02466149a482870c0aa598",
+    "counts": {
+      "runs": 4,
+      "games": 8000
+    },
+    "launchable": false,
+    "blocking": 14
+  },
+  "screen_evaluation_B": {
+    "sha256": "26fcc283b130109e348633ab9a1721af8ffce8d25cb92f9fdfa1dcee8daed641",
+    "counts": {
+      "bo3": 13440,
+      "endpoints": 5,
+      "per_endpoint": 2688
+    },
+    "launchable": false,
+    "blocking": 15
+  },
+  "screen_evaluation_B_holdout": {
+    "sha256": "8b2970b3c9caec931db3b0c7ee27cab3bef16aed0168761636844122286eceac",
+    "counts": {
+      "bo3": 15680,
+      "endpoints": 5,
+      "per_endpoint": 3136
+    },
+    "launchable": false,
+    "blocking": 16
+  },
+  "panel_imports_sha256": "4f7f9acdac002ad100474acc160ccab89c6b0c7c4bb9ebc1ebed98572ed89f8b"
+}
