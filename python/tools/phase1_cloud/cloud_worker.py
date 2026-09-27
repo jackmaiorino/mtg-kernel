@@ -21,6 +21,7 @@ from throughput import (cgroup_limits, finite, production_reference, ThroughputP
 from runtime_observation import controlled_environment, image_contract, sample as runtime_sample, capture as capture_runtime
 
 GIB = 1024 ** 3
+DISK_RESERVE = 60 * GIB
 COLLECTION_TIMINGS = ('collection_elapsed_seconds', 'collection_initialization_seconds')
 UPDATE_TIMINGS = ('update_elapsed_seconds', 'input_read_seconds', 'behavior_replay_seconds',
                   'learner_update_seconds', 'checkpoint_io_seconds')
@@ -54,6 +55,11 @@ def receipt_timings(hot, receipt):
             result['update_preparation']=row
     result['update_elapsed_excludes_final_receipt_publication'] = True
     return result
+
+
+def require_disk_reserve(free_values):
+    require(free_values and all(type(value) is int and value >= DISK_RESERVE for value in free_values),
+            '60 GiB filesystem reserve required')
 
 
 def stage(archive, expected_sha, root):
@@ -341,8 +347,7 @@ def run_locked(hot, durable, guard_state, max_new_iterations, finish_lease=False
     pin(runtime_image_pin['path'],runtime_image_pin['sha256'])
     runtime_image=read(runtime_image_pin['path']);image_contract(runtime_image)
     durable.mkdir(parents=True, exist_ok=True)
-    require(shutil.disk_usage(hot).free >= 16 * GIB and
-            shutil.disk_usage(durable).free >= 16 * GIB, '16 GiB free-space reserve required')
+    require_disk_reserve([shutil.disk_usage(hot).free, shutil.disk_usage(durable).free])
     copy_exact(hot / 'manifest.json', durable / 'manifest.json')
     config = read(manifest['training_config']['path'])
     preparation=preparation_workers(config)
@@ -453,7 +458,7 @@ def run_locked(hot, durable, guard_state, max_new_iterations, finish_lease=False
                     reason = 'guard_stop'
                 elif observation.get('rss_bytes', 0) and observation['rss_bytes'] > 8 * GIB:
                     reason = 'process_memory_cap'
-                elif min(shutil.disk_usage(hot).free, shutil.disk_usage(durable).free) < 16 * GIB:
+                elif min(shutil.disk_usage(hot).free, shutil.disk_usage(durable).free) < DISK_RESERVE:
                     reason = 'storage_reserve'
                 elif observation['policy']['action']:
                     reason=observation['policy']['action']

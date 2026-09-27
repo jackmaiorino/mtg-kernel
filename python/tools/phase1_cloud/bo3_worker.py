@@ -29,6 +29,7 @@ from throughput import ThroughputPolicy, cgroup_limits, finite
 MIB = 1024 ** 2
 GIB = 1024 ** 3
 RESERVE = 16 * GIB
+DISK_RESERVE = 60 * GIB
 MAX_STAGE = 8 * 3600
 MAX_BYTES = 100 * GIB
 FINAL_RECEIPT_RESERVE = 16 * MIB
@@ -63,8 +64,8 @@ def receipt_charge(current, size, cap, reserve, final=False):
 def require_disk_headroom(free_values, extra, written=0, final=False):
     require(free_values and all(type(value) is int and value >= 0 for value in [*free_values, extra, written]),
             'actual nonnegative disk free/write observations required')
-    required = RESERVE + extra + (0 if final else FINAL_RECEIPT_RESERVE)
-    require(all(free - written >= required for free in free_values), '16 GiB filesystem/final-result reserve reached')
+    required = DISK_RESERVE + extra + (0 if final else FINAL_RECEIPT_RESERVE)
+    require(all(free - written >= required for free in free_values), '60 GiB filesystem/final-result reserve reached')
 
 
 def absolute(value):

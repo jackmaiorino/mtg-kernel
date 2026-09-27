@@ -106,13 +106,14 @@ class WorkerContracts(unittest.TestCase):
             worker.receipt_charge(80, 11, 100, 10, final=True)
 
     def test_final_disk_write_preserves_physical_reserve_and_discounts_cached_writes(self):
-        free = worker.RESERVE + worker.FINAL_RECEIPT_RESERVE + 10
+        self.assertEqual(worker.RESERVE, 16 * worker.GIB)  # independent memory reserve stays unchanged
+        free = worker.DISK_RESERVE + worker.FINAL_RECEIPT_RESERVE + 10
         worker.require_disk_headroom([free], 10)
         with self.assertRaises(ValueError):
             worker.require_disk_headroom([free], 10, written=1)
-        worker.require_disk_headroom([worker.RESERVE + 5], 5, final=True)
+        worker.require_disk_headroom([worker.DISK_RESERVE + 5], 5, final=True)
         with self.assertRaises(ValueError):
-            worker.require_disk_headroom([worker.RESERVE + 4], 5, final=True)
+            worker.require_disk_headroom([worker.DISK_RESERVE + 4], 5, final=True)
 
 
 if __name__ == '__main__':
