@@ -41,6 +41,10 @@ REGISTRY_CANDIDATES = {
                          'cycle-3 training commits 162b7579 and b01afb52 (EVIDENCE-NOTES.md) and search_authority.engine_commit a7043e30 (refresh manifests) all carry these registry bytes; the commit for generations 0-256 is not recorded'),
 }
 PARENT_REF_REQUESTED = {'refresh-034/anchor-0', 'refresh-034/anchor-1', 'refresh-034/current-0', 'refresh-034/current-1'}
+RECOMPUTATION = {'a06fa9566106f0ea': SEALED / 'receipts/card-db-recomputation/1804e9f9.json',
+                 '64c82a261e078f1a': SEALED / 'receipts/card-db-recomputation/18f4ca51.json'}
+LINEAGE = SEALED / 'receipts/lineage-parents-v1.json'
+LINKAGE = SEALED / 'receipts/registry-linkage-v1.json'
 PINNED = Path('E:/pinned-binaries')
 TOOLS = {'exporter': '7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6/native_checkpoint_export_v1.exe',
          'roundtrip': '3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024/native_inference_export_roundtrip_v1.exe',
@@ -72,18 +76,39 @@ def registry_record(card_db_hash):
               'destination_sha256': sha(DESTINATION), 'namespace_mismatch_count': len(changed),
               'namespace_mismatch_fields': sorted({f for c in changed for f in c['fields']}),
               'namespace_mismatch_examples': [c for c in changed if c['fields'] != ['engine_capability']][:5]}
-    record['card_db_hash_recomputation'] = ('pending: rerun the training commit build.rs card-DB recipe on the pinned bytes '
-                                            '(FABLE-REVIEW-20260927 panel-export change 2)')
+    recomputation = RECOMPUTATION[card_db_hash]
+    body = json.loads(recomputation.read_bytes())
+    record['card_db_hash_recomputation'] = {'receipt': recomputation.as_posix(), 'sha256': sha(recomputation),
+                                            'training_commit': body['training_commit'], 'computed': body['computed_card_db_hash_u64_hex'],
+                                            'matches_recorded': body['matches']}
     if changed:
         record['namespace_v1'] = 'fails'
         record['status'] = 'unresolved'
         record['reason'] = ('validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; '
-                            'the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT')
+                            'the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; '
+                            'admission waits for the R14 design verdict and CODEX #557 item 5')
         return record
     snapshot = REPO / 'data/line_a_source_registries' / (record['candidate_sha256'] + '.json')
     record.update({'namespace_v1': 'passes', 'status': 'passes-v1',
                    'snapshot_repo_path': snapshot.relative_to(REPO).as_posix(), 'snapshot_sha256': sha(snapshot)})
     return record
+
+
+def sealed_linkage(label):
+    """Typed linkage class and evidence digest from the sealed registry-linkage receipt."""
+    record = json.loads(LINKAGE.read_bytes())['members'][label]
+    return {'class': record['class'], 'receipt': LINKAGE.as_posix(), 'receipt_sha256': sha(LINKAGE),
+            'registry_blobs_named': record['registry_blobs_named'], 'all_named_blobs_equal_pinned': record['all_named_blobs_equal_pinned']}
+
+
+def sealed_lineage(label):
+    chain = json.loads(LINEAGE.read_bytes())['members'].get(label)
+    if not chain:
+        return None
+    first = chain[0]
+    return {'receipt': LINEAGE.as_posix(), 'receipt_sha256': sha(LINEAGE),
+            'direct_parent': first.get('parent'), 'relation': first.get('relation'),
+            'chain': [{'run_sha256': step['run_sha256'], 'base_seed': step.get('base_seed')} for step in chain]}
 
 
 def registry_linkage(facts, provenance):
@@ -135,7 +160,7 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
     registry = registries.setdefault(facts['card_db_hash_u64_hex'], registry_record(facts['card_db_hash_u64_hex']))
     open_items = []
     if registry['status'] == 'unresolved': open_items.append('registry: ' + registry['reason'])
-    if label in PARENT_REF_REQUESTED: open_items.append('parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash')
+
     if facts['store_authority_route'] == 'none':
         open_items.append('store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it')
     if provenance['status'] != 'resolved': open_items.append('training provenance: ' + provenance['reason'])
@@ -145,9 +170,10 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
                else 'later-version candidate (R10: after the eight, by 2026-10-04 18:00 EDT)')
     record = {'roster_index': index, 'label': label, 'family': family, 'version_role': version, 'store': store,
               'identity_pin_check': pin_check, 'source_facts': facts, 'registry': registry,
-              'registry_linkage': registry_linkage(facts, provenance), 'training_provenance': provenance}
-    if label in PARENT_REF_REQUESTED:
-        record['parent_ref'] = {'status': 'pending', 'requested_by': 'CODEX #526 (direct initialization or resume parent ref and hash)'}
+              'registry_linkage': sealed_linkage(label), 'training_provenance': provenance}
+    lineage = sealed_lineage(label)
+    if lineage:
+        record['lineage'] = lineage
     if summary:
         body = summary['body']
         record.update({'export': body['export'], 'import_descriptor': body['import_descriptor'], 'model_source': body['model_source'],

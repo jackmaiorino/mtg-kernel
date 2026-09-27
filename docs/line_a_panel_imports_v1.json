@@ -1,6 +1,6 @@
 {
   "schema": "mtg-kernel-line-a-panel-imports/v1",
-  "revision": 2,
+  "revision": 3,
   "status": "1 playable, 0 pending, 13 unresolved of 14 archival members",
   "producer": "Opus lane panel-export (collab/GOALS/opus-panel-export-20260927.md), branch opus/panel-export-v1, python/tools/line_a_panel_imports_v1.py",
   "roster": "proposal v0.2 (collab/CODEX-G115-OPPONENT-PORTFOLIO-PROPOSAL-20260926.md, 2026-09-27 10:18 EDT): 0 V3 and 1 D3 wrapper are outside this manifest; 2-9 refresh-034 slots 0-7; 10-12 v3b arm1 runs 0-2; 13-15 v3b arm2 runs 0-2",
@@ -134,27 +134,54 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [],
+        "all_named_blobs_equal_pinned": false
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+          "generation": 512,
+          "checkpoint_sha256": "03f0e226f884f51bf7128f70bec189bd6ac2c8f231ced8886f2cb7d3e936cc90",
+          "sidecar_sha256": "c56a8ba1361ab172c669307084c4522ee06ac79e39b7cf4a306f11effe36b031",
+          "state_sha256": "2904dd7b899c21234c64925440277dbfa8d6f552d8f620b153bc8d16c44f523a",
+          "derived_model_parameter_sha256": "0635d2defb8facd700ede34789434956fc4a2fd3b5058cc2df5dd820398b4c22"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -226,27 +253,60 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+          "generation": 384,
+          "checkpoint_sha256": "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+          "sidecar_sha256": "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb",
+          "state_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+          "derived_model_parameter_sha256": "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "dc171fe72549154e533e337bc39884faa76811809abc0bc573bb975cea500a42",
+            "base_seed": 970002
+          },
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -318,22 +378,45 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "7d111d855c09858cbc8404152cdf8878af3d8d5244dc3983ac25ddb2fe566232",
+            "base_seed": 971221
+          }
+        ]
+      },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -405,22 +488,45 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "31dec27f24885c1fc657403f217591b03f4c5ff7f279988cbd54392d45450178",
+            "base_seed": 971223
+          }
+        ]
+      },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -492,27 +598,68 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "405bbc2ece626c186ad35837ff0437c01f7ff5b9665f2815f67ce5b7ade5c4f7",
+          "generation": 256,
+          "checkpoint_sha256": "0b6d798afef4ee4fa37107b0de55b56a645ad6d3d0cc0e2809bb2e934db1dc6c",
+          "sidecar_sha256": "b1bf239290634135050ed60449d39fe4a8fc920238cb7eae16d8b13fe1ef0591",
+          "state_sha256": "9f0705c936a597367fb1b97fd9cd170618a3096e50f33560519cee485681166a",
+          "derived_model_parameter_sha256": "0efd6de962aeb6208133a88627d2d4be502e084c0f129f27824bbba852dda7c9"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "ed2fa4ddfe259ecae0e82206d0560bfefbf789baca86a15bb92c58f0b268f902",
+            "base_seed": 975001
+          },
+          {
+            "run_sha256": "405bbc2ece626c186ad35837ff0437c01f7ff5b9665f2815f67ce5b7ade5c4f7",
+            "base_seed": 972001
+          },
+          {
+            "run_sha256": "3d41a6ddd18383e104563cc0c1d29011466961e54662df2aef89a64338dd0f81",
+            "base_seed": 970001
+          },
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -563,7 +710,13 @@
         "namespace_mismatch_count": 0,
         "namespace_mismatch_fields": [],
         "namespace_mismatch_examples": [],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/18f4ca51.json",
+          "sha256": "b28c1aafd109c7885b9b4cb4a42cd35eaf3185ce78670d6b7c4c6df9ee3b0c1e",
+          "training_commit": "18f4ca51419d215370d539cef726edd7f8e7ae0b",
+          "computed": "64c82a261e078f1a",
+          "matches_recorded": true
+        },
         "namespace_v1": "passes",
         "status": "passes-v1",
         "snapshot_repo_path": "data/line_a_source_registries/af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc.json",
@@ -571,16 +724,12 @@
       },
       "registry_linkage": {
         "class": "commit-recorded",
-        "scope": "generations 256-2048; the commit for generations 0-256 and the executable are not recorded; no build receipt",
-        "training_commit_registry_sha256": {
-          "162b7579f899c3df76910be59a9a076d14adfd5e": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
-          "b01afb528d27ffed942a06a4ab9f606edfb6258c": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
-          "a7043e3044d38f20dbb95afbc430af74d2f11ec8": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
-        },
-        "evidence": {
-          "path": "E:/mtg-kernel-population-v2-cycle3/lineage/real-attempt-003/EVIDENCE-NOTES.md",
-          "sha256": "4e3b4112aaa0260581b8c0db9b289a2e3a5ca645693648f3fcd1027f3a725f1e"
-        }
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "partial",
@@ -592,9 +741,44 @@
         ],
         "reason": "engine commits recorded for generations 256-2048 only; executable identity not recorded"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504",
+          "generation": 2048,
+          "checkpoint_sha256": "5e1ff645091bfacdade2a3e06b47c3cd71c96ed1c9fee4dd9756b343d7c834fd",
+          "sidecar_sha256": "81ab98f52c37cb14a8305f48674133148ac0d06df516c1a12510e5350bb62133",
+          "state_sha256": "e4aa3172bf3962af1498028f19649a85424d0e30f226b5c1f6722160fb24a2d4",
+          "derived_model_parameter_sha256": "67c5d0a2c506c0514623f3f4ea0f273b904662cbdae4f6ddc89c44e255b9a70d"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "f25a63d0a2968016c2d44220b02d46b642fad5c4d524cd7ed82d699dbfda83a1",
+            "base_seed": 977002
+          },
+          {
+            "run_sha256": "8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504",
+            "base_seed": 975002
+          },
+          {
+            "run_sha256": "fd634e085a7a82786caa9ffff64d19d99a780aaaeac4d3f46cd1171eef3589e9",
+            "base_seed": 972002
+          },
+          {
+            "run_sha256": "5816d5d3cca083e47dd4bf63245035f222e2d5edce778091a75d191cd8722e3a",
+            "base_seed": 970003
+          },
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
       "export": {
         "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__current-1",
@@ -673,7 +857,6 @@
       },
       "status": "playable",
       "open_items": [
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
         "training provenance: engine commits recorded for generations 256-2048 only; executable identity not recorded"
       ]
     },
@@ -745,22 +928,45 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "c9bd4a75d9ac8b73951e5d681295bfb3b8d468f5e00775535b69e3cd05a963f1",
+            "base_seed": 971222
+          }
+        ]
+      },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -832,22 +1038,45 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "7d111d855c09858cbc8404152cdf8878af3d8d5244dc3983ac25ddb2fe566232",
+            "base_seed": 971221
+          }
+        ]
+      },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -919,17 +1148,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -946,7 +1183,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1018,17 +1255,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1045,7 +1290,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1117,17 +1362,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1144,7 +1397,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1216,17 +1469,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1243,7 +1504,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1315,17 +1576,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1342,7 +1611,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1414,17 +1683,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1441,7 +1718,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is implemented at 3dbe2cb7 with its tests passing; admission waits for the R14 design verdict and CODEX #557 item 5",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     }
