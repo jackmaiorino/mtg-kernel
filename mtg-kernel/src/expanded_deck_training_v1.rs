@@ -88,6 +88,7 @@ mod fresh_registry_transfer_source;
 mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
+pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -726,6 +727,9 @@ pub enum OptimizerMaskV1 {
 #[serde(deny_unknown_fields)]
 pub struct LineBUpdateOptionsV1 {
     pub optimizer_mask: OptimizerMaskV1,
+    /// The treatment slot's teacher; `None` for the matched control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teacher: Option<LineBTeacherOptionsV1>,
 }
 
 /// Frozen-tensor digest of `source` under the line (b) mask: every masked
@@ -2422,6 +2426,11 @@ fn execute_update_v1(
             .collect();
         context.validate_batch(&batch)?;
     }
+    // One line (b) seed entry per trajectory in batch order (CODEX #572),
+    // refused before any replay or teacher work.
+    if let Some(teacher) = line_b.as_ref().and_then(|options| options.teacher.as_ref()) {
+        teacher.validate_v1(episodes.len())?;
+    }
     let input_read_seconds = update_started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
     // Recompute all actor-visible rows, including opponent decisions,
@@ -2537,11 +2546,35 @@ fn execute_update_v1(
         ),
     };
     let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
+    // Line (b) teach step (treatment slots): the start-of-update student,
+    // after collection and before the update; the packet is published with
+    // the receipt. A batch without a selected root trains ordinarily.
+    let teacher_started = std::time::Instant::now();
+    let line_b_teacher = match line_b.as_ref().and_then(|options| options.teacher.as_ref()) {
+        None => None,
+        Some(teacher) => {
+            ensure(
+                gae_targets.is_some(),
+                "the line (b) teacher requires gae_advantage_value/v1",
+            )?;
+            ensure(
+                matches!(update_backend, ExpandedUpdateBackendV1::Cpu),
+                "the line (b) teacher runs on the CPU update backend until its CUDA path lands",
+            )?;
+            let packet =
+                line_b_teacher_packet_v1::line_b_teach_v1(&episodes, &policy, &before, teacher)?;
+            let input =
+                line_b_teacher_packet_v1::line_b_auxiliary_input_v1(&packet, &tensor_groups)?;
+            Some((packet, input))
+        }
+    };
+    let teacher_seconds = teacher_started.elapsed().as_secs_f64();
     // Line (b) head-only mask: validate the topology and keep the pre-step
     // snapshot, whatever backend runs the step below.
     let masked_before = match &line_b {
         Some(LineBUpdateOptionsV1 {
             optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+            ..
         }) => {
             let before = state.snapshot_v1().map_err(err)?;
             let mask = HeadOnlyMaskV1::for_snapshot_v1(&before).map_err(err)?;
@@ -2550,6 +2583,7 @@ fn execute_update_v1(
         None => None,
     };
     let learner_started = std::time::Instant::now();
+    let mut line_b_auxiliary = None;
     let update = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
             (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
@@ -2618,6 +2652,32 @@ fn execute_update_v1(
                 .as_ref()
                 .expect("computed above whenever loss_selection is gae_advantage_value/v1");
             match (update_backend, generation) {
+                (ExpandedUpdateBackendV1::Cpu, _)
+                    if matches!(line_b_teacher, Some((_, Some(_)))) =>
+                {
+                    let Some((_, Some(input))) = &line_b_teacher else {
+                        unreachable!("guarded by the arm")
+                    };
+                    let (result, auxiliary) = state
+                        .train_step_gae_feature_transfer_line_b_v1(
+                            generation,
+                            &groups,
+                            &gae.value_targets,
+                            &gae.advantages,
+                            value_coefficient,
+                            learning_rate,
+                            match backward_execution {
+                                UpdateBackwardExecutionV1::Sequential => None,
+                                UpdateBackwardExecutionV1::FixedPartition4 => {
+                                    Some(fixed_partition_backward_worker_limit_v1())
+                                }
+                            },
+                            input,
+                        )
+                        .map_err(err)?;
+                    line_b_auxiliary = Some(auxiliary);
+                    result
+                }
                 (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
                     .train_step_gae_feature_transfer_v3(
                         &groups,
@@ -2797,6 +2857,15 @@ fn execute_update_v1(
     if let Some(frozen) = frozen_tensor_sha256 {
         result["line_b"] = json!({"optimizer_mask": HEAD_ONLY_MASK_VERSION_V1,
             "frozen_tensor_sha256": frozen});
+    }
+    if let Some((packet, _)) = &line_b_teacher {
+        let packet_pin = publish_json(&output_directory, "line-b-teacher-packet.json", packet)?;
+        result["line_b"]["teacher"] = line_b_teacher_packet_v1::line_b_teacher_receipt_v1(
+            packet,
+            &packet_pin,
+            line_b_auxiliary.as_ref(),
+            teacher_seconds,
+        );
     }
     // Advantage statistics (design section 3), gated on the new loss
     // identity only: a v3 update's `gae_targets` is always `None`, so v3
@@ -6547,6 +6616,7 @@ pub(crate) mod tests {
         };
         let options = LineBUpdateOptionsV1 {
             optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+            teacher: None,
         };
         let (initial_source, final_source, masked) = run("masked", Some(options), 4);
         let (initial_policy, initial_state) = initialize(&initial_source).unwrap();
@@ -7133,6 +7203,138 @@ pub(crate) mod tests {
         }
         for bad in refused {
             assert!(line_b_teach_v1(&trajectories, &policy, &student, &bad).is_err());
+        }
+    }
+
+    /// Line (b) treatment through the real Collect and Update commands on the
+    /// CPU reference: the learner collects with the unclamped sampler; the
+    /// update runs the teach step, trains with the auxiliary term, keeps the
+    /// frozen digest, and publishes the packet (SHA-256 bound) and the
+    /// telemetry. Control, reverse and forward start from the same source and
+    /// trajectory; seed entries that do not match the batch are refused.
+    #[test]
+    fn line_b_teacher_update_publishes_packet_and_telemetry() {
+        use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root =
+            std::env::temp_dir().join(format!("line-b-teacher-update-{}", std::process::id()));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let decks = [list("Affinity"), list("Terror")];
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-teacher-update".into(),
+            seed: 2_026_092_721,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            registered: decks.clone(),
+            selected: decks.clone(),
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: vec![episode],
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1,
+            output_directory: root.join("collect"),
+        })
+        .unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collected["trajectories"].clone()).unwrap();
+        let teacher = |direction, games: Vec<Option<LineBGameSeedsV1>>| LineBTeacherOptionsV1 {
+            direction,
+            coefficient: 0.1,
+            temperature: 0.25,
+            rollouts: 2,
+            workers: 2,
+            games,
+        };
+        let seeds = || {
+            vec![Some(LineBGameSeedsV1 {
+                root_seed: 11,
+                teacher_seed: 21,
+            })]
+        };
+        let update = |label: &str, teacher: Option<LineBTeacherOptionsV1>| {
+            execute_v1(ExpandedTrainingCommandV1::Update {
+                source: source.clone(),
+                trajectories: trajectories.clone(),
+                learning_rate: 0.0003,
+                value_coefficient: 0.5,
+                update_backend: ExpandedUpdateBackendV1::Cpu,
+                update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+                loss_selection: gae_loss_selection_v1(),
+                line_b: Some(LineBUpdateOptionsV1 {
+                    optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+                    teacher,
+                }),
+                output_directory: root.join(format!("update-{label}")),
+            })
+        };
+        let control = update("control", None).unwrap();
+        assert!(control["line_b"].get("teacher").is_none());
+        let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
+        let mut moved = Vec::new();
+        for (label, direction) in [
+            ("reverse", LineBDivergenceV1::Reverse),
+            ("forward", LineBDivergenceV1::Forward),
+        ] {
+            let receipt = update(label, Some(teacher(direction, seeds()))).unwrap();
+            assert_eq!(
+                receipt["line_b"]["frozen_tensor_sha256"],
+                initial_frozen.as_str()
+            );
+            let taught = &receipt["line_b"]["teacher"];
+            let pin: PinnedFileV1 = serde_json::from_value(taught["packet"].clone()).unwrap();
+            let bytes = std::fs::read(&pin.path).unwrap();
+            assert_eq!(sha(&bytes), pin.sha256);
+            let packet: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                packet["options"]["direction"],
+                serde_json::to_value(direction).unwrap()
+            );
+            assert_eq!(taught["census"], packet["census"]);
+            assert_eq!(taught["census"]["selected_roots"], 1);
+            let telemetry = &taught["telemetry"];
+            assert_eq!(telemetry["roots"].as_array().unwrap().len(), 1);
+            let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
+            if taught["census"]["complete_roots"] == 1 {
+                assert!(telemetry["roots"][0]["divergence_before"].is_number());
+            } else {
+                assert!(telemetry["roots"][0]["divergence_before"].is_null());
+                assert_eq!(auxiliary, 0.0);
+            }
+            moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
+        }
+        if moved.iter().all(|(nonzero, _)| *nonzero) {
+            assert_ne!(
+                moved[0].1, control["after_state_sha256"],
+                "the teacher must change the update"
+            );
+            assert_ne!(moved[0].1, moved[1].1, "the directions must differ");
+        }
+        for games in [Vec::new(), vec![None, None]] {
+            assert!(update("refused", Some(teacher(LineBDivergenceV1::Reverse, games))).is_err());
         }
     }
 

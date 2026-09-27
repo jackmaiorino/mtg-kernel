@@ -169,6 +169,14 @@ impl NativeExpandedTrainingRunV1 {
 
     pub fn validate_v1(&self) -> Result<(), String> {
         check(self.schema == SCHEMA, "unknown successor run schema")?;
+        // Line (b) teacher seeds are explicit per update and come from the
+        // launcher's manifest (CODEX #572); this driver invents no schedule.
+        check(
+            self.line_b
+                .as_ref()
+                .is_none_or(|options| options.teacher.is_none()),
+            "the training-run driver takes no line (b) teacher; the launcher passes per-update seeds to Update",
+        )?;
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
         crate::expanded_deck_training_v1::validate_collection_workers_v1(self.collection_workers)?;

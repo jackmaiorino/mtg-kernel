@@ -240,6 +240,41 @@ impl NativePolicyValueTrainStateV1 {
         Ok((result, auxiliary))
     }
 
+    /// The line (b) entry for an update batch of either fresh-lineage
+    /// generation (the model's input configs are private to this module).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_feature_transfer_line_b_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        line_b: &LineBAuxiliaryInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
+        let input_config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        self.train_step_gae_line_b_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            input_config,
+            line_b,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn train_step_gae_core_v1(
         &mut self,
