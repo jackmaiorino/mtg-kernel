@@ -205,3 +205,143 @@ fn learner_rows_do_not_depend_on_the_opponent_kind() {
     };
     assert_eq!(prefix(&recent), prefix(&ordinary));
 }
+
+fn legacy_kind(forced: bool, spell_adapter: bool) -> ExpandedOpponentKindV1 {
+    ExpandedOpponentKindV1::Legacy {
+        source: episode(0, None).opponent.unwrap(),
+        v3_forced_actions: forced,
+        v3_spell_target_reference_adapter: spell_adapter,
+        admission: pin("v3-admission.json", &"9e".repeat(32)),
+    }
+}
+
+fn legacy_seat(forced: bool, spell_adapter: bool) -> OpponentSeatV1 {
+    OpponentSeatV1::Legacy {
+        policy: FrozenPlayPolicyV1::training_fixture_v3(),
+        identity: json!({"schema": "legacy-collection-model/v1", "fixture": true}),
+        forced,
+        spell_adapter,
+        rows: Vec::new(),
+    }
+}
+
+/// Legacy V3 against a V4 learner, both adapter settings: same seed gives
+/// the same bytes; forced singletons are recorded unscored and replay one
+/// draw; scored rows carry V3 digests; tampering is refused.
+#[test]
+fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
+    for (forced, spell_adapter) in [(true, true), (false, false)] {
+        for learner_seat in [0, 1] {
+            let episode = episode(learner_seat, Some(legacy_kind(forced, spell_adapter)));
+            let a = play(&episode, legacy_seat(forced, spell_adapter));
+            let b = play(&episode, legacy_seat(forced, spell_adapter));
+            assert_eq!(
+                serde_json::to_vec(&a).unwrap(),
+                serde_json::to_vec(&b).unwrap()
+            );
+            assert_eq!(a.schema, LEGACY_TRAJECTORY_SCHEMA);
+            assert!(!admits_public_trajectory(&a));
+            let record = a.opponent_record.as_ref().expect("opponent record");
+            let opponent: Vec<_> = a
+                .decisions
+                .iter()
+                .filter(|r| r.actor != learner_seat)
+                .collect();
+            assert_eq!(record.rows.len(), opponent.len());
+            let singletons = opponent
+                .iter()
+                .filter(|r| r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER))
+                .count();
+            if forced {
+                assert!(singletons > 0, "fixture games contain forced singletons");
+                assert!(opponent
+                    .iter()
+                    .filter(|r| r.logits.is_empty())
+                    .all(|r| r.selected == 0 && r.tensor.is_empty()));
+            } else {
+                assert_eq!(singletons, 0);
+                assert!(opponent.iter().all(|r| !r.logits.is_empty()));
+            }
+            let hashes = a.configuration_sha256.clone();
+            record
+                .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
+                .unwrap();
+            let mut tampered = a.decisions.clone();
+            let row = tampered
+                .iter_mut()
+                .find(|r| r.actor != learner_seat && r.logits.len() > 1)
+                .expect("a scored opponent choice");
+            row.selected = (row.selected + 1) % row.logits.len() as u32;
+            assert!(record
+                .validate(&a.episode, &hashes, &tampered, &a.terminal)
+                .is_err());
+            if forced {
+                // A fabricated scored singleton is refused.
+                let mut fabricated = a.decisions.clone();
+                let row = fabricated
+                    .iter_mut()
+                    .find(|r| r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER))
+                    .unwrap();
+                row.logits = vec![0f32.to_bits()];
+                assert!(record
+                    .validate(&a.episode, &hashes, &fabricated, &a.terminal)
+                    .is_err());
+            }
+        }
+    }
+}
+
+/// Admission refuses a receipt that disagrees with the declaration.
+#[test]
+fn legacy_admission_refuses_mismatched_receipts() {
+    let directory = std::env::temp_dir().join(format!(
+        "mtg-legacy-admission-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let net = FrozenPlayPolicyV1::training_fixture_v3();
+    let source = episode(0, None).opponent.unwrap();
+    let receipt = LegacyAdmissionV1 {
+        schema: LEGACY_ADMISSION_SCHEMA.into(),
+        member: "fixture".into(),
+        route: "strict".into(),
+        model_source: source.clone(),
+        expected_model: net.actual_model_identity_v1(),
+        v3_forced_actions: true,
+        v3_spell_target_reference_adapter: true,
+        registry_pins: vec![],
+        evidence: vec![],
+    };
+    let write = |name: &str, r: &LegacyAdmissionV1| {
+        let bytes = serde_json::to_vec(r).unwrap();
+        let path = directory.join(name);
+        std::fs::write(&path, &bytes).unwrap();
+        PinnedFileV1 {
+            path,
+            sha256: sha(&bytes),
+        }
+    };
+    let mut r14 = receipt.clone();
+    r14.route = "r14".into();
+    let mut flags = receipt.clone();
+    flags.v3_spell_target_reference_adapter = false;
+    let mut route = receipt.clone();
+    route.route = "unreviewed".into();
+    for (name, bad) in [
+        ("r14.json", &r14),
+        ("flags.json", &flags),
+        ("route.json", &route),
+    ] {
+        let admission = write(name, bad);
+        let error = admit_legacy(&source, true, true, &admission).err().unwrap();
+        assert_eq!(
+            error, "legacy opponent differs from its admission receipt",
+            "{name}"
+        );
+    }
+    std::fs::remove_dir_all(&directory).unwrap();
+}
