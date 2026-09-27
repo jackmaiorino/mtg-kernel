@@ -310,6 +310,7 @@ fn legacy_admission_refuses_mismatched_receipts() {
         member: "fixture".into(),
         route: "strict".into(),
         model_source: source.clone(),
+        model_source_sha256: sha(&serde_json::to_vec(&source).unwrap()),
         expected_model: net.actual_model_identity_v1(),
         v3_forced_actions: true,
         v3_spell_target_reference_adapter: true,
@@ -331,10 +332,13 @@ fn legacy_admission_refuses_mismatched_receipts() {
     flags.v3_spell_target_reference_adapter = false;
     let mut route = receipt.clone();
     route.route = "unreviewed".into();
+    let mut bytes = receipt.clone();
+    bytes.model_source_sha256 = "00".repeat(32);
     for (name, bad) in [
         ("r14.json", &r14),
         ("flags.json", &flags),
         ("route.json", &route),
+        ("bytes.json", &bytes),
     ] {
         let admission = write(name, bad);
         let error = admit_legacy(&source, true, true, &admission).err().unwrap();

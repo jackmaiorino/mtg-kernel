@@ -27,7 +27,9 @@ const OPPONENT_RECORD_SCHEMA: &str = "mtg-kernel-public-opponent-record/v1";
 pub(crate) const LEGACY_ADMISSION_SCHEMA: &str = "mtg-kernel-public-legacy-opponent-admission/v1";
 /// Sampler identity of an unscored V3 forced singleton row.
 pub(crate) const V3_FORCED_SINGLETON_SAMPLER: &str = "mtg-kernel-v3-forced-singleton/v1";
-const LEGACY_ROUTES: [&str; 3] = ["v3-frozen", "strict", "r14"];
+/// Admitted routes. The R14 registry route is refused until its acceptance
+/// is bound (CODEX #558: a matching receipt alone cannot admit it).
+const LEGACY_ROUTES: [&str; 2] = ["v3-frozen", "strict"];
 
 /// How one opponent row was produced.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +57,7 @@ pub(crate) struct OpponentRowV1 {
     substep_index: u32,
     actor: u8,
     legal_action_count: u32,
+    selected: u32,
     menu_sha256: String,
     form: OpponentRowFormV1,
 }
@@ -79,6 +82,9 @@ pub(crate) struct LegacyAdmissionV1 {
     pub(crate) member: String,
     pub(crate) route: String,
     pub(crate) model_source: ExpandedModelSourceV1,
+    /// SHA256 of `serde_json::to_vec(&model_source)`, the struct's own
+    /// field-order serialization; binds the embedded source bytes exactly.
+    pub(crate) model_source_sha256: String,
     pub(crate) expected_model: PlayModelIdentityV1,
     pub(crate) v3_forced_actions: bool,
     pub(crate) v3_spell_target_reference_adapter: bool,
@@ -127,8 +133,8 @@ fn admit_legacy(
     ensure(
         receipt.schema == LEGACY_ADMISSION_SCHEMA
             && LEGACY_ROUTES.contains(&receipt.route.as_str())
-            && (receipt.route != "r14" || !receipt.registry_pins.is_empty())
             && receipt.model_source == *source
+            && receipt.model_source_sha256 == sha(&serde_json::to_vec(source).map_err(err)?)
             && (
                 receipt.v3_forced_actions,
                 receipt.v3_spell_target_reference_adapter,
@@ -206,6 +212,7 @@ pub(crate) fn menu_sha256(
 fn row(
     session: &FastActorSessionV1,
     decision: FastActorDecisionV1,
+    selected: u32,
     form: OpponentRowFormV1,
 ) -> Result<OpponentRowV1, String> {
     Ok(OpponentRowV1 {
@@ -214,17 +221,22 @@ fn row(
         substep_index: decision.substep_index,
         actor: seat(decision.acting_player),
         legal_action_count: decision.legal_action_count,
+        selected,
         menu_sha256: menu_sha256(session, decision)?,
         form,
     })
 }
 
+fn digests(generation: &str) -> Option<(&'static str, &'static str)> {
+    match generation {
+        "v3" => Some((FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3)),
+        "v4" => Some((FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4)),
+        _ => None,
+    }
+}
+
 fn scored(generation: &str, observation: &str, width: usize) -> OpponentRowFormV1 {
-    let (contract, encoding) = if generation == "v3" {
-        (FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3)
-    } else {
-        (FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4)
-    };
+    let (contract, encoding) = digests(generation).expect("generation is v3 or v4");
     OpponentRowFormV1::Scored {
         generation: generation.into(),
         feature_contract_digest: contract.into(),
@@ -262,9 +274,15 @@ impl OpponentSeatV1 {
         rows: &mut Vec<OpponentRowV1>,
         session: &FastActorSessionV1,
         decision: FastActorDecisionV1,
+        selected: u32,
         width: usize,
     ) -> Result<(), String> {
-        rows.push(row(session, decision, scored("v4", "original", width))?);
+        rows.push(row(
+            session,
+            decision,
+            selected,
+            scored("v4", "original", width),
+        )?);
         Ok(())
     }
 
@@ -286,6 +304,7 @@ impl OpponentSeatV1 {
             rows.push(row(
                 session,
                 decision,
+                selected,
                 OpponentRowFormV1::UnscoredSingleton,
             )?);
             let unscored = FrozenPlayDecisionScoresV1 {
@@ -312,6 +331,7 @@ impl OpponentSeatV1 {
             rows.push(row(
                 session,
                 decision,
+                selected,
                 scored("v3", observation, scores.logits.len()),
             )?);
             return Ok((selected, scores, tensor, None));
@@ -320,6 +340,7 @@ impl OpponentSeatV1 {
         rows.push(row(
             session,
             decision,
+            selected,
             scored("v3", "original", scores.logits.len()),
         )?);
         Ok((
@@ -373,24 +394,43 @@ impl OpponentRecordV1 {
             let mut check = |row: &DecisionRecordV1| -> Result<SeatRowDrawV1, String> {
                 let r = rows.next().ok_or("opponent row has no record")?;
                 ensure(
-                    (r.step, r.physical_decision_id, r.substep_index, r.actor)
-                        == (
-                            row.step,
-                            row.physical_decision_id,
-                            row.substep_index,
-                            row.actor,
-                        ),
+                    (
+                        r.step,
+                        r.physical_decision_id,
+                        r.substep_index,
+                        r.actor,
+                        r.selected,
+                    ) == (
+                        row.step,
+                        row.physical_decision_id,
+                        row.substep_index,
+                        row.actor,
+                        row.selected,
+                    ) && r.menu_sha256.len() == 64
+                        && r.menu_sha256
+                            .bytes()
+                            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
                     "opponent row differs from its record",
                 )?;
                 match &r.form {
                     OpponentRowFormV1::Scored {
                         generation: g,
+                        feature_contract_digest,
+                        feature_encoding_digest,
+                        observation,
                         sampler_identity,
-                        ..
                     } => {
                         ensure(
                             r.legal_action_count as usize == row.logits.len()
                                 && g == generation
+                                && digests(g)
+                                    == Some((
+                                        feature_contract_digest.as_str(),
+                                        feature_encoding_digest.as_str(),
+                                    ))
+                                && (observation == "original"
+                                    || (observation == "spell_target_repaired"
+                                        && generation == "v3"))
                                 && row.sampler_identity == *sampler_identity
                                 && row.sampler_identity.as_deref()
                                     == decision_sampler_identity_v1(row.logits.len()),

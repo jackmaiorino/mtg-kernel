@@ -405,7 +405,7 @@ fn collect_with_opponent(
                                 policy.select_with_scores(&input).map_err(err)?;
                             let (tensor, public_rows) = policy.captured()?;
                             auxiliary.push(Some(public_rows.clone()));
-                            Seat::push_public_row(rows, &session, d, scores.logits.len())?;
+                            Seat::push_public_row(rows, &session, d, selected, scores.logits.len())?;
                             (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                         }
                         Seat::Legacy {
