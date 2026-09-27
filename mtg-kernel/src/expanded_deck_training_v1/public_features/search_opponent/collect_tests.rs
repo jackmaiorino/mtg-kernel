@@ -243,12 +243,14 @@ fn typed_search_failure_publishes_a_public_failure_record() {
         panic!("fixture has no live decision");
     };
     stale.step += 1;
+    // The wrapper plays whichever seat holds this fixture's first decision.
+    let searcher = seat(stale.acting_player);
     let mut net = FrozenPlayPolicyV1::training_fixture_v4();
     let mut search = SearchOpponentV1::new(
         &net,
         fixture_descriptor(&net),
         REVIEWED_DESCRIPTOR_SHA256.into(),
-        0,
+        searcher,
     )
     .unwrap();
     search.reset_for_game([1, 2], "failure-fixture").unwrap();
@@ -277,7 +279,7 @@ fn typed_search_failure_publishes_a_public_failure_record() {
         "mtg-kernel-public-search-opponent-failure/v1"
     );
     assert_eq!(record["episode_id"], "failure-fixture");
-    assert_eq!(record["seat"], 0);
+    assert_eq!(record["seat"], searcher);
     assert_eq!(record["step"], stale.step);
     assert_eq!(record["error"], "InvalidAdapterBinding");
     assert!(record.get("state").is_none());
