@@ -2689,9 +2689,10 @@ mod tests {
     fn a_raw_halt_keeps_its_reason_when_the_copy_cannot_take_the_same_step() {
         // Staging an Escape cast halts only the raw session (policy surface
         // v5 cannot represent it, which is why reset refuses Terror); the
-        // copy plays on. With these picks, Terror seed 1 stages one at step
-        // 112. There the copy is put one step ahead, so its own step fails:
-        // the game is over, and the raw session's reason must win.
+        // copy plays on. With these picks, Terror seed 1 stages one (at step
+        // 112 on this branch). There the copy is put one step ahead, so its
+        // own step fails: the game is over, and the raw session's reason
+        // must win.
         let (mut server, mut decision) = flat_v4_server_hosting("g-escape-1", "Terror", 1);
         let mut rng = crate::state::SplitMix64::seed(1);
         loop {
@@ -2720,7 +2721,6 @@ mod tests {
                 _ => None,
             };
             if let Some(reason) = raw_halt {
-                assert_eq!(current.step, 112);
                 // One step ahead, the copy cannot take this step.
                 let fast = game.flat_v4.as_mut().unwrap().fast_session_mut_for_test();
                 let crate::rl_session::FastActorResponseV1::Decision(expected) =

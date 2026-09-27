@@ -10,33 +10,39 @@ const USAGE: &str = "usage: spellbench_qualify_v1 --tournament-dir DIR --decisio
 /// 1 MiB).
 const WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
 
+fn usage() -> ! {
+    eprintln!("{USAGE}");
+    std::process::exit(2)
+}
+
 fn main() {
     let mut arguments = std::env::args().skip(1);
     let (mut tournament_dir, mut decision_log_dir, mut bot_configs) = (None, None, BTreeMap::new());
+    // A repeated flag, or a repeated bot name, is refused rather than
+    // letting the last one win silently.
     while let Some(flag) = arguments.next() {
-        let value = arguments.next().unwrap_or_else(|| {
-            eprintln!("{USAGE}");
-            std::process::exit(2)
-        });
+        let value = arguments.next().unwrap_or_else(|| usage());
         match flag.as_str() {
-            "--tournament-dir" => tournament_dir = Some(PathBuf::from(value)),
-            "--decision-log-dir" => decision_log_dir = Some(PathBuf::from(value)),
+            "--tournament-dir" if tournament_dir.is_none() => {
+                tournament_dir = Some(PathBuf::from(value))
+            }
+            "--decision-log-dir" if decision_log_dir.is_none() => {
+                decision_log_dir = Some(PathBuf::from(value))
+            }
             "--bot" => {
-                let (name, path) = value.split_once('=').unwrap_or_else(|| {
-                    eprintln!("{USAGE}");
-                    std::process::exit(2)
-                });
-                bot_configs.insert(name.to_string(), PathBuf::from(path));
+                let (name, path) = value.split_once('=').unwrap_or_else(|| usage());
+                if bot_configs
+                    .insert(name.to_string(), PathBuf::from(path))
+                    .is_some()
+                {
+                    usage()
+                }
             }
-            _ => {
-                eprintln!("{USAGE}");
-                std::process::exit(2)
-            }
+            _ => usage(),
         }
     }
     let (Some(tournament_dir), Some(decision_log_dir)) = (tournament_dir, decision_log_dir) else {
-        eprintln!("{USAGE}");
-        std::process::exit(2)
+        usage()
     };
     let args = SpellbenchQualificationArgsV1 {
         tournament_dir,
