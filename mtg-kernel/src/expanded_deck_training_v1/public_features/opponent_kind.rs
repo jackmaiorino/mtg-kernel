@@ -1,11 +1,16 @@
 //! Opt-in opponent kinds of the public collector (opponent kinds interface
 //! v1, docs/search_opponent_collection_v1.md): a recent public-input
-//! checkpoint, and Legacy V3 (declared, refused until its adapters land).
+//! checkpoint, and Legacy V3 admitted against a declared-identity receipt.
 //! Opponent rows never enter learner targets, normalization, entropy or
 //! gradients; the update keeps reading learner rows only.
 use super::search_opponent::{SearchBuildV1, SearchOpponentV1};
 use super::*;
+use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
 use crate::rl_session::FastActorDecisionV1;
+use crate::sideboard_play_policy_v1::public_inputs::{
+    select_forced_v3_for_evaluation, select_spell_adapter_v3_for_evaluation,
+};
+use crate::sideboard_play_policy_v1::{FrozenPlayDecisionScoresV1, PlayModelIdentityV1};
 
 #[cfg(test)]
 mod tests;
@@ -14,7 +19,15 @@ mod tests;
 /// public-input checkpoint; distinct so ordinary readers refuse it.
 pub(crate) const PUBLIC_CHECKPOINT_TRAJECTORY_SCHEMA: &str =
     "mtg-kernel-public-input-public-checkpoint-opponent-trajectory/v1";
+/// Outer schema of a public trajectory whose opponent seat was Legacy V3.
+pub(crate) const LEGACY_TRAJECTORY_SCHEMA: &str =
+    "mtg-kernel-public-input-legacy-opponent-trajectory/v1";
 const OPPONENT_RECORD_SCHEMA: &str = "mtg-kernel-public-opponent-record/v1";
+/// Declared-identity receipt admitting one Legacy V3 opponent.
+pub(crate) const LEGACY_ADMISSION_SCHEMA: &str = "mtg-kernel-public-legacy-opponent-admission/v1";
+/// Sampler identity of an unscored V3 forced singleton row.
+pub(crate) const V3_FORCED_SINGLETON_SAMPLER: &str = "mtg-kernel-v3-forced-singleton/v1";
+const LEGACY_ROUTES: [&str; 3] = ["v3-frozen", "strict", "r14"];
 
 /// How one opponent row was produced.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +41,9 @@ pub(crate) enum OpponentRowFormV1 {
         observation: String,
         sampler_identity: Option<String>,
     },
+    /// V3 forced singleton: no forward pass; the row holds no logits and no
+    /// tensor, and one draw from the seat stream selects action 0.
+    UnscoredSingleton,
 }
 
 /// Binding of one opponent decision to its row and ordered legal menu.
@@ -54,6 +70,24 @@ pub(crate) struct OpponentRecordV1 {
     rows: Vec<OpponentRowV1>,
 }
 
+/// Declared-identity receipt for one Legacy V3 opponent: the frozen V3 from
+/// the D3 envelope, or a V3-transfer import from opus-panel-export.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LegacyAdmissionV1 {
+    pub(crate) schema: String,
+    pub(crate) member: String,
+    pub(crate) route: String,
+    pub(crate) model_source: ExpandedModelSourceV1,
+    pub(crate) expected_model: PlayModelIdentityV1,
+    pub(crate) v3_forced_actions: bool,
+    pub(crate) v3_spell_target_reference_adapter: bool,
+    #[serde(default)]
+    pub(crate) registry_pins: Vec<PinnedFileV1>,
+    #[serde(default)]
+    pub(crate) evidence: Vec<PinnedFileV1>,
+}
+
 /// The opponent seat of one public-collector game.
 pub(crate) enum OpponentSeatV1 {
     /// Ordinary V4 net, or the unchanged D3 wrapper around it.
@@ -68,6 +102,52 @@ pub(crate) enum OpponentSeatV1 {
         identity: Value,
         rows: Vec<OpponentRowV1>,
     },
+    /// Legacy V3 through the evaluator's adapter functions, in its order.
+    Legacy {
+        policy: FrozenPlayPolicyV1,
+        identity: Value,
+        forced: bool,
+        spell_adapter: bool,
+        rows: Vec<OpponentRowV1>,
+    },
+}
+
+/// Checks a Legacy declaration against its admission receipt, then loads it
+/// and verifies generation, observation successor and model identity. A
+/// receipt with adapter flags true/true is not by itself authorization: the
+/// member, route, source and model must all agree.
+fn admit_legacy(
+    source: &ExpandedModelSourceV1,
+    forced: bool,
+    spell_adapter: bool,
+    admission: &PinnedFileV1,
+) -> Result<(FrozenPlayPolicyV1, Value), String> {
+    let receipt: LegacyAdmissionV1 =
+        serde_json::from_slice(&read_pinned_bytes(admission)?).map_err(err)?;
+    ensure(
+        receipt.schema == LEGACY_ADMISSION_SCHEMA
+            && LEGACY_ROUTES.contains(&receipt.route.as_str())
+            && (receipt.route != "r14" || !receipt.registry_pins.is_empty())
+            && receipt.model_source == *source
+            && (
+                receipt.v3_forced_actions,
+                receipt.v3_spell_target_reference_adapter,
+            ) == (forced, spell_adapter),
+        "legacy opponent differs from its admission receipt",
+    )?;
+    let (policy, identity) = load_expanded_inference_v1(source)?;
+    ensure(
+        policy.feature_generation_v1() == PlayPolicyGenerationV1::V3
+            && policy.uses_observation_successor_v3()
+            && identity.model == receipt.expected_model,
+        "legacy opponent must load as the admitted V3 model",
+    )?;
+    let effective = json!({
+        "schema": "legacy-collection-model/v1", "member": receipt.member, "route": receipt.route,
+        "admission": admission, "identity": identity,
+        "v3_forced_actions": forced, "v3_spell_target_reference_adapter": spell_adapter,
+    });
+    Ok((policy, effective))
 }
 
 /// Loads an opt-in opponent kind; every refusal happens before collection.
@@ -80,8 +160,7 @@ pub(crate) fn load_seat(
         ExpandedOpponentKindV1::PublicCheckpoint { config, checkpoint } => {
             let (policy, identity) = load_for_evaluation(config, checkpoint)?;
             ensure(
-                policy.feature_generation_v1()
-                    == crate::paired_bo1_harness_v1::PlayPolicyGenerationV1::V4,
+                policy.feature_generation_v1() == PlayPolicyGenerationV1::V4,
                 "public-checkpoint opponent must be V4",
             )?;
             Ok(OpponentSeatV1::PublicCheckpoint {
@@ -90,8 +169,25 @@ pub(crate) fn load_seat(
                 rows: Vec::new(),
             })
         }
-        ExpandedOpponentKindV1::Legacy { .. } => {
-            Err("legacy V3 opponents are declared but not admitted by this build".into())
+        ExpandedOpponentKindV1::Legacy {
+            source,
+            v3_forced_actions,
+            v3_spell_target_reference_adapter,
+            admission,
+        } => {
+            let (policy, identity) = admit_legacy(
+                source,
+                *v3_forced_actions,
+                *v3_spell_target_reference_adapter,
+                admission,
+            )?;
+            Ok(OpponentSeatV1::Legacy {
+                policy,
+                identity,
+                forced: *v3_forced_actions,
+                spell_adapter: *v3_spell_target_reference_adapter,
+                rows: Vec::new(),
+            })
         }
     }
 }
@@ -107,6 +203,47 @@ pub(crate) fn menu_sha256(
     Ok(sha(&serde_json::to_vec(&menu).map_err(err)?))
 }
 
+fn row(
+    session: &FastActorSessionV1,
+    decision: FastActorDecisionV1,
+    form: OpponentRowFormV1,
+) -> Result<OpponentRowV1, String> {
+    Ok(OpponentRowV1 {
+        step: decision.step,
+        physical_decision_id: decision.physical_decision_id,
+        substep_index: decision.substep_index,
+        actor: seat(decision.acting_player),
+        legal_action_count: decision.legal_action_count,
+        menu_sha256: menu_sha256(session, decision)?,
+        form,
+    })
+}
+
+fn scored(generation: &str, observation: &str, width: usize) -> OpponentRowFormV1 {
+    let (contract, encoding) = if generation == "v3" {
+        (FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3)
+    } else {
+        (FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4)
+    };
+    OpponentRowFormV1::Scored {
+        generation: generation.into(),
+        feature_contract_digest: contract.into(),
+        feature_encoding_digest: encoding.into(),
+        observation: observation.into(),
+        sampler_identity: decision_sampler_identity_v1(width).map(str::to_owned),
+    }
+}
+
+/// One opponent decision of a tensor-recording kind: the chosen action, its
+/// scores and tensor (empty for an unscored singleton) and the row's sampler
+/// identity when it is not the ordinary one of its width.
+pub(super) type OpponentChoiceV1 = (
+    u32,
+    FrozenPlayDecisionScoresV1,
+    TensorBitsV1,
+    Option<String>,
+);
+
 impl OpponentSeatV1 {
     pub(crate) fn outer_schema(&self) -> &'static str {
         match self {
@@ -115,6 +252,7 @@ impl OpponentSeatV1 {
             } => super::search_opponent::SEARCH_OPPONENT_TRAJECTORY_SCHEMA,
             Self::Net { search: None, .. } => "mtg-kernel-public-input-trajectory/v1",
             Self::PublicCheckpoint { .. } => PUBLIC_CHECKPOINT_TRAJECTORY_SCHEMA,
+            Self::Legacy { .. } => LEGACY_TRAJECTORY_SCHEMA,
         }
     }
 
@@ -126,30 +264,78 @@ impl OpponentSeatV1 {
         decision: FastActorDecisionV1,
         width: usize,
     ) -> Result<(), String> {
-        rows.push(OpponentRowV1 {
-            step: decision.step,
-            physical_decision_id: decision.physical_decision_id,
-            substep_index: decision.substep_index,
-            actor: seat(decision.acting_player),
-            legal_action_count: decision.legal_action_count,
-            menu_sha256: menu_sha256(session, decision)?,
-            form: OpponentRowFormV1::Scored {
-                generation: "v4".into(),
-                feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
-                feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
-                observation: "original".into(),
-                sampler_identity: decision_sampler_identity_v1(width).map(str::to_owned),
-            },
-        });
+        rows.push(row(session, decision, scored("v4", "original", width))?);
         Ok(())
+    }
+
+    /// The evaluator's Legacy precedence: the forced singleton adapter first
+    /// (when enabled), then the spell-target adapter (when enabled), then
+    /// ordinary V3 scoring. Each consumes exactly one draw from the physical
+    /// actor's continuing stream, singletons included.
+    pub(super) fn legacy_decide(
+        policy: &mut FrozenPlayPolicyV1,
+        forced: bool,
+        spell_adapter: bool,
+        rows: &mut Vec<OpponentRowV1>,
+        session: &FastActorSessionV1,
+        decision: FastActorDecisionV1,
+    ) -> Result<OpponentChoiceV1, String> {
+        let input = PairedBo1PolicyInputV1::new(session, decision);
+        if forced && decision.legal_action_count == 1 {
+            let selected = select_forced_v3_for_evaluation(policy, &input).map_err(err)?;
+            rows.push(row(
+                session,
+                decision,
+                OpponentRowFormV1::UnscoredSingleton,
+            )?);
+            let unscored = FrozenPlayDecisionScoresV1 {
+                logits: Vec::new(),
+                value: 0.0,
+            };
+            return Ok((
+                selected,
+                unscored,
+                TensorBitsV1::empty(),
+                Some(V3_FORCED_SINGLETON_SAMPLER.into()),
+            ));
+        }
+        if spell_adapter {
+            let (selected, scores, repaired) =
+                select_spell_adapter_v3_for_evaluation(policy, &input).map_err(err)?;
+            let tensor =
+                TensorBitsV1::from_tensor(&policy.last_scored_training_tensor_v3()?.common);
+            let observation = if repaired {
+                "spell_target_repaired"
+            } else {
+                "original"
+            };
+            rows.push(row(
+                session,
+                decision,
+                scored("v3", observation, scores.logits.len()),
+            )?);
+            return Ok((selected, scores, tensor, None));
+        }
+        let (selected, scores, tensor) = policy.select_with_training_tensor_v3(session)?;
+        rows.push(row(
+            session,
+            decision,
+            scored("v3", "original", scores.logits.len()),
+        )?);
+        Ok((
+            selected,
+            scores,
+            TensorBitsV1::from_tensor(&tensor.common),
+            None,
+        ))
     }
 }
 
 impl OpponentRecordV1 {
-    pub(crate) fn public_checkpoint(seat: u8, identity: Value, rows: Vec<OpponentRowV1>) -> Self {
+    pub(crate) fn new(kind: &str, seat: u8, identity: Value, rows: Vec<OpponentRowV1>) -> Self {
         Self {
             schema: OPPONENT_RECORD_SCHEMA.into(),
-            kind: "public_checkpoint".into(),
+            kind: kind.into(),
             seat,
             effective_identity: identity,
             build: SearchBuildV1::current(),
@@ -158,7 +344,8 @@ impl OpponentRecordV1 {
     }
 
     /// Learner rows replay the behavior sampler as usual; each opponent row
-    /// must match its record in order and replays one draw from its seat.
+    /// must match its record in order and replays exactly one draw from its
+    /// seat (over a single logit for an unscored singleton).
     pub(super) fn validate(
         &self,
         episode: &ExpandedEpisodeV1,
@@ -166,13 +353,18 @@ impl OpponentRecordV1 {
         decisions: &[DecisionRecordV1],
         terminal: &RlSessionTerminalV1,
     ) -> Result<(), String> {
+        let (kind, generation, singletons) = match &episode.opponent_kind {
+            Some(ExpandedOpponentKindV1::PublicCheckpoint { .. }) => {
+                ("public_checkpoint", "v4", false)
+            }
+            Some(ExpandedOpponentKindV1::Legacy {
+                v3_forced_actions, ..
+            }) => ("legacy", "v3", *v3_forced_actions),
+            None => return Err("opponent record without an opponent kind".into()),
+        };
         ensure(
             self.schema == OPPONENT_RECORD_SCHEMA
-                && self.kind == "public_checkpoint"
-                && matches!(
-                    episode.opponent_kind,
-                    Some(ExpandedOpponentKindV1::PublicCheckpoint { .. })
-                )
+                && self.kind == kind
                 && self.seat == 1 - episode.learner_seat,
             "opponent record identity differs from its episode",
         )?;
@@ -180,11 +372,6 @@ impl OpponentRecordV1 {
         {
             let mut check = |row: &DecisionRecordV1| -> Result<SeatRowDrawV1, String> {
                 let r = rows.next().ok_or("opponent row has no record")?;
-                let OpponentRowFormV1::Scored {
-                    generation,
-                    sampler_identity,
-                    ..
-                } = &r.form;
                 ensure(
                     (r.step, r.physical_decision_id, r.substep_index, r.actor)
                         == (
@@ -192,15 +379,39 @@ impl OpponentRecordV1 {
                             row.physical_decision_id,
                             row.substep_index,
                             row.actor,
-                        )
-                        && r.legal_action_count as usize == row.logits.len()
-                        && generation == "v4"
-                        && row.sampler_identity == *sampler_identity
-                        && row.sampler_identity.as_deref()
-                            == decision_sampler_identity_v1(row.logits.len()),
+                        ),
                     "opponent row differs from its record",
                 )?;
-                Ok(SeatRowDrawV1::Logits)
+                match &r.form {
+                    OpponentRowFormV1::Scored {
+                        generation: g,
+                        sampler_identity,
+                        ..
+                    } => {
+                        ensure(
+                            r.legal_action_count as usize == row.logits.len()
+                                && g == generation
+                                && row.sampler_identity == *sampler_identity
+                                && row.sampler_identity.as_deref()
+                                    == decision_sampler_identity_v1(row.logits.len()),
+                            "opponent row differs from its record",
+                        )?;
+                        Ok(SeatRowDrawV1::Logits)
+                    }
+                    OpponentRowFormV1::UnscoredSingleton => {
+                        ensure(
+                            singletons
+                                && r.legal_action_count == 1
+                                && row.selected == 0
+                                && row.logits.is_empty()
+                                && row.tensor.is_empty()
+                                && row.sampler_identity.as_deref()
+                                    == Some(V3_FORCED_SINGLETON_SAMPLER),
+                            "unscored singleton row differs from its record",
+                        )?;
+                        Ok(SeatRowDrawV1::Singleton)
+                    }
+                }
             };
             let check: SeatRowCheckV1<'_> = &mut check;
             validate_episode_records_with_search_v1(
@@ -217,9 +428,9 @@ impl OpponentRecordV1 {
 }
 
 /// Identity receipt for a run whose schedule declares opt-in opponent kinds:
-/// each distinct declaration is loaded once before collection (so a bad pin
-/// or an unadmitted kind stops the run early) and its effective identity is
-/// bound with the build and executable. None when the run declares none.
+/// each distinct declaration is loaded and admitted once before collection
+/// (so a bad pin or receipt stops the run early) and its effective identity
+/// is bound with the build and executable. None when the run declares none.
 pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option<Value>, String> {
     let mut kinds: Vec<&ExpandedOpponentKindV1> = Vec::new();
     let mut episodes = 0usize;
@@ -246,10 +457,24 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
                     "sampler": "ordinary behavior sampler of each menu width",
                 }));
             }
-            ExpandedOpponentKindV1::Legacy { .. } => {
-                return Err(
-                    "legacy V3 opponents are declared but not admitted by this build".into(),
-                )
+            ExpandedOpponentKindV1::Legacy {
+                source,
+                v3_forced_actions,
+                v3_spell_target_reference_adapter,
+                admission,
+            } => {
+                let (_, identity) = admit_legacy(
+                    source,
+                    *v3_forced_actions,
+                    *v3_spell_target_reference_adapter,
+                    admission,
+                )?;
+                entries.push(json!({
+                    "kind": "legacy", "source": source, "admission": admission,
+                    "effective_identity": identity,
+                    "adapter_version": "evaluator precedence: forced singleton, spell-target adapter, ordinary V3",
+                    "sampler": "ordinary behavior sampler of each menu width; one draw over a single logit for forced singletons",
+                }));
             }
         }
     }

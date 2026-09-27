@@ -662,6 +662,41 @@ fn floats(values: &[u32]) -> Vec<f32> {
     values.iter().map(|x| f32::from_bits(*x)).collect()
 }
 impl TensorBitsV1 {
+    /// No tensor at all: an unscored V3 forced singleton records none.
+    fn empty() -> Self {
+        Self {
+            state: Vec::new(),
+            object_features: Vec::new(),
+            object_card_ids: Vec::new(),
+            object_groups: Vec::new(),
+            object_node_ids: Vec::new(),
+            edge_features: Vec::new(),
+            edge_source_indices: Vec::new(),
+            edge_target_indices: Vec::new(),
+            action_features: Vec::new(),
+            action_ref_features: Vec::new(),
+            action_ref_card_ids: Vec::new(),
+            action_ref_action_indices: Vec::new(),
+            action_ref_node_indices: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.state.is_empty()
+            && self.object_features.is_empty()
+            && self.object_card_ids.is_empty()
+            && self.object_groups.is_empty()
+            && self.object_node_ids.is_empty()
+            && self.edge_features.is_empty()
+            && self.edge_source_indices.is_empty()
+            && self.edge_target_indices.is_empty()
+            && self.action_features.is_empty()
+            && self.action_ref_features.is_empty()
+            && self.action_ref_card_ids.is_empty()
+            && self.action_ref_action_indices.is_empty()
+            && self.action_ref_node_indices.is_empty()
+    }
+
     /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
     /// specifically: `NativeFlatDecisionTensorV3` and `NativeFlatDecisionTensorV4`
     /// are both byte-identical `{ common: NativeFlatDecisionTensorV2 }`

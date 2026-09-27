@@ -276,6 +276,10 @@ fn collect_with_opponent(
                 episode.opponent_kind,
                 Some(ExpandedOpponentKindV1::PublicCheckpoint { .. })
             ),
+            Seat::Legacy { .. } => matches!(
+                episode.opponent_kind,
+                Some(ExpandedOpponentKindV1::Legacy { .. })
+            ),
         },
         "opponent dispatch differs from its episode",
     )?;
@@ -291,6 +295,7 @@ fn collect_with_opponent(
             }
         }
         Seat::PublicCheckpoint { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
+        Seat::Legacy { policy, .. } => policy.reset_for_game_v1(seeds).map_err(err)?,
     }
     let mut decisions = Vec::new();
     let mut auxiliary = Vec::new();
@@ -310,7 +315,18 @@ fn collect_with_opponent(
                     Seat::PublicCheckpoint { identity, rows, .. } => (
                         None,
                         None,
-                        Some(opponent_kind::OpponentRecordV1::public_checkpoint(
+                        Some(opponent_kind::OpponentRecordV1::new(
+                            "public_checkpoint",
+                            1 - episode.learner_seat,
+                            identity,
+                            rows,
+                        )),
+                    ),
+                    Seat::Legacy { identity, rows, .. } => (
+                        None,
+                        None,
+                        Some(opponent_kind::OpponentRecordV1::new(
+                            "legacy",
                             1 - episode.learner_seat,
                             identity,
                             rows,
@@ -391,6 +407,25 @@ fn collect_with_opponent(
                             auxiliary.push(Some(public_rows.clone()));
                             Seat::push_public_row(rows, &session, d, scores.logits.len())?;
                             (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        }
+                        Seat::Legacy {
+                            policy,
+                            forced,
+                            spell_adapter,
+                            rows,
+                            ..
+                        } => {
+                            let (selected, scores, tensor, identity) = Seat::legacy_decide(
+                                policy,
+                                *forced,
+                                *spell_adapter,
+                                rows,
+                                &session,
+                                d,
+                            )?;
+                            auxiliary.push(None);
+                            sampler_identity = identity;
+                            (selected, scores, tensor)
                         }
                     }
                 };
