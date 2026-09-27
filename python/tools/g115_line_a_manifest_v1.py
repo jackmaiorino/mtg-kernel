@@ -93,7 +93,9 @@ PENDING_CONTRACTS = (
 NOT_TRAINABLE = {
     'v3': 'public_feature_training_v1 accepts only V4 opponents and has no V3 adapters '
           '(public_features.rs:207-210); ownerless-blocker entry filed by Codex (CODEX #523)',
-    'd3-wrapper': 'D3 wrapper as training opponent: opus-search-opponent lane (opponent_search pin, CODEX #521)',
+    'd3-wrapper': 'D3 wrapper as training opponent: opus-search-opponent lane; episode opponent is the g115 source '
+                  'plus opponent_search = the reviewed descriptor pin (CLAUDE #449, CODEX #521); code and '
+                  'collector qualification pending',
     'recent': 'public-input checkpoints are evaluation-only; the training opponent loader reads only ordinary '
               'expanded-deck checkpoints (expanded_deck_training_v1.rs:862-875); owner not yet named',
     'population': 'V3-transfer archival import; public_feature_training_v1 accepts only V4 opponents',
@@ -275,7 +277,10 @@ def native_match(job, packet):
                            packet['postboard'][by_seat[1] + '|' + by_seat[0]]])
 
 
-def draft_roster(g115_source, panel_imports=None):
+RECENT_BINDINGS_SCHEMA = 'g115-line-a-recent-bindings/v1'
+
+
+def draft_roster(g115_source, panel_imports=None, recent_bindings=None):
     """The ruling's roster as a DRAFT (not the frozen declaration): order, weights and exposure stay Codex's."""
     def pending(reason):
         return dict(status='pending', reason=reason)
@@ -290,13 +295,25 @@ def draft_roster(g115_source, panel_imports=None):
              evaluation=dict(status='bound', source=dict(kind='information_set_search_v3', source=g115_source,
                                                          descriptor=SEARCH_DESCRIPTOR)),
              training=pending(NOT_TRAINABLE['d3-wrapper']))]
+    bindings = {}
+    if recent_bindings is not None:
+        require(recent_bindings['schema'] == RECENT_BINDINGS_SCHEMA, 'Wrong recent bindings schema')
+        bindings = {m['id']: m for m in recent_bindings['members']}
     for member_id, (replica, arm, checkpoint) in RECENT_ENDPOINTS.items():
         root = 'E:/mtg-postboard-campaign-20260921/control-variance-002/%s' % replica
+        evaluation = dict(status='pending', checkpoint=dict(
+            path='%s/endpoints/%s/checkpoint.json' % (root, arm), sha256=checkpoint),
+            reason='public_checkpoint source needs its run config pin (CODEX #529 packet not supplied)')
+        binding = bindings.get(member_id)
+        if binding is not None:
+            source = binding['evaluation_source']
+            require(source['kind'] == 'public_checkpoint' and source['checkpoint']['sha256'] == checkpoint,
+                    'Recent binding differs from the ruling endpoint: ' + member_id)
+            # Raw config-file and checkpoint semantic config hashes are different domains (CODEX #529).
+            evaluation = dict(status='bound', source=source, optimizer=binding['optimizer'],
+                              semantic_config_sha256=binding['checkpoint_semantic_config_sha256'])
         members.append(dict(id=member_id, role='recent', scope='full',
-                            lineage='g115 continuation %s/%s' % (replica, arm),
-                            evaluation=dict(status='pending', checkpoint=dict(
-                                path='%s/endpoints/%s/checkpoint.json' % (root, arm), sha256=checkpoint),
-                                reason='public_checkpoint source needs its run config pin from the declaration'),
+                            lineage='g115 continuation %s/%s' % (replica, arm), evaluation=evaluation,
                             training=pending(NOT_TRAINABLE['recent'])))
     for role, slots in (('population', POPULATION_SLOTS), ('august', AUGUST_SLOTS)):
         for slot in slots:
@@ -311,9 +328,7 @@ def draft_roster(g115_source, panel_imports=None):
             members.append(dict(id='%s/%s' % (role, slot), role=role, scope='rally',
                                 lineage=ARCHIVAL_LINEAGE[slot], evaluation=evaluation,
                                 training=pending(NOT_TRAINABLE[role])))
-    members.append(dict(id='holdout/b-block48', role='holdout', scope='full', lineage='campaign-002 b',
-                        evaluation=pending('R7: enters only if Codex confirms canonical registrations'),
-                        training=pending('never a training opponent')))
+    # R7: version 1 has no holdout; b/block48 is a declared g115 ancestor (CODEX #530).
     roles = {role: [m['id'] for m in members if m['role'] == role] for role in ROLES}
     return dict(schema=ROSTER_SCHEMA, frozen=False, version=1, template=TEMPLATE,
                 basis='DIRECTOR-RULINGS-20260927.md R2, R3, R7 (draft order; the declaration fixes order, '
@@ -511,7 +526,8 @@ def build(seed_manifest, template, roster, imports_sha256=None):
                                                               imports_sha256)
         result['screen_training' + suffix] = screen_training_manifest(seed_manifest, template, roster, composition,
                                                                       imports_sha256)
-        for holdout in (False, True):
+        holdouts = (False, True) if any(m['role'] == 'holdout' for m in roster['members']) else (False,)
+        for holdout in holdouts:
             name = 'screen_evaluation' + suffix + ('_holdout' if holdout else '')
             result[name] = screen_evaluation_manifest(seed_manifest, packet, roster, composition, learner, holdout,
                                                       imports_sha256)
@@ -524,6 +540,7 @@ def main():
     parser.add_argument('--template', type=Path, default=Path(TEMPLATE['path']))
     parser.add_argument('--roster', type=Path, help='Frozen g115-line-a-roster/v1 manifest; default: ruling draft')
     parser.add_argument('--panel-imports', type=Path, help='mtg-kernel-line-a-panel-imports/v1 manifest')
+    parser.add_argument('--recent-bindings', type=Path, help='g115-line-a-recent-bindings/v1 packet (CODEX #529)')
     parser.add_argument('--out', type=Path, help='Fresh directory for the dry-run manifests')
     args = parser.parse_args()
     template = load_template(args.template)
@@ -532,7 +549,9 @@ def main():
         imports = json.loads(args.panel_imports.read_bytes())
         imports_sha256 = file_sha256(args.panel_imports)
         require(imports['schema'] == 'mtg-kernel-line-a-panel-imports/v1', 'Wrong panel import schema')
-    roster = json.loads(args.roster.read_bytes()) if args.roster else draft_roster(template['source'], imports)
+    bindings = json.loads(args.recent_bindings.read_bytes()) if args.recent_bindings else None
+    roster = json.loads(args.roster.read_bytes()) if args.roster else draft_roster(template['source'], imports,
+                                                                                    bindings)
     result = build(seeds.load_seed_manifest(args.seed_manifest), template, roster, imports_sha256)
     if args.out:
         args.out.mkdir(parents=True)

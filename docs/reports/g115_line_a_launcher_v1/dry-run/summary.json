@@ -6,13 +6,13 @@
     "blocking": 0
   },
   "roster": {
-    "sha256": "c7338abd5301a0056aa2a32f2334b8b775006412a97b946696713acfec2242dd",
+    "sha256": "0ec8ff2b224b9954b2f56c27edc366de86ebcb98439c20ee2fdf30fdfc525c07",
     "counts": null,
     "launchable": null,
     "blocking": 0
   },
   "calibration_E": {
-    "sha256": "9803ea0b4c98396986016849b7b039eae405e900ac818656f6c3404f39e47cd0",
+    "sha256": "dea44813fbd1f392526ebef0d3fc7e9625a8e72722178ee076bdb8b4fea9383e",
     "counts": {
       "bo3": 3200,
       "full_members": 6,
@@ -21,10 +21,10 @@
       "seats": 2
     },
     "launchable": false,
-    "blocking": 19
+    "blocking": 15
   },
   "screen_training_E": {
-    "sha256": "112fc0752e04de68e13f1da1989194a82dcdd1584d700071edfeca4005032c8d",
+    "sha256": "a8fc9c0368eb82f8f8f530a2c198e4f116b29855eea4662b74d8b6027bc5d5a1",
     "counts": {
       "runs": 4,
       "games": 8000
@@ -33,27 +33,17 @@
     "blocking": 22
   },
   "screen_evaluation_E": {
-    "sha256": "2b85213ed798f7ad6b95af37e81c1f94eea834d19fd0bff0c6e9f4d1a82c8efa",
+    "sha256": "fa1c3e9e90620b7bba55f2b5780c7f1bc71e92be73c3139d3863a966f89d7d94",
     "counts": {
       "bo3": 16000,
       "endpoints": 5,
       "per_endpoint": 3200
     },
     "launchable": false,
-    "blocking": 23
-  },
-  "screen_evaluation_E_holdout": {
-    "sha256": "0f4a2df08fa9b3f0c7947bc50bc185ab78cbc4a392fadebefb135d552d82b6ad",
-    "counts": {
-      "bo3": 18240,
-      "endpoints": 5,
-      "per_endpoint": 3648
-    },
-    "launchable": false,
-    "blocking": 24
+    "blocking": 19
   },
   "calibration_B": {
-    "sha256": "51c1c40685c7ad8ddf2af3a36c071d99abcfe3de6eed4d5c091f6d6b1e9b8f11",
+    "sha256": "cbbd83ff6aac0c02a34d17986b27de889839695de98cbaef5a1c67e1f70d19ef",
     "counts": {
       "bo3": 2688,
       "full_members": 6,
@@ -62,10 +52,10 @@
       "seats": 2
     },
     "launchable": false,
-    "blocking": 11
+    "blocking": 7
   },
   "screen_training_B": {
-    "sha256": "9911da16bd123daee6172e517d2974baba1132c4a15f44e85738530b40f97cad",
+    "sha256": "ced84aae90e7d8a8a2bb8a74836c47ac9afda6dedb6aea2660c598625e506a64",
     "counts": {
       "runs": 4,
       "games": 8000
@@ -74,24 +64,15 @@
     "blocking": 14
   },
   "screen_evaluation_B": {
-    "sha256": "e372cad8eb9d5231e04752c131e8192d4354930bd0a525c9b97c166d00a79511",
+    "sha256": "5fbfced4ae379ed3dccf67be6e7b175eb9808623015763e12a544eb41f9246f9",
     "counts": {
       "bo3": 13440,
       "endpoints": 5,
       "per_endpoint": 2688
     },
     "launchable": false,
-    "blocking": 15
+    "blocking": 11
   },
-  "screen_evaluation_B_holdout": {
-    "sha256": "c096f13d0c878787988b67f4e1285824fcbf66289f648c4f8fdf8cac9d60f5df",
-    "counts": {
-      "bo3": 15680,
-      "endpoints": 5,
-      "per_endpoint": 3136
-    },
-    "launchable": false,
-    "blocking": 16
-  },
-  "panel_imports_sha256": "4f7f9acdac002ad100474acc160ccab89c6b0c7c4bb9ebc1ebed98572ed89f8b"
+  "panel_imports_sha256": "4f7f9acdac002ad100474acc160ccab89c6b0c7c4bb9ebc1ebed98572ed89f8b",
+  "recent_bindings_sha256": "184eb7f5137059faa000b4c4d9b013ec22d227555f81ffb93f2f706f69820c5f"
 }

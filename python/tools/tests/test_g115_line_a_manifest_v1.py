@@ -86,16 +86,25 @@ class ManifestTests(unittest.TestCase):
 
     def test_counts_are_the_ruling_counts_for_both_compositions(self):
         self.assertEqual((manifest.PER_FULL_MEMBER, manifest.PER_RALLY_MEMBER), (448, 64))
-        expected = {'E': (3200, 16000, 18240), 'B': (2688, 13440, 15680)}
-        for composition, (calibration, screen, with_holdout) in expected.items():
+        expected = {'E': (3200, 16000), 'B': (2688, 13440)}
+        for composition, (calibration, screen) in expected.items():
             with self.subTest(composition=composition):
                 self.assertEqual(self.result['calibration_' + composition]['counts']['bo3'], calibration)
                 self.assertEqual(self.result['screen_evaluation_' + composition]['counts'],
                                  dict(bo3=screen, endpoints=5, per_endpoint=calibration))
-                self.assertEqual(self.result['screen_evaluation_%s_holdout' % composition]['counts']['bo3'],
-                                 with_holdout)
-                self.assertEqual(with_holdout - screen, 2240)
+                self.assertNotIn('screen_evaluation_%s_holdout' % composition, self.result)  # CODEX #530
                 self.assertEqual(self.result['screen_training_' + composition]['counts'], dict(runs=4, games=8000))
+
+    def test_a_declared_holdout_adds_448_bo3_per_endpoint(self):
+        roster = copy.deepcopy(self.roster)
+        roster['members'].append(dict(id='holdout/x', role='holdout', scope='full', lineage='other lineage',
+                                      evaluation=dict(status='pending', reason='test'),
+                                      training=dict(status='pending', reason='never')))
+        roster['roles']['holdout'] = ['holdout/x']
+        result = manifest.build(self.seed_manifest, self.template, roster)
+        self.assertEqual(result['screen_evaluation_E_holdout']['counts']['bo3'], 18240)
+        self.assertEqual(result['screen_evaluation_B_holdout']['counts']['bo3'], 15680)
+        self.assertEqual(result['calibration_E']['counts']['bo3'], 3200)
         self.assertEqual(self.result['calibration_E']['counts']['full_members'], 6)
         self.assertEqual(self.result['calibration_E']['counts']['rally_members'], 8)
         self.assertEqual(self.result['calibration_B']['counts']['rally_members'], 0)
@@ -139,7 +148,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_draft_roster_follows_the_ruling_roles(self):
         roles = collections.Counter(m['role'] for m in self.roster['members'])
-        self.assertEqual(roles, {'v3': 1, 'd3-wrapper': 1, 'recent': 4, 'population': 4, 'august': 4, 'holdout': 1})
+        self.assertEqual(roles, {'v3': 1, 'd3-wrapper': 1, 'recent': 4, 'population': 4, 'august': 4})
         self.assertFalse(self.roster['frozen'])
         v3 = self.roster['members'][0]
         self.assertEqual(v3['evaluation']['source']['v3_forced_actions'], True)
@@ -151,6 +160,23 @@ class ManifestTests(unittest.TestCase):
         current = [m for m in bound['members'] if m['id'] == 'population/current-1'][0]
         self.assertEqual(current['evaluation']['status'], 'bound')
 
+    def test_recent_bindings_bind_public_checkpoint_sources(self):
+        members = []
+        for member_id, (replica, arm, checkpoint) in manifest.RECENT_ENDPOINTS.items():
+            members.append(dict(id=member_id, checkpoint_semantic_config_sha256='d' * 64,
+                                optimizer=dict(path='E:/o/%s.json' % arm, sha256='e' * 64),
+                                evaluation_source=dict(kind='public_checkpoint',
+                                                       config=dict(path='E:/c/%s.json' % arm, sha256='c' * 64),
+                                                       checkpoint=dict(path='E:/k/%s.json' % arm, sha256=checkpoint))))
+        packet = dict(schema=manifest.RECENT_BINDINGS_SCHEMA, members=members)
+        roster = manifest.draft_roster(self.template['source'], None, packet)
+        recent = [m for m in roster['members'] if m['role'] == 'recent']
+        self.assertEqual({m['evaluation']['status'] for m in recent}, {'bound'})
+        manifest.validate_roster(roster)
+        members[0]['evaluation_source']['checkpoint']['sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'differs from the ruling endpoint'):
+            manifest.draft_roster(self.template['source'], None, packet)
+
     def test_roster_validation_refuses_changed_roles(self):
         def bind_with_short_pin(roster):
             roster['members'][2]['evaluation'] = dict(status='bound', source=dict(
@@ -158,7 +184,11 @@ class ManifestTests(unittest.TestCase):
                 checkpoint=dict(path='E:/k.json', sha256='abc')))
 
         def train_the_holdout(roster):
-            roster['members'][-1]['training'] = dict(status='bound', episode_fields=dict(opponent=source('b' * 64, 'h')))
+            roster['members'].append(dict(id='holdout/x', role='holdout', scope='full', lineage='other',
+                                          evaluation=dict(status='pending', reason='test'),
+                                          training=dict(status='bound',
+                                                        episode_fields=dict(opponent=source('b' * 64, 'h')))))
+            roster['roles']['holdout'] = ['holdout/x']
 
         for change, message in ((lambda r: r['members'][6].update(scope='full'), 'Role or scope'),
                                 (lambda r: r['members'].append(copy.deepcopy(r['members'][0])), 'Duplicate'),

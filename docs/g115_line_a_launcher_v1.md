@@ -29,9 +29,10 @@ Rule `g115-line-a-episode-schedule/v1`: episode e = 10u + s (update u, slot s, e
 | Calibration (untouched g115), BO3 | 3,200 | 2,688 |
 | Screen training, games | 8,000 (4 runs x 2,000) | 8,000 |
 | Screen evaluation, BO3 | 16,000 | 13,440 |
-| with the R7 holdout, BO3 | 18,240 | 15,680 |
 
-Full-scope members (V3, D3 wrapper, four recent endpoints) play 448 cells per evaluated endpoint. The archival roles play only the 64 Rally-opponent cells. The latest dry run is in `docs/reports/g115_line_a_launcher_v1/dry-run/`. Every manifest there is non-launchable and lists its reasons.
+Version 1 has no R7 holdout: the candidate b/block48 is a declared g115 ancestor (CODEX #530), so the optional 2,240 BO3 are dropped. The builder still supports a declared holdout (+448 BO3 per evaluated endpoint) for a later version.
+
+Full-scope members (V3, D3 wrapper, four recent endpoints) play 448 cells per evaluated endpoint. The archival roles play only the 64 Rally-opponent cells. The recent endpoints' evaluation sources are bound from Codex's packet `line-a-recent-bindings-v1.json` (`184eb7f5`, CODEX #529). Its raw config-file hashes and the checkpoints' semantic config hashes are kept as separate domains. The latest dry run is in `docs/reports/g115_line_a_launcher_v1/dry-run/`. Every manifest there is non-launchable and lists its reasons.
 
 ## What the guard refuses
 
