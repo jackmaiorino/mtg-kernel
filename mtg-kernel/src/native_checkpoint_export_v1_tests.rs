@@ -95,8 +95,8 @@ fn expected_v1(source: &ExportCheckpointSourceV1, metadata: &[u8]) -> ExportChec
 fn bind_v1(loaded: &LoadedShadowCheckpointV1) -> BoundModelGuidedSearchV1 {
     BoundModelGuidedSearchV1::bind_v1(
         KernelNativeSearchTierV1::T512,
-        6,
-        authorized_seed_block_v1(6).unwrap(),
+        3,
+        authorized_seed_block_v1(3).unwrap(),
         &MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1,
         crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
         &loaded.identity,
