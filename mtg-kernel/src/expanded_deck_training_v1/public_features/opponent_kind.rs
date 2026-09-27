@@ -10,7 +10,7 @@ use crate::rl_session::FastActorDecisionV1;
 use crate::sideboard_play_policy_v1::public_inputs::{
     select_forced_v3_for_evaluation, select_spell_adapter_v3_for_evaluation,
 };
-use crate::sideboard_play_policy_v1::{FrozenPlayDecisionScoresV1, PlayModelIdentityV1};
+use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 
 #[cfg(test)]
 mod tests;
@@ -23,8 +23,9 @@ pub(crate) const PUBLIC_CHECKPOINT_TRAJECTORY_SCHEMA: &str =
 pub(crate) const LEGACY_TRAJECTORY_SCHEMA: &str =
     "mtg-kernel-public-input-legacy-opponent-trajectory/v1";
 const OPPONENT_RECORD_SCHEMA: &str = "mtg-kernel-public-opponent-record/v1";
-/// Declared-identity receipt admitting one Legacy V3 opponent.
-pub(crate) const LEGACY_ADMISSION_SCHEMA: &str = "mtg-kernel-public-legacy-opponent-admission/v1";
+/// Per-member admission receipt shared with opus-panel-export (CLAUDE #472,
+/// python/tools/line_a_panel_admission_v1.py); the frozen V3 uses it too.
+pub(crate) const LEGACY_ADMISSION_SCHEMA: &str = "mtg-kernel-line-a-panel-admission/v1";
 /// Sampler identity of an unscored V3 forced singleton row.
 pub(crate) const V3_FORCED_SINGLETON_SAMPLER: &str = "mtg-kernel-v3-forced-singleton/v1";
 /// Admitted routes. The R14 registry route is refused until its acceptance
@@ -73,25 +74,51 @@ pub(crate) struct OpponentRecordV1 {
     rows: Vec<OpponentRowV1>,
 }
 
-/// Declared-identity receipt for one Legacy V3 opponent: the frozen V3 from
-/// the D3 envelope, or a V3-transfer import from opus-panel-export.
+/// Import descriptor named by an admission receipt: the source's play import.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdmissionImportV1 {
+    pub(crate) path: PathBuf,
+    pub(crate) sha256: String,
+    pub(crate) schema: Option<String>,
+}
+
+/// The identity the loaded model must show.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdmissionIdentityV1 {
+    pub(crate) identity_schema: String,
+    pub(crate) model_parameter_sha256: String,
+    pub(crate) weights_sha256: String,
+    pub(crate) feature_generation: String,
+    pub(crate) observation_successor: bool,
+    pub(crate) feature_contract_digest: String,
+    pub(crate) feature_encoding_digest: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdmissionFlagsV1 {
+    pub(crate) v3_forced_actions: bool,
+    pub(crate) v3_spell_target_reference_adapter: bool,
+}
+
+/// Declared-identity receipt for one Legacy V3 opponent (a panel import on
+/// the strict route, or the frozen V3 relocated from the D3 envelope). The
+/// model source is bound by its pinned descriptor file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LegacyAdmissionV1 {
     pub(crate) schema: String,
     pub(crate) member: String,
     pub(crate) route: String,
-    pub(crate) model_source: ExpandedModelSourceV1,
-    /// SHA256 of `serde_json::to_vec(&model_source)`, the struct's own
-    /// field-order serialization; binds the embedded source bytes exactly.
-    pub(crate) model_source_sha256: String,
-    pub(crate) expected_model: PlayModelIdentityV1,
-    pub(crate) v3_forced_actions: bool,
-    pub(crate) v3_spell_target_reference_adapter: bool,
-    #[serde(default)]
-    pub(crate) registry_pins: Vec<PinnedFileV1>,
-    #[serde(default)]
-    pub(crate) evidence: Vec<PinnedFileV1>,
+    pub(crate) model_source: PinnedFileV1,
+    pub(crate) import_descriptor: AdmissionImportV1,
+    pub(crate) expected_identity: AdmissionIdentityV1,
+    pub(crate) adapter_flags: AdmissionFlagsV1,
+    pub(crate) registry_pins: Value,
+    pub(crate) evidence: Value,
+    pub(crate) nonclaims: Vec<String>,
 }
 
 /// The opponent seat of one public-collector game.
@@ -130,22 +157,37 @@ fn admit_legacy(
 ) -> Result<(FrozenPlayPolicyV1, Value), String> {
     let receipt: LegacyAdmissionV1 =
         serde_json::from_slice(&read_pinned_bytes(admission)?).map_err(err)?;
+    // The pinned descriptor file must hold exactly the declared source.
+    let descriptor: ExpandedModelSourceV1 =
+        serde_json::from_slice(&read_pinned_bytes(&receipt.model_source)?).map_err(err)?;
+    let e = &receipt.expected_identity;
     ensure(
         receipt.schema == LEGACY_ADMISSION_SCHEMA
             && LEGACY_ROUTES.contains(&receipt.route.as_str())
-            && receipt.model_source == *source
-            && receipt.model_source_sha256 == sha(&serde_json::to_vec(source).map_err(err)?)
+            && descriptor == *source
             && (
-                receipt.v3_forced_actions,
-                receipt.v3_spell_target_reference_adapter,
-            ) == (forced, spell_adapter),
+                &receipt.import_descriptor.path,
+                &receipt.import_descriptor.sha256,
+            ) == (&source.play_import.path, &source.play_import.sha256)
+            && e.feature_generation == "V3"
+            && e.observation_successor
+            && receipt.adapter_flags
+                == (AdmissionFlagsV1 {
+                    v3_forced_actions: forced,
+                    v3_spell_target_reference_adapter: spell_adapter,
+                }),
         "legacy opponent differs from its admission receipt",
     )?;
     let (policy, identity) = load_expanded_inference_v1(source)?;
+    let origin = serde_json::to_value(&identity.source_import).map_err(err)?;
     ensure(
         policy.feature_generation_v1() == PlayPolicyGenerationV1::V3
             && policy.uses_observation_successor_v3()
-            && identity.model == receipt.expected_model,
+            && origin["schema"] == e.identity_schema.as_str()
+            && identity.model.model_parameter_sha256 == e.model_parameter_sha256
+            && identity.model.weights_sha256 == e.weights_sha256
+            && identity.model.feature_contract_digest == e.feature_contract_digest
+            && identity.model.feature_encoding_digest == e.feature_encoding_digest,
         "legacy opponent must load as the admitted V3 model",
     )?;
     let effective = json!({

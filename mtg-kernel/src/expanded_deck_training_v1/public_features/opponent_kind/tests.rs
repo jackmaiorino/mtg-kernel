@@ -291,7 +291,9 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
     }
 }
 
-/// Admission refuses a receipt that disagrees with the declaration.
+/// Admission refuses a receipt that disagrees with the declaration, before
+/// any model load: wrong descriptor bytes, flags, route (R14 included until
+/// its acceptance is bound) or import descriptor.
 #[test]
 fn legacy_admission_refuses_mismatched_receipts() {
     let directory = std::env::temp_dir().join(format!(
@@ -303,44 +305,70 @@ fn legacy_admission_refuses_mismatched_receipts() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&directory).unwrap();
-    let net = FrozenPlayPolicyV1::training_fixture_v3();
+    let write = |name: &str, bytes: &[u8]| {
+        let path = directory.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        PinnedFileV1 {
+            path,
+            sha256: sha(bytes),
+        }
+    };
     let source = episode(0, None).opponent.unwrap();
+    let descriptor = write("model-source.json", &serde_json::to_vec(&source).unwrap());
+    let mut other_source = source.clone();
+    other_source.play_import.sha256 = "ab".repeat(32);
+    let other_descriptor = write(
+        "other-source.json",
+        &serde_json::to_vec(&other_source).unwrap(),
+    );
     let receipt = LegacyAdmissionV1 {
         schema: LEGACY_ADMISSION_SCHEMA.into(),
         member: "fixture".into(),
         route: "strict".into(),
-        model_source: source.clone(),
-        model_source_sha256: sha(&serde_json::to_vec(&source).unwrap()),
-        expected_model: net.actual_model_identity_v1(),
-        v3_forced_actions: true,
-        v3_spell_target_reference_adapter: true,
-        registry_pins: vec![],
-        evidence: vec![],
-    };
-    let write = |name: &str, r: &LegacyAdmissionV1| {
-        let bytes = serde_json::to_vec(r).unwrap();
-        let path = directory.join(name);
-        std::fs::write(&path, &bytes).unwrap();
-        PinnedFileV1 {
-            path,
-            sha256: sha(&bytes),
-        }
+        model_source: descriptor,
+        import_descriptor: AdmissionImportV1 {
+            path: source.play_import.path.clone(),
+            sha256: source.play_import.sha256.clone(),
+            schema: None,
+        },
+        expected_identity: AdmissionIdentityV1 {
+            identity_schema: "mtg-kernel-frozen-sideboard-play-transfer/v1".into(),
+            model_parameter_sha256: "00".repeat(32),
+            weights_sha256: "00".repeat(32),
+            feature_generation: "V3".into(),
+            observation_successor: true,
+            feature_contract_digest: "93".repeat(32),
+            feature_encoding_digest: "c4".repeat(32),
+        },
+        adapter_flags: AdmissionFlagsV1 {
+            v3_forced_actions: true,
+            v3_spell_target_reference_adapter: true,
+        },
+        registry_pins: json!({}),
+        evidence: json!({}),
+        nonclaims: vec![],
     };
     let mut r14 = receipt.clone();
     r14.route = "r14".into();
     let mut flags = receipt.clone();
-    flags.v3_spell_target_reference_adapter = false;
+    flags.adapter_flags.v3_spell_target_reference_adapter = false;
     let mut route = receipt.clone();
     route.route = "unreviewed".into();
     let mut bytes = receipt.clone();
-    bytes.model_source_sha256 = "00".repeat(32);
+    bytes.model_source = other_descriptor;
+    let mut import = receipt.clone();
+    import.import_descriptor.sha256 = "cd".repeat(32);
+    let mut generation = receipt.clone();
+    generation.expected_identity.feature_generation = "V4".into();
     for (name, bad) in [
         ("r14.json", &r14),
         ("flags.json", &flags),
         ("route.json", &route),
         ("bytes.json", &bytes),
+        ("import.json", &import),
+        ("generation.json", &generation),
     ] {
-        let admission = write(name, bad);
+        let admission = write(name, &serde_json::to_vec(bad).unwrap());
         let error = admit_legacy(&source, true, true, &admission).err().unwrap();
         assert_eq!(
             error, "legacy opponent differs from its admission receipt",
@@ -350,9 +378,9 @@ fn legacy_admission_refuses_mismatched_receipts() {
     std::fs::remove_dir_all(&directory).unwrap();
 }
 
-/// Admission helper, not a check: prints the loaded model identity of the
+/// Admission helper, not a check: prints the loaded identity fields of the
 /// ExpandedModelSourceV1 JSON named by MTG_LEGACY_PROBE_SOURCE, so an
-/// admission receipt's expected_model is taken from a real load.
+/// admission receipt's expected_identity is taken from a real load.
 #[test]
 #[ignore = "admission helper; needs MTG_LEGACY_PROBE_SOURCE"]
 fn legacy_admission_identity_probe() {
@@ -363,10 +391,13 @@ fn legacy_admission_identity_probe() {
     println!(
         "LEGACY_PROBE {}",
         json!({
-            "model_source_sha256": sha(&serde_json::to_vec(&source).unwrap()),
-            "generation_v3": policy.feature_generation_v1() == PlayPolicyGenerationV1::V3,
-            "observation_successor_v3": policy.uses_observation_successor_v3(),
-            "expected_model": identity.model,
+            "identity_schema": serde_json::to_value(&identity.source_import).unwrap()["schema"],
+            "model_parameter_sha256": identity.model.model_parameter_sha256,
+            "weights_sha256": identity.model.weights_sha256,
+            "feature_generation": if policy.feature_generation_v1() == PlayPolicyGenerationV1::V3 { "V3" } else { "V4" },
+            "observation_successor": policy.uses_observation_successor_v3(),
+            "feature_contract_digest": identity.model.feature_contract_digest,
+            "feature_encoding_digest": identity.model.feature_encoding_digest,
         })
     );
 }
