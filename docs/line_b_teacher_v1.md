@@ -2,7 +2,7 @@
 
 Engineering record of lane opus-exit-teacher (goal `collab/GOALS/opus-exit-teacher-20260927.md`) for the recipe in `collab/CODEX-G115-EXIT-PROPOSAL-20260927.md` (v0.2 contract, v0.4 summary, 11:23 contract dispositions). Base `500cfae9`. Nothing here is playing-strength evidence. T = 0.25, c = 0.1, K = 16 and the rollout caps are parameters with the proposal's defaults.
 
-Status: section 1 implemented and tested (9 unit tests, debug profile, feature `experimental-burn-net8-packed-cuda-v1`); sections 2 to 6 pending (design in `collab/FABLE-QUEUE.md`, "Opus lane exit-teacher: design review"; Codex dispositions in CODEX #522).
+Status: section 1 implemented, wired into collection and tested (debug profile, feature `experimental-burn-net8-packed-cuda-v1`); sections 2 to 6 pending. Design: `collab/FABLE-QUEUE.md`, "Opus lane exit-teacher: design review"; Codex dispositions CODEX #522 and #528; Fable verdict `collab/FABLE-REVIEW-20260927.md` (CHANGE-REQUIRED scoped, eight changes, tracked in section 6); director ruling `collab/DIRECTOR-RULINGS-20260927.md` (two slots: reverse and forward KL; availability-aware census).
 
 ## 1. Collection sampler `unclamped-softmax-f64-icdf-u53-v1`
 
@@ -21,15 +21,19 @@ Rule (canonical contract JSON in the module, SHA-256 `61e91239...2b00`), for 1 t
 
 Claim: `|P(i) - p_i| <= (4n + 16) u` for every action, with `u = 2^-53`, `n` the menu width, `P(i)` the selection probability over the `2^53` draw grid and `p_i` the real-valued softmax of the same binary32 logits.
 
-| Source | Bound (first order in u) |
+Scope: this envelope is the sampler's alone. It says nothing about the loss backends: both take the softmax in f32 (about 6e-7 relative at n = 8), and the CUDA path admits device logits that differ from the recorded ones by a per-row log-odds range of `2e-3 + 3e-3 * max|z|` plus a `5e-2` common shift (`bridge.rs:434-480`). Agreement with the production loss path is a separate receipt (section 6).
+
+Thresholds: the envelope admits `P(i) = 0` once `p_i < (4n + 16) u`, that is beyond 32.9 nats at n = 8, 26.8 at n = 5,040 and 24.3 at n = 65,536. The implementation gives zero probability only below the `2^-53` grid (about 36.7 nats), but the envelope is the promise. A screen run makes a few hundred thousand learner decisions, so actions below 5e-15 are not drawn under either reading.
+
+| Source | Bound |
 |---|---|
-| Gap subtraction: one rounding, `d~ = d(1+delta)`, `abs(delta) <= u` | relative `abs(d) u` on `w_i`; since `p_i abs(d_i) <= 1/e`, at most `u/e` on `p_i`, and `u D` on `S` with `D = sum p_j abs(d_j) <= (n-1)/e` |
-| `exp_v1` on exact `d` in [-708, 0] | relative `eta <= 4u`: Horner term j carries 2j+1 roundings, so `u e^x (2x+1) = 2.40u` absolute for `abs(r) <= x = ln2/2`, i.e. `3.39u` relative; reduction subtraction `0.35u`; ln 2 split error `1.2e-26` times `abs(k) <= 1021`; truncation `0.08u`; coefficient rounding `0.01u`; total `3.83u` |
-| Sequential sums | increment `C_i - C_(i-1) = w_i + delta_i`, `abs(delta_i) <= u C_i`: `u` absolute per action; `abs(S - sum w) <= (n-1) u S` |
-| Threshold product and boundary comparisons | for a boundary `c`, `fl` is monotone with relative error `u`, so the grid fraction below `c` is within `u` of `c/S`; two boundaries give `2u` |
+| Gap subtraction: one rounding, `d~ = d(1+delta)`, `abs(delta) <= u` | `e^d~ = e^d (1+zeta)`, `abs(zeta) <= u abs(d) (1 + 8e-14)`. Since `p_i abs(d_i) <= 1/e`, this is at most `u/e` on `p_i`, and `u D` on `S` with `D = sum p_j abs(d_j) <= (n-1)/e` |
+| `exp_v1` on exact `d` in [-708, 0] | relative `eta <= 4u` (budget `3.818u`). Reduction domain: `k` is the exact ties-to-even integer rounding of `y^ = fl(d * RN(1/ln2))` (the 1.5 * 2^52 shifter, exact for `abs(y^) < 2^51`); `abs(y^ - d/ln2) <= 1.3e-13`, so `abs(r) <= x_m = ln2/2 + 9e-14`. Horner: term j carries at most 2j+1 roundings, so `u e^x_m (2x_m+1)/(1-27u)` absolute, `3.386u` relative to `e^-x_m`. Reduction: the final subtraction, `fl(k * ln2_lo)` and the ln 2 split error (`1.2e-26` times `abs(k) <= 1021`) give `0.347u`. Truncation `x_m^14/14! e^(2x_m)`: `0.075u`. Coefficients (generic rounding of `RN(1/j!)`, j >= 3): `(e^x_m - 1 - x_m - x_m^2/2) e^x_m = 0.011u`. Products of these terms: below `2u^2` |
+| Sequential sums | increment `C_i - C_(i-1) = w_i + delta_i`, `abs(delta_i) <= u C_i (1+2u)`: at most `u(1+2u)` per action; `abs(S - sum w) <= (n-1) u (1+2u) S` |
+| Threshold product, strict comparison and draw grid | For a boundary value `c` (a prefix sum), let `G(c)` count grid points g with `fl(g 2^-53 S) < c`. `fl(x) <= x(1+u)`, so `x < c/(1+u)` implies `fl(x) < c`; `x >= c` implies `fl(x) >= c` because rounding is monotone and `c` is representable. Hence `ceil(2^53 F/(1+u)) <= G(c) <= ceil(2^53 F)` with `F = c/S`. The rounded product can only lower the count and the grid can only raise it by less than one point, so `-uF/(1+u) <= G(c)/2^53 - F < 2^-53`: under `u` per boundary, under `2u` per interval. The comparison is strict (`C_i > t`), so a tie `t = C_i` goes to the next index; `G(0) = 0` and `G(S) = 2^53` exactly because `u S < S` for every draw. Codex's conservative split (`u/(1-u)` arithmetic plus `u` grid per boundary) gives `2u/(1-u) + 2u` per interval instead |
 | Tail floor | actions with `d < -708` get zero mass; all such mass is below `n e^-708 < 2.2e-303` |
 
-Total: `(11n/8 + 10) u + n e^-708` (second-order terms are below `n^2 u^2 < 5.3e-23`). The declared `(4n + 16) u` covers it with margin for every `n >= 1`.
+Total (tight route): `(1 + 1/e) n u + 10 u` plus second-order terms below `1e-3 u` for `n <= 65,536`, hence `(11n/8 + 10) u + n e^-708`. The conservative threshold split gives `(11n/8 + 12) u + n e^-708`. The declared `(4n + 16) u` covers both for every `n >= 1`. (Amended after CODEX #528: explicit threshold and grid argument, reduction domain from the rounded product, generic coefficient term 0.011u, explicit higher-order terms. Contract and code unchanged.)
 
 Measurements:
 
@@ -42,14 +46,35 @@ Measurements:
 | Golden battery: 512 menus (widths 1 to 12, 64, 65, 300; gaps to 40 nats; repeated values), one seat-stream draw each | stream SHA-256 `9dee7479...ba8d`, pinned in Rust and reproduced by the replica |
 | Underflow, ties, invalid input | zero-weight actions get zero grid mass; four equal logits split the grid exactly; empty, non-finite and over-width menus fail closed |
 
-The fixture measurements check the implementation; the table above is the general argument. Still open (Codex #522 item 1): consistency with the probabilities of the actual loss backend (the CUDA device-1 f32 log-softmax), measured on collected rows once the sampler is wired in. The u53 argument does not cover f32 or CUDA differences.
+The fixture measurements check the implementation; the table above is the general argument.
 
-## 2. Head-only optimizer mask (pending)
+Evaluation convention (disclosure): formal BO3 evaluation plays every endpoint, the trained students included, through the legacy clamped deployment sampler. Qhat's behaviour law therefore differs from the evaluated law only on actions more than 16 nats below the best, each carrying less than about 1.1e-7 relative mass.
+
+Still open: agreement with the production loss path (Codex #522 item 1; Fable changes 2 and 3 on the line (b) and lane entries). The CUDA GAE step reads the device logits back to the host and gates them against the recorded logits (`bridge.rs:434-480`); its reported `selected_log_probability` is a host f32 value refolded from the recorded logits (`bridge.rs:1641-1658`) and never sees the device forward. The receipt therefore uses the device's live root-row logits: the maximum log-probability discrepancy between that path and the collection softmax at selected roots, declared in log-probability units against the size of the teacher gradient (`c p_i d`; order 1e-3 or tighter, not the 5e-2 bridge gate), with the host refold check as a separate line.
+
+### Wiring into collection
+
+- `FrozenPlayPolicyV1` carries an optional collection sampler (`None` for every constructed policy). `sample_scores`, the one sampling point, takes one `next_u64` of the acting seat's stream and hands it to the unclamped sampler when the mode is set, so seat streams advance exactly as with the legacy samplers. Collection forks keep the mode; `with_legacy_collection_sampler_v1` drops it.
+- `CollectionSamplerV1` (`legacy` default, or `unclamped-softmax-f64-icdf-u53-v1`) is a field of the Collect and CollectParallel commands and of the training-run config. It is omitted when legacy, so existing commands, configs, receipts and trajectories keep their bytes. It applies to the learner policy only.
+- Learner rows record the unclamped identity at every width; the trajectory records `learner_sampler`. Opponent rows keep the legacy width rule. Validation replays every row with the sampler its identity names and rejects any mismatch, unknown identity or altered selection.
+- On resume and before each update, the training-run driver checks that the collection receipt's `collection_sampler` and every trajectory's `learner_sampler` match the run config.
+- Parallel collection gives a current-self opponent (an opponent whose source equals the learner's, which is the frozen g115 `initial` assignment at the first update) a fork of the learner policy. That fork now drops the collection mode, matching the serial loader; without this, g115 would have sampled with the learner's sampler in parallel runs only.
+- Tests: serial Collect and CollectParallel publish byte-identical trajectories with the new sampler and with the legacy default; learner and opponent rows carry the expected identities; four tamper cases fail validation; legacy trajectories contain no new key; the policy draws one seat-stream value per decision and matches the sampler reference.
+
+## 2. Head-only optimizer mask (pending; design countersigned by Fable and Codex)
 
 ## 3. Root selection (pending)
 
+Surface decisions are always substep 0 (`rl_session.rs:172-176`, `:1599-1602`); the substep-0 clause of the eligibility rule is kept as a guard (disclosure).
+
 ## 4. Coupled terminal action search (pending)
+
+Commitments from review: the availability-aware census (a censored rollout, meaning declared cap exhaustion or environmental interruption, zeroes its root's auxiliary term while the root stays in the denominator; per-list per-run censored fractions; an unsupported branch, invalid state or operator error fails the update). Every rollout uses fresh student and opponent forks seeded under Codex's policy domain, with no stream state from the collected game. The learner seat uses the versioned collection sampler and opponents keep their production samplers. Invariance tests state their construction: byte-identity for roots that keep the same (object id, card) pairs; a distribution-level equality for pairs from different library shuffles; the Legacy-mode power check.
 
 ## 5. Target and loss (pending)
 
+Both directions, as one parameter with exactly two values: reverse `c * KL(p_theta || q)` (default, slot 1) and forward `c * KL(q || p_theta)` (slot 2), c, T, K unchanged. Each direction gets its finite-difference check, permuted controls and a derived gauge-residual term on both backends.
+
 ## 6. Receipts (pending)
+
+Tracker of review changes (Fable lane verdict 1 to 8; line (b) verdict changes 1 to 3): census (1), forward direction (2), CUDA consistency receipt on device root-row logits plus the host refold check (3; line (b) change 2), gauge terms for both directions with the observed residual in the acceptance packet and a new pinned CUDA golden (4), invariance constructions (5), two-replay determinism receipt at snapshot-hash level for control and both slots, disclosed to the director if any update differs (6), derivation corrections and scope sentence (7, done in section 1, Codex countersign pending), disclosures (8, done in sections 1 and 3); manipulation telemetry emission (line (b) change 1: divergence at the same selected roots before and after each update with frozen q, auxiliary and ordinary scorer gradient norms over the seven head tensors before Adam and their ratio, end-of-run head distance against the matched control); learner-seat rollout sampler pin (line (b) change 3).

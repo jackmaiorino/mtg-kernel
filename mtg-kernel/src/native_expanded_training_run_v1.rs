@@ -5,7 +5,8 @@ use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
 use crate::expanded_deck_training_v1::{
-    execute_v1, load_expanded_inference_v1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
+    execute_v1, load_expanded_inference_v1, CollectionSamplerV1, ExpandedEpisodeV1,
+    ExpandedInferenceIdentityV1,
     ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
     ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
     DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
@@ -115,6 +116,10 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
     )]
     pub max_prepared_tensor_mebibytes: usize,
+    /// Learner collection sampler (g115 line (b)); the legacy default is
+    /// omitted, so every existing config and run identity is unchanged.
+    #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
+    pub collection_sampler: CollectionSamplerV1,
     pub output_directory: PathBuf,
 }
 
@@ -437,6 +442,7 @@ fn validate_collection(
     source: &ExpandedModelSourceV1,
     episodes: &[ExpandedEpisodeV1],
     before: &ExpandedInferenceIdentityV1,
+    collection_sampler: CollectionSamplerV1,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let document = read_pin(collection)?;
     check(
@@ -445,7 +451,16 @@ fn validate_collection(
             && document["behavior_state_sha256"] == before.state_sha256,
         "collection source/state does not match iteration",
     )?;
-    validate_collection_episodes(&document, episodes)
+    check(
+        document.get("collection_sampler").and_then(Value::as_str)
+            == collection_sampler.identity_v1(),
+        "collection sampler differs from the run config",
+    )?;
+    validate_collection_episodes_with_sampler_v1(
+        &document,
+        episodes,
+        collection_sampler.identity_v1(),
+    )
 }
 
 /// The schedule half of `validate_collection`: every published trajectory
@@ -456,9 +471,20 @@ fn validate_collection(
 /// the ledger re-derives (`ledgered_retry_seed_overrides_v1`, which first
 /// re-verifies the whole ledger against the schedule); every other episode
 /// field, and every unledgered slot, must still match the schedule exactly.
+#[cfg(test)]
 fn validate_collection_episodes(
     document: &Value,
     episodes: &[ExpandedEpisodeV1],
+) -> Result<Vec<PinnedFileV1>, String> {
+    validate_collection_episodes_with_sampler_v1(document, episodes, None)
+}
+
+/// Also binds every trajectory's `learner_sampler` to the configured
+/// collection sampler (absent for the legacy samplers).
+fn validate_collection_episodes_with_sampler_v1(
+    document: &Value,
+    episodes: &[ExpandedEpisodeV1],
+    learner_sampler: Option<&str>,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(document["trajectories"].clone()).map_err(err)?;
@@ -504,6 +530,10 @@ fn validate_collection_episodes(
         check(
             saved["episode"] == value(&expected)?,
             "collection episode assignment differs",
+        )?;
+        check(
+            saved.get("learner_sampler").and_then(Value::as_str) == learner_sampler,
+            "collection learner sampler differs from the run config",
         )?;
     }
     Ok(trajectories)
@@ -611,6 +641,7 @@ fn collection_command(
             source: source.clone(),
             episodes: episodes.to_vec(),
             max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
+            collection_sampler: config.collection_sampler,
             output_directory,
         }
     } else {
@@ -619,6 +650,7 @@ fn collection_command(
             episodes: episodes.to_vec(),
             workers: config.collection_workers,
             max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
+            collection_sampler: config.collection_sampler,
             output_directory,
         }
     }
@@ -636,6 +668,7 @@ fn record_loss_selection_execution(config: &NativeExpandedTrainingRunV1, documen
 }
 
 fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &mut Value) {
+    config.collection_sampler.record_v1(document);
     if config.collection_workers > 1 {
         document["collection_backend"] = json!("native-cpu-parallel-episodes-v1");
         document["collection_workers_requested"] = json!(config.collection_workers);
@@ -771,7 +804,7 @@ pub fn run_native_expanded_training_v1(
             )?;
             let collection = parse_pin(&receipt, "collection")?;
             let trajectories =
-                validate_collection(&collection, &current, &episodes, &current_identity)?;
+                validate_collection(&collection, &current, &episodes, &current_identity, config.collection_sampler)?;
             let update = parse_pin(&receipt, "update")?;
             let (next, after) = validate_update(
                 &update,
@@ -841,7 +874,7 @@ pub fn run_native_expanded_training_v1(
             if path.exists() {
                 let candidate = pin(&path)?;
                 let started = Instant::now();
-                validate_collection(&candidate, &current, &episodes, &current_identity)?;
+                validate_collection(&candidate, &current, &episodes, &current_identity, config.collection_sampler)?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
             }
@@ -859,6 +892,7 @@ pub fn run_native_expanded_training_v1(
                     &current,
                     &episodes,
                     &current_identity,
+                    config.collection_sampler,
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 let started = Instant::now();
@@ -907,7 +941,7 @@ pub fn run_native_expanded_training_v1(
             let collection = collection_pin.as_ref().unwrap();
             let started = Instant::now();
             let trajectories =
-                validate_collection(collection, &current, &episodes, &current_identity)?;
+                validate_collection(collection, &current, &episodes, &current_identity, config.collection_sampler)?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
             publish(
                 &attempt,
@@ -926,7 +960,7 @@ pub fn run_native_expanded_training_v1(
         let update = update_pin.unwrap();
         let started = Instant::now();
         let trajectories =
-            validate_collection(&collection, &current, &episodes, &current_identity)?;
+            validate_collection(&collection, &current, &episodes, &current_identity, config.collection_sampler)?;
         collection_validation_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
         let (next, after) = validate_update(
@@ -1099,6 +1133,7 @@ mod tests {
             preparation_workers: 1,
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -1423,6 +1458,54 @@ mod tests {
     }
 
     #[test]
+    fn collection_learner_sampler_must_match_the_run_config() {
+        let directory = temporary_directory("learner-sampler-binding");
+        let write = |name: &str, document: &Value| -> PinnedFileV1 {
+            let bytes = serde_json::to_vec(document).unwrap();
+            let path = directory.join(name);
+            fs::write(&path, &bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: digest(&bytes),
+            }
+        };
+        let episode = schedule().iterations[0].episodes[0].episode.clone();
+        let identity = CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1
+            .identity_v1()
+            .unwrap();
+        let legacy = write(
+            "legacy.json",
+            &json!({"episode": value(&episode).unwrap()}),
+        );
+        let unclamped = write(
+            "unclamped.json",
+            &json!({"episode": value(&episode).unwrap(), "learner_sampler": identity}),
+        );
+        let collection =
+            |trajectory: &PinnedFileV1| json!({"trajectories": [value(trajectory).unwrap()]});
+        let episodes = vec![episode];
+        validate_collection_episodes_with_sampler_v1(&collection(&legacy), &episodes, None)
+            .unwrap();
+        validate_collection_episodes_with_sampler_v1(
+            &collection(&unclamped),
+            &episodes,
+            Some(identity),
+        )
+        .unwrap();
+        for (trajectory, expected) in [(&legacy, Some(identity)), (&unclamped, None)] {
+            assert_eq!(
+                validate_collection_episodes_with_sampler_v1(
+                    &collection(trajectory),
+                    &episodes,
+                    expected
+                )
+                .unwrap_err(),
+                "collection learner sampler differs from the run config"
+            );
+        }
+    }
+
+    #[test]
     fn recovered_update_must_match_actual_preparation_mode() {
         let serial = json!({});
         validate_preparation_execution(&serial, 1, 256).unwrap();
@@ -1698,6 +1781,7 @@ mod tests {
             preparation_workers: 1,
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("run"),
         }
     }

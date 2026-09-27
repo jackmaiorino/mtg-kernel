@@ -9,6 +9,9 @@ use crate::durable_publication_v1::{
 use crate::fast_sampler::{
     WideCategoricalScratchV1, FAST_CATEGORICAL_MAX_ACTIONS, WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
 };
+use crate::unclamped_softmax_sampler_v1::{
+    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
+};
 use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v3::{
@@ -663,6 +666,46 @@ fn decision_sampler_identity_v1(width: usize) -> Option<&'static str> {
     (width > FAST_CATEGORICAL_MAX_ACTIONS).then_some(WIDE_CATEGORICAL_SAMPLER_VERSION_V1)
 }
 
+/// Learner behavior sampler for collection (g115 line (b)). The legacy
+/// default is omitted from every command, config and receipt, so existing
+/// bytes and identities are unchanged. Opponents keep their production
+/// samplers whatever this says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollectionSamplerV1 {
+    #[default]
+    #[serde(rename = "legacy")]
+    Legacy,
+    #[serde(rename = "unclamped-softmax-f64-icdf-u53-v1")]
+    UnclampedSoftmaxF64IcdfU53V1,
+}
+
+impl CollectionSamplerV1 {
+    pub(crate) fn is_legacy(&self) -> bool {
+        *self == Self::Legacy
+    }
+
+    pub(crate) fn identity_v1(&self) -> Option<&'static str> {
+        match self {
+            Self::Legacy => None,
+            Self::UnclampedSoftmaxF64IcdfU53V1 => Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1),
+        }
+    }
+
+    /// Applies the mode to the learner policy only.
+    pub(crate) fn apply_to_learner_v1(&self, policy: &mut FrozenPlayPolicyV1) {
+        if *self == Self::UnclampedSoftmaxF64IcdfU53V1 {
+            policy.enable_unclamped_collection_sampler_v1();
+        }
+    }
+
+    /// Writes the mode into a receipt exactly when it is not legacy.
+    pub(crate) fn record_v1(&self, document: &mut Value) {
+        if let Some(identity) = self.identity_v1() {
+            document["collection_sampler"] = json!(identity);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExpandedTrajectoryV1 {
@@ -678,6 +721,10 @@ struct ExpandedTrajectoryV1 {
     configuration_sha256: [String; 2],
     decisions: Vec<DecisionRecordV1>,
     terminal: RlSessionTerminalV1,
+    /// The learner policy's collection sampler (`CollectionSamplerV1`);
+    /// absent for the legacy samplers, preserving archived bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    learner_sampler: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1160,6 +1207,7 @@ fn collect_episode(
                     configuration_sha256: config_hashes,
                     decisions,
                     terminal,
+                    learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -1181,6 +1229,7 @@ fn collect_episode(
                 // is generation-agnostic (both wrappers share the same inner
                 // `NativeFlatDecisionTensorV2`), so only this selection point
                 // differs.
+                let acting_sampler = acting.collection_sampler_identity_v1();
                 let (selected, scores, tensor_bits) =
                     if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
                         let (selected, scores, tensor) =
@@ -1201,7 +1250,8 @@ fn collect_episode(
                     logits: bits(&scores.logits),
                     value: scores.value.to_bits(),
                     tensor: tensor_bits,
-                    sampler_identity: decision_sampler_identity_v1(scores.logits.len())
+                    sampler_identity: acting_sampler
+                        .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
                 };
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
@@ -1584,20 +1634,45 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         &t.feature_encoding_digest,
         &t.card_db_hash,
     )?;
-    validate_episode_records_v1(
+    validate_episode_records_with_learner_sampler_v1(
         &t.episode,
         &t.configuration_sha256,
         &t.decisions,
         &t.terminal,
+        t.learner_sampler.as_deref(),
     )
 }
 
+/// Legacy-sampler record validation, unchanged for every existing caller.
 fn validate_episode_records_v1(
     episode: &ExpandedEpisodeV1,
     configuration_sha256: &[String; 2],
     decisions: &[DecisionRecordV1],
     terminal: &RlSessionTerminalV1,
 ) -> Result<(), String> {
+    validate_episode_records_with_learner_sampler_v1(
+        episode,
+        configuration_sha256,
+        decisions,
+        terminal,
+        None,
+    )
+}
+
+/// Rows the learner policy sampled carry `learner_sampler` (every width);
+/// opponent rows keep the legacy width rule. Each row is replayed with the
+/// sampler its identity names, from one draw of the acting seat's stream.
+fn validate_episode_records_with_learner_sampler_v1(
+    episode: &ExpandedEpisodeV1,
+    configuration_sha256: &[String; 2],
+    decisions: &[DecisionRecordV1],
+    terminal: &RlSessionTerminalV1,
+    learner_sampler: Option<&str>,
+) -> Result<(), String> {
+    ensure(
+        learner_sampler.is_none_or(|identity| identity == UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1),
+        "unsupported learner collection sampler",
+    )?;
     let configs = episode.configurations()?;
     ensure(
         *configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
@@ -1646,6 +1721,7 @@ fn validate_episode_records_v1(
     let mut index = 0usize;
     let mut rng = paired_policy_seeds_v1(episode.seed).map(SplitMix64::seed);
     let mut sampler = WideCategoricalScratchV1::default();
+    let mut unclamped = UnclampedSoftmaxScratchV1::default();
     while index < decisions.len() {
         let first = &decisions[index];
         ensure(
@@ -1675,13 +1751,23 @@ fn validate_episode_records_v1(
                     && row.logits.iter().all(|v| f32::from_bits(*v).is_finite()),
                 "invalid captured outputs",
             )?;
+            let learner_policy_row =
+                episode.opponent.is_none() || row.actor == episode.learner_seat;
+            let expected_identity = learner_sampler
+                .filter(|_| learner_policy_row)
+                .or_else(|| decision_sampler_identity_v1(row.logits.len()));
             ensure(
-                row.sampler_identity.as_deref() == decision_sampler_identity_v1(row.logits.len()),
+                row.sampler_identity.as_deref() == expected_identity,
                 "stored decision sampler identity differs from action width",
             )?;
-            let selected = sampler
-                .sample(&floats(&row.logits), rng[row.actor as usize].next_u64())
-                .map_err(err)?;
+            let draw = rng[row.actor as usize].next_u64();
+            let selected = if expected_identity == Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1) {
+                unclamped
+                    .sample(&floats(&row.logits), draw)
+                    .map_err(err)?
+            } else {
+                sampler.sample(&floats(&row.logits), draw).map_err(err)?
+            };
             ensure(
                 selected == row.selected as usize,
                 "stored action differs from recorded behavior sampler",
@@ -1830,6 +1916,9 @@ pub enum ExpandedTrainingCommandV1 {
         /// `collect_episode_tolerant_v1`.
         #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction_v1")]
         max_non_natural_episode_fraction: f32,
+        /// Learner collection sampler; omitted when legacy.
+        #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
+        collection_sampler: CollectionSamplerV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only successor. The legacy Collect command and its
@@ -1840,6 +1929,9 @@ pub enum ExpandedTrainingCommandV1 {
         workers: usize,
         #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction_v1")]
         max_non_natural_episode_fraction: f32,
+        /// Learner collection sampler; omitted when legacy.
+        #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
+        collection_sampler: CollectionSamplerV1,
         output_directory: PathBuf,
     },
     Update {
@@ -1905,18 +1997,21 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             episodes,
             workers,
             max_non_natural_episode_fraction,
+            collection_sampler,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
             episodes,
             workers,
             max_non_natural_episode_fraction,
+            collection_sampler,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {
             source,
             episodes,
             max_non_natural_episode_fraction,
+            collection_sampler,
             output_directory,
         } => {
             let collection_started = std::time::Instant::now();
@@ -1934,6 +2029,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             if let Some(context) = &transfer {
                 context.validate_batch(&episodes)?;
             }
+            collection_sampler.apply_to_learner_v1(&mut policy);
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
                 source: source.clone(),
@@ -2009,6 +2105,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let mut result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs,
                 "collection_elapsed_seconds":collection_started.elapsed().as_secs_f64(),
                 "collection_initialization_seconds":initialization_seconds});
+            collection_sampler.record_v1(&mut result);
             if let Some(pin) = non_natural_ledger_pin {
                 result["non_natural_ledger"] = json!(pin);
             }
@@ -2991,6 +3088,7 @@ pub(crate) mod tests {
             source_import: learner.identity_v1().clone(),
             behavior_state_sha256: learner_behavior.identity.state_sha256.clone(),
             seat_behaviors,
+            learner_sampler: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -5087,6 +5185,7 @@ pub(crate) mod tests {
             source: source.clone(),
             episodes: episodes.clone(),
             max_non_natural_episode_fraction: 0.5,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -5117,6 +5216,7 @@ pub(crate) mod tests {
             source,
             episodes,
             max_non_natural_episode_fraction: 0.1,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -5820,6 +5920,7 @@ pub(crate) mod tests {
                 source: source.clone(),
                 episodes: vec![episode],
                 max_non_natural_episode_fraction: 0.0,
+                collection_sampler: CollectionSamplerV1::Legacy,
                 output_directory: root.join(format!("collect-{iteration}")),
             })?;
             let trajectories: Vec<PinnedFileV1> =
