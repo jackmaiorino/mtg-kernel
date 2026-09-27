@@ -33,7 +33,7 @@ use crate::native_train_state_payload_v1::{
 use crate::native_training_store_digest_v1::{
     lower_hex_raw32_v1, parse_lower_hex_raw32_v1, sha256_v1,
 };
-use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
+use crate::paired_bo1_harness_v1::{PairedBo1PolicyV1, PlayPolicyGenerationV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyImportV1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
