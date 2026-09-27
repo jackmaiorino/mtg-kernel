@@ -107,6 +107,17 @@ class ThroughputTests(unittest.TestCase):
             placement['projected_seconds'] = guard.projected_seconds(value, placement['allocation'], 10**7)
         self.assertEqual(self.admit(value, units=10**7)['id'], 'jack-24')
 
+    def test_a_missed_earlier_bound_is_recorded_as_a_shortfall(self):
+        value = evidence()
+        value['earlier_bound'] = dict(seconds=100.0, source='CODEX-G115-D3-RESULT-20260924.md:51')
+        admitted = self.admit(value)
+        self.assertEqual(admitted['id'], 'jack-24')
+        self.assertAlmostEqual(admitted['shortfall']['shortfall_seconds'], admitted['projected_seconds'] - 100.0)
+        self.assertIsNone(self.admit(evidence())['shortfall'])
+        value['earlier_bound'] = dict(seconds=100.0, source=' ')
+        with self.assertRaisesRegex(ValueError, 'Earlier bound needs its source'):
+            self.admit(value)
+
     def test_refuses_a_projection_that_differs_from_measured_rates(self):
         value = evidence()
         value['placements'][2]['projected_seconds'] /= 2

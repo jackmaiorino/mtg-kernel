@@ -1,4 +1,5 @@
 """Offline launcher tests with a fake native evaluator; no game engine or GPU work."""
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -327,6 +328,78 @@ class AdmittedDispatchTests(unittest.TestCase):
         self.assertIn('update', calls[2])
         self.assertEqual(calls[1][-2:], ['--', 'ARTIFACTS/catalog.jsonl'])
         self.assertEqual(calls[3][-2:], ['--', 'ARTIFACTS/catalog.jsonl'])
+
+
+
+def with_search_member(launch, directory, now):
+    """Re-pin the qualification launch so half of its jobs use a search-kind member with its own evidence."""
+    import g115_line_a_manifest_v1 as manifest_module
+    directory = Path(directory)
+    launch = copy.deepcopy(launch)
+    launch['member_sources']['d3'] = dict(kind='information_set_search_v3', source=LEARNER['source'],
+                                          descriptor=dict(schema='fake-descriptor'))
+    for job in launch['jobs'][::2]:
+        job['member'] = 'd3'
+    body = json.loads(Path(launch['job_manifest']['path']).read_text())
+    body['job_list_sha256'] = manifest_module.canonical_sha256(launch['jobs'])
+    body.pop('manifest_sha256')
+    body['manifest_sha256'] = manifest_module.canonical_sha256(body)
+    job_path = directory / 'job-set-split.json'
+    job_path.write_text(json.dumps(body))
+    worksheet = json.loads(Path(launch['worksheet']['path']).read_text())
+    worksheet['manifest_sha256'] = body['manifest_sha256']
+    sheet = directory / 'worksheet-split.json'
+    sheet.write_text(json.dumps(worksheet))
+    ordinary = json.loads(Path(launch['throughput_evidence']['bo3-ordinary']['path']).read_text())
+    for placement in ordinary['placements']:  # four ordinary jobs remain after the split
+        placement['projected_seconds'] = guard.projected_seconds(ordinary, placement['allocation'], 4)
+    ordinary_path = directory / 'evidence-ordinary-split.json'
+    ordinary_path.write_text(json.dumps(ordinary))
+    launch['throughput_evidence']['bo3-ordinary'] = dict(path=str(ordinary_path),
+                                                         sha256=guard.sha256_file(ordinary_path))
+    search = copy.deepcopy(ordinary)
+    search['binding']['work_class'] = 'bo3-search'
+    search['hosts']['jack']['phases'] = [dict(p, seconds=p['seconds'] * (40 if p['workers'] == 1 else 60))
+                                         for p in search['hosts']['jack']['phases']]
+    search['placements'] = []
+    for workers in (1, 8):
+        allocation = dict(jack=workers)
+        search['placements'].append(dict(id='jack-%d' % workers, allocation=allocation, eligible=True,
+                                         ineligibility_reason='',
+                                         projected_seconds=guard.projected_seconds(search, allocation, 4)))
+    search['selected'] = min(search['placements'], key=lambda p: p['projected_seconds'])['id']
+    evidence = directory / 'evidence-search.json'
+    evidence.write_text(json.dumps(search))
+    launch.update(job_manifest=dict(path=str(job_path), sha256=guard.sha256_file(job_path)),
+                  job_manifest_sha256=body['manifest_sha256'],
+                  worksheet=dict(path=str(sheet), sha256=guard.sha256_file(sheet)))
+    launch['throughput_evidence']['bo3-search'] = dict(path=str(evidence), sha256=guard.sha256_file(evidence))
+    return launch, search['selected']
+
+
+class WorkClassSplitTests(unittest.TestCase):
+    def test_each_work_class_runs_at_its_own_selected_worker_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base, now = qualification_launch(directory)
+            launch, search_selected = with_search_member(base, directory, now)
+            with patch.object(guard, 'PINNED_ROOT', str(Path(directory) / 'pinned')), \
+                    patch.object(guard, 'DISK_RESERVE_BYTES', 0), patch.object(launcher, 'minimum_reserve', lambda h: 0):
+                placements, admitted = launcher.check(launch, 'jack', now=now)
+                self.assertEqual(set(placements), {'bo3-ordinary', 'bo3-search'})
+                self.assertEqual(placements['bo3-search']['id'], search_selected)
+                root = Path(directory) / 'run'
+                root.mkdir()
+                result = launcher.dispatch(launch, 'jack', root, placements, admitted, prefix=PREFIX)
+                with self.assertRaisesRegex(ValueError, 'Throughput evidence missing for bo3-search'):
+                    launcher.check(dict(launch, throughput_evidence={'bo3-ordinary': launch['throughput_evidence'][
+                        'bo3-ordinary']}), 'jack', now=now)
+            self.assertTrue(result['complete'])
+            workers = {row['work_class']: row['workers'] for row in result['rows']}
+            self.assertEqual(workers, {'bo3-ordinary': 8, 'bo3-search': placements['bo3-search']['allocation']['jack']})
+            self.assertEqual(sum(row['work_class'] == 'bo3-search' for row in result['rows']), 4)
+            admission = json.loads((root / 'admission.json').read_text())
+            self.assertEqual(set(admission['placements']), {'bo3-ordinary', 'bo3-search'})
+            self.assertIsNone(admission['placements']['bo3-ordinary']['shortfall'])
 
 
 if __name__ == '__main__':

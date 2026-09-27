@@ -85,10 +85,10 @@ MATCH_OPTIONS = dict(max_physical_decisions=4000, max_physical_games=6, max_poli
 GAME_ONE_CHOOSER = 0
 CAPS = dict(calibration=12_000_000_000, screen=48_000_000_000, total=60_000_000_000)
 PENDING_CONTRACTS = (
-    'C2 loading receipt must trace the pre-update model, moments and age to the pinned g115 input (CODEX #523)',
-    'C3 one new integrated yardstick executable, pinned before calibration (CODEX #523)',
-    'C5 game-one chooser 0 and the template-derived deck packet (not yet countersigned)',
-    'lane design verdict (FABLE-QUEUE.md, Opus lane line-a-launcher)',
+    'C2 loading receipt must trace the pre-update model, moments and age to the pinned g115 input (CODEX #523; '
+    'FABLE-REVIEW-20260927 launcher item 5)',
+    'C3 one new integrated yardstick executable, pinned before calibration (CODEX #523; launcher item 4)',
+    'launcher design verdict CHANGE-REQUIRED items 1 to 4, 6 and 7 (FABLE-REVIEW-20260927)',
 )
 NOT_TRAINABLE = {
     'v3': 'public_feature_training_v1 accepts only V4 opponents and has no V3 adapters '

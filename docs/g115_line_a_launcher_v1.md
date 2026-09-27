@@ -36,7 +36,7 @@ Full-scope members (V3, D3 wrapper, four recent endpoints) play 448 cells per ev
 
 ## What the guard refuses
 
-- **Throughput evidence.** Refused if missing or bound to another launcher, executable, data tree or work class. The Jack, HaleysPC and RunPod inventory must be under 24 h old. Serial and parallel runs must both be measured, with outputs identical to serial, and every eligible host measured. The shortest projected feasible completion is admitted; an older time bound is recorded, never a veto.
+- **Throughput evidence.** Refused if missing or bound to another launcher, executable, data tree or work class. The Jack, HaleysPC and RunPod inventory must be under 24 h old. Serial and parallel runs must both be measured, with outputs identical to serial, and every eligible host measured. The shortest projected feasible completion is admitted. An earlier bound is recorded as a shortfall in the admission record, never a veto.
 - **Byte worksheet.** Refused if unmeasured, over the job-set cap (12 GB calibration, 48 GB screen), over the joint 60 GB, or leaving less than 60 GiB free on the volume. Each job also reserves bytes in the D4 storage `Ledger` before it runs.
 - **Scratch.** No scratch use without a scratch manifest first. No receipt may cite scratch as an input of record. The storage lock `collab/LOCKS/e-io.json` guards scratch fills; a waiter waits and never breaks it.
 - **Order and identity.** Screen training needs a calibration completion record and a passed usability record. The composition comes only from the director's scope ruling. Calibration and screen evaluation run one pinned yardstick executable. Binaries run only from their pinned copies.
@@ -45,11 +45,24 @@ Full-scope members (V3, D3 wrapper, four recent endpoints) play 448 cells per ev
 
 | Path | Status |
 |---|---|
-| Throughput timing check (ordinary BO3) | Guarded launcher and transport; bounded to 64 BO3 |
-| Qualification BO3 set, calibration, screen evaluation | Admission checks implemented and tested; dispatch lands with the qualification unit |
-| Screen training (public trainer) | Not yet migrated; the manifests are non-launchable |
-| Line (b) screen | Not started (goal amendment of 2026-09-27 11:20) |
-| Raw `public_feature_evaluation_v1` / `public_feature_training_v1` calls | Unguarded by design; this doc is the supported path |
+| Throughput timing check (ordinary BO3) | Guarded launcher and WMI transport, bounded to 64 BO3. Run once on Jack's PC (receipts `docs/reports/g115_line_a_launcher_v1/throughput-001/`) |
+| Qualification BO3 set | Admission and dispatch implemented and tested with a fake evaluator; runs through the transport once its evidence and worksheet are assembled |
+| Calibration and screen evaluation | Same dispatch path. Formal modes fail closed until the frozen roster, the scope ruling, the pinned yardstick and the review's items 3, 4 and 7 are met |
+| Screen training (public trainer) | Not yet migrated. The manifests are non-launchable (review items 1, 2, 5 and 6) |
+| Lines (b) and (c) | Not started (goal amendments of 2026-09-27) |
+| Raw `public_feature_evaluation_v1` or `public_feature_training_v1` calls | Unguarded by design; this launcher is the supported path |
+
+## First timing check (2026-09-27 15:24 EDT, Jack's PC)
+
+56 BO3: V3 and untouched g115 as members, two engineering seed blocks (never a frozen packet), 7 learner decks and both seats. Evaluator `868a7411` from engineering build 001 (`ff6e0124`). Match hashes were identical at every worker count. Outcomes were not read.
+
+| Workers | Seconds | BO3 per second | Speedup |
+|---|---|---|---|
+| 1 | 39.53 | 1.42 | 1.00 |
+| 8 | 6.51 | 8.60 | 6.07 |
+| 24 | 4.45 | 12.57 | 8.87 |
+
+At 24 workers, 56 jobs are only about 2.3 waves, so this set understates the full packets' parallel rate. The largest charged output was 75 KB per BO3. The search class (D3 member) is not yet measured.
 
 ## Open prerequisites (owners)
 

@@ -131,7 +131,14 @@ def require_throughput(evidence, work_class, units, binding, now=None):
     selected = placements.get(evidence['selected'])
     require(selected is not None and selected['eligible'], 'Selected placement missing or ineligible')
     require(selected['projected_seconds'] <= min(eligible)[0] + 1e-6, 'A faster feasible placement exists')
-    return selected
+    # An earlier qualification's wall-time bound is a comparator, never a veto: record the shortfall.
+    bound = evidence.get('earlier_bound')
+    shortfall = None
+    if bound is not None:
+        require(bound['seconds'] > 0 and str(bound.get('source', '')).strip(), 'Earlier bound needs its source')
+        shortfall = dict(bound_seconds=bound['seconds'], source=bound['source'],
+                         shortfall_seconds=max(0.0, selected['projected_seconds'] - bound['seconds']))
+    return dict(selected, shortfall=shortfall)
 
 
 # Byte budget (artifact law clause 1, storage ruling R3(c)).

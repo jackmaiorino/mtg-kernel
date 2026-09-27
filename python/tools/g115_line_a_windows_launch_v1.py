@@ -212,6 +212,8 @@ def dispatch(launch, host, root, placements, jobs, prefix=None):
     The completion record carries identities, hashes, times and bytes only; no outcome is read.
     """
     root = Path(root)
+    write_json(root / 'admission.json', dict(schema='g115-line-a-admission/v1', mode=launch['mode'], host=host,
+                                            placements=placements, jobs=len(jobs)))
     worksheet = guard.read(guard.checked(launch['worksheet']))
     ledger = Ledger(worksheet['cap_bytes'], launch['control_allowance_bytes'])
     executable = guard.require_pinned(launch['executable']['path'], launch['executable']['sha256'])
