@@ -578,4 +578,75 @@ mod tests {
         shape.entries[0].differences[0].field = "name".into();
         assert!(validate_allowlist_shape_v1(&shape).is_err());
     }
+
+    /// The braces of the first function whose text starts with `signature`.
+    fn function_body<'a>(source: &'a str, signature: &str) -> &'a str {
+        let start = source.find(signature).expect("function present");
+        let open = start + source[start..].find('{').expect("function body");
+        let mut depth = 0usize;
+        for (offset, c) in source[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &source[open..=open + offset];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unbalanced function body")
+    }
+
+    /// String literals of six or more characters, in order: the check
+    /// messages and the metadata and run pointers each check reads.
+    fn literals(body: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        let mut rest = body;
+        while let Some(open) = rest.find('"') {
+            let after = &rest[open + 1..];
+            let close = after.find('"').expect("closed literal");
+            let literal = &after[..close];
+            if literal.len() >= 6 && !literal.contains('\n') {
+                found.push(literal);
+            }
+            rest = &after[close + 1..];
+        }
+        found
+    }
+
+    /// FABLE-REVIEW-20260927 R14 point 3 (recommended parity test): this
+    /// loader repeats load_v1's checks in load_v1's order. After its two
+    /// route-specific checks, load_v1's ordered literals from the metadata
+    /// read through the source deck ids appear here contiguously, so a check
+    /// added to, removed from or reordered in either loader fails this test.
+    #[test]
+    fn the_loader_repeats_the_v1_checks_in_order() {
+        let v1_source = include_str!("../sideboard_play_policy_v1.rs");
+        let v1 = literals(function_body(
+            v1_source,
+            "pub fn load_v1(input: &FrozenPlayPolicyImportV1)",
+        ));
+        let r14 = literals(function_body(
+            include_str!("registry_evolution_v1.rs"),
+            "fn load_registry_evolution_v3(",
+        ));
+        let first = v1.iter().position(|s| *s == "metadata.json").unwrap();
+        let last = v1
+            .iter()
+            .position(|s| *s == "invalid source deck id")
+            .unwrap();
+        let shared = &v1[first..=last];
+        assert!(shared.len() >= 40, "{shared:?}");
+        let offset = r14.iter().position(|s| *s == "metadata.json").unwrap();
+        assert_eq!(
+            r14[..offset],
+            [
+                "registry evolution descriptor schema differs",
+                "explicit V3 destination feature identity differs"
+            ]
+        );
+        assert_eq!(&r14[offset..offset + shared.len()], shared);
+    }
 }
