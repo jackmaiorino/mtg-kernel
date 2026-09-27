@@ -248,11 +248,12 @@ fn typed_search_failure_publishes_a_public_failure_record() {
     )
     .unwrap();
     search.reset_for_game([1, 2], "failure-fixture").unwrap();
+    net.reset_sampling_v1([1, 2]);
     let error = search
         .select(&mut net, &session, stale)
         .err()
         .expect("typed failure");
-    assert!(error.contains(SEARCH_FAILURE_MARKER));
+    assert!(error.contains(SEARCH_FAILURE_MARKER), "{error}");
     let directory = std::env::temp_dir().join(format!(
         "mtg-search-failure-{}-{}",
         std::process::id(),
