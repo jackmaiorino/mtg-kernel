@@ -86,6 +86,7 @@ fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
 mod line_b_root_selection_v1;
+mod line_b_teacher_operator_v1;
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -6736,6 +6737,221 @@ pub(crate) mod tests {
             ..episode.clone()
         };
         assert!(!line_b_learner_row_v1(&against, 0) && line_b_learner_row_v1(&against, 1));
+    }
+
+    /// One real self-play game (Burn mirror, fixture V4 policy) collected
+    /// with the line (b) unclamped learner sampler.
+    fn line_b_operator_fixture_v1() -> (FrozenPlayPolicyV1, ExpandedTrajectoryV1) {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        policy.enable_unclamped_collection_sampler_v1();
+        let learner = test_behavior(&policy, false);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-operator-fixture".into(),
+            seed: 2_026_092_702,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            registered: [deck.clone(), deck.clone()],
+            selected: [deck.clone(), deck],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        assert_eq!(
+            trajectory.learner_sampler.as_deref(),
+            Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+        );
+        (policy, trajectory)
+    }
+
+    fn line_b_root_input_v1<'a>(
+        root: &'a line_b_root_selection_v1::LineBRootV1,
+        policy: &'a FrozenPlayPolicyV1,
+        teacher_seed: u64,
+        learner_sampler: Option<&'static str>,
+    ) -> line_b_teacher_operator_v1::LineBTeacherRootInputV1<'a> {
+        line_b_teacher_operator_v1::LineBTeacherRootInputV1 {
+            root,
+            teacher_seed,
+            learner_sampler,
+            policies: line_b_teacher_operator_v1::LineBRolloutPoliciesV1 {
+                student: policy,
+                opponent: None,
+                learner_seat: 0,
+            },
+        }
+    }
+
+    /// Line (b) rollouts from the replayed root of the fixture game: no
+    /// defect in the census, records identical for one and three workers,
+    /// fork reuse equal to brand-new forks, the teacher seed changes the
+    /// records, and a legacy-sampler trajectory is refused.
+    #[test]
+    fn line_b_teacher_rollouts_are_worker_invariant_fresh_and_seeded() {
+        use line_b_root_selection_v1::select_line_b_root_v1;
+        use line_b_teacher_operator_v1::{
+            line_b_rollout_with_new_forks_v1, line_b_root_status_v1, line_b_teacher_rollouts_v1,
+            LineBRolloutOutcomeV1, LineBRootStatusV1,
+        };
+        let (policy, trajectory) = line_b_operator_fixture_v1();
+        let root = select_line_b_root_v1(&trajectory, 11)
+            .unwrap()
+            .expect("the fixture has eligible roots");
+        let unclamped = Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1);
+        let input = |seed: u64, sampler| line_b_root_input_v1(&root, &policy, seed, sampler);
+        let rollouts = 2_u32;
+        let width = trajectory.decisions[root.decision_index].logits.len() as u32;
+        let serial = line_b_teacher_rollouts_v1(&[input(21, unclamped)], rollouts, 1).unwrap();
+        assert_eq!(serial.len(), 1);
+        let records = &serial[0];
+        assert_eq!(records.len(), (rollouts * width) as usize);
+        for (index, record) in records.iter().enumerate() {
+            let index = index as u32;
+            assert_eq!(
+                (record.ordinal, record.action),
+                (index / width, index % width)
+            );
+            assert!(
+                !matches!(record.outcome, LineBRolloutOutcomeV1::Defect(_)),
+                "defect in the census: {record:?}"
+            );
+        }
+        assert_eq!(
+            line_b_teacher_rollouts_v1(&[input(21, unclamped)], rollouts, 3).unwrap(),
+            serial
+        );
+        // The ordinal's last action ran on the most reused fork pair.
+        for ordinal in 0..rollouts {
+            let index = (ordinal * width + width - 1) as usize;
+            assert_eq!(
+                line_b_rollout_with_new_forks_v1(&input(21, unclamped), ordinal, width - 1)
+                    .unwrap(),
+                records[index]
+            );
+        }
+        let reseeded = line_b_teacher_rollouts_v1(&[input(22, unclamped)], 1, 1).unwrap();
+        assert_ne!(
+            reseeded[0].as_slice(),
+            &records[..width as usize],
+            "the teacher seed must change the rollouts"
+        );
+        assert!(line_b_teacher_rollouts_v1(&[input(21, None)], rollouts, 1).is_err());
+        let logits: Vec<f32> = trajectory.decisions[root.decision_index]
+            .logits
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect();
+        match line_b_root_status_v1(records, rollouts, &logits, 0.25).unwrap() {
+            LineBRootStatusV1::Complete {
+                mean_returns,
+                log_target,
+            } => {
+                assert_eq!(mean_returns.len(), width as usize);
+                assert_eq!(log_target.len(), width as usize);
+                assert!(mean_returns
+                    .iter()
+                    .all(|m| [-1.0, -0.5, 0.0, 0.5, 1.0].contains(m)));
+            }
+            LineBRootStatusV1::Censored { censored_rollouts } => assert!(censored_rollouts > 0),
+        }
+    }
+
+    /// Fable change 5, construction stated. Root pairs in one actor
+    /// information set that hold the same (object id, card) objects give
+    /// byte-identical rollout records: a FutureChanceV3 redeterminized clone
+    /// of the root (hidden hand and library placement and engine randomness
+    /// all differ), the root with an unobserved library reversed, and the
+    /// root with its engine randomness replaced. The Legacy sample mode keeps
+    /// the true engine randomness, so the replaced-randomness pair must
+    /// differ there (power).
+    #[test]
+    fn line_b_teacher_rollouts_are_invariant_to_hidden_placement_and_engine_rng() {
+        use crate::rl_session::V4SearchSampleMode;
+        use line_b_root_selection_v1::{select_line_b_root_v1, LineBRootV1};
+        use line_b_teacher_operator_v1::line_b_teacher_rollouts_mode_v1;
+        let (policy, trajectory) = line_b_operator_fixture_v1();
+        let root = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        let unclamped = Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1);
+        let run = |root: &LineBRootV1, mode: V4SearchSampleMode| {
+            line_b_teacher_rollouts_mode_v1(
+                &[line_b_root_input_v1(root, &policy, 21, unclamped)],
+                1,
+                1,
+                mode,
+            )
+            .unwrap()
+        };
+        let base = run(&root, V4SearchSampleMode::FutureChanceV3);
+        let mut pairs = vec![
+            (
+                "redeterminized clone",
+                root.session
+                    .kernel_search_redeterminized_clone_mode_v4(
+                        0x5eed,
+                        V4SearchSampleMode::FutureChanceV3,
+                    )
+                    .unwrap(),
+            ),
+            (
+                "engine randomness",
+                root.session
+                    .diagnostic_certificate_perturbed_clone_v1(None, true)
+                    .unwrap(),
+            ),
+        ];
+        for owner in 0..2 {
+            if let Ok(session) = root
+                .session
+                .diagnostic_certificate_perturbed_clone_v1(Some(owner), false)
+            {
+                pairs.push(("library order", session));
+            }
+        }
+        assert!(
+            pairs.len() >= 3,
+            "the fixture root needs an unobserved library"
+        );
+        for (label, session) in pairs {
+            assert_ne!(
+                session.diagnostic_state_hash(),
+                root.session.diagnostic_state_hash(),
+                "{label}"
+            );
+            assert_eq!(
+                session.kernel_search_visible_key_v4(0).unwrap(),
+                root.visible_key,
+                "{label}"
+            );
+            let other = LineBRootV1 {
+                session,
+                ..root.clone()
+            };
+            assert_eq!(
+                run(&other, V4SearchSampleMode::FutureChanceV3),
+                base,
+                "{label}"
+            );
+        }
+        let replaced = LineBRootV1 {
+            session: root
+                .session
+                .diagnostic_certificate_perturbed_clone_v1(None, true)
+                .unwrap(),
+            ..root.clone()
+        };
+        assert_ne!(
+            run(&replaced, V4SearchSampleMode::Legacy),
+            run(&root, V4SearchSampleMode::Legacy),
+            "Legacy keeps the true engine randomness"
+        );
     }
 
     /// Pinned against the value this exact fixture (same seeds, decks,
