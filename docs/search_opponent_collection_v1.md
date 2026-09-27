@@ -53,7 +53,7 @@ Search simulation seeds derive from engine encodings, so a search game reproduce
 
 ## Opponent kinds interface v1 (proposal, director scope extension of 2026-09-27)
 
-Status: countersigned with bindings (CODEX #558); implemented on the branch (829d8c4e, 549dd680, 6b1e91a9), tests pending. Adds two opt-in opponent kinds to the public collector beside ordinary V4 and the D3 wrapper.
+Status: countersigned with bindings (CODEX #558); implemented on the branch (829d8c4e, 549dd680, 6b1e91a9, 523e1bf3). Design entry for Fable filed separately (CLAUDE #474). Adds two opt-in opponent kinds to the public collector beside ordinary V4 and the D3 wrapper.
 
 **Declaration.** One new optional episode field, `opponent_kind`, omitted when absent (every existing byte unchanged). The public_checkpoint JSON is byte-identical to the evaluator's `ModelSource` for that kind, so a launcher can copy an evaluation source; the legacy JSON is the evaluator's shape plus `admission`, so it is evaluator-compatible, not byte-identical:
 
@@ -90,4 +90,4 @@ Validation extends the existing seat hook: exact ordered one-to-one corresponden
 
 **Per-kind blockers.**
 - public_checkpoint: none beyond implementation and countersign; four recent pins exist.
-- legacy: admission receipts. The frozen V3 receipt is this lane's task (relocation done; the expected model identity comes from one load). Panel members come from opus-panel-export: current-1 on the strict route now; seven refresh members need the R14 route; the six v3b endpoints also lack Store authority and stay later-version candidates. V3 rows inside a V4-learner trajectory are countersigned under the new outer schema and kind-aware validator (CODEX #558).
+- legacy: admission receipts. The frozen V3 is build-bound: its transfer envelope records the destination build commit and the loader reproduces the envelope, so a V3 source loads only in a binary of that commit. The established rebinding (`g115_d3_payload_v1.prepare`, also used by line-a-launcher) changes only `receipt.destination_build_git_head`. An admission receipt binds that build's model source, so each training build needs its own rebind and receipt; the expected identity is build-independent: `mtg-kernel-registry-transferred-play/v1`, model parameters `8474051a...` (the transfer receipt's destination), weights `2fa88edf...`, V3, observation successor (probe at 13759e4d; receipt `e46fd8ac...` admits it through the collector path). Panel members come from opus-panel-export: current-1 on the strict route now; seven refresh members need the R14 route; the six v3b endpoints also lack Store authority and stay later-version candidates. V3 rows inside a V4-learner trajectory are countersigned under the new outer schema and kind-aware validator (CODEX #558).
