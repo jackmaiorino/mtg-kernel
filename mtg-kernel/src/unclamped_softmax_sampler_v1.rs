@@ -121,7 +121,8 @@ impl std::error::Error for UnclampedSoftmaxSamplerErrorV1 {}
 
 /// Libm-free `e^d` for `d` in `[UNCLAMPED_SOFTMAX_GAP_FLOOR_V1, 0]`, with the
 /// operation order the contract names. Callers guarantee the domain.
-fn exp_v1(d: f64) -> f64 {
+/// Shared with the line (b) teacher target.
+pub(crate) fn exp_v1(d: f64) -> f64 {
     let k_float = (d * INV_LN2_V1 + ROUND_SHIFTER_V1) - ROUND_SHIFTER_V1;
     let r = (d - k_float * LN2_HI_V1) - k_float * LN2_LO_V1;
     let mut value = EXP_TAYLOR_V1[13];
