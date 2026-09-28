@@ -23,7 +23,8 @@ use super::{
     ExpandedTrajectoryV1,
 };
 use crate::line_b_teacher_target_v1::{
-    line_b_teacher_target_v1, LineBDivergenceV1, LINE_B_TEACHER_TARGET_VERSION_V1,
+    line_b_divergence_v1, line_b_teacher_target_v1, LineBDivergenceV1,
+    LINE_B_TEACHER_TARGET_VERSION_V1,
 };
 use crate::native_policy_train_step_v1::{
     LineBAuxiliaryInputV1, LineBAuxiliaryResultV1, LineBAuxiliaryRootV1,
@@ -354,6 +355,7 @@ pub(super) fn line_b_teacher_receipt_v1(
     packet: &LineBTeacherPacketV1,
     packet_pin: &PinnedFileV1,
     auxiliary: Option<&LineBAuxiliaryResultV1>,
+    rescore: Option<&[Option<(f64, f64)>]>,
     teacher_seconds: f64,
 ) -> Value {
     let telemetry = auxiliary.map(|auxiliary| {
@@ -365,10 +367,15 @@ pub(super) fn line_b_teacher_receipt_v1(
                 _ => None,
             })
             .zip(&auxiliary.divergences_before)
-            .map(|(root, before)| {
+            .enumerate()
+            .map(|(index, (root, before))| {
+                let pair = rescore.and_then(|pairs| pairs.get(index).copied().flatten());
                 json!({"trajectory_index": root.trajectory_index,
                     "decision_index": root.decision_index,
-                    "divergence_before": before})
+                    "divergence_before": before,
+                    "rescore_before": pair.map(|(before, _)| before),
+                    "rescore_after": pair.map(|(_, after)| after),
+                    "signed_difference": pair.map(|(before, after)| after - before)})
             })
             .collect();
         let ratio = if auxiliary.ordinary_head_l2 > 0.0 {
@@ -394,4 +401,143 @@ pub(super) fn line_b_teacher_receipt_v1(
         "census": packet.census,
         "teacher_seconds": teacher_seconds,
         "telemetry": telemetry})
+}
+
+/// The proposal's 12:51 rescore on each selected root, same root, full menu
+/// and frozen target for both readings: its divergence from the recorded
+/// collection logits (the start-of-update forward, bit for bit) and from a
+/// host forward of the published parameters, both in binary64 and the same
+/// on either backend. Censored roots are unavailable (`None`); the rescore
+/// never touches optimizer state.
+pub(super) fn line_b_rescore_v1(
+    input: &LineBAuxiliaryInputV1,
+    groups: &[crate::native_policy_train_step_v1::NativePolicyPhysicalDecisionV1<'_>],
+    model: &crate::native_policy_value_net_v1::NativePolicyValueNetV1,
+    generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+) -> Result<Vec<Option<(f64, f64)>>, String> {
+    use crate::native_policy_train_step_v1::NativePolicyForwardInputV1;
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    input
+        .roots
+        .iter()
+        .map(|root| {
+            let Some(target) = &root.target else {
+                return Ok(None);
+            };
+            let substep = groups
+                .get(root.group_index)
+                .and_then(|group| group.substeps.get(root.substep_index))
+                .ok_or("line (b) rescore root is outside the batch")?;
+            let before: Vec<f64> = substep
+                .expected_raw_action_logit_bits
+                .iter()
+                .map(|bits| f64::from(f32::from_bits(*bits)))
+                .collect();
+            let view = match &substep.forward {
+                NativePolicyForwardInputV1::Encoded(view) => **view,
+                NativePolicyForwardInputV1::Packed { encoded, .. } => **encoded,
+            };
+            let output = match generation {
+                FreshLineageGenerationV1::V3 => model.forward_feature_transfer_v3(view),
+                FreshLineageGenerationV1::V4 => model.forward_feature_transfer_v4(view),
+            }
+            .map_err(|error| format!("line (b) rescore forward: {error:?}"))?;
+            let after: Vec<f64> = output.logits.iter().map(|&z| f64::from(z)).collect();
+            let divergence = |logits: &[f64]| {
+                line_b_divergence_v1(input.direction, logits, target)
+                    .map(|value| value.divergence)
+                    .map_err(|error| error.to_string())
+            };
+            Ok(Some((divergence(&before)?, divergence(&after)?)))
+        })
+        .collect()
+}
+
+pub const LINE_B_HEAD_DISTANCE_SCHEMA_V1: &str = "mtg-kernel-line-b-head-distance/v1";
+
+/// End-of-run head distance (proposal 12:51): the L2 distance over the seven
+/// trainable head tensors between a treatment and its matched control, the
+/// control's head L2 over the same tensors as the reference, and their ratio
+/// (null when the reference norm is zero).
+pub(super) fn line_b_head_distance_v1(
+    treatment: &ExpandedModelSourceV1,
+    control: &ExpandedModelSourceV1,
+) -> Result<Value, String> {
+    let (_, treatment_state) = super::initialize(treatment)?;
+    let (_, control_state) = super::initialize(control)?;
+    let treatment = treatment_state.snapshot_v1().map_err(super::err)?;
+    let control = control_state.snapshot_v1().map_err(super::err)?;
+    line_b_head_distance_from_parameters_v1(&treatment.parameters, &control.parameters)
+}
+
+pub(super) fn line_b_head_distance_from_parameters_v1(
+    treatment: &[crate::native_policy_value_net_v1::NativeNamedParameterV1],
+    control: &[crate::native_policy_value_net_v1::NativeNamedParameterV1],
+) -> Result<Value, String> {
+    use crate::native_policy_train_step_v1::HEAD_ONLY_TRAINABLE_TENSORS_V1;
+    use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+    fn find<'a>(
+        parameters: &'a [NativeNamedParameterV1],
+        name: &str,
+    ) -> Result<&'a NativeNamedParameterV1, String> {
+        parameters
+            .iter()
+            .find(|parameter| parameter.name == name)
+            .ok_or_else(|| format!("line (b) head distance: {name} is missing"))
+    }
+    let (mut squared_distance, mut squared_reference) = (0.0_f64, 0.0_f64);
+    for name in HEAD_ONLY_TRAINABLE_TENSORS_V1 {
+        let (a, b) = (find(treatment, name)?, find(control, name)?);
+        if a.values.len() != b.values.len() {
+            return Err(format!("line (b) head distance: {name} shapes differ"));
+        }
+        for (x, y) in a.values.iter().zip(&b.values) {
+            let (x, y) = (f64::from(*x), f64::from(*y));
+            squared_distance += (x - y) * (x - y);
+            squared_reference += y * y;
+        }
+    }
+    let (distance, reference) = (squared_distance.sqrt(), squared_reference.sqrt());
+    Ok(json!({"schema": LINE_B_HEAD_DISTANCE_SCHEMA_V1,
+        "tensors": HEAD_ONLY_TRAINABLE_TENSORS_V1,
+        "l2": distance,
+        "reference": "the control's L2 over the same tensors",
+        "reference_l2": reference,
+        "relative_l2": if reference > 0.0 { json!(distance / reference) } else { Value::Null }}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_policy_train_step_v1::HEAD_ONLY_TRAINABLE_TENSORS_V1;
+    use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+
+    fn heads(value: f32) -> Vec<NativeNamedParameterV1> {
+        HEAD_ONLY_TRAINABLE_TENSORS_V1
+            .into_iter()
+            .map(|name| NativeNamedParameterV1 {
+                name,
+                shape: vec![2],
+                values: vec![value; 2],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn head_distance_reports_l2_reference_and_a_null_ratio_at_a_zero_reference() {
+        let (zero, one) = (heads(0.0), heads(1.0));
+        let distance = line_b_head_distance_from_parameters_v1(&one, &zero).unwrap();
+        assert_eq!(distance["schema"], LINE_B_HEAD_DISTANCE_SCHEMA_V1);
+        assert_eq!(distance["l2"].as_f64().unwrap(), 14.0_f64.sqrt());
+        assert_eq!(distance["reference_l2"].as_f64().unwrap(), 0.0);
+        assert!(distance["relative_l2"].is_null());
+        let back = line_b_head_distance_from_parameters_v1(&zero, &one).unwrap();
+        assert_eq!(back["relative_l2"].as_f64().unwrap(), 1.0);
+        let mut missing = one.clone();
+        missing.pop();
+        assert!(line_b_head_distance_from_parameters_v1(&missing, &one).is_err());
+        let mut reshaped = one.clone();
+        reshaped[0].values.push(1.0);
+        assert!(line_b_head_distance_from_parameters_v1(&reshaped, &one).is_err());
+    }
 }

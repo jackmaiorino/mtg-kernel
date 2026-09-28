@@ -2038,10 +2038,19 @@ pub enum ExpandedTrainingCommandV1 {
         line_b: Option<LineBUpdateOptionsV1>,
         output_directory: PathBuf,
     },
+    /// Line (b) end-of-run head distance between a treatment and its matched
+    /// control (proposal 12:51); reads both sources, writes nothing.
+    LineBHeadDistance {
+        treatment: ExpandedModelSourceV1,
+        control: ExpandedModelSourceV1,
+    },
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
     match command {
+        ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
+            line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
+        }
         ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,
@@ -2820,6 +2829,17 @@ fn execute_update_v1(
         }
         None => None,
     };
+    // Line (b) rescore (proposal 12:51): the same roots before and after this
+    // update with the frozen targets, from the published parameters.
+    let line_b_rescore = match &line_b_teacher {
+        Some((_, Some(input))) => Some(line_b_teacher_packet_v1::line_b_rescore_v1(
+            input,
+            &groups,
+            state.model_v1(),
+            generation,
+        )?),
+        _ => None,
+    };
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -2906,6 +2926,7 @@ fn execute_update_v1(
             packet,
             &packet_pin,
             line_b_auxiliary.as_ref(),
+            line_b_rescore.as_deref(),
             teacher_seconds,
         );
         if let Some(envelope) = line_b_envelope {
@@ -7358,6 +7379,7 @@ pub(crate) mod tests {
         assert!(control["line_b"].get("teacher").is_none());
         let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
         let mut moved = Vec::new();
+        let mut checkpoints = Vec::new();
         for (label, direction) in [
             ("reverse", LineBDivergenceV1::Reverse),
             ("forward", LineBDivergenceV1::Forward),
@@ -7392,13 +7414,53 @@ pub(crate) mod tests {
                 eprintln!("{label} {direction:?} envelope {envelope} telemetry {telemetry}");
             }
             let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
+            let root = &telemetry["roots"][0];
             if taught["census"]["complete_roots"] == 1 {
-                assert!(telemetry["roots"][0]["divergence_before"].is_number());
+                let before = root["divergence_before"].as_f64().unwrap();
+                let rescore_before = root["rescore_before"].as_f64().unwrap();
+                let rescore_after = root["rescore_after"].as_f64().unwrap();
+                assert_eq!(
+                    root["signed_difference"].as_f64().unwrap(),
+                    rescore_after - rescore_before
+                );
+                if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                    // The CPU tape is the recorded collection forward.
+                    assert_eq!(rescore_before.to_bits(), before.to_bits());
+                } else {
+                    assert!((rescore_before - before).abs() < 1e-6);
+                }
             } else {
-                assert!(telemetry["roots"][0]["divergence_before"].is_null());
+                assert!(root["divergence_before"].is_null());
+                assert!(root["rescore_after"].is_null());
                 assert_eq!(auxiliary, 0.0);
             }
             moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
+            checkpoints.push(receipt["checkpoint"].clone());
+        }
+        // End-of-run head distance (proposal 12:51) through the command.
+        let checkpoint_source = |pin: &Value| ExpandedModelSourceV1 {
+            checkpoint: Some(serde_json::from_value(pin.clone()).unwrap()),
+            ..source.clone()
+        };
+        let distance = |treatment: &Value, control_pin: &Value| {
+            execute_v1(ExpandedTrainingCommandV1::LineBHeadDistance {
+                treatment: checkpoint_source(treatment),
+                control: checkpoint_source(control_pin),
+            })
+            .unwrap()
+        };
+        let same = distance(&control["checkpoint"], &control["checkpoint"]);
+        assert_eq!(same["l2"], 0.0);
+        assert_eq!(same["relative_l2"], 0.0);
+        let treated = distance(&checkpoints[0], &control["checkpoint"]);
+        let (l2, reference) = (
+            treated["l2"].as_f64().unwrap(),
+            treated["reference_l2"].as_f64().unwrap(),
+        );
+        assert!(reference > 0.0);
+        assert_eq!(treated["relative_l2"].as_f64().unwrap(), l2 / reference);
+        if moved[0].0 {
+            assert!(l2 > 0.0, "the teacher must move the heads");
         }
         if moved.iter().all(|(nonzero, _)| *nonzero) {
             assert_ne!(
