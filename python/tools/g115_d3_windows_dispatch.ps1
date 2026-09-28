@@ -40,11 +40,9 @@ if ($RunConfig) {
                 if (Test-Path -LiteralPath (Join-Path $config.cloud_control $name)) { throw 'Cloud control already attempted; use fresh preparation' }
             }
         } elseif (Test-Path -LiteralPath $config.worker_root) { throw 'Worker root already exists; never resume or overwrite it' }
-        $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^public_feature_evaluation_v1.exe$|^trainer.exe$|^mtg_kernel.*exe$|^cargo.exe$|^rustc.exe$' })
-        if ([IO.Path]::GetFileName($config.launcher) -in @('g115_d4_build_launch_v1.py','g115_r14_test_launch_v1.py','g115_d4_replay_timing_launch_v1.py','g115_d4_audit_pipeline_v1.py')) {
-            $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(public_.*|native_.*|learned_sideboard_v1|trainer|mtg_kernel.*|cargo|rustc)\.exe$' })
-        }
-        if ($busy.Count -ne 0) { throw 'Competing native work present; preserve existing work' }
+        # Match the acquire-side refusal, exempting only this token's owned work.
+        & $config.python (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py') --check-busy
+        if ($LASTEXITCODE -ne 0) { throw 'Reservation-aware busy check refused' }
         $receipt.worker_started_utc = [DateTime]::UtcNow.ToString('o')
         Save-Json (Join-Path $config.control_root 'owner-start.json') $receipt
         # Windows PowerShell treats native stderr as an error record. Preserve it

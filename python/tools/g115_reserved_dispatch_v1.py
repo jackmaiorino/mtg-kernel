@@ -53,9 +53,16 @@ def cleanup_auxiliary(config):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check-owner', action='store_true')
+    parser.add_argument('--check-busy', action='store_true')
     parser.add_argument('--config')
     parser.add_argument('--cleanup-auxiliary', action='store_true')
     args = parser.parse_args()
+    if args.check_busy:
+        token = check_owner()
+        busy = reservation.cim_busy(r'^(cargo|rustc|public_.*|native_.*|expanded_deck_.*|learned_sideboard_v1|trainer|mtg_kernel.*|wsl)\.exe$', reservation.exempt_pids(token))
+        if busy:
+            raise RuntimeError('Competing native work present: ' + json.dumps(busy))
+        return
     if args.check_owner:
         print(check_owner())
         return
