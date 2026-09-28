@@ -56,24 +56,43 @@ def slot_label(name, update, slot, kind):
     return f"{name}/update/{update:03}/slot/{slot:02}/{kind}"
 
 
-def run(command, directory, name):
+def run(command, directory, name, affinity=None):
+    """Runs one command at BelowNormal priority; `affinity` (a list of
+    logical processors) pins the process right after it starts."""
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.command.json"
     path.write_text(json.dumps(command, indent=1))
     started = time.perf_counter()
-    done = subprocess.run(
+    process = subprocess.Popen(
         [str(BIN), str(path)],
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS,
     )
+    if affinity is not None:
+        import psutil
+
+        psutil.Process(process.pid).cpu_affinity(affinity)
+    stdout, stderr = process.communicate()
     seconds = time.perf_counter() - started
-    (directory / f"{name}.stderr.txt").write_text(done.stderr)
-    if done.returncode != 0:
-        raise SystemExit(f"{name} failed ({done.returncode}): {done.stderr[-2000:]}")
-    result = json.loads(done.stdout)
+    (directory / f"{name}.stderr.txt").write_text(stderr)
+    if process.returncode != 0:
+        raise SystemExit(f"{name} failed ({process.returncode}): {stderr[-2000:]}")
+    result = json.loads(stdout)
     (directory / f"{name}.result.json").write_text(json.dumps(result, indent=1))
     return result, seconds
+
+
+def affinity_from_mask(mask):
+    return None if mask is None else [cpu for cpu in range(64) if (mask >> cpu) & 1]
+
+
+def host_load():
+    """Host CPU busy percent over one second (the quiet-host check)."""
+    import psutil
+
+    return psutil.cpu_percent(interval=1.0)
 
 
 def template():
@@ -407,6 +426,7 @@ def throughput(args, directory):
     episodes, games = batch(args.name, 0, entries, initial, a48)
     collect = collect_command(initial, episodes, args.collect_workers, directory / "collect")
     collected, seconds = run(collect, directory, "collect")
+    affinity = affinity_from_mask(args.affinity_mask)
     record = {
         "schema": "line-b-engineering-throughput-receipt/v1",
         "name": args.name,
@@ -415,16 +435,23 @@ def throughput(args, directory):
         "roots_requested": args.roots,
         "rollouts": args.rollouts,
         "backend": args.backends[0],
+        "placement": {
+            "priority": "below_normal",
+            "affinity": affinity if affinity is not None else "all logical processors",
+        },
         "collect_seconds": round(seconds, 3),
         "runs": {},
     }
     for workers in args.worker_counts:
         label = f"workers-{workers:02}"
-        options = teacher("reverse-kl", games, argparse.Namespace(rollouts=args.rollouts, workers=workers), False)
+        options = teacher(
+            "reverse-kl", games, argparse.Namespace(rollouts=args.rollouts, workers=workers), False
+        )
         command = update_command(
             initial, collected["trajectories"], args.backends[0], options, directory / label
         )
-        result, seconds = run(command, directory, label)
+        load_before = host_load()
+        result, seconds = run(command, directory, label, affinity)
         taught = result["line_b"]["teacher"]
         roots = packet_roots(taught["packet"])
         decisions = [d for root in roots for d in root["rollout_decisions"]]
@@ -435,6 +462,7 @@ def throughput(args, directory):
         teacher_seconds = taught["teacher_seconds"]
         record["runs"][label] = {
             "workers": workers,
+            "host_cpu_percent_before": load_before,
             "update_seconds": round(seconds, 3),
             "teacher_seconds": teacher_seconds,
             "roots": len(roots),
@@ -514,6 +542,12 @@ def main():
     parser.add_argument("--replays", type=int, default=2)
     parser.add_argument("--backends", nargs="+", default=["cuda1", "cpu"])
     parser.add_argument("--serial-collect", action="store_true")
+    parser.add_argument(
+        "--affinity-mask",
+        type=lambda text: int(text, 0),
+        default=None,
+        help="throughput only: pin each update to these logical processors (e.g. 0xffff for the P-cores)",
+    )
     args = parser.parse_args()
     directory = args.root / args.name
     if directory.exists():

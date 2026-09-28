@@ -123,11 +123,15 @@ def throughput(record):
             r["physical_decisions_mean"],
             r["physical_decisions_max"],
             r["census"]["censored_rollouts"] / r["census"]["rollouts"] if r["census"]["rollouts"] else None,
+            r.get("host_cpu_percent_before"),
         ]
         for r in runs
     ]
+    placement = record.get("placement", {})
     return "\n".join(
         [
+            f"Placement: priority {placement.get('priority', 'n/a')}, affinity {placement.get('affinity', 'n/a')}.",
+            "",
             table(
                 [
                     "workers",
@@ -139,6 +143,7 @@ def throughput(record):
                     "decisions per rollout (mean)",
                     "decisions per rollout (max)",
                     "censored rollout fraction",
+                    "host CPU percent before the run",
                 ],
                 rows,
             ),
