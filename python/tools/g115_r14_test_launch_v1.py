@@ -110,7 +110,7 @@ def admission(plan, host):
     memory = available_memory()
     require(memory >= 32 * GIB, 'Jack memory reserve unavailable')
     features = FEATURES if plan['suite'] == 'panel' else 'experimental-burn-net8-packed-cuda-v1'
-    command = [str(cargo), 'test', '--config', "build.rustc='" + rustc.as_posix() + "'", '--locked', '--offline', '-p', 'mtg-kernel', '--release',
+    command = [str(cargo), 'test', '--config', "build.rustc='" + str(rustc) + "'", '--locked', '--offline', '-p', 'mtg-kernel', '--release',
                '--config', 'profile.release.lto=false',
                '--config', 'profile.release.codegen-units=16',
                '--config', 'profile.release.package.mtg-kernel.codegen-units=16',
