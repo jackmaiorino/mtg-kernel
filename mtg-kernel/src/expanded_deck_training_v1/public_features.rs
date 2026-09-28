@@ -466,8 +466,6 @@ fn publish_bytes(directory: &Path, name: &str, bytes: &[u8]) -> Result<String, S
     Ok(sha(bytes))
 }
 
-/// All collectors use the current batch's parameters. Results are ordered by
-/// the original schedule before publication and the single learning update.
 /// The update's input from one trajectory: the learner's physical-decision
 /// groups in order, each row with its tensor and public row. The learner
 /// filter comes first, so no opponent row, record or auxiliary row enters.
@@ -507,6 +505,8 @@ pub(super) fn learner_groups(
     Ok(groups)
 }
 
+/// All collectors use the current batch's parameters. Results are ordered by
+/// the original schedule before publication and the single learning update.
 fn collect_parallel(
     policy: &PublicInputPlayPolicyV1,
     episodes: &[ExpandedEpisodeV1],
