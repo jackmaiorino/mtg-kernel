@@ -62,34 +62,86 @@ def slot_label(name, update, slot, kind):
     return f"{name}/update/{update:03}/slot/{slot:02}/{kind}"
 
 
-def run(command, directory, name, affinity=None):
-    """Runs one command at BelowNormal priority. Right after the start,
-    `affinity` (a list of logical processors) pins the process and the
-    execution-speed throttling opt-out is applied through the owned handle
-    and read back (director ruling CLAUDE #611, windows_owned_child_policy_v1),
-    recorded in <name>.placement.json; a failed readback stops the child."""
+CREATE_SUSPENDED = 0x00000004
+
+
+def placement_api():
+    """kernel32 affinity calls and ntdll's NtResumeProcess on an owned handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetProcessAffinityMask.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    kernel.GetProcessAffinityMask.restype = wintypes.BOOL
+    kernel.SetProcessAffinityMask.argtypes = [wintypes.HANDLE, ctypes.c_size_t]
+    kernel.SetProcessAffinityMask.restype = wintypes.BOOL
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    return ctypes, kernel, ntdll
+
+
+def spawn_placed(argv, executable, affinity_mask=None, **popen_args):
+    """Starts `argv` suspended at BelowNormal, pins `affinity_mask` (refused
+    unless it is a non-empty subset of the host mask), applies the
+    execution-speed throttling opt-out through the owned handle and reads
+    both back (windows_owned_child_policy_v1), and only then resumes the
+    child: no instruction of the child runs before the readback (director
+    ruling CLAUDE #611, pre-work barrier of CODEX #619). On any failure the
+    child is killed and reaped without having run."""
+    ctypes, kernel, ntdll = placement_api()
+    process = subprocess.Popen(
+        argv, creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED, **popen_args
+    )
+    try:
+        handle = int(process._handle)
+        if affinity_mask is not None:
+            process_mask, host_mask = ctypes.c_size_t(), ctypes.c_size_t()
+            if not kernel.GetProcessAffinityMask(handle, ctypes.byref(process_mask), ctypes.byref(host_mask)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if affinity_mask <= 0 or affinity_mask & host_mask.value != affinity_mask:
+                raise ValueError(f"affinity {affinity_mask:#x} is not within the host mask {host_mask.value:#x}")
+            if not kernel.SetProcessAffinityMask(handle, affinity_mask):
+                raise ctypes.WinError(ctypes.get_last_error())
+        readback = configure_owned_child(process, executable)
+        if affinity_mask is not None and readback["after"]["affinity_mask"] != affinity_mask:
+            raise RuntimeError("affinity readback differs from the requested mask")
+        status = ntdll.NtResumeProcess(handle)
+        if status != 0:
+            raise RuntimeError(f"NtResumeProcess failed with status {status:#x}")
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
+    readback["set_before_resume"] = True
+    return process, readback
+
+
+def run(command, directory, name, affinity_mask=None):
+    """Runs one command at BelowNormal priority under `spawn_placed` (the
+    throttling opt-out always, `affinity_mask` when given), recording the
+    readback in <name>.placement.json; a failed placement stops the child
+    before it runs. The timing includes the placement."""
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.command.json"
     path.write_text(json.dumps(command, indent=1))
     started = time.perf_counter()
-    process = subprocess.Popen(
-        [str(BIN), str(path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS,
-    )
     try:
-        if affinity is not None:
-            import psutil
-
-            psutil.Process(process.pid).cpu_affinity(affinity)
-        readback = configure_owned_child(process, BIN)
+        process, readback = spawn_placed(
+            [str(BIN), str(path)],
+            BIN,
+            affinity_mask,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
     except Exception as error:
-        process.kill()
-        _, stderr = process.communicate()
-        (directory / f"{name}.placement-error.txt").write_text(f"{error!r}\n{stderr}")
-        raise SystemExit(f"{name}: placement failed ({error!r}); the child was stopped")
+        (directory / f"{name}.placement-error.txt").write_text(repr(error))
+        raise SystemExit(f"{name}: placement failed ({error!r}); the child was stopped before it ran")
     (directory / f"{name}.placement.json").write_text(json.dumps(readback, indent=1))
     stdout, stderr = process.communicate()
     seconds = time.perf_counter() - started
@@ -99,10 +151,6 @@ def run(command, directory, name, affinity=None):
     result = json.loads(stdout)
     (directory / f"{name}.result.json").write_text(json.dumps(result, indent=1))
     return result, seconds
-
-
-def affinity_from_mask(mask):
-    return None if mask is None else [cpu for cpu in range(64) if (mask >> cpu) & 1]
 
 
 def host_load():
@@ -560,7 +608,8 @@ def throughput(args, directory):
         "backend": args.backends[0],
         "placement": {
             "priority": "below_normal",
-            "qos": "execution-speed throttling opt-out at spawn, read back per run (windows-owned-child-policy/v1)",
+            "qos": "execution-speed throttling opt-out on the suspended child, read back before resume, per run"
+            " (windows-owned-child-policy/v1)",
             "affinity_mask": hex(args.affinity_mask) if args.affinity_mask is not None else "all logical processors",
             "pair_mask": hex(args.pair_mask) if args.pair_mask is not None else None,
         },
@@ -576,7 +625,6 @@ def throughput(args, directory):
         if args.pair_mask is not None and workers >= 16:
             plan.append((f"workers-{workers:02}-mask-{args.pair_mask:#x}", workers, args.pair_mask))
     for label, workers, mask in plan:
-        affinity = affinity_from_mask(mask)
         options = teacher(
             "reverse-kl", games, argparse.Namespace(rollouts=args.rollouts, workers=workers), False
         )
@@ -585,7 +633,7 @@ def throughput(args, directory):
         )
         load_before = host_load()
         sampler = PlacementSampler()
-        result, seconds = run(command, directory, label, affinity)
+        result, seconds = run(command, directory, label, mask)
         placement = sampler.finish()
         taught = result["line_b"]["teacher"]
         roots = packet_roots(taught["packet"])
@@ -595,7 +643,8 @@ def throughput(args, directory):
             for kind in root["rollout_outcomes"]:
                 outcomes[kind] = outcomes.get(kind, 0) + 1
         teacher_seconds = taught["teacher_seconds"]
-        readback = json.loads((directory / f"{label}.placement.json").read_text())["after"]
+        placed = json.loads((directory / f"{label}.placement.json").read_text())
+        readback = placed["after"]
         record["runs"][label] = {
             "workers": workers,
             "affinity_mask": hex(mask) if mask is not None else "all logical processors",
@@ -606,6 +655,7 @@ def throughput(args, directory):
                 "power_state_mask": readback["power_state_mask"],
                 "execution_speed_opt_out": bool(readback["power_control_mask"] & 1)
                 and not readback["power_state_mask"] & 1,
+                "set_before_resume": placed.get("set_before_resume", False),
             },
             "host_cpu_percent_before": load_before,
             "placement_during_run": placement,
@@ -627,6 +677,9 @@ def throughput(args, directory):
         "one_packet_across_worker_counts": len({r["packet_sha256"] for r in runs}) == 1,
         "execution_speed_opt_out_read_back_on_every_run": all(
             r["placement_readback"]["execution_speed_opt_out"] for r in runs
+        ),
+        "placement_read_back_before_resume_on_every_run": all(
+            r["placement_readback"]["set_before_resume"] for r in runs
         ),
         "affinity_read_back_as_requested_on_every_run": all(
             r["affinity_mask"] in ("all logical processors", r["placement_readback"]["affinity_mask"])
