@@ -37,7 +37,7 @@ if ($RunConfig) {
             }
         } elseif (Test-Path -LiteralPath $config.worker_root) { throw 'Worker root already exists; never resume or overwrite it' }
         $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^public_feature_evaluation_v1.exe$|^trainer.exe$|^mtg_kernel.*exe$|^cargo.exe$|^rustc.exe$' })
-        if ([IO.Path]::GetFileName($config.launcher) -in @('g115_d4_build_launch_v1.py','g115_d4_replay_timing_launch_v1.py','g115_d4_audit_pipeline_v1.py')) {
+        if ([IO.Path]::GetFileName($config.launcher) -in @('g115_d4_build_launch_v1.py','g115_r14_test_launch_v1.py','g115_d4_replay_timing_launch_v1.py','g115_d4_audit_pipeline_v1.py')) {
             $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(public_.*|native_.*|learned_sideboard_v1|trainer|mtg_kernel.*|cargo|rustc)\.exe$' })
         }
         if ($busy.Count -ne 0) { throw 'Competing native work present; preserve existing work' }
@@ -96,6 +96,8 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-timing/v1') { throw 'D4 admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_d4_eval_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-eval-timing/v1') { throw 'D4 evaluation admits bounded Windows timing only' }
+} elseif ($launcherName -eq 'g115_r14_test_launch_v1.py') {
+    if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-r14-windows-tests/v1') { throw 'R14 tests require the named Jack test owner' }
 } elseif ($launcherName -eq 'g115_d4_build_launch_v1.py') {
     if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-windows-build/v1') { throw 'D4 build mode admits the named Jack build launcher only' }
 } elseif ($launcherName -eq 'g115_d4_replay_timing_launch_v1.py') {
