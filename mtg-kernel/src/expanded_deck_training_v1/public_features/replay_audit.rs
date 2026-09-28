@@ -102,6 +102,7 @@ impl AuditPolicy {
 pub(super) fn admits_public_trajectory(t: &Trajectory) -> bool {
     t.schema == "mtg-kernel-public-input-trajectory/v1"
         && t.search.is_none()
+        && t.opponent_record.is_none()
         && t.decisions.len() == t.auxiliary.len()
 }
 

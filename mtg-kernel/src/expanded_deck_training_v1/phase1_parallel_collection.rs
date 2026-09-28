@@ -264,7 +264,11 @@ pub(super) fn collect_parallel_v1(
             schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
             entries: ledger_entries,
         };
-        Some(publish_json(&output_directory, "non-natural.json", &document)?)
+        Some(publish_json(
+            &output_directory,
+            "non-natural.json",
+            &document,
+        )?)
     } else {
         None
     };
@@ -448,6 +452,7 @@ mod tests {
                 starting_player: (index % 2) as u8,
                 learner_seat: 0,
                 opponent: None,
+                opponent_kind: None,
                 opponent_search: None,
                 registered: decks.clone(),
                 selected: decks.clone(),
@@ -553,6 +558,7 @@ mod tests {
                 // Exercise common-model self-play and a separately owned
                 // policy for the other physical seat with the same weights.
                 opponent: (index >= 2).then(|| source.clone()),
+                opponent_kind: None,
                 opponent_search: None,
                 registered: [deck.clone(), deck.clone()],
                 selected: [deck.clone(), deck.clone()],
@@ -726,11 +732,52 @@ mod tests {
                 .unwrap();
             let mut changed = trajectory.clone();
             changed.decisions[learner_choice].sampler_identity = None;
-            assert!(validate_trajectory(&changed).is_err());
+            assert_eq!(
+                validate_trajectory(&changed).unwrap_err(),
+                "stored decision sampler identity differs from action width"
+            );
             let mut changed = trajectory.clone();
             let row = &mut changed.decisions[learner_choice];
             row.selected = (row.selected + 1) % row.logits.len() as u32;
-            assert!(validate_trajectory(&changed).is_err());
+            assert_eq!(
+                validate_trajectory(&changed).unwrap_err(),
+                "stored action differs from recorded behavior sampler"
+            );
+            // A hook cannot silently override the recorded learner sampler.
+            let mut hook = |_: &DecisionRecordV1| Ok(SeatRowDrawV1::None);
+            assert_eq!(
+                validate_episode_records_with_search_v1(
+                    episode.configurations().unwrap(),
+                    episode,
+                    &trajectory.configuration_sha256,
+                    &trajectory.decisions,
+                    &trajectory.terminal,
+                    trajectory.learner_sampler.as_deref(),
+                    Some((episode.learner_seat, &mut hook)),
+                )
+                .unwrap_err(),
+                "hooked seat conflicts with learner collection sampler or is invalid"
+            );
+            if episode.opponent.is_some() {
+                // Hooked logits stay legacy even with an unclamped learner.
+                let mut hook = |row: &DecisionRecordV1| {
+                    assert_eq!(
+                        row.sampler_identity.as_deref(),
+                        decision_sampler_identity_v1(row.logits.len())
+                    );
+                    Ok(SeatRowDrawV1::Logits)
+                };
+                validate_episode_records_with_search_v1(
+                    episode.configurations().unwrap(),
+                    episode,
+                    &trajectory.configuration_sha256,
+                    &trajectory.decisions,
+                    &trajectory.terminal,
+                    trajectory.learner_sampler.as_deref(),
+                    Some((1 - episode.learner_seat, &mut hook)),
+                )
+                .unwrap();
+            }
         }
         assert!(learner_rows > 0 && opponent_rows > 0);
     }

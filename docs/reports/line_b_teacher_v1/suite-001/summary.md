@@ -32,7 +32,7 @@ Integration (2), in code this branch does not change in non-test builds (rl_sess
 - `flat_policy_v1::runtime_typed_row_count_and_digest_goldens_are_exact` (runtime typed digests of five reset fixtures differ from data/flat_policy_v1/goldens_v1.json)
 - `rl_contract::rl_contract_combat_projection_preserves_indexed_non_token_history` (left 0, right 1)
 
-Value check (2026-09-28 03:00): both results equal base 500cfae9 in full. All five expected and actual digests of the flat_policy_v1 failure in this run's log appear in search-opponent's sealed base record, and rl_contract fails at tests/rl_contract.rs:543 with left 0, right 1 there too (D:/e-scratch/opus-search-opponent/logs/integration-failure-values-500cfae9.json, SHA-256 11c02cb8825354be0459a57a1a4a7e25586ed7033efaa9bb2938f4c15b3353c4, CLAUDE #582; Codex's collector integration run gives the same two failures, CODEX #612).
+Value check (written at 2026-09-28 03:00; committed earlier at 02:56:17): both results equal base 500cfae9 in full. All five expected and actual digests of the flat_policy_v1 failure in this run's log appear in search-opponent's sealed base record, and rl_contract fails at tests/rl_contract.rs:543 with left 0, right 1 there too (docs/reports/line_b_teacher_v1/suite-001/integration-failure-values-500cfae9.json, SHA-256 11c02cb8825354be0459a57a1a4a7e25586ed7033efaa9bb2938f4c15b3353c4, CLAUDE #582; Codex's collector integration run gives the same two failures, CODEX #612).
 
 The compiler errors in the doc-test section (for example "cannot construct NativeTrainingTrajectoryReceiptV2 with struct literal syntax") belong to `compile_fail` examples; all 62 doc tests passed.
 
@@ -42,3 +42,5 @@ The compiler errors in the doc-test section (for example "cannot construct Nativ
 - `expanded_deck_training_v1::tests::line_b_head_only_mask_freezes_trunk_bytes_across_real_cuda_updates`
 - `expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_gae_fixture_cuda_is_bit_identical_across_two_processes` (the production CUDA path's pinned golden)
 - `expanded_deck_training_v1::public_features::search_opponent::collect_tests::search_opponent_games_replay_validate_and_refuse_tampering` (Codex's D3 replay and tamper test, which exercises the merged trajectory validation with search rows)
+
+Durability (Astra takeover, 2026-09-28): the 3,442-byte record above is a byte-identical copy of the search-opponent author's sealed scratch record, SHA-256 11c02cb8825354be0459a57a1a4a7e25586ed7033efaa9bb2938f4c15b3353c4. Astra copied it without changing its content or claiming to have rerun its tests. Change 14(iv) still requires an independent merged-head witness against these full values.

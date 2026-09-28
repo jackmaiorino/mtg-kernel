@@ -42,6 +42,8 @@ def audit(report, arm):
             path = checked(report["outputs"][f"{index:04}/episode-{episode:03}.json"])
             assert pin(path)["sha256"] == checkpoint["trajectory_sha256"][episode]
             trajectory = read(path)
+            # Public rows are learner-only in this schema; other opponent schemas also fill opponent rows.
+            assert trajectory["schema"] == "mtg-kernel-public-input-trajectory/v1"
             assert trajectory["terminal"]["terminal_classification"] == "natural"
             assert trajectory["optimizer_state_sha256"] == receipt["before_state_sha256"]
             rows = [item["state"] for item in trajectory["auxiliary"] if item is not None]

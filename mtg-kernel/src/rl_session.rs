@@ -4220,6 +4220,54 @@ impl FastActorSessionV1 {
          self.max_policy_steps.saturating_sub(self.policy_step_count)]
     }
 
+    /// Feature-gated boundary audit of the search opponent (lane
+    /// opus-search-opponent): a private copy in which `owner` drew its first
+    /// eligible library card instead of its first eligible hand card, so
+    /// positions, zones and zone-change counts move together as a real
+    /// alternative draw would. Both objects carry no state beyond their card
+    /// definition and no knowledge entry of either player refers to them or
+    /// to the library slot. None when no such pair exists. Never a live
+    /// session mutation.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_draw_consistent_swap_clone_v1(&self, owner: PlayerId) -> Option<Self> {
+        use crate::state::Zone;
+        let s = &self.state;
+        let p = owner.index();
+        let pristine = |id: ObjectId, zone: Zone| {
+            let o = s.objects.get(id);
+            o.owner == owner && o.controller == owner && o.zone == zone
+                && o.spell_copy_origin.is_none() && o.attachments.is_empty() && o.v4.attached_to.is_none()
+                && !o.tapped && !o.summoning_sick && o.damage == 0
+                && o.counters == crate::state::Counters::default() && o.plotted_turn.is_none()
+                && !o.v4.is_token && o.v4 == crate::state::ObjectStateV4::from_card_def(o.card_def)
+        };
+        let referenced = |id: ObjectId, slot: Option<usize>| {
+            [PlayerId::P0, PlayerId::P1].iter().any(|observer| {
+                s.known_hand_cards(*observer, owner).iter().any(|k| k.object == id)
+                    || s.known_library_cards(*observer, owner).iter()
+                        .any(|k| k.object == id || Some(k.position as usize) == slot)
+            })
+        };
+        let (hi, hand) = s.players[p].hand.iter().copied().enumerate()
+            .find(|(_, id)| pristine(*id, Zone::Hand) && !referenced(*id, None))?;
+        let definition = s.objects.get(hand).card_def;
+        let (li, library) = s.players[p].library.iter().copied().enumerate()
+            .find(|(i, id)| s.objects.get(*id).card_def != definition
+                && pristine(*id, Zone::Library) && !referenced(*id, Some(*i)))?;
+        let mut copy = self.clone();
+        let state = &mut copy.state;
+        let (drawn, undrawn) = (state.objects.get(hand).zone_change_count, state.objects.get(library).zone_change_count);
+        state.players[p].hand[hi] = library;
+        state.players[p].library[li] = hand;
+        let moved = state.objects.get_mut(library);
+        moved.zone = Zone::Hand;
+        moved.zone_change_count = drawn;
+        let moved = state.objects.get_mut(hand);
+        moved.zone = Zone::Library;
+        moved.zone_change_count = undrawn;
+        Some(copy)
+    }
+
     /// Feature-gated offline invariance perturbation; no live session mutation.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     pub(crate) fn diagnostic_certificate_perturbed_clone_v1(&self,library:Option<usize>,rng:bool)->Result<Self,String> {

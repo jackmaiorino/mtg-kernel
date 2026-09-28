@@ -372,7 +372,10 @@ pub(super) fn line_b_auxiliary_input_v1(
 /// trajectory's learner list in batch order. The launcher sums these counts
 /// over a run's updates for the per-list per-run censored fractions against
 /// the 5 percent ceiling; `censored_root_fraction` is this update's share.
-pub(super) fn line_b_census_by_list_v1(packet: &LineBTeacherPacketV1, lists: &[String]) -> Value {
+pub(super) fn line_b_census_by_list_v1(
+    packet: &LineBTeacherPacketV1,
+    lists: &[String],
+) -> Result<Value, String> {
     #[derive(Default)]
     struct Counts {
         teacher_games: u64,
@@ -387,21 +390,24 @@ pub(super) fn line_b_census_by_list_v1(packet: &LineBTeacherPacketV1, lists: &[S
     let label = |index: usize| {
         lists
             .get(index)
+            .filter(|label| !label.is_empty())
             .cloned()
-            .unwrap_or_else(|| "<unlisted>".into())
+            .ok_or_else(|| format!("line (b) census missing list for trajectory {index}"))
     };
     for game in &packet.games {
         match game {
-            LineBPacketGameV1::Canonical { .. } => {}
+            LineBPacketGameV1::Canonical { trajectory_index } => {
+                label(*trajectory_index)?;
+            }
             LineBPacketGameV1::NoEligibleRoot {
                 trajectory_index, ..
             } => {
-                let counts = by_list.entry(label(*trajectory_index)).or_default();
+                let counts = by_list.entry(label(*trajectory_index)?).or_default();
                 counts.teacher_games += 1;
                 counts.no_eligible_root_games += 1;
             }
             LineBPacketGameV1::Root(root) => {
-                let counts = by_list.entry(label(root.trajectory_index)).or_default();
+                let counts = by_list.entry(label(root.trajectory_index)?).or_default();
                 counts.teacher_games += 1;
                 counts.selected_roots += 1;
                 match root.status {
@@ -435,7 +441,7 @@ pub(super) fn line_b_census_by_list_v1(packet: &LineBTeacherPacketV1, lists: &[S
             )
         })
         .collect();
-    Value::Object(rows)
+    Ok(Value::Object(rows))
 }
 
 /// `result.line_b.teacher` of the update receipt (proposal 12:51 telemetry):
@@ -569,6 +575,7 @@ pub(super) fn line_b_head_distance_from_parameters_v1(
 ) -> Result<Value, String> {
     use crate::native_policy_train_step_v1::HEAD_ONLY_TRAINABLE_TENSORS_V1;
     use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+
     fn find<'a>(
         parameters: &'a [NativeNamedParameterV1],
         name: &str,
@@ -604,6 +611,40 @@ mod tests {
     use super::*;
     use crate::native_policy_train_step_v1::HEAD_ONLY_TRAINABLE_TENSORS_V1;
     use crate::native_policy_value_net_v1::NativeNamedParameterV1;
+
+    #[test]
+    fn census_refuses_missing_or_empty_trajectory_list() {
+        let mut packet = LineBTeacherPacketV1 {
+            schema: "test",
+            operator: "test",
+            target: "test",
+            options: LineBPacketOptionsV1 {
+                direction: LineBDivergenceV1::Reverse,
+                coefficient: 0.1,
+                temperature: 0.25,
+                rollouts: 16,
+                games: vec![None],
+            },
+            student_state_sha256: String::new(),
+            games: vec![LineBPacketGameV1::NoEligibleRoot {
+                trajectory_index: 0,
+                episode_id: "fixture".into(),
+            }],
+            census: LineBCensusV1::default(),
+        };
+        assert_eq!(
+            line_b_census_by_list_v1(&packet, &[]).unwrap_err(),
+            "line (b) census missing list for trajectory 0"
+        );
+        assert!(line_b_census_by_list_v1(&packet, &[String::new()]).is_err());
+        let census = line_b_census_by_list_v1(&packet, &["Burn".into()]).unwrap();
+        assert_eq!(census["Burn"]["teacher_games"], 1);
+        assert_eq!(census["Burn"]["no_eligible_root_games"], 1);
+        packet.games = vec![LineBPacketGameV1::Canonical {
+            trajectory_index: 1,
+        }];
+        assert!(line_b_census_by_list_v1(&packet, &["Burn".into()]).is_err());
+    }
 
     fn heads(value: f32) -> Vec<NativeNamedParameterV1> {
         HEAD_ONLY_TRAINABLE_TENSORS_V1

@@ -48,8 +48,9 @@ pub const LINE_B_TEACHER_ROLLOUTS_V1: usize = 16;
 /// root may show in a treatment update. At K = 16 and T = 0.25 the smallest
 /// non-zero return contrast (1/16) is 0.25 in target log-odds; a discrepancy
 /// `d` adds `c p_i d` of spurious logit gradient per root against `c p_i`
-/// times that contrast, so this caps the spurious share at 0.4 percent. A
-/// breach is a backend defect that fails the update.
+/// times that contrast, a 0.4 percent per-coordinate scale comparison, not
+/// a relative-gradient bound: centering can double the contribution and
+/// the true gradient can cancel (CODEX #616). A breach fails the update.
 pub const LINE_B_CUDA_ENVELOPE_V1: f64 = 1e-3;
 
 /// fdlibm's two-part `ln 2` (the sampler's constants).

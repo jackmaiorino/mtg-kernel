@@ -50,6 +50,8 @@ def canonical_source(source):
 
 
 def canonical_episode(episode):
+    # order() drops unknown keys; opt-in opponent fields must not vanish from a manifest.
+    assert not {'opponent_search', 'opponent_kind'} & episode.keys()
     value = order(episode, ['id','seed','starting_player','learner_seat','opponent','registered','selected','postboard','max_physical_decisions','max_policy_steps'])
     if value.get('opponent') is None:
         value.pop('opponent', None)

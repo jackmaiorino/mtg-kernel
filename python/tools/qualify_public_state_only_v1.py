@@ -132,6 +132,8 @@ def analyze(root):
                 path = batch/f"episode-{index:03}.json"
                 assert pin(path)["sha256"] == digest
                 trajectory = read(path)
+                # Public rows are learner-only in this schema; other opponent schemas also fill opponent rows.
+                assert trajectory["schema"] == "mtg-kernel-public-input-trajectory/v1"
                 assert trajectory["terminal"]["terminal_classification"] == "natural"
                 assert trajectory["optimizer_state_sha256"] == completion["receipts"][update-first]["before_state_sha256"]
                 assert len(trajectory["decisions"]) == len(trajectory["auxiliary"])

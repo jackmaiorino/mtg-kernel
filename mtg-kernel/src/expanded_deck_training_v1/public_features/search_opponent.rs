@@ -22,6 +22,10 @@ pub(crate) const SEARCH_OPPONENT_TRAJECTORY_SCHEMA: &str =
 const SEARCH_RECORD_SCHEMA: &str = "mtg-kernel-public-search-opponent-record/v1";
 /// The reviewed D3 budget: simulations, transitions, depth, experiment seed.
 const D3_BUDGET: (u32, u32, u16, u64) = (128, 1024, 8, 20260922);
+/// Prefix of the error string that carries a typed search failure record.
+const SEARCH_FAILURE_MARKER: &str = "search-opponent-failure/v1:";
+/// Opt-in sampler dump of the full hidden state; never set while collecting.
+const HIDDEN_STATE_DUMP_ENV: &str = "MTG_V4_SEARCH_FAILURE_STATE";
 /// E:/mtg-g115-lineage-20260923/d3-search-descriptor-reviewed.json.
 pub(crate) const REVIEWED_DESCRIPTOR_SHA256: &str =
     "5eb1d55d13b78b341f8ff0c4df2589f8ee725974dc9fcadd691db6e12b2133d7";
@@ -86,6 +90,7 @@ pub(crate) struct SearchOpponentV1 {
     descriptor_sha256: String,
     descriptor: V4InformationSetSearchDescriptorV1,
     count: usize,
+    episode_id: String,
 }
 
 impl SearchOpponentV1 {
@@ -132,6 +137,10 @@ impl SearchOpponentV1 {
         seat: u8,
     ) -> Result<Self, String> {
         ensure(seat < 2, "invalid search seat")?;
+        ensure(
+            std::env::var_os(HIDDEN_STATE_DUMP_ENV).is_none(),
+            "MTG_V4_SEARCH_FAILURE_STATE must stay unset while collecting with a search opponent",
+        )?;
         let wrapper = SearchPlayV3::new(net.fork_for_collection_v3()?, descriptor.clone())?;
         Ok(Self {
             wrapper,
@@ -139,12 +148,23 @@ impl SearchOpponentV1 {
             descriptor_sha256,
             descriptor,
             count: 0,
+            episode_id: String::new(),
         })
     }
 
-    pub(crate) fn reset_for_game(&mut self, seeds: [u64; 2]) -> Result<(), String> {
+    /// Search decisions made in the current game.
+    pub(crate) fn decisions(&self) -> u64 {
+        self.count as u64
+    }
+
+    pub(crate) fn reset_for_game(
+        &mut self,
+        seeds: [u64; 2],
+        episode_id: &str,
+    ) -> Result<(), String> {
         self.wrapper.begin_match();
         self.count = 0;
+        self.episode_id = episode_id.into();
         self.wrapper.reset_for_game_v1(seeds).map_err(err)
     }
 
@@ -165,9 +185,33 @@ impl SearchOpponentV1 {
         let selected = self
             .wrapper
             .select_action_v1(PairedBo1PolicyInputV1::new(session, decision))
-            .map_err(err)?;
+            .map_err(|error| self.failure(decision, error))?;
         self.count += 1;
         Ok((selected, scores, tensor))
+    }
+
+    /// A typed search error ends the run (no fallback, no retry). The error
+    /// carries a failure record with public bindings only: episode, seat,
+    /// decision position, menu width and the wrapper's error variant.
+    fn failure(
+        &self,
+        decision: FastActorDecisionV1,
+        error: crate::rl_session::RlSessionError,
+    ) -> String {
+        let record = json!({
+            "schema": "mtg-kernel-public-search-opponent-failure/v1",
+            "episode_id": self.episode_id,
+            "seat": self.seat,
+            "step": decision.step,
+            "physical_decision_id": decision.physical_decision_id,
+            "substep_index": decision.substep_index,
+            "legal_action_count": decision.legal_action_count,
+            "error": self.wrapper.records()["failure"]["error"].clone(),
+            "descriptor_sha256": self.descriptor_sha256,
+            "build": SearchBuildV1::current(),
+            "non_claim": "No hidden state is recorded; MTG_V4_SEARCH_FAILURE_STATE is unset.",
+        });
+        format!("{SEARCH_FAILURE_MARKER}{record} ({})", error.message)
     }
 
     pub(crate) fn finish(&self) -> Result<SearchTrajectoryV1, String> {
@@ -236,6 +280,7 @@ impl SearchTrajectoryV1 {
         configuration_sha256: &[String; 2],
         decisions: &[DecisionRecordV1],
         terminal: &RlSessionTerminalV1,
+        learner_sampler: Option<&str>,
     ) -> Result<(), String> {
         let d = &self.descriptor;
         ensure(
@@ -250,7 +295,7 @@ impl SearchTrajectoryV1 {
         let (simulations, transitions) = (d.simulations, d.transitions);
         let mut records = self.decisions.iter();
         {
-            let mut check = |row: &DecisionRecordV1| -> Result<(), String> {
+            let mut check = |row: &DecisionRecordV1| -> Result<SeatRowDrawV1, String> {
                 let r = records.next().ok_or("search row has no search record")?;
                 ensure(
                     row.sampler_identity.as_deref() == Some(SEARCH_SAMPLER_IDENTITY)
@@ -272,16 +317,18 @@ impl SearchTrajectoryV1 {
                         && (1..=simulations).contains(&r.simulations)
                         && (1..=transitions).contains(&r.transitions),
                     "search row differs from its search record",
-                )
+                )?;
+                // The wrapper chose without the seat stream: no draw.
+                Ok(SeatRowDrawV1::None)
             };
-            let check: SearchRowCheckV1<'_> = &mut check;
+            let check: SeatRowCheckV1<'_> = &mut check;
             validate_episode_records_with_search_v1(
-                episode.configurations_admitting_search_v1()?,
+                episode.configurations_for_public_collector_v1()?,
                 episode,
                 configuration_sha256,
                 decisions,
                 terminal,
-                None,
+                learner_sampler,
                 Some((self.seat, check)),
             )?;
         }
@@ -292,17 +339,29 @@ impl SearchTrajectoryV1 {
 /// Identity receipt for a run whose schedule contains search-opponent games:
 /// descriptor and checkpoint pins, build and executable. None when the run
 /// has no such game, so ordinary runs publish nothing new.
-pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option<Value>, String> {
-    let ids: Vec<&str> = config
-        .updates
-        .iter()
-        .flatten()
-        .filter(|e| e.opponent_search.is_some())
-        .map(|e| e.id.as_str())
-        .collect();
-    if ids.is_empty() {
+pub(crate) fn run_receipt(
+    config: &Config,
+    config_sha256: &str,
+    invocation: std::ops::Range<usize>,
+) -> Result<Option<Value>, String> {
+    let search_ids = |updates: &[Vec<ExpandedEpisodeV1>]| -> Vec<String> {
+        updates
+            .iter()
+            .flatten()
+            .filter(|e| e.opponent_search.is_some())
+            .map(|e| e.id.clone())
+            .collect()
+    };
+    let scheduled = search_ids(&config.updates);
+    if scheduled.is_empty() {
         return Ok(None);
     }
+    let played = search_ids(
+        config
+            .updates
+            .get(invocation.clone())
+            .ok_or("receipt update range exceeds the schedule")?,
+    );
     for episode in config.updates.iter().flatten() {
         if let Some(pin) = &episode.opponent_search {
             ensure(
@@ -318,15 +377,225 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
     }
     let executable = std::env::current_exe().map_err(err)?;
     Ok(Some(json!({
-        "schema": "mtg-kernel-public-search-opponent-run-receipt/v1",
+        "schema": "mtg-kernel-public-search-opponent-run-receipt/v2",
         "config_sha256": config_sha256,
         "descriptor_sha256": REVIEWED_DESCRIPTOR_SHA256,
         "opponent_checkpoint_sha256": G115_CHECKPOINT_SHA256,
-        "search_episode_ids": ids,
+        "scheduled_search_episode_ids": scheduled,
+        // The updates this invocation plays; completion.json records how far
+        // it got.
+        "invocation_updates": [invocation.start, invocation.end],
+        "invocation_search_episode_ids": played,
         "build": SearchBuildV1::current(),
         "executable_sha256": sha(&fs::read(executable).map_err(err)?),
         "non_claim": "Engineering identity only; no strength or promotion claim.",
     })))
+}
+
+/// Perturbations of a live root that leave the searcher's information set
+/// unchanged (FABLE-REVIEW-20260927 change 2).
+const AUDIT_VARIANTS: [&str; 4] = [
+    "learner draw-consistent hand/library swap",
+    "learner library order",
+    "searcher library order",
+    "future randomness",
+];
+
+/// Counts of one boundary audit. Observational and deterministic. A variant
+/// is unavailable when it cannot be built at that root; a built variant that
+/// changes the searcher's decision binding or visible key is inadmissible and
+/// stops collection, since availability implies invariance by construction.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BoundaryAuditCountsV1 {
+    pub(crate) roots: u64,
+    pub(crate) checked: [u64; 4],
+    pub(crate) unavailable: [u64; 4],
+    pub(crate) inadmissible: [u64; 4],
+}
+
+/// The decision part of a search outcome: everything but node keys, whose
+/// hidden zone-change offsets may legitimately differ.
+fn audit_fields(outcome: &crate::model_guided_search_core_v4::Outcome) -> Result<Value, String> {
+    let v = serde_json::to_value(outcome).map_err(err)?;
+    let estimates: Vec<Value> = v["estimator"]["nodes"][0]["edges"]
+        .as_array()
+        .ok_or("boundary audit: estimator missing")?
+        .iter()
+        .map(|e| e["value"].clone())
+        .collect();
+    Ok(json!({
+        "selected": v["estimator"]["selected_by_estimate"], "selected_by_core": v["selected"],
+        "selected_by_mean": v["selected_by_mean"], "root_estimates": estimates,
+        "root_visits": v["root_visits"], "root_value_sums": v["root_value_sums"],
+        "root_priors": v["root_priors"], "root_work": v["root_work"], "nodes": v["nodes"],
+        "simulations": v["simulations"], "transitions": v["transitions"],
+        "headroom": v["headroom"], "census": v["census"],
+    }))
+}
+
+impl SearchOpponentV1 {
+    /// Reruns the unchanged D3 search on each perturbation of a live root.
+    /// A fresh fork of the net searches; the wrapper, its records and the
+    /// session are untouched. The rerun of the root must select the action
+    /// the wrapper played (`recorded`); each built perturbation must keep the
+    /// searcher's decision binding and visible key and give the same decision
+    /// fields. A perturbation that cannot be built is counted as unavailable.
+    pub(crate) fn audit_root(
+        &self,
+        net: &FrozenPlayPolicyV1,
+        session: &FastActorSessionV1,
+        decision: FastActorDecisionV1,
+        recorded: u32,
+        counts: &mut BoundaryAuditCountsV1,
+    ) -> Result<(), String> {
+        let (learner, searcher) = (PlayerId(1 - self.seat), PlayerId(self.seat));
+        let variants = [
+            session.diagnostic_draw_consistent_swap_clone_v1(learner),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(Some(learner.index()), false)
+                .ok(),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(Some(searcher.index()), false)
+                .ok(),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(None, true)
+                .ok(),
+        ];
+        self.audit_variants(net, session, decision, recorded, variants, counts)
+    }
+
+    pub(super) fn audit_variants(
+        &self,
+        net: &FrozenPlayPolicyV1,
+        session: &FastActorSessionV1,
+        decision: FastActorDecisionV1,
+        recorded: u32,
+        variants: [Option<FastActorSessionV1>; 4],
+        counts: &mut BoundaryAuditCountsV1,
+    ) -> Result<(), String> {
+        use crate::model_guided_search_core_v4::Limits;
+        let d = &self.descriptor;
+        let limits = Limits {
+            simulations: d.simulations,
+            transitions: d.transitions,
+            depth: d.depth,
+            seed: d.experiment_seed,
+        };
+        let policy = net.fork_for_collection_v3()?;
+        let search = |s: &FastActorSessionV1| {
+            PairedBo1PolicyInputV1::new(s, decision)
+                .report_search_future_v3(&policy, limits)
+                .map_err(|e| format!("boundary audit search: {e:?}"))
+                .and_then(|o| audit_fields(&o))
+        };
+        let expected = search(session)?;
+        ensure(
+            expected["selected"] == json!(recorded),
+            &format!(
+                "boundary audit: the fresh rerun selected {} but the wrapper played {recorded} at episode {} step {}",
+                expected["selected"], self.episode_id, decision.step
+            ),
+        )?;
+        let depth = u32::from(d.depth);
+        let key = session
+            .kernel_search_visible_key_v4(depth)
+            .map_err(|e| format!("boundary audit key: {e:?}"))?;
+        counts.roots += 1;
+        for (i, variant) in variants.iter().enumerate() {
+            let Some(variant) = variant.as_ref() else {
+                counts.unavailable[i] += 1;
+                continue;
+            };
+            if variant.current_response() != FastActorResponseV1::Decision(decision)
+                || variant.kernel_search_visible_key_v4(depth).ok() != Some(key)
+            {
+                counts.inadmissible[i] += 1;
+                return Err(format!(
+                    "boundary audit: {} changed the searcher's decision binding or visible key at episode {} step {}",
+                    AUDIT_VARIANTS[i], self.episode_id, decision.step
+                ));
+            }
+            ensure(
+                search(variant)? == expected,
+                &format!(
+                    "boundary audit: {} changed the D3 decision at episode {} step {}",
+                    AUDIT_VARIANTS[i], self.episode_id, decision.step
+                ),
+            )?;
+            counts.checked[i] += 1;
+        }
+        Ok(())
+    }
+}
+
+/// Run-wide audit counts. One trainer run per process; collector threads add
+/// their per-root counts here and the run publishes the total at completion.
+static AUDIT_COUNTS: std::sync::Mutex<BoundaryAuditCountsV1> =
+    std::sync::Mutex::new(BoundaryAuditCountsV1 {
+        roots: 0,
+        checked: [0; 4],
+        unavailable: [0; 4],
+        inadmissible: [0; 4],
+    });
+
+pub(crate) fn reset_audit_counts() {
+    *AUDIT_COUNTS.lock().unwrap_or_else(|p| p.into_inner()) = BoundaryAuditCountsV1::default();
+}
+
+/// Audits one live search root and adds its counts to the run total. A
+/// mismatch stops collection like a typed search error.
+pub(crate) fn audit_live_root(
+    search: &SearchOpponentV1,
+    net: &FrozenPlayPolicyV1,
+    session: &FastActorSessionV1,
+    decision: FastActorDecisionV1,
+    recorded: u32,
+) -> Result<(), String> {
+    let mut counts = BoundaryAuditCountsV1::default();
+    search.audit_root(net, session, decision, recorded, &mut counts)?;
+    let mut total = AUDIT_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
+    total.roots += counts.roots;
+    for i in 0..4 {
+        total.checked[i] += counts.checked[i];
+        total.unavailable[i] += counts.unavailable[i];
+        total.inadmissible[i] += counts.inadmissible[i];
+    }
+    Ok(())
+}
+
+pub(crate) fn audit_report(every: u32) -> Result<Value, String> {
+    let counts = AUDIT_COUNTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    Ok(json!({
+        "schema": "mtg-kernel-public-search-opponent-boundary-audit/v2",
+        "every": every,
+        "variants": AUDIT_VARIANTS,
+        "counts": counts,
+        "assertion": "at each audited root a fresh rerun selected the action the wrapper played; each built variant kept the searcher's decision binding and visible key (a built variant that changes either stops collection) and gave the same D3 decision fields as the rerun (selected actions, root estimates, visits, value sums, priors, root work, nodes, simulations, transitions, headroom, census); a variant that cannot be built at a root is counted as unavailable; node keys and outcome digests are not compared",
+        "non_claim": "Engineering boundary audit; no strength claim.",
+    }))
+}
+
+/// Publishes `search-failure.json` in the update directory when a collection
+/// error carries a typed search failure record, then returns the error so the
+/// run still stops. Other errors pass through unchanged.
+pub(crate) fn publish_failure(directory: &Path, error: String) -> String {
+    let Some(start) = error.find(SEARCH_FAILURE_MARKER) else {
+        return error;
+    };
+    let tail = &error[start + SEARCH_FAILURE_MARKER.len()..];
+    let parsed = serde_json::Deserializer::from_str(tail)
+        .into_iter::<Value>()
+        .next()
+        .and_then(Result::ok);
+    match parsed.map(|record| publish_json(directory, "search-failure.json", &record)) {
+        Some(Ok(_)) => error,
+        Some(Err(publish)) => format!("{error}; failure receipt not written: {publish}"),
+        None => format!("{error}; failure record unreadable"),
+    }
 }
 
 /// Byte copy of the reviewed D3 descriptor,

@@ -4,11 +4,19 @@
 //! own information set. Each variant differs from the original root only in
 //! state the searcher cannot observe: which unseen learner cards sit in hand
 //! versus library, the learner's or the searcher's own unobserved library
-//! order, or the environment's future random stream. The unchanged D3
-//! wrapper must return the same action and byte-identical decision records,
-//! and every resampled world must be identical. Two power checks show that
-//! the comparison is not vacuous: visible state changes the search, and the
-//! Legacy sample mode, which keeps the true random stream, is caught.
+//! order, or the environment's future random stream. Two power checks show
+//! that the comparison is not vacuous: visible state changes the search, and
+//! the Legacy sample mode, which keeps the true random stream, is caught.
+//!
+//! Two forms of the hand/library variant (FABLE-REVIEW-20260927 change 1).
+//! The zones-only swap keeps every object's zone-change count, so records
+//! and resampled worlds stay byte-identical; it is not a reachable history.
+//! The draw-consistent swap also exchanges the two objects' counts, as a real
+//! alternative draw would (a draw increments the count). Resampled worlds
+//! then keep the same object-to-slot placement, but hidden counts ride along
+//! into node keys, so the outcome digest may differ: the decision (action,
+//! estimates, visits, value sums, priors, nodes, work, census) is what is
+//! invariant, not the record digest.
 //!
 //! Scope: the sampler reshuffles the learner's true unseen cards, so the
 //! search does know the learner's remaining card multiset (D3's reviewed
@@ -134,6 +142,97 @@ fn reverse_library(mut s: GameState, owner: PlayerId) -> GameState {
     s
 }
 
+/// Hand cards carry one zone change, as if drawn; library cards none.
+fn drawn_root_state(searcher: PlayerId) -> GameState {
+    let mut s = root_state(searcher);
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for id in s.players[p.index()].hand.clone() {
+            s.objects.get_mut(id).zone_change_count = 1;
+        }
+    }
+    s
+}
+
+/// A reachable alternative: the owner drew the library card instead of the
+/// hand card, so positions and zone-change counts move together.
+fn draw_consistent_swap(s: GameState, owner: PlayerId) -> GameState {
+    let p = owner.index();
+    let (hand, definition) = (
+        s.players[p].hand[0],
+        s.objects.get(s.players[p].hand[0]).card_def,
+    );
+    let library = *s.players[p]
+        .library
+        .iter()
+        .find(|id| s.objects.get(**id).card_def != definition)
+        .expect("fixture library has another identity");
+    let (drawn, undrawn) = (
+        s.objects.get(hand).zone_change_count,
+        s.objects.get(library).zone_change_count,
+    );
+    assert_ne!(drawn, undrawn, "fixture must carry draw history");
+    let mut s = swap_hand_and_library(s, owner);
+    s.objects.get_mut(library).zone_change_count = drawn;
+    s.objects.get_mut(hand).zone_change_count = undrawn;
+    s
+}
+
+/// Object-to-slot placement of every hand and library slot in the resampled
+/// world for each fixed seed, with zone-change counts masked.
+fn placements(s: &FastActorSessionV1) -> Vec<String> {
+    SEEDS
+        .iter()
+        .map(|seed| {
+            let world = s
+                .kernel_search_redeterminized_clone_mode_v4(
+                    *seed,
+                    V4SearchSampleMode::FutureChanceV3,
+                )
+                .unwrap();
+            let g = world.game_state();
+            let slots = |ids: &[crate::ids::ObjectId]| {
+                ids.iter()
+                    .map(|id| (*id, g.objects.get(*id).card_def))
+                    .collect::<Vec<_>>()
+            };
+            format!(
+                "{:?}",
+                [PlayerId::P0, PlayerId::P1].map(|p| {
+                    let player = &g.players[p.index()];
+                    (slots(&player.hand), slots(&player.library))
+                })
+            )
+        })
+        .collect()
+}
+
+/// The decision part of one wrapper record: everything but the digest.
+fn decision_fields(records: &Value) -> Value {
+    assert!(records["failure"].is_null());
+    let row = &records["decisions"][0];
+    let keys = [
+        "selected",
+        "selected_by_core",
+        "selected_by_mean",
+        "root_key",
+        "root_estimates",
+        "root_visits",
+        "root_value_sums",
+        "root_priors",
+        "root_work",
+        "nodes",
+        "simulations",
+        "transitions",
+        "headroom",
+        "census",
+    ];
+    Value::Object(
+        keys.iter()
+            .map(|k| (k.to_string(), row[*k].clone()))
+            .collect(),
+    )
+}
+
 /// Full-state hashes of the resampled world for each fixed seed.
 fn worlds(s: &FastActorSessionV1, mode: V4SearchSampleMode) -> Vec<u64> {
     SEEDS
@@ -206,6 +305,48 @@ fn reviewed_descriptor_copy_is_exact_and_accepted_by_the_wrapper() {
     let reviewed: V4InformationSetSearchDescriptorV1 =
         serde_json::from_str(REVIEWED_DESCRIPTOR_JSON).unwrap();
     assert!(SearchPlayV3::new(FrozenPlayPolicyV1::training_fixture_v4(), reviewed).is_err());
+}
+
+/// FABLE-REVIEW-20260927 change 1: the reachable form of the hand/library
+/// variant. The decision must not move; the digest is not required to match.
+#[test]
+fn d3_opponent_decision_ignores_a_draw_consistent_hand_library_swap() {
+    for searcher in [PlayerId::P0, PlayerId::P1] {
+        for environment in [false, true] {
+            let context =
+                format!("draw-consistent swap, searcher {searcher:?}, environment {environment}");
+            let base = with_randomness(&drawn_root_state(searcher), environment, 111);
+            let original = session(base.clone());
+            let variant = session(draw_consistent_swap(base, searcher.opponent()));
+            assert_ne!(
+                variant.diagnostic_state_hash(),
+                original.diagnostic_state_hash(),
+                "{context}: perturbation changed nothing"
+            );
+            assert_eq!(
+                decision(&variant),
+                decision(&original),
+                "{context}: decision"
+            );
+            assert_eq!(
+                variant.kernel_search_visible_key_v4(8).unwrap(),
+                original.kernel_search_visible_key_v4(8).unwrap(),
+                "{context}: visible root key"
+            );
+            assert_eq!(
+                placements(&variant),
+                placements(&original),
+                "{context}: placement"
+            );
+            let (a, b) = (d3(&original), d3(&variant));
+            assert_eq!(a.0, b.0, "{context}: selected action");
+            assert_eq!(
+                decision_fields(&a.1),
+                decision_fields(&b.1),
+                "{context}: decision fields"
+            );
+        }
+    }
 }
 
 #[test]
