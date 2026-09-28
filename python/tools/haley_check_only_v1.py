@@ -23,6 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from haley_check_only_runner_v1 import build_command
+
 HOST = 'haley@100.71.75.65'
 ROOT = 'C:/mtg-line-a/check-only/'
 MAP_SCHEMA = 'g115-line-a-staging-map/v1'
@@ -101,7 +103,7 @@ def make_plan(lane, run_id, commit, cargo_args, files, toolchain, timeout_second
                           'no GPU test is in scope']}
 
 
-def make_receipt(state, collected_dir, staging_receipt_sha256):
+def make_receipt(state, collected_dir, staging_receipt_sha256, plan_path):
     """Binds every collected file; a run that stopped before or around cargo is receipted as refused or error."""
     folder = Path(collected_dir)
     files = {path.name: sha256(path) for path in sorted(folder.glob('*'))
@@ -109,8 +111,19 @@ def make_receipt(state, collected_dir, staging_receipt_sha256):
     completion = json.loads((folder / 'completion.json').read_text(encoding='utf-8'))
     dispatched = json.loads((folder / 'dispatch.json').read_text(encoding='utf-8'))
     reservation = json.loads((folder / 'reservation-status.json').read_text(encoding='utf-8'))
+    plan_bytes = Path(plan_path).read_bytes()
+    plan = json.loads(plan_bytes)
+    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
+    require(all(plan.get(key) == state[key] for key in ('lane', 'run_id', 'commit', 'cargo_args', 'toolchain')),
+            'the local state differs from the prepared plan')
+    require(completion.get('plan_sha256') == plan_sha256,
+            'the completion plan digest differs from the prepared plan bytes')
     require(completion.get('commit') == state['commit'] and completion.get('run_id') == state['run_id'],
             'the completion record belongs to another run')
+    stopped = [key for key in ('refused', 'error') if key in completion]
+    if 'cargo.log' in files or completion.get('log_sha256') is not None or not stopped:
+        require('cargo.log' in files and completion.get('log_sha256') == files['cargo.log'],
+                'the collected cargo log differs from its producer digest')
     receipt = {'schema': RECEIPT_SCHEMA, 'host': 'haleyspc', 'lane': state['lane'], 'run_id': state['run_id'],
                'commit': state['commit'], 'cargo_args': state['cargo_args'],
                'started_utc': completion['started_utc'], 'finished_utc': completion['finished_utc'],
@@ -118,14 +131,15 @@ def make_receipt(state, collected_dir, staging_receipt_sha256):
                'reservation': {'token': dispatched['token'], 'dispatch_state': dispatched.get('state'),
                                'supervisor_pid': dispatched.get('pid'), 'token_fate': reservation.get('token_fate'),
                                'runner_token': completion.get('reservation_token')},
+               'plan_sha256': plan_sha256, 'log_sha256': completion.get('log_sha256'),
                'staging_receipt_sha256': staging_receipt_sha256, 'collected_files': files,
                'nonclaims': completion['nonclaims']}
-    stopped = [key for key in ('refused', 'error') if key in completion]
     if stopped:
         receipt.update({'outcome': stopped[0], 'detail': completion[stopped[0]]})
         return receipt
     require(completion.get('head') == state['commit'], 'the remote checkout differs from the pinned commit')
     require(completion.get('reservation_token') == dispatched.get('token'), 'the run did not hold the dispatched token')
+    require(completion.get('argv') == build_command(plan), 'the executed command differs from the prepared plan')
     receipt.update({'outcome': 'ran', 'remote_head': completion['head'], 'clean': completion.get('clean'),
                     'toolchain': {'rustc_verbose_version_sha256': completion['toolchain']['rustc_verbose_version_sha256'],
                                   'cargo_version': completion['toolchain']['cargo_version'],
@@ -260,7 +274,7 @@ def cmd_collect(args):
     remote.fetch(state['paths']['worker_root'] + '/cargo.log', out / 'cargo.log', check=ran)  # absent if stopped early
     for name, value in (('dispatch.json', dispatched), ('reservation-status.json', reservation)):
         (out / name).write_text(json.dumps(value, indent=1, default=str) + '\n', encoding='utf-8', newline='\n')
-    receipt = make_receipt(state, out, sha256(run_dir / 'staging-receipt.json'))
+    receipt = make_receipt(state, out, sha256(run_dir / 'staging-receipt.json'), run_dir / 'plan.json')
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=1) + '\n', encoding='utf-8', newline='\n')
     print(json.dumps({'receipt': str(out / 'receipt.json'), 'sha256': sha256(out / 'receipt.json'),
                       'outcome': receipt['outcome'], 'exit_code': receipt['exit_code'],

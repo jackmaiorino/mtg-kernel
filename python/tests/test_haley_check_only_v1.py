@@ -13,6 +13,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "python" / "tools"
@@ -234,37 +235,123 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("reservation_token", value)
         runner.check_plan(value)
 
+class ReceiptTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.folder = self.root / 'collected'
+        self.folder.mkdir()
+        self.plan = plan()
+        self.plan_path = self.root / 'plan.json'
+        controller.write_json(self.plan_path, self.plan)
+        self.state = {key: self.plan[key] for key in ('lane', 'run_id', 'commit', 'cargo_args', 'toolchain')}
+        controller.write_json(self.folder / 'dispatch.json', {'state': 'dispatched', 'token': 't-1', 'pid': 7})
+        controller.write_json(self.folder / 'reservation-status.json', {'token_fate': 'released'})
+        self.log = self.folder / 'cargo.log'
+        self.log.write_text('test result: ok. 1 passed; 0 failed; 0 ignored\n', encoding='utf-8')
+        self.completion = {
+            'commit': COMMIT, 'run_id': self.plan['run_id'], 'head': COMMIT, 'clean': True,
+            'argv': runner.build_command(self.plan), 'plan_sha256': controller.sha256(self.plan_path),
+            'log_sha256': controller.sha256(self.log), 'started_utc': 's', 'finished_utc': 'f', 'exit_code': 0,
+            'test_counts': {'passed': 1, 'failed': 0, 'ignored': 0},
+            'toolchain': {'rustc_verbose_version_sha256': '9' * 64, 'cargo_version': 'cargo 1.94.1'},
+            'reservation_token': 't-1', 'nonclaims': ['check-only']}
+
+    def receipt(self, completion=None):
+        controller.write_json(self.folder / 'completion.json', self.completion if completion is None else completion)
+        return controller.make_receipt(self.state, self.folder, '6' * 64, self.plan_path)
+
+    def early_stop(self, kind):
+        stopped = {key: self.completion[key] for key in
+                   ('commit', 'run_id', 'plan_sha256', 'started_utc', 'finished_utc', 'nonclaims')}
+        return dict(stopped, exit_code=None, **{kind: 'stopped before cargo'})
+
     def test_the_receipt_binds_the_remote_head_the_token_and_every_collected_file(self):
-        state = {"lane": "opus-panel-export", "run_id": "run-1", "commit": COMMIT, "cargo_args": ["test"],
-                 "toolchain": plan()["toolchain"]}
-        completion = {"commit": COMMIT, "run_id": "run-1", "head": COMMIT, "clean": True, "argv": ["cargo"], "started_utc": "s",
-                      "finished_utc": "f", "exit_code": 0, "test_counts": {"passed": 1, "failed": 0, "ignored": 0},
-                      "toolchain": {"rustc_verbose_version_sha256": "9" * 64, "cargo_version": "cargo 1.94.1"},
-                      "reservation_token": "t-1", "nonclaims": ["check-only"]}
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp)
-            (folder / "dispatch.json").write_text(json.dumps({"state": "dispatched", "token": "t-1", "pid": 7}), encoding="utf-8")
-            (folder / "reservation-status.json").write_text(json.dumps({"token_fate": "released"}), encoding="utf-8")
-            (folder / "cargo.log").write_text("test result: ok. 1 passed; 0 failed; 0 ignored\n", encoding="utf-8")
-            (folder / "completion.json").write_text(json.dumps(completion), encoding="utf-8")
-            receipt = controller.make_receipt(state, tmp, "6" * 64)
-            self.assertEqual((receipt["schema"], receipt["outcome"]), ("haley-check-only-receipt/v1", "ran"))
-            self.assertEqual(receipt["reservation"], {"token": "t-1", "dispatch_state": "dispatched", "supervisor_pid": 7,
-                                                      "token_fate": "released", "runner_token": "t-1"})
-            self.assertEqual(sorted(receipt["collected_files"]),
-                             ["cargo.log", "completion.json", "dispatch.json", "reservation-status.json"])
-            for field, value in (("head", "e" * 40), ("reservation_token", "t-2"), ("run_id", "run-0")):
-                (folder / "completion.json").write_text(json.dumps(dict(completion, **{field: value})), encoding="utf-8")
-                with self.assertRaises(SystemExit):
-                    controller.make_receipt(state, tmp, "6" * 64)
-            stopped = {key: completion[key] for key in ("commit", "run_id", "started_utc", "finished_utc", "nonclaims")}
-            stopped.update({"exit_code": None, "refused": "check-only refused: cargo differs from its pin"})
-            (folder / "cargo.log").unlink()
-            (folder / "completion.json").write_text(json.dumps(stopped), encoding="utf-8")
-            receipt = controller.make_receipt(state, tmp, "6" * 64)
-            self.assertEqual((receipt["outcome"], receipt["exit_code"]), ("refused", None))
-            self.assertIn("cargo differs", receipt["detail"])
-            self.assertNotIn("test_counts", receipt)
+        receipt = self.receipt()
+        self.assertEqual((receipt['schema'], receipt['outcome']), ('haley-check-only-receipt/v1', 'ran'))
+        self.assertNotIn('placement', receipt)
+        self.assertEqual(receipt['plan_sha256'], self.completion['plan_sha256'])
+        self.assertEqual(receipt['log_sha256'], self.completion['log_sha256'])
+        self.assertEqual(receipt['reservation'], {'token': 't-1', 'dispatch_state': 'dispatched', 'supervisor_pid': 7,
+                                                 'token_fate': 'released', 'runner_token': 't-1'})
+        self.assertEqual(sorted(receipt['collected_files']),
+                         ['cargo.log', 'completion.json', 'dispatch.json', 'reservation-status.json'])
+        for field, value in (('head', 'e' * 40), ('reservation_token', 't-2'), ('run_id', 'run-0')):
+            with self.subTest(field=field), self.assertRaises(SystemExit):
+                self.receipt(dict(self.completion, **{field: value}))
+
+    def test_another_plan_digest_is_refused_for_ran_and_early_failure(self):
+        for completion in (self.completion, self.early_stop('refused')):
+            with self.subTest(outcome=completion.get('refused')), self.assertRaisesRegex(SystemExit, 'plan digest'):
+                self.receipt(dict(completion, plan_sha256='f' * 64))
+
+    def test_plan_bytes_are_bound_without_json_reserialization(self):
+        # Whitespace changes preserve every plan value, but not the bytes the remote runner used.
+        self.plan_path.write_bytes(self.plan_path.read_bytes() + b'\n')
+        with self.assertRaisesRegex(SystemExit, 'plan digest'):
+            self.receipt()
+
+    def test_another_executed_command_is_refused(self):
+        argv = self.completion['argv'][:-1] + ['--bins']
+        with self.assertRaisesRegex(SystemExit, 'executed command'):
+            self.receipt(dict(self.completion, argv=argv))
+
+    def test_state_cannot_relabel_the_prepared_command(self):
+        self.state['cargo_args'] = ['build', '--release']
+        with self.assertRaisesRegex(SystemExit, 'local state'):
+            self.receipt()
+
+    def test_changed_log_bytes_and_missing_producer_digest_are_refused(self):
+        self.log.write_bytes(self.log.read_bytes() + b'altered\n')
+        with self.assertRaisesRegex(SystemExit, 'producer digest'):
+            self.receipt()
+        with self.assertRaisesRegex(SystemExit, 'producer digest'):
+            self.receipt(dict(self.completion, log_sha256=None))
+
+    def test_a_missing_log_is_refused_after_cargo_ran(self):
+        self.log.unlink()
+        with self.assertRaisesRegex(SystemExit, 'producer digest'):
+            self.receipt()
+
+    def test_an_honest_nonzero_cargo_exit_remains_a_receipted_failure(self):
+        self.log.write_text('test result: FAILED. 0 passed; 1 failed; 0 ignored\n', encoding='utf-8')
+        receipt = self.receipt(dict(self.completion, exit_code=101, log_sha256=controller.sha256(self.log),
+                                    test_counts={'passed': 0, 'failed': 1, 'ignored': 0}))
+        self.assertEqual((receipt['outcome'], receipt['exit_code'], receipt['test_counts']['failed']), ('ran', 101, 1))
+
+    def test_early_refusal_and_error_without_a_cargo_log_remain_receipted(self):
+        self.log.unlink()
+        for kind in ('refused', 'error'):
+            with self.subTest(kind=kind):
+                receipt = self.receipt(self.early_stop(kind))
+                self.assertEqual((receipt['outcome'], receipt['exit_code']), (kind, None))
+                self.assertNotIn('test_counts', receipt)
+                self.assertNotIn('cargo.log', receipt['collected_files'])
+
+    def test_runner_pins_a_partial_log_when_cargo_errors(self):
+        # Exercise the producer's real failure finalization, without launching Cargo or making a remote call.
+        worker = self.root / 'worker'
+        self.plan['worker_root'] = str(worker)
+        controller.write_json(self.plan_path, self.plan)
+
+        def interrupted(value, root, environ):
+            (root / 'cargo.log').write_bytes(b'partial cargo output\n')
+            raise subprocess.TimeoutExpired(['cargo'], 1)
+
+        args = ['runner', '--manifest', str(self.plan_path), '--host', 'haleyspc', '--root', str(worker)]
+        with patch.object(runner, 'check_plan'), patch.object(runner, 'run', side_effect=interrupted), \
+                patch.object(sys, 'argv', args), self.assertRaises(SystemExit) as caught:
+            runner.main()
+        self.assertEqual(caught.exception.code, 2)
+        completion = json.loads((worker / 'completion.json').read_text(encoding='utf-8'))
+        self.log.write_bytes((worker / 'cargo.log').read_bytes())
+        self.assertEqual(completion['log_sha256'], controller.sha256(self.log))
+        receipt = self.receipt(completion)
+        self.assertEqual((receipt['outcome'], receipt['exit_code']), ('error', None))
+        self.log.write_bytes(b'changed failure output\n')
+        with self.assertRaisesRegex(SystemExit, 'producer digest'):
+            self.receipt(completion)
 
 
 if __name__ == "__main__":

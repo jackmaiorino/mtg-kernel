@@ -230,6 +230,11 @@ def main():
         record.update({'refused' if isinstance(stopped, SystemExit) else 'error': str(stopped) or repr(stopped),
                        'exit_code': None})
         code = 2
+    # A timeout or placement refusal can leave a log even though run() returned no fields.
+    # Bind that partial log too, so collection can retain the failure without accepting altered bytes.
+    log_path = root / 'cargo.log'
+    if log_path.is_file():
+        record['log_sha256'] = sha256(log_path)
     record['finished_utc'] = now()
     (root / 'completion.json').write_text(json.dumps(record, indent=1) + '\n', encoding='utf-8', newline='\n')
     sys.exit(code)
