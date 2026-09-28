@@ -58,6 +58,10 @@ pub struct LineBTeacherOptionsV1 {
     pub workers: usize,
     /// One entry per trajectory in batch order; `None` for a canonical game.
     pub games: Vec<Option<LineBGameSeedsV1>>,
+    /// Receipt-only permuted-target control (CODEX 11:23 item 6): the same
+    /// update on a CPU shadow with permuted targets, never published.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub permuted_control: bool,
 }
 
 impl LineBTeacherOptionsV1 {

@@ -2587,6 +2587,53 @@ fn execute_update_v1(
         }
         None => None,
     };
+    // Line (b) permuted-target control (receipt only, CODEX 11:23 item 6):
+    // the same update on a CPU shadow of the start-of-update state with the
+    // permuted targets, restored by the mask; the receipt records its term
+    // and the real targets' rescore after it. Nothing of it is published.
+    let line_b_permuted = match (&line_b_teacher, &masked_before, &gae_targets) {
+        (Some((_, Some(input))), Some((mask, snapshot_before)), Some(gae))
+            if line_b
+                .as_ref()
+                .and_then(|options| options.teacher.as_ref())
+                .is_some_and(|teacher| teacher.permuted_control) =>
+        {
+            let (permuted, kinds) =
+                crate::native_policy_train_step_v1::line_b_permuted_input_v1(input);
+            let mut shadow = state.clone();
+            let (_, auxiliary) = shadow
+                .train_step_gae_feature_transfer_line_b_v1(
+                    generation,
+                    &groups,
+                    &gae.value_targets,
+                    &gae.advantages,
+                    value_coefficient,
+                    learning_rate,
+                    None,
+                    &permuted,
+                )
+                .map_err(err)?;
+            let mut after = shadow.snapshot_v1().map_err(err)?;
+            mask.restore_frozen_v1(snapshot_before, &mut after).map_err(err)?;
+            let shadow =
+                NativePolicyValueTrainStateV1::from_snapshot_v1(shadow.model_v1().clone(), &after)
+                    .map_err(err)?;
+            let rescore = line_b_teacher_packet_v1::line_b_rescore_v1(
+                input,
+                &groups,
+                shadow.model_v1(),
+                generation,
+            )?;
+            Some(json!({"backend": "cpu", "kinds": kinds,
+                "divergences_before": auxiliary.divergences_before,
+                "auxiliary_loss": auxiliary.auxiliary_loss,
+                "auxiliary_head_l2": auxiliary.auxiliary_head_l2,
+                "after_state_sha256": hex(&after.state_sha256_v1().map_err(err)?),
+                "rescore_after": rescore.iter().map(|value| value.map(|(_, after)| after))
+                    .collect::<Vec<_>>()}))
+        }
+        _ => None,
+    };
     let learner_started = std::time::Instant::now();
     let mut line_b_auxiliary = None;
     #[cfg_attr(
@@ -2917,8 +2964,21 @@ fn execute_update_v1(
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     update_backend.record_update_execution_v1(&mut result);
     if let Some(frozen) = frozen_tensor_sha256 {
+        // The update's scorer-bias gauge (the step refuses a residual beyond
+        // its derived bound, so a published update is within it).
+        let gauge = &update.scorer_bias_gauge;
         result["line_b"] = json!({"optimizer_mask": HEAD_ONLY_MASK_VERSION_V1,
-            "frozen_tensor_sha256": frozen});
+            "frozen_tensor_sha256": frozen,
+            "scorer_bias_gauge": {"substep_count": gauge.substep_count,
+                "raw_gradient_residual": gauge.raw_gradient_residual,
+                "high_precision_residual": gauge.high_precision_residual,
+                "per_substep_bound_sum": gauge.per_substep_bound_sum,
+                "cross_substep_bound": gauge.cross_substep_bound,
+                "derived_absolute_bound": gauge.derived_absolute_bound,
+                "within_bound": f64::from(gauge.raw_gradient_residual).abs()
+                    <= gauge.derived_absolute_bound
+                    && gauge.high_precision_residual.abs() <= gauge.derived_absolute_bound,
+                "anchor_preserved": gauge.parameter_after_bits == gauge.parameter_before_bits}});
     }
     if let Some((packet, _)) = &line_b_teacher {
         let packet_pin = publish_json(&output_directory, "line-b-teacher-packet.json", packet)?;
@@ -2931,6 +2991,9 @@ fn execute_update_v1(
         );
         if let Some(envelope) = line_b_envelope {
             result["line_b"]["teacher"]["cuda_envelope"] = envelope;
+        }
+        if let Some(permuted) = line_b_permuted {
+            result["line_b"]["teacher"]["permuted_control"] = permuted;
         }
     }
     // Advantage statistics (design section 3), gated on the new loss
@@ -7197,6 +7260,7 @@ pub(crate) mod tests {
                 }),
                 None,
             ],
+            permuted_control: false,
         };
         let student = "0".repeat(64);
         let serial = line_b_teach_v1(&trajectories, &policy, &student, &options(1)).unwrap();
@@ -7352,6 +7416,7 @@ pub(crate) mod tests {
             rollouts: 2,
             workers: 2,
             games,
+            permuted_control: true,
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
@@ -7377,6 +7442,12 @@ pub(crate) mod tests {
         };
         let control = update("control", None).unwrap();
         assert!(control["line_b"].get("teacher").is_none());
+        let assert_gauge = |receipt: &Value| {
+            let gauge = &receipt["line_b"]["scorer_bias_gauge"];
+            assert_eq!(gauge["within_bound"], true, "{gauge}");
+            assert_eq!(gauge["anchor_preserved"], true, "{gauge}");
+        };
+        assert_gauge(&control);
         let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
         let mut moved = Vec::new();
         let mut checkpoints = Vec::new();
@@ -7413,9 +7484,22 @@ pub(crate) mod tests {
                     .is_finite());
                 eprintln!("{label} {direction:?} envelope {envelope} telemetry {telemetry}");
             }
+            assert_gauge(&receipt);
+            let permuted = &taught["permuted_control"];
+            assert_eq!(permuted["backend"], "cpu");
             let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
             let root = &telemetry["roots"][0];
             if taught["census"]["complete_roots"] == 1 {
+                // A single root is its width's only member: its own target
+                // rotated by one action, so a different divergence.
+                assert_eq!(permuted["kinds"], json!(["within_root"]));
+                assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
+                assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
+                assert_ne!(
+                    permuted["after_state_sha256"],
+                    receipt["after_state_sha256"]
+                );
+                eprintln!("{label} {direction:?} permuted control {permuted}");
                 let before = root["divergence_before"].as_f64().unwrap();
                 let rescore_before = root["rescore_before"].as_f64().unwrap();
                 let rescore_after = root["rescore_after"].as_f64().unwrap();
@@ -7433,6 +7517,7 @@ pub(crate) mod tests {
                 assert!(root["divergence_before"].is_null());
                 assert!(root["rescore_after"].is_null());
                 assert_eq!(auxiliary, 0.0);
+                assert_eq!(permuted["kinds"], json!([null]));
             }
             moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
             checkpoints.push(receipt["checkpoint"].clone());
