@@ -511,19 +511,17 @@ impl OpponentSeatV1 {
             )?);
             return Ok((selected, scores, tensor, None));
         }
-        let (selected, scores, tensor) = policy.select_with_training_tensor_v3(session)?;
+        // The evaluator's own ordinary path (select_action_v1 calls
+        // select_paired_with_scores_v1); scoring refreshes the captured tensor.
+        let (selected, scores) = policy.select_paired_with_scores_v1(&input).map_err(err)?;
+        let tensor = TensorBitsV1::from_tensor(&policy.last_scored_training_tensor_v3()?.common);
         rows.push(row(
             session,
             decision,
             selected,
             scored("v3", "original", scores.logits.len()),
         )?);
-        Ok((
-            selected,
-            scores,
-            TensorBitsV1::from_tensor(&tensor.common),
-            None,
-        ))
+        Ok((selected, scores, tensor, None))
     }
 }
 
