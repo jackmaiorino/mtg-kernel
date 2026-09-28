@@ -644,6 +644,7 @@ mod tests {
                 learner_seat: (index % 2) as u8,
                 opponent: (index >= 2).then(|| source.clone()),
                 opponent_search: None,
+                opponent_kind: None,
                 registered: decks.clone(),
                 selected: decks.clone(),
                 postboard: false,
