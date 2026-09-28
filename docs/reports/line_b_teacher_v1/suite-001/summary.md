@@ -32,6 +32,8 @@ Integration (2), in code this branch does not change in non-test builds (rl_sess
 - `flat_policy_v1::runtime_typed_row_count_and_digest_goldens_are_exact` (runtime typed digests of five reset fixtures differ from data/flat_policy_v1/goldens_v1.json)
 - `rl_contract::rl_contract_combat_projection_preserves_indexed_non_token_history` (left 0, right 1)
 
+Value check (2026-09-28 03:00): both results equal base 500cfae9 in full. All five expected and actual digests of the flat_policy_v1 failure in this run's log appear in search-opponent's sealed base record, and rl_contract fails at tests/rl_contract.rs:543 with left 0, right 1 there too (D:/e-scratch/opus-search-opponent/logs/integration-failure-values-500cfae9.json, SHA-256 11c02cb8825354be0459a57a1a4a7e25586ed7033efaa9bb2938f4c15b3353c4, CLAUDE #582; Codex's collector integration run gives the same two failures, CODEX #612).
+
 The compiler errors in the doc-test section (for example "cannot construct NativeTrainingTrajectoryReceiptV2 with struct literal syntax") belong to `compile_fail` examples; all 62 doc tests passed.
 
 ## Ignored tests run explicitly
