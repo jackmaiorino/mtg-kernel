@@ -15,7 +15,7 @@ import subprocess
 import time
 
 SCHEMA = 'g115-r14-windows-tests/v1'
-SUITES = {'panel': ['registry_evolution', 'native_checkpoint_export_v1', 'sideboard_play_policy_v1', 'expanded_deck_training_v1'],
+SUITES = {'panel': ['registry_evolution', 'native_checkpoint_export_v1', 'sideboard_play_policy_v1', 'expanded_deck_training_v1', 'this_build_carries_no_forbidden_build_flag_override_v1'],
           'collector': ['opponent_kind', '--include-ignored']}
 FEATURES = 'native-training-store-v2-production,experimental-burn-net8-packed-cuda-v1'
 ENV_KEYS = {'PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'CUDA_PATH', 'CUDA_PATH_V12_8'}
@@ -92,13 +92,16 @@ def admission(plan, host):
     require(not git('status', '--porcelain', '--untracked-files=normal'), 'Clean committed source required')
     cargo, rustc, linker = [pinned(plan['tools'][name]) for name in ('cargo', 'rustc', 'linker')]
     env = os.environ.copy()
-    for name in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
+    for name in ('RUSTC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
                  'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER'):
         env.pop(name, None)
     env.update(plan['environment'])
     env.update(CARGO_TARGET_DIR=str(target), TEMP=str(temporary), TMP=str(temporary),
-               CARGO_BUILD_JOBS=str(plan['jobs']), RUSTC=str(rustc), CARGO_INCREMENTAL='0',
+               CARGO_BUILD_JOBS=str(plan['jobs']), CARGO_INCREMENTAL='0',
                CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=str(linker))
+    env['PATH'] = str(rustc.parent) + os.pathsep + env.get('PATH', '')
+    require(Path(shutil.which('rustc', path=env['PATH'])).resolve() == rustc.resolve(),
+            'PATH must select the pinned compiler without RUSTC override')
     versions = {name: subprocess.check_output([str(tool), flag], text=True, env=env).strip()
                 for name, tool, flag in [('rustc', rustc, '-vV'), ('cargo', cargo, '--version')]}
     require(versions['rustc'].startswith('rustc 1.94.1 '), 'Pinned Rust 1.94.1 required')
