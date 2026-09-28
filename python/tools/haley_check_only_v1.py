@@ -33,7 +33,9 @@ REPORTS = REPO / 'docs/reports/haley_check_only_v1'
 RUNNER = Path(__file__).with_name('haley_check_only_runner_v1.py')
 REMOTE_PYTHON = 'C:/Users/haley/AppData/Local/Programs/Python/Python312/python.exe'
 DISPATCH = Path(__file__).with_name('haley_check_only_dispatch_v1.py')
-COLLECTED = ('completion.json', 'cargo.log')
+GIB = 2 ** 30
+RESERVE_BYTES = 60 * GIB  # artifact law clause 1, every volume
+GROWTH_BYTES = 8 * GIB  # a panel-suite release test build measured about 1 GB of target on Jack's PC
 # host_reservation_v1.dispatch outcomes. A run started (it may finish before the handoff). Only Held is a definite
 # refusal that leaves nothing acquired for this run (the host is reserved, or the busy refusal cancelled this
 # acquisition); Refused can follow a created supervisor, and an unconfirmed spawn may be running, so neither is retried.
@@ -87,40 +89,50 @@ def make_bundle(repo, ref, commit, out):
     return path
 
 
-def make_plan(lane, run_id, commit, cargo_args, files, toolchain, timeout_seconds=5400):
+def make_plan(lane, run_id, commit, cargo_args, files, toolchain, timeout_seconds=5400, growth_bytes=GROWTH_BYTES):
     paths = remote_paths(lane, run_id, commit)
     return {'schema': PLAN_SCHEMA, 'host': 'haleyspc', 'lane': lane, 'run_id': run_id, 'commit': commit,
             'files': files, 'toolchain': toolchain, 'source_root': paths['source_root'],
             'target_dir': paths['target_dir'], 'temp_dir': paths['temp_dir'], 'worker_root': paths['worker_root'],
             'cargo_args': list(cargo_args), 'timeout_seconds': timeout_seconds,
+            'reserve_bytes': RESERVE_BYTES, 'growth_bytes': growth_bytes,
             'release_condition': 'the supervisor job is empty after the cargo command',
             'nonclaims': ['check-only pass or fail evidence for the suite owner', 'not a timing or identity receipt',
                           'no GPU test is in scope']}
 
 
 def make_receipt(state, collected_dir, staging_receipt_sha256):
-    files = {}
-    for path in sorted(Path(collected_dir).glob('*')):
-        if path.is_file() and path.name != 'receipt.json':
-            files[path.name] = sha256(path)
-    completion = json.loads((Path(collected_dir) / 'completion.json').read_text(encoding='utf-8'))
-    dispatched = json.loads((Path(collected_dir) / 'dispatch.json').read_text(encoding='utf-8'))
-    reservation = json.loads((Path(collected_dir) / 'reservation-status.json').read_text(encoding='utf-8'))
-    require(completion.get('commit') == state['commit'] and completion.get('head') == state['commit'],
-            'the remote checkout differs from the pinned commit')
+    """Binds every collected file; a run that stopped before or around cargo is receipted as refused or error."""
+    folder = Path(collected_dir)
+    files = {path.name: sha256(path) for path in sorted(folder.glob('*'))
+             if path.is_file() and path.name != 'receipt.json'}
+    completion = json.loads((folder / 'completion.json').read_text(encoding='utf-8'))
+    dispatched = json.loads((folder / 'dispatch.json').read_text(encoding='utf-8'))
+    reservation = json.loads((folder / 'reservation-status.json').read_text(encoding='utf-8'))
+    require(completion.get('commit') == state['commit'] and completion.get('run_id') == state['run_id'],
+            'the completion record belongs to another run')
+    receipt = {'schema': RECEIPT_SCHEMA, 'host': 'haleyspc', 'lane': state['lane'], 'run_id': state['run_id'],
+               'commit': state['commit'], 'cargo_args': state['cargo_args'],
+               'started_utc': completion['started_utc'], 'finished_utc': completion['finished_utc'],
+               'exit_code': completion['exit_code'],
+               'reservation': {'token': dispatched['token'], 'dispatch_state': dispatched.get('state'),
+                               'supervisor_pid': dispatched.get('pid'), 'token_fate': reservation.get('token_fate'),
+                               'runner_token': completion.get('reservation_token')},
+               'staging_receipt_sha256': staging_receipt_sha256, 'collected_files': files,
+               'nonclaims': completion['nonclaims']}
+    stopped = [key for key in ('refused', 'error') if key in completion]
+    if stopped:
+        receipt.update({'outcome': stopped[0], 'detail': completion[stopped[0]]})
+        return receipt
+    require(completion.get('head') == state['commit'], 'the remote checkout differs from the pinned commit')
     require(completion.get('reservation_token') == dispatched.get('token'), 'the run did not hold the dispatched token')
-    return {'schema': RECEIPT_SCHEMA, 'host': 'haleyspc', 'lane': state['lane'], 'run_id': state['run_id'],
-            'commit': state['commit'], 'remote_head': completion['head'], 'clean': completion.get('clean'),
-            'toolchain': {'rustc_verbose_version_sha256': completion['toolchain']['rustc_verbose_version_sha256'],
-                          'cargo_version': completion['toolchain']['cargo_version'],
-                          'rustc': state['toolchain']['rustc'], 'cargo': state['toolchain']['cargo']},
-            'cargo_args': state['cargo_args'], 'argv': completion['argv'],
-            'started_utc': completion['started_utc'], 'finished_utc': completion['finished_utc'],
-            'exit_code': completion['exit_code'], 'test_counts': completion['test_counts'],
-            'reservation': {'token': dispatched['token'], 'dispatch_state': dispatched.get('state'),
-                            'supervisor_pid': dispatched.get('pid'), 'token_fate': reservation.get('token_fate')},
-            'staging_receipt_sha256': staging_receipt_sha256, 'collected_files': files,
-            'nonclaims': completion['nonclaims']}
+    receipt.update({'outcome': 'ran', 'remote_head': completion['head'], 'clean': completion.get('clean'),
+                    'toolchain': {'rustc_verbose_version_sha256': completion['toolchain']['rustc_verbose_version_sha256'],
+                                  'cargo_version': completion['toolchain']['cargo_version'],
+                                  'rustc': state['toolchain']['rustc'], 'cargo': state['toolchain']['cargo']},
+                    'argv': completion['argv'], 'test_counts': completion['test_counts'],
+                    'free_bytes': [completion.get('free_bytes_before'), completion.get('free_bytes_after')]})
+    return receipt
 
 
 class Remote:
@@ -138,10 +150,11 @@ class Remote:
         require(result.returncode == 0, 'HaleysPC command failed: ' + (result.stderr or result.stdout).strip()[-400:])
         return result.stdout
 
-    def fetch(self, remote, local):
+    def fetch(self, remote, local, check=True):
         result = self.run(['scp', '-q', '-o', 'BatchMode=yes', '%s:%s' % (self.host, remote), str(local)],
                           capture_output=True, text=True, timeout=600)
-        require(result.returncode == 0, 'scp failed: ' + result.stderr.strip()[-400:])
+        require(result.returncode == 0 or not check, 'scp failed: ' + result.stderr.strip()[-400:])
+        return result.returncode == 0
 
 
 def stage(tools_dir, map_path, receipt_path):
@@ -240,14 +253,16 @@ def cmd_collect(args):
     require(reservation.get('token_fate') != 'holds', 'the run still holds the reservation; collect after it ends')
     out = REPORTS / state['run_id']
     out.mkdir(parents=True)
-    for name in COLLECTED:
-        remote.fetch(state['paths']['worker_root'] + '/' + name, out / name)
+    remote.fetch(state['paths']['worker_root'] + '/completion.json', out / 'completion.json')
+    ran = json.loads((out / 'completion.json').read_text(encoding='utf-8')).get('exit_code') is not None
+    remote.fetch(state['paths']['worker_root'] + '/cargo.log', out / 'cargo.log', check=ran)  # absent if stopped early
     for name, value in (('dispatch.json', dispatched), ('reservation-status.json', reservation)):
         (out / name).write_text(json.dumps(value, indent=1, default=str) + '\n', encoding='utf-8', newline='\n')
     receipt = make_receipt(state, out, sha256(run_dir / 'staging-receipt.json'))
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=1) + '\n', encoding='utf-8', newline='\n')
     print(json.dumps({'receipt': str(out / 'receipt.json'), 'sha256': sha256(out / 'receipt.json'),
-                      'exit_code': receipt['exit_code'], 'test_counts': receipt['test_counts']}))
+                      'outcome': receipt['outcome'], 'exit_code': receipt['exit_code'],
+                      'test_counts': receipt.get('test_counts')}))
 
 
 def main():

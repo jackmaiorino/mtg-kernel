@@ -68,6 +68,8 @@ class RunnerTests(unittest.TestCase):
         self.refused(runner.check_plan, plan(cargo_args=["run", "--bin", "anything"]))
         self.refused(runner.check_plan, plan(cargo_args=["test", "--target-dir", "C:/elsewhere"]))
         self.refused(runner.check_plan, plan(cargo_args=["test", "--config", "build.rustc='x'"]))
+        self.refused(runner.check_plan, plan(reserve_bytes=59 * 2 ** 30))
+        self.refused(runner.check_plan, plan(growth_bytes=0))
         relative = plan()
         relative["toolchain"]["rustc"]["path"] = "rustc.exe"
         self.refused(runner.check_plan, relative)
@@ -99,6 +101,11 @@ class RunnerTests(unittest.TestCase):
         for other in (fake_helper(fate="released")[0], fake_helper(lane="opus-exit-teacher")[0],
                       fake_helper(work_id="another-run")[0]):
             self.refused(runner.held_reservation, plan(), other, {"MTG_HOST_RESERVATION_TOKEN": "t-1"})
+
+    def test_the_build_never_takes_c_below_its_reserve(self):
+        runner.check_space(plan(), 68 * 2 ** 30)
+        self.refused(runner.check_space, plan(), 67 * 2 ** 30)
+        self.assertEqual((plan()["reserve_bytes"], plan()["growth_bytes"]), (60 * 2 ** 30, 8 * 2 ** 30))
 
     def test_test_counts_sum_every_result_line(self):
         log = ("test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured\n"
@@ -223,7 +230,7 @@ class ControllerTests(unittest.TestCase):
     def test_the_receipt_binds_the_remote_head_the_token_and_every_collected_file(self):
         state = {"lane": "opus-panel-export", "run_id": "run-1", "commit": COMMIT, "cargo_args": ["test"],
                  "toolchain": plan()["toolchain"]}
-        completion = {"commit": COMMIT, "head": COMMIT, "clean": True, "argv": ["cargo"], "started_utc": "s",
+        completion = {"commit": COMMIT, "run_id": "run-1", "head": COMMIT, "clean": True, "argv": ["cargo"], "started_utc": "s",
                       "finished_utc": "f", "exit_code": 0, "test_counts": {"passed": 1, "failed": 0, "ignored": 0},
                       "toolchain": {"rustc_verbose_version_sha256": "9" * 64, "cargo_version": "cargo 1.94.1"},
                       "reservation_token": "t-1", "nonclaims": ["check-only"]}
@@ -234,15 +241,23 @@ class ControllerTests(unittest.TestCase):
             (folder / "cargo.log").write_text("test result: ok. 1 passed; 0 failed; 0 ignored\n", encoding="utf-8")
             (folder / "completion.json").write_text(json.dumps(completion), encoding="utf-8")
             receipt = controller.make_receipt(state, tmp, "6" * 64)
-            self.assertEqual(receipt["schema"], "haley-check-only-receipt/v1")
-            self.assertEqual(receipt["reservation"], {"token": "t-1", "dispatch_state": "dispatched",
-                                                      "supervisor_pid": 7, "token_fate": "released"})
+            self.assertEqual((receipt["schema"], receipt["outcome"]), ("haley-check-only-receipt/v1", "ran"))
+            self.assertEqual(receipt["reservation"], {"token": "t-1", "dispatch_state": "dispatched", "supervisor_pid": 7,
+                                                      "token_fate": "released", "runner_token": "t-1"})
             self.assertEqual(sorted(receipt["collected_files"]),
                              ["cargo.log", "completion.json", "dispatch.json", "reservation-status.json"])
-            for field, value in (("head", "e" * 40), ("reservation_token", "t-2")):
+            for field, value in (("head", "e" * 40), ("reservation_token", "t-2"), ("run_id", "run-0")):
                 (folder / "completion.json").write_text(json.dumps(dict(completion, **{field: value})), encoding="utf-8")
                 with self.assertRaises(SystemExit):
                     controller.make_receipt(state, tmp, "6" * 64)
+            stopped = {key: completion[key] for key in ("commit", "run_id", "started_utc", "finished_utc", "nonclaims")}
+            stopped.update({"exit_code": None, "refused": "check-only refused: cargo differs from its pin"})
+            (folder / "cargo.log").unlink()
+            (folder / "completion.json").write_text(json.dumps(stopped), encoding="utf-8")
+            receipt = controller.make_receipt(state, tmp, "6" * 64)
+            self.assertEqual((receipt["outcome"], receipt["exit_code"]), ("refused", None))
+            self.assertIn("cargo differs", receipt["detail"])
+            self.assertNotIn("test_counts", receipt)
 
 
 if __name__ == "__main__":

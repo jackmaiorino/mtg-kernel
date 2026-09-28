@@ -7,8 +7,10 @@ releases when they end (CLAUDE #574). The runner checks the plan (schema haley-c
 file and that its token holds this lane's lock for this run, prepares a clean detached git checkout of the pinned
 commit from the staged bundle, and runs the one cargo command at BelowNormal priority with an isolated target
 directory. The compiler is selected by --config build.rustc=<absolute rustc> with RUSTC unset (CLAUDE #526
-S4): the native-store capture sees a drive-absolute RUSTC and the crate compile sees no build override. It writes
-WORKER_ROOT/cargo.log and WORKER_ROOT/completion.json and exits with the cargo exit code.
+S4): the native-store capture sees a drive-absolute RUSTC and the crate compile sees no build override. It keeps
+C: above its reserve after the plan's declared growth, writes WORKER_ROOT/cargo.log and WORKER_ROOT/completion.json
+and exits with the cargo exit code; a refusal or error before or around cargo is recorded in completion.json
+(refused or error, exit code null) and exits 2.
 
 Check-only: the result is pass or fail evidence for the suite owner, never a timing or identity receipt.
 """
@@ -18,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
@@ -26,6 +29,7 @@ PLAN_SCHEMA = 'haley-check-only-plan/v1'
 COMPLETION_SCHEMA = 'haley-check-only-completion/v1'
 ROOT = 'C:/mtg-line-a/check-only/'
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+MIN_RESERVE_BYTES = 60 * 2 ** 30  # artifact law clause 1, every volume
 # Variables that would override the compiler or its flags; removed so the pinned toolchain alone decides.
 OVERRIDES = ('RUSTC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS', 'RUSTC_WRAPPER',
              'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
@@ -67,6 +71,8 @@ def check_plan(plan):
     for key in ('bundle', 'helper', 'launcher', 'dispatch'):
         require(under_root(plan['files'][key]['path']), key + ' lies outside ' + ROOT)
     require(under_root(plan['worker_root']), 'worker_root lies outside ' + ROOT)
+    require(int(plan.get('reserve_bytes', 0)) >= MIN_RESERVE_BYTES and int(plan.get('growth_bytes', 0)) > 0,
+            'the plan must keep at least the 60 GiB reserve and declare its growth')
     args = plan.get('cargo_args')
     require(isinstance(args, list) and args and all(isinstance(a, str) for a in args), 'cargo arguments')
     require(args[0] in ('test', 'build', 'check', 'clippy'), 'only test, build, check or clippy commands are admitted')
@@ -158,6 +164,39 @@ def toolchain_record(plan):
             'rustc_verbose_version_sha256': hashlib.sha256(verbose).hexdigest(), 'cargo_version': cargo}
 
 
+def check_space(plan, free_bytes):
+    """The build may grow C: by growth_bytes; the drive keeps its reserve (artifact law clause 1)."""
+    require(free_bytes - int(plan['growth_bytes']) >= int(plan['reserve_bytes']),
+            'C: has %d free bytes; %d of growth would cross the %d-byte reserve'
+            % (free_bytes, int(plan['growth_bytes']), int(plan['reserve_bytes'])))
+
+
+def run(plan, root, environ):
+    """Every check, the checkout and the one cargo command; returns the completion fields."""
+    require(sha256(__file__) == plan['files']['launcher']['sha256'], 'runner differs from its plan pin')
+    for key in ('bundle', 'helper', 'dispatch'):
+        require(sha256(plan['files'][key]['path']) == plan['files'][key]['sha256'], key + ' differs from its pin')
+    for tool in ('cargo', 'rustc'):
+        require(sha256(plan['toolchain'][tool]['path']) == plan['toolchain'][tool]['sha256'], tool + ' differs from its pin')
+    fields = {'reservation_token': held_reservation(plan, load_helper(plan['files']['helper']['path']), environ)}
+    fields['free_bytes_before'] = shutil.disk_usage(PureWindowsPath(ROOT).anchor).free
+    check_space(plan, fields['free_bytes_before'])
+    Path(plan['temp_dir']).mkdir(parents=True, exist_ok=True)
+    fields['head'] = prepare_source(plan)
+    fields['clean'] = True
+    fields['toolchain'] = toolchain_record(plan)
+    fields['argv'] = build_command(plan)
+    log_path = root / 'cargo.log'
+    with open(log_path, 'wb') as log:
+        result = subprocess.run(fields['argv'], stdout=log, stderr=subprocess.STDOUT,
+                                env=build_environment(environ, plan), cwd=plan['source_root'],
+                                creationflags=BELOW_NORMAL_PRIORITY_CLASS, timeout=int(plan.get('timeout_seconds', 5400)))
+    fields.update({'exit_code': result.returncode, 'log_sha256': sha256(log_path),
+                   'test_counts': test_counts(log_path.read_text(encoding='utf-8', errors='replace')),
+                   'free_bytes_after': shutil.disk_usage(PureWindowsPath(ROOT).anchor).free})
+    return fields
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--manifest', required=True)
@@ -168,35 +207,23 @@ def main():
     plan_bytes = Path(args.manifest).read_bytes()
     plan = json.loads(plan_bytes)
     check_plan(plan)
-    require(sha256(__file__) == plan['files']['launcher']['sha256'], 'runner differs from its plan pin')
-    for key in ('bundle', 'helper', 'dispatch'):
-        require(sha256(plan['files'][key]['path']) == plan['files'][key]['sha256'], key + ' differs from its pin')
-    for tool in ('cargo', 'rustc'):
-        require(sha256(plan['toolchain'][tool]['path']) == plan['toolchain'][tool]['sha256'], tool + ' differs from its pin')
     require(str(PureWindowsPath(args.root)) == str(PureWindowsPath(plan['worker_root'])), 'root differs from the plan')
-    token = held_reservation(plan, load_helper(plan['files']['helper']['path']), os.environ)
     root = Path(args.root)
-    root.mkdir(parents=True)
-    Path(plan['temp_dir']).mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True)  # a second start of the same plan stops here
     record = {'schema': COMPLETION_SCHEMA, 'host': 'haleyspc', 'lane': plan['lane'], 'run_id': plan['run_id'],
-              'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(), 'commit': plan['commit'],
-              'reservation_token': token, 'started_utc': now()}
-    record['head'] = prepare_source(plan)
-    record['clean'] = True
-    record['toolchain'] = toolchain_record(plan)
-    command = build_command(plan)
-    record['argv'] = command
-    log_path = root / 'cargo.log'
-    with open(log_path, 'wb') as log:
-        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=build_environment(os.environ, plan),
-                                cwd=plan['source_root'], creationflags=BELOW_NORMAL_PRIORITY_CLASS,
-                                timeout=int(plan.get('timeout_seconds', 5400)))
-    record.update({'exit_code': result.returncode, 'finished_utc': now(), 'log_sha256': sha256(log_path),
-                   'test_counts': test_counts(log_path.read_text(encoding='utf-8', errors='replace')),
-                   'nonclaims': ['check-only pass or fail evidence for the suite owner',
-                                 'not a timing or identity receipt', 'no GPU test is in scope']})
+              'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(), 'commit': plan['commit'], 'started_utc': now(),
+              'nonclaims': ['check-only pass or fail evidence for the suite owner',
+                            'not a timing or identity receipt', 'no GPU test is in scope']}
+    try:
+        record.update(run(plan, root, os.environ))
+        code = record['exit_code']
+    except (SystemExit, Exception) as stopped:  # every stop before or around cargo leaves a record to collect
+        record.update({'refused' if isinstance(stopped, SystemExit) else 'error': str(stopped) or repr(stopped),
+                       'exit_code': None})
+        code = 2
+    record['finished_utc'] = now()
     (root / 'completion.json').write_text(json.dumps(record, indent=1) + '\n', encoding='utf-8', newline='\n')
-    sys.exit(result.returncode)
+    sys.exit(code)
 
 
 if __name__ == '__main__':
