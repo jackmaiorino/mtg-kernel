@@ -246,7 +246,7 @@ def acceptance_checks(record):
 
 def acceptance(args, directory):
     initial, a48, iterations = template()
-    episodes, games = batch(args.name, 0, iterations[args.iteration]["episodes"], initial, a48)
+    episodes, games = batch(args.seed_name, 0, iterations[args.iteration]["episodes"], initial, a48)
     collect = collect_command(initial, episodes, args.collect_workers, directory / "collect")
     collected, seconds = run(collect, directory, "collect")
     trajectories = collected["trajectories"]
@@ -254,6 +254,7 @@ def acceptance(args, directory):
         "schema": "line-b-engineering-acceptance-receipt/v1",
         "name": args.name,
         "provenance": args.provenance,
+        "seed_name": args.seed_name,
         "claim": "engineering receipt: identity, determinism and telemetry only; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256, "iteration": args.iteration},
         "student": initial,
@@ -311,6 +312,7 @@ def chain(args, directory):
         "schema": "line-b-engineering-chain-receipt/v1",
         "name": args.name,
         "provenance": args.provenance,
+        "seed_name": args.seed_name,
         "claim": "engineering receipt: identity and determinism only; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256},
         "rollouts": args.rollouts,
@@ -328,7 +330,7 @@ def chain(args, directory):
             for update in range(args.updates):
                 label = f"{arm}-{replay}-u{update:03}"
                 entries = iterations[args.iteration + update]["episodes"]
-                episodes, games = batch(args.name, update, entries, initial, a48)
+                episodes, games = batch(args.seed_name, update, entries, initial, a48)
                 collect = collect_command(
                     student, episodes, collect_workers, directory / f"{label}-collect"
                 )
@@ -487,7 +489,7 @@ def throughput(args, directory):
         for entry in iteration["episodes"]
         if learner_list(entry["episode"]).startswith("published-")
     ][: args.roots]
-    episodes, games = batch(args.name, 0, entries, initial, a48)
+    episodes, games = batch(args.seed_name, 0, entries, initial, a48)
     collect = collect_command(initial, episodes, args.collect_workers, directory / "collect")
     collected, seconds = run(collect, directory, "collect")
     affinity = affinity_from_mask(args.affinity_mask)
@@ -495,6 +497,7 @@ def throughput(args, directory):
         "schema": "line-b-engineering-throughput-receipt/v1",
         "name": args.name,
         "provenance": args.provenance,
+        "seed_name": args.seed_name,
         "claim": "engineering timing of the teach step on one fixed batch; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256},
         "roots_requested": args.roots,
@@ -554,6 +557,7 @@ def diagnostics(args, directory):
         "schema": "line-b-engineering-diagnostics-receipt/v1",
         "name": args.name,
         "provenance": args.provenance,
+        "seed_name": args.seed_name,
         "claim": "non-outcome diagnostics of the teacher at engineering roots; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256},
         "rollouts": args.rollouts,
@@ -564,7 +568,7 @@ def diagnostics(args, directory):
     for update in range(args.updates):
         label = f"u{update:03}"
         entries = iterations[args.iteration + update]["episodes"]
-        episodes, games = batch(args.name, update, entries, initial, a48)
+        episodes, games = batch(args.seed_name, update, entries, initial, a48)
         collect = collect_command(initial, episodes, args.collect_workers, directory / f"{label}-collect")
         collected, _ = run(collect, directory, f"{label}-collect")
         options = teacher("reverse-kl", games, args, False)
@@ -599,6 +603,11 @@ def main():
     parser.add_argument("--mode", choices=["acceptance", "chain", "chain-recheck", "throughput", "diagnostics"], required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument(
+        "--seed-name",
+        default=None,
+        help="engineering seed namespace (default: --name); repeat a batch in a new receipt directory",
+    )
+    parser.add_argument(
         "--binary",
         type=Path,
         default=BIN,
@@ -624,6 +633,7 @@ def main():
     )
     args = parser.parse_args()
     BIN = args.binary
+    args.seed_name = args.seed_name or args.name
     directory = args.root / args.name
     args.provenance = {
         "binary": str(BIN),
