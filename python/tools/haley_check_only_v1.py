@@ -250,7 +250,9 @@ def cmd_collect(args):
     reservation = json.loads(remote.powershell(remote_script([state['files']['dispatch']['path'], '--plan',
                                                               state['paths']['plan'], '--python', REMOTE_PYTHON,
                                                               '--status', dispatched['token']])).strip().splitlines()[-1])
-    require(reservation.get('token_fate') != 'holds', 'the run still holds the reservation; collect after it ends')
+    fate = str(reservation.get('token_fate'))
+    require(fate != 'holds', 'the run still holds the reservation; collect after it ends')
+    require(fate == 'released' or fate.startswith('reclaimed-'), 'the reservation has no recorded end (%s)' % fate)
     out = REPORTS / state['run_id']
     out.mkdir(parents=True)
     remote.fetch(state['paths']['worker_root'] + '/completion.json', out / 'completion.json')

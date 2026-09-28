@@ -84,9 +84,13 @@ class RunnerTests(unittest.TestCase):
 
     def test_overrides_are_removed_and_the_run_is_isolated(self):
         base = {"PATH": "C:\\Windows", "RUSTC": "C:\\x\\rustc.exe", "rustflags": "-C target-cpu=native",
-                "CARGO_TARGET_DIR": "C:\\shared", "RUSTC_WRAPPER": "sccache", "HOME": "C:\\Users\\haley"}
+                "CARGO_TARGET_DIR": "C:\\shared", "RUSTC_WRAPPER": "sccache", "HOME": "C:\\Users\\haley",
+                "CARGO_PROFILE_RELEASE_LTO": "false", "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER": "lld-link",
+                "CARGO_HTTP_TIMEOUT": "60"}
         env = runner.build_environment(base, plan())
-        for name in ("RUSTC", "rustflags", "RUSTC_WRAPPER"):
+        self.assertEqual(env["CARGO_HTTP_TIMEOUT"], "60")
+        for name in ("RUSTC", "rustflags", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_LTO",
+                     "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"):
             self.assertNotIn(name, env)
         self.assertEqual(env["PATH"].split(";")[0], TC)
         self.assertEqual(env["CARGO_TARGET_DIR"], "C:\\mtg-line-a\\check-only\\target\\opus-panel-export")
@@ -126,6 +130,9 @@ class RunnerTests(unittest.TestCase):
             local = {"commit": commit, "source_root": str(Path(tmp) / "src"), "files": {"bundle": {"path": str(bundle)}}}
             self.assertEqual(runner.prepare_source(local), commit)
             self.assertEqual(runner.prepare_source(local), commit)
+            pinned = subprocess.run(["git", "-C", str(Path(tmp) / "src"), "config", "--local", "--get", "core.autocrlf"],
+                                    capture_output=True, text=True).stdout.strip()
+            self.assertEqual(pinned, "true")
             (Path(tmp) / "src" / "a.txt").write_text("changed\n", encoding="utf-8")
             self.refused(runner.prepare_source, local)
             self.refused(controller.make_bundle, origin, "main", "f" * 40, tmp)

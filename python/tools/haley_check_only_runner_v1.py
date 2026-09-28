@@ -33,7 +33,13 @@ MIN_RESERVE_BYTES = 60 * 2 ** 30  # artifact law clause 1, every volume
 # Variables that would override the compiler or its flags; removed so the pinned toolchain alone decides.
 OVERRIDES = ('RUSTC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS', 'RUSTC_WRAPPER',
              'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
-             'CARGO_BUILD_RUSTC', 'CARGO_BUILD_TARGET', 'CARGO_TARGET_DIR', 'CARGO_BUILD_TARGET_DIR')
+             'CARGO_BUILD_RUSTC', 'CARGO_BUILD_TARGET', 'CARGO_TARGET_DIR', 'CARGO_BUILD_TARGET_DIR', 'RUSTDOCFLAGS')
+# Cargo reads any configuration key from CARGO_<KEY>; these families change the profile, build or target settings.
+OVERRIDE_PREFIXES = ('CARGO_PROFILE_', 'CARGO_BUILD_', 'CARGO_TARGET_', 'CARGO_ENCODED_')
+# Jack's PC checks out under Git for Windows' system default core.autocrlf=true. The clone pins the same value so the
+# files that .gitattributes leaves to text=auto get the same bytes on both hosts (the *.rs, *.toml and *.dek rules
+# pin their own endings).
+LINE_ENDINGS = ('core.autocrlf', 'true')
 TEST_RESULT = re.compile(r'^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored', re.M)
 
 
@@ -91,7 +97,8 @@ def build_rustc_config(rustc_path):
 
 
 def build_environment(base, plan):
-    env = {k: v for k, v in base.items() if k.upper() not in OVERRIDES}
+    env = {k: v for k, v in base.items()
+           if k.upper() not in OVERRIDES and not k.upper().startswith(OVERRIDE_PREFIXES)}
     toolchain_bin = str(PureWindowsPath(plan['toolchain']['rustc']['path']).parent)
     env['PATH'] = toolchain_bin + os.pathsep + base.get('PATH', '')
     env['CARGO_TARGET_DIR'] = str(PureWindowsPath(plan['target_dir']))
@@ -144,9 +151,11 @@ def prepare_source(plan):
     source = Path(plan['source_root'])
     bundle = plan['files']['bundle']['path']
     if not source.exists():
-        result = subprocess.run(['git', 'clone', '--quiet', '--no-checkout', bundle, str(source)],
-                                capture_output=True, text=True)
+        result = subprocess.run(['git', 'clone', '--quiet', '--no-checkout', '--config', '%s=%s' % LINE_ENDINGS,
+                                 bundle, str(source)], capture_output=True, text=True)
         require(result.returncode == 0, 'git clone from the bundle failed: ' + result.stderr.strip()[-300:])
+    require(git(source, 'config', '--local', '--get', LINE_ENDINGS[0]) == LINE_ENDINGS[1],
+            'the checkout does not pin %s=%s' % LINE_ENDINGS)
     git(source, 'checkout', '--quiet', '--detach', plan['commit'])
     head = git(source, 'rev-parse', 'HEAD')
     require(head == plan['commit'], 'checkout HEAD %s differs from the pinned commit' % head)
