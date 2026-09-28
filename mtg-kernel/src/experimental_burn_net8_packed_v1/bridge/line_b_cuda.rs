@@ -13,12 +13,17 @@ use crate::native_policy_train_step_v1::{LineBAuxiliaryInputV1, LineBAuxiliaryRe
 /// One selected root's device-logit envelope: the largest
 /// `|log p_device(a) - log p_collection(a)|` over its menu and the bound the
 /// tolerance gate implies, `2e-3 + 3e-3 max|z|` (a log-probability change is
-/// at most the range of the logit changes, which the gate bounds).
+/// at most the range of the logit changes, which the gate bounds). The host
+/// refold line is the separate cheap check (FABLE-REVIEW-20260927 change 3):
+/// the update's host refold of the sampled action's log-probability (binary32
+/// `selected_log_softmax` of the transported collection logits, which never
+/// sees the device forward) against the collection sampler's binary64 value.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct LineBCudaEnvelopeRootV1 {
     pub(crate) root: usize,
     pub(crate) max_abs_log_probability_discrepancy: f64,
     pub(crate) bound: f64,
+    pub(crate) host_refold_abs_discrepancy: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,12 +33,14 @@ pub(crate) struct LineBCudaAuxiliaryV1 {
 }
 
 /// An available root: its index among the selected roots, its flat substep,
-/// its frozen target and its transported collection logits.
+/// its frozen target, its transported collection logits and the action the
+/// collection sampled there.
 pub(super) struct LineBCudaRootV1 {
     index: usize,
     pub(super) flat_substep: usize,
     pub(super) target: LineBSoftmaxV1,
     collection_bits: Vec<u32>,
+    selected_action_index: usize,
 }
 
 pub(super) struct LineBCudaPlanV1 {
@@ -95,6 +102,7 @@ pub(super) fn line_b_cuda_plan_v1(
                 flat_substep: group_first_substeps[root.group_index] + root.substep_index,
                 target: target.clone(),
                 collection_bits: substep.expected_raw_action_logit_bits.to_vec(),
+                selected_action_index: substep.selected_action_index,
             });
         }
     }
@@ -193,11 +201,24 @@ pub(super) fn line_b_cuda_term_v1(
         let magnitude = collection_logits
             .iter()
             .fold(0.0_f64, |m, z| m.max(z.abs()));
+        let transported: Vec<f32> = root
+            .collection_bits
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect();
+        let selected = root.selected_action_index;
+        let (refolded, _) = selected_log_softmax(&transported, selected)?;
+        let sampler = collection
+            .log_probabilities
+            .get(selected)
+            .copied()
+            .ok_or(invalid("line-b-cuda-root-selected-action"))?;
         envelope.push(LineBCudaEnvelopeRootV1 {
             root: root.index,
             max_abs_log_probability_discrepancy: discrepancy,
             bound: TRANSPORTED_LOGIT_RANGE_ABSOLUTE_TOLERANCE_V2
                 + TRANSPORTED_LOGIT_RANGE_RELATIVE_TOLERANCE_V2 * magnitude,
+            host_refold_abs_discrepancy: (f64::from(refolded) - sampler).abs(),
         });
         let value = line_b_divergence_v1(plan.direction, &device_logits, &root.target)
             .map_err(|_| invalid("line-b-auxiliary-divergence"))?;

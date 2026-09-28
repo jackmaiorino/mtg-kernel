@@ -2847,9 +2847,15 @@ fn execute_update_v1(
                             .envelope
                             .iter()
                             .all(|root| root.max_abs_log_probability_discrepancy <= root.bound);
+                        let max_host_refold = cuda
+                            .envelope
+                            .iter()
+                            .map(|root| root.host_refold_abs_discrepancy)
+                            .fold(0.0_f64, f64::max);
                         line_b_envelope = Some(json!({"roots": cuda.envelope,
                             "max_abs_log_probability_discrepancy": max_discrepancy,
-                            "within_bound": within_bound}));
+                            "within_bound": within_bound,
+                            "max_host_refold_abs_discrepancy": max_host_refold}));
                         line_b_auxiliary = Some(cuda.auxiliary);
                         result
                     }
@@ -7567,8 +7573,18 @@ pub(crate) mod tests {
                     .as_f64()
                     .unwrap()
                     .is_finite());
+                // The host refold is binary32 arithmetic on the same logits:
+                // rounding-scale on the fixture's small logits.
+                let refold = envelope["max_host_refold_abs_discrepancy"]
+                    .as_f64()
+                    .unwrap();
+                assert!(refold.is_finite() && refold < 1e-5, "{envelope}");
                 eprintln!("{label} {direction:?} envelope {envelope} telemetry {telemetry}");
             }
+            eprintln!(
+                "{label} {direction:?} after_state_sha256 {}",
+                receipt["after_state_sha256"]
+            );
             assert_gauge(&receipt);
             let permuted = &taught["permuted_control"];
             assert_eq!(permuted["backend"], "cpu");
