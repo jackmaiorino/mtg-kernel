@@ -595,8 +595,11 @@ impl OpponentRecordV1 {
                         observation,
                         sampler_identity,
                     } => {
+                        // With forced actions on, a singleton is never scored:
+                        // a scored row there would be fabricated.
                         ensure(
                             r.legal_action_count as usize == row.logits.len()
+                                && !(singletons && r.legal_action_count == 1)
                                 && g == generation
                                 && digests(g)
                                     == Some((

@@ -330,6 +330,40 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                     assert!(record
                         .validate(&a.episode, &hashes, &fabricated, &a.terminal)
                         .is_err());
+                    // So is a consistent forgery: the singleton rewritten as a
+                    // scored V3 row in both the decision and its record (the
+                    // draw count is the same either way).
+                    let index = a
+                        .decisions
+                        .iter()
+                        .filter(|r| r.actor != learner_seat)
+                        .position(|r| {
+                            r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER)
+                        })
+                        .unwrap();
+                    let (contract, encoding) = digests("v3").unwrap();
+                    let mut forged_record = record.clone();
+                    forged_record.rows[index].form = OpponentRowFormV1::Scored {
+                        generation: "v3".into(),
+                        feature_contract_digest: contract.into(),
+                        feature_encoding_digest: encoding.into(),
+                        observation: "original".into(),
+                        sampler_identity: None,
+                    };
+                    let mut forged = a.decisions.clone();
+                    let row = forged
+                        .iter_mut()
+                        .filter(|r| r.actor != learner_seat)
+                        .nth(index)
+                        .unwrap();
+                    row.logits = vec![0f32.to_bits()];
+                    row.sampler_identity = None;
+                    assert_eq!(
+                        forged_record
+                            .validate(&a.episode, &hashes, &forged, &a.terminal)
+                            .unwrap_err(),
+                        "opponent row differs from its record"
+                    );
                 }
             }
         }
