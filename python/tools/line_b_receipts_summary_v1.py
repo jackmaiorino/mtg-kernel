@@ -122,6 +122,8 @@ def throughput(record):
     rows = [
         [
             r["workers"],
+            r.get("affinity_mask", "all logical processors"),
+            (r.get("placement_readback") or {}).get("execution_speed_opt_out"),
             r["roots"],
             r["rollouts"],
             r["teacher_seconds"],
@@ -140,7 +142,9 @@ def throughput(record):
     best = max((r["rollouts_per_second"] or 0.0 for r in runs), default=0.0)
     return "\n".join(
         [
-            f"Placement: priority {placement.get('priority', 'n/a')}, affinity {placement.get('affinity', 'n/a')}.",
+            f"Placement: priority {placement.get('priority', 'n/a')},"
+            f" affinity {placement.get('affinity_mask', placement.get('affinity', 'n/a'))},"
+            f" QoS {placement.get('qos', 'not set (system-managed)')}.",
             f"Best teach-step rate {fmt(best)} rollouts per second against the cap's 1.48 completed"
             " rollouts per reserved host-second (256,000 rollouts in 48 host-hours); the teach"
             " step alone, before collection and update time.",
@@ -148,6 +152,8 @@ def throughput(record):
             table(
                 [
                     "workers",
+                    "affinity mask",
+                    "throttling opt-out read back",
                     "roots",
                     "rollouts",
                     "teach step seconds",
