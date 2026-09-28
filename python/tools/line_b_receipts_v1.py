@@ -87,8 +87,8 @@ def run(command, directory, name, affinity=None):
         readback = configure_owned_child(process, BIN)
     except Exception as error:
         process.kill()
-        process.communicate()
-        (directory / f"{name}.placement-error.txt").write_text(repr(error))
+        _, stderr = process.communicate()
+        (directory / f"{name}.placement-error.txt").write_text(f"{error!r}\n{stderr}")
         raise SystemExit(f"{name}: placement failed ({error!r}); the child was stopped")
     (directory / f"{name}.placement.json").write_text(json.dumps(readback, indent=1))
     stdout, stderr = process.communicate()
