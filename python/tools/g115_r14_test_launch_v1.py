@@ -17,6 +17,7 @@ import time
 SCHEMA = 'g115-r14-windows-tests/v1'
 SUITES = {'panel': ['registry_evolution', 'native_checkpoint_export_v1', 'sideboard_play_policy_v1', 'expanded_deck_training_v1', 'this_build_carries_no_forbidden_build_flag_override_v1'],
           'collector': ['opponent_kind', '--include-ignored'],
+          'collector-public-features': ['public_features', '--include-ignored'],
           'collector-lib': [], 'collector-integration': []}
 FEATURES = 'native-training-store-v2-production,experimental-burn-net8-packed-cuda-v1'
 ENV_KEYS = {'PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'CUDA_PATH', 'CUDA_PATH_V12_8'}
