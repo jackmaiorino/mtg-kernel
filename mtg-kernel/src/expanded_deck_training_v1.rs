@@ -2614,7 +2614,8 @@ fn execute_update_v1(
                 )
                 .map_err(err)?;
             let mut after = shadow.snapshot_v1().map_err(err)?;
-            mask.restore_frozen_v1(snapshot_before, &mut after).map_err(err)?;
+            mask.restore_frozen_v1(snapshot_before, &mut after)
+                .map_err(err)?;
             let shadow =
                 NativePolicyValueTrainStateV1::from_snapshot_v1(shadow.model_v1().clone(), &after)
                     .map_err(err)?;
@@ -7267,6 +7268,11 @@ pub(crate) mod tests {
         let pooled = line_b_teach_v1(&trajectories, &policy, &student, &options(3)).unwrap();
         assert_eq!(serial.games, pooled.games);
         assert_eq!(serial.census, pooled.census);
+        // The published bytes too: the packet records no execution setting.
+        assert_eq!(
+            serde_json::to_vec(&serial).unwrap(),
+            serde_json::to_vec(&pooled).unwrap()
+        );
         assert!(matches!(
             serial.games[1],
             LineBPacketGameV1::Canonical {

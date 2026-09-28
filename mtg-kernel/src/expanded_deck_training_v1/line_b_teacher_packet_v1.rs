@@ -132,12 +132,24 @@ pub(super) struct LineBCensusV1 {
     pub(super) policy_steps: u64,
 }
 
+/// The packet's recipe and seeds, without the execution settings (`workers`,
+/// `permuted_control`): the packet is a function of the student, the batch,
+/// the seeds and the recipe, so its bytes do not depend on the worker count.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(super) struct LineBPacketOptionsV1 {
+    pub(super) direction: LineBDivergenceV1,
+    pub(super) coefficient: f64,
+    pub(super) temperature: f64,
+    pub(super) rollouts: u32,
+    pub(super) games: Vec<Option<LineBGameSeedsV1>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(super) struct LineBTeacherPacketV1 {
     pub(super) schema: &'static str,
     pub(super) operator: &'static str,
     pub(super) target: &'static str,
-    pub(super) options: LineBTeacherOptionsV1,
+    pub(super) options: LineBPacketOptionsV1,
     /// The start-of-update student the rollouts continued with.
     pub(super) student_state_sha256: String,
     pub(super) games: Vec<LineBPacketGameV1>,
@@ -270,7 +282,13 @@ pub(super) fn line_b_teach_v1(
         schema: LINE_B_TEACHER_PACKET_SCHEMA_V1,
         operator: LINE_B_TEACHER_OPERATOR_VERSION_V1,
         target: LINE_B_TEACHER_TARGET_VERSION_V1,
-        options: options.clone(),
+        options: LineBPacketOptionsV1 {
+            direction: options.direction,
+            coefficient: options.coefficient,
+            temperature: options.temperature,
+            rollouts: options.rollouts,
+            games: options.games.clone(),
+        },
         student_state_sha256: student_state_sha256.into(),
         games,
         census,
