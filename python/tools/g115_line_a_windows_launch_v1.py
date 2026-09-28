@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from windows_held_spawn_v1 import spawn_held
 import subprocess
 import sys
 import threading
@@ -124,8 +125,9 @@ class Pool:
             row['request_sha256'] = guard.sha256_file(request_path)
             flags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             with (self.root / 'logs' / (name + '.log')).open('xb') as log:
-                child = subprocess.Popen(self.command + [str(request_path)], env=self.environment(), stdout=log,
-                                         stderr=subprocess.STDOUT, creationflags=flags)
+                child, placement = spawn_held(self.command + [str(request_path)], self.command[0], env=self.environment(), stdout=log,
+                                              stderr=subprocess.STDOUT, creationflags=flags)
+                row['placement'] = placement
                 try:
                     child.wait(timeout=self.timeout)
                 except subprocess.TimeoutExpired:

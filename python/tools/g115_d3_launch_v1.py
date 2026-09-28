@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+from windows_held_spawn_v1 import spawn_held
 import subprocess
 import threading
 import time
@@ -364,7 +365,14 @@ def launch(manifest, host, root):
         begin = time.monotonic()
         row = dict(id=identifier, complete=False)
         with (root / (identifier + '.log')).open('xb') as log:
-            child = subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT, **kwargs)
+            try:
+                child, placement = spawn_held(argv, argv[0], env=env, stdout=log, stderr=subprocess.STDOUT, **kwargs)
+                row['placement'] = placement
+            except Exception as error:
+                row.update(error_type=type(error).__name__, error=str(error), seconds=time.monotonic()-begin)
+                stop.set()
+                write(root / (identifier + '.execution.json'), row)
+                return row
             with lock:
                 active[child.pid] = dict(child=child, cpu=0., rss=0, io=0)
             try:
