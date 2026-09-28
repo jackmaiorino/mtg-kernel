@@ -185,6 +185,8 @@ def diagnostics(record):
                     "student entropy (mean, nats)",
                     "target p_max (mean)",
                     "target entropy (mean, nats)",
+                    "complete roots with tied mean returns (target equals the student)",
+                    "mean return spread (mean over complete roots)",
                     "decisions per rollout (median)",
                 ],
                 rows,
@@ -215,6 +217,8 @@ def summary_row(name, roots):
         mean("student_entropy", roots),
         mean("target_p_max", complete),
         mean("target_entropy", complete),
+        sum(1 for r in complete if r.get("mean_return_spread") == 0.0),
+        mean("mean_return_spread", complete) if all("mean_return_spread" in r for r in complete) else None,
         statistics.median(decisions) if decisions else None,
     ]
 

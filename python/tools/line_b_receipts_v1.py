@@ -374,8 +374,9 @@ def chain(args, directory):
 
 
 def packet_roots(pin):
-    """Per root: list, student and target p_max and entropy, status and
-    per-rollout physical decisions and outcome kinds."""
+    """Per root: list, student and target p_max and entropy, status, the
+    spread of the mean returns (zero when every action ties, so the target
+    equals the student's policy) and per-rollout decisions and outcomes."""
     packet = json.loads(Path(pin["path"]).read_text())
     roots = []
     for game in packet["games"]:
@@ -385,8 +386,11 @@ def packet_roots(pin):
         student = softmax(logits)
         status_kind = next(iter(game["status"]))
         target = None
+        spread = None
         if status_kind == "complete":
             target = [math.exp(v) for v in game["status"]["complete"]["log_target"]]
+            means = game["status"]["complete"]["mean_returns"]
+            spread = max(means) - min(means)
         roots.append(
             {
                 "trajectory_index": game["trajectory_index"],
@@ -396,6 +400,7 @@ def packet_roots(pin):
                 "student_entropy": entropy(student),
                 "target_p_max": max(target) if target else None,
                 "target_entropy": entropy(target) if target else None,
+                "mean_return_spread": spread,
                 "rollout_decisions": [r["physical_decisions"] for r in game["rollouts"]],
                 "rollout_outcomes": [next(iter(r["outcome"])) for r in game["rollouts"]],
             }
@@ -533,9 +538,16 @@ def diagnostics(args, directory):
 
 
 def main():
+    global BIN
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["acceptance", "chain", "throughput", "diagnostics"], required=True)
     parser.add_argument("--name", required=True)
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        default=BIN,
+        help="the CLI to run; the line (b) receipts use the pinned 822d0426 copy (CODEX #584)",
+    )
     parser.add_argument("--root", type=Path, default=Path("D:/e-scratch/opus-exit-teacher/receipts"))
     parser.add_argument("--iteration", type=int, default=0)
     parser.add_argument("--updates", type=int, default=4)
@@ -555,6 +567,7 @@ def main():
         help="throughput only: pin each update to these logical processors (e.g. 0xffff for the P-cores)",
     )
     args = parser.parse_args()
+    BIN = args.binary
     directory = args.root / args.name
     args.provenance = {
         "binary": str(BIN),
