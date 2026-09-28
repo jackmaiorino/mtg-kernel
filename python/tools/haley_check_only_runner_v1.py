@@ -1,0 +1,180 @@
+"""HaleysPC check-only runner (version 1): the launcher the supported WMI dispatcher starts on HaleysPC.
+
+Invoked by g115_d3_windows_dispatch.ps1 as: python -u haley_check_only_runner_v1.py --manifest PLAN --host haleyspc
+--root WORKER_ROOT. It checks the plan (schema haley-check-only-plan/v1) and every pinned file, prepares a clean
+detached git checkout of the pinned commit from the staged bundle, and runs the one cargo command under the host
+reservation's supervisor (host_reservation_v1.py supervise --token), at BelowNormal priority, with an isolated
+target directory. The compiler is selected by --config build.rustc=<absolute rustc> with RUSTC unset (CLAUDE #526
+S4): the native-store capture sees a drive-absolute RUSTC and the crate compile sees no build override. It writes
+WORKER_ROOT/cargo.log and WORKER_ROOT/completion.json and exits with the cargo exit code.
+
+Check-only: the result is pass or fail evidence for the suite owner, never a timing or identity receipt.
+"""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path, PureWindowsPath
+
+PLAN_SCHEMA = 'haley-check-only-plan/v1'
+COMPLETION_SCHEMA = 'haley-check-only-completion/v1'
+ROOT = 'C:/mtg-line-a/check-only/'
+BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+# Variables that would override the compiler or its flags; removed so the pinned toolchain alone decides.
+OVERRIDES = ('RUSTC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS', 'RUSTC_WRAPPER',
+             'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
+             'CARGO_BUILD_RUSTC', 'CARGO_BUILD_TARGET', 'CARGO_TARGET_DIR', 'CARGO_BUILD_TARGET_DIR')
+TEST_RESULT = re.compile(r'^test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored', re.M)
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def require(ok, message):
+    if not ok:
+        raise SystemExit('check-only refused: ' + message)
+
+
+def under_root(path):
+    text = str(path).replace('\\', '/')
+    return text.startswith(ROOT) and '..' not in text
+
+
+def check_plan(plan):
+    """Plan shape and path rules; returns nothing, refuses on any violation."""
+    require(plan.get('schema') == PLAN_SCHEMA, 'plan schema')
+    require(plan.get('host') == 'haleyspc', 'plan host')
+    require(re.fullmatch(r'[0-9a-f]{40}', plan.get('commit', '')) is not None, 'plan commit is not 40 lowercase hex')
+    require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', plan.get('lane', '')) is not None, 'plan lane')
+    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,95}', plan.get('run_id', '')) is not None, 'plan run id')
+    for key in ('source_root', 'target_dir', 'temp_dir'):
+        require(under_root(plan[key]), key + ' lies outside ' + ROOT)
+    for key in ('bundle', 'helper', 'launcher'):
+        require(under_root(plan['files'][key]['path']), key + ' lies outside ' + ROOT)
+    args = plan.get('cargo_args')
+    require(isinstance(args, list) and args and all(isinstance(a, str) for a in args), 'cargo arguments')
+    require(args[0] in ('test', 'build', 'check', 'clippy'), 'only test, build, check or clippy commands are admitted')
+    require(not any(a.startswith('--target-dir') or a.startswith('--config') for a in args),
+            'the target directory and compiler come from the plan, not the arguments')
+    for tool in ('cargo', 'rustc'):
+        path = PureWindowsPath(plan['toolchain'][tool]['path'])
+        require(path.is_absolute() and path.drive, tool + ' path must be drive-absolute')
+
+
+def build_rustc_config(rustc_path):
+    """The S4 selection: a TOML literal string keeps the backslashes the native-store capture requires."""
+    windows = str(PureWindowsPath(rustc_path))
+    require('\\' in windows and '/' not in windows and "'" not in windows, 'rustc path must be a backslash path')
+    return "build.rustc='%s'" % windows
+
+
+def build_environment(base, plan):
+    env = {k: v for k, v in base.items() if k.upper() not in OVERRIDES}
+    toolchain_bin = str(PureWindowsPath(plan['toolchain']['rustc']['path']).parent)
+    env['PATH'] = toolchain_bin + os.pathsep + base.get('PATH', '')
+    env['CARGO_TARGET_DIR'] = str(PureWindowsPath(plan['target_dir']))
+    env['TEMP'] = env['TMP'] = str(PureWindowsPath(plan['temp_dir']))
+    env['CARGO_INCREMENTAL'] = '0'
+    return env
+
+
+def build_command(plan, python):
+    cargo = str(PureWindowsPath(plan['toolchain']['cargo']['path']))
+    work = [cargo, '--config', build_rustc_config(plan['toolchain']['rustc']['path'])] + plan['cargo_args']
+    helper = str(PureWindowsPath(plan['files']['helper']['path']))
+    return [python, '-u', helper, 'supervise', '--token', plan['reservation_token'],
+            '--cwd', str(PureWindowsPath(plan['source_root'])), '--'] + work
+
+
+def test_counts(log_text):
+    totals = [0, 0, 0]
+    for match in TEST_RESULT.finditer(log_text):
+        for index in range(3):
+            totals[index] += int(match.group(index + 1))
+    return dict(zip(('passed', 'failed', 'ignored'), totals))
+
+
+def git(source, *args):
+    result = subprocess.run(['git', '-C', str(source)] + list(args), capture_output=True, text=True)
+    require(result.returncode == 0, 'git %s failed: %s' % (' '.join(args), result.stderr.strip()[-300:]))
+    return result.stdout.strip()
+
+
+def prepare_source(plan):
+    """A clean detached checkout of the pinned commit, cloned from the staged bundle when absent."""
+    source = Path(plan['source_root'])
+    bundle = plan['files']['bundle']['path']
+    if not source.exists():
+        result = subprocess.run(['git', 'clone', '--quiet', '--no-checkout', bundle, str(source)],
+                                capture_output=True, text=True)
+        require(result.returncode == 0, 'git clone from the bundle failed: ' + result.stderr.strip()[-300:])
+    git(source, 'checkout', '--quiet', '--detach', plan['commit'])
+    head = git(source, 'rev-parse', 'HEAD')
+    require(head == plan['commit'], 'checkout HEAD %s differs from the pinned commit' % head)
+    status = git(source, 'status', '--porcelain=v1', '--untracked-files=all')
+    require(status == '', 'the checkout is not clean')
+    return head
+
+
+def toolchain_record(plan):
+    rustc = str(PureWindowsPath(plan['toolchain']['rustc']['path']))
+    verbose = subprocess.run([rustc, '-vV'], capture_output=True).stdout
+    cargo = subprocess.run([str(PureWindowsPath(plan['toolchain']['cargo']['path'])), '-V'],
+                           capture_output=True, text=True).stdout.strip()
+    return {'rustc_verbose_version': verbose.decode('utf-8', 'replace'),
+            'rustc_verbose_version_sha256': hashlib.sha256(verbose).hexdigest(), 'cargo_version': cargo}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--manifest', required=True)
+    parser.add_argument('--host', required=True)
+    parser.add_argument('--root', required=True)
+    args = parser.parse_args()
+    require(args.host == 'haleyspc', 'this runner admits HaleysPC only')
+    plan_bytes = Path(args.manifest).read_bytes()
+    plan = json.loads(plan_bytes)
+    check_plan(plan)
+    require(sha256(__file__) == plan['files']['launcher']['sha256'], 'runner differs from its plan pin')
+    for key in ('bundle', 'helper'):
+        require(sha256(plan['files'][key]['path']) == plan['files'][key]['sha256'], key + ' differs from its pin')
+    for tool in ('cargo', 'rustc'):
+        require(sha256(plan['toolchain'][tool]['path']) == plan['toolchain'][tool]['sha256'], tool + ' differs from its pin')
+    root = Path(args.root)
+    root.mkdir(parents=True)
+    Path(plan['temp_dir']).mkdir(parents=True, exist_ok=True)
+    record = {'schema': COMPLETION_SCHEMA, 'host': 'haleyspc', 'lane': plan['lane'], 'run_id': plan['run_id'],
+              'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(), 'commit': plan['commit'], 'started_utc': now()}
+    record['head'] = prepare_source(plan)
+    record['clean'] = True
+    record['toolchain'] = toolchain_record(plan)
+    command = build_command(plan, sys.executable)
+    record['argv'] = command
+    log_path = root / 'cargo.log'
+    with open(log_path, 'wb') as log:
+        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=build_environment(os.environ, plan),
+                                cwd=plan['source_root'], creationflags=BELOW_NORMAL_PRIORITY_CLASS,
+                                timeout=int(plan.get('timeout_seconds', 5400)))
+    record.update({'exit_code': result.returncode, 'finished_utc': now(), 'log_sha256': sha256(log_path),
+                   'test_counts': test_counts(log_path.read_text(encoding='utf-8', errors='replace')),
+                   'nonclaims': ['check-only pass or fail evidence for the suite owner',
+                                 'not a timing or identity receipt', 'no GPU test is in scope']})
+    (root / 'completion.json').write_text(json.dumps(record, indent=1) + '\n', encoding='utf-8', newline='\n')
+    sys.exit(result.returncode)
+
+
+if __name__ == '__main__':
+    main()
