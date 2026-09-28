@@ -349,28 +349,84 @@ def chain(args, directory):
                 print(label, round(seconds, 1), "s", result["after_state_sha256"][:12], flush=True)
             record["chains"][f"{arm}-{replay}"] = steps
             (directory / "receipt.json").write_text(json.dumps(record, indent=1))
-    found = {}
-    for arm in args.arms:
-        runs = [record["chains"].get(f"{arm}-{replay}") for replay in "ab"[: args.replays]]
-        if len(runs) > 1 and all(runs):
-            # Control: parallel run against its serial replay; treatment:
-            # two replays. Trajectories, packets and every after-state.
-            name = "control_equals_serial_replay" if arm == "control" else f"{arm}_replays_identical"
-            found[name] = all(
-                a["after_state_sha256"] == b["after_state_sha256"]
-                and a["trajectories_sha256"] == b["trajectories_sha256"]
-                and (a["teacher"] or {}).get("packet") == (b["teacher"] or {}).get("packet")
-                for a, b in zip(*runs)
+    record["checks"] = chain_checks(record, directory)
+    (directory / "receipt.json").write_text(json.dumps(record, indent=1))
+    print(json.dumps(record["checks"], indent=1))
+
+
+def trajectory_content_digest(path, student_checkpoint):
+    """SHA-256 of a trajectory with the student's source checkpoint pin and
+    the same file's SHA-256 in the student seat's identity masked: they name
+    the replay's own previous checkpoint file, whose bytes embed
+    replay-specific trajectory paths; everything else (the opponents' pins,
+    the rest of the identities, the decisions and the terminal) is compared
+    as recorded."""
+    trajectory = json.loads(Path(path).read_text())
+    masked = 0
+    for seat in trajectory.get("seat_behaviors") or []:
+        source = seat.get("source") or {}
+        if student_checkpoint is not None and source.get("checkpoint") == student_checkpoint:
+            source["checkpoint"] = "student-checkpoint"
+            identity = seat.get("identity") or {}
+            if identity.get("checkpoint_sha256") == student_checkpoint["sha256"]:
+                identity["checkpoint_sha256"] = "student-checkpoint"
+            masked += 1
+    body = json.dumps(trajectory, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(body).hexdigest(), masked
+
+
+def chain_checks(record, directory):
+    """Replay identity per arm and update (FABLE-REVIEW-20260927 change 6):
+    the published snapshot hash, the packet bytes (SHA-256), and trajectory
+    content with the student's path-bearing source pin masked; the checkpoint
+    and trajectory files themselves differ between replays only through the
+    paths their pins embed (update 0 collects from the same pinned g115, so
+    its trajectory files must match byte for byte)."""
+    found = {"replays": {}}
+    arms = sorted({key.rsplit("-", 1)[0] for key in record["chains"]})
+    for arm in arms:
+        a_steps, b_steps = record["chains"].get(f"{arm}-a"), record["chains"].get(f"{arm}-b")
+        if not (a_steps and b_steps):
+            continue
+        rows = []
+        for update, (a, b) in enumerate(zip(a_steps, b_steps)):
+            commands = [
+                json.loads((directory / f"{arm}-{replay}-u{update:03}.command.json").read_text())
+                for replay in "ab"
+            ]
+            digests, masked = [], []
+            for command in commands:
+                student = command["source"].get("checkpoint")
+                pairs = [trajectory_content_digest(pin["path"], student) for pin in command["trajectories"]]
+                digests.append([digest for digest, _ in pairs])
+                masked.append(sum(count for _, count in pairs))
+            rows.append(
+                {
+                    "update": update,
+                    "snapshot_equal": a["after_state_sha256"] == b["after_state_sha256"],
+                    "packet_equal": (a["teacher"] or {}).get("packet", {}).get("sha256")
+                    == (b["teacher"] or {}).get("packet", {}).get("sha256"),
+                    "trajectory_content_equal": digests[0] == digests[1],
+                    "trajectory_files_equal": a["trajectories_sha256"] == b["trajectories_sha256"],
+                    "student_pins_masked": masked,
+                }
             )
+        found["replays"][arm] = {
+            "compared": "parallel against its serial replay" if arm == "control" else "two replays",
+            "identical": all(
+                row["snapshot_equal"] and row["packet_equal"] and row["trajectory_content_equal"]
+                for row in rows
+            ),
+            "update_0_trajectory_files_equal": rows[0]["trajectory_files_equal"] if rows else None,
+            "per_update": rows,
+        }
     steps = [s for chain_steps in record["chains"].values() for s in chain_steps]
     found["frozen_tensor_sha256_constant"] = len({s["frozen_tensor_sha256"] for s in steps}) == 1
     found["gauge_within_bound"] = all(
         s["scorer_bias_gauge"]["within_bound"] and s["scorer_bias_gauge"]["anchor_preserved"]
         for s in steps
     )
-    record["checks"] = found
-    (directory / "receipt.json").write_text(json.dumps(record, indent=1))
-    print(json.dumps(found, indent=1))
+    return found
 
 
 def packet_roots(pin):
@@ -540,7 +596,7 @@ def diagnostics(args, directory):
 def main():
     global BIN
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["acceptance", "chain", "throughput", "diagnostics"], required=True)
+    parser.add_argument("--mode", choices=["acceptance", "chain", "chain-recheck", "throughput", "diagnostics"], required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument(
         "--binary",
@@ -578,6 +634,13 @@ def main():
             text=True,
         ).stdout.strip(),
     }
+    if args.mode == "chain-recheck":
+        # Recompute a finished chain receipt's checks from its artifacts.
+        record = json.loads((directory / "receipt.json").read_text())
+        record["checks"] = chain_checks(record, directory)
+        (directory / "receipt.json").write_text(json.dumps(record, indent=1))
+        print(json.dumps(record["checks"], indent=1))
+        return
     if directory.exists():
         raise SystemExit(f"{directory} exists; receipts never overwrite")
     directory.mkdir(parents=True)

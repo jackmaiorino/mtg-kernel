@@ -99,7 +99,14 @@ def chain(record):
                 sum(s["collect_seconds"] for s in steps),
             ]
         )
-    checks = [(k, v) for k, v in record.get("checks", {}).items()]
+    checks = []
+    for key, value in record.get("checks", {}).items():
+        if key == "replays":
+            for arm, replay in value.items():
+                checks.append((f"{arm}: {replay['compared']}, identical at every update", replay["identical"]))
+                checks.append((f"{arm}: update 0 trajectory files byte-identical", replay["update_0_trajectory_files_equal"]))
+        else:
+            checks.append((key, value))
     return "\n".join(
         [
             table(["chain", "updates", "final state", "update seconds", "collect seconds"], rows),

@@ -7449,6 +7449,19 @@ pub(crate) mod tests {
         );
     }
 
+    /// The published state after the reverse and after the forward treatment
+    /// update of this fixture (FABLE-REVIEW-20260927 change 4), pinned from
+    /// the runs of 2026-09-27 at dbab4cd0; the CUDA values are GPU 1's (RTX
+    /// 3050). Each backend is deterministic run to run (acceptance-001).
+    const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
+        "e60b46a397f917cfadfbb87cd36fdac9d0a11187cc81fe04edbabf50db8d9926",
+        "73e13d2db04664ce76d984966763f27318c6bd3dd17ffe2b5e0981b833b4fe64",
+    ];
+    const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
+        "4ec11a5c9df8bf98cecd3f72a72fa39906377489945aa6d8be77822624f4cd92",
+        "d91b7ceacffea8eeff1ef90970efc568028d34ca47270d0d18f48d1551da2fbd",
+    ];
+
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
         use crate::line_b_teacher_target_v1::LineBDivergenceV1;
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
@@ -7622,6 +7635,18 @@ pub(crate) mod tests {
             }
             moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
             checkpoints.push(receipt["checkpoint"].clone());
+        }
+        // Pinned treatment goldens (FABLE-REVIEW-20260927 change 4).
+        let goldens = match update_backend {
+            ExpandedUpdateBackendV1::Cpu => LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1,
+            ExpandedUpdateBackendV1::Cuda { .. } => LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1,
+        };
+        for ((_, state), golden) in moved.iter().zip(goldens) {
+            assert_eq!(
+                state.as_str(),
+                Some(golden),
+                "{label}: pinned line (b) golden"
+            );
         }
         // End-of-run head distance (proposal 12:51) through the command.
         let checkpoint_source = |pin: &Value| ExpandedModelSourceV1 {
