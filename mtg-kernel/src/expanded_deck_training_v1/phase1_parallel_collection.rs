@@ -448,6 +448,7 @@ mod tests {
                 starting_player: (index % 2) as u8,
                 learner_seat: 0,
                 opponent: None,
+                opponent_search: None,
                 registered: decks.clone(),
                 selected: decks.clone(),
                 postboard: false,
@@ -552,6 +553,7 @@ mod tests {
                 // Exercise common-model self-play and a separately owned
                 // policy for the other physical seat with the same weights.
                 opponent: (index >= 2).then(|| source.clone()),
+                opponent_search: None,
                 registered: [deck.clone(), deck.clone()],
                 selected: [deck.clone(), deck.clone()],
                 postboard: false,
@@ -595,10 +597,8 @@ mod tests {
     #[test]
     fn unclamped_learner_collection_is_serial_parallel_identical_and_keeps_opponents_legacy() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-unclamped-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("expanded-collect-unclamped-{}", std::process::id()));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -637,6 +637,7 @@ mod tests {
                 starting_player: (index % 2) as u8,
                 learner_seat: (index % 2) as u8,
                 opponent: (index >= 2).then(|| source.clone()),
+                opponent_search: None,
                 registered: decks.clone(),
                 selected: decks.clone(),
                 postboard: false,

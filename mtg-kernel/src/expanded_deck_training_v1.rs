@@ -538,6 +538,12 @@ pub struct ExpandedEpisodeV1 {
     /// seat's independently loaded behavior, including an optional checkpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opponent: Option<ExpandedModelSourceV1>,
+    /// Some pins the reviewed D3 search descriptor that plays the other
+    /// physical seat around `opponent` (frozen g115). Only the public-feature
+    /// collector admits it; `configurations` refuses it everywhere else.
+    /// None keeps every prior serialized byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opponent_search: Option<PinnedFileV1>,
     /// Configuration identity is metadata only, never opponent model input.
     pub registered: [ExpandedDeckListV1; 2],
     pub selected: [ExpandedDeckListV1; 2],
@@ -548,6 +554,19 @@ pub struct ExpandedEpisodeV1 {
 
 impl ExpandedEpisodeV1 {
     fn configurations(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        ensure(
+            self.opponent_search.is_none(),
+            "search opponent is admitted only by the public-feature collector",
+        )?;
+        self.configurations_admitting_search_v1()
+    }
+
+    /// Search-aware validation for the public-feature collector only.
+    fn configurations_admitting_search_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        ensure(
+            self.opponent_search.is_none() || self.opponent.is_some(),
+            "search opponent requires an explicit opponent model",
+        )?;
         ensure(
             !self.id.is_empty() && self.id.len() <= 128,
             "invalid episode id",
@@ -1713,11 +1732,38 @@ fn validate_episode_records_with_learner_sampler_v1(
     terminal: &RlSessionTerminalV1,
     learner_sampler: Option<&str>,
 ) -> Result<(), String> {
+    validate_episode_records_with_search_v1(
+        episode.configurations()?,
+        episode,
+        configuration_sha256,
+        decisions,
+        terminal,
+        learner_sampler,
+        None,
+    )
+}
+
+/// A search-seat row check, called in order for each row of that seat.
+type SearchRowCheckV1<'a> = &'a mut dyn FnMut(&DecisionRecordV1) -> Result<(), String>;
+
+/// `search` names the physical seat whose rows the D3 wrapper chose and the
+/// check that binds each such row to its search record. Those rows draw
+/// nothing from that seat's stream; every other row replays the recorded
+/// behavior sampler exactly as before (`learner_sampler` on the rows the
+/// learner policy sampled, the legacy width rule on the others).
+fn validate_episode_records_with_search_v1(
+    configs: [DeckConfigurationV1; 2],
+    episode: &ExpandedEpisodeV1,
+    configuration_sha256: &[String; 2],
+    decisions: &[DecisionRecordV1],
+    terminal: &RlSessionTerminalV1,
+    learner_sampler: Option<&str>,
+    mut search: Option<(u8, SearchRowCheckV1<'_>)>,
+) -> Result<(), String> {
     ensure(
         learner_sampler.is_none_or(|identity| identity == UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1),
         "unsupported learner collection sampler",
     )?;
-    let configs = episode.configurations()?;
     ensure(
         *configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
         "selected deck hash differs",
@@ -1795,6 +1841,10 @@ fn validate_episode_records_with_learner_sampler_v1(
                     && row.logits.iter().all(|v| f32::from_bits(*v).is_finite()),
                 "invalid captured outputs",
             )?;
+            if let Some((_, check)) = search.as_mut().filter(|(seat, _)| *seat == row.actor) {
+                check(row)?;
+                continue;
+            }
             let learner_policy_row =
                 episode.opponent.is_none() || row.actor == episode.learner_seat;
             let expected_identity = learner_sampler
@@ -3300,6 +3350,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat,
             opponent,
+            opponent_search: None,
             registered: [list("Affinity"), list("Terror")],
             selected: [list("Affinity"), list("Terror")],
             postboard: false,
@@ -3780,6 +3831,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [deck.clone(), list("Terror")],
             selected: [deck, list("Terror")],
             postboard: false,
@@ -3883,6 +3935,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [deck.clone(), deck.clone()],
             selected: [deck.clone(), deck.clone()],
             postboard: false,
@@ -4013,6 +4066,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [wildfire.clone(), faeries.clone()],
             selected: [wildfire, faeries],
             postboard: false,
@@ -4145,6 +4199,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [faeries.clone(), elves.clone()],
             selected: [faeries, elves],
             postboard: false,
@@ -4276,6 +4331,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [faeries.clone(), burn.clone()],
             selected: [faeries, burn],
             postboard: false,
@@ -4390,6 +4446,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [burn.clone(), faeries.clone()],
             selected: [burn, faeries],
             postboard: false,
@@ -4517,6 +4574,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [caw_gates.clone(), spy.clone()],
             selected: [caw_gates, spy],
             postboard: false,
@@ -4652,6 +4710,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [caw_gates.clone(), rally.clone()],
             selected: [caw_gates, rally],
             postboard: false,
@@ -4777,6 +4836,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [caw_gates.clone(), rally.clone()],
             selected: [caw_gates, rally],
             postboard: false,
@@ -4921,6 +4981,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [elves.clone(), spy.clone()],
             selected: [elves, spy],
             postboard: false,
@@ -5068,6 +5129,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_search: None,
             registered: [burn.clone(), caw_gates.clone()],
             selected: [burn, caw_gates],
             postboard: false,
@@ -5104,6 +5166,7 @@ pub(crate) mod tests {
             starting_player: slot_hint % 2,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [list("Affinity"), list("Terror")],
             selected: [list("Affinity"), list("Terror")],
             postboard: false,
@@ -5585,6 +5648,7 @@ pub(crate) mod tests {
                 starting_player: (game_index % 2) as u8,
                 learner_seat: 0,
                 opponent: None,
+                opponent_search: None,
                 registered: [list(deck_a_id), list(deck_b_id)],
                 selected: [list(deck_a_id), list(deck_b_id)],
                 postboard: false,
@@ -5639,6 +5703,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [list("CawGates"), list("Burn")],
             selected: [list("CawGates"), list("Burn")],
             postboard: false,
@@ -5676,6 +5741,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [list("Spy"), list("SpyV2")],
             selected: [list("Spy"), list("SpyV2")],
             postboard: false,
@@ -5794,6 +5860,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [list("Elves"), list("Wildfire")],
             selected: [list("Elves"), list("Wildfire")],
             postboard: false,
@@ -5846,6 +5913,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [faeries.clone(), affinity.clone()],
             selected: [faeries, affinity],
             postboard: false,
@@ -5884,6 +5952,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [faeries.clone(), affinity.clone()],
             selected: [faeries, affinity],
             postboard: false,
@@ -5937,6 +6006,7 @@ pub(crate) mod tests {
                 starting_player,
                 learner_seat: 0,
                 opponent: None,
+                opponent_search: None,
                 registered: decks.clone(),
                 selected: decks,
                 postboard: false,
@@ -6005,6 +6075,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
             postboard: false,
@@ -6035,6 +6106,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
             postboard: false,
@@ -6083,6 +6155,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
             postboard: false,
@@ -6114,6 +6187,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
             postboard: false,
@@ -6194,6 +6268,7 @@ pub(crate) mod tests {
                 starting_player: 0,
                 learner_seat: 0,
                 opponent: None,
+                opponent_search: None,
                 registered: decks.clone(),
                 selected: decks.clone(),
                 postboard: false,
@@ -6703,6 +6778,7 @@ pub(crate) mod tests {
                     starting_player: (iteration % 2) as u8,
                     learner_seat: 0,
                     opponent: None,
+                    opponent_search: None,
                     registered: decks.clone(),
                     selected: decks.clone(),
                     postboard: false,
@@ -6841,6 +6917,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [deck.clone(), deck.clone()],
             selected: [deck.clone(), deck],
             postboard: false,
@@ -6959,6 +7036,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: [deck.clone(), deck.clone()],
             selected: [deck.clone(), deck],
             postboard: false,
@@ -7399,6 +7477,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_search: None,
             registered: decks.clone(),
             selected: decks.clone(),
             postboard: false,

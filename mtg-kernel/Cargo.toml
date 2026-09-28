@@ -61,6 +61,14 @@ required-features = [
     "experimental-burn-net8-packed-cuda-v1",
 ]
 
+# Inference-only export of a validated Store checkpoint to the frozen
+# native-inference-export/v1 bundle. It records the production build capture,
+# which exists only under the Windows production Store admission.
+[[bin]]
+name = "native_checkpoint_export_v1"
+path = "src/bin/native_checkpoint_export_v1.rs"
+required-features = ["native-training-store-v2-production"]
+
 [[example]]
 name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]

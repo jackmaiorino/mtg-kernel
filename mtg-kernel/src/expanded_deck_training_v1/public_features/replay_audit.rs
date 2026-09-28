@@ -96,6 +96,15 @@ impl AuditPolicy {
     }
 }
 
+/// Only ordinary public trajectories are audited. A search-opponent
+/// trajectory carries its own schema and is refused rather than audited as
+/// if a net had sampled its opponent rows.
+pub(super) fn admits_public_trajectory(t: &Trajectory) -> bool {
+    t.schema == "mtg-kernel-public-input-trajectory/v1"
+        && t.search.is_none()
+        && t.decisions.len() == t.auxiliary.len()
+}
+
 /// Internal view only. The input's original schema and state identity are
 /// retained; native records never acquire synthetic public-feature rows.
 struct SavedTrajectory {
@@ -119,11 +128,7 @@ fn read_trajectory(
                 "public trajectories require public models",
             )?;
             let t: Trajectory = serde_json::from_slice(bytes).map_err(err)?;
-            ensure(
-                t.schema == "mtg-kernel-public-input-trajectory/v1"
-                    && t.decisions.len() == t.auxiliary.len(),
-                "trajectory schema/rows differ",
-            )?;
+            ensure(admits_public_trajectory(&t), "trajectory schema/rows differ")?;
             Ok(SavedTrajectory {
                 state_hash: t.optimizer_state_sha256,
                 episode: t.episode,

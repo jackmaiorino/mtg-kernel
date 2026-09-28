@@ -1,0 +1,42 @@
+{
+  "schema": "g115-line-a-engineering-build/v1",
+  "commit": "ff6e01248176b99aee828fd1651b4a669bbb91b8",
+  "clean": true,
+  "command": [
+    "cargo",
+    "--config",
+    "profile.release.package.mtg-kernel.codegen-units=4",
+    "build",
+    "-p",
+    "mtg-kernel",
+    "--release",
+    "--features",
+    "experimental-burn-net8-packed-cuda-v1",
+    "-j",
+    "4",
+    "--bin",
+    "public_feature_evaluation_v1",
+    "--bin",
+    "public_feature_training_v1"
+  ],
+  "target": "D:/cargo-target/opus-line-a-launcher",
+  "toolchain": {
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+    "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n",
+    "vc_tools": "14.50.35717"
+  },
+  "started_unix": 1790524017.3510454,
+  "scope": "engineering qualification build, not the yardstick build",
+  "finished_unix": 1790524584.348758,
+  "exit_code": 0,
+  "binaries": {
+    "public_feature_evaluation_v1": {
+      "sha256": "868a741115880fa5055a6c5906abe521bc2514a2febc1f0bce058dc79b3c48a5",
+      "pinned": "E:/pinned-binaries/868a741115880fa5055a6c5906abe521bc2514a2febc1f0bce058dc79b3c48a5/public_feature_evaluation_v1.exe"
+    },
+    "public_feature_training_v1": {
+      "sha256": "e96ed742950b9539239f588bf39e51b0d1126b891352eb67b489d0adfd5b1711",
+      "pinned": "E:/pinned-binaries/e96ed742950b9539239f588bf39e51b0d1126b891352eb67b489d0adfd5b1711/public_feature_training_v1.exe"
+    }
+  }
+}

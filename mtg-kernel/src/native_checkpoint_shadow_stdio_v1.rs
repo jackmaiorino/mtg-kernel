@@ -179,8 +179,9 @@ const SOURCE_TRAIN_STATE_SHA256_V1: &str =
     "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8";
 const SOURCE_MODEL_PARAMETER_SHA256_V1: &str =
     "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d";
-const SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "legacy-v1";
-const POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "environment-randomization-v2";
+pub(crate) const SOURCE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str = "legacy-v1";
+pub(crate) const POPULATION_STORE_ENVIRONMENT_TRAJECTORY_CONTRACT_V1: &str =
+    "environment-randomization-v2";
 pub(crate) const SHADOW_RANDOMIZATION_IDENTITY_V1: &str = "legacy_v1";
 
 const PORTABLE_RUN_SHA256_V1: &str =
@@ -195,8 +196,8 @@ const PORTABLE_PAYLOAD_SHA256_V1: &str =
 const PORTABLE_TRAIN_STATE_SHA256_V1: &str =
     "0b35c448201efe92375f48a22201c432d3272a3286fae1440f6e7aa2277b9de5";
 
-const FIXED_MAX_PHYSICAL_DECISIONS_V1: u64 = 1_024;
-const FIXED_MAX_POLICY_STEPS_V1: u64 = 2_048;
+pub(crate) const FIXED_MAX_PHYSICAL_DECISIONS_V1: u64 = 1_024;
+pub(crate) const FIXED_MAX_POLICY_STEPS_V1: u64 = 2_048;
 
 /// Explicit runtime authority selection. No platform or path fallback exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
